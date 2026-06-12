@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -13,20 +14,34 @@ import (
 
 var (
 	stateFile       string
-	clusterArn      string
+	clusterId       string
 	ccClusterId     string
 	ccEnvironmentId string
 	ccApiKey        string
 	ccApiSecret     string
 	outputDir       string
-	force           bool
 )
 
 func NewMigrateMskConnectorsCmd() *cobra.Command {
 	mskConnectorsCmd := &cobra.Command{
-		Use:           "msk",
-		Short:         "Migrate MSK Connect connectors to Confluent Cloud",
-		Long:          "Migrate MSK Connect connectors to Confluent Cloud",
+		Use:   "msk",
+		Short: "Migrate MSK Connect connectors to Confluent Cloud",
+		Long:  "Generate Terraform configuration that recreates MSK Connect connectors as Confluent Cloud fully-managed connectors. Uses the Confluent translate/config API to convert connector configs.",
+		Example: `  kcp create-asset migrate-connectors msk \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --cc-environment-id env-a1bcde \
+      --cc-cluster-id lkc-xyz123 \
+      --cc-api-key ABCDEFGHIJKLMNOP \
+      --cc-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: iampolicy.RenderSingle("", []string{
+				"kafkaconnect:ListConnectors",
+				"kafkaconnect:DescribeConnector",
+				"kafkaconnect:DescribeWorkerConfiguration",
+				"kafkaconnect:DescribeCustomPlugin",
+			}),
+		},
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateMskConnectors,
 		RunE:          runMigrateMskConnectors,
@@ -37,7 +52,7 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the cluster to migrate connectors from.")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster.")
 	requiredFlags.StringVar(&ccEnvironmentId, "cc-environment-id", "", "The ID of the Confluent Cloud environment to migrate connectors to.")
 	requiredFlags.StringVar(&ccClusterId, "cc-cluster-id", "", "The ID of the Confluent Cloud cluster to migrate connectors to.")
 	requiredFlags.StringVar(&ccApiKey, "cc-api-key", "", "The API key for the Confluent Cloud cluster to migrate connectors to.")
@@ -48,7 +63,6 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform connector assets will be written to")
-	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	mskConnectorsCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -71,6 +85,7 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 	})
 
 	_ = mskConnectorsCmd.MarkFlagRequired("state-file")
+	_ = mskConnectorsCmd.MarkFlagRequired("cluster-id")
 	_ = mskConnectorsCmd.MarkFlagRequired("cc-environment-id")
 	_ = mskConnectorsCmd.MarkFlagRequired("cc-cluster-id")
 	_ = mskConnectorsCmd.MarkFlagRequired("cc-api-key")
@@ -108,7 +123,7 @@ func parseMigrateMskConnectorsOpts() (*MigrateMskConnectorOpts, error) {
 	}
 
 	if outputDir == "" {
-		outputDir = fmt.Sprintf("%s-connectors", utils.ExtractClusterNameFromArn(clusterArn))
+		outputDir = fmt.Sprintf("%s-connectors", utils.ExtractClusterNameFromArn(clusterId))
 	}
 
 	var state types.State
@@ -116,7 +131,7 @@ func parseMigrateMskConnectorsOpts() (*MigrateMskConnectorOpts, error) {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	cluster, err := utils.GetClusterByArn(&state, clusterArn)
+	cluster, err := state.GetClusterByArn(clusterId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
@@ -133,7 +148,6 @@ func parseMigrateMskConnectorsOpts() (*MigrateMskConnectorOpts, error) {
 		CcApiSecret:   ccApiSecret,
 		Connectors:    connectors,
 		OutputDir:     outputDir,
-		Force:         force,
 	}
 
 	return &opts, nil

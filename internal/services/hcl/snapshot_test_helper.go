@@ -1,8 +1,12 @@
+//go:build terraform_validation
+
 package hcl
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,6 +15,78 @@ import (
 	"github.com/gruntwork-io/terratest/modules/terraform"
 	"github.com/stretchr/testify/require"
 )
+
+// pluginCacheDir is the shared Terraform plugin cache directory, set by TestMain.
+var pluginCacheDir string
+
+// TestMain pre-warms the Terraform plugin cache so parallel tests don't race
+// to download the same providers simultaneously.
+func TestMain(m *testing.M) {
+	pluginCacheDir = filepath.Join(os.TempDir(), "terraform-plugin-cache")
+	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil {
+		log.Fatalf("could not create plugin cache directory: %v", err)
+	}
+
+	if err := warmPluginCache(pluginCacheDir); err != nil {
+		log.Fatalf("failed to warm plugin cache: %v", err)
+	}
+
+	os.Exit(m.Run())
+}
+
+// warmPluginCache runs a single terraform init to download all providers used
+// by the tests into the shared cache directory. Subsequent parallel test runs
+// will read from cache instead of hitting the network.
+func warmPluginCache(cacheDir string) error {
+	// Minimal config that requires every provider the tests use.
+	config := `
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 6.0"
+    }
+    confluent = {
+      source  = "confluentinc/confluent"
+      version = "~> 2.0"
+    }
+    null    = { source = "hashicorp/null" }
+    tls     = { source = "hashicorp/tls" }
+    local   = { source = "hashicorp/local" }
+    random  = { source = "hashicorp/random" }
+    time    = { source = "hashicorp/time" }
+    external = { source = "hashicorp/external" }
+    http    = { source = "hashicorp/http" }
+  }
+}
+`
+	dir, err := os.MkdirTemp("", "tf-cache-warm-*")
+	if err != nil {
+		return fmt.Errorf("create temp dir: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(dir) }()
+
+	if err := os.WriteFile(filepath.Join(dir, "main.tf"), []byte(config), 0o644); err != nil {
+		return fmt.Errorf("write config: %w", err)
+	}
+
+	cmd := exec.Command("terraform", "init", "-no-color")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(),
+		"TF_PLUGIN_CACHE_DIR="+cacheDir,
+		"AWS_ACCESS_KEY_ID=fake",
+		"AWS_SECRET_ACCESS_KEY=fake",
+	)
+	cmd.Stdout = os.Stderr
+	cmd.Stderr = os.Stderr
+
+	log.Printf("Pre-warming Terraform plugin cache at %s ...", cacheDir)
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("terraform init: %w", err)
+	}
+	log.Println("Plugin cache warm.")
+	return nil
+}
 
 // projectToFiles flattens a MigrationInfraTerraformProject into a map of filename → content.
 func projectToFiles(project types.MigrationInfraTerraformProject) map[string]string {
@@ -83,6 +159,28 @@ func terraformFilesToMap(tf types.TerraformFiles) map[string]string {
 	return files
 }
 
+// migrateTopicsProjectToFiles flattens the single-folder migrate-topics project
+// into a flat filename → content map suitable for terraform validation. Unlike
+// schemaProjectToFiles (which prefixes per-registry folder paths), migrate-topics
+// always returns one folder rendered at the project root.
+func migrateTopicsProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
+	files := map[string]string{}
+	if len(project.Folders) == 0 {
+		return files
+	}
+	folder := project.Folders[0]
+	if folder.ProvidersTf != "" {
+		files["providers.tf"] = folder.ProvidersTf
+	}
+	if folder.VariablesTf != "" {
+		files["variables.tf"] = folder.VariablesTf
+	}
+	for name, content := range folder.AdditionalFiles {
+		files[name] = content
+	}
+	return files
+}
+
 // schemaProjectToFiles flattens a MigrationScriptsTerraformProject into a map.
 func schemaProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
 	files := map[string]string{}
@@ -111,20 +209,8 @@ func schemaProjectToFiles(project types.MigrationScriptsTerraformProject) map[st
 func validateTerraformProject(t *testing.T, files map[string]string) {
 	t.Helper()
 
-	// Skip if SKIP_TERRAFORM_VALIDATION env var is set (for faster local iteration)
-	if os.Getenv("SKIP_TERRAFORM_VALIDATION") == "true" {
-		t.Log("Skipping Terraform validation (SKIP_TERRAFORM_VALIDATION=true)")
-		return
-	}
-
 	// Create temp directory (auto-cleanup after test)
 	tempDir := t.TempDir()
-
-	// Create plugin cache directory if it doesn't exist
-	pluginCacheDir := filepath.Join(os.TempDir(), "terraform-plugin-cache")
-	if err := os.MkdirAll(pluginCacheDir, 0o755); err != nil {
-		t.Logf("Warning: could not create plugin cache directory: %v", err)
-	}
 
 	// Write all generated files to temp directory
 	for filename, content := range files {
@@ -164,6 +250,7 @@ func validateTerraformProject(t *testing.T, files map[string]string) {
 			"AWS_DEFAULT_REGION":         "us-east-1",
 			"CONFLUENT_CLOUD_API_KEY":    "fake",
 			"CONFLUENT_CLOUD_API_SECRET": "fake",
+			"TF_PLUGIN_CACHE_DIR":        pluginCacheDir,
 		},
 	}
 

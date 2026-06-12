@@ -22,9 +22,20 @@ var (
 
 func NewReportCostsCmd() *cobra.Command {
 	reportCostsCmd := &cobra.Command{
-		Use:           "costs",
-		Short:         "Generate a report of costs for given region(s)",
-		Long:          "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`",
+		Use:   "costs",
+		Short: "Generate a report of costs for given region(s)",
+		Long: "Generate a report of costs for the given region(s) based on the data collected by `kcp discover`.\n\n" +
+			"`--region`, `--start`, and `--end` are all optional. If none are supplied, costs for every region in the state file over the last 31 full days are reported. If you supply `--start`, you must also supply `--end`.\n\n" +
+			"**Output:** writes a `cost_report_YYYY-MM-DD_HH-MM-SS.md` file in the current working directory with cost analysis for the selected regions and time period.",
+		Example: `  # Default: all regions in the state file for the last 31 days
+  kcp report costs --state-file kcp-state.json
+
+  # Specific regions
+  kcp report costs --state-file kcp-state.json --region us-east-1 --region eu-west-3
+
+  # Specific regions and date range (all three must be supplied together)
+  kcp report costs --state-file kcp-state.json \
+      --region us-east-1,eu-west-3 --start 2024-01-01 --end 2024-01-31`,
 		SilenceErrors: true,
 		PreRunE:       preRunReportCosts,
 		RunE:          runReportCosts,
@@ -129,7 +140,7 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 	}
 
 	if startDate == nil && endDate == nil {
-		if len(state.Regions) == 0 {
+		if state.MSKSources == nil || len(state.MSKSources.Regions) == 0 {
 			return nil, fmt.Errorf("no regions found in state file")
 		}
 		// default to the last 31 days.  Ensures a period of 30 full days ending on the previous day, since end date is exclusive in cloudwatch API.
@@ -141,8 +152,10 @@ func parseCostReporterOpts() (*CostReporterOpts, error) {
 
 	if len(regions) == 0 {
 		// retrieve all regions from state file
-		for _, region := range state.Regions {
-			regions = append(regions, region.Name)
+		if state.MSKSources != nil {
+			for _, region := range state.MSKSources.Regions {
+				regions = append(regions, region.Name)
+			}
 		}
 		if len(regions) == 0 {
 			return nil, fmt.Errorf("no regions found in state file")

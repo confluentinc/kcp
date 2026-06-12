@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -15,8 +16,8 @@ import (
 )
 
 var (
-	stateFile  string
-	clusterArn string
+	stateFile       string
+	sourceClusterId string
 
 	needsEnvironment bool
 	environmentName  string
@@ -39,7 +40,6 @@ var (
 	preventDestroy bool
 
 	outputDir string
-	force     bool
 )
 
 type TargetInfraOpts struct {
@@ -62,9 +62,26 @@ type TargetInfraOpts struct {
 
 func NewTargetInfraCmd() *cobra.Command {
 	targetInfraCmd := &cobra.Command{
-		Use:           "target-infra",
-		Short:         "Create a target infrastructure asset",
-		Long:          "Create Terraform assets for Confluent Cloud target infrastructure including environment, cluster, and private link setup.",
+		Use:   "target-infra",
+		Short: "Create a target infrastructure asset",
+		Long:  "Create Terraform assets for Confluent Cloud target infrastructure including environment, cluster, and private link setup. Infrastructure provisioning is controlled by --needs-environment, --needs-cluster and --needs-private-link.",
+		Example: `  # Full provision from a kcp-state file (creates environment, cluster and private link)
+  kcp create-asset target-infra \
+      --state-file kcp-state.json \
+      --source-cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --needs-environment --env-name example-env \
+      --needs-cluster --cluster-name example-cluster --cluster-type enterprise \
+      --needs-private-link --subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16 \
+      --output-dir confluent-cloud-infrastructure
+
+  # Reuse an existing environment + cluster, only wire up private link
+  kcp create-asset target-infra \
+      --aws-region us-east-1 --vpc-id vpc-xxxxxxxx \
+      --env-id env-abc123 --cluster-id lkc-xyz789 --cluster-type dedicated \
+      --needs-private-link --subnet-cidrs 10.0.0.0/16,10.0.1.0/16,10.0.2.0/16`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: iamAnnotation(),
+		},
 		SilenceErrors: true,
 		PreRunE:       preRunCreateTargetInfra,
 		RunE:          runCreateTargetInfra,
@@ -75,7 +92,7 @@ func NewTargetInfraCmd() *cobra.Command {
 	stateFileFlags := pflag.NewFlagSet("statefile", pflag.ExitOnError)
 	stateFileFlags.SortFlags = false
 	stateFileFlags.StringVar(&stateFile, "state-file", "", "Path to kcp state file (if provided, vpc-id and aws-region are extracted from state)")
-	stateFileFlags.StringVar(&clusterArn, "cluster-arn", "", "MSK cluster ARN (required when --state-file is provided)")
+	stateFileFlags.StringVar(&sourceClusterId, "source-cluster-id", "", "The ARN of the MSK cluster (required when --state-file is provided).")
 	targetInfraCmd.Flags().AddFlagSet(stateFileFlags)
 	groups[stateFileFlags] = "State File (Optional)"
 
@@ -117,7 +134,6 @@ func NewTargetInfraCmd() *cobra.Command {
 	outputFlags := pflag.NewFlagSet("output", pflag.ExitOnError)
 	outputFlags.SortFlags = false
 	outputFlags.StringVar(&outputDir, "output-dir", "target_infra", "Output directory for generated Terraform files")
-	outputFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	targetInfraCmd.Flags().AddFlagSet(outputFlags)
 	groups[outputFlags] = "Output"
 
@@ -153,8 +169,9 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 
 	// Validate state file or manual configuration
 	if stateFile != "" {
-		if clusterArn == "" {
-			return fmt.Errorf("--cluster-arn is required when --state-file is provided")
+		// When using state file, source-cluster-id is required
+		if sourceClusterId == "" {
+			return fmt.Errorf("required flag `--source-cluster-id` not set when `--state-file` is provided")
 		}
 	} else {
 		if awsRegion == "" {
@@ -221,7 +238,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to parse statefile JSON: %w", err)
 		}
 
-		cluster, err := utils.GetClusterByArn(&state, clusterArn)
+		cluster, err := state.GetClusterByArn(sourceClusterId)
 		if err != nil {
 			return fmt.Errorf("failed to get cluster: %w", err)
 		}
@@ -258,7 +275,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 	hclService := hcl.NewTargetInfraHCLService()
 	project := hclService.GenerateTerraformFiles(request)
 
-	if err := utils.ValidateOutputDir(outputDir, force); err != nil {
+	if err := utils.ValidateOutputDir(outputDir); err != nil {
 		return err
 	}
 	slog.Debug("creating output directory", "directory", outputDir)

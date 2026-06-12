@@ -1,19 +1,17 @@
 import { useState, useCallback } from 'react'
 import { useRegions } from '@/stores/store'
-import { findClusterInRegions, getClusterArn } from '@/lib/clusterUtils'
+import { getOSKClusterDataById } from '@/stores/store'
+import { findClusterInRegions } from '@/lib/clusterUtils'
+import { SOURCE_TYPES } from '@/constants'
 import { getMetricConfig } from '@/lib/tcoUtils'
-
-interface TCOCluster {
-  name: string
-  regionName: string
-  arn: string
-  key: string
-}
+import type { SourceType } from '@/types'
+import type { TCOCluster } from './useTCOClusters'
 
 interface ModalCluster {
   name: string
-  region: string
-  arn: string
+  key: string
+  region?: string
+  sourceType: SourceType
   metrics?: {
     metadata?: {
       start_date?: string
@@ -29,12 +27,6 @@ interface ModalState {
   workloadAssumption: string | null
 }
 
-/**
- * Hook to manage TCO metrics modal state
- * Handles opening the modal with cluster metrics and preselected metric configuration
- *
- * @returns {Object} Modal state and control functions
- */
 export const useTCOModal = (allClusters: TCOCluster[]) => {
   const regions = useRegions()
 
@@ -53,28 +45,40 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
       const cluster = allClusters.find((c) => c.key === clusterKey)
       if (!cluster) return
 
-      const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)
-      if (!clusterObj) return
-
       const metricConfig = getMetricConfig(metricType)
 
-      const clusterArn = cluster.arn || getClusterArn(clusterObj)
-      if (!clusterArn) {
-        console.error(`Cluster "${clusterObj.name}" missing ARN`)
-        return
-      }
+      if (cluster.sourceType === SOURCE_TYPES.OSK) {
+        const oskCluster = getOSKClusterDataById(clusterKey)
+        if (!oskCluster) return
 
-      setModalState({
-        isOpen: true,
-        cluster: {
-          name: clusterObj.name,
-          region: cluster.regionName,
-          arn: clusterArn,
-          metrics: clusterObj.metrics,
-        },
-        preselectedMetric: metricConfig.metric,
-        workloadAssumption: metricConfig.workloadAssumption,
-      })
+        setModalState({
+          isOpen: true,
+          cluster: {
+            name: oskCluster.id,
+            key: oskCluster.id,
+            sourceType: SOURCE_TYPES.OSK,
+            metrics: oskCluster.metrics,
+          },
+          preselectedMetric: metricConfig.metric,
+          workloadAssumption: metricConfig.workloadAssumption,
+        })
+      } else {
+        const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)
+        if (!clusterObj) return
+
+        setModalState({
+          isOpen: true,
+          cluster: {
+            name: clusterObj.name,
+            key: cluster.key,
+            region: cluster.regionName,
+            sourceType: SOURCE_TYPES.MSK,
+            metrics: clusterObj.metrics,
+          },
+          preselectedMetric: metricConfig.metric,
+          workloadAssumption: metricConfig.workloadAssumption,
+        })
+      }
     },
     [allClusters, regions]
   )

@@ -1,0 +1,353 @@
+package jmx
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/confluentinc/kcp/internal/types"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func mockJolokiaServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	var callCount atomic.Int64
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := callCount.Add(1)
+		var response map[string]any
+
+		switch {
+		case strings.Contains(r.URL.Path, "BytesInPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 1000)}}
+		case strings.Contains(r.URL.Path, "BytesOutPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 500)}}
+		case strings.Contains(r.URL.Path, "MessagesInPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 10)}}
+		case strings.Contains(r.URL.Path, "GlobalPartitionCount"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Value": 20.0}}
+		case strings.Contains(r.URL.Path, "PartitionCount"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Value": 50.0}}
+		case strings.Contains(r.URL.Path, "socket-server-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"l1": map[string]any{"connection-count": 2.0},
+				"l2": map[string]any{"connection-count": 1.0},
+			}}
+		case strings.Contains(r.URL.Path, "kafka.log"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"p0": map[string]any{"Value": 536870912.0},
+				"p1": map[string]any{"Value": 536870912.0},
+			}}
+		default:
+			response = map[string]any{"status": 404, "error": "MBean not found"}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+}
+
+func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
+	prev := &rawSample{
+		timestamp: time.Now(),
+		counters:  map[string]float64{"BytesInPerSec": 10000, "BytesOutPerSec": 5000, "MessagesInPerSec": 100},
+		gauges:    map[string]float64{"PartitionCount": 50, "GlobalPartitionCount": 20, "ClientConnectionCount": 3, "TotalLocalStorageUsage": 1073741824},
+	}
+	curr := &rawSample{
+		timestamp: prev.timestamp.Add(10 * time.Second),
+		counters:  map[string]float64{"BytesInPerSec": 20000, "BytesOutPerSec": 10000, "MessagesInPerSec": 200},
+		gauges:    map[string]float64{"PartitionCount": 50, "GlobalPartitionCount": 20, "ClientConnectionCount": 5, "TotalLocalStorageUsage": 2147483648},
+	}
+
+	snapshot := computeSnapshot(prev, curr, BrokerMetricDefinitions().UnitConversions)
+
+	assert.Equal(t, 1000.0, snapshot.metrics["BytesInPerSec"])
+	assert.Equal(t, 500.0, snapshot.metrics["BytesOutPerSec"])
+	assert.Equal(t, 10.0, snapshot.metrics["MessagesInPerSec"])
+	assert.Equal(t, 50.0, snapshot.metrics["PartitionCount"])
+	assert.Equal(t, 20.0, snapshot.metrics["GlobalPartitionCount"])
+	assert.Equal(t, 5.0, snapshot.metrics["ClientConnectionCount"])
+	assert.Equal(t, 2.0, snapshot.metrics["TotalLocalStorageUsage"])
+	assert.Equal(t, prev.timestamp, snapshot.start)
+	assert.Equal(t, curr.timestamp, snapshot.end)
+}
+
+func TestComputeSnapshot_CounterResetProducesZeroNotNegative(t *testing.T) {
+	prev := &rawSample{
+		timestamp: time.Now(),
+		counters:  map[string]float64{"BytesInPerSec": 50000, "BytesOutPerSec": 20000, "MessagesInPerSec": 500},
+		gauges:    map[string]float64{"PartitionCount": 50},
+	}
+	// Simulate broker restart: counters reset to values lower than previous
+	curr := &rawSample{
+		timestamp: prev.timestamp.Add(10 * time.Second),
+		counters:  map[string]float64{"BytesInPerSec": 1000, "BytesOutPerSec": 500, "MessagesInPerSec": 10},
+		gauges:    map[string]float64{"PartitionCount": 50},
+	}
+
+	snapshot := computeSnapshot(prev, curr, nil)
+
+	// Counter metrics should be absent (skipped), not negative
+	_, hasBytes := snapshot.metrics["BytesInPerSec"]
+	_, hasBytesOut := snapshot.metrics["BytesOutPerSec"]
+	_, hasMessages := snapshot.metrics["MessagesInPerSec"]
+	assert.False(t, hasBytes, "BytesInPerSec should be skipped on counter reset")
+	assert.False(t, hasBytesOut, "BytesOutPerSec should be skipped on counter reset")
+	assert.False(t, hasMessages, "MessagesInPerSec should be skipped on counter reset")
+
+	// Gauge metrics should still be present
+	assert.Equal(t, 50.0, snapshot.metrics["PartitionCount"])
+}
+
+func TestToProcessedClusterMetrics(t *testing.T) {
+	now := time.Now()
+	snapshots := []jmxSnapshot{
+		{
+			start:   now,
+			end:     now.Add(1 * time.Second),
+			metrics: map[string]float64{"BytesInPerSec": 1000, "PartitionCount": 7},
+		},
+		{
+			start:   now.Add(1 * time.Second),
+			end:     now.Add(2 * time.Second),
+			metrics: map[string]float64{"BytesInPerSec": 2000, "PartitionCount": 7},
+		},
+		{
+			start:   now.Add(2 * time.Second),
+			end:     now.Add(3 * time.Second),
+			metrics: map[string]float64{"BytesInPerSec": 1500, "PartitionCount": 7},
+		},
+	}
+
+	result := toProcessedClusterMetrics(snapshots, now, 3*time.Second, 1*time.Second)
+
+	// 3 snapshots × 2 metrics = 6 ProcessedMetric rows
+	assert.Len(t, result.Metrics, 6)
+
+	// Check aggregates
+	bytesAgg := result.Aggregates["BytesInPerSec"]
+	assert.NotNil(t, bytesAgg.Minimum)
+	assert.NotNil(t, bytesAgg.Maximum)
+	assert.NotNil(t, bytesAgg.Average)
+	assert.Equal(t, 1000.0, *bytesAgg.Minimum)
+	assert.Equal(t, 2000.0, *bytesAgg.Maximum)
+	assert.Equal(t, 1500.0, *bytesAgg.Average)
+
+	partAgg := result.Aggregates["PartitionCount"]
+	assert.Equal(t, 7.0, *partAgg.Minimum)
+	assert.Equal(t, 7.0, *partAgg.Maximum)
+	assert.Equal(t, 7.0, *partAgg.Average)
+
+	// Check metadata
+	assert.Equal(t, int32(1), result.Metadata.Period)
+	assert.Equal(t, now, result.Metadata.StartDate)
+}
+
+func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
+	server := mockJolokiaServer(t)
+	defer server.Close()
+
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Should have ProcessedMetric rows
+	assert.NotEmpty(t, result.Metrics)
+
+	// Should have aggregates for rate and gauge metrics
+	assert.NotEmpty(t, result.Aggregates)
+	assert.Contains(t, result.Aggregates, "BytesInPerSec")
+	assert.Contains(t, result.Aggregates, "PartitionCount")
+
+	// Each ProcessedMetric should have start, end, label, value
+	for _, m := range result.Metrics {
+		assert.NotEmpty(t, m.Start)
+		assert.NotEmpty(t, m.End)
+		assert.NotEmpty(t, m.Label)
+		assert.NotNil(t, m.Value)
+	}
+
+	// Metadata should be populated
+	assert.Equal(t, int32(1), result.Metadata.Period)
+	assert.False(t, result.Metadata.StartDate.IsZero())
+	assert.False(t, result.Metadata.EndDate.IsZero())
+}
+
+func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
+	server := mockJolokiaServer(t)
+	defer server.Close()
+
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.QueryInfo)
+
+	defs := BrokerMetricDefinitions()
+	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
+	assert.Len(t, result.QueryInfo, expectedCount)
+
+	for _, qi := range result.QueryInfo {
+		assert.Equal(t, types.MetricBackendJolokia, qi.SourceType)
+		assert.NotEmpty(t, qi.MetricName)
+		assert.NotEmpty(t, qi.MBeanPath)
+		assert.NotEmpty(t, qi.JolokiaURL)
+		assert.Contains(t, qi.CurlCommand, "curl")
+		assert.Contains(t, qi.CurlCommand, server.URL)
+		assert.NotEmpty(t, qi.AggregationNote)
+	}
+
+	// Verify specific metrics are present
+	names := make(map[string]bool)
+	for _, qi := range result.QueryInfo {
+		names[qi.MetricName] = true
+	}
+	assert.True(t, names["BytesInPerSec"])
+	assert.True(t, names["BytesOutPerSec"])
+	assert.True(t, names["MessagesInPerSec"])
+	assert.True(t, names["PartitionCount"])
+	assert.True(t, names["ClientConnectionCount"])
+	assert.True(t, names["TotalLocalStorageUsage"])
+}
+
+func TestBuildJMXQueryInfo(t *testing.T) {
+	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
+	defs := BrokerMetricDefinitions()
+	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second, defs)
+
+	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
+	assert.Len(t, infos, expectedCount)
+
+	// All entries should have Statistic, Period, and QueryDuration
+	for _, info := range infos {
+		assert.NotEmpty(t, info.Statistic)
+		assert.Equal(t, int32(10), info.Period)
+		assert.Equal(t, "5m", info.QueryDuration)
+	}
+
+	// Counter metrics should reference the Count attribute in aggregation note
+	for _, info := range infos[:3] {
+		assert.Contains(t, info.AggregationNote, "Count")
+		assert.Contains(t, info.AggregationNote, "2 broker(s)")
+		assert.Contains(t, info.CurlCommand, "broker1:8778")
+		assert.Contains(t, info.Statistic, "Rate")
+	}
+
+	// Gauge metric (PartitionCount) should reference the Value attribute
+	assert.Contains(t, infos[3].AggregationNote, "Value")
+	assert.Equal(t, "PartitionCount", infos[3].MetricName)
+
+	// Controller metric (GlobalPartitionCount) should reference controller MBean
+	assert.Equal(t, "GlobalPartitionCount", infos[4].MetricName)
+	assert.Contains(t, infos[4].AggregationNote, "Controller")
+	assert.Contains(t, infos[4].MBeanPath, "KafkaController")
+
+	// Aggregate metrics should reference wildcard
+	assert.Contains(t, infos[5].AggregationNote, "Wildcard")
+	assert.Contains(t, infos[6].AggregationNote, "Wildcard")
+
+	// Empty brokerURLs should return nil
+	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second, defs))
+	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second, defs))
+}
+
+func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
+	// Mock server that rejects controller MBeans (simulates non-controller broker)
+	var callCount atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := callCount.Add(1)
+		var response map[string]any
+
+		switch {
+		case strings.Contains(r.URL.Path, "BytesInPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 1000)}}
+		case strings.Contains(r.URL.Path, "BytesOutPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 500)}}
+		case strings.Contains(r.URL.Path, "MessagesInPerSec"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": float64(n * 10)}}
+		case strings.Contains(r.URL.Path, "kafka.controller"):
+			// Controller MBean not available on this broker
+			response = map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: kafka.controller:type=KafkaController,name=GlobalPartitionCount"}
+		case strings.Contains(r.URL.Path, "PartitionCount"):
+			response = map[string]any{"status": 200, "value": map[string]any{"Value": 50.0}}
+		case strings.Contains(r.URL.Path, "socket-server-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"l1": map[string]any{"connection-count": 2.0},
+			}}
+		case strings.Contains(r.URL.Path, "kafka.log"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"p0": map[string]any{"Value": 536870912.0},
+			}}
+		default:
+			response = map[string]any{"status": 404, "error": "MBean not found"}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	// Other metrics should be collected
+	assert.NotEmpty(t, result.Metrics)
+	assert.Contains(t, result.Aggregates, "BytesInPerSec")
+	assert.Contains(t, result.Aggregates, "PartitionCount")
+
+	// GlobalPartitionCount should NOT be in the aggregates (controller MBean unavailable)
+	_, hasGlobal := result.Aggregates["GlobalPartitionCount"]
+	assert.False(t, hasGlobal, "GlobalPartitionCount should be omitted when controller MBean is not available")
+
+	// But query info should still include it (shows what was attempted)
+	queryNames := make(map[string]bool)
+	for _, qi := range result.QueryInfo {
+		queryNames[qi.MetricName] = true
+	}
+	assert.True(t, queryNames["GlobalPartitionCount"], "QueryInfo should still include GlobalPartitionCount")
+}
+
+func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
+	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions())
+	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be greater than")
+}
+
+func TestConnectMetricDefinitions(t *testing.T) {
+	defs := ConnectMetricDefinitions()
+
+	require.Len(t, defs.Gauges, 2)
+	assert.Equal(t, "connector-count", defs.Gauges[0].Name)
+	assert.Equal(t, "task-count", defs.Gauges[1].Name)
+
+	assert.Empty(t, defs.Counters)
+	assert.Empty(t, defs.Controller)
+	assert.Nil(t, defs.UnitConversions)
+
+	// Connect definitions should have aggregate metrics for client-level and task-level metrics
+	require.Len(t, defs.Aggregates, 6)
+	aggNames := make([]string, len(defs.Aggregates))
+	for i, a := range defs.Aggregates {
+		aggNames[i] = a.Name
+	}
+	assert.Contains(t, aggNames, "incoming-byte-rate")
+	assert.Contains(t, aggNames, "outgoing-byte-rate")
+	assert.Contains(t, aggNames, "connection-count")
+	assert.Contains(t, aggNames, "request-rate")
+	assert.Contains(t, aggNames, "source-record-write-rate")
+	assert.Contains(t, aggNames, "source-record-poll-rate")
+}

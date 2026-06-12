@@ -1,8 +1,6 @@
 package modules
 
 import (
-	"log/slog"
-
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -51,7 +49,7 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 func collectMigrationInfraVars(request types.MigrationWizardRequest) []ModuleVariable[types.MigrationWizardRequest] {
 	var allVars []ModuleVariable[types.MigrationWizardRequest]
 	switch {
-	case request.HasPublicMskEndpoints:
+	case request.HasPublicEndpoints:
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
 		allVars = append(allVars, GetClusterLinkVariables()...)
 	case request.UseJumpClusters:
@@ -61,7 +59,7 @@ func collectMigrationInfraVars(request types.MigrationWizardRequest) []ModuleVar
 		allVars = append(allVars, GetJumpClusterVariables()...)
 	default:
 		allVars = append(allVars, GetPrivateMigrationProviderVariables()...)
-		allVars = append(allVars, GetMskPrivateClusterLinkVariables()...)
+		allVars = append(allVars, GetPrivateClusterLinkVariables()...)
 		allVars = append(allVars, GetExternalOutboundClusterLinkingVariables()...)
 	}
 	return allVars
@@ -117,9 +115,6 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 		}
 
 		if _, exists := values[varDef.Definition.Name]; exists {
-			slog.Warn("conflicting variable values, keeping first occurrence",
-				"variable", varDef.Definition.Name,
-			)
 			continue
 		}
 		values[varDef.Definition.Name] = value

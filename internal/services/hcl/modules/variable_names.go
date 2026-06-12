@@ -6,13 +6,14 @@ const (
 	// Cluster Link module variables
 	VarConfluentCloudClusterAPIKey    = "confluent_cloud_cluster_api_key"
 	VarConfluentCloudClusterAPISecret = "confluent_cloud_cluster_api_secret"
-	VarMSKClusterID                   = "msk_cluster_id"
+	VarMSKClusterID                   = "source_cluster_id"
 	VarTargetClusterID                = "target_cluster_id"
 	VarTargetClusterRestEndpoint      = "target_cluster_rest_endpoint"
 	VarClusterLinkName                = "cluster_link_name"
-	VarMSKSaslScramBootstrapServers   = "msk_sasl_scram_bootstrap_servers"
-	VarMSKSaslScramUsername           = "msk_sasl_scram_username"
-	VarMSKSaslScramPassword           = "msk_sasl_scram_password"
+	VarMSKSaslScramBootstrapServers   = "source_sasl_scram_bootstrap_servers"
+	VarMSKSaslScramMechanism          = "source_sasl_scram_mechanism"
+	VarMSKSaslScramUsername           = "source_sasl_scram_username"
+	VarMSKSaslScramPassword           = "source_sasl_scram_password"
 
 	// Jump Cluster Setup Host module variables
 	VarJumpClusterSetupHostSubnetID   = "jump_cluster_setup_host_subnet_id"
@@ -28,7 +29,7 @@ const (
 	VarConfluentCloudClusterID                = "confluent_cloud_cluster_id"
 	VarConfluentCloudClusterBootstrapEndpoint = "confluent_cloud_cluster_bootstrap_endpoint"
 	VarConfluentCloudClusterRestEndpoint      = "confluent_cloud_cluster_rest_endpoint"
-	VarMSKClusterBootstrapBrokers             = "msk_cluster_bootstrap_brokers"
+	VarMSKClusterBootstrapBrokers             = "source_cluster_bootstrap_brokers"
 	VarJumpClusterIAMAuthRoleName             = "jump_cluster_iam_auth_role_name"
 
 	// Networking module variables
@@ -53,5 +54,5 @@ const (
 	// External Outbound Cluster Link module variables
 	VarSubnetID                   = "subnet_id"
 	VarSecurityGroupID            = "security_group_id"
-	VarMSKClusterBootstrapServers = "msk_cluster_bootstrap_servers"
+	VarMSKClusterBootstrapServers = "source_cluster_bootstrap_servers"
 )

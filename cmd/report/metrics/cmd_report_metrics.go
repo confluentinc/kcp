@@ -13,17 +13,34 @@ import (
 )
 
 var (
-	stateFile   string
-	start       string
-	end         string
-	clusterArns []string
+	stateFile  string
+	start      string
+	end        string
+	clusterIds []string
+	sourceType string
 )
 
 func NewReportMetricsCmd() *cobra.Command {
 	reportMetricsCmd := &cobra.Command{
-		Use:           "metrics",
-		Short:         "Generate a report of metrics for given cluster(s)",
-		Long:          "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover`",
+		Use:   "metrics",
+		Short: "Generate a report of metrics for given cluster(s)",
+		Long: "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover` or `kcp scan clusters`.\n\n" +
+			"`--start` and `--end` must be provided together if specified. If neither `--cluster-id` nor `--source-type` is given, metrics for all clusters (both MSK and OSK) are included. `--cluster-id` and `--source-type` are mutually exclusive.\n\n" +
+			"**Output:** writes a `metric_report_YYYY-MM-DD_HH-MM-SS.md` file in the current working directory with metrics analysis for the selected clusters and time period.",
+		Example: `  # All clusters (MSK and OSK) in the state file
+  kcp report metrics --state-file kcp-state.json
+
+  # Specific clusters (supports both MSK ARNs and OSK cluster IDs)
+  kcp report metrics --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
+      --cluster-id osk-prod-cluster
+
+  # All MSK clusters only
+  kcp report metrics --state-file kcp-state.json --source-type msk
+
+  # All OSK clusters, custom date range
+  kcp report metrics --state-file kcp-state.json --source-type osk \
+      --start 2024-01-01 --end 2024-01-31`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunReportMetrics,
@@ -40,7 +57,8 @@ func NewReportMetricsCmd() *cobra.Command {
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "The AWS cluster ARN(s) to include in the report (comma separated list or repeated flag).  If not provided, all clusters in the state file will be included.")
+	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type filter: 'msk' (MSK only) or 'osk' (OSK only). Returns all clusters from the specified source.")
+	optionalFlags.StringSliceVar(&clusterIds, "cluster-id", []string{}, "The cluster identifier(s) to include in the report (comma separated list or repeated flag). Accepts both MSK ARNs and OSK cluster IDs.")
 	optionalFlags.StringVar(&start, "start", "", "inclusive start date for metrics report (YYYY-MM-DD).  (Defaults to 31 days prior to today)")
 	optionalFlags.StringVar(&end, "end", "", "exclusive end date for metrics report (YYYY-MM-DD).  (Defaults to today).")
 	reportMetricsCmd.Flags().AddFlagSet(optionalFlags)
@@ -65,8 +83,10 @@ func NewReportMetricsCmd() *cobra.Command {
 	})
 
 	_ = reportMetricsCmd.MarkFlagRequired("state-file")
+	// cluster-id and source-type are mutually exclusive
+	reportMetricsCmd.MarkFlagsMutuallyExclusive("cluster-id", "source-type")
 	// optional but if one is provided, the other must be provided
-	reportMetricsCmd.MarkFlagsRequiredTogether("start", "end", "cluster-arn")
+	reportMetricsCmd.MarkFlagsRequiredTogether("start", "end")
 
 	return reportMetricsCmd
 }
@@ -75,6 +95,12 @@ func preRunReportMetrics(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
+
+	// Validate source type if provided
+	if sourceType != "" && sourceType != "msk" && sourceType != "osk" {
+		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
+	}
+
 	return nil
 }
 
@@ -128,10 +154,6 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 	}
 
 	if startDate == nil && endDate == nil {
-		if len(state.Regions) == 0 {
-			return nil, fmt.Errorf("no regions found in state file")
-		}
-
 		// default to the last 31 days.  Ensures a period of 30 full days ending on the previous day, since end date is exclusive in cloudwatch API.
 		now := time.Now()
 		start := now.AddDate(0, 0, -31)
@@ -139,24 +161,44 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 		endDate = &now
 	}
 
-	if len(clusterArns) == 0 {
-		// retrieve all cluster ARNs from state file
-		for _, region := range state.Regions {
-			for _, cluster := range region.Clusters {
-				clusterArns = append(clusterArns, cluster.Arn)
+	// Use provided cluster IDs or discover from state file based on source-type
+	var allClusterIds []string
+
+	if len(clusterIds) == 0 {
+		// No cluster IDs provided - retrieve clusters based on source-type
+		if sourceType == "" || sourceType == "msk" {
+			if state.MSKSources != nil {
+				for _, region := range state.MSKSources.Regions {
+					for _, cluster := range region.Clusters {
+						allClusterIds = append(allClusterIds, cluster.Arn)
+					}
+				}
 			}
 		}
-
-		if len(clusterArns) == 0 {
-			return nil, fmt.Errorf("no clusters found in state file")
+		if sourceType == "" || sourceType == "osk" {
+			if state.OSKSources != nil {
+				for _, cluster := range state.OSKSources.Clusters {
+					allClusterIds = append(allClusterIds, cluster.ID)
+				}
+			}
 		}
+		if len(allClusterIds) == 0 {
+			if sourceType == "" {
+				return nil, fmt.Errorf("no clusters found in state file")
+			}
+			return nil, fmt.Errorf("no %s clusters found in state file", sourceType)
+		}
+	} else {
+		// Use provided cluster IDs
+		allClusterIds = clusterIds
 	}
 
 	opts := MetricReporterOpts{
-		ClusterArns: clusterArns,
-		State:       state,
-		StartDate:   startDate,
-		EndDate:     endDate,
+		ClusterIds: allClusterIds,
+		State:      state,
+		StartDate:  startDate,
+		EndDate:    endDate,
+		SourceType: sourceType,
 	}
 
 	return &opts, nil

@@ -62,6 +62,25 @@ export type {
   RegionData,
 } from './aws/msk'
 
+// Re-export OSK types for convenience
+export type {
+  OSKCluster,
+  OSKClusterMetadata,
+  ProcessedOSKCluster,
+  ProcessedOSKSource,
+} from './osk'
+
+// Re-export API types for convenience
+export type {
+  SourceType,
+  ProcessedMSKSource,
+  ProcessedSource,
+  ProcessedState,
+  SchemaRegistry,
+  StateUploadRequest,
+  StateUploadResponse,
+} from './api/state'
+
 // Re-export constants types
 export type {
   TabId,

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -15,9 +16,8 @@ var (
 	roleArn                   string
 	userArn                   string
 	stateFile                 string
-	clusterArn                string
+	clusterId                 string
 	outputDir                 string
-	force                     bool
 	skipAuditReport           bool
 	preventDestroy            bool
 	targetClusterId           string
@@ -26,9 +26,38 @@ var (
 
 func NewMigrateIamAclsCmd() *cobra.Command {
 	aclsCmd := &cobra.Command{
-		Use:           "iam",
-		Short:         "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
-		Long:          "Convert IAM ACLs from IAM roles or users to Confluent Cloud IAM ACLs as individual Terraform resources.",
+		Use:   "iam",
+		Short: "Convert IAM ACLs to Confluent Cloud IAM ACLs.",
+		Long:  "Convert IAM ACLs from IAM roles or users to Confluent Cloud IAM ACLs as individual Terraform resources.",
+		Example: `  # From an IAM role
+  kcp create-asset migrate-acls iam \
+      --role-arn arn:aws:iam::123456789012:role/MyKafkaRole \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --target-cluster-id lkc-xyz123 \
+      --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.confluent.cloud:443
+
+  # From an IAM user
+  kcp create-asset migrate-acls iam \
+      --user-arn arn:aws:iam::123456789012:user/app-user \
+      --state-file kcp-state.json \
+      --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
+      --target-cluster-id lkc-xyz123 \
+      --target-rest-endpoint https://lkc-xyz123.eu-west-3.aws.confluent.cloud:443`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: iampolicy.RenderSingle("", []string{
+				"iam:GetRole",
+				"iam:GetUser",
+				"iam:GetRolePolicy",
+				"iam:ListRolePolicies",
+				"iam:ListAttachedRolePolicies",
+				"iam:GetUserPolicy",
+				"iam:ListUserPolicies",
+				"iam:ListAttachedUserPolicies",
+				"iam:GetPolicy",
+				"iam:GetPolicyVersion",
+			}),
+		},
 		SilenceErrors: true,
 		PreRunE:       preRunMigrateIamAcls,
 		RunE:          runMigrateIamAcls,
@@ -41,7 +70,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	requiredFlags.StringVar(&roleArn, "role-arn", "", "IAM Role ARN to convert ACLs from")
 	requiredFlags.StringVar(&userArn, "user-arn", "", "IAM User ARN to convert ACLs from")
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file.")
-	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The ARN of the cluster to migrate ACLs from.")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The ARN of the MSK cluster.")
 	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
 	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
 	aclsCmd.Flags().AddFlagSet(requiredFlags)
@@ -50,7 +79,6 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&outputDir, "output-dir", "", "The directory where the Confluent Cloud Terraform ACL assets will be written to")
-	optionalFlags.BoolVar(&force, "force", false, "Overwrite the output directory if it already exists")
 	optionalFlags.BoolVar(&skipAuditReport, "skip-audit-report", false, "Skip generating an audit report of the converted ACLs")
 	optionalFlags.BoolVar(&preventDestroy, "prevent-destroy", true, "Whether to set lifecycle { prevent_destroy = true } on generated Terraform resources")
 	aclsCmd.Flags().AddFlagSet(optionalFlags)
@@ -68,7 +96,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
 				if groupNames[i] == "Required Flags" {
 					fmt.Printf("  (Provide either --role-arn OR --user-arn OR --state-file)\n")
-					fmt.Printf("  (If --state-file is provided, --cluster-arn is also required)\n\n")
+					fmt.Printf("  (If --state-file is provided, --cluster-id is also required)\n\n")
 				}
 			}
 		}
@@ -80,7 +108,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 
 	aclsCmd.MarkFlagsOneRequired("role-arn", "user-arn", "state-file")
 	aclsCmd.MarkFlagsMutuallyExclusive("role-arn", "user-arn", "state-file")
-	aclsCmd.MarkFlagsRequiredTogether("state-file", "cluster-arn")
+	aclsCmd.MarkFlagsRequiredTogether("state-file", "cluster-id")
 	_ = aclsCmd.MarkFlagRequired("target-cluster-id")
 	_ = aclsCmd.MarkFlagRequired("target-cluster-rest-endpoint")
 
@@ -122,7 +150,7 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to load existing state file: %v", err)
 		}
-		principals, err := parseClientDiscoveryFile(clusterArn, state)
+		principals, err := parseClientDiscoveryFile(clusterId, state)
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse client discovery file: %v", err)
 		}
@@ -139,7 +167,6 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 		TargetClusterId:           targetClusterId,
 		TargetClusterRestEndpoint: targetClusterRestEndpoint,
 		OutputDir:                 outputDir,
-		Force:                     force,
 		SkipAuditReport:           skipAuditReport,
 		PreventDestroy:            preventDestroy,
 	}
@@ -147,8 +174,8 @@ func parseMigrateIamAclsOpts() (*MigrateIamAclsOpts, error) {
 	return &opts, nil
 }
 
-func parseClientDiscoveryFile(clusterArn string, state *types.State) ([]string, error) {
-	cluster, err := state.GetClusterByArn(clusterArn)
+func parseClientDiscoveryFile(clusterId string, state *types.State) ([]string, error) {
+	cluster, err := state.GetClusterByArn(clusterId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}

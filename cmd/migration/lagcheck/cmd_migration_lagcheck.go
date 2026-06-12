@@ -1,13 +1,20 @@
 package lagcheck
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+// clusterLinkVerifyTimeout bounds the pre-TUI GetClusterLink probe so the
+// command fails fast with a clear error instead of hanging on a bad endpoint.
+const clusterLinkVerifyTimeout = 15 * time.Second
 
 var (
 	restEndpoint string
@@ -22,9 +29,10 @@ func NewMigrationLagCheckCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lag-check",
 		Short: "Show mirror topic lag for the cluster link",
-		Long:  "Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal with cluster link credentials. Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.",
-		Example: `  kcp migration lag-check --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx
-  All flags can be provided via environment variables (uppercase, with underscores).`,
+		Long: `Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal with cluster link credentials. Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.
+
+All flags can be provided via environment variables (uppercase, with underscores).`,
+		Example:       `  kcp migration lag-check --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationLagCheck,
@@ -80,10 +88,19 @@ func runMigrationLagCheck(cmd *cobra.Command, args []string) error {
 	}
 
 	svc := clusterlink.NewConfluentCloudService(nil)
+
+	ctx, cancel := context.WithTimeout(cmd.Context(), clusterLinkVerifyTimeout)
+	defer cancel()
+	if _, err := svc.GetClusterLink(ctx, config); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return fmt.Errorf("timed out verifying cluster link after %s — check network connectivity to %s", clusterLinkVerifyTimeout, restEndpoint)
+		}
+		return fmt.Errorf("failed to verify cluster link: %w", err)
+	}
+
 	model := newModel(svc, config, interval)
 	p := newProgram(model)
-	_, err := p.Run()
-	if err != nil {
+	if _, err := p.Run(); err != nil {
 		return fmt.Errorf("TUI: %w", err)
 	}
 	return nil

@@ -5,12 +5,50 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 )
+
+// httpStatusError is returned by doRequest/doPostRequest when the server
+// responds with a non-success status code. Callers can use errors.As to
+// branch on StatusCode (e.g. to distinguish 404 from 401).
+type httpStatusError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *httpStatusError) Error() string {
+	return fmt.Sprintf("unexpected status code %d: %s", e.StatusCode, e.Body)
+}
+
+// basicAuthHeader returns the full "Basic <base64>" header value built from
+// the config's API key and secret.
+func basicAuthHeader(config Config) string {
+	return "Basic " + base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%s:%s", config.APIKey, config.APISecret))
+}
+
+// linkPath returns the escaped base path for the cluster link resource.
+func linkPath(config Config) string {
+	return fmt.Sprintf("/kafka/v3/clusters/%s/links/%s",
+		url.PathEscape(config.ClusterID),
+		url.PathEscape(config.LinkName))
+}
+
+// ClusterLink describes a Confluent Cloud cluster link as returned by
+// GET /kafka/v3/clusters/{cluster_id}/links/{link_name}.
+type ClusterLink struct {
+	LinkName        string `json:"link_name"`
+	LinkID          string `json:"link_id"`
+	ClusterID       string `json:"cluster_id"`
+	SourceClusterID string `json:"source_cluster_id"`
+	LinkState       string `json:"link_state"`
+	LinkError       string `json:"link_error,omitempty"`
+}
 
 type MirrorLag struct {
 	Partition             int `json:"partition"`
@@ -39,6 +77,22 @@ type Config struct {
 	Topics       []string
 }
 
+// Operation values accepted by AlterConfigs. They mirror the Confluent REST v3
+// batch-alter conventions: SET writes the value, DELETE clears it back to the
+// server-side default.
+const (
+	OperationSet    = "SET"
+	OperationDelete = "DELETE"
+)
+
+// ConfigAlteration is one entry in a batch :alter request body. Operation must
+// be OperationSet or OperationDelete; Value is ignored for DELETE.
+type ConfigAlteration struct {
+	Name      string `json:"name"`
+	Value     string `json:"value"`
+	Operation string `json:"operation"`
+}
+
 // PromoteMirrorTopicsResponse represents the response from promoting mirror topics
 type PromoteMirrorTopicsResponse struct {
 	Data []struct {
@@ -50,10 +104,23 @@ type PromoteMirrorTopicsResponse struct {
 
 // Service defines cluster link operations
 type Service interface {
+	GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error)
 	ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error)
 	ListConfigs(ctx context.Context, config Config) (map[string]string, error)
 	ValidateTopics(topics []string, clusterLinkTopics []string) error
 	PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error)
+
+	// AlterConfigs applies the given alterations to the cluster link's configs.
+	//
+	// IMPORTANT: this method is NOT atomic across multiple alterations. The
+	// implementation iterates the slice and issues one network call per entry,
+	// short-circuiting on the first error. On mid-batch failure, alterations
+	// before the failing index are already persisted server-side; alterations
+	// at and after the failing index are NOT applied. The returned error does
+	// not identify which entries succeeded — callers that need batch
+	// atomicity must implement compensation themselves, or call this method
+	// with a single alteration at a time.
+	AlterConfigs(ctx context.Context, config Config, alterations []ConfigAlteration) error
 }
 
 // HTTPClient interface for HTTP operations
@@ -76,8 +143,28 @@ func NewConfluentCloudService(httpClient HTTPClient) *ConfluentCloudService {
 	}
 }
 
+// GetClusterLink fetches the cluster link resource. Translates common
+// failure statuses (404, 401/403) into user-facing messages so callers can
+// surface actionable errors to the CLI.
+func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error) {
+	var link ClusterLink
+	if err := s.doRequest(ctx, config, linkPath(config), &link); err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) {
+			switch statusErr.StatusCode {
+			case http.StatusNotFound:
+				return nil, fmt.Errorf("cluster link %q not found on cluster %s", config.LinkName, config.ClusterID)
+			case http.StatusUnauthorized, http.StatusForbidden:
+				return nil, fmt.Errorf("authentication failed (status %d) — verify --cluster-api-key and --cluster-api-secret", statusErr.StatusCode)
+			}
+		}
+		return nil, fmt.Errorf("failed to get cluster link: %w", err)
+	}
+	return &link, nil
+}
+
 func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error) {
-	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/mirrors", config.ClusterID, config.LinkName)
+	path := linkPath(config) + "/mirrors"
 
 	var response struct {
 		Data []MirrorTopic `json:"data"`
@@ -105,7 +192,7 @@ func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Con
 
 // ListConfigs retrieves cluster link configurations
 func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (map[string]string, error) {
-	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/configs", config.ClusterID, config.LinkName)
+	path := linkPath(config) + "/configs"
 
 	var response struct {
 		Data []struct {
@@ -136,13 +223,67 @@ func (s *ConfluentCloudService) ValidateTopics(topics []string, clusterLinkTopic
 	return nil
 }
 
+// AlterConfigs applies a batch of cluster link config alterations.
+//
+// The Confluent Platform Kafka REST v3 API exposes per-config endpoints
+// rather than a batch :alter resource (verified against CP 8.x where POST
+// /configs:alter returns 405). SET maps to PUT /configs/{name} with
+// {"value": ...}, DELETE maps to DELETE /configs/{name}. We iterate the
+// batch client-side to provide a stable interface above the
+// version-dependent shape — first error short-circuits and is returned.
+//
+// NOT atomic: alterations before the failing index are already persisted
+// server-side. The returned error does not identify the partition between
+// applied and skipped entries. See the Service interface doc.
+//
+// Empty alterations short-circuit without a network call. 404 / 401 / 403
+// translate to actionable messages matching GetClusterLink's style.
+func (s *ConfluentCloudService) AlterConfigs(ctx context.Context, config Config, alterations []ConfigAlteration) error {
+	if len(alterations) == 0 {
+		return nil
+	}
+
+	for _, a := range alterations {
+		path := linkPath(config) + "/configs/" + url.PathEscape(a.Name)
+		var err error
+		switch a.Operation {
+		case OperationSet:
+			body := struct {
+				Value string `json:"value"`
+			}{Value: a.Value}
+			err = s.doPutRequest(ctx, config, path, body)
+		case OperationDelete:
+			err = s.doDeleteRequest(ctx, config, path)
+		default:
+			return fmt.Errorf("unsupported AlterConfigs operation %q for %s", a.Operation, a.Name)
+		}
+		if err != nil {
+			return translateAlterError(config, a, err)
+		}
+	}
+	return nil
+}
+
+func translateAlterError(config Config, alteration ConfigAlteration, err error) error {
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) {
+		switch statusErr.StatusCode {
+		case http.StatusNotFound:
+			return fmt.Errorf("cluster link %q not found on cluster %s (while %s %q)", config.LinkName, config.ClusterID, alteration.Operation, alteration.Name)
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return fmt.Errorf("authentication failed (status %d) while %s %q on cluster link %q — verify --cluster-api-key and --cluster-api-secret", statusErr.StatusCode, alteration.Operation, alteration.Name, config.LinkName)
+		}
+	}
+	return fmt.Errorf("failed to %s cluster link config %q on link %q: %w", alteration.Operation, alteration.Name, config.LinkName, err)
+}
+
 // PromoteMirrorTopics promotes the specified mirror topics
 func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error) {
 	if len(topicNames) == 0 {
 		return &PromoteMirrorTopicsResponse{}, nil
 	}
 
-	path := fmt.Sprintf("/kafka/v3/clusters/%s/links/%s/mirrors:promote", config.ClusterID, config.LinkName)
+	path := linkPath(config) + "/mirrors:promote"
 
 	requestBody := struct {
 		MirrorTopicNames []string `json:"mirror_topic_names"`
@@ -158,17 +299,15 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 	return &response, nil
 }
 
-// doRequest performs an authenticated HTTP GET request to Confluent Cloud API
+// doRequest performs an authenticated HTTP GET request to Confluent Cloud API.
+// Non-2xx responses are returned as *httpStatusError so callers can branch on
+// the status code.
 func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, path string, result interface{}) error {
-	url := config.RestEndpoint + path
-	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", config.APIKey, config.APISecret)))
-
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, config.RestEndpoint+path, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
+	req.Header.Set("Authorization", basicAuthHeader(config))
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -178,7 +317,7 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("unexpected status code %d: %s", res.StatusCode, string(body))
+		return &httpStatusError{StatusCode: res.StatusCode, Body: string(body)}
 	}
 
 	body, err := io.ReadAll(res.Body)
@@ -195,21 +334,17 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 
 // doPostRequest performs an authenticated HTTP POST request to Confluent Cloud API
 func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config, path string, requestBody interface{}, result interface{}) error {
-	url := config.RestEndpoint + path
-	auth := base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%s:%s", config.APIKey, config.APISecret)))
-
 	jsonBody, err := json.Marshal(requestBody)
 	if err != nil {
 		return fmt.Errorf("failed to marshal request body: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewBuffer(jsonBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.RestEndpoint+path, bytes.NewBuffer(jsonBody))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-
-	req.Header.Add("Authorization", "Basic "+auth)
-	req.Header.Add("Content-Type", "application/json")
+	req.Header.Set("Authorization", basicAuthHeader(config))
+	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -219,7 +354,7 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)
-		return fmt.Errorf("unexpected status code %d: %s", res.StatusCode, string(body))
+		return &httpStatusError{StatusCode: res.StatusCode, Body: string(body)}
 	}
 
 	body, err := io.ReadAll(res.Body)
@@ -233,6 +368,63 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 		}
 	}
 
+	return nil
+}
+
+// doPutRequest performs an authenticated HTTP PUT. Used by AlterConfigs to
+// update a single config key on the CP Kafka REST v3 API. Treats 200 and 204
+// as success.
+func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config, path string, requestBody interface{}) error {
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, config.RestEndpoint+path, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", basicAuthHeader(config))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(res.Body)
+		return &httpStatusError{StatusCode: res.StatusCode, Body: string(body)}
+	}
+	return nil
+}
+
+// doDeleteRequest performs an authenticated HTTP DELETE. Used by AlterConfigs
+// to reset a single config key to its server-side default.
+func (s *ConfluentCloudService) doDeleteRequest(ctx context.Context, config Config, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, config.RestEndpoint+path, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", basicAuthHeader(config))
+
+	res, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() {
+		_, _ = io.Copy(io.Discard, res.Body)
+		_ = res.Body.Close()
+	}()
+
+	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
+		body, _ := io.ReadAll(res.Body)
+		return &httpStatusError{StatusCode: res.StatusCode, Body: string(body)}
+	}
 	return nil
 }
 

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	connector_utils "github.com/confluentinc/kcp/internal/utils"
 )
@@ -48,7 +49,6 @@ type MigrateSelfManagedConnectorOpts struct {
 
 	Connectors []types.SelfManagedConnector
 	OutputDir  string
-	Force      bool
 }
 
 type SelfManagedConnectorMigrator struct {
@@ -60,7 +60,6 @@ type SelfManagedConnectorMigrator struct {
 
 	Connectors []types.SelfManagedConnector
 	OutputDir  string
-	Force      bool
 }
 
 func NewSelfManagedConnectorMigrator(opts MigrateSelfManagedConnectorOpts) *SelfManagedConnectorMigrator {
@@ -71,7 +70,6 @@ func NewSelfManagedConnectorMigrator(opts MigrateSelfManagedConnectorOpts) *Self
 		CcApiSecret:   opts.CcApiSecret,
 		Connectors:    opts.Connectors,
 		OutputDir:     opts.OutputDir,
-		Force:         opts.Force,
 	}
 }
 
@@ -82,7 +80,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	}
 
 	if mc.OutputDir != "" {
-		if err := connector_utils.ValidateOutputDir(mc.OutputDir, mc.Force); err != nil {
+		if err := connector_utils.ValidateOutputDir(mc.OutputDir); err != nil {
 			return err
 		}
 		if err := os.MkdirAll(mc.OutputDir, 0755); err != nil {
@@ -91,6 +89,11 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	}
 
 	fmt.Printf("🔍 Found %d connector(s) to migrate\n", len(mc.Connectors))
+
+	// Write shared Terraform infrastructure files (providers.tf, variables.tf)
+	if err := hcl.WriteMigrateConnectorsInfraFiles(mc.OutputDir); err != nil {
+		return err
+	}
 
 	tmplContent, err := assetsFs.ReadFile("assets/connector.tmpl")
 	if err != nil {

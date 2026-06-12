@@ -1,51 +1,22 @@
 import { ExternalLink } from 'lucide-react'
 import { Button } from '@/components/common/ui/button'
-import { findClusterInRegions } from '@/lib/clusterUtils'
-import type { Region, Cluster } from '@/types'
+import type { WorkloadData } from '@/stores/store'
+import type { TCOCluster } from '@/hooks/useTCOClusters'
 
-interface TCOCluster {
-  name: string
-  regionName: string
-  arn: string
-  key: string
-}
+type WorkloadField = keyof WorkloadData[string]
 
-interface TCOWorkloadData {
-  [clusterKey: string]: {
-    avgIngressThroughput?: string
-    peakIngressThroughput?: string
-    avgEgressThroughput?: string
-    peakEgressThroughput?: string
-    retentionDays?: string
-    partitions?: string
-    replicationFactor?: string
-    localRetentionHours?: string
-  }
-}
+type MetricType = 'avg-ingress' | 'peak-ingress' | 'avg-egress' | 'peak-egress' | 'partitions'
 
 interface TCOInputRowProps {
   label: string
   clusters: TCOCluster[]
-  tcoWorkloadData: TCOWorkloadData
-  regions: Region[]
-  field?: string
+  tcoWorkloadData: WorkloadData
+  field?: WorkloadField
   readOnly?: boolean
-  readOnlyValue?: (cluster: Cluster | undefined) => boolean | undefined
-  onInputChange?: (
-    clusterKey: string,
-    field:
-      | 'avgIngressThroughput'
-      | 'peakIngressThroughput'
-      | 'avgEgressThroughput'
-      | 'peakEgressThroughput'
-      | 'retentionDays'
-      | 'partitions'
-      | 'replicationFactor'
-      | 'localRetentionHours',
-    value: string
-  ) => void
-  onMetricsClick?: (clusterKey: string, metricType: string) => void
-  metricType?: string
+  readOnlyValue?: (cluster: TCOCluster) => boolean | undefined
+  onInputChange?: (clusterKey: string, field: WorkloadField, value: string) => void
+  onMetricsClick?: (clusterKey: string, metricType: MetricType) => void
+  metricType?: MetricType
   inputType?: 'number'
   step?: string
   min?: string
@@ -54,15 +25,10 @@ interface TCOInputRowProps {
   buttonTitle?: string
 }
 
-/**
- * Reusable row component for TCO input table
- * Handles both input fields and read-only display fields
- */
 export const TCOInputRow = ({
   label,
   clusters,
   tcoWorkloadData,
-  regions,
   field,
   readOnly = false,
   readOnlyValue,
@@ -82,12 +48,11 @@ export const TCOInputRow = ({
   if (readOnly && readOnlyValue) {
     return (
       <tr>
-        <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
+        <td className="px-4 py-3 text-sm font-medium text-foreground bg-secondary">
           {label}
         </td>
         {clusters.map((cluster) => {
-          const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)
-          const value = readOnlyValue(clusterObj)
+          const value = readOnlyValue(cluster)
 
           return (
             <td
@@ -106,7 +71,7 @@ export const TCOInputRow = ({
                     {value ? '✓' : '✗'}
                   </span>
                 ) : (
-                  <span className="text-sm text-gray-500 dark:text-gray-400">N/A</span>
+                  <span className="text-sm text-muted-foreground">N/A</span>
                 )}
               </div>
             </td>
@@ -122,7 +87,7 @@ export const TCOInputRow = ({
 
   return (
     <tr>
-      <td className="px-4 py-3 text-sm font-medium text-gray-900 dark:text-gray-100 bg-gray-50 dark:bg-card">
+      <td className="px-4 py-3 text-sm font-medium text-foreground bg-secondary">
         {label}
       </td>
       {clusters.map((cluster) => (
@@ -135,26 +100,8 @@ export const TCOInputRow = ({
               type={inputType}
               step={step}
               min={min}
-              value={
-                (tcoWorkloadData[cluster.key]?.[field as keyof TCOWorkloadData[string]] as
-                  | string
-                  | undefined) || ''
-              }
-              onChange={(e) =>
-                onInputChange(
-                  cluster.key,
-                  field as
-                    | 'avgIngressThroughput'
-                    | 'peakIngressThroughput'
-                    | 'avgEgressThroughput'
-                    | 'peakEgressThroughput'
-                    | 'retentionDays'
-                    | 'partitions'
-                    | 'replicationFactor'
-                    | 'localRetentionHours',
-                  e.target.value
-                )
-              }
+              value={tcoWorkloadData[cluster.key]?.[field] || ''}
+              onChange={(e) => onInputChange(cluster.key, field, e.target.value)}
               className={inputClassName}
               placeholder={placeholder}
             />

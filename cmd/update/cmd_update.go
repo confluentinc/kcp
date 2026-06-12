@@ -14,9 +14,22 @@ var (
 
 func NewUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "update",
-		Short:         "Update the kcp binary to the latest version",
-		Long:          `Updates the kcp binary to the latest version by downloading latest release from github and installing`,
+		Use:   "update",
+		Short: "Update the kcp binary to the latest version",
+		Long: `Updates the kcp binary to the latest version by downloading the latest release from GitHub and installing it. A backup of the current binary is created automatically and restored on failure.
+
+If kcp is installed in a system directory (e.g. ` + "`/usr/local/bin`" + `), re-run with ` + "`sudo`" + ` — the command checks permissions early and exits with an error if elevation is required.`,
+		Example: `  # Check for updates (no install)
+  kcp update --check-only
+
+  # Update with confirmation prompt
+  kcp update
+
+  # Update without prompt
+  kcp update --force
+
+  # Update when kcp is installed in /usr/local/bin
+  sudo kcp update`,
 		SilenceErrors: true,
 		RunE:          runUpdate,
 	}
@@ -30,7 +43,6 @@ func NewUpdateCmd() *cobra.Command {
 	groups[optionalFlags] = "Optional Flags"
 
 	cmd.Flags().AddFlagSet(optionalFlags)
-	groups[optionalFlags] = "Optional Flags"
 
 	cmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)

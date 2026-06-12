@@ -1,20 +1,17 @@
 import { useMemo } from 'react'
 import { useRegions } from '@/stores/store'
 import { getClusterArn } from '@/lib/clusterUtils'
+import { SOURCE_TYPES } from '@/constants'
+import type { SourceType, OSKClusterMetadata } from '@/types'
 
-interface TCOCluster {
+export interface TCOCluster {
   name: string
-  regionName: string
-  arn: string
   key: string
+  sourceType: SourceType
+  regionName: string
+  metadata?: OSKClusterMetadata
 }
 
-/**
- * Hook to flatten all clusters from all regions into a single array
- * Each cluster includes its region name and ARN for identification
- *
- * @returns {TCOCluster[]} Array of clusters with region and ARN information
- */
 export const useTCOClusters = (): TCOCluster[] => {
   const regions = useRegions()
 
@@ -26,9 +23,9 @@ export const useTCOClusters = (): TCOCluster[] => {
         if (arn) {
           clusters.push({
             name: cluster.name,
-            regionName: region.name,
-            arn: arn,
             key: arn,
+            sourceType: SOURCE_TYPES.MSK,
+            regionName: region.name,
           })
         }
       })

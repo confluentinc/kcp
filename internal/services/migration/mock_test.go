@@ -12,12 +12,13 @@ import (
 
 // mockGatewayService implements gateway.Service using function fields for test control.
 type mockGatewayService struct {
-	getGatewayYAMLFn     func(ctx context.Context, namespace, name string) ([]byte, error)
-	validateGatewayCRsFn func(initial, fenced, switchover []byte) error
-	checkPermissionsFn   func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	applyGatewayYAMLFn   func(ctx context.Context, namespace, name string, yaml []byte) error
-	getGatewayPodUIDsFn  func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
-	waitForGatewayPodsFn func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
+	validateGatewayCRsFn  func(initial, fenced, switchover []byte) error
+	checkPermissionsFn    func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
+	getGatewayPodUIDsFn   func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
+	waitForGatewayPodsFn  func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 }
 
 func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -62,12 +63,28 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
 }
 
+func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+	if m.waitForGatewayReadyFn != nil {
+		return m.waitForGatewayReadyFn(ctx, namespace, name, pollInterval, timeout, onProgress)
+	}
+	return nil
+}
+
 // mockClusterLinkService implements clusterlink.Service using function fields for test control.
 type mockClusterLinkService struct {
+	getClusterLinkFn      func(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error)
 	listMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error)
 	listConfigsFn         func(ctx context.Context, config clusterlink.Config) (map[string]string, error)
 	validateTopicsFn      func(topics []string, clusterLinkTopics []string) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
+	alterConfigsFn        func(ctx context.Context, config clusterlink.Config, alterations []clusterlink.ConfigAlteration) error
+}
+
+func (m *mockClusterLinkService) GetClusterLink(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error) {
+	if m.getClusterLinkFn != nil {
+		return m.getClusterLinkFn(ctx, config)
+	}
+	return nil, fmt.Errorf("mockClusterLinkService.GetClusterLink not configured")
 }
 
 func (m *mockClusterLinkService) ListMirrorTopics(ctx context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
@@ -96,6 +113,13 @@ func (m *mockClusterLinkService) PromoteMirrorTopics(ctx context.Context, config
 		return m.promoteMirrorTopicsFn(ctx, config, topicNames)
 	}
 	return nil, fmt.Errorf("mockClusterLinkService.PromoteMirrorTopics not configured")
+}
+
+func (m *mockClusterLinkService) AlterConfigs(ctx context.Context, config clusterlink.Config, alterations []clusterlink.ConfigAlteration) error {
+	if m.alterConfigsFn != nil {
+		return m.alterConfigsFn(ctx, config, alterations)
+	}
+	return fmt.Errorf("mockClusterLinkService.AlterConfigs not configured")
 }
 
 // mockOffsetProvider implements offset.Provider using a function field for test control.

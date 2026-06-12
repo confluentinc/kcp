@@ -3,7 +3,7 @@ package list
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -15,9 +15,14 @@ var (
 
 func NewMigrationListCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "list",
-		Short:         "List all migrations from the migration state file",
-		Long:          "Display all migrations from the migration state file in a human-readable format, showing migration IDs, status, gateway configuration, and topics.",
+		Use:   "list",
+		Short: "List all migrations from the migration state file",
+		Long:  "Display all migrations from the migration state file in a human-readable format, showing migration IDs, status, gateway configuration, and topics.",
+		Example: `  # Default state file
+  kcp migration list
+
+  # Specific state file
+  kcp migration list --migration-state-file /path/to/migration-state.json`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationList,
@@ -45,7 +50,7 @@ func preRunMigrationList(cmd *cobra.Command, args []string) error {
 
 func runMigrationList(cmd *cobra.Command, args []string) error {
 	// Load migration state (following KCP pattern)
-	migrationState, err := types.NewMigrationStateFromFile(migrationStateFile)
+	migrationState, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load migration state file %q: %w\nEnsure the file exists or run 'kcp migration init' to create a new migration", migrationStateFile, err)
 	}

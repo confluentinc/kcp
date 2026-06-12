@@ -114,3 +114,46 @@ func TestMigrationInit_WithAuthFlag_PassesValidation(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "at least one of the flags")
 }
+
+func TestMigrationInit_PauseOffsetSyncFlag_Registered(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationInitCmd()
+	flag := cmd.Flags().Lookup("pause-consumer-offset-sync")
+	require.NotNil(t, flag, "--pause-consumer-offset-sync flag must be registered")
+	assert.Equal(t, "false", flag.DefValue, "default must be false (opt-in)")
+}
+
+// TestMigrationInit_PauseOffsetSync_SkipValidate_MutuallyExclusive verifies that
+// --pause-consumer-offset-sync and --skip-validate cannot be combined. The
+// restore bookend needs the init-time snapshot captured by the validation path;
+// without it, restore has nothing to diff against and would silently leave the
+// cluster link disabled after switchover.
+func TestMigrationInit_PauseOffsetSync_SkipValidate_MutuallyExclusive(t *testing.T) {
+	resetAuthFlags()
+	pauseConsumerOffsetSync = false
+	skipValidate = false
+
+	cmd := NewMigrationInitCmd()
+	cmd.SetArgs([]string{
+		"--source-bootstrap", "broker:9092",
+		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
+		"--k8s-namespace", "test-ns",
+		"--initial-cr-name", "test-cr",
+		"--cluster-id", "lkc-123",
+		"--cluster-rest-endpoint", "https://pkc-abc.confluent.cloud:443",
+		"--cluster-link-name", "test-link",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--fenced-cr-yaml", "fenced.yaml",
+		"--switchover-cr-yaml", "switchover.yaml",
+		"--use-unauthenticated-plaintext",
+		"--skip-validate",
+		"--pause-consumer-offset-sync",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "skip-validate")
+	assert.Contains(t, err.Error(), "pause-consumer-offset-sync")
+}

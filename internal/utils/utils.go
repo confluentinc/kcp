@@ -69,18 +69,6 @@ func GetClientBrokerEncryptionInTransit(cluster kafkatypes.Cluster) kafkatypes.C
 	return DefaultClientBrokerEncryptionInTransit
 }
 
-func GetClusterByArn(state *types.State, clusterArn string) (*types.DiscoveredCluster, error) {
-	for _, region := range state.Regions {
-		for _, cluster := range region.Clusters {
-			if cluster.Arn == clusterArn {
-				return &cluster, nil
-			}
-		}
-	}
-
-	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
-}
-
 func ExtractClusterNameFromArn(arn string) string {
 	// ARN format: arn:aws:kafka:region:account:cluster/cluster-name/uuid
 	// Split on '/' and take index 1 for cluster name

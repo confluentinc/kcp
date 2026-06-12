@@ -1,0 +1,11 @@
+title: Gateway Switchover
+nav:
+  - Examples: index.md
+  - none → mTLS: switchover-none-to-mtls
+  - none → OAuth: switchover-none-to-oauth
+  - none → SASL/PLAIN: switchover-none-to-saslplain
+  - mTLS → mTLS: switchover-mtls-to-mtls
+  - mTLS → OAuth: switchover-mtls-to-oauth
+  - mTLS → SASL/PLAIN: switchover-mtls-to-sasl-plain
+  - SASL/SCRAM → OAuth: switchover-sasl-scram-to-oauth
+  - SASL/SCRAM → SASL/PLAIN: switchover-sasl-scram-to-sasl-plain

@@ -13,8 +13,6 @@ interface ClusterClientsProps {
 }
 
 export const ClusterClients = ({ clients }: ClusterClientsProps) => {
-  console.log('clients', clients)
-
   const getRoleBadge = (role: string) => {
     const colors: Record<string, string> = {
       producer: 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300 border border-orange-200 dark:border-orange-700/50',
@@ -56,8 +54,8 @@ export const ClusterClients = ({ clients }: ClusterClientsProps) => {
   if (!clients || clients.length === 0) {
     return (
       <div className="text-center py-12">
-        <div className="text-gray-500 dark:text-gray-400 text-lg">No clients found</div>
-        <p className="text-sm text-gray-400 dark:text-gray-500 mt-2">
+        <div className="text-muted-foreground text-lg">No clients found</div>
+        <p className="text-sm text-muted-foreground mt-2">
           This cluster doesn't have any discovered clients.
         </p>
       </div>
@@ -67,31 +65,31 @@ export const ClusterClients = ({ clients }: ClusterClientsProps) => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+        <h3 className="text-lg font-semibold text-foreground">
           Discovered Clients ({clients.length})
         </h3>
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full border border-gray-200 dark:border-border rounded-lg">
+        <table className="w-full border border-border rounded-lg">
           <thead>
-            <tr className="bg-gray-50 dark:bg-card">
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-gray-200 dark:border-border">
+            <tr className="bg-secondary">
+              <th className="px-4 py-3 text-left text-sm font-medium text-foreground border-b border-border">
                 Client ID
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
+              <th className="px-4 py-3 text-left text-sm font-medium text-foreground border-b border-l border-border">
                 Topic
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
+              <th className="px-4 py-3 text-left text-sm font-medium text-foreground border-b border-l border-border">
                 Role
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
+              <th className="px-4 py-3 text-left text-sm font-medium text-foreground border-b border-l border-border">
                 Auth
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
+              <th className="px-4 py-3 text-left text-sm font-medium text-foreground border-b border-l border-border">
                 Principal
               </th>
-              <th className="px-4 py-3 text-left text-sm font-medium text-gray-900 dark:text-gray-100 border-b border-l border-gray-200 dark:border-border">
+              <th className="px-4 py-3 text-left text-sm font-medium text-foreground border-b border-l border-border">
                 Timestamp
               </th>
             </tr>
@@ -100,24 +98,24 @@ export const ClusterClients = ({ clients }: ClusterClientsProps) => {
             {clients.map((client, index) => (
               <tr
                 key={client.composite_key || index}
-                className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+                className="hover:bg-secondary transition-colors"
               >
-                <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 font-mono border-b border-gray-200 dark:border-border">
+                <td className="px-4 py-3 text-sm text-foreground font-mono border-b border-border">
                   {client.client_id || 'N/A'}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 font-mono border-b border-l border-gray-200 dark:border-border">
+                <td className="px-4 py-3 text-sm text-foreground font-mono border-b border-l border-border">
                   {client.topic || 'N/A'}
                 </td>
-                <td className="px-4 py-3 text-sm border-b border-l border-gray-200 dark:border-border">
+                <td className="px-4 py-3 text-sm border-b border-l border-border">
                   {getRoleBadge(client.role || '')}
                 </td>
-                <td className="px-4 py-3 text-sm border-b border-l border-gray-200 dark:border-border">
+                <td className="px-4 py-3 text-sm border-b border-l border-border">
                   {getAuthBadge(client.auth || '')}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-900 dark:text-gray-100 font-mono border-b border-l border-gray-200 dark:border-border">
+                <td className="px-4 py-3 text-sm text-foreground font-mono border-b border-l border-border">
                   {client.principal || 'N/A'}
                 </td>
-                <td className="px-4 py-3 text-sm text-gray-600 dark:text-gray-400 border-b border-l border-gray-200 dark:border-border">
+                <td className="px-4 py-3 text-sm text-muted-foreground border-b border-l border-border">
                   {client.timestamp
                     ? new Date(client.timestamp).toLocaleString()
                     : 'N/A'}

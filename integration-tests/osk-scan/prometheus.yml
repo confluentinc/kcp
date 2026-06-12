@@ -1,0 +1,6 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# No scrape targets — data is seeded via remote write
+scrape_configs: []

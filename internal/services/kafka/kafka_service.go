@@ -13,11 +13,15 @@ type KafkaService struct {
 	client     client.KafkaAdmin
 	authType   types.AuthType
 	clusterArn string
+	skipTopics bool
+	skipACLs   bool
 }
 
 type KafkaServiceOpts struct {
 	AuthType   types.AuthType
 	ClusterArn string
+	SkipTopics bool
+	SkipACLs   bool
 }
 
 func NewKafkaService(kafkaAdmin client.KafkaAdmin, opts KafkaServiceOpts) *KafkaService {
@@ -25,6 +29,8 @@ func NewKafkaService(kafkaAdmin client.KafkaAdmin, opts KafkaServiceOpts) *Kafka
 		client:     kafkaAdmin,
 		authType:   opts.AuthType,
 		clusterArn: opts.ClusterArn,
+		skipTopics: opts.SkipTopics,
+		skipACLs:   opts.SkipACLs,
 	}
 }
 
@@ -39,11 +45,20 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 	kafkaAdminClientInformation.ClusterID = clusterMetadata.ClusterID
 
-	topics, err := ks.scanClusterTopics()
-	if err != nil {
-		return nil, err
+	// Store discovered broker addresses
+	brokerAddrs := make([]string, 0, len(clusterMetadata.Brokers))
+	for _, broker := range clusterMetadata.Brokers {
+		brokerAddrs = append(brokerAddrs, broker.Addr())
 	}
-	kafkaAdminClientInformation.SetTopics(topics)
+	kafkaAdminClientInformation.DiscoveredBrokers = brokerAddrs
+
+	if !ks.skipTopics {
+		topics, err := ks.scanClusterTopics()
+		if err != nil {
+			return nil, err
+		}
+		kafkaAdminClientInformation.SetTopics(topics)
+	}
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterType == kafkatypes.ClusterTypeServerless {
@@ -51,11 +66,13 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 		return kafkaAdminClientInformation, nil
 	}
 
-	acls, err := ks.scanKafkaAcls()
-	if err != nil {
-		return nil, err
+	if !ks.skipACLs {
+		acls, err := ks.scanKafkaAcls()
+		if err != nil {
+			return nil, err
+		}
+		kafkaAdminClientInformation.Acls = acls
 	}
-	kafkaAdminClientInformation.Acls = acls
 
 	return kafkaAdminClientInformation, nil
 }
@@ -111,7 +128,7 @@ func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 		return nil, fmt.Errorf("failed to list acls: %v", err)
 	}
 
-	// Flatten the ACLs for easier processing
+	// Flatten the ACLs for easier processing.
 	var flattenedAcls []types.Acls
 	for _, resourceAcl := range acls {
 		for _, acl := range resourceAcl.Acls {

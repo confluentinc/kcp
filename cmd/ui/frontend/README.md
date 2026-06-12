@@ -1,69 +1,127 @@
-# React + TypeScript + Vite
+# KCP Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React + TypeScript frontend for the KCP web UI.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+### Prerequisites
 
-## Expanding the ESLint configuration
+- Node.js 18+
+- Yarn
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+### Setup
 
-```js
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      ...tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      ...tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      ...tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+yarn install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Development Server
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default tseslint.config([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+yarn dev
 ```
+
+Frontend runs on `http://localhost:5173` with hot reload.
+
+### Build
+
+```bash
+yarn build
+```
+
+Built assets are embedded into the Go binary via `frontend.go`.
+
+### Type Checking
+
+```bash
+yarn type-check
+yarn type-check:watch
+```
+
+### Linting
+
+```bash
+yarn lint
+```
+
+## Testing
+
+### E2E Tests with Playwright
+
+Playwright tests run against the full Go backend + frontend.
+
+**Run all tests:**
+
+```bash
+yarn test:e2e
+```
+
+**Run with UI mode (interactive):**
+
+```bash
+yarn test:e2e:ui
+```
+
+**Debug specific test:**
+
+```bash
+yarn test:e2e:debug osk-sidebar.spec.ts
+```
+
+**Run with browser visible:**
+
+```bash
+yarn test:e2e:headed
+```
+
+### Test Fixtures
+
+Test fixtures are in `tests/fixtures/`:
+- `state-osk-only.json` - OSK clusters only
+- `state-both.json` - Both MSK and OSK clusters
+
+## Architecture
+
+### Source Types
+
+The UI supports two Kafka source types:
+
+**MSK (AWS Managed Streaming for Kafka)**
+- Regions → Clusters hierarchy
+- Displays: ARN, VPC, instance type, CloudWatch metrics, costs
+- Tabs: Cluster, Metrics, Topics, ACLs, Connectors, Clients
+
+**OSK (Open Source Kafka)**
+- Flat cluster list
+- Displays: Bootstrap servers, metadata, labels
+- Tabs: Cluster, Topics, ACLs, Connectors, Clients (no Metrics)
+
+### State Management
+
+- Zustand for global state
+- `useAppStore` hook provides access to:
+  - `processedState` - unified source data
+  - `selectedSourceType` - 'msk' | 'osk'
+  - `selectOSKCluster(clusterId)` - navigate to OSK cluster
+  - `selectCluster(region, arn)` - navigate to MSK cluster
+
+### Type Guards
+
+Use type guards from `lib/sourceUtils.ts` to safely access source-specific data:
+
+```typescript
+import { isMSKSource, isOSKSource } from '@/lib/sourceUtils'
+
+const mskSource = processedState?.sources.find(isMSKSource)
+const oskSource = processedState?.sources.find(isOSKSource)
+```
+
+## Tech Stack
+
+- React 19
+- TypeScript 5.8
+- Vite 7
+- Zustand (state management)
+- Recharts (charts)
+- Tailwind CSS 4
+- Playwright (E2E testing)

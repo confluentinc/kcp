@@ -31,11 +31,22 @@ export const useMetricsDataProcessor = (
 
     const metrics = metricsResponse.results
 
-    // Get all unique dates and sort them
+    // Use metadata.period to determine time granularity:
+    // period >= 86400 (1 day) = daily granularity (CloudWatch), group by date
+    // period < 86400 = sub-day granularity (JMX), use full timestamps
+    const period = metricsResponse.metadata?.period ?? 86400
+    const useFullTimestamps = period < 86400
+
+    const getTimeKey = (start: string): string => {
+      if (useFullTimestamps) return start
+      return start.split('T')[0]
+    }
+
+    // Get all unique time keys and sort them
     const allDates = new Set<string>()
     metrics.forEach((metric: MetricResult) => {
-      if (metric && metric.start && typeof metric.start === 'string') {
-        allDates.add(metric.start.split('T')[0]) // Get date part only
+      if (metric?.start && typeof metric.start === 'string') {
+        allDates.add(getTimeKey(metric.start))
       }
     })
     const uniqueDates = Array.from(allDates).sort()
@@ -48,10 +59,10 @@ export const useMetricsDataProcessor = (
       if (!metricsByLabel[metric.label]) {
         metricsByLabel[metric.label] = {}
       }
-      const date =
-        metric.start && typeof metric.start === 'string' ? metric.start.split('T')[0] : ''
-      if (date) {
-        metricsByLabel[metric.label][date] = typeof metric.value === 'number' ? metric.value : null
+      const timeKey =
+        metric.start && typeof metric.start === 'string' ? getTimeKey(metric.start) : ''
+      if (timeKey) {
+        metricsByLabel[metric.label][timeKey] = typeof metric.value === 'number' ? metric.value : null
       }
     })
 

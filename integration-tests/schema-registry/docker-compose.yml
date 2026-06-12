@@ -1,0 +1,67 @@
+services:
+  # KRaft Kafka broker (backing store for Schema Registry)
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka
+    container_name: kcp-test-sr-kafka
+    ports:
+      - "19092:9092"
+    environment:
+      CLUSTER_ID: 'SrTeStClUsTerId0000001'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  # Unauthenticated Schema Registry (port 8081)
+  schema-registry:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry
+    container_name: kcp-test-sr-unauth
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8081:8081"
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8081
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry-unauth
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas_unauth
+
+  # Basic Auth Schema Registry (port 8082)
+  schema-registry-basic-auth:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry-basic-auth
+    container_name: kcp-test-sr-basic-auth
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8082:8082"
+    volumes:
+      - ./configs/schema-registry-jaas.conf:/etc/schema-registry/jaas.conf:ro
+      - ./configs/schema-registry-basic-auth.properties:/etc/schema-registry/basic-auth.properties:ro
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry-basic-auth
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: http://0.0.0.0:8082
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry-basic-auth
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas_basic_auth
+      SCHEMA_REGISTRY_AUTHENTICATION_METHOD: BASIC
+      SCHEMA_REGISTRY_AUTHENTICATION_ROLES: admin,developer
+      SCHEMA_REGISTRY_AUTHENTICATION_REALM: SchemaRegistryProps
+      SCHEMA_REGISTRY_OPTS: -Djava.security.auth.login.config=/etc/schema-registry/jaas.conf

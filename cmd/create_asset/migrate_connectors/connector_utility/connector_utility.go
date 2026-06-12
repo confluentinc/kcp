@@ -16,13 +16,11 @@ import (
 type ConnectorUtilityOpts struct {
 	ClustersByArn map[string]*types.DiscoveredCluster
 	OutputDir     string
-	Force         bool
 }
 
 type ConnectorUtility struct {
 	clustersByArn map[string]*types.DiscoveredCluster
 	outputDir     string
-	force         bool
 }
 
 type ConnectorConfig struct {
@@ -38,7 +36,6 @@ func NewConnectorUtility(opts ConnectorUtilityOpts) *ConnectorUtility {
 	return &ConnectorUtility{
 		clustersByArn: opts.ClustersByArn,
 		outputDir:     opts.OutputDir,
-		force:         opts.Force,
 	}
 }
 
@@ -48,7 +45,7 @@ func (cu *ConnectorUtility) Run() error {
 		return nil
 	}
 
-	if err := utils.ValidateOutputDir(cu.outputDir, cu.force); err != nil {
+	if err := utils.ValidateOutputDir(cu.outputDir); err != nil {
 		return err
 	}
 	if err := os.MkdirAll(cu.outputDir, 0755); err != nil {

@@ -82,6 +82,15 @@ export const API_ENDPOINTS = {
   METRICS: '/metrics',
   COSTS: '/costs',
   UPLOAD_STATE: '/upload-state',
+  STATE: '/state',
+} as const
+
+/**
+ * Kafka source types
+ */
+export const SOURCE_TYPES = {
+  MSK: 'msk',
+  OSK: 'osk',
 } as const
 
 /**

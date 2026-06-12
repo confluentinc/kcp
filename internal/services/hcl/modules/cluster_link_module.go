@@ -5,15 +5,15 @@ import "github.com/confluentinc/kcp/internal/types"
 func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	return []ModuleVariable[types.MigrationWizardRequest]{
 		{
-			Name:       SchemaMSKSaslScramUsername.Name,
-			Definition: SchemaMSKSaslScramUsername.ToDefinition(),
+			Name:       SchemaSaslScramUsername.Name,
+			Definition: SchemaSaslScramUsername.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
 		},
 		{
-			Name:       SchemaMSKSaslScramPassword.Name,
-			Definition: SchemaMSKSaslScramPassword.ToDefinition(),
+			Name:       SchemaSaslScramPassword.Name,
+			Definition: SchemaSaslScramPassword.ToDefinition(),
 			ValueExtractor: func(_ types.MigrationWizardRequest) any {
 				return ""
 			},
@@ -54,17 +54,31 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 			},
 		},
 		{
-			Name:       SchemaMSKClusterID.Name,
-			Definition: SchemaMSKClusterID.ToDefinition(),
+			Name:       SchemaClusterID.Name,
+			Definition: SchemaClusterID.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskClusterId
+				return request.SourceClusterId
 			},
 		},
 		{
-			Name:       SchemaMSKSaslScramBootstrapServers.Name,
-			Definition: SchemaMSKSaslScramBootstrapServers.ToDefinition(),
+			Name:       SchemaSaslScramBootstrapServers.Name,
+			Definition: SchemaSaslScramBootstrapServers.ToDefinition(),
 			ValueExtractor: func(request types.MigrationWizardRequest) any {
-				return request.MskSaslScramBootstrapServers
+				return request.SourceSaslScramBootstrapServers
+			},
+			Condition:        nil,
+			FromModuleOutput: "",
+		},
+		{
+			Name: "source_sasl_scram_mechanism",
+			Definition: types.TerraformVariable{
+				Name:        "source_sasl_scram_mechanism",
+				Description: "The SASL/SCRAM mechanism of the source Kafka cluster (SCRAM-SHA-256 or SCRAM-SHA-512).",
+				Sensitive:   false,
+				Type:        "string",
+			},
+			ValueExtractor: func(request types.MigrationWizardRequest) any {
+				return request.SourceSaslScramMechanism
 			},
 		},
 	}

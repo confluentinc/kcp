@@ -1,6 +1,7 @@
 package types
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -8,71 +9,16 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	cloudwatchtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
-	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
-	"github.com/aws/aws-sdk-go-v2/service/kafka"
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
-	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
-// State represents the raw input data structure (kcp-state.json file)
-// This is what gets fed INTO the frontend/API for processing
+// State represents the unified state file (kcp-state.json)
 type State struct {
-	Regions          []DiscoveredRegion     `json:"regions"`
+	MSKSources       *MSKSourcesState       `json:"msk_sources,omitempty"`
+	OSKSources       *OSKSourcesState       `json:"osk_sources,omitempty"`
 	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
 	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
 	Timestamp        time.Time              `json:"timestamp"`
-}
-
-// UnmarshalJSON implements custom JSON unmarshaling for State to handle
-// backward compatibility with the old schema_registries array format.
-func (s *State) UnmarshalJSON(data []byte) error {
-	// Use an alias to avoid infinite recursion
-	type StateAlias State
-	var raw struct {
-		StateAlias
-		SchemaRegistriesRaw json.RawMessage `json:"schema_registries"`
-	}
-
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return err
-	}
-
-	*s = State(raw.StateAlias)
-	s.SchemaRegistries = nil
-
-	if len(raw.SchemaRegistriesRaw) == 0 || string(raw.SchemaRegistriesRaw) == "null" {
-		return nil
-	}
-
-	// Detect format: array (old) vs object (new)
-	trimmed := raw.SchemaRegistriesRaw
-	for len(trimmed) > 0 && (trimmed[0] == ' ' || trimmed[0] == '\t' || trimmed[0] == '\n' || trimmed[0] == '\r') {
-		trimmed = trimmed[1:]
-	}
-
-	if len(trimmed) > 0 && trimmed[0] == '[' {
-		// Old format: array of SchemaRegistryInformation
-		var oldFormat []SchemaRegistryInformation
-		if err := json.Unmarshal(raw.SchemaRegistriesRaw, &oldFormat); err != nil {
-			return fmt.Errorf("failed to unmarshal old schema_registries format: %w", err)
-		}
-		s.SchemaRegistries = &SchemaRegistriesState{
-			ConfluentSchemaRegistry: oldFormat,
-		}
-	} else if len(trimmed) > 0 && trimmed[0] == '{' {
-		// New format: object with typed keys
-		var newFormat SchemaRegistriesState
-		if err := json.Unmarshal(raw.SchemaRegistriesRaw, &newFormat); err != nil {
-			return fmt.Errorf("failed to unmarshal schema_registries: %w", err)
-		}
-		s.SchemaRegistries = &newFormat
-	}
-
-	return nil
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -87,27 +33,77 @@ func NewStateFrom(fromState *State) *State {
 	}
 
 	if fromState == nil {
-		workingState.Regions = []DiscoveredRegion{}
+		// Initialize both sources with empty arrays
+		workingState.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
+		workingState.OSKSources = &OSKSourcesState{
+			Clusters: []OSKDiscoveredCluster{},
+		}
 	} else {
-		// Copy existing regions to preserve untouched regions
-		workingState.Regions = make([]DiscoveredRegion, len(fromState.Regions))
-		copy(workingState.Regions, fromState.Regions)
-		// Copy schema registries to preserve schema data across discovery runs
-		workingState.SchemaRegistries = fromState.SchemaRegistries
+		// Copy existing MSK data or initialize empty
+		if fromState.MSKSources != nil {
+			mskSources := &MSKSourcesState{
+				Regions: make([]DiscoveredRegion, len(fromState.MSKSources.Regions)),
+			}
+			copy(mskSources.Regions, fromState.MSKSources.Regions)
+			workingState.MSKSources = mskSources
+		} else {
+			workingState.MSKSources = &MSKSourcesState{
+				Regions: []DiscoveredRegion{},
+			}
+		}
+
+		// Copy existing OSK data or initialize empty
+		if fromState.OSKSources != nil {
+			oskSources := &OSKSourcesState{
+				Clusters: make([]OSKDiscoveredCluster, len(fromState.OSKSources.Clusters)),
+			}
+			copy(oskSources.Clusters, fromState.OSKSources.Clusters)
+			workingState.OSKSources = oskSources
+		} else {
+			workingState.OSKSources = &OSKSourcesState{
+				Clusters: []OSKDiscoveredCluster{},
+			}
+		}
 	}
 
 	return workingState
 }
 
 func NewStateFromFile(stateFile string) (*State, error) {
-	file, err := os.ReadFile(stateFile)
+	data, err := os.ReadFile(stateFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read state file: %v", err)
+		return nil, fmt.Errorf("failed to read state file %s: %v", stateFile, err)
+	}
+	return NewStateFromBytes(data)
+}
+
+func NewStateFromBytes(data []byte) (*State, error) {
+	var state State
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
+		// Decode failed — the schema may have changed between versions,
+		// or the file contains unknown fields from a different KCP version.
+		// Try to extract just the version from the raw bytes to give a more
+		// actionable error than a raw JSON type error.
+		var raw struct {
+			KcpBuildInfo struct {
+				Version string `json:"version"`
+			} `json:"kcp_build_info"`
+		}
+		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
+			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
+				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
+			}
+			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
+		}
+		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
 	}
 
-	var state State
-	if err := json.Unmarshal(file, &state); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal state: %v", err)
+	if state.KcpBuildInfo.Version == "" {
+		slog.Warn("state file has no kcp_build_info.version, this may not be a valid KCP state file")
 	}
 
 	return &state, nil
@@ -139,17 +135,19 @@ func (s *State) WriteReportCommands(filePath string, stateFilePath string) error
 	clusterCommands := []string{"# Report cluster metrics commands"}
 
 	// Loop through regions
-	for _, region := range s.Regions {
-		// Output command for report costs for this region
-		regionCommand := []string{fmt.Sprintf("# region: %s", region.Name)}
-		regionCommand = append(regionCommand, fmt.Sprintf("kcp report costs --state-file %s --region %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, region.Name))
-		regionCommands = append(regionCommands, strings.Join(regionCommand, "\n"))
+	if s.MSKSources != nil {
+		for _, region := range s.MSKSources.Regions {
+			// Output command for report costs for this region
+			regionCommand := []string{fmt.Sprintf("# region: %s", region.Name)}
+			regionCommand = append(regionCommand, fmt.Sprintf("kcp report costs --state-file %s --region %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, region.Name))
+			regionCommands = append(regionCommands, strings.Join(regionCommand, "\n"))
 
-		// Loop through clusters in this region
-		for _, cluster := range region.Clusters {
-			clusterCommand := []string{fmt.Sprintf("# cluster: %s", cluster.Name)}
-			clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-arn %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
-			clusterCommands = append(clusterCommands, strings.Join(clusterCommand, "\n"))
+			// Loop through clusters in this region
+			for _, cluster := range region.Clusters {
+				clusterCommand := []string{fmt.Sprintf("# cluster: %s", cluster.Name)}
+				clusterCommand = append(clusterCommand, fmt.Sprintf("kcp report metrics --state-file %s --cluster-id %s --start <YYYY-MM-DD> --end <YYYY-MM-DD>\n", stateFilePath, cluster.Arn))
+				clusterCommands = append(clusterCommands, strings.Join(clusterCommand, "\n"))
+			}
 		}
 	}
 
@@ -174,23 +172,31 @@ func (s *State) PersistStateFile(stateFile string) error {
 }
 
 func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
-	for i, existingRegion := range s.Regions {
+	if s.MSKSources == nil {
+		s.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
+	}
+	for i, existingRegion := range s.MSKSources.Regions {
 		if existingRegion.Name == newRegion.Name {
 			discoveredClusters := newRegion.Clusters
 			newRegion.Clusters = existingRegion.Clusters
 			// set discovered clusters and refresh into state (preserves KafkaAdminClientInformation)
 			newRegion.RefreshClusters(discoveredClusters)
-			s.Regions[i] = newRegion
+			s.MSKSources.Regions[i] = newRegion
 			return
 		}
 	}
-	s.Regions = append(s.Regions, newRegion)
+	s.MSKSources.Regions = append(s.MSKSources.Regions, newRegion)
 }
 
 func (s *State) UpsertDiscoveredClients(regionName string, clusterName string, discoveredClients []DiscoveredClient) error {
 	slog.Info("🔍 looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
-	for i := range s.Regions {
-		region := &s.Regions[i]
+	if s.MSKSources == nil {
+		return fmt.Errorf("no MSK sources found in state file")
+	}
+	for i := range s.MSKSources.Regions {
+		region := &s.MSKSources.Regions[i]
 		if region.Name == regionName {
 			for j := range region.Clusters {
 				cluster := &region.Clusters[j]
@@ -226,10 +232,12 @@ func dedupDiscoveredClients(discoveredClients []DiscoveredClient) []DiscoveredCl
 }
 
 func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
-	for _, region := range s.Regions {
-		for _, cluster := range region.Clusters {
-			if cluster.Arn == clusterArn {
-				return &cluster, nil
+	if s.MSKSources != nil {
+		for i := range s.MSKSources.Regions {
+			for j := range s.MSKSources.Regions[i].Clusters {
+				if s.MSKSources.Regions[i].Clusters[j].Arn == clusterArn {
+					return &s.MSKSources.Regions[i].Clusters[j], nil
+				}
 			}
 		}
 	}
@@ -237,602 +245,17 @@ func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
 	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
 }
 
-type DiscoveredRegion struct {
-	Name           string                                      `json:"name"`
-	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
-	Costs          CostInformation                             `json:"costs"`
-	Clusters       []DiscoveredCluster                         `json:"clusters"`
-	// internal only - exclude from JSON output
-	ClusterArns []string `json:"-"`
-}
-
-// RefreshClusters replaces the cluster list but merges KafkaAdminClientInformation from existing clusters
-// New discoveries take precedence over old values (only uses old values when new values are empty/nil)
-func (dr *DiscoveredRegion) RefreshClusters(newClusters []DiscoveredCluster) {
-	// build map of ARN -> KafkaAdminClientInformation from existing clusters
-	adminInfoByArn := make(map[string]KafkaAdminClientInformation)
-	for _, existingCluster := range dr.Clusters {
-		adminInfoByArn[existingCluster.Arn] = existingCluster.KafkaAdminClientInformation
+// GetOSKClusterByID looks up an OSK cluster by the user-provided ID from credentials
+func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
+	if s.OSKSources == nil {
+		return nil, fmt.Errorf("no OSK sources in state file")
 	}
 
-	// replace cluster list with new discoveries
-	dr.Clusters = newClusters
-
-	// merge admin info: new discoveries take precedence, only use old values when new is empty/nil
-	for i := range dr.Clusters {
-		if oldAdminInfo, exists := adminInfoByArn[dr.Clusters[i].Arn]; exists {
-			newAdminInfo := &dr.Clusters[i].KafkaAdminClientInformation
-			newAdminInfo.MergeFrom(oldAdminInfo)
+	for i := range s.OSKSources.Clusters {
+		if s.OSKSources.Clusters[i].ID == id {
+			return &s.OSKSources.Clusters[i], nil
 		}
 	}
-}
 
-// MergeFrom merges values from another KafkaAdminClientInformation
-// New discoveries are added, old data is preserved, duplicates are merged (new takes precedence)
-func (c *KafkaAdminClientInformation) MergeFrom(other KafkaAdminClientInformation) {
-	// Only use old ClusterID if new one is empty
-	if c.ClusterID == "" {
-		c.ClusterID = other.ClusterID
-	}
-
-	// Merge Topics: new topics take precedence, old topics preserved if not re-discovered
-	c.Topics = mergeTopics(c.Topics, other.Topics)
-
-	// Merge ACLs: combine both, deduplicate
-	c.Acls = mergeAcls(c.Acls, other.Acls)
-
-	// Merge SelfManagedConnectors: new connectors take precedence, old preserved if not re-discovered
-	c.SelfManagedConnectors = mergeSelfManagedConnectors(c.SelfManagedConnectors, other.SelfManagedConnectors)
-}
-
-// mergeTopics merges two Topics, with newTopics taking precedence for duplicates (by name)
-func mergeTopics(newTopics, oldTopics *Topics) *Topics {
-	// If no old topics, just return new (even if empty)
-	if oldTopics == nil || len(oldTopics.Details) == 0 {
-		return newTopics
-	}
-
-	// If no new topics, preserve old
-	if newTopics == nil || len(newTopics.Details) == 0 {
-		return oldTopics
-	}
-
-	// Merge: start with old, update/add with new
-	topicsByName := make(map[string]TopicDetails)
-	for _, topic := range oldTopics.Details {
-		topicsByName[topic.Name] = topic
-	}
-	for _, topic := range newTopics.Details {
-		topicsByName[topic.Name] = topic // new takes precedence
-	}
-
-	// Convert back to slice
-	mergedDetails := make([]TopicDetails, 0, len(topicsByName))
-	for _, topic := range topicsByName {
-		mergedDetails = append(mergedDetails, topic)
-	}
-
-	return &Topics{
-		Details: mergedDetails,
-		Summary: CalculateTopicSummaryFromDetails(mergedDetails),
-	}
-}
-
-// mergeAcls merges two ACL slices, deduplicating by all fields
-func mergeAcls(newAcls, oldAcls []Acls) []Acls {
-	if len(oldAcls) == 0 {
-		return newAcls
-	}
-	if len(newAcls) == 0 {
-		return oldAcls
-	}
-
-	// Use composite key for deduplication
-	aclKey := func(a Acls) string {
-		return fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s",
-			a.ResourceType, a.ResourceName, a.ResourcePatternType,
-			a.Principal, a.Host, a.Operation, a.PermissionType)
-	}
-
-	aclsByKey := make(map[string]Acls)
-	for _, acl := range oldAcls {
-		aclsByKey[aclKey(acl)] = acl
-	}
-	for _, acl := range newAcls {
-		aclsByKey[aclKey(acl)] = acl // new takes precedence
-	}
-
-	merged := make([]Acls, 0, len(aclsByKey))
-	for _, acl := range aclsByKey {
-		merged = append(merged, acl)
-	}
-	return merged
-}
-
-// mergeSelfManagedConnectors merges connectors, with new taking precedence for duplicates (by name)
-func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnectors) *SelfManagedConnectors {
-	if oldConnectors == nil || len(oldConnectors.Connectors) == 0 {
-		return newConnectors
-	}
-	if newConnectors == nil || len(newConnectors.Connectors) == 0 {
-		return oldConnectors
-	}
-
-	connectorsByName := make(map[string]SelfManagedConnector)
-	for _, c := range oldConnectors.Connectors {
-		connectorsByName[c.Name] = c
-	}
-	for _, c := range newConnectors.Connectors {
-		connectorsByName[c.Name] = c // new takes precedence
-	}
-
-	merged := make([]SelfManagedConnector, 0, len(connectorsByName))
-	for _, c := range connectorsByName {
-		merged = append(merged, c)
-	}
-
-	return &SelfManagedConnectors{Connectors: merged}
-}
-
-type DiscoveredCluster struct {
-	Name                        string                      `json:"name"`
-	Arn                         string                      `json:"arn"`
-	Region                      string                      `json:"region"`
-	ClusterMetrics              ClusterMetrics              `json:"metrics"`
-	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
-	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
-	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
-}
-
-type AWSClientInformation struct {
-	MskClusterConfig     kafkatypes.Cluster                     `json:"msk_cluster_config"`
-	ClientVpcConnections []kafkatypes.ClientVpcConnection       `json:"client_vpc_connections"`
-	ClusterOperations    []kafkatypes.ClusterOperationV2Summary `json:"cluster_operations"`
-	Nodes                []kafkatypes.NodeInfo                  `json:"nodes"`
-	ScramSecrets         []string                               `json:"ScramSecrets"`
-	BootstrapBrokers     kafka.GetBootstrapBrokersOutput        `json:"bootstrap_brokers"`
-	Policy               kafka.GetClusterPolicyOutput           `json:"policy"`
-	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatible_versions"`
-	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
-	Connectors           []ConnectorSummary                     `json:"connectors"`
-}
-
-// Returns only one bootstrap broker per authentication type.
-func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
-	var brokerList string
-	var visibility string
-	slog.Info("🔍 parsing broker addresses", "authType", authType)
-
-	switch authType {
-	case AuthTypeIAM:
-		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslIam)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslIam)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("no SASL/IAM brokers found in the cluster")
-		}
-	case AuthTypeSASLSCRAM:
-		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicSaslScram)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringSaslScram)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("no SASL/SCRAM brokers found in the cluster")
-		}
-	case AuthTypeUnauthenticatedTLS:
-		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
-		visibility = "PRIVATE"
-		if brokerList == "" {
-			return nil, fmt.Errorf("no unauthenticated (TLS encryption) brokers found in the cluster")
-		}
-	case AuthTypeUnauthenticatedPlaintext:
-		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerString)
-		visibility = "PRIVATE"
-		if brokerList == "" {
-			return nil, fmt.Errorf("no unauthenticated (plaintext) brokers found in the cluster")
-		}
-	case AuthTypeTLS:
-		brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringPublicTls)
-		visibility = "PUBLIC"
-		if brokerList == "" {
-			brokerList = aws.ToString(c.BootstrapBrokers.BootstrapBrokerStringTls)
-			visibility = "PRIVATE"
-		}
-		if brokerList == "" {
-			return nil, fmt.Errorf("no TLS brokers found in the cluster")
-		}
-	default:
-		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
-	}
-
-	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
-
-	// Split by comma and trim whitespace from each address, filter out empty strings
-	rawAddresses := strings.Split(brokerList, ",")
-	addresses := make([]string, 0, len(rawAddresses))
-	for _, addr := range rawAddresses {
-		trimmedAddr := strings.TrimSpace(addr)
-		if trimmedAddr != "" {
-			addresses = append(addresses, trimmedAddr)
-		}
-	}
-	return addresses, nil
-}
-
-type ClusterNetworking struct {
-	VpcId          string       `json:"vpc_id"`
-	SubnetIds      []string     `json:"subnet_ids"`
-	SecurityGroups []string     `json:"security_groups"`
-	Subnets        []SubnetInfo `json:"subnets"`
-}
-
-type SubnetInfo struct {
-	SubnetMskBrokerId int    `json:"subnet_msk_broker_id"`
-	SubnetId          string `json:"subnet_id"`
-	AvailabilityZone  string `json:"availability_zone"`
-	PrivateIpAddress  string `json:"private_ip_address"`
-	CidrBlock         string `json:"cidr_block"`
-}
-
-type ConnectorSummary struct {
-	ConnectorArn                     string                                                        `json:"connector_arn"`
-	ConnectorName                    string                                                        `json:"connector_name"`
-	ConnectorState                   string                                                        `json:"connector_state"`
-	CreationTime                     string                                                        `json:"creation_time"`
-	KafkaCluster                     kafkaconnecttypes.ApacheKafkaClusterDescription               `json:"kafka_cluster"`
-	KafkaClusterClientAuthentication kafkaconnecttypes.KafkaClusterClientAuthenticationDescription `json:"kafka_cluster_client_authentication"`
-	Capacity                         kafkaconnecttypes.CapacityDescription                         `json:"capacity"`
-	Plugins                          []kafkaconnecttypes.PluginDescription                         `json:"plugins"`
-	ConnectorConfiguration           map[string]string                                             `json:"connector_configuration"`
-}
-
-type SelfManagedConnector struct {
-	Name        string         `json:"name"`
-	Config      map[string]any `json:"config"`
-	State       string         `json:"state,omitempty"`
-	ConnectHost string         `json:"connect_host,omitempty"`
-}
-
-type SelfManagedConnectors struct {
-	Connectors []SelfManagedConnector `json:"connectors"`
-}
-
-type KafkaAdminClientInformation struct {
-	ClusterID             string                 `json:"cluster_id"`
-	Topics                *Topics                `json:"topics"`
-	Acls                  []Acls                 `json:"acls"`
-	SelfManagedConnectors *SelfManagedConnectors `json:"self_managed_connectors"`
-}
-
-func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
-	return CalculateTopicSummaryFromDetails(c.Topics.Details)
-}
-
-func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
-	c.Topics = &Topics{
-		Details: topicDetails,
-		Summary: CalculateTopicSummaryFromDetails(topicDetails),
-	}
-}
-
-type DiscoveredClient struct {
-	CompositeKey string    `json:"composite_key"`
-	ClientId     string    `json:"client_id"`
-	Role         string    `json:"role"`
-	Topic        string    `json:"topic"`
-	Auth         string    `json:"auth"`
-	Principal    string    `json:"principal"`
-	Timestamp    time.Time `json:"timestamp"`
-}
-
-// ----- metrics -----
-type BrokerType string
-
-const (
-	BrokerTypeExpress  BrokerType = "express"
-	BrokerTypeStandard BrokerType = "standard"
-)
-
-type ClusterMetrics struct {
-	MetricMetadata MetricMetadata                     `json:"metadata"`
-	Results        []cloudwatchtypes.MetricDataResult `json:"results"`
-	QueryInfo      []MetricQueryInfo                  `json:"query_info"`
-}
-
-type MetricMetadata struct {
-	ClusterType          string    `json:"cluster_type"`
-	NumberOfBrokerNodes  int       `json:"number_of_broker_nodes"`
-	KafkaVersion         string    `json:"kafka_version"`
-	BrokerAzDistribution string    `json:"broker_az_distribution"`
-	EnhancedMonitoring   string    `json:"enhanced_monitoring"`
-	StartDate            time.Time `json:"start_date"`
-	EndDate              time.Time `json:"end_date"`
-	Period               int32     `json:"period"`
-
-	FollowerFetching bool       `json:"follower_fetching"`
-	InstanceType     string     `json:"instance_type"`
-	TieredStorage    bool       `json:"tiered_storage"`
-	BrokerType       BrokerType `json:"broker_type"`
-}
-
-type CloudWatchTimeWindow struct {
-	StartTime time.Time
-	EndTime   time.Time
-	Period    int32
-}
-
-type MetricQueryInfo struct {
-	MetricName        string `json:"metric_name"`
-	Namespace         string `json:"namespace"`
-	Dimensions        string `json:"dimensions"`
-	Statistic         string `json:"statistic"`
-	Period            int32  `json:"period"`
-	SearchExpression  string `json:"search_expression"`
-	MathExpression    string `json:"math_expression"`
-	AWSCLICommand     string `json:"aws_cli_command"`
-	ConsoleSourceJSON string `json:"console_source_json"`
-	AggregationNote   string `json:"aggregation_note"`
-}
-
-// ----- costs -----
-type CostQueryTimePeriod struct {
-	Start string `json:"start"`
-	End   string `json:"end"`
-}
-
-type CostQueryInfo struct {
-	TimePeriod      CostQueryTimePeriod `json:"time_period"`
-	Granularity     string              `json:"granularity"`
-	Services        []string            `json:"services"`
-	Regions         []string            `json:"regions"`
-	GroupBy         []string            `json:"group_by"`
-	Metrics         []string            `json:"metrics"`
-	Tags            map[string][]string `json:"tags,omitempty"`
-	AWSCLICommand   string              `json:"aws_cli_command"`
-	ConsoleURL      string              `json:"console_url"`
-	AggregationNote string              `json:"aggregation_note"`
-}
-
-type CostInformation struct {
-	CostMetadata CostMetadata                     `json:"metadata"`
-	CostResults  []costexplorertypes.ResultByTime `json:"results"`
-	QueryInfo    CostQueryInfo                    `json:"query_info"`
-}
-
-type CostMetadata struct {
-	StartDate   time.Time           `json:"start_date"`
-	EndDate     time.Time           `json:"end_date"`
-	Granularity string              `json:"granularity"`
-	Tags        map[string][]string `json:"tags"`
-	Services    []string            `json:"services"`
-}
-
-type KcpBuildInfo struct {
-	Version string `json:"version"`
-	Commit  string `json:"commit"`
-	Date    string `json:"date"`
-}
-
-type SchemaRegistryInformation struct {
-	Type                 string                       `json:"type"`
-	URL                  string                       `json:"url"`
-	DefaultCompatibility schemaregistry.Compatibility `json:"default_compatibility"`
-	Contexts             []string                     `json:"contexts"`
-	Subjects             []Subject                    `json:"subjects"`
-}
-
-type Subject struct {
-	Name          string                          `json:"name"`
-	SchemaType    string                          `json:"schema_type"`
-	Compatibility string                          `json:"compatibility,omitempty"`
-	Versions      []schemaregistry.SchemaMetadata `json:"versions"`
-	Latest        schemaregistry.SchemaMetadata   `json:"latest_schema"`
-}
-
-// SchemaRegistriesState holds schema registries organized by type
-type SchemaRegistriesState struct {
-	ConfluentSchemaRegistry []SchemaRegistryInformation     `json:"confluent_schema_registry,omitempty"`
-	AWSGlue                 []GlueSchemaRegistryInformation `json:"aws_glue,omitempty"`
-}
-
-// UpsertConfluentSchemaRegistry inserts or updates a Confluent SR entry, matched by URL
-func (s *SchemaRegistriesState) UpsertConfluentSchemaRegistry(sr SchemaRegistryInformation) {
-	for i, existing := range s.ConfluentSchemaRegistry {
-		if existing.URL == sr.URL {
-			s.ConfluentSchemaRegistry[i] = sr
-			return
-		}
-	}
-	s.ConfluentSchemaRegistry = append(s.ConfluentSchemaRegistry, sr)
-}
-
-// UpsertGlueSchemaRegistry inserts or updates a Glue SR entry, matched by RegistryName+Region
-func (s *SchemaRegistriesState) UpsertGlueSchemaRegistry(gr GlueSchemaRegistryInformation) {
-	for i, existing := range s.AWSGlue {
-		if existing.RegistryName == gr.RegistryName && existing.Region == gr.Region {
-			s.AWSGlue[i] = gr
-			return
-		}
-	}
-	s.AWSGlue = append(s.AWSGlue, gr)
-}
-
-type GlueSchemaRegistryInformation struct {
-	RegistryName string       `json:"registry_name"`
-	RegistryArn  string       `json:"registry_arn"`
-	Region       string       `json:"region"`
-	Schemas      []GlueSchema `json:"schemas"`
-}
-
-type GlueSchema struct {
-	SchemaName string              `json:"schema_name"`
-	SchemaArn  string              `json:"schema_arn"`
-	DataFormat string              `json:"data_format"`
-	Versions   []GlueSchemaVersion `json:"versions"`
-	Latest     *GlueSchemaVersion  `json:"latest_version"`
-}
-
-type GlueSchemaVersion struct {
-	SchemaDefinition string    `json:"schema_definition"`
-	DataFormat       string    `json:"data_format"`
-	VersionNumber    int64     `json:"version_number"`
-	Status           string    `json:"status"`
-	CreatedDate      time.Time `json:"created_date"`
-}
-
-// ProcessedState represents the transformed output data structure
-// This is what comes OUT of the frontend/API after processing the raw State data
-// Same structure as State but with costs and metrics flattened for easier frontend consumption
-type ProcessedState struct {
-	Regions          []ProcessedRegion      `json:"regions"`
-	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
-	Timestamp        time.Time              `json:"timestamp"`
-}
-
-// ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters
-type ProcessedRegion struct {
-	Name           string                                      `json:"name"`
-	Configurations []kafka.DescribeConfigurationRevisionOutput `json:"configurations"`
-	Costs          ProcessedRegionCosts                        `json:"costs"`    // Flattened from raw AWS Cost Explorer data
-	Clusters       []ProcessedCluster                          `json:"clusters"` // Simplified from full DiscoveredCluster data
-}
-
-type ProcessedRegionCosts struct {
-	Region     string              `json:"region"`
-	Metadata   CostMetadata        `json:"metadata"`
-	Results    []ProcessedCost     `json:"results"`
-	Aggregates ProcessedAggregates `json:"aggregates"`
-	QueryInfo  CostQueryInfo       `json:"query_info"`
-}
-
-// AWS service name constants — single source of truth for Cost Explorer service filters.
-// Frontend constants (cmd/ui/frontend/src/constants/index.ts AWS_SERVICES) should mirror these.
-const (
-	ServiceAWSCertificateManager = "AWS Certificate Manager"
-	ServiceMSK                   = "Amazon Managed Streaming for Apache Kafka"
-	ServiceEC2Other              = "EC2 - Other"
-	ServiceELB                   = "Amazon Elastic Load Balancing"
-	ServiceVPC                   = "Amazon Virtual Private Cloud"
-)
-
-// newServiceCostAggregates creates a ServiceCostAggregates with all maps initialized
-func newServiceCostAggregates() ServiceCostAggregates {
-	return ServiceCostAggregates{
-		UnblendedCost:    make(map[string]any),
-		BlendedCost:      make(map[string]any),
-		AmortizedCost:    make(map[string]any),
-		NetAmortizedCost: make(map[string]any),
-		NetUnblendedCost: make(map[string]any),
-	}
-}
-
-// ForService returns a pointer to the ServiceCostAggregates for the given service name,
-// or nil if the service is not recognized.
-func (a *ProcessedAggregates) ForService(name string) *ServiceCostAggregates {
-	switch name {
-	case ServiceAWSCertificateManager:
-		return &a.AWSCertificateManager
-	case ServiceMSK:
-		return &a.AmazonManagedStreamingForApacheKafka
-	case ServiceEC2Other:
-		return &a.EC2Other
-	case ServiceELB:
-		return &a.ElasticLoadBalancing
-	case ServiceVPC:
-		return &a.AmazonVPC
-	}
-	return nil
-}
-
-// ProcessedAggregates represents the specific services we query
-type ProcessedAggregates struct {
-	AWSCertificateManager                ServiceCostAggregates `json:"AWS Certificate Manager"`
-	AmazonManagedStreamingForApacheKafka ServiceCostAggregates `json:"Amazon Managed Streaming for Apache Kafka"`
-	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
-	ElasticLoadBalancing                 ServiceCostAggregates `json:"Amazon Elastic Load Balancing"`
-	AmazonVPC                            ServiceCostAggregates `json:"Amazon Virtual Private Cloud"`
-}
-
-// NewProcessedAggregates creates a new ProcessedAggregates with all maps initialized
-func NewProcessedAggregates() ProcessedAggregates {
-	return ProcessedAggregates{
-		AWSCertificateManager:                newServiceCostAggregates(),
-		AmazonManagedStreamingForApacheKafka: newServiceCostAggregates(),
-		EC2Other:                             newServiceCostAggregates(),
-		ElasticLoadBalancing:                 newServiceCostAggregates(),
-		AmazonVPC:                            newServiceCostAggregates(),
-	}
-}
-
-type ProcessedCost struct {
-	Start     string                 `json:"start"`
-	End       string                 `json:"end"`
-	Service   string                 `json:"service"`
-	UsageType string                 `json:"usage_type"`
-	Values    ProcessedCostBreakdown `json:"values"`
-}
-
-type ProcessedCostBreakdown struct {
-	UnblendedCost    float64 `json:"unblended_cost"`
-	BlendedCost      float64 `json:"blended_cost"`
-	AmortizedCost    float64 `json:"amortized_cost"`
-	NetAmortizedCost float64 `json:"net_amortized_cost"`
-	NetUnblendedCost float64 `json:"net_unblended_cost"`
-}
-
-// ProcessedCluster contains the complete cluster data with flattened metrics
-// This is the full cluster information with processed metrics, unlike the simplified version in types.go
-type ProcessedCluster struct {
-	Name                        string                      `json:"name"`
-	Arn                         string                      `json:"arn"`
-	Region                      string                      `json:"region"`
-	ClusterMetrics              ProcessedClusterMetrics     `json:"metrics"` // Flattened from raw CloudWatch metrics
-	AWSClientInformation        AWSClientInformation        `json:"aws_client_information"`
-	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
-	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
-}
-
-type ProcessedClusterMetrics struct {
-	Region     string                     `json:"region"`
-	ClusterArn string                     `json:"cluster_arn"`
-	Metadata   MetricMetadata             `json:"metadata"`
-	Metrics    []ProcessedMetric          `json:"results"`
-	Aggregates map[string]MetricAggregate `json:"aggregates"`
-	QueryInfo  []MetricQueryInfo          `json:"query_info"`
-}
-
-type ProcessedMetric struct {
-	Start string   `json:"start"`
-	End   string   `json:"end"`
-	Label string   `json:"label"`
-	Value *float64 `json:"value"`
-}
-
-type MetricAggregate struct {
-	Average *float64 `json:"avg"`
-	Maximum *float64 `json:"max"`
-	Minimum *float64 `json:"min"`
-}
-
-type CostAggregate struct {
-	Sum     *float64 `json:"sum"`
-	Average *float64 `json:"avg"`
-	Maximum *float64 `json:"max"`
-	Minimum *float64 `json:"min"`
-}
-
-// ServiceCostAggregates represents cost aggregates for a single service
-// Uses explicit fields for each metric type instead of a map
-type ServiceCostAggregates struct {
-	UnblendedCost    map[string]any `json:"unblended_cost"`
-	BlendedCost      map[string]any `json:"blended_cost"`
-	AmortizedCost    map[string]any `json:"amortized_cost"`
-	NetAmortizedCost map[string]any `json:"net_amortized_cost"`
-	NetUnblendedCost map[string]any `json:"net_unblended_cost"`
+	return nil, fmt.Errorf("OSK cluster with ID '%s' not found in state file", id)
 }

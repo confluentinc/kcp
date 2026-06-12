@@ -1,54 +1,51 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
-import type { Cluster } from '@/types'
+import { ChevronRight } from 'lucide-react'
 import type { ReactNode } from 'react'
 
 interface ClusterAccordionProps {
-  cluster: Cluster
+  clusterName: string
   isExpanded: boolean
   onToggle: () => void
   children: ReactNode
 }
 
 export const ClusterAccordion = ({
-  cluster,
+  clusterName,
   isExpanded,
   onToggle,
   children,
 }: ClusterAccordionProps) => {
   return (
     <div
-      className={`bg-white dark:bg-card rounded-lg border overflow-hidden transition-all ${
+      className={`bg-card rounded-lg border overflow-hidden transition-all ${
         isExpanded
-          ? 'border-accent shadow-md dark:border-accent'
-          : 'border-gray-200 dark:border-border'
+          ? 'border-accent/50 shadow-md border-l-[3px] border-l-accent'
+          : 'border-border'
       }`}
     >
       {/* Cluster Header Row - Clickable */}
       <div
-        className={`px-6 py-4 border-b border-gray-200 dark:border-border cursor-pointer transition-colors ${
-          isExpanded ? 'bg-accent/5 dark:bg-accent/10' : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+        className={`px-6 py-4 border-b border-border cursor-pointer transition-colors duration-150 ${
+          isExpanded ? 'bg-accent/5' : 'hover:bg-secondary'
         }`}
         onClick={onToggle}
       >
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-6">
-            <div className="flex items-center space-x-3">
-              {isExpanded ? (
-                <ChevronDown className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-              ) : (
-                <ChevronRight className="h-4 w-4 text-gray-400 dark:text-gray-500" />
-              )}
-              <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">
-                {cluster.name}
-              </h3>
-            </div>
+          <div className="flex items-center space-x-3">
+            <ChevronRight
+              className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${
+                isExpanded ? 'rotate-90' : ''
+              }`}
+            />
+            <h3 className="text-lg font-medium text-foreground">
+              {clusterName}
+            </h3>
           </div>
         </div>
       </div>
 
       {/* Content - Only shown when expanded */}
       {isExpanded && (
-        <div className="border-t border-gray-200 dark:border-border bg-gray-50 dark:bg-card overflow-visible pt-4">
+        <div className="border-t border-border bg-secondary/30 overflow-visible pt-4">
           {children}
         </div>
       )}

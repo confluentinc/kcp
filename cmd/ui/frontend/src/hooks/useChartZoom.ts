@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useRef, useEffect } from 'react'
 import type { ChartDataPoint } from '@/components/common/DateRangeChart'
 
 /**
@@ -69,6 +69,10 @@ export const useChartZoom = ({
 
   const [state, setState] = useState<ZoomState>(initialState)
 
+  // Refs for requestAnimationFrame throttling of mouse move
+  const rafRef = useRef<number | null>(null)
+  const pendingLabelRef = useRef<string | number | null>(null)
+
   // Helper function to get Y-axis domain for numeric data
   const getAxisYDomain = useCallback(
     (from: number, to: number, ref: string, offset: number) => {
@@ -114,17 +118,35 @@ export const useChartZoom = ({
     }
   }, [])
 
-  // Handle mouse move event
+  // Handle mouse move event — throttled to once per animation frame
   const handleMouseMove = useCallback((e: RechartsMouseEvent) => {
-    setState((prevState) => {
-      if (prevState.refAreaLeft && e && e.activeLabel !== undefined) {
-        return {
-          ...prevState,
-          refAreaRight: e.activeLabel,
-        }
+    if (e && e.activeLabel !== undefined) {
+      pendingLabelRef.current = e.activeLabel as string | number
+
+      if (rafRef.current === null) {
+        rafRef.current = requestAnimationFrame(() => {
+          rafRef.current = null
+          const label = pendingLabelRef.current
+          if (label === null) return
+
+          setState((prevState) => {
+            if (prevState.refAreaLeft) {
+              return { ...prevState, refAreaRight: label }
+            }
+            return prevState
+          })
+        })
       }
-      return prevState
-    })
+    }
+  }, [])
+
+  // Cancel pending animation frame on unmount
+  useEffect(() => {
+    return () => {
+      if (rafRef.current !== null) {
+        cancelAnimationFrame(rafRef.current)
+      }
+    }
   }, [])
 
   // Zoom function

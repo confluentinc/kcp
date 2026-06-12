@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -14,8 +14,9 @@ import (
 )
 
 var (
-	migrationStateFile string
-	skipValidate       bool
+	migrationStateFile      string
+	skipValidate            bool
+	pauseConsumerOffsetSync bool
 
 	k8sNamespace   string
 	initialCrName  string
@@ -62,7 +63,34 @@ This command validates the cluster link and mirror topics on the destination clu
 fetches the current gateway CR from Kubernetes, validates consistency across the initial,
 fenced, and switchover gateway CRs, and writes the migration configuration to the state file.
 
-The state file can then be used by 'kcp migration execute' to run the migration.`,
+The state file can then be used by 'kcp migration execute' to run the migration.
+
+All flags can be provided via environment variables using uppercase names with underscores
+(e.g. ` + "`--cluster-api-key`" + ` → ` + "`CLUSTER_API_KEY`" + `, ` + "`--source-bootstrap`" + ` → ` + "`SOURCE_BOOTSTRAP`" + `).`,
+		Example: `  # MSK source with IAM auth
+  kcp migration init \
+      --k8s-namespace my-namespace \
+      --initial-cr-name my-gateway \
+      --source-bootstrap b1.my-cluster.kafka.us-east-1.amazonaws.com:9098 \
+      --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+      --cluster-id lkc-abc123 \
+      --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+      --cluster-link-name my-cluster-link \
+      --cluster-api-key ABCDEFGHIJKLMNOP \
+      --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+      --fenced-cr-yaml gateway-fenced.yaml \
+      --switchover-cr-yaml gateway-switchover.yaml \
+      --use-sasl-iam
+
+  # SASL/SCRAM source
+  kcp migration init \
+      --k8s-namespace my-namespace --initial-cr-name my-gateway \
+      --source-bootstrap broker1:9096 --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
+      --cluster-id lkc-abc123 --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
+      --cluster-link-name my-cluster-link \
+      --cluster-api-key ABCDEFGHIJKLMNOP --cluster-api-secret xxxx \
+      --fenced-cr-yaml gateway-fenced.yaml --switchover-cr-yaml gateway-switchover.yaml \
+      --use-sasl-scram --sasl-scram-username kafkauser --sasl-scram-password kafkapass`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationInit,
@@ -92,6 +120,7 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
 	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
+	optionalFlags.BoolVar(&pauseConsumerOffsetSync, "pause-consumer-offset-sync", false, "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.")
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
 	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
@@ -170,6 +199,17 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
+	// --pause-consumer-offset-sync requires the init-time snapshot captured by
+	// the validation path, so it cannot be combined with --skip-validate.
+	// Without the snapshot, the restore bookend has nothing to diff against
+	// and would silently leave the cluster link disabled after switchover.
+	migrationInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
+
+	// If any credential in a pair/trio is set, the whole set must be set.
+	migrationInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
+	migrationInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
+	migrationInitCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
+
 	return migrationInitCmd
 }
 
@@ -199,16 +239,16 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
 	// ===== PHASE 1: Load or create state =====
-	var migrationState *types.MigrationState
+	var migrationState *migration.MigrationState
 	if _, err := os.Stat(migrationStateFile); err == nil {
 		// File exists, load it
-		migrationState, err = types.NewMigrationStateFromFile(migrationStateFile)
+		migrationState, err = migration.NewMigrationStateFromFile(migrationStateFile)
 		if err != nil {
 			return fmt.Errorf("failed to load migration state: %w", err)
 		}
 	} else {
 		// File doesn't exist, create new state
-		migrationState = types.NewMigrationState()
+		migrationState = migration.NewMigrationState()
 	}
 
 	// ===== PHASE 2: Read YAML files =====
@@ -233,20 +273,21 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
-	config := &types.MigrationConfig{
-		MigrationId:         fmt.Sprintf("migration-%s", uuid.New().String()),
-		SourceBootstrap:     sourceBootstrap,
-		ClusterBootstrap:    clusterBootstrap,
-		K8sNamespace:        k8sNamespace,
-		InitialCrName:       initialCrName,
-		KubeConfigPath:      kubeConfigPathResolved,
-		ClusterId:           clusterId,
-		ClusterRestEndpoint: clusterRestEndpoint,
-		ClusterLinkName:     clusterLinkName,
-		Topics:              topics,
-		FencedCrYAML:        fencedCrYAML,
-		SwitchoverCrYAML:    switchoverCrYAML,
-		CurrentState:        types.StateUninitialized,
+	config := &migration.MigrationConfig{
+		MigrationId:             fmt.Sprintf("migration-%s", uuid.New().String()),
+		SourceBootstrap:         sourceBootstrap,
+		ClusterBootstrap:        clusterBootstrap,
+		K8sNamespace:            k8sNamespace,
+		InitialCrName:           initialCrName,
+		KubeConfigPath:          kubeConfigPathResolved,
+		ClusterId:               clusterId,
+		ClusterRestEndpoint:     clusterRestEndpoint,
+		ClusterLinkName:         clusterLinkName,
+		Topics:                  topics,
+		FencedCrYAML:            fencedCrYAML,
+		SwitchoverCrYAML:        switchoverCrYAML,
+		CurrentState:            migration.StateUninitialized,
+		PauseConsumerOffsetSync: pauseConsumerOffsetSync,
 	}
 
 	// ===== PHASE 3: Early write - upsert migration and write to file =====
@@ -273,7 +314,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationInitializerOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationInitializerOpts {
+func parseMigrationInitializerOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationInitializerOpts {
 	return MigrationInitializerOpts{
 		MigrationStateFile:    migrationStateFile,
 		MigrationState:        migrationState,

@@ -2,7 +2,9 @@ package execute
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -23,8 +25,9 @@ var (
 	useUnauthenticatedTLS       bool
 	useUnauthenticatedPlaintext bool
 
-	saslScramUsername string
-	saslScramPassword string
+	saslScramUsername  string
+	saslScramPassword  string
+	saslScramMechanism string
 
 	saslPlainUsername string
 	saslPlainPassword string
@@ -33,6 +36,7 @@ var (
 	tlsClientCert         string
 	tlsClientKey          string
 	insecureSkipTLSVerify bool
+	rolloutTimeout        time.Duration
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -45,7 +49,25 @@ This command resumes a migration from its current state, progressing through:
 lag checking, gateway fencing, topic promotion, and gateway switchover.
 
 The migration must first be created with 'kcp migration init'. If execution is
-interrupted, re-running this command will resume from the last completed step.`,
+interrupted, re-running this command will resume from the last completed step.
+
+Credentials (cluster-api-key, cluster-api-secret) are intentionally not stored in
+the migration state file and must be provided each time.`,
+		Example: `  # MSK source with IAM auth
+  kcp migration execute \
+      --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+      --lag-threshold 0 \
+      --cluster-api-key ABCDEFGHIJKLMNOP \
+      --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+      --use-sasl-iam --aws-region us-east-1
+
+  # OSK source with TLS
+  kcp migration execute \
+      --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+      --lag-threshold 0 \
+      --cluster-api-key ABCDEFGHIJKLMNOP \
+      --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+      --use-tls --tls-ca-cert ca.pem --tls-client-cert client.pem --tls-client-key client.key`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationExecute,
@@ -67,6 +89,7 @@ interrupted, re-running this command will resume from the last completed step.`,
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
+	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -87,6 +110,7 @@ interrupted, re-running this command will resume from the last completed step.`,
 	saslScramFlags.SortFlags = false
 	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
+	saslScramFlags.StringVar(&saslScramMechanism, "sasl-scram-mechanism", "SHA512", "SASL/SCRAM mechanism (SHA256 or SHA512). Defaults to SHA512 for MSK compatibility.")
 	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
@@ -139,6 +163,11 @@ interrupted, re-running this command will resume from the last completed step.`,
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
+	// If any credential in a pair/trio is set, the whole set must be set.
+	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
+	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
+	migrationExecuteCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
+
 	return migrationExecuteCmd
 }
 
@@ -154,6 +183,12 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
+		switch saslScramMechanism {
+		case "SHA256", "SHA512":
+			// valid
+		default:
+			return fmt.Errorf("invalid --sasl-scram-mechanism %q: must be SHA256 or SHA512", saslScramMechanism)
+		}
 	}
 
 	if useSaslPlain {
@@ -172,7 +207,7 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 
 func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// Load migration state (following established pattern)
-	migrationState, err := types.NewMigrationStateFromFile(migrationStateFile)
+	migrationState, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init' to create a new migration first", migrationStateFile, err)
 	}
@@ -212,7 +247,7 @@ func resolveAuthType() types.AuthType {
 	}
 }
 
-func parseMigrationExecutorOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationExecutorOpts {
+func parseMigrationExecutorOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
 		MigrationStateFile:    migrationStateFile,
 		MigrationState:        migrationState,
@@ -226,11 +261,13 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		AuthType:              resolveAuthType(),
 		SaslScramUsername:     saslScramUsername,
 		SaslScramPassword:     saslScramPassword,
+		SaslScramMechanism:    saslScramMechanism,
 		SaslPlainUsername:     saslPlainUsername,
 		SaslPlainPassword:     saslPlainPassword,
 		TlsCaCert:             tlsCaCert,
 		TlsClientCert:         tlsClientCert,
 		TlsClientKey:          tlsClientKey,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
+		RolloutTimeout:        rolloutTimeout,
 	}
 }

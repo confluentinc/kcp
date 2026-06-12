@@ -2,7 +2,10 @@ package api
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -18,10 +21,12 @@ type ReportService interface {
 	ProcessState(state types.State) types.ProcessedState
 	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
 	FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type UICmdOpts struct {
-	Port string
+	Port      string
+	StateFile string
 }
 
 type UI struct {
@@ -35,8 +40,8 @@ type UI struct {
 	statesMutex sync.RWMutex            // Protects concurrent access to states map
 }
 
-func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) *UI {
-	return &UI{
+func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGenerator, migrationInfraHCLService hcl.MigrationInfraGenerator, migrationScriptsHCLService hcl.MigrationScriptsGenerator, opts UICmdOpts) (*UI, error) {
+	ui := &UI{
 		reportService:              reportService,
 		targetInfraHCLService:      targetInfraHCLService,
 		migrationInfraHCLService:   migrationInfraHCLService,
@@ -45,6 +50,29 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 		port:   opts.Port,
 		states: make(map[string]*types.State),
 	}
+
+	// Pre-load state file if provided
+	if opts.StateFile != "" {
+		state, err := types.NewStateFromFile(opts.StateFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to load state file %q: %w", opts.StateFile, err)
+		}
+		ui.states["default"] = state
+		slog.Info("Pre-loaded state file", "path", opts.StateFile)
+
+		hasSources := (state.MSKSources != nil && len(state.MSKSources.Regions) > 0) ||
+			(state.OSKSources != nil && len(state.OSKSources.Clusters) > 0)
+		hasSchemaRegistries := state.SchemaRegistries != nil &&
+			(len(state.SchemaRegistries.ConfluentSchemaRegistry) > 0 || len(state.SchemaRegistries.AWSGlue) > 0)
+
+		if !hasSources && hasSchemaRegistries {
+			slog.Warn("No cluster sources found — run kcp discover (MSK) or kcp scan clusters (OSK) to populate", "path", opts.StateFile)
+		} else if !hasSources && !hasSchemaRegistries {
+			return nil, fmt.Errorf("state file %q contains no sources or schema registries — run kcp discover (MSK) or kcp scan clusters (OSK) to populate it", opts.StateFile)
+		}
+	}
+
+	return ui, nil
 }
 
 // getStateBySession extracts the sessionId from the request and retrieves the corresponding state
@@ -81,7 +109,11 @@ func (ui *UI) Run() error {
 		})
 	})
 
+	// Get pre-loaded state endpoint
+	e.GET("/state", ui.handleGetState)
+
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
+	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -102,14 +134,53 @@ func (ui *UI) Run() error {
 	return nil
 }
 
+func parseDateRange(c echo.Context) (*time.Time, *time.Time, error) {
+	var startTime, endTime *time.Time
+	if s := c.QueryParam("startDate"); s != "" {
+		parsed, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid start date format: must be RFC3339 (e.g., 2025-09-01T00:00:00Z)")
+		}
+		startTime = &parsed
+	}
+	if s := c.QueryParam("endDate"); s != "" {
+		parsed, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid end date format: must be RFC3339 (e.g., 2025-09-27T23:59:59Z)")
+		}
+		endTime = &parsed
+	}
+	return startTime, endTime, nil
+}
+
+func (ui *UI) handleGetState(c echo.Context) error {
+	sessionId := c.QueryParam("sessionId")
+	if sessionId == "" {
+		sessionId = "default"
+	}
+	ui.statesMutex.Lock()
+	state, exists := ui.states[sessionId]
+	// Fall back to "default" session if specific session not found
+	if !exists && sessionId != "default" {
+		state, exists = ui.states["default"]
+		if exists {
+			// Copy default state to the requesting session so subsequent
+			// requests (uploads, asset generation) work with this session ID
+			ui.states[sessionId] = state
+		}
+	}
+	ui.statesMutex.Unlock()
+	if !exists {
+		return c.JSON(http.StatusNotFound, map[string]any{"error": "No state loaded"})
+	}
+	processedState := ui.reportService.ProcessState(*state)
+	return c.JSON(http.StatusOK, processedState)
+}
+
 func (ui *UI) handleGetMetrics(c echo.Context) error {
 	region := c.Param("region")
 	cluster := c.Param("cluster")
 
-	startDate := c.QueryParam("startDate")
-	endDate := c.QueryParam("endDate")
-
-	// Get state by session ID
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -118,30 +189,14 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters if provided
-	var startTime, endTime *time.Time
-	if startDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid start date format",
-				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
-			})
-		} else {
-			startTime = &parsed
-		}
-	}
-	if endDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid end date format",
-				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
-			})
-		} else {
-			endTime = &parsed
-		}
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
 	}
 
-	// Process the full state to get structured data
 	processedState := ui.reportService.ProcessState(*state)
 
 	// Filter by region and cluster
@@ -156,13 +211,9 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 	return c.JSON(http.StatusOK, filteredMetrics)
 }
 
-func (ui *UI) handleGetCosts(c echo.Context) error {
-	region := c.Param("region")
+func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
+	clusterId := c.Param("clusterId")
 
-	startDate := c.QueryParam("startDate")
-	endDate := c.QueryParam("endDate")
-
-	// Get state by session ID
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -171,33 +222,61 @@ func (ui *UI) handleGetCosts(c echo.Context) error {
 		})
 	}
 
-	// Parse date filters if provided
-	var startTime, endTime *time.Time
-	if startDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, startDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid start date format",
-				"message": "Start date must be in RFC3339 format (e.g., 2025-09-01T00:00:00Z)",
-			})
-		} else {
-			startTime = &parsed
-		}
-	}
-	if endDate != "" {
-		if parsed, err := time.Parse(time.RFC3339, endDate); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]any{
-				"error":   "Invalid end date format",
-				"message": "End date must be in RFC3339 format (e.g., 2025-09-27T23:59:59Z)",
-			})
-		} else {
-			endTime = &parsed
-		}
+	if state.OSKSources == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error": "No OSK sources in state",
+		})
 	}
 
-	// Process the full state to get structured data
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
+	}
+
 	processedState := ui.reportService.ProcessState(*state)
 
-	// Filter costs by region
+	filteredMetrics, err := ui.reportService.FilterClusterMetrics(processedState, clusterId, "osk", startTime, endTime)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Cluster not found or no metrics available",
+			"message": err.Error(),
+		})
+	}
+
+	if filteredMetrics.Metrics == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "No metrics available for this cluster",
+			"message": "Run 'kcp scan clusters --source-type osk --metrics jolokia' or '--metrics prometheus' to collect metrics",
+		})
+	}
+
+	return c.JSON(http.StatusOK, filteredMetrics)
+}
+
+func (ui *UI) handleGetCosts(c echo.Context) error {
+	region := c.Param("region")
+
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": err.Error(),
+		})
+	}
+
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
+	}
+
+	processedState := ui.reportService.ProcessState(*state)
+
 	regionCosts, err := ui.reportService.FilterRegionCosts(processedState, region, startTime, endTime)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
@@ -218,20 +297,28 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 		})
 	}
 
-	var state types.State
-	if err := c.Bind(&state); err != nil {
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
-			"error":   "Invalid request body",
+			"error":   "Failed to read request body",
+			"message": err.Error(),
+		})
+	}
+
+	state, err := types.NewStateFromBytes(body)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "State file could not be loaded",
 			"message": err.Error(),
 		})
 	}
 
 	// Store state in map using session ID as key
 	ui.statesMutex.Lock()
-	ui.states[sessionId] = &state
+	ui.states[sessionId] = state
 	ui.statesMutex.Unlock()
 
-	processedState := ui.reportService.ProcessState(state)
+	processedState := ui.reportService.ProcessState(*state)
 
 	return c.JSON(http.StatusOK, processedState)
 }
@@ -246,14 +333,14 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	}
 
 	// Block external outbound cluster linking for dedicated clusters
-	if !req.HasPublicMskEndpoints && !req.UseJumpClusters && req.TargetClusterType == "dedicated" {
+	if !req.HasPublicEndpoints && !req.UseJumpClusters && req.TargetClusterType == "dedicated" {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Unsupported configuration",
 			"message": "External outbound cluster linking (Type 2/3) is not supported for dedicated clusters. Please use jump clusters (Type 4, 5, or 6) for private networking, or Type 1 (Cluster Link) if your MSK brokers are publicly accessible.",
 		})
 	}
 
-	if req.HasPublicMskEndpoints {
+	if req.HasPublicEndpoints {
 		if err := validateClusterLinkRequest(req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Invalid request body",
@@ -295,8 +382,8 @@ func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	if req.ClusterLinkName == "" {
 		missingFields = append(missingFields, "clusterLinkName")
 	}
-	if req.MskSaslScramBootstrapServers == "" {
-		missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	if req.SourceSaslScramBootstrapServers == "" {
+		missingFields = append(missingFields, "sourceSaslScramBootstrapServers")
 	}
 
 	if len(missingFields) > 0 {
@@ -325,15 +412,15 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	if req.JumpClusterSetupHostSubnetCidr == "" {
 		missingFields = append(missingFields, "jumpClusterSetupHostSubnetCidr")
 	}
-	if req.MskJumpClusterAuthType == "" {
-		missingFields = append(missingFields, "mskJumpClusterAuthType")
+	if req.JumpClusterAuthType == "" {
+		missingFields = append(missingFields, "jumpClusterAuthType")
 	}
 	if req.TargetClusterId == "" {
 		missingFields = append(missingFields, "targetClusterId")
 	}
 	// This might be missing depending on the MskJumpClusterAuthType.
 	// if req.MskSaslScramBootstrapServers == "" {
-	// 	missingFields = append(missingFields, "mskSaslScramBootstrapServers")
+	// 	missingFields = append(missingFields, "sourceSaslScramBootstrapServers")
 	// }
 	if req.TargetRestEndpoint == "" {
 		missingFields = append(missingFields, "targetRestEndpoint")
@@ -358,11 +445,11 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	if req.VpcId == "" {
 		missingFields = append(missingFields, "vpcId")
 	}
-	if req.MskRegion == "" {
-		missingFields = append(missingFields, "mskRegion")
+	if req.SourceRegion == "" {
+		missingFields = append(missingFields, "sourceRegion")
 	}
-	if req.MskClusterId == "" {
-		missingFields = append(missingFields, "mskClusterId")
+	if req.SourceClusterId == "" {
+		missingFields = append(missingFields, "sourceClusterId")
 	}
 	if req.ExtOutboundSecurityGroupId == "" {
 		missingFields = append(missingFields, "extOutboundSecurityGroupId")
@@ -386,13 +473,8 @@ func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
 		missingFields = append(missingFields, "clusterLinkName")
 	}
 
-	var conditionalErrors []string
-
 	if len(missingFields) > 0 {
 		return fmt.Errorf("missing required fields: %s", strings.Join(missingFields, ", "))
-	}
-	if len(conditionalErrors) > 0 {
-		return fmt.Errorf("invalid configuration: %s", strings.Join(conditionalErrors, "; "))
 	}
 
 	return nil
@@ -478,24 +560,27 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 		})
 	}
 
-	var targetCluster *types.DiscoveredCluster
-	for _, region := range state.Regions {
-		if region.Name != req.MskRegion {
-			continue
+	// Look up cluster ACLs based on source type
+	var allAcls []types.Acls
+	switch req.SourceType {
+	case "osk":
+		oskCluster, err := state.GetOSKClusterByID(req.ClusterId)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "Cluster not found",
+				"message": fmt.Sprintf("OSK cluster '%s' not found: %v", req.ClusterId, err),
+			})
 		}
-		for i := range region.Clusters {
-			if region.Clusters[i].Arn == req.MskClusterArn {
-				targetCluster = &region.Clusters[i]
-				break
-			}
+		allAcls = oskCluster.KafkaAdminClientInformation.Acls
+	default: // "msk" or empty (backward compat)
+		cluster, err := state.GetClusterByArn(req.ClusterId)
+		if err != nil {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "Cluster not found",
+				"message": fmt.Sprintf("MSK cluster '%s' not found: %v", req.ClusterId, err),
+			})
 		}
-	}
-
-	if targetCluster == nil {
-		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "Cluster not found",
-			"message": fmt.Sprintf("No cluster found with ARN %s in region %s", req.MskClusterArn, req.MskRegion),
-		})
+		allAcls = cluster.KafkaAdminClientInformation.Acls
 	}
 
 	selectedPrincipalsSet := make(map[string]bool)
@@ -504,7 +589,7 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 	}
 
 	aclsByPrincipal := make(map[string][]types.Acls)
-	for _, acl := range targetCluster.KafkaAdminClientInformation.Acls {
+	for _, acl := range allAcls {
 		if selectedPrincipalsSet[acl.Principal] {
 			aclsByPrincipal[acl.Principal] = append(aclsByPrincipal[acl.Principal], acl)
 		}
@@ -537,7 +622,27 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 		})
 	}
 
-	terraformFiles, err := ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(req)
+	// Default mode is mirror for back-compat with pre-mode-flag clients;
+	// the new wizard always sends Mode explicitly.
+	if req.Mode == "" {
+		req.Mode = types.MigrateTopicsModeMirror
+	}
+
+	// --mode new emits confluent_kafka_topic resources with partitions and
+	// configs preserved from source — those live in state, not in the wizard
+	// payload. Hydrate from state using the (source_type, cluster_id) the
+	// wizard sends as hidden fields and the selected_topics name list as the
+	// filter. Mirror mode doesn't need this (cluster link drives configs).
+	if req.Mode == types.MigrateTopicsModeNew {
+		if err := ui.hydrateTopicsFromState(c, &req); err != nil {
+			return c.JSON(http.StatusBadRequest, map[string]any{
+				"error":   "Failed to hydrate topic details for new mode",
+				"message": err.Error(),
+			})
+		}
+	}
+
+	project, err := ui.migrationScriptsHCLService.GenerateMirrorTopicsFiles(req)
 	if err != nil {
 		return c.JSON(http.StatusInternalServerError, map[string]any{
 			"error":   "Failed to generate Terraform files",
@@ -545,7 +650,91 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 		})
 	}
 
+	// Flatten the single-folder per-topic layout back into the legacy
+	// TerraformFiles shape so the existing wizard UI (which renders main.tf /
+	// providers.tf / variables.tf) keeps working. Per-topic file output is
+	// a CLI-only capability in this iteration — UI parity is deferred.
+	terraformFiles := flattenMigrateTopicsProject(project)
+
 	return c.JSON(http.StatusCreated, terraformFiles)
+}
+
+// hydrateTopicsFromState looks up the source cluster in the loaded state and
+// populates req.Topics with full TopicDetails (partitions, configurations) for
+// each name in req.SelectedTopics. New-mode HCL generation needs partition
+// counts and config maps that the wizard's name-only selection can't carry.
+func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequest) error {
+	if req.ClusterId == "" || req.SourceType == "" {
+		return fmt.Errorf("source_type and cluster_id are required for --mode new (wizard should send these as hidden fields)")
+	}
+
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return fmt.Errorf("session state lookup: %w", err)
+	}
+
+	var details []types.TopicDetails
+	switch req.SourceType {
+	case "msk":
+		cluster, err := state.GetClusterByArn(req.ClusterId)
+		if err != nil {
+			return fmt.Errorf("lookup MSK cluster %q: %w", req.ClusterId, err)
+		}
+		if cluster.KafkaAdminClientInformation.Topics != nil {
+			details = cluster.KafkaAdminClientInformation.Topics.Details
+		}
+	case "osk":
+		cluster, err := state.GetOSKClusterByID(req.ClusterId)
+		if err != nil {
+			return fmt.Errorf("lookup OSK cluster %q: %w", req.ClusterId, err)
+		}
+		if cluster.KafkaAdminClientInformation.Topics != nil {
+			details = cluster.KafkaAdminClientInformation.Topics.Details
+		}
+	default:
+		return fmt.Errorf("invalid source_type %q (must be 'msk' or 'osk')", req.SourceType)
+	}
+
+	byName := make(map[string]types.TopicDetails, len(details))
+	for _, d := range details {
+		byName[d.Name] = d
+	}
+
+	req.Topics = make([]types.TopicDetails, 0, len(req.SelectedTopics))
+	for _, name := range req.SelectedTopics {
+		d, ok := byName[name]
+		if !ok {
+			return fmt.Errorf("topic %q not found in state for cluster %q (state may be stale — re-run `kcp scan clusters`)", name, req.ClusterId)
+		}
+		req.Topics = append(req.Topics, d)
+	}
+	return nil
+}
+
+// flattenMigrateTopicsProject concatenates per-topic .tf files into a single
+// main.tf string so the legacy UI wizard contract stays intact while the CLI
+// uses the per-file layout.
+func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject) types.TerraformFiles {
+	out := types.TerraformFiles{}
+	if len(project.Folders) == 0 {
+		return out
+	}
+	folder := project.Folders[0]
+	out.ProvidersTf = folder.ProvidersTf
+	out.VariablesTf = folder.VariablesTf
+
+	names := make([]string, 0, len(folder.AdditionalFiles))
+	for n := range folder.AdditionalFiles {
+		names = append(names, n)
+	}
+	// Deterministic ordering so UI output is stable across requests.
+	sort.Strings(names)
+	var b strings.Builder
+	for _, n := range names {
+		b.WriteString(folder.AdditionalFiles[n])
+	}
+	out.MainTf = b.String()
+	return out
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {

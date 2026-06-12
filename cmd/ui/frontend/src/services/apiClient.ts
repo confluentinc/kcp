@@ -185,6 +185,31 @@ const metrics = {
       config
     )
   },
+
+  /**
+   * Get metrics for an OSK cluster
+   */
+  async getOSKMetrics(
+    clusterId: string,
+    sessionId: string,
+    params?: MetricsQueryParams,
+    config?: RequestConfig
+  ): Promise<MetricsApiResponse> {
+    const queryParams: Record<string, string | Date | undefined> = { sessionId }
+    if (params?.startDate) {
+      queryParams.startDate =
+        params.startDate instanceof Date ? params.startDate : new Date(params.startDate)
+    }
+    if (params?.endDate) {
+      queryParams.endDate =
+        params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
+    }
+    return get<MetricsApiResponse>(
+      `${API_ENDPOINTS.METRICS}/osk/${encodeURIComponent(clusterId)}`,
+      queryParams,
+      config
+    )
+  },
 }
 
 /**
@@ -236,6 +261,20 @@ const state = {
     const queryString = buildQueryString({ sessionId })
     const endpoint = queryString ? `${API_ENDPOINTS.UPLOAD_STATE}?${queryString}` : API_ENDPOINTS.UPLOAD_STATE
     return post<StateUploadResponse>(endpoint, data, config)
+  },
+
+  /**
+   * Get pre-loaded state (when kcp ui is started with --state-file)
+   */
+  async getState(
+    sessionId: string,
+    config?: RequestConfig
+  ): Promise<StateUploadResponse> {
+    return get<StateUploadResponse>(
+      API_ENDPOINTS.STATE,
+      { sessionId },
+      config
+    )
   },
 }
 

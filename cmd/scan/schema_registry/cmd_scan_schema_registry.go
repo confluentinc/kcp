@@ -6,6 +6,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	glue_service "github.com/confluentinc/kcp/internal/services/glue_schema_registry"
+	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/schema_registry"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -26,11 +27,42 @@ var (
 	region             string
 )
 
+func schemaRegistryIAMAnnotation() string {
+	return iampolicy.RenderSingle(
+		"Only required for `--sr-type glue`. AWS Glue scans use the AWS default credential chain.",
+		[]string{
+			"glue:ListSchemas",
+			"glue:ListSchemaVersions",
+			"glue:GetSchema",
+			"glue:GetSchemaByDefinition",
+			"glue:GetSchemaVersion",
+			"glue:GetRegistry",
+		},
+		"arn:aws:glue:<AWS REGION>:<AWS ACCOUNT ID>:registry/<REGISTRY NAME>",
+		"arn:aws:glue:<AWS REGION>:<AWS ACCOUNT ID>:schema/<REGISTRY NAME>/*",
+	)
+}
+
 func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd := &cobra.Command{
-		Use:           "schema-registry",
-		Short:         "Scan a schema registry for schemas and versions",
-		Long:          "Scan a schema registry (Confluent or AWS Glue) to discover all schemas and their versions. Use --sr-type to select the registry type. Results are added to the state file under schema_registries.",
+		Use:   "schema-registry",
+		Short: "Scan a schema registry for schemas and versions",
+		Long:  "Scan a schema registry (Confluent or AWS Glue) to discover all schemas and their versions. Use --sr-type to select the registry type. Results are added to the state file under schema_registries.",
+		Example: `  # Confluent Schema Registry, unauthenticated
+  kcp scan schema-registry --sr-type confluent --state-file kcp-state.json \
+      --url https://my-schema-registry:8081 --use-unauthenticated
+
+  # Confluent Schema Registry, basic auth
+  kcp scan schema-registry --sr-type confluent --state-file kcp-state.json \
+      --url https://my-schema-registry:8081 \
+      --use-basic-auth --username my-user --password my-pass
+
+  # AWS Glue Schema Registry
+  kcp scan schema-registry --sr-type glue --state-file kcp-state.json \
+      --region us-east-1 --registry-name my-glue-registry`,
+		Annotations: map[string]string{
+			iampolicy.AnnotationKey: schemaRegistryIAMAnnotation(),
+		},
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunScanSchemaRegistry,
@@ -83,6 +115,10 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 
 	_ = schemaRegistryCmd.MarkFlagRequired("state-file")
 	_ = schemaRegistryCmd.MarkFlagRequired("sr-type")
+
+	// --use-unauthenticated and --use-basic-auth cannot be set together.
+	// "One-of" is enforced in preRunE since it only applies when --sr-type=confluent.
+	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated", "use-basic-auth")
 
 	return schemaRegistryCmd
 }
