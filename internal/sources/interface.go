@@ -6,9 +6,9 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// Source represents a Kafka source (MSK or OSK) that can be scanned
+// Source represents a Kafka source (MSK or Apache Kafka) that can be scanned
 type Source interface {
-	// Type returns the source type (msk or osk)
+	// Type returns the source type (msk or apache-kafka)
 	Type() types.SourceType
 
 	// LoadCredentials loads authentication credentials from a file
@@ -23,8 +23,8 @@ type Source interface {
 
 // ClusterIdentifier uniquely identifies a cluster within a source
 type ClusterIdentifier struct {
-	Name             string   // Human-readable name (MSK: cluster name, OSK: user ID)
-	UniqueID         string   // Unique identifier (MSK: ARN, OSK: user ID)
+	Name             string   // Human-readable name (MSK: cluster name, Apache Kafka: user ID)
+	UniqueID         string   // Unique identifier (MSK: ARN, Apache Kafka: user ID)
 	BootstrapServers []string // Bootstrap server addresses
 }
 
@@ -33,7 +33,7 @@ type ScanOptions struct {
 	SkipTopics bool
 	SkipACLs   bool
 	// State is the existing kcp state. Required for MSK scanning (broker addresses
-	// come from prior kcp discover output). Ignored by OSK.
+	// come from prior kcp discover output). Ignored by Apache Kafka.
 	State *types.State
 }
 
@@ -47,5 +47,5 @@ type ScanResult struct {
 type ClusterScanResult struct {
 	Identifier         ClusterIdentifier
 	KafkaAdminInfo     *types.KafkaAdminClientInformation
-	SourceSpecificData interface{} // MSK: AWSClientInformation, OSK: OSKClusterMetadata
+	SourceSpecificData interface{} // MSK: AWSClientInformation, Apache Kafka: ApacheKafkaClusterMetadata
 }

@@ -14,7 +14,7 @@ import (
 // Removed: TestParseMetricReporterOpts_SourceTypeAuto - "auto" is no longer supported
 
 func TestParseMetricReporterOpts_SourceTypeMSK(t *testing.T) {
-	// Setup: create a state file with both MSK and OSK sources
+	// Setup: create a state file with both MSK and Apache Kafka sources
 	tmpDir := t.TempDir()
 	stateFilePath := filepath.Join(tmpDir, "state.json")
 
@@ -29,9 +29,9 @@ func TestParseMetricReporterOpts_SourceTypeMSK(t *testing.T) {
 				},
 			},
 		},
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{
-				{ID: "osk-cluster-1"},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{
+				{ID: "apache-kafka-cluster-1"},
 			},
 		},
 		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
@@ -60,8 +60,8 @@ func TestParseMetricReporterOpts_SourceTypeMSK(t *testing.T) {
 	assert.Contains(t, opts.ClusterIds[0], "arn:aws:kafka")
 }
 
-func TestParseMetricReporterOpts_SourceTypeOSK(t *testing.T) {
-	// Setup: create a state file with both MSK and OSK sources
+func TestParseMetricReporterOpts_SourceTypeApacheKafka(t *testing.T) {
+	// Setup: create a state file with both MSK and Apache Kafka sources
 	tmpDir := t.TempDir()
 	stateFilePath := filepath.Join(tmpDir, "state.json")
 
@@ -76,9 +76,9 @@ func TestParseMetricReporterOpts_SourceTypeOSK(t *testing.T) {
 				},
 			},
 		},
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{
-				{ID: "osk-cluster-1"},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{
+				{ID: "apache-kafka-cluster-1"},
 			},
 		},
 		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
@@ -90,7 +90,7 @@ func TestParseMetricReporterOpts_SourceTypeOSK(t *testing.T) {
 
 	// Set module-level variables
 	stateFile = stateFilePath
-	sourceType = "osk"
+	sourceType = "apache-kafka"
 	clusterIds = []string{}
 	start = ""
 	end = ""
@@ -101,10 +101,10 @@ func TestParseMetricReporterOpts_SourceTypeOSK(t *testing.T) {
 	// Verify
 	require.NoError(t, err)
 	assert.NotNil(t, opts)
-	assert.Equal(t, "osk", opts.SourceType)
-	// Should only include OSK clusters
+	assert.Equal(t, "apache-kafka", opts.SourceType)
+	// Should only include Apache Kafka clusters
 	assert.Len(t, opts.ClusterIds, 1)
-	assert.Equal(t, "osk-cluster-1", opts.ClusterIds[0])
+	assert.Equal(t, "apache-kafka-cluster-1", opts.ClusterIds[0])
 }
 
 // Removed: TestParseMetricReporterOpts_ClusterArnFlag - --cluster-arn flag no longer exists
@@ -115,9 +115,9 @@ func TestParseMetricReporterOpts_ClusterIdFlag(t *testing.T) {
 	stateFilePath := filepath.Join(tmpDir, "state.json")
 
 	state := &types.State{
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{
-				{ID: "osk-cluster-1"},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{
+				{ID: "apache-kafka-cluster-1"},
 			},
 		},
 		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
@@ -130,7 +130,7 @@ func TestParseMetricReporterOpts_ClusterIdFlag(t *testing.T) {
 	// Set module-level variables
 	stateFile = stateFilePath
 	sourceType = ""
-	clusterIds = []string{"osk-cluster-1"}
+	clusterIds = []string{"apache-kafka-cluster-1"}
 	start = ""
 	end = ""
 
@@ -141,7 +141,7 @@ func TestParseMetricReporterOpts_ClusterIdFlag(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotNil(t, opts)
 	assert.Len(t, opts.ClusterIds, 1)
-	assert.Equal(t, "osk-cluster-1", opts.ClusterIds[0])
+	assert.Equal(t, "apache-kafka-cluster-1", opts.ClusterIds[0])
 }
 
 func TestParseMetricReporterOpts_MultipleClusterIds(t *testing.T) {
@@ -160,9 +160,9 @@ func TestParseMetricReporterOpts_MultipleClusterIds(t *testing.T) {
 				},
 			},
 		},
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{
-				{ID: "osk-cluster-1"},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{
+				{ID: "apache-kafka-cluster-1"},
 			},
 		},
 		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
@@ -175,7 +175,7 @@ func TestParseMetricReporterOpts_MultipleClusterIds(t *testing.T) {
 	// Set module-level variables
 	stateFile = stateFilePath
 	sourceType = ""
-	clusterIds = []string{"arn:aws:kafka:us-east-1:123456789012:cluster/test-msk/uuid1", "osk-cluster-1"}
+	clusterIds = []string{"arn:aws:kafka:us-east-1:123456789012:cluster/test-msk/uuid1", "apache-kafka-cluster-1"}
 	start = ""
 	end = ""
 
@@ -185,7 +185,7 @@ func TestParseMetricReporterOpts_MultipleClusterIds(t *testing.T) {
 	// Verify
 	require.NoError(t, err)
 	assert.NotNil(t, opts)
-	// Should include both clusters (MSK ARN and OSK ID)
+	// Should include both clusters (MSK ARN and Apache Kafka ID)
 	assert.Len(t, opts.ClusterIds, 2)
 }
 
@@ -254,8 +254,8 @@ func TestParseMetricReporterOpts_NoClustersInState_MSK(t *testing.T) {
 		MSKSources: &types.MSKSourcesState{
 			Regions: []types.DiscoveredRegion{},
 		},
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{},
 		},
 		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
 		Timestamp:    time.Now(),
@@ -288,8 +288,8 @@ func TestParseMetricReporterOpts_NoClustersInState_Neither(t *testing.T) {
 		MSKSources: &types.MSKSourcesState{
 			Regions: []types.DiscoveredRegion{},
 		},
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{},
 		},
 		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
 		Timestamp:    time.Now(),
@@ -335,7 +335,7 @@ func TestPreRunReportMetrics_ValidSourceTypes(t *testing.T) {
 		clusterIds []string
 	}{
 		{"msk", "msk", []string{}},
-		{"osk", "osk", []string{}},
+		{"apache-kafka", "apache-kafka", []string{}},
 		{"with cluster id", "", []string{"cluster-1"}},
 		{"neither flag", "", []string{}},
 	}
@@ -411,7 +411,7 @@ func TestNewReportMetricsCmd_MutuallyExclusiveFlags(t *testing.T) {
 }
 
 func TestParseMetricReporterOpts_NeitherFlagProvided(t *testing.T) {
-	// Setup: create a state file with both MSK and OSK sources
+	// Setup: create a state file with both MSK and Apache Kafka sources
 	tmpDir := t.TempDir()
 	stateFilePath := filepath.Join(tmpDir, "state.json")
 
@@ -426,9 +426,9 @@ func TestParseMetricReporterOpts_NeitherFlagProvided(t *testing.T) {
 				},
 			},
 		},
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{
-				{ID: "osk-cluster-1"},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{
+				{ID: "apache-kafka-cluster-1"},
 			},
 		},
 		KcpBuildInfo: types.KcpBuildInfo{Version: "0.0.0-localdev"},
@@ -453,9 +453,9 @@ func TestParseMetricReporterOpts_NeitherFlagProvided(t *testing.T) {
 	assert.NotNil(t, opts)
 	// Should include clusters from both sources
 	assert.Len(t, opts.ClusterIds, 2)
-	// Should have both MSK ARN and OSK ID
+	// Should have both MSK ARN and Apache Kafka ID
 	assert.Contains(t, opts.ClusterIds, "arn:aws:kafka:us-east-1:123456789012:cluster/test-msk/uuid1")
-	assert.Contains(t, opts.ClusterIds, "osk-cluster-1")
+	assert.Contains(t, opts.ClusterIds, "apache-kafka-cluster-1")
 }
 
 // Helper to clean up state after tests

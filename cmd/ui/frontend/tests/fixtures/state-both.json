@@ -44,7 +44,7 @@
       }
     ]
   },
-  "osk_sources": {
+  "apache_kafka_sources": {
     "clusters": [
       {
         "id": "staging-kafka-cluster",

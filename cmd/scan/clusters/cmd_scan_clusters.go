@@ -14,8 +14,8 @@ import (
 	jmx "github.com/confluentinc/kcp/internal/services/jmx"
 	prometheussvc "github.com/confluentinc/kcp/internal/services/prometheus"
 	"github.com/confluentinc/kcp/internal/sources"
+	"github.com/confluentinc/kcp/internal/sources/apachekafka"
 	"github.com/confluentinc/kcp/internal/sources/msk"
-	"github.com/confluentinc/kcp/internal/sources/osk"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
@@ -37,7 +37,7 @@ var (
 
 func scanClustersIAMAnnotation() string {
 	return iampolicy.RenderStatements(
-		"Only required for `--source-type msk`. OSK scans use credentials from the credentials file, not AWS IAM.",
+		"Only required for `--source-type msk`. Apache Kafka scans use credentials from the credentials file, not AWS IAM.",
 		[]iampolicy.Statement{
 			{
 				Sid: "MSKClusterKafkaAccess",
@@ -60,33 +60,33 @@ func NewScanClustersCmd() *cobra.Command {
 	scanClustersCmd := &cobra.Command{
 		Use:   "clusters",
 		Short: "Scan Kafka clusters using the Kafka Admin API",
-		Long: `Scan MSK or OSK clusters to discover topics, ACLs, and other metadata via the Kafka Admin API. Results are merged into the kcp-state.json file.
+		Long: `Scan MSK or Apache Kafka clusters to discover topics, ACLs, and other metadata via the Kafka Admin API. Results are merged into the kcp-state.json file.
 
 Source-specific notes:
 
 - ` + "`--source-type msk`" + ` reads cluster connection details from the ` + "`msk-credentials.yaml`" + ` file produced by ` + "`kcp discover`" + `. SCRAM is forced to SHA-512 (the only mechanism MSK supports).
-- ` + "`--source-type osk`" + ` reads from a hand-authored ` + "`osk-credentials.yaml`" + ` file. SASL/SCRAM defaults to SHA-256 — set ` + "`auth_method.sasl_scram.mechanism: SHA512`" + ` if your cluster requires SHA-512. The full schema and worked examples are documented at [OSK Configuration → OSK credentials](../../osk-configuration/osk-credentials.md).
+- ` + "`--source-type apache-kafka`" + ` reads from a hand-authored ` + "`apache-kafka-credentials.yaml`" + ` file. SASL/SCRAM defaults to SHA-256 — set ` + "`auth_method.sasl_scram.mechanism: SHA512`" + ` if your cluster requires SHA-512. The full schema and worked examples are documented at [Apache Kafka Configuration → Apache Kafka credentials](../../apache-kafka-configuration/apache-kafka-credentials.md).
 
-Metrics collection (OSK only):
+Metrics collection (Apache Kafka only):
 
 - ` + "`--metrics jolokia`" + ` polls each broker's Jolokia HTTP endpoint live for the duration set by ` + "`--metrics-duration`" + ` (interval: ` + "`--metrics-interval`" + `, default 10s).
 - ` + "`--metrics prometheus`" + ` queries a Prometheus server for historical metrics over ` + "`--metrics-range`" + ` (e.g. 7d, 30d).
 
-Both backends produce the same metric shape and feed reports and the UI. See [OSK Configuration → Metrics collection](../../osk-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.`,
+Both backends produce the same metric shape and feed reports and the UI. See [Apache Kafka Configuration → Metrics collection](../../apache-kafka-configuration/metrics-collection.md) for the metric list, the counter-based rate calculation, and authentication options.`,
 		Example: `  # Scan an MSK cluster (credentials from kcp discover)
   kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
 
-  # Scan an OSK cluster (hand-authored credentials)
-  kcp scan clusters --source-type osk --state-file kcp-state.json --credentials-file osk-credentials.yaml
+  # Scan an Apache Kafka cluster (hand-authored credentials)
+  kcp scan clusters --source-type apache-kafka --state-file kcp-state.json --credentials-file apache-kafka-credentials.yaml
 
-  # OSK with live Jolokia metric collection
-  kcp scan clusters --source-type osk --state-file kcp-state.json \
-      --credentials-file osk-credentials.yaml \
+  # Apache Kafka with live Jolokia metric collection
+  kcp scan clusters --source-type apache-kafka --state-file kcp-state.json \
+      --credentials-file apache-kafka-credentials.yaml \
       --metrics jolokia --metrics-duration 5m --metrics-interval 10s
 
-  # OSK with historical Prometheus metrics
-  kcp scan clusters --source-type osk --state-file kcp-state.json \
-      --credentials-file osk-credentials.yaml \
+  # Apache Kafka with historical Prometheus metrics
+  kcp scan clusters --source-type apache-kafka --state-file kcp-state.json \
+      --credentials-file apache-kafka-credentials.yaml \
       --metrics prometheus --metrics-range 30d`,
 		Annotations: map[string]string{
 			iampolicy.AnnotationKey: scanClustersIAMAnnotation(),
@@ -99,9 +99,9 @@ Both backends produce the same metric shape and feed reports and the UI. See [OS
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk' (required)")
+	requiredFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'apache-kafka' (required)")
 	requiredFlags.StringVar(&stateFile, "state-file", "kcp-state.json", "Path to the KCP state file")
-	requiredFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to credentials file (msk-credentials.yaml or osk-credentials.yaml)")
+	requiredFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to credentials file (msk-credentials.yaml or apache-kafka-credentials.yaml)")
 	scanClustersCmd.Flags().AddFlagSet(requiredFlags)
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
@@ -112,7 +112,7 @@ Both backends produce the same metric shape and feed reports and the UI. See [OS
 
 	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
 	metricsFlags.SortFlags = false
-	metricsFlags.StringVar(&metricsSource, "metrics", "", "Metrics collection source: 'jolokia' or 'prometheus' (OSK only)")
+	metricsFlags.StringVar(&metricsSource, "metrics", "", "Metrics collection source: 'jolokia' or 'prometheus' (Apache Kafka only)")
 	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia (e.g. 10m, 1h). Required with --metrics jolokia.")
 	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia (e.g. 10s, 30s). Default: 10s.")
 	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Day range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
@@ -131,22 +131,22 @@ func preRunScanClusters(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate source type
-	if sourceType != "msk" && sourceType != "osk" {
-		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
+	if sourceType != "msk" && sourceType != "apache-kafka" {
+		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'apache-kafka'", sourceType)
 	}
 
 	// Validate credentials file naming convention
 	if sourceType == "msk" && filepath.Base(credentialsFile) != "msk-credentials.yaml" {
 		slog.Warn("credentials file should be named 'msk-credentials.yaml' for MSK sources", "file", credentialsFile)
 	}
-	if sourceType == "osk" && filepath.Base(credentialsFile) != "osk-credentials.yaml" {
-		slog.Warn("credentials file should be named 'osk-credentials.yaml' for OSK sources", "file", credentialsFile)
+	if sourceType == "apache-kafka" && filepath.Base(credentialsFile) != "apache-kafka-credentials.yaml" {
+		slog.Warn("credentials file should be named 'apache-kafka-credentials.yaml' for Apache Kafka sources", "file", credentialsFile)
 	}
 
 	// Validate metrics flags
 	if metricsSource != "" {
-		if sourceType != "osk" {
-			return fmt.Errorf("--metrics is only supported for OSK sources (--source-type osk)")
+		if sourceType != "apache-kafka" {
+			return fmt.Errorf("--metrics is only supported for Apache Kafka sources (--source-type apache-kafka)")
 		}
 		switch metricsSource {
 		case "jolokia":
@@ -202,8 +202,8 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	switch sourceType {
 	case "msk":
 		source = msk.NewMSKSource()
-	case "osk":
-		source = osk.NewOSKSource()
+	case "apache-kafka":
+		source = apachekafka.NewApacheKafkaSource()
 	default:
 		return fmt.Errorf("unsupported source type: %s", sourceType)
 	}
@@ -220,11 +220,11 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 		slog.Info("cluster", "name", cluster.Name, "id", cluster.UniqueID)
 	}
 
-	// OSK-specific docs pointer — link to the version of the docs that
+	// Apache Kafka-specific docs pointer — link to the version of the docs that
 	// matches this binary (build_info.DocsURL() resolves to /dev/ for
 	// development builds and /<version>/ for release builds).
-	if sourceType == "osk" {
-		fmt.Printf("\nℹ️  OSK credentials file format & metrics options: %sosk-configuration/\n", build_info.DocsURL())
+	if sourceType == "apache-kafka" {
+		fmt.Printf("\nℹ️  Apache Kafka credentials file format & metrics options: %sapache-kafka-configuration/\n", build_info.DocsURL())
 	}
 
 	// Perform scan
@@ -246,7 +246,7 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	}
 
 	// Collect metrics if enabled
-	if metricsSource != "" && sourceType == "osk" {
+	if metricsSource != "" && sourceType == "apache-kafka" {
 		if err := collectMetrics(ctx, state, credentialsFile); err != nil {
 			slog.Warn("metrics collection failed", "error", err)
 			fmt.Printf("\n⚠️  Metrics collection failed: %v\n", err)
@@ -291,8 +291,8 @@ func mergeResultsIntoState(state *types.State, result *sources.ScanResult) error
 	switch result.SourceType {
 	case types.SourceTypeMSK:
 		return mergeMSKResults(state, result)
-	case types.SourceTypeOSK:
-		return mergeOSKResults(state, result)
+	case types.SourceTypeApacheKafka:
+		return mergeApacheKafkaResults(state, result)
 	default:
 		return fmt.Errorf("unsupported source type: %s", result.SourceType)
 	}
@@ -314,7 +314,7 @@ func mergeMSKResults(state *types.State, result *sources.ScanResult) error {
 	// Apply results into state in-place. Merge old admin info into the new
 	// scan result before overwriting so previously-discovered data (topics,
 	// ACLs, self-managed connectors) is preserved when the new scan returns
-	// empty/nil for those fields. Mirrors the OSK merge path; ensures a
+	// empty/nil for those fields. Mirrors the Apache Kafka merge path; ensures a
 	// re-run of `kcp scan clusters` does not wipe data already in state.
 	for i := range state.MSKSources.Regions {
 		for j := range state.MSKSources.Regions[i].Clusters {
@@ -330,32 +330,32 @@ func mergeMSKResults(state *types.State, result *sources.ScanResult) error {
 	return nil
 }
 
-// mergeOSKResults merges OSK scan results into state
-func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
-	if state.OSKSources == nil {
-		state.OSKSources = &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{},
+// mergeApacheKafkaResults merges Apache Kafka scan results into state
+func mergeApacheKafkaResults(state *types.State, result *sources.ScanResult) error {
+	if state.ApacheKafkaSources == nil {
+		state.ApacheKafkaSources = &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{},
 		}
 	}
 
 	// Build index of existing clusters by ID for efficient lookup
 	existingIndex := make(map[string]int)
-	for i := range state.OSKSources.Clusters {
-		existingIndex[state.OSKSources.Clusters[i].ID] = i
+	for i := range state.ApacheKafkaSources.Clusters {
+		existingIndex[state.ApacheKafkaSources.Clusters[i].ID] = i
 	}
 
 	// Separate scan results into updates and new clusters to avoid pointer
 	// invalidation: appending to the slice may reallocate the backing array,
 	// which would invalidate any pointers taken before the append.
-	var newClusters []types.OSKDiscoveredCluster
+	var newClusters []types.ApacheKafkaDiscoveredCluster
 
 	for _, clusterResult := range result.Clusters {
-		metadata, ok := clusterResult.SourceSpecificData.(types.OSKClusterMetadata)
+		metadata, ok := clusterResult.SourceSpecificData.(types.ApacheKafkaClusterMetadata)
 		if !ok {
-			return fmt.Errorf("invalid source-specific data for OSK cluster")
+			return fmt.Errorf("invalid source-specific data for Apache Kafka cluster")
 		}
 
-		newCluster := types.OSKDiscoveredCluster{
+		newCluster := types.ApacheKafkaDiscoveredCluster{
 			ID:                          clusterResult.Identifier.UniqueID,
 			BootstrapServers:            clusterResult.Identifier.BootstrapServers,
 			KafkaAdminClientInformation: *clusterResult.KafkaAdminInfo,
@@ -363,7 +363,7 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 		}
 
 		if idx, exists := existingIndex[newCluster.ID]; exists {
-			existing := state.OSKSources.Clusters[idx]
+			existing := state.ApacheKafkaSources.Clusters[idx]
 
 			// Merge KafkaAdminClientInformation: preserve old topics/ACLs/connectors
 			// if the new scan returned empty results (e.g. transient permission failure)
@@ -376,21 +376,21 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 			}
 
 			// Update in-place by index
-			state.OSKSources.Clusters[idx] = newCluster
+			state.ApacheKafkaSources.Clusters[idx] = newCluster
 		} else {
 			newClusters = append(newClusters, newCluster)
 		}
 	}
 
 	// Append new clusters after all in-place updates are done
-	state.OSKSources.Clusters = append(state.OSKSources.Clusters, newClusters...)
+	state.ApacheKafkaSources.Clusters = append(state.ApacheKafkaSources.Clusters, newClusters...)
 
-	slog.Info("merged OSK scan results", "clusters", len(result.Clusters))
+	slog.Info("merged Apache Kafka scan results", "clusters", len(result.Clusters))
 	return nil
 }
 
 func collectMetrics(ctx context.Context, state *types.State, credentialsFilePath string) error {
-	creds, errs := types.NewOSKCredentialsFromFile(credentialsFilePath)
+	creds, errs := types.NewApacheKafkaCredentialsFromFile(credentialsFilePath)
 	if len(errs) > 0 {
 		return fmt.Errorf("failed to reload credentials: %v", errs)
 	}
@@ -411,12 +411,12 @@ func collectMetrics(ctx context.Context, state *types.State, credentialsFilePath
 			continue
 		}
 
-		oskCluster, err := state.GetOSKClusterByID(clusterCreds.ID)
+		apacheKafkaCluster, err := state.GetApacheKafkaClusterByID(clusterCreds.ID)
 		if err != nil {
 			slog.Warn("cluster not found in state", "cluster", clusterCreds.ID, "error", err)
 			continue
 		}
-		oskCluster.ClusterMetrics = metrics
+		apacheKafkaCluster.ClusterMetrics = metrics
 
 		fmt.Printf("   ✅ Collected %d data points for cluster '%s'\n", len(metrics.Metrics), clusterCreds.ID)
 	}
@@ -424,7 +424,7 @@ func collectMetrics(ctx context.Context, state *types.State, credentialsFilePath
 	return nil
 }
 
-func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+func collectJolokiaMetrics(ctx context.Context, clusterCreds types.ApacheKafkaClusterAuth) (*types.ProcessedClusterMetrics, error) {
 	if !clusterCreds.HasJolokiaConfig() {
 		return nil, fmt.Errorf("no jolokia config for cluster %s", clusterCreds.ID)
 	}
@@ -447,7 +447,7 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 	return jmxService.CollectOverDuration(ctx, duration, interval)
 }
 
-func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+func collectPrometheusMetrics(ctx context.Context, clusterCreds types.ApacheKafkaClusterAuth) (*types.ProcessedClusterMetrics, error) {
 	if !clusterCreds.HasPrometheusConfig() {
 		return nil, fmt.Errorf("no prometheus config for cluster %s", clusterCreds.ID)
 	}
@@ -480,4 +480,3 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(), labels)
 	return promService.CollectMetrics(ctx, queryRange)
 }
-

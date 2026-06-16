@@ -187,9 +187,9 @@ const metrics = {
   },
 
   /**
-   * Get metrics for an OSK cluster
+   * Get metrics for an Apache Kafka cluster
    */
-  async getOSKMetrics(
+  async getApacheKafkaMetrics(
     clusterId: string,
     sessionId: string,
     params?: MetricsQueryParams,
@@ -205,7 +205,7 @@ const metrics = {
         params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
     }
     return get<MetricsApiResponse>(
-      `${API_ENDPOINTS.METRICS}/osk/${encodeURIComponent(clusterId)}`,
+      `${API_ENDPOINTS.METRICS}/apache-kafka/${encodeURIComponent(clusterId)}`,
       queryParams,
       config
     )

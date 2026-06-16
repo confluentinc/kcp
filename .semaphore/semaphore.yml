@@ -105,23 +105,23 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-tf-validation GOTEST_FLAGS="-p 1 -parallel 4 -count=1"
 
-  - name: 'integration: osk scan'
+  - name: 'integration: apache kafka scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     run:
-      when: "change_in(['/cmd/scan/', '/internal/sources/', '/internal/client/', '/internal/types/', '/internal/services/jmx/', '/internal/services/prometheus/', '/internal/services/kafka/', '/integration-tests/osk-scan/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
+      when: "change_in(['/cmd/scan/', '/internal/sources/', '/internal/client/', '/internal/types/', '/internal/services/jmx/', '/internal/services/prometheus/', '/internal/services/kafka/', '/integration-tests/apache-kafka-scan/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       prologue:
         commands:
           # keytool (from JDK) is required for TLS certificate generation
           - sem-version java 17
       jobs:
-        - name: 'osk scan'
+        - name: 'apache kafka scan'
           commands:
             - cache restore frontend-dependencies
             - cache restore go-mod-cache
             - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
-            - make test-osk-scan
+            - make test-apache-kafka-scan
 
   - name: 'integration: schema registry scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']

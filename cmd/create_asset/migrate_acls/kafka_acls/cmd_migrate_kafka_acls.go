@@ -50,8 +50,8 @@ func NewConvertKafkaAclsCmd() *cobra.Command {
 
 	sourceFlags := pflag.NewFlagSet("source", pflag.ExitOnError)
 	sourceFlags.SortFlags = false
-	sourceFlags.StringVar(&sourceType, "source-type", "msk", "The source type (msk or osk).")
-	sourceFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
+	sourceFlags.StringVar(&sourceType, "source-type", "msk", "The source type (msk or apache-kafka).")
+	sourceFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for Apache Kafka).")
 	aclsCmd.Flags().AddFlagSet(sourceFlags)
 	groups[sourceFlags] = "Source Flags"
 
@@ -133,15 +133,15 @@ func parseMigrateKafkaAclsOpts() (*MigrateKafkaAclsOpts, error) {
 		}
 		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
 		clusterName = cluster.Name
-	case "osk":
-		cluster, err := state.GetOSKClusterByID(clusterId)
+	case "apache-kafka":
+		cluster, err := state.GetApacheKafkaClusterByID(clusterId)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
+			return nil, fmt.Errorf("failed to get Apache Kafka cluster: %w", err)
 		}
 		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
 		clusterName = cluster.ID
 	default:
-		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)
+		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'apache-kafka')", sourceType)
 	}
 
 	if len(kafkaAdminInfo.Acls) == 0 {

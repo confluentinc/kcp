@@ -21,7 +21,7 @@ test.describe('State File Validation', () => {
     const mismatchedState = {
       kcp_build_info: { version: '0.1.0', commit: 'abc', date: '2024-01-01' },
       msk_sources: { regions: [] },
-      osk_sources: {
+      apache_kafka_sources: {
         clusters: [
           {
             id: 'test-cluster',
@@ -53,7 +53,7 @@ test.describe('State File Validation', () => {
     const emptyState = {
       kcp_build_info: { version: '0.1.0', commit: 'abc', date: '2024-01-01' },
       msk_sources: { regions: [] },
-      osk_sources: { clusters: [] },
+      apache_kafka_sources: { clusters: [] },
     }
 
     await page.click('button:has-text("Upload KCP State File")')
@@ -87,7 +87,7 @@ test.describe('State File Validation', () => {
     const schemaOnlyState = {
       kcp_build_info: { version: '0.1.0', commit: 'abc', date: '2024-01-01' },
       msk_sources: { regions: [] },
-      osk_sources: { clusters: [] },
+      apache_kafka_sources: { clusters: [] },
       schema_registries: {
         confluent_schema_registry: [
           { type: 'confluent', url: 'http://localhost:8081', subjects: [] },

@@ -144,7 +144,7 @@ var hardLimitCatalog = []hardLimit{
 
 // sourceUsesMTLS reads `MskClusterConfig.Provisioned.ClientAuthentication.Tls.Enabled`
 // from `kcp scan clusters` output. Returns false when any layer is unpopulated
-// (the admin scan didn't run, or the cluster is OSK).
+// (the admin scan didn't run, or the cluster is Apache Kafka).
 //
 // Serverless clusters always return false — AWS MSK Serverless supports
 // only IAM SASL (no mTLS); its ClientAuthentication block lives on the

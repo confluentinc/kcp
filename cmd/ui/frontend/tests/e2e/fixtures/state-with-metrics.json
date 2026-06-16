@@ -10692,10 +10692,10 @@
       }
     ]
   },
-  "osk_sources": {
+  "apache_kafka_sources": {
     "clusters": [
       {
-        "id": "osk-kafka",
+        "id": "apache-kafka-kafka",
         "bootstrap_servers": [
           "localhost:9092"
         ],
@@ -15284,7 +15284,7 @@
         "discovered_clients": null,
         "metadata": {
           "environment": "test",
-          "location": "osk-scan",
+          "location": "apache-kafka-scan",
           "last_scanned": "2026-04-24T11:48:38.620422+01:00"
         }
       },

@@ -6,7 +6,7 @@ test.describe('TCO Inputs Metrics Modal', () => {
     await page.goto('/')
     await page.waitForSelector('text=AWS MSK', { timeout: 10000 })
 
-    // Upload state file with metrics for both MSK and OSK
+    // Upload state file with metrics for both MSK and Apache Kafka
     await page.click('button:has-text("Upload KCP State File")')
     const fileInput = page.locator('input[type="file"]')
     await fileInput.setInputFiles({
@@ -14,24 +14,24 @@ test.describe('TCO Inputs Metrics Modal', () => {
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(stateWithMetrics)),
     })
-    await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 5000 })
 
     // Navigate to TCO Inputs
     await page.locator('button:has-text("TCO Inputs")').click()
     await page.waitForSelector('text=Workload Assumptions', { timeout: 5000 })
   })
 
-  test('multiple OSK clusters render in TCO table', async ({ page }) => {
-    await page.locator('button:has-text("OSK")').click()
-    await expect(page.locator('th:has-text("osk-kafka")')).toBeVisible()
+  test('multiple Apache Kafka clusters render in TCO table', async ({ page }) => {
+    await page.locator('button:has-text("Apache Kafka")').click()
+    await expect(page.locator('th:has-text("apache-kafka-kafka")')).toBeVisible()
     await expect(page.locator('th:has-text("prod-kafka-us-east")')).toBeVisible()
     await expect(page.locator('th:has-text("staging-kafka-eu")')).toBeVisible()
     await expect(page.locator('th:has-text("dev-kafka-local")')).toBeVisible()
   })
 
-  test('OSK metrics modal shows chart with data', async ({ page }) => {
-    await page.locator('button:has-text("OSK")').click()
-    // Click the value picker button for avg ingress on the first OSK cluster
+  test('Apache Kafka metrics modal shows chart with data', async ({ page }) => {
+    await page.locator('button:has-text("Apache Kafka")').click()
+    // Click the value picker button for avg ingress on the first Apache Kafka cluster
     const valuePickerButtons = page.locator('button[title="Go to cluster metrics for ingress data"]')
     await valuePickerButtons.first().click()
 
@@ -46,7 +46,7 @@ test.describe('TCO Inputs Metrics Modal', () => {
   })
 
   test('Use as TCO Input transfers value from metrics modal', async ({ page }) => {
-    await page.locator('button:has-text("OSK")').click()
+    await page.locator('button:has-text("Apache Kafka")').click()
 
     // Open metrics modal for avg ingress on first cluster
     const valuePickerButtons = page.locator('button[title="Go to cluster metrics for ingress data"]')
@@ -68,14 +68,14 @@ test.describe('TCO Inputs Metrics Modal', () => {
     // Close the modal
     await page.keyboard.press('Escape')
 
-    // The avg ingress input for the first OSK cluster should now have a value
+    // The avg ingress input for the first Apache Kafka cluster should now have a value
     const firstInput = page.locator('input[type="number"]').first()
     const inputValue = await firstInput.inputValue()
     expect(parseFloat(inputValue)).toBeGreaterThan(0)
   })
 
-  test('OSK partition lookup shows GlobalPartitionCount chart', async ({ page }) => {
-    await page.locator('button:has-text("OSK")').click()
+  test('Apache Kafka partition lookup shows GlobalPartitionCount chart', async ({ page }) => {
+    await page.locator('button:has-text("Apache Kafka")').click()
 
     const partitionButtons = page.locator('button[title="Go to cluster metrics for partition data"]')
     await partitionButtons.first().click()
@@ -87,8 +87,8 @@ test.describe('TCO Inputs Metrics Modal', () => {
     await expect(page.locator('text=No data available for')).not.toBeVisible()
   })
 
-  test('OSK metrics stats update when date range changes', async ({ page }) => {
-    await page.locator('button:has-text("OSK")').click()
+  test('Apache Kafka metrics stats update when date range changes', async ({ page }) => {
+    await page.locator('button:has-text("Apache Kafka")').click()
 
     // Open metrics modal
     const valuePickerButtons = page.locator('button[title="Go to cluster metrics for ingress data"]')
@@ -104,7 +104,7 @@ test.describe('TCO Inputs Metrics Modal', () => {
     expect(initialAvg).toBeTruthy()
 
     // Reset the start date via the X button — this changes the date range and triggers a re-fetch
-    const metricsResponse = page.waitForResponse((resp) => resp.url().includes('/metrics/osk/'))
+    const metricsResponse = page.waitForResponse((resp) => resp.url().includes('/metrics/apache-kafka/'))
     await page.locator('button[title="Reset to default start date"]').click()
     await metricsResponse
 

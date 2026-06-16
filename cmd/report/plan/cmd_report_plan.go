@@ -255,7 +255,7 @@ func migrateLegacyState(data []byte) (*types.State, error) {
 			}
 		}
 	}
-	if state.MSKSources == nil && state.OSKSources == nil && state.SchemaRegistries == nil {
+	if state.MSKSources == nil && state.ApacheKafkaSources == nil && state.SchemaRegistries == nil {
 		return nil, fmt.Errorf("legacy keys present but nothing populated after migration")
 	}
 	slog.Warn("loaded pre-0.7 state-file layout in legacy-compatibility mode; re-run `kcp discover` / `kcp scan` to refresh the file in the current schema")

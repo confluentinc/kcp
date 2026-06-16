@@ -9,7 +9,7 @@ interface ClusterMetricsFetchConfig {
   clusterRegion: string
   startDate: Date | undefined
   endDate: Date | undefined
-  sourceType?: 'msk' | 'osk'
+  sourceType?: 'msk' | 'apache-kafka'
   clusterId?: string
 }
 
@@ -50,8 +50,8 @@ export const useClusterMetricsFetch = ({
 
       try {
         let data: MetricsApiResponse
-        if (sourceType === 'osk' && clusterId) {
-          data = await apiClient.metrics.getOSKMetrics(clusterId, sessionId, {
+        if (sourceType === 'apache-kafka' && clusterId) {
+          data = await apiClient.metrics.getApacheKafkaMetrics(clusterId, sessionId, {
             startDate,
             endDate,
           })

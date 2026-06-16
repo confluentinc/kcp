@@ -116,14 +116,14 @@ func assertServiceTotal(t *testing.T, svc types.ServiceCostAggregates, expectedT
 	assert.InDelta(t, expectedTotal, total, 0.001)
 }
 
-func TestProcessState_OSKMetricsPreservation(t *testing.T) {
+func TestProcessState_ApacheKafkaMetricsPreservation(t *testing.T) {
 	rs := NewReportService()
 
-	t.Run("OSK cluster with Jolokia metrics preserved", func(t *testing.T) {
-		// Create a test state with OSK cluster containing metrics
+	t.Run("Apache Kafka cluster with Jolokia metrics preserved", func(t *testing.T) {
+		// Create a test state with Apache Kafka cluster containing metrics
 		state := types.State{
-			OSKSources: &types.OSKSourcesState{
-				Clusters: []types.OSKDiscoveredCluster{
+			ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+				Clusters: []types.ApacheKafkaDiscoveredCluster{
 					{
 						ID:               "test-cluster",
 						BootstrapServers: []string{"broker1:9092", "broker2:9092"},
@@ -144,7 +144,7 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 							},
 						},
 						DiscoveredClients: []types.DiscoveredClient{},
-						Metadata: types.OSKClusterMetadata{
+						Metadata: types.ApacheKafkaClusterMetadata{
 							Environment: "test",
 						},
 					},
@@ -160,11 +160,11 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 		// Verify the state was processed
 		require.Len(t, processedState.Sources, 1)
 		source := processedState.Sources[0]
-		require.Equal(t, types.SourceTypeOSK, source.Type)
-		require.NotNil(t, source.OSKData)
-		require.Len(t, source.OSKData.Clusters, 1)
+		require.Equal(t, types.SourceTypeApacheKafka, source.Type)
+		require.NotNil(t, source.ApacheKafkaData)
+		require.Len(t, source.ApacheKafkaData.Clusters, 1)
 
-		cluster := source.OSKData.Clusters[0]
+		cluster := source.ApacheKafkaData.Clusters[0]
 		assert.Equal(t, "test-cluster", cluster.ID)
 
 		// Verify metrics are preserved
@@ -175,10 +175,10 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 		assert.InDelta(t, 100.5, *cluster.ClusterMetrics.Metrics[0].Value, 0.01)
 	})
 
-	t.Run("OSK cluster with Prometheus metrics preserved", func(t *testing.T) {
+	t.Run("Apache Kafka cluster with Prometheus metrics preserved", func(t *testing.T) {
 		state := types.State{
-			OSKSources: &types.OSKSourcesState{
-				Clusters: []types.OSKDiscoveredCluster{
+			ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+				Clusters: []types.ApacheKafkaDiscoveredCluster{
 					{
 						ID:               "prometheus-cluster",
 						BootstrapServers: []string{"broker1:9092"},
@@ -205,7 +205,7 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 							},
 						},
 						DiscoveredClients: []types.DiscoveredClient{},
-						Metadata: types.OSKClusterMetadata{
+						Metadata: types.ApacheKafkaClusterMetadata{
 							Environment: "prod",
 						},
 					},
@@ -219,7 +219,7 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 		processedState := rs.ProcessState(state)
 
 		require.Len(t, processedState.Sources, 1)
-		cluster := processedState.Sources[0].OSKData.Clusters[0]
+		cluster := processedState.Sources[0].ApacheKafkaData.Clusters[0]
 
 		// Verify metrics are preserved
 		require.NotNil(t, cluster.ClusterMetrics)
@@ -232,10 +232,10 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 		assert.InDelta(t, 300.0, *cluster.ClusterMetrics.Metrics[1].Value, 0.01)
 	})
 
-	t.Run("OSK cluster without metrics handled correctly", func(t *testing.T) {
+	t.Run("Apache Kafka cluster without metrics handled correctly", func(t *testing.T) {
 		state := types.State{
-			OSKSources: &types.OSKSourcesState{
-				Clusters: []types.OSKDiscoveredCluster{
+			ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+				Clusters: []types.ApacheKafkaDiscoveredCluster{
 					{
 						ID:               "no-metrics-cluster",
 						BootstrapServers: []string{"broker1:9092"},
@@ -244,7 +244,7 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 						},
 						ClusterMetrics:    nil,
 						DiscoveredClients: []types.DiscoveredClient{},
-						Metadata: types.OSKClusterMetadata{
+						Metadata: types.ApacheKafkaClusterMetadata{
 							Environment: "test",
 						},
 					},
@@ -258,18 +258,18 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 		processedState := rs.ProcessState(state)
 
 		require.Len(t, processedState.Sources, 1)
-		cluster := processedState.Sources[0].OSKData.Clusters[0]
+		cluster := processedState.Sources[0].ApacheKafkaData.Clusters[0]
 
 		// Metrics should be nil or empty
 		assert.Nil(t, cluster.ClusterMetrics)
 	})
 
-	t.Run("ProcessState with multiple OSK clusters", func(t *testing.T) {
+	t.Run("ProcessState with multiple Apache Kafka clusters", func(t *testing.T) {
 		state := types.State{
-			OSKSources: &types.OSKSourcesState{
-				Clusters: []types.OSKDiscoveredCluster{
+			ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+				Clusters: []types.ApacheKafkaDiscoveredCluster{
 					{
-						ID:               "osk-cluster-1",
+						ID:               "apache-kafka-cluster-1",
 						BootstrapServers: []string{"broker1:9092"},
 						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
 							SaslMechanism: "SCRAM-SHA-256",
@@ -288,12 +288,12 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 							},
 						},
 						DiscoveredClients: []types.DiscoveredClient{},
-						Metadata: types.OSKClusterMetadata{
+						Metadata: types.ApacheKafkaClusterMetadata{
 							Environment: "prod",
 						},
 					},
 					{
-						ID:               "osk-cluster-2",
+						ID:               "apache-kafka-cluster-2",
 						BootstrapServers: []string{"broker1:9092"},
 						KafkaAdminClientInformation: types.KafkaAdminClientInformation{
 							SaslMechanism: "SCRAM-SHA-512",
@@ -312,7 +312,7 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 							},
 						},
 						DiscoveredClients: []types.DiscoveredClient{},
-						Metadata: types.OSKClusterMetadata{
+						Metadata: types.ApacheKafkaClusterMetadata{
 							Environment: "staging",
 						},
 					},
@@ -325,22 +325,22 @@ func TestProcessState_OSKMetricsPreservation(t *testing.T) {
 
 		processedState := rs.ProcessState(state)
 
-		// Should have OSK source
+		// Should have Apache Kafka source
 		require.Len(t, processedState.Sources, 1)
-		require.Equal(t, types.SourceTypeOSK, processedState.Sources[0].Type)
-		require.NotNil(t, processedState.Sources[0].OSKData)
+		require.Equal(t, types.SourceTypeApacheKafka, processedState.Sources[0].Type)
+		require.NotNil(t, processedState.Sources[0].ApacheKafkaData)
 
-		// Verify both OSK clusters have metrics preserved
-		require.Len(t, processedState.Sources[0].OSKData.Clusters, 2)
+		// Verify both Apache Kafka clusters have metrics preserved
+		require.Len(t, processedState.Sources[0].ApacheKafkaData.Clusters, 2)
 
-		cluster1 := processedState.Sources[0].OSKData.Clusters[0]
+		cluster1 := processedState.Sources[0].ApacheKafkaData.Clusters[0]
 		require.NotNil(t, cluster1.ClusterMetrics)
 		require.Len(t, cluster1.ClusterMetrics.Metrics, 1)
 		assert.Equal(t, "BytesInPerSec", cluster1.ClusterMetrics.Metrics[0].Label)
 		require.NotNil(t, cluster1.ClusterMetrics.Metrics[0].Value)
 		assert.InDelta(t, 100.0, *cluster1.ClusterMetrics.Metrics[0].Value, 0.01)
 
-		cluster2 := processedState.Sources[0].OSKData.Clusters[1]
+		cluster2 := processedState.Sources[0].ApacheKafkaData.Clusters[1]
 		require.NotNil(t, cluster2.ClusterMetrics)
 		require.Len(t, cluster2.ClusterMetrics.Metrics, 1)
 		assert.Equal(t, "MessagesInPerSec", cluster2.ClusterMetrics.Metrics[0].Label)
@@ -357,7 +357,7 @@ func ptr(v float64) *float64 {
 func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 	rs := NewReportService()
 
-	// Create a test state with both MSK and OSK clusters
+	// Create a test state with both MSK and Apache Kafka clusters
 	processedState := types.ProcessedState{
 		Sources: []types.ProcessedSource{
 			// MSK source with cluster
@@ -388,13 +388,13 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 					},
 				},
 			},
-			// OSK source with cluster
+			// Apache Kafka source with cluster
 			{
-				Type: types.SourceTypeOSK,
-				OSKData: &types.ProcessedOSKSource{
-					Clusters: []types.ProcessedOSKCluster{
+				Type: types.SourceTypeApacheKafka,
+				ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+					Clusters: []types.ProcessedApacheKafkaCluster{
 						{
-							ID:               "my-osk-cluster",
+							ID:               "my-apache-kafka-cluster",
 							BootstrapServers: []string{"broker1:9092"},
 							ClusterMetrics: &types.ProcessedClusterMetrics{
 								Metrics: []types.ProcessedMetric{
@@ -433,19 +433,19 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		assert.InDelta(t, 500.0, *result.Metrics[0].Value, 0.01)
 	})
 
-	t.Run("sourceType=osk finds OSK cluster", func(t *testing.T) {
+	t.Run("sourceType=apache-kafka finds Apache Kafka cluster", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
 			processedState,
-			"my-osk-cluster",
-			"osk",
+			"my-apache-kafka-cluster",
+			"apache-kafka",
 			nil,
 			nil,
 		)
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Equal(t, "", result.Region) // OSK clusters don't have regions
-		assert.Equal(t, "my-osk-cluster", result.ClusterArn)
+		assert.Equal(t, "", result.Region) // Apache Kafka clusters don't have regions
+		assert.Equal(t, "my-apache-kafka-cluster", result.ClusterArn)
 		require.Len(t, result.Metrics, 1)
 		assert.Equal(t, "MessagesInPerSec", result.Metrics[0].Label)
 		require.NotNil(t, result.Metrics[0].Value)
@@ -467,10 +467,10 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-msk-cluster/abc-123", result.ClusterArn)
 	})
 
-	t.Run("sourceType=auto detects non-ARN and searches OSK", func(t *testing.T) {
+	t.Run("sourceType=auto detects non-ARN and searches Apache Kafka", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
 			processedState,
-			"my-osk-cluster",
+			"my-apache-kafka-cluster",
 			"auto",
 			nil,
 			nil,
@@ -479,7 +479,7 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "", result.Region)
-		assert.Equal(t, "my-osk-cluster", result.ClusterArn)
+		assert.Equal(t, "my-apache-kafka-cluster", result.ClusterArn)
 	})
 
 	t.Run("empty sourceType detects ARN and searches MSK", func(t *testing.T) {
@@ -497,10 +497,10 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		assert.Equal(t, "arn:aws:kafka:us-east-1:123456789012:cluster/test-msk-cluster/abc-123", result.ClusterArn)
 	})
 
-	t.Run("empty sourceType detects non-ARN and searches OSK", func(t *testing.T) {
+	t.Run("empty sourceType detects non-ARN and searches Apache Kafka", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
 			processedState,
-			"my-osk-cluster",
+			"my-apache-kafka-cluster",
 			"",
 			nil,
 			nil,
@@ -509,7 +509,7 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Equal(t, "", result.Region)
-		assert.Equal(t, "my-osk-cluster", result.ClusterArn)
+		assert.Equal(t, "my-apache-kafka-cluster", result.ClusterArn)
 	})
 
 	t.Run("cluster not found in MSK sources shows clear error", func(t *testing.T) {
@@ -527,29 +527,29 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		assert.Contains(t, err.Error(), "arn:aws:kafka:us-west-2:999999999999:cluster/nonexistent/xyz-789")
 	})
 
-	t.Run("cluster not found in OSK sources shows clear error", func(t *testing.T) {
+	t.Run("cluster not found in Apache Kafka sources shows clear error", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
 			processedState,
 			"nonexistent-cluster",
-			"osk",
+			"apache-kafka",
 			nil,
 			nil,
 		)
 
 		require.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "not found in OSK sources")
+		assert.Contains(t, err.Error(), "not found in Apache Kafka sources")
 		assert.Contains(t, err.Error(), "nonexistent-cluster")
 	})
 
-	t.Run("OSK cluster without metrics returns cluster with nil metrics", func(t *testing.T) {
-		// Create state with OSK cluster that has no metrics
+	t.Run("Apache Kafka cluster without metrics returns cluster with nil metrics", func(t *testing.T) {
+		// Create state with Apache Kafka cluster that has no metrics
 		stateWithoutMetrics := types.ProcessedState{
 			Sources: []types.ProcessedSource{
 				{
-					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					Type: types.SourceTypeApacheKafka,
+					ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+						Clusters: []types.ProcessedApacheKafkaCluster{
 							{
 								ID:               "no-metrics-cluster",
 								BootstrapServers: []string{"broker1:9092"},
@@ -564,7 +564,7 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
 			stateWithoutMetrics,
 			"no-metrics-cluster",
-			"osk",
+			"apache-kafka",
 			nil,
 			nil,
 		)
@@ -592,16 +592,16 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 	})
 }
 
-func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
+func TestFilterApacheKafkaClusterMetrics_PopulatesMetadata(t *testing.T) {
 	rs := NewReportService()
 
-	t.Run("OSK cluster with metadata populates Environment and Location", func(t *testing.T) {
+	t.Run("Apache Kafka cluster with metadata populates Environment and Location", func(t *testing.T) {
 		processedState := types.ProcessedState{
 			Sources: []types.ProcessedSource{
 				{
-					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					Type: types.SourceTypeApacheKafka,
+					ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+						Clusters: []types.ProcessedApacheKafkaCluster{
 							{
 								ID:               "prod-cluster",
 								BootstrapServers: []string{"broker1:9092"},
@@ -616,7 +616,7 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 									},
 									Metadata: types.MetricMetadata{Period: 60},
 								},
-								Metadata: types.OSKClusterMetadata{
+								Metadata: types.ApacheKafkaClusterMetadata{
 									Environment: "production",
 									Location:    "datacenter-1",
 								},
@@ -627,7 +627,7 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 			},
 		}
 
-		result, err := rs.FilterClusterMetrics(processedState, "prod-cluster", "osk", nil, nil)
+		result, err := rs.FilterClusterMetrics(processedState, "prod-cluster", "apache-kafka", nil, nil)
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -635,13 +635,13 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 		assert.Equal(t, "datacenter-1", result.Location)
 	})
 
-	t.Run("OSK cluster without metadata fields has empty Environment and Location", func(t *testing.T) {
+	t.Run("Apache Kafka cluster without metadata fields has empty Environment and Location", func(t *testing.T) {
 		processedState := types.ProcessedState{
 			Sources: []types.ProcessedSource{
 				{
-					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					Type: types.SourceTypeApacheKafka,
+					ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+						Clusters: []types.ProcessedApacheKafkaCluster{
 							{
 								ID:               "no-metadata-cluster",
 								BootstrapServers: []string{"broker1:9092"},
@@ -649,7 +649,7 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 									Metrics:  []types.ProcessedMetric{},
 									Metadata: types.MetricMetadata{Period: 60},
 								},
-								Metadata: types.OSKClusterMetadata{
+								Metadata: types.ApacheKafkaClusterMetadata{
 									// Environment and Location not set
 								},
 							},
@@ -659,7 +659,7 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 			},
 		}
 
-		result, err := rs.FilterClusterMetrics(processedState, "no-metadata-cluster", "osk", nil, nil)
+		result, err := rs.FilterClusterMetrics(processedState, "no-metadata-cluster", "apache-kafka", nil, nil)
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -667,18 +667,18 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 		assert.Equal(t, "", result.Location)
 	})
 
-	t.Run("OSK cluster with nil metrics still populates metadata", func(t *testing.T) {
+	t.Run("Apache Kafka cluster with nil metrics still populates metadata", func(t *testing.T) {
 		processedState := types.ProcessedState{
 			Sources: []types.ProcessedSource{
 				{
-					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					Type: types.SourceTypeApacheKafka,
+					ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+						Clusters: []types.ProcessedApacheKafkaCluster{
 							{
 								ID:               "no-metrics-cluster",
 								BootstrapServers: []string{"broker1:9092"},
 								ClusterMetrics:   nil,
-								Metadata: types.OSKClusterMetadata{
+								Metadata: types.ApacheKafkaClusterMetadata{
 									Environment: "staging",
 									Location:    "datacenter-2",
 								},
@@ -689,7 +689,7 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 			},
 		}
 
-		result, err := rs.FilterClusterMetrics(processedState, "no-metrics-cluster", "osk", nil, nil)
+		result, err := rs.FilterClusterMetrics(processedState, "no-metrics-cluster", "apache-kafka", nil, nil)
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
@@ -735,7 +735,7 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		// MSK clusters should have empty OSK fields
+		// MSK clusters should have empty Apache Kafka fields
 		assert.Equal(t, "", result.Environment)
 		assert.Equal(t, "", result.Location)
 	})
@@ -749,12 +749,12 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 		return &t
 	}
 
-	oskState := types.ProcessedState{
+	apacheKafkaState := types.ProcessedState{
 		Sources: []types.ProcessedSource{
 			{
-				Type: types.SourceTypeOSK,
-				OSKData: &types.ProcessedOSKSource{
-					Clusters: []types.ProcessedOSKCluster{
+				Type: types.SourceTypeApacheKafka,
+				ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+					Clusters: []types.ProcessedApacheKafkaCluster{
 						{
 							ID:               "date-test-cluster",
 							BootstrapServers: []string{"broker1:9092"},
@@ -780,20 +780,20 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 	}
 
 	t.Run("nil start and end returns all parseable metrics", func(t *testing.T) {
-		result, err := rs.FilterClusterMetrics(oskState, "date-test-cluster", "osk", nil, nil)
+		result, err := rs.FilterClusterMetrics(apacheKafkaState, "date-test-cluster", "apache-kafka", nil, nil)
 		require.NoError(t, err)
 		assert.Len(t, result.Metrics, 7)
 	})
 
 	t.Run("start filter excludes earlier metrics", func(t *testing.T) {
-		result, err := rs.FilterClusterMetrics(oskState, "date-test-cluster", "osk", makeTime("2025-01-03T00:00:00Z"), nil)
+		result, err := rs.FilterClusterMetrics(apacheKafkaState, "date-test-cluster", "apache-kafka", makeTime("2025-01-03T00:00:00Z"), nil)
 		require.NoError(t, err)
 		assert.Len(t, result.Metrics, 4)
 		assert.InDelta(t, 300.0, *result.Metrics[0].Value, 0.01)
 	})
 
 	t.Run("end filter excludes later metrics", func(t *testing.T) {
-		result, err := rs.FilterClusterMetrics(oskState, "date-test-cluster", "osk", nil, makeTime("2025-01-03T00:00:00Z"))
+		result, err := rs.FilterClusterMetrics(apacheKafkaState, "date-test-cluster", "apache-kafka", nil, makeTime("2025-01-03T00:00:00Z"))
 		require.NoError(t, err)
 		assert.Len(t, result.Metrics, 3)
 		assert.InDelta(t, 300.0, *result.Metrics[2].Value, 0.01)
@@ -801,7 +801,7 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 
 	t.Run("start and end produce a subset", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
-			oskState, "date-test-cluster", "osk",
+			apacheKafkaState, "date-test-cluster", "apache-kafka",
 			makeTime("2025-01-02T00:00:00Z"),
 			makeTime("2025-01-04T00:00:00Z"),
 		)
@@ -813,7 +813,7 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 
 	t.Run("inclusive start boundary", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
-			oskState, "date-test-cluster", "osk",
+			apacheKafkaState, "date-test-cluster", "apache-kafka",
 			makeTime("2025-01-03T00:00:00Z"),
 			makeTime("2025-01-03T00:00:00Z"),
 		)
@@ -824,7 +824,7 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 
 	t.Run("RFC3339 with timezone offset is parsed correctly", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
-			oskState, "date-test-cluster", "osk",
+			apacheKafkaState, "date-test-cluster", "apache-kafka",
 			makeTime("2025-01-06T00:00:00Z"),
 			makeTime("2025-01-06T01:00:00Z"),
 		)
@@ -835,7 +835,7 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 
 	t.Run("unparseable timestamps are silently skipped", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
-			oskState, "date-test-cluster", "osk",
+			apacheKafkaState, "date-test-cluster", "apache-kafka",
 			makeTime("2025-01-01T00:00:00Z"),
 			makeTime("2025-01-06T02:00:00Z"),
 		)
@@ -846,7 +846,7 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 
 	t.Run("aggregates are recalculated from filtered subset", func(t *testing.T) {
 		result, err := rs.FilterClusterMetrics(
-			oskState, "date-test-cluster", "osk",
+			apacheKafkaState, "date-test-cluster", "apache-kafka",
 			makeTime("2025-01-02T00:00:00Z"),
 			makeTime("2025-01-04T00:00:00Z"),
 		)

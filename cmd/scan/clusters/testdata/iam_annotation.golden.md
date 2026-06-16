@@ -1,4 +1,4 @@
-Only required for `--source-type msk`. OSK scans use credentials from the credentials file, not AWS IAM.
+Only required for `--source-type msk`. Apache Kafka scans use credentials from the credentials file, not AWS IAM.
 
 ```json
 {

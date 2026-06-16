@@ -1,14 +1,14 @@
 # KCP CLI
 
-KCP (Kafka Copy Paste) is a CLI tool for planning and executing Kafka migrations to Confluent Cloud.
+KCP is a CLI tool for planning and executing Apache Kafka® migrations to Confluent Cloud.
 
 > [!NOTE]
 > KCP supports migrations from two source types:
 >
 > - **AWS MSK (Managed Streaming for Kafka)** — full discovery via AWS APIs + Kafka Admin API.
-> - **Open Source Kafka (OSK)** — direct scanning via Kafka Admin API.
+> - **Apache Kafka** — direct scanning via Kafka Admin API.
 >
-> The workflow differs slightly based on your source type. See the [Command Reference](command-reference/index.md) for per-command specifics, or the [Source Compatibility](source-compatibility.md) matrix for which commands support which source flavor (MSK Provisioned/Express, MSK Serverless, OSK).
+> The workflow differs slightly based on your source type. See the [Command Reference](command-reference/index.md) for per-command specifics, or the [Source Compatibility](source-compatibility.md) matrix for which commands support which source flavor (MSK Provisioned/Express, MSK Serverless, Apache Kafka).
 
 ## Installation
 
@@ -70,13 +70,13 @@ aws sts get-caller-identity
 Each command's per-command AWS IAM permission requirements are documented on its page in the [Command Reference](command-reference/index.md).
 
 > [!NOTE]
-> **OSK (Open Source Kafka)** migrations do not require AWS authentication. OSK clusters are accessed directly via Kafka Admin API using the credentials you provide in `osk-credentials.yaml`. See [`kcp scan clusters`](command-reference/scan/clusters.md) for details.
+> **Apache Kafka** migrations do not require AWS authentication. Apache Kafka clusters are accessed directly via Kafka Admin API using the credentials you provide in `apache-kafka-credentials.yaml`. See [`kcp scan clusters`](command-reference/scan/clusters.md) for details.
 
 ## Workflow
 
 The typical migration flow:
 
-1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or OSK) to build `kcp-state.json`.
+1. **Discover / scan** — `kcp discover` (MSK) or `kcp scan clusters` (MSK or Apache Kafka) to build `kcp-state.json`.
 2. **Report** — `kcp report costs` and `kcp report metrics` for cost and utilization analysis. Alternatively, use the `kcp ui` for fine-grained analysis.
 3. **Generate migration assets for data migration** — `kcp create-asset target-infra`, `migration-infra`, `migrate-topics`, `migrate-schemas`, `migrate-acls`, `migrate-connectors`.
 4. **Initialize and execute client switchover** — `kcp migration init` followed by `kcp migration execute`.
@@ -119,5 +119,5 @@ The full CLI reference is generated directly from the Cobra command definitions 
 
 - [Getting Started with Zero-Cut Migrations](getting-started-with-zero-cut-migrations.md)
 - [Gateway Switchover Examples](gateway-switchover/index.md)
-- [OSK Configuration → OSK credentials](osk-configuration/osk-credentials.md) — schema and worked examples for `osk-credentials.yaml`
-- [OSK Configuration → Metrics collection](osk-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for OSK metrics
+- [Apache Kafka Configuration → Apache Kafka credentials](apache-kafka-configuration/apache-kafka-credentials.md) — schema and worked examples for `apache-kafka-credentials.yaml`
+- [Apache Kafka Configuration → Metrics collection](apache-kafka-configuration/metrics-collection.md) — Jolokia and Prometheus design notes for Apache Kafka metrics

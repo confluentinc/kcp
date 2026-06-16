@@ -1,6 +1,6 @@
 /**
  * Shared form schema fragments for migration infrastructure wizards.
- * Used by both MSK and OSK wizard configs.
+ * Used by both MSK and Apache Kafka wizard configs.
  */
 
 /** Target cluster properties for public cluster link path */

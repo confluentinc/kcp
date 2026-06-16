@@ -68,28 +68,21 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 		sources = append(sources, mskSource)
 	}
 
-	// Process OSK if present
-	if state.OSKSources != nil && len(state.OSKSources.Clusters) > 0 {
-		processedOSKClusters := []types.ProcessedOSKCluster{}
+	// Process Apache Kafka if present
+	if state.ApacheKafkaSources != nil && len(state.ApacheKafkaSources.Clusters) > 0 {
+		processedApacheKafkaClusters := []types.ProcessedApacheKafkaCluster{}
 
-		for _, cluster := range state.OSKSources.Clusters {
-			processedOSKClusters = append(processedOSKClusters, types.ProcessedOSKCluster{
-				ID:                          cluster.ID,
-				BootstrapServers:            cluster.BootstrapServers,
-				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
-				ClusterMetrics:              cluster.ClusterMetrics,
-				DiscoveredClients:           cluster.DiscoveredClients,
-				Metadata:                    cluster.Metadata,
-			})
+		for _, cluster := range state.ApacheKafkaSources.Clusters {
+			processedApacheKafkaClusters = append(processedApacheKafkaClusters, types.ProcessedApacheKafkaCluster(cluster))
 		}
 
-		oskSource := types.ProcessedSource{
-			Type: types.SourceTypeOSK,
-			OSKData: &types.ProcessedOSKSource{
-				Clusters: processedOSKClusters,
+		apacheKafkaSource := types.ProcessedSource{
+			Type: types.SourceTypeApacheKafka,
+			ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+				Clusters: processedApacheKafkaClusters,
 			},
 		}
-		sources = append(sources, oskSource)
+		sources = append(sources, apacheKafkaSource)
 	}
 
 	// Return the processed state with unified sources
@@ -113,7 +106,7 @@ func (rs *ReportService) filterMetricsByDateRange(metrics []types.ProcessedMetri
 
 	var filteredMetrics []types.ProcessedMetric
 	for _, metric := range metrics {
-		// Try parsing with RFC3339 first (handles timezone offsets like +01:00 from OSK metrics)
+		// Try parsing with RFC3339 first (handles timezone offsets like +01:00 from Apache Kafka metrics)
 		metricStartTime, err := time.Parse(time.RFC3339, metric.Start)
 		if err != nil {
 			// Fall back to the MSK format without timezone offset
@@ -203,23 +196,23 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 }
 
 // filterClusterMetrics filters the processed state by cluster ID and date range
-// sourceType can be "msk", "osk", or "auto" (auto-detects based on identifier pattern)
+// sourceType can be "msk", "apache-kafka", or "auto" (auto-detects based on identifier pattern)
 func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	if sourceType == "" || sourceType == "auto" {
 		if strings.HasPrefix(clusterID, "arn:") {
 			sourceType = "msk"
 		} else {
-			sourceType = "osk"
+			sourceType = "apache-kafka"
 		}
 	}
 
 	switch sourceType {
 	case "msk":
 		return rs.filterMSKClusterMetrics(processedState, clusterID, startTime, endTime)
-	case "osk":
-		return rs.filterOSKClusterMetrics(processedState, clusterID, startTime, endTime)
+	case "apache-kafka":
+		return rs.filterApacheKafkaClusterMetrics(processedState, clusterID, startTime, endTime)
 	default:
-		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk' or 'osk')", sourceType)
+		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk' or 'apache-kafka')", sourceType)
 	}
 }
 
@@ -275,14 +268,14 @@ func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedS
 	}, nil
 }
 
-// filterOSKClusterMetrics filters OSK cluster metrics by cluster ID
-func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	var targetCluster *types.ProcessedOSKCluster
+// filterApacheKafkaClusterMetrics filters Apache Kafka cluster metrics by cluster ID
+func (rs *ReportService) filterApacheKafkaClusterMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	var targetCluster *types.ProcessedApacheKafkaCluster
 
-	// Find the cluster in OSK sources
+	// Find the cluster in Apache Kafka sources
 	for _, source := range processedState.Sources {
-		if source.Type == types.SourceTypeOSK && source.OSKData != nil {
-			for _, cluster := range source.OSKData.Clusters {
+		if source.Type == types.SourceTypeApacheKafka && source.ApacheKafkaData != nil {
+			for _, cluster := range source.ApacheKafkaData.Clusters {
 				if strings.EqualFold(cluster.ID, clusterID) {
 					targetCluster = &cluster
 					break
@@ -295,7 +288,7 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	}
 
 	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found in OSK sources", clusterID)
+		return nil, fmt.Errorf("cluster '%s' not found in Apache Kafka sources", clusterID)
 	}
 
 	// Handle cluster without metrics (nil ClusterMetrics)
@@ -319,7 +312,7 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	return &types.ProcessedClusterMetrics{
-		Region:      "", // OSK clusters don't have regions
+		Region:      "", // Apache Kafka clusters don't have regions
 		ClusterArn:  clusterID,
 		Metadata:    targetCluster.ClusterMetrics.Metadata,
 		Metrics:     filteredMetrics,

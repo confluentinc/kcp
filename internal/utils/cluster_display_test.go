@@ -12,8 +12,8 @@ func TestGetClusterDisplayName_MSK(t *testing.T) {
 	assert.Equal(t, "my-cluster", displayName)
 }
 
-func TestGetClusterDisplayName_OSK(t *testing.T) {
-	displayName := GetClusterDisplayName(types.SourceTypeOSK, "", "production-kafka")
+func TestGetClusterDisplayName_ApacheKafka(t *testing.T) {
+	displayName := GetClusterDisplayName(types.SourceTypeApacheKafka, "", "production-kafka")
 	assert.Equal(t, "production-kafka", displayName)
 }
 

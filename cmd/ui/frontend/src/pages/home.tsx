@@ -35,7 +35,7 @@ export const Home = () => {
   const setError = useAppStore((state) => state.setError)
   const clearSelection = useAppStore((state) => state.clearSelection)
   const selectSummary = useAppStore((state) => state.selectSummary)
-  const selectOSKCluster = useAppStore((state) => state.selectOSKCluster)
+  const selectApacheKafkaCluster = useAppStore((state) => state.selectApacheKafkaCluster)
 
   // Check for pre-loaded state on mount
   useEffect(() => {
@@ -52,18 +52,18 @@ export const Home = () => {
           if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
             selectSummary()
           } else {
-            // Fallback: auto-select first OSK cluster if no MSK sources
-            const oskSource = response.sources.find((s: any) => s.type === 'osk' && s.osk_data !== undefined)
-            const firstCluster = oskSource?.osk_data?.clusters?.[0]
+            // Fallback: auto-select first Apache Kafka cluster if no MSK sources
+            const apacheKafkaSource = response.sources.find((s: any) => s.type === 'apache-kafka' && s.apache_kafka_data !== undefined)
+            const firstCluster = apacheKafkaSource?.apache_kafka_data?.clusters?.[0]
             if (firstCluster) {
-              selectOSKCluster(firstCluster.id)
+              selectApacheKafkaCluster(firstCluster.id)
             }
           }
         } else if (response && hasSchemaRegistries(response.schema_registries)) {
           setKcpState(response)
-          setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate.')
+          setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate.')
         } else if (response) {
-          setError('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate it, then reload.')
+          setError('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it, then reload.')
         }
       } catch {
         // No pre-loaded state, user will upload manually
@@ -73,7 +73,7 @@ export const Home = () => {
     }
 
     checkPreloadedState()
-  }, [sessionId, setKcpState, selectSummary, selectOSKCluster])
+  }, [sessionId, setKcpState, selectSummary, selectApacheKafkaCluster])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
@@ -109,20 +109,20 @@ export const Home = () => {
             if (mskSource?.msk_data?.regions && mskSource.msk_data.regions.length > 0) {
               selectSummary()
             } else {
-              // Fallback: auto-select first OSK cluster if no MSK sources
-              const oskSource = result.sources.find((s) => s.type === 'osk' && s.osk_data !== undefined)
-              const firstCluster = oskSource?.osk_data?.clusters?.[0]
+              // Fallback: auto-select first Apache Kafka cluster if no MSK sources
+              const apacheKafkaSource = result.sources.find((s) => s.type === 'apache-kafka' && s.apache_kafka_data !== undefined)
+              const firstCluster = apacheKafkaSource?.apache_kafka_data?.clusters?.[0]
               if (firstCluster) {
-                selectOSKCluster(firstCluster.id)
+                selectApacheKafkaCluster(firstCluster.id)
               }
             }
           } else if (result && hasSchemaRegistries(result.schema_registries)) {
             setKcpState(result)
             setIsProcessing(false)
-            setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate.')
+            setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate.')
           } else {
             setKcpState(null)
-            throw new Error('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate it.')
+            throw new Error('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it.')
           }
         } else {
           throw new Error('Invalid file format. Expected a KCP state file.')

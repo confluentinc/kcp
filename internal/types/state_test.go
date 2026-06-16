@@ -752,11 +752,11 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 	}
 }
 
-func TestOSKDiscoveredCluster_Structure(t *testing.T) {
-	cluster := OSKDiscoveredCluster{
+func TestApacheKafkaDiscoveredCluster_Structure(t *testing.T) {
+	cluster := ApacheKafkaDiscoveredCluster{
 		ID:               "prod-kafka-01",
 		BootstrapServers: []string{"broker1:9092"},
-		Metadata: OSKClusterMetadata{
+		Metadata: ApacheKafkaClusterMetadata{
 			Environment:  "production",
 			Location:     "us-datacenter-1",
 			KafkaVersion: "3.6.0",
@@ -771,9 +771,9 @@ func TestOSKDiscoveredCluster_Structure(t *testing.T) {
 	}
 }
 
-func TestOSKSourcesState_Structure(t *testing.T) {
-	state := OSKSourcesState{
-		Clusters: []OSKDiscoveredCluster{
+func TestApacheKafkaSourcesState_Structure(t *testing.T) {
+	state := ApacheKafkaSourcesState{
+		Clusters: []ApacheKafkaDiscoveredCluster{
 			{ID: "cluster-1"},
 			{ID: "cluster-2"},
 		},
@@ -790,36 +790,36 @@ func TestNewStateFrom_AlwaysInitializesBothSources(t *testing.T) {
 	if state.MSKSources == nil {
 		t.Error("MSKSources should be initialized, got nil")
 	}
-	if state.OSKSources == nil {
-		t.Error("OSKSources should be initialized, got nil")
+	if state.ApacheKafkaSources == nil {
+		t.Error("ApacheKafkaSources should be initialized, got nil")
 	}
 	if len(state.MSKSources.Regions) != 0 {
 		t.Errorf("MSKSources.Regions should be empty, got %d items", len(state.MSKSources.Regions))
 	}
-	if len(state.OSKSources.Clusters) != 0 {
-		t.Errorf("OSKSources.Clusters should be empty, got %d items", len(state.OSKSources.Clusters))
+	if len(state.ApacheKafkaSources.Clusters) != 0 {
+		t.Errorf("ApacheKafkaSources.Clusters should be empty, got %d items", len(state.ApacheKafkaSources.Clusters))
 	}
 }
 
-func TestNewStateFrom_PreservesExistingOSKData(t *testing.T) {
-	// Create state with OSK data
+func TestNewStateFrom_PreservesExistingApacheKafkaData(t *testing.T) {
+	// Create state with Apache Kafka data
 	existingState := &State{
-		OSKSources: &OSKSourcesState{
-			Clusters: []OSKDiscoveredCluster{
+		ApacheKafkaSources: &ApacheKafkaSourcesState{
+			Clusters: []ApacheKafkaDiscoveredCluster{
 				{ID: "test-cluster"},
 			},
 		},
 	}
 
 	newState := NewStateFrom(existingState)
-	if newState.OSKSources == nil {
-		t.Fatal("OSKSources should be preserved")
+	if newState.ApacheKafkaSources == nil {
+		t.Fatal("ApacheKafkaSources should be preserved")
 	}
-	if len(newState.OSKSources.Clusters) != 1 {
-		t.Errorf("Expected 1 OSK cluster, got %d", len(newState.OSKSources.Clusters))
+	if len(newState.ApacheKafkaSources.Clusters) != 1 {
+		t.Errorf("Expected 1 Apache Kafka cluster, got %d", len(newState.ApacheKafkaSources.Clusters))
 	}
 	if newState.MSKSources == nil {
-		t.Error("MSKSources should be initialized even when copying OSK data")
+		t.Error("MSKSources should be initialized even when copying Apache Kafka data")
 	}
 }
 
@@ -838,25 +838,25 @@ func TestProcessedSource_TypeDiscrimination(t *testing.T) {
 		t.Error("MSKData should not be nil for MSK source")
 	}
 
-	// Test OSK source
-	oskSource := ProcessedSource{
-		Type: SourceTypeOSK,
-		OSKData: &ProcessedOSKSource{
-			Clusters: []ProcessedOSKCluster{},
+	// Test Apache Kafka source
+	apacheKafkaSource := ProcessedSource{
+		Type: SourceTypeApacheKafka,
+		ApacheKafkaData: &ProcessedApacheKafkaSource{
+			Clusters: []ProcessedApacheKafkaCluster{},
 		},
 	}
-	if oskSource.Type != SourceTypeOSK {
-		t.Errorf("Expected OSK type, got %s", oskSource.Type)
+	if apacheKafkaSource.Type != SourceTypeApacheKafka {
+		t.Errorf("Expected Apache Kafka type, got %s", apacheKafkaSource.Type)
 	}
-	if oskSource.OSKData == nil {
-		t.Error("OSKData should not be nil for OSK source")
+	if apacheKafkaSource.ApacheKafkaData == nil {
+		t.Error("ApacheKafkaData should not be nil for Apache Kafka source")
 	}
 }
 
-func TestGetOSKClusterByID_Found(t *testing.T) {
+func TestGetApacheKafkaClusterByID_Found(t *testing.T) {
 	state := &State{
-		OSKSources: &OSKSourcesState{
-			Clusters: []OSKDiscoveredCluster{
+		ApacheKafkaSources: &ApacheKafkaSourcesState{
+			Clusters: []ApacheKafkaDiscoveredCluster{
 				{
 					ID:               "my-kafka",
 					BootstrapServers: []string{"broker1:9092", "broker2:9092"},
@@ -868,51 +868,51 @@ func TestGetOSKClusterByID_Found(t *testing.T) {
 		},
 	}
 
-	cluster, err := state.GetOSKClusterByID("my-kafka")
+	cluster, err := state.GetApacheKafkaClusterByID("my-kafka")
 	if err != nil {
-		t.Fatalf("GetOSKClusterByID() error = %v, want nil", err)
+		t.Fatalf("GetApacheKafkaClusterByID() error = %v, want nil", err)
 	}
 	if cluster.ID != "my-kafka" {
-		t.Errorf("GetOSKClusterByID() ID = %q, want %q", cluster.ID, "my-kafka")
+		t.Errorf("GetApacheKafkaClusterByID() ID = %q, want %q", cluster.ID, "my-kafka")
 	}
 	if cluster.KafkaAdminClientInformation.ClusterID != "abc-123" {
-		t.Errorf("GetOSKClusterByID() ClusterID = %q, want %q", cluster.KafkaAdminClientInformation.ClusterID, "abc-123")
+		t.Errorf("GetApacheKafkaClusterByID() ClusterID = %q, want %q", cluster.KafkaAdminClientInformation.ClusterID, "abc-123")
 	}
 	if len(cluster.BootstrapServers) != 2 {
-		t.Errorf("GetOSKClusterByID() BootstrapServers length = %d, want 2", len(cluster.BootstrapServers))
+		t.Errorf("GetApacheKafkaClusterByID() BootstrapServers length = %d, want 2", len(cluster.BootstrapServers))
 	}
 	if len(cluster.BootstrapServers) >= 1 && cluster.BootstrapServers[0] != "broker1:9092" {
-		t.Errorf("GetOSKClusterByID() BootstrapServers[0] = %q, want %q", cluster.BootstrapServers[0], "broker1:9092")
+		t.Errorf("GetApacheKafkaClusterByID() BootstrapServers[0] = %q, want %q", cluster.BootstrapServers[0], "broker1:9092")
 	}
 	if len(cluster.BootstrapServers) >= 2 && cluster.BootstrapServers[1] != "broker2:9092" {
-		t.Errorf("GetOSKClusterByID() BootstrapServers[1] = %q, want %q", cluster.BootstrapServers[1], "broker2:9092")
+		t.Errorf("GetApacheKafkaClusterByID() BootstrapServers[1] = %q, want %q", cluster.BootstrapServers[1], "broker2:9092")
 	}
 }
 
-func TestGetOSKClusterByID_NotFound(t *testing.T) {
+func TestGetApacheKafkaClusterByID_NotFound(t *testing.T) {
 	state := &State{
-		OSKSources: &OSKSourcesState{
-			Clusters: []OSKDiscoveredCluster{
+		ApacheKafkaSources: &ApacheKafkaSourcesState{
+			Clusters: []ApacheKafkaDiscoveredCluster{
 				{ID: "my-kafka"},
 			},
 		},
 	}
 
-	_, err := state.GetOSKClusterByID("nonexistent")
+	_, err := state.GetApacheKafkaClusterByID("nonexistent")
 	if err == nil {
-		t.Error("GetOSKClusterByID() error = nil, want error")
+		t.Error("GetApacheKafkaClusterByID() error = nil, want error")
 	}
 	if err != nil && !strings.Contains(err.Error(), "nonexistent") {
-		t.Errorf("GetOSKClusterByID() error should contain 'nonexistent', got: %v", err)
+		t.Errorf("GetApacheKafkaClusterByID() error should contain 'nonexistent', got: %v", err)
 	}
 }
 
-func TestGetOSKClusterByID_NilOSKSources(t *testing.T) {
+func TestGetApacheKafkaClusterByID_NilApacheKafkaSources(t *testing.T) {
 	state := &State{}
 
-	_, err := state.GetOSKClusterByID("my-kafka")
+	_, err := state.GetApacheKafkaClusterByID("my-kafka")
 	if err == nil {
-		t.Error("GetOSKClusterByID() error = nil, want error")
+		t.Error("GetApacheKafkaClusterByID() error = nil, want error")
 	}
 }
 

@@ -90,7 +90,7 @@ export const API_ENDPOINTS = {
  */
 export const SOURCE_TYPES = {
   MSK: 'msk',
-  OSK: 'osk',
+  APACHE_KAFKA: 'apache-kafka',
 } as const
 
 /**

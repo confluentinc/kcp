@@ -126,7 +126,7 @@ type ProcessedClusterMetrics struct {
 	Metrics    []ProcessedMetric          `json:"results"`
 	Aggregates map[string]MetricAggregate `json:"aggregates"`
 	QueryInfo  []MetricQueryInfo          `json:"query_info"`
-	// OSK-specific fields (optional, omitempty for MSK clusters)
+	// Apache Kafka-specific fields (optional, omitempty for MSK clusters)
 	Environment string `json:"environment,omitempty"`
 	Location    string `json:"location,omitempty"`
 }
@@ -171,15 +171,15 @@ type ServiceCostAggregates struct {
 type SourceType string
 
 const (
-	SourceTypeMSK SourceType = "msk"
-	SourceTypeOSK SourceType = "osk"
+	SourceTypeMSK         SourceType = "msk"
+	SourceTypeApacheKafka SourceType = "apache-kafka"
 )
 
-// ProcessedSource represents a unified source (MSK or OSK) with discriminated union
+// ProcessedSource represents a unified source (MSK or Apache Kafka) with discriminated union
 type ProcessedSource struct {
-	Type    SourceType          `json:"type"`
-	MSKData *ProcessedMSKSource `json:"msk_data,omitempty"`
-	OSKData *ProcessedOSKSource `json:"osk_data,omitempty"`
+	Type            SourceType                  `json:"type"`
+	MSKData         *ProcessedMSKSource         `json:"msk_data,omitempty"`
+	ApacheKafkaData *ProcessedApacheKafkaSource `json:"apache_kafka_data,omitempty"`
 }
 
 // ProcessedMSKSource contains processed MSK data (regions)
@@ -187,17 +187,17 @@ type ProcessedMSKSource struct {
 	Regions []ProcessedRegion `json:"regions"`
 }
 
-// ProcessedOSKSource contains processed OSK data (flat cluster array)
-type ProcessedOSKSource struct {
-	Clusters []ProcessedOSKCluster `json:"clusters"`
+// ProcessedApacheKafkaSource contains processed Apache Kafka data (flat cluster array)
+type ProcessedApacheKafkaSource struct {
+	Clusters []ProcessedApacheKafkaCluster `json:"clusters"`
 }
 
-// ProcessedOSKCluster represents an OSK cluster in the API response
-type ProcessedOSKCluster struct {
+// ProcessedApacheKafkaCluster represents an Apache Kafka cluster in the API response
+type ProcessedApacheKafkaCluster struct {
 	ID                          string                      `json:"id"`
 	BootstrapServers            []string                    `json:"bootstrap_servers"`
 	KafkaAdminClientInformation KafkaAdminClientInformation `json:"kafka_admin_client_information"`
 	ClusterMetrics              *ProcessedClusterMetrics    `json:"metrics,omitempty"`
 	DiscoveredClients           []DiscoveredClient          `json:"discovered_clients"`
-	Metadata                    OSKClusterMetadata          `json:"metadata"`
+	Metadata                    ApacheKafkaClusterMetadata  `json:"metadata"`
 }
