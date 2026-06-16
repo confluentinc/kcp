@@ -1,4 +1,4 @@
-import type { ProcessedSource, ProcessedMSKSource, ProcessedOSKSource } from '@/types'
+import type { ProcessedSource, ProcessedMSKSource, ProcessedApacheKafkaSource } from '@/types'
 
 /**
  * Type guard to check if a source is MSK
@@ -10,12 +10,12 @@ export function isMSKSource(
 }
 
 /**
- * Type guard to check if a source is OSK
+ * Type guard to check if a source is Apache Kafka
  */
-export function isOSKSource(
+export function isApacheKafkaSource(
   source: ProcessedSource
-): source is ProcessedSource & { osk_data: ProcessedOSKSource } {
-  return source.type === 'osk' && source.osk_data !== undefined
+): source is ProcessedSource & { apache_kafka_data: ProcessedApacheKafkaSource } {
+  return source.type === 'apache-kafka' && source.apache_kafka_data !== undefined
 }
 
 /**
@@ -27,9 +27,9 @@ export function getMSKSource(sources: ProcessedSource[]): ProcessedMSKSource | n
 }
 
 /**
- * Get OSK source from sources array (if present)
+ * Get Apache Kafka source from sources array (if present)
  */
-export function getOSKSource(sources: ProcessedSource[]): ProcessedOSKSource | null {
-  const oskSource = sources.find(isOSKSource)
-  return oskSource?.osk_data ?? null
+export function getApacheKafkaSource(sources: ProcessedSource[]): ProcessedApacheKafkaSource | null {
+  const apacheKafkaSource = sources.find(isApacheKafkaSource)
+  return apacheKafkaSource?.apache_kafka_data ?? null
 }

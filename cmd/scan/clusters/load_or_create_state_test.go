@@ -29,10 +29,10 @@ func TestLoadOrCreateState_NewFile_InitialisesRequiredFields(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, state.MSKSources, "MSKSources should be initialised")
-	require.NotNil(t, state.OSKSources, "OSKSources should be initialised")
+	require.NotNil(t, state.ApacheKafkaSources, "ApacheKafkaSources should be initialised")
 	require.NotNil(t, state.SchemaRegistries, "SchemaRegistries should be initialised")
 	assert.Empty(t, state.MSKSources.Regions)
-	assert.Empty(t, state.OSKSources.Clusters)
+	assert.Empty(t, state.ApacheKafkaSources.Clusters)
 }
 
 func TestLoadOrCreateState_ExistingFile_LoadsState(t *testing.T) {

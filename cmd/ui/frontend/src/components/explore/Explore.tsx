@@ -2,7 +2,7 @@ import { useAppStore } from '@/stores/store'
 import { Summary } from './views/Summary'
 import { RegionReport } from './views/RegionReport'
 import { MSKClusterReport } from './views/MSKClusterReport'
-import { OSKClusterReport } from './views/OSKClusterReport'
+import { ApacheKafkaClusterReport } from './views/ApacheKafkaClusterReport'
 import { SchemaRegistries } from './views/SchemaRegistries'
 
 export const Explore = () => {
@@ -29,8 +29,8 @@ export const Explore = () => {
     // Route to appropriate cluster view based on source type
     if (selectedSourceType === 'msk') {
       return <MSKClusterReport />
-    } else if (selectedSourceType === 'osk') {
-      return <OSKClusterReport />
+    } else if (selectedSourceType === 'apache-kafka') {
+      return <ApacheKafkaClusterReport />
     }
     // Fallback for invalid state
     return (

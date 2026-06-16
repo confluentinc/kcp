@@ -144,7 +144,7 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 	config.Net.SASL.Password = password
 	config.Net.SASL.Handshake = true
 
-	// Default to SHA256 for OSK clusters (most common in open source)
+	// Default to SHA256 for Apache Kafka clusters (most common in open source)
 	// MSK credentials are explicitly set to SHA512 during discovery (AWS MSK requirement)
 	switch mechanism {
 	case "", "SHA256", "SCRAM-SHA-256":

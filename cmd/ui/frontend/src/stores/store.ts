@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { devtools } from 'zustand/middleware'
 import { useShallow } from 'zustand/react/shallow'
-import type { Cluster, ProcessedOSKCluster, Region, SourceType, KafkaAdminInfo } from '@/types'
+import type { Cluster, ProcessedApacheKafkaCluster, Region, SourceType, KafkaAdminInfo } from '@/types'
 import type { TerraformFiles } from '@/components/migration/wizards/types'
 import type {
   ProcessedState,
@@ -93,7 +93,7 @@ interface AppState {
   selectedSourceType: SourceType | null
   selectedRegionName: string | null
   selectedClusterArn: string | null
-  selectedOSKClusterId: string | null
+  selectedApacheKafkaClusterId: string | null
 
   // TCO workload data (keyed by ARN)
   tcoWorkloadData: WorkloadData
@@ -124,7 +124,7 @@ interface AppState {
   selectSummary: () => void
   selectRegion: (regionName: string) => void
   selectCluster: (regionName: string, clusterArn: string, preselectedMetric?: string) => void
-  selectOSKCluster: (clusterId: string) => void
+  selectApacheKafkaCluster: (clusterId: string) => void
   selectTCOInputs: () => void
   selectSchemaRegistries: () => void
   clearSelection: () => void
@@ -179,7 +179,7 @@ export const useAppStore = create<AppState>()(
       selectedSourceType: null,
       selectedRegionName: null,
       selectedClusterArn: null,
-      selectedOSKClusterId: null,
+      selectedApacheKafkaClusterId: null,
       tcoWorkloadData: {},
       clusterDateFilters: {},
       regionState: {},
@@ -204,7 +204,7 @@ export const useAppStore = create<AppState>()(
             selectedSourceType: 'msk',
             selectedRegionName: null,
             selectedClusterArn: null,
-            selectedOSKClusterId: null,
+            selectedApacheKafkaClusterId: null,
           },
           false,
           'selectSummary'
@@ -217,7 +217,7 @@ export const useAppStore = create<AppState>()(
             selectedSourceType: 'msk',
             selectedRegionName: regionName,
             selectedClusterArn: null,
-            selectedOSKClusterId: null,
+            selectedApacheKafkaClusterId: null,
           },
           false,
           'selectRegion'
@@ -230,24 +230,24 @@ export const useAppStore = create<AppState>()(
             selectedSourceType: 'msk',
             selectedRegionName: regionName,
             selectedClusterArn: clusterArn,
-            selectedOSKClusterId: null,
+            selectedApacheKafkaClusterId: null,
             preselectedMetric: preselectedMetric || null,
           },
           false,
           'selectCluster'
         ),
 
-      selectOSKCluster: (clusterId) =>
+      selectApacheKafkaCluster: (clusterId) =>
         set(
           {
             selectedView: 'cluster',
-            selectedSourceType: 'osk',
-            selectedOSKClusterId: clusterId,
+            selectedSourceType: 'apache-kafka',
+            selectedApacheKafkaClusterId: clusterId,
             selectedRegionName: null,
             selectedClusterArn: null,
           },
           false,
-          'selectOSKCluster'
+          'selectApacheKafkaCluster'
         ),
 
       selectTCOInputs: () =>
@@ -256,7 +256,7 @@ export const useAppStore = create<AppState>()(
             selectedView: 'tco-inputs',
             selectedRegionName: null,
             selectedClusterArn: null,
-            selectedOSKClusterId: null,
+            selectedApacheKafkaClusterId: null,
           },
           false,
           'selectTCOInputs'
@@ -268,7 +268,7 @@ export const useAppStore = create<AppState>()(
             selectedView: 'schema-registries',
             selectedRegionName: null,
             selectedClusterArn: null,
-            selectedOSKClusterId: null,
+            selectedApacheKafkaClusterId: null,
           },
           false,
           'selectSchemaRegistries'
@@ -281,7 +281,7 @@ export const useAppStore = create<AppState>()(
             selectedSourceType: null,
             selectedRegionName: null,
             selectedClusterArn: null,
-            selectedOSKClusterId: null,
+            selectedApacheKafkaClusterId: null,
           },
           false,
           'clearSelection'
@@ -745,8 +745,8 @@ export const getClusterDataByArn = (arn: string): Cluster | null => {
   return null
 }
 
-// Utility function to get OSK cluster data by cluster ID
-export const getOSKClusterDataById = (clusterId: string): ProcessedOSKCluster | null => {
+// Utility function to get Apache Kafka cluster data by cluster ID
+export const getApacheKafkaClusterDataById = (clusterId: string): ProcessedApacheKafkaCluster | null => {
   const state = useAppStore.getState()
   const kcpState = state.kcpState
 
@@ -754,20 +754,20 @@ export const getOSKClusterDataById = (clusterId: string): ProcessedOSKCluster | 
     return null
   }
 
-  // Find the OSK source
-  const oskSource = kcpState.sources.find((s) => s.type === 'osk' && s.osk_data !== undefined)
+  // Find the Apache Kafka source
+  const apacheKafkaSource = kcpState.sources.find((s) => s.type === 'apache-kafka' && s.apache_kafka_data !== undefined)
 
-  if (!oskSource?.osk_data?.clusters) {
+  if (!apacheKafkaSource?.apache_kafka_data?.clusters) {
     return null
   }
 
-  return oskSource.osk_data.clusters.find((c) => c.id === clusterId) || null
+  return apacheKafkaSource.apache_kafka_data.clusters.find((c) => c.id === clusterId) || null
 }
 
 // Unified cluster data lookup by source type and cluster key
-// Returns the kafka_admin_client_information which is shared between MSK and OSK
+// Returns the kafka_admin_client_information which is shared between MSK and Apache Kafka
 export const getClusterDataBySourceType = (
-  sourceType: 'msk' | 'osk',
+  sourceType: 'msk' | 'apache-kafka',
   clusterKey: string
 ): { kafka_admin_client_information: KafkaAdminInfo; name: string } | null => {
   if (sourceType === 'msk') {
@@ -778,8 +778,8 @@ export const getClusterDataBySourceType = (
         name: cluster.name,
       }
     }
-  } else if (sourceType === 'osk') {
-    const cluster = getOSKClusterDataById(clusterKey)
+  } else if (sourceType === 'apache-kafka') {
+    const cluster = getApacheKafkaClusterDataById(clusterKey)
     if (cluster) {
       return {
         kafka_admin_client_information: cluster.kafka_admin_client_information,

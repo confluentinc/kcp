@@ -28,7 +28,7 @@ interface ClusterMetricsProps {
       }
     }
   }
-  sourceType?: 'msk' | 'osk'
+  sourceType?: 'msk' | 'apache-kafka'
   clusterId?: string
   isActive?: boolean
   inModal?: boolean

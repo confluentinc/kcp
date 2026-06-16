@@ -114,23 +114,23 @@ func (r *MetricReporter) generateReport(clusters []types.ProcessedClusterMetrics
 // determineReportTitle determines the report title based on cluster types
 func (r *MetricReporter) determineReportTitle(clusters []types.ProcessedClusterMetrics) string {
 	hasMSK := false
-	hasOSK := false
+	hasApacheKafka := false
 
 	for _, cluster := range clusters {
 		if r.isMSKCluster(cluster.ClusterArn) {
 			hasMSK = true
 		} else {
-			hasOSK = true
+			hasApacheKafka = true
 		}
 	}
 
-	// Mixed MSK+OSK
-	if hasMSK && hasOSK {
+	// Mixed MSK+Apache Kafka
+	if hasMSK && hasApacheKafka {
 		return "Kafka Metrics Report"
 	}
-	// Only OSK clusters
-	if hasOSK {
-		return "OSK Metrics Report"
+	// Only Apache Kafka clusters
+	if hasApacheKafka {
+		return "Apache Kafka Metrics Report"
 	}
 	// Only MSK clusters (default)
 	return "AWS MSK Metrics Report"
@@ -150,11 +150,11 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 		md.AddParagraph(fmt.Sprintf("**Cluster ARN**: %s", clusterMetrics.ClusterArn))
 		md.AddParagraph(fmt.Sprintf("**Region**: %s", clusterMetrics.Region))
 	} else {
-		// OSK cluster - show ID instead of ARN
+		// Apache Kafka cluster - show ID instead of ARN
 		md.AddHeading(fmt.Sprintf("Cluster: %s", clusterMetrics.ClusterArn), 3)
 		md.AddParagraph(fmt.Sprintf("**Cluster ID**: %s", clusterMetrics.ClusterArn))
 
-		// Add OSK-specific metadata
+		// Add Apache Kafka-specific metadata
 		environment := clusterMetrics.Environment
 		if environment == "" {
 			environment = "Not specified"
@@ -346,7 +346,7 @@ func (r *MetricReporter) formatTimestamp(timestamp string) string {
 		return "N/A"
 	}
 
-	// Try parsing with RFC3339 first (handles timezone offsets like +01:00 from OSK metrics)
+	// Try parsing with RFC3339 first (handles timezone offsets like +01:00 from Apache Kafka metrics)
 	if parsedTime, err := time.Parse(time.RFC3339, timestamp); err == nil {
 		return parsedTime.Format("2006-01-02 15:04 MST")
 	}

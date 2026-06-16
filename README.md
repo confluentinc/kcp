@@ -12,7 +12,7 @@ Please see the CHANGELOG.md for details of recent updates.
 
 <div align="center">
 
-**A comprehensive command-line tool for planning and executing Kafka migrations to Confluent Cloud.**
+**A comprehensive command-line tool for planning and executing Apache Kafka® migrations to Confluent Cloud.**
 
 </div>
 
@@ -123,7 +123,7 @@ npx playwright test --headed
 npx playwright test --ui
 
 # Run a specific test file
-npx playwright test tests/e2e/osk-migration-infra.spec.ts
+npx playwright test tests/e2e/apache-kafka-migration-infra.spec.ts
 
 # Debug a specific test
 npx playwright test -g "Public path" --debug
@@ -135,17 +135,17 @@ Test fixtures are in `cmd/ui/frontend/tests/e2e/fixtures/`. The Playwright confi
 
 Integration tests live in `integration-tests/` and run against real infrastructure via Docker.
 
-#### OSK Scan Tests
+#### Apache Kafka Scan Tests
 
 Tests the `kcp scan clusters` command against a Docker Compose environment with a multi-listener KRaft Kafka broker. Covers all supported authentication methods, Jolokia metrics collection (unauthenticated, auth, TLS), and Prometheus metrics collection (unauthenticated, auth, TLS).
 
 **Prerequisites:** Docker
 
 ```bash
-make test-osk-scan
+make test-apache-kafka-scan
 ```
 
-This starts the environment, runs all 10 scan variants, and tears down automatically. Credential files and Docker Compose configuration are in `integration-tests/osk-scan/`.
+This starts the environment, runs all 10 scan variants, and tears down automatically. Credential files and Docker Compose configuration are in `integration-tests/apache-kafka-scan/`.
 
 #### Schema Registry Scan Tests
 
@@ -205,4 +205,14 @@ make pre-commit-install
 - [Kafka Migration Guide](https://www.confluent.io/resources/white-paper/migrate-from-kafka-to-confluent/)
 - [Migration Hub on Confluent Cloud](https://confluent.cloud/migration-hub)
 - [Talk to a migration expert from Confluent](https://meetings.salesloft.com/confluentinc/confluent-migration-assistance)
+
+---
+
+## Trademarks
+
+Apache®, [Apache Kafka®, Kafka®](https://kafka.apache.org/), and the Kafka logo are either
+registered trademarks or trademarks of the [Apache Software Foundation](https://www.apache.org/)
+in the United States and/or other countries. No endorsement by the Apache Software Foundation
+is implied by the use of these marks. CONFLUENT® and the Confluent logo are registered
+trademarks of Confluent, Inc.
 

@@ -1,9 +1,9 @@
 import type { WizardConfig } from './types'
 import { getClusterDataByArn, getClusterDataBySourceType } from '@/stores/store'
 
-export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
+export const createTargetInfraWizardConfig = (clusterKey: string, sourceType: 'msk' | 'apache-kafka' = 'msk'): WizardConfig => {
   // Target infra needs full MSK cluster data for AWS-specific fields
-  // For OSK, those fields will use defaults
+  // For Apache Kafka, those fields will use defaults
   const cluster = sourceType === 'msk' ? getClusterDataByArn(clusterKey) : null
   const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
   const isMsk = sourceType === 'msk'

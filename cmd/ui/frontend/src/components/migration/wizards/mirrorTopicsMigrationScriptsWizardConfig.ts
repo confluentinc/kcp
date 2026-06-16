@@ -4,7 +4,7 @@ import { getClusterDataBySourceType } from '@/stores/store'
 const MODE_MIRROR = 'mirror'
 const MODE_NEW = 'new'
 
-export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
+export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: string, sourceType: 'msk' | 'apache-kafka' = 'msk'): WizardConfig => {
   const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
 
   const topics = clusterData?.kafka_admin_client_information?.topics?.details || []

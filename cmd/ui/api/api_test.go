@@ -166,8 +166,8 @@ func TestHandleUploadState_MissingSessionId(t *testing.T) {
 func stateWithSources(version string) *types.State {
 	return &types.State{
 		KcpBuildInfo: types.KcpBuildInfo{Version: version},
-		OSKSources: &types.OSKSourcesState{
-			Clusters: []types.OSKDiscoveredCluster{{ID: "test-cluster"}},
+		ApacheKafkaSources: &types.ApacheKafkaSourcesState{
+			Clusters: []types.ApacheKafkaDiscoveredCluster{{ID: "test-cluster"}},
 		},
 	}
 }

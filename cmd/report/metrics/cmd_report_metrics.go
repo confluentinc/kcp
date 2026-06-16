@@ -25,21 +25,21 @@ func NewReportMetricsCmd() *cobra.Command {
 		Use:   "metrics",
 		Short: "Generate a report of metrics for given cluster(s)",
 		Long: "Generate a report of metrics for the given cluster(s) based on the data collected by `kcp discover` or `kcp scan clusters`.\n\n" +
-			"`--start` and `--end` must be provided together if specified. If neither `--cluster-id` nor `--source-type` is given, metrics for all clusters (both MSK and OSK) are included. `--cluster-id` and `--source-type` are mutually exclusive.\n\n" +
+			"`--start` and `--end` must be provided together if specified. If neither `--cluster-id` nor `--source-type` is given, metrics for all clusters (both MSK and Apache Kafka) are included. `--cluster-id` and `--source-type` are mutually exclusive.\n\n" +
 			"**Output:** writes a `metric_report_YYYY-MM-DD_HH-MM-SS.md` file in the current working directory with metrics analysis for the selected clusters and time period.",
-		Example: `  # All clusters (MSK and OSK) in the state file
+		Example: `  # All clusters (MSK and Apache Kafka) in the state file
   kcp report metrics --state-file kcp-state.json
 
-  # Specific clusters (supports both MSK ARNs and OSK cluster IDs)
+  # Specific clusters (supports both MSK ARNs and Apache Kafka cluster IDs)
   kcp report metrics --state-file kcp-state.json \
       --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc123 \
-      --cluster-id osk-prod-cluster
+      --cluster-id apache-kafka-prod-cluster
 
   # All MSK clusters only
   kcp report metrics --state-file kcp-state.json --source-type msk
 
-  # All OSK clusters, custom date range
-  kcp report metrics --state-file kcp-state.json --source-type osk \
+  # All Apache Kafka clusters, custom date range
+  kcp report metrics --state-file kcp-state.json --source-type apache-kafka \
       --start 2024-01-01 --end 2024-01-31`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -57,8 +57,8 @@ func NewReportMetricsCmd() *cobra.Command {
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type filter: 'msk' (MSK only) or 'osk' (OSK only). Returns all clusters from the specified source.")
-	optionalFlags.StringSliceVar(&clusterIds, "cluster-id", []string{}, "The cluster identifier(s) to include in the report (comma separated list or repeated flag). Accepts both MSK ARNs and OSK cluster IDs.")
+	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type filter: 'msk' (MSK only) or 'apache-kafka' (Apache Kafka only). Returns all clusters from the specified source.")
+	optionalFlags.StringSliceVar(&clusterIds, "cluster-id", []string{}, "The cluster identifier(s) to include in the report (comma separated list or repeated flag). Accepts both MSK ARNs and Apache Kafka cluster IDs.")
 	optionalFlags.StringVar(&start, "start", "", "inclusive start date for metrics report (YYYY-MM-DD).  (Defaults to 31 days prior to today)")
 	optionalFlags.StringVar(&end, "end", "", "exclusive end date for metrics report (YYYY-MM-DD).  (Defaults to today).")
 	reportMetricsCmd.Flags().AddFlagSet(optionalFlags)
@@ -97,8 +97,8 @@ func preRunReportMetrics(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate source type if provided
-	if sourceType != "" && sourceType != "msk" && sourceType != "osk" {
-		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'osk'", sourceType)
+	if sourceType != "" && sourceType != "msk" && sourceType != "apache-kafka" {
+		return fmt.Errorf("invalid source-type '%s': must be 'msk' or 'apache-kafka'", sourceType)
 	}
 
 	return nil
@@ -175,9 +175,9 @@ func parseMetricReporterOpts() (*MetricReporterOpts, error) {
 				}
 			}
 		}
-		if sourceType == "" || sourceType == "osk" {
-			if state.OSKSources != nil {
-				for _, cluster := range state.OSKSources.Clusters {
+		if sourceType == "" || sourceType == "apache-kafka" {
+			if state.ApacheKafkaSources != nil {
+				for _, cluster := range state.ApacheKafkaSources.Clusters {
 					allClusterIds = append(allClusterIds, cluster.ID)
 				}
 			}

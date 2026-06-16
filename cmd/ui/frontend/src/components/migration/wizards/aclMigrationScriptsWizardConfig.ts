@@ -11,7 +11,7 @@ interface Acl {
   PermissionType: string
 }
 
-export const createAclMigrationScriptsWizardConfig = (clusterKey: string, sourceType: 'msk' | 'osk' = 'msk'): WizardConfig => {
+export const createAclMigrationScriptsWizardConfig = (clusterKey: string, sourceType: 'msk' | 'apache-kafka' = 'msk'): WizardConfig => {
   const clusterData = getClusterDataBySourceType(sourceType, clusterKey)
 
   const acls: Acl[] = clusterData?.kafka_admin_client_information?.acls || []

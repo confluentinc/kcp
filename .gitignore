@@ -71,7 +71,7 @@ tmp
 # local work not to be committed :)
 scratch/
 
-# Test environment certificates (generated, excluded by integration-tests/osk-scan/.gitignore)
+# Test environment certificates (generated, excluded by integration-tests/apache-kafka-scan/.gitignore)
 .worktrees/
 
 # Claude-generated implementation plans (local only, not part of the codebase)

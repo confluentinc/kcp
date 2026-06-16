@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useRegions } from '@/stores/store'
-import { getOSKClusterDataById } from '@/stores/store'
+import { getApacheKafkaClusterDataById } from '@/stores/store'
 import { findClusterInRegions } from '@/lib/clusterUtils'
 import { SOURCE_TYPES } from '@/constants'
 import { getMetricConfig } from '@/lib/tcoUtils'
@@ -47,17 +47,17 @@ export const useTCOModal = (allClusters: TCOCluster[]) => {
 
       const metricConfig = getMetricConfig(metricType)
 
-      if (cluster.sourceType === SOURCE_TYPES.OSK) {
-        const oskCluster = getOSKClusterDataById(clusterKey)
-        if (!oskCluster) return
+      if (cluster.sourceType === SOURCE_TYPES.APACHE_KAFKA) {
+        const apacheKafkaCluster = getApacheKafkaClusterDataById(clusterKey)
+        if (!apacheKafkaCluster) return
 
         setModalState({
           isOpen: true,
           cluster: {
-            name: oskCluster.id,
-            key: oskCluster.id,
-            sourceType: SOURCE_TYPES.OSK,
-            metrics: oskCluster.metrics,
+            name: apacheKafkaCluster.id,
+            key: apacheKafkaCluster.id,
+            sourceType: SOURCE_TYPES.APACHE_KAFKA,
+            metrics: apacheKafkaCluster.metrics,
           },
           preselectedMetric: metricConfig.metric,
           workloadAssumption: metricConfig.workloadAssumption,

@@ -14,7 +14,7 @@ import { getAllGlueSchemaRegistries } from '@/stores/store'
 
 interface MigrationScriptsSelectionProps {
     clusterArn: string
-    sourceType: 'msk' | 'osk'
+    sourceType: 'msk' | 'apache-kafka'
     onComplete: (wizardType: WizardType) => void
     onClose: () => void
     hasGeneratedFiles?: (wizardType: WizardType) => boolean

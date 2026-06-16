@@ -1,25 +1,25 @@
 import { test, expect } from '@playwright/test'
 
-test.describe('Switching Between MSK and OSK', () => {
+test.describe('Switching Between MSK and Apache Kafka', () => {
   test.beforeEach(async ({ page }) => {
     await page.goto('/')
-    // State is pre-loaded via --state-file flag (state-migration.json with both MSK and OSK)
+    // State is pre-loaded via --state-file flag (state-migration.json with both MSK and Apache Kafka)
     // Wait for both sections to appear in sidebar
     await page.waitForSelector('text=AWS MSK', { timeout: 10000 })
-    await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 5000 })
   })
 
-  test('displays both MSK and OSK sections', async ({ page }) => {
+  test('displays both MSK and Apache Kafka sections', async ({ page }) => {
     await expect(page.locator('text=AWS MSK')).toBeVisible()
-    await expect(page.locator('text=OPEN SOURCE KAFKA')).toBeVisible()
+    await expect(page.locator('text=Apache Kafka')).toBeVisible()
   })
 
-  test('can switch from MSK cluster to OSK cluster', async ({ page }) => {
+  test('can switch from MSK cluster to Apache Kafka cluster', async ({ page }) => {
     // Click MSK cluster
     await page.click('text=kcp-playground')
     await expect(page.locator('h1:has-text("kcp-playground")')).toBeVisible()
 
-    // Click OSK cluster
+    // Click Apache Kafka cluster
     await page.click('text=production-kafka-us-east')
     await expect(page.locator('text=Bootstrap Servers')).toBeVisible()
   })
@@ -34,10 +34,10 @@ test.describe('Switching Between MSK and OSK', () => {
     await expect(page.locator('text=All Regions Cost Overview')).toBeVisible()
   })
 
-  test('OSK cluster has Metrics tab', async ({ page }) => {
+  test('Apache Kafka cluster has Metrics tab', async ({ page }) => {
     await page.click('text=production-kafka-us-east')
 
-    // OSK supports Jolokia/Prometheus metrics
+    // Apache Kafka supports Jolokia/Prometheus metrics
     await expect(page.locator('nav button:has-text("Metrics")')).toBeVisible()
   })
 

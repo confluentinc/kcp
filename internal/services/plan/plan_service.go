@@ -179,10 +179,10 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 	// change the verdicts.
 	plan.OpenQuestions = append(plan.OpenQuestions, detectStaleStateOQ(state.Timestamp, s.now(), s.cfg.Thresholds.StaleStateDays)...)
 
-	// OSK-source OQ: today's plan covers MSK only; OSK clusters in the
+	// Apache Kafka-source OQ: today's plan covers MSK only; Apache Kafka clusters in the
 	// state are silently ignored. Surface a fleet-wide OQ so the
 	// customer knows their on-prem Kafka clusters didn't get planned.
-	plan.OpenQuestions = append(plan.OpenQuestions, detectOSKSourceOpenQuestion(state)...)
+	plan.OpenQuestions = append(plan.OpenQuestions, detectApacheKafkaSourceOpenQuestion(state)...)
 
 	// Stable order: blocker OQs first, acknowledgement OQs last; tie-break
 	// on cluster ID so two clusters of equal priority sort alphabetically.
@@ -341,29 +341,29 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 	return oqs
 }
 
-// detectOSKSourceOpenQuestion surfaces a fleet-wide OQ when the
-// state file contains OSK (open-source Kafka, on-prem) clusters.
+// detectApacheKafkaSourceOpenQuestion surfaces a fleet-wide OQ when the
+// state file contains Apache Kafka (on-prem) clusters.
 // `kcp report plan` covers MSK only today; without this OQ those
 // clusters would be silently dropped from the plan.
-func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestion {
-	var oskCount int
+func detectApacheKafkaSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestion {
+	var apacheKafkaCount int
 	for _, src := range state.Sources {
-		if src.OSKData != nil {
-			oskCount += len(src.OSKData.Clusters)
+		if src.ApacheKafkaData != nil {
+			apacheKafkaCount += len(src.ApacheKafkaData.Clusters)
 		}
 	}
-	if oskCount == 0 {
+	if apacheKafkaCount == 0 {
 		return nil
 	}
 	noun, verb := "clusters", "aren't"
-	if oskCount == 1 {
+	if apacheKafkaCount == 1 {
 		noun, verb = "cluster", "isn't"
 	}
 	return []types.OpenQuestion{{
-		ID:         "osk_source_unsupported",
-		Title:      fmt.Sprintf("%d on-prem Kafka %s in the state file %s covered by `kcp report plan`", oskCount, noun, verb),
-		Body:       "The state file includes `osk_sources` clusters (open-source Kafka, e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the OSK clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
-		HowToClose: "Plan the OSK clusters separately: run `kcp report plan` against a state file slice that only contains the OSK clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
+		ID:         "apache_kafka_source_unsupported",
+		Title:      fmt.Sprintf("%d on-prem Kafka %s in the state file %s covered by `kcp report plan`", apacheKafkaCount, noun, verb),
+		Body:       "The state file includes `apache_kafka_sources` clusters (e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the Apache Kafka clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
+		HowToClose: "Plan the Apache Kafka clusters separately: run `kcp report plan` against a state file slice that only contains the Apache Kafka clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
 	}}
 }
 

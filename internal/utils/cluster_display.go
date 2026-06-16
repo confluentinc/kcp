@@ -6,7 +6,7 @@ import (
 
 // GetClusterDisplayName returns a human-readable cluster identifier for logging.
 // For MSK sources, it extracts the cluster name from the ARN.
-// For OSK sources, it returns the cluster ID.
+// For Apache Kafka sources, it returns the cluster ID.
 func GetClusterDisplayName(sourceType types.SourceType, clusterArn string, clusterID string) string {
 	switch sourceType {
 	case types.SourceTypeMSK:
@@ -14,7 +14,7 @@ func GetClusterDisplayName(sourceType types.SourceType, clusterArn string, clust
 			return "unknown-cluster"
 		}
 		return ExtractClusterNameFromArn(clusterArn)
-	case types.SourceTypeOSK:
+	case types.SourceTypeApacheKafka:
 		if clusterID == "" {
 			return "unknown-cluster"
 		}

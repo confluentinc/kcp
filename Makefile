@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-apache-kafka-scan test-kafka-connect test-schema-registry
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -111,15 +111,15 @@ test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
 test-migration-teardown: ## Tear down migration E2E infrastructure
 	@bash integration-tests/migration/testdata/teardown.sh
 
-test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
-	@bash integration-tests/osk-scan/setup.sh
-	@bash integration-tests/osk-scan/run.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
-	@bash integration-tests/osk-scan/teardown.sh
+test-apache-kafka-scan: build ## Run Apache Kafka scan tests (all auth methods, JMX, Prometheus)
+	@bash integration-tests/apache-kafka-scan/setup.sh
+	@bash integration-tests/apache-kafka-scan/run.sh || (bash integration-tests/apache-kafka-scan/teardown.sh; exit 1)
+	@bash integration-tests/apache-kafka-scan/teardown.sh
 
 test-kafka-connect: build ## Run Kafka Connect self-managed connector scan tests
-	@bash integration-tests/osk-scan/setup.sh
-	@bash integration-tests/osk-scan/run-connect.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
-	@bash integration-tests/osk-scan/teardown.sh
+	@bash integration-tests/apache-kafka-scan/setup.sh
+	@bash integration-tests/apache-kafka-scan/run-connect.sh || (bash integration-tests/apache-kafka-scan/teardown.sh; exit 1)
+	@bash integration-tests/apache-kafka-scan/teardown.sh
 
 test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, basic auth)
 	@bash integration-tests/schema-registry/setup.sh

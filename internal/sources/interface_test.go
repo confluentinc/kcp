@@ -11,8 +11,8 @@ func TestSourceType_Constants(t *testing.T) {
 	if types.SourceTypeMSK != "msk" {
 		t.Errorf("expected SourceTypeMSK to be 'msk', got '%s'", types.SourceTypeMSK)
 	}
-	if types.SourceTypeOSK != "osk" {
-		t.Errorf("expected SourceTypeOSK to be 'osk', got '%s'", types.SourceTypeOSK)
+	if types.SourceTypeApacheKafka != "apache-kafka" {
+		t.Errorf("expected SourceTypeApacheKafka to be 'apache-kafka', got '%s'", types.SourceTypeApacheKafka)
 	}
 }
 

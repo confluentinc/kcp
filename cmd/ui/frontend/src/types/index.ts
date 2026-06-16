@@ -62,13 +62,13 @@ export type {
   RegionData,
 } from './aws/msk'
 
-// Re-export OSK types for convenience
+// Re-export Apache Kafka types for convenience
 export type {
-  OSKCluster,
-  OSKClusterMetadata,
-  ProcessedOSKCluster,
-  ProcessedOSKSource,
-} from './osk'
+  ApacheKafkaCluster,
+  ApacheKafkaClusterMetadata,
+  ProcessedApacheKafkaCluster,
+  ProcessedApacheKafkaSource,
+} from './apache-kafka'
 
 // Re-export API types for convenience
 export type {

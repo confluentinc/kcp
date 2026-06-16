@@ -52,9 +52,9 @@ func TestDetermineReportTitle(t *testing.T) {
 		assert.Equal(t, "AWS MSK Metrics Report", title)
 	})
 
-	t.Run("Only OSK clusters", func(t *testing.T) {
+	t.Run("Only Apache Kafka clusters", func(t *testing.T) {
 		reporter := NewMetricReporter(nil, MetricReporterOpts{
-			ClusterIds: []string{"osk-cluster-1"},
+			ClusterIds: []string{"apache-kafka-cluster-1"},
 			State:      &types.State{},
 			StartDate:  &startTime,
 			EndDate:    &endTime,
@@ -62,19 +62,19 @@ func TestDetermineReportTitle(t *testing.T) {
 
 		clusters := []types.ProcessedClusterMetrics{
 			{
-				ClusterArn: "osk-cluster-1",
+				ClusterArn: "apache-kafka-cluster-1",
 			},
 		}
 
 		title := reporter.determineReportTitle(clusters)
-		assert.Equal(t, "OSK Metrics Report", title)
+		assert.Equal(t, "Apache Kafka Metrics Report", title)
 	})
 
-	t.Run("Mixed MSK and OSK clusters", func(t *testing.T) {
+	t.Run("Mixed MSK and Apache Kafka clusters", func(t *testing.T) {
 		reporter := NewMetricReporter(nil, MetricReporterOpts{
 			ClusterIds: []string{
 				"arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster/abc-123",
-				"osk-cluster-1",
+				"apache-kafka-cluster-1",
 			},
 			State:     &types.State{},
 			StartDate: &startTime,
@@ -86,7 +86,7 @@ func TestDetermineReportTitle(t *testing.T) {
 				ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster/abc-123",
 			},
 			{
-				ClusterArn: "osk-cluster-1",
+				ClusterArn: "apache-kafka-cluster-1",
 			},
 		}
 
@@ -103,8 +103,8 @@ func TestIsMSKCluster(t *testing.T) {
 		assert.True(t, reporter.isMSKCluster("arn:aws:kafka:eu-west-1:999999999999:cluster/prod/xyz"))
 	})
 
-	t.Run("OSK ID is not detected as MSK", func(t *testing.T) {
-		assert.False(t, reporter.isMSKCluster("osk-cluster-1"))
+	t.Run("Apache Kafka ID is not detected as MSK", func(t *testing.T) {
+		assert.False(t, reporter.isMSKCluster("apache-kafka-cluster-1"))
 		assert.False(t, reporter.isMSKCluster("my-kafka-cluster"))
 		assert.False(t, reporter.isMSKCluster("prod-kafka"))
 	})
@@ -176,18 +176,18 @@ func TestGenerateReport_MSKCluster(t *testing.T) {
 	// Check query details section is present
 	assert.Contains(t, report, "Query Details")
 
-	// Check OSK-specific fields are NOT present
+	// Check Apache Kafka-specific fields are NOT present
 	assert.NotContains(t, report, "Cluster ID:")
 	assert.NotContains(t, report, "Environment:")
 	assert.NotContains(t, report, "Location:")
 }
 
-func TestGenerateReport_OSKCluster(t *testing.T) {
+func TestGenerateReport_ApacheKafkaCluster(t *testing.T) {
 	startTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
-		ClusterIds: []string{"my-osk-cluster"},
+		ClusterIds: []string{"my-apache-kafka-cluster"},
 		State:      &types.State{},
 		StartDate:  &startTime,
 		EndDate:    &endTime,
@@ -195,8 +195,8 @@ func TestGenerateReport_OSKCluster(t *testing.T) {
 
 	clusters := []types.ProcessedClusterMetrics{
 		{
-			ClusterArn:  "my-osk-cluster",
-			Region:      "", // OSK clusters don't have regions
+			ClusterArn:  "my-apache-kafka-cluster",
+			Region:      "", // Apache Kafka clusters don't have regions
 			Environment: "production",
 			Location:    "datacenter-1",
 			Metadata: types.MetricMetadata{
@@ -219,11 +219,11 @@ func TestGenerateReport_OSKCluster(t *testing.T) {
 	report := md.String()
 
 	// Check title
-	assert.Contains(t, report, "OSK Metrics Report")
+	assert.Contains(t, report, "Apache Kafka Metrics Report")
 
-	// Check OSK-specific fields are present
+	// Check Apache Kafka-specific fields are present
 	assert.Contains(t, report, "Cluster ID")
-	assert.Contains(t, report, "my-osk-cluster")
+	assert.Contains(t, report, "my-apache-kafka-cluster")
 	assert.Contains(t, report, "Environment")
 	assert.Contains(t, report, "production")
 	assert.Contains(t, report, "Location")
@@ -242,12 +242,12 @@ func TestGenerateReport_OSKCluster(t *testing.T) {
 	assert.NotContains(t, report, "Query Details")
 }
 
-func TestGenerateReport_OSKCluster_MissingMetadata(t *testing.T) {
+func TestGenerateReport_ApacheKafkaCluster_MissingMetadata(t *testing.T) {
 	startTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
-		ClusterIds: []string{"osk-no-metadata"},
+		ClusterIds: []string{"apache-kafka-no-metadata"},
 		State:      &types.State{},
 		StartDate:  &startTime,
 		EndDate:    &endTime,
@@ -255,7 +255,7 @@ func TestGenerateReport_OSKCluster_MissingMetadata(t *testing.T) {
 
 	clusters := []types.ProcessedClusterMetrics{
 		{
-			ClusterArn:  "osk-no-metadata",
+			ClusterArn:  "apache-kafka-no-metadata",
 			Region:      "",
 			Environment: "", // Empty environment
 			Location:    "", // Empty location
@@ -287,7 +287,7 @@ func TestGenerateReport_MixedClusters(t *testing.T) {
 	reporter := NewMetricReporter(nil, MetricReporterOpts{
 		ClusterIds: []string{
 			"arn:aws:kafka:us-east-1:123456789012:cluster/msk/abc",
-			"osk-cluster",
+			"apache-kafka-cluster",
 		},
 		State:     &types.State{},
 		StartDate: &startTime,
@@ -307,7 +307,7 @@ func TestGenerateReport_MixedClusters(t *testing.T) {
 			},
 		},
 		{
-			ClusterArn:  "osk-cluster",
+			ClusterArn:  "apache-kafka-cluster",
 			Region:      "",
 			Environment: "staging",
 			Location:    "us-datacenter",
@@ -324,7 +324,7 @@ func TestGenerateReport_MixedClusters(t *testing.T) {
 	// Check title for mixed clusters
 	assert.Contains(t, report, "Kafka Metrics Report")
 
-	// Check both MSK and OSK fields are present
+	// Check both MSK and Apache Kafka fields are present
 	assert.Contains(t, report, "Cluster ARN")
 	assert.Contains(t, report, "Cluster ID")
 	assert.Contains(t, report, "Enhanced Monitoring")
@@ -342,7 +342,7 @@ func TestBackwardCompatibility_MSKReport(t *testing.T) {
 		EndDate:    &endTime,
 	})
 
-	// MSK cluster without OSK fields (backward compatibility test)
+	// MSK cluster without Apache Kafka fields (backward compatibility test)
 	clusters := []types.ProcessedClusterMetrics{
 		{
 			ClusterArn: "arn:aws:kafka:us-east-1:123456789012:cluster/legacy/xyz",
@@ -373,7 +373,7 @@ func TestBackwardCompatibility_MSKReport(t *testing.T) {
 	assert.Contains(t, report, "Enhanced Monitoring")
 	assert.Contains(t, report, "Instance Type")
 
-	// OSK-specific fields should not appear in MSK report
+	// Apache Kafka-specific fields should not appear in MSK report
 	assert.NotContains(t, report, "Cluster ID:")
 	assert.NotContains(t, report, "Environment:")
 	assert.NotContains(t, report, "Location:")
@@ -429,14 +429,14 @@ func TestBackwardCompatibility_QueryInfoWithoutSourceType(t *testing.T) {
 	assert.Contains(t, report, "SEARCH Expression")
 	assert.Contains(t, report, "300 seconds")
 
-	// Should NOT contain OSK-specific fields
+	// Should NOT contain Apache Kafka-specific fields
 	assert.NotContains(t, report, "Jolokia")
 	assert.NotContains(t, report, "MBean Path")
 	assert.NotContains(t, report, "Prometheus")
 	assert.NotContains(t, report, "PromQL")
 }
 
-func TestGenerateReport_OSKCluster_JolokiaQueryDetails(t *testing.T) {
+func TestGenerateReport_ApacheKafkaCluster_JolokiaQueryDetails(t *testing.T) {
 	startTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 
@@ -522,7 +522,7 @@ func TestGenerateReport_OSKCluster_JolokiaQueryDetails(t *testing.T) {
 	assert.NotContains(t, report, "AWS CLI Command")
 }
 
-func TestGenerateReport_OSKCluster_PrometheusQueryDetails(t *testing.T) {
+func TestGenerateReport_ApacheKafkaCluster_PrometheusQueryDetails(t *testing.T) {
 	startTime := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	endTime := time.Date(2025, 1, 31, 0, 0, 0, 0, time.UTC)
 

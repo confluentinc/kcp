@@ -1,7 +1,7 @@
 import { useAppStore } from '@/stores/store'
-import { isMSKSource, isOSKSource } from '@/lib/sourceUtils'
+import { isMSKSource, isApacheKafkaSource } from '@/lib/sourceUtils'
 import { MSKSourceSection } from './sidebar/MSKSourceSection'
-import { OSKSourceSection } from './sidebar/OSKSourceSection'
+import { ApacheKafkaSourceSection } from './sidebar/ApacheKafkaSourceSection'
 import { Database } from 'lucide-react'
 
 export const Sidebar = () => {
@@ -11,10 +11,10 @@ export const Sidebar = () => {
 
   // Extract sources
   const mskSource = kcpState?.sources.find(isMSKSource)
-  const oskSource = kcpState?.sources.find(isOSKSource)
+  const apacheKafkaSource = kcpState?.sources.find(isApacheKafkaSource)
 
   const hasMSK = mskSource !== undefined
-  const hasOSK = oskSource !== undefined
+  const hasApacheKafka = apacheKafkaSource !== undefined
 
   return (
     <div className="h-full flex flex-col">
@@ -25,13 +25,13 @@ export const Sidebar = () => {
           <MSKSourceSection regions={mskSource.msk_data.regions} />
         )}
 
-        {/* Show OSK section if OSK data exists */}
-        {hasOSK && oskSource.osk_data && (
-          <OSKSourceSection clusters={oskSource.osk_data.clusters} />
+        {/* Show Apache Kafka section if Apache Kafka data exists */}
+        {hasApacheKafka && apacheKafkaSource.apache_kafka_data && (
+          <ApacheKafkaSourceSection clusters={apacheKafkaSource.apache_kafka_data.clusters} />
         )}
 
         {/* Empty state if no sources */}
-        {!hasMSK && !hasOSK && (
+        {!hasMSK && !hasApacheKafka && (
           <div className="bg-warning/10 border border-warning/20 rounded-lg p-4">
             <p className="text-sm text-warning">
               No clusters available. Please upload a KCP state file to explore your infrastructure.

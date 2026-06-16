@@ -61,14 +61,14 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 		slog.Info("Pre-loaded state file", "path", opts.StateFile)
 
 		hasSources := (state.MSKSources != nil && len(state.MSKSources.Regions) > 0) ||
-			(state.OSKSources != nil && len(state.OSKSources.Clusters) > 0)
+			(state.ApacheKafkaSources != nil && len(state.ApacheKafkaSources.Clusters) > 0)
 		hasSchemaRegistries := state.SchemaRegistries != nil &&
 			(len(state.SchemaRegistries.ConfluentSchemaRegistry) > 0 || len(state.SchemaRegistries.AWSGlue) > 0)
 
 		if !hasSources && hasSchemaRegistries {
-			slog.Warn("No cluster sources found — run kcp discover (MSK) or kcp scan clusters (OSK) to populate", "path", opts.StateFile)
+			slog.Warn("No cluster sources found — run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate", "path", opts.StateFile)
 		} else if !hasSources && !hasSchemaRegistries {
-			return nil, fmt.Errorf("state file %q contains no sources or schema registries — run kcp discover (MSK) or kcp scan clusters (OSK) to populate it", opts.StateFile)
+			return nil, fmt.Errorf("state file %q contains no sources or schema registries — run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it", opts.StateFile)
 		}
 	}
 
@@ -113,7 +113,7 @@ func (ui *UI) Run() error {
 	e.GET("/state", ui.handleGetState)
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
-	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
+	e.GET("/metrics/apache-kafka/:clusterId", ui.handleGetApacheKafkaMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -211,7 +211,7 @@ func (ui *UI) handleGetMetrics(c echo.Context) error {
 	return c.JSON(http.StatusOK, filteredMetrics)
 }
 
-func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
+func (ui *UI) handleGetApacheKafkaMetrics(c echo.Context) error {
 	clusterId := c.Param("clusterId")
 
 	state, err := ui.getStateBySession(c)
@@ -222,9 +222,9 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 		})
 	}
 
-	if state.OSKSources == nil {
+	if state.ApacheKafkaSources == nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
-			"error": "No OSK sources in state",
+			"error": "No Apache Kafka sources in state",
 		})
 	}
 
@@ -238,7 +238,7 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 
 	processedState := ui.reportService.ProcessState(*state)
 
-	filteredMetrics, err := ui.reportService.FilterClusterMetrics(processedState, clusterId, "osk", startTime, endTime)
+	filteredMetrics, err := ui.reportService.FilterClusterMetrics(processedState, clusterId, "apache-kafka", startTime, endTime)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "Cluster not found or no metrics available",
@@ -249,7 +249,7 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	if filteredMetrics.Metrics == nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "No metrics available for this cluster",
-			"message": "Run 'kcp scan clusters --source-type osk --metrics jolokia' or '--metrics prometheus' to collect metrics",
+			"message": "Run 'kcp scan clusters --source-type apache-kafka --metrics jolokia' or '--metrics prometheus' to collect metrics",
 		})
 	}
 
@@ -563,15 +563,15 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 	// Look up cluster ACLs based on source type
 	var allAcls []types.Acls
 	switch req.SourceType {
-	case "osk":
-		oskCluster, err := state.GetOSKClusterByID(req.ClusterId)
+	case "apache-kafka":
+		apacheKafkaCluster, err := state.GetApacheKafkaClusterByID(req.ClusterId)
 		if err != nil {
 			return c.JSON(http.StatusNotFound, map[string]any{
 				"error":   "Cluster not found",
-				"message": fmt.Sprintf("OSK cluster '%s' not found: %v", req.ClusterId, err),
+				"message": fmt.Sprintf("Apache Kafka cluster '%s' not found: %v", req.ClusterId, err),
 			})
 		}
-		allAcls = oskCluster.KafkaAdminClientInformation.Acls
+		allAcls = apacheKafkaCluster.KafkaAdminClientInformation.Acls
 	default: // "msk" or empty (backward compat)
 		cluster, err := state.GetClusterByArn(req.ClusterId)
 		if err != nil {
@@ -683,16 +683,16 @@ func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequ
 		if cluster.KafkaAdminClientInformation.Topics != nil {
 			details = cluster.KafkaAdminClientInformation.Topics.Details
 		}
-	case "osk":
-		cluster, err := state.GetOSKClusterByID(req.ClusterId)
+	case "apache-kafka":
+		cluster, err := state.GetApacheKafkaClusterByID(req.ClusterId)
 		if err != nil {
-			return fmt.Errorf("lookup OSK cluster %q: %w", req.ClusterId, err)
+			return fmt.Errorf("lookup Apache Kafka cluster %q: %w", req.ClusterId, err)
 		}
 		if cluster.KafkaAdminClientInformation.Topics != nil {
 			details = cluster.KafkaAdminClientInformation.Topics.Details
 		}
 	default:
-		return fmt.Errorf("invalid source_type %q (must be 'msk' or 'osk')", req.SourceType)
+		return fmt.Errorf("invalid source_type %q (must be 'msk' or 'apache-kafka')", req.SourceType)
 	}
 
 	byName := make(map[string]types.TopicDetails, len(details))

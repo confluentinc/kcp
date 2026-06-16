@@ -1,0 +1,5 @@
+title: Apache Kafka Configuration
+nav:
+  - Apache Kafka credentials: apache-kafka-credentials.md
+  - Metrics collection: metrics-collection.md
+  - Connect metrics collection: connect-metrics-collection.md

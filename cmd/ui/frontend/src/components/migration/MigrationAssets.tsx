@@ -6,7 +6,7 @@ import {
   Wizard,
   createTargetInfraWizardConfig,
   createMigrationInfraMskWizardConfig,
-  createMigrationInfraOskWizardConfig,
+  createMigrationInfraApacheKafkaWizardConfig,
 } from '@/components/migration/wizards'
 import type { Cluster, WizardType, SourceType } from '@/types'
 import { WIZARD_TYPES } from '@/constants'
@@ -57,15 +57,15 @@ export const MigrationAssets = () => {
       }))
   )
 
-  // Get OSK clusters from the state
-  const oskSource = kcpState?.sources.find(
-    (s) => s.type === 'osk' && s.osk_data !== undefined
+  // Get Apache Kafka clusters from the state
+  const apacheKafkaSource = kcpState?.sources.find(
+    (s) => s.type === 'apache-kafka' && s.apache_kafka_data !== undefined
   )
-  const oskClusters = oskSource?.osk_data?.clusters || []
+  const apacheKafkaClusters = apacheKafkaSource?.apache_kafka_data?.clusters || []
 
   const hasMskClusters = mskClusters.length > 0
-  const hasOskClusters = oskClusters.length > 0
-  const hasAnyClusters = hasMskClusters || hasOskClusters
+  const hasApacheKafkaClusters = apacheKafkaClusters.length > 0
+  const hasAnyClusters = hasMskClusters || hasApacheKafkaClusters
 
   // Expand first cluster by default when clusters are loaded
   useEffect(() => {
@@ -75,11 +75,11 @@ export const MigrationAssets = () => {
         if (firstClusterArn) {
           setExpandedCluster(firstClusterArn)
         }
-      } else if (hasOskClusters) {
-        setExpandedCluster(oskClusters[0].id)
+      } else if (hasApacheKafkaClusters) {
+        setExpandedCluster(apacheKafkaClusters[0].id)
       }
     }
-  }, [hasAnyClusters, hasMskClusters, hasOskClusters, expandedCluster, setExpandedCluster, mskClusters, oskClusters])
+  }, [hasAnyClusters, hasMskClusters, hasApacheKafkaClusters, expandedCluster, setExpandedCluster, mskClusters, apacheKafkaClusters])
 
   const openWizard = (
     wizardType: WizardType,
@@ -116,17 +116,17 @@ export const MigrationAssets = () => {
     }
   }
 
-  // OSK handler factories
-  const handleCreateTargetInfrastructureOsk = (clusterId: string, clusterName: string) => {
-    openWizard(WIZARD_TYPES.TARGET_INFRA, clusterName, clusterId, 'osk', null, '')
+  // Apache Kafka handler factories
+  const handleCreateTargetInfrastructureApacheKafka = (clusterId: string, clusterName: string) => {
+    openWizard(WIZARD_TYPES.TARGET_INFRA, clusterName, clusterId, 'apache-kafka', null, '')
   }
 
-  const handleCreateMigrationInfrastructureOsk = (clusterId: string, clusterName: string) => {
-    openWizard(WIZARD_TYPES.MIGRATION_INFRA, clusterName, clusterId, 'osk', null, '')
+  const handleCreateMigrationInfrastructureApacheKafka = (clusterId: string, clusterName: string) => {
+    openWizard(WIZARD_TYPES.MIGRATION_INFRA, clusterName, clusterId, 'apache-kafka', null, '')
   }
 
-  const handleCreateMigrationScriptsOsk = (clusterId: string, clusterName: string) => {
-    openWizard(WIZARD_TYPES.MIGRATION_SCRIPTS, clusterName, clusterId, 'osk', null, '')
+  const handleCreateMigrationScriptsApacheKafka = (clusterId: string, clusterName: string) => {
+    openWizard(WIZARD_TYPES.MIGRATION_SCRIPTS, clusterName, clusterId, 'apache-kafka', null, '')
   }
 
   const handleCloseWizard = () => {
@@ -248,16 +248,16 @@ export const MigrationAssets = () => {
             </div>
           )}
 
-          {/* OSK Clusters Section */}
-          {hasOskClusters && (
+          {/* Apache Kafka Clusters Section */}
+          {hasApacheKafkaClusters && (
             <div>
               <h2 className="text-lg font-semibold text-foreground mb-3">
-                Open Source Kafka
+                Apache Kafka
               </h2>
               <div className="space-y-4">
-                {oskClusters.map((oskCluster) => {
-                  const clusterKey = oskCluster.id
-                  const clusterName = oskCluster.id
+                {apacheKafkaClusters.map((apacheKafkaCluster) => {
+                  const clusterKey = apacheKafkaCluster.id
+                  const clusterName = apacheKafkaCluster.id
                   const isExpanded = expandedCluster === clusterKey
 
                   return (
@@ -271,9 +271,9 @@ export const MigrationAssets = () => {
                         clusterKey={clusterKey}
                         clusterName={clusterName}
                         getPhaseStatus={getPhaseStatus}
-                        onCreateTargetInfrastructure={() => handleCreateTargetInfrastructureOsk(oskCluster.id, clusterName)}
-                        onCreateMigrationInfrastructure={() => handleCreateMigrationInfrastructureOsk(oskCluster.id, clusterName)}
-                        onCreateMigrationScripts={() => handleCreateMigrationScriptsOsk(oskCluster.id, clusterName)}
+                        onCreateTargetInfrastructure={() => handleCreateTargetInfrastructureApacheKafka(apacheKafkaCluster.id, clusterName)}
+                        onCreateMigrationInfrastructure={() => handleCreateMigrationInfrastructureApacheKafka(apacheKafkaCluster.id, clusterName)}
+                        onCreateMigrationScripts={() => handleCreateMigrationScriptsApacheKafka(apacheKafkaCluster.id, clusterName)}
                         onViewTerraform={handleViewTerraform}
                         migrationScriptsDescription="Generate Migration Assets to Move Data from Kafka to Confluent Cloud"
                       />
@@ -328,8 +328,8 @@ export const MigrationAssets = () => {
               {wizardType === WIZARD_TYPES.MIGRATION_INFRA && (
                 <Wizard
                   config={
-                    selectedClusterForWizard.sourceType === 'osk'
-                      ? createMigrationInfraOskWizardConfig(wizardClusterKey)
+                    selectedClusterForWizard.sourceType === 'apache-kafka'
+                      ? createMigrationInfraApacheKafkaWizardConfig(wizardClusterKey)
                       : createMigrationInfraMskWizardConfig(wizardClusterKey)
                   }
                   clusterKey={wizardClusterKey}

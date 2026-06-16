@@ -16,7 +16,7 @@ export const generateTCOCSV = (
   const headers = allClusters.map((cluster) => cluster.name)
 
   const getReadOnlyValue = (cluster: TCOCluster, field: 'follower_fetching' | 'tiered_storage'): string => {
-    if (cluster.sourceType === SOURCE_TYPES.OSK) {
+    if (cluster.sourceType === SOURCE_TYPES.APACHE_KAFKA) {
       return 'N/A'
     }
     const clusterObj = findClusterInRegions(regions, cluster.regionName, cluster.name)

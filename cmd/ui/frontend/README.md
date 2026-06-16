@@ -65,7 +65,7 @@ yarn test:e2e:ui
 **Debug specific test:**
 
 ```bash
-yarn test:e2e:debug osk-sidebar.spec.ts
+yarn test:e2e:debug apache-kafka-sidebar.spec.ts
 ```
 
 **Run with browser visible:**
@@ -77,8 +77,8 @@ yarn test:e2e:headed
 ### Test Fixtures
 
 Test fixtures are in `tests/fixtures/`:
-- `state-osk-only.json` - OSK clusters only
-- `state-both.json` - Both MSK and OSK clusters
+- `state-apache-kafka-only.json` - Apache Kafka clusters only
+- `state-both.json` - Both MSK and Apache Kafka clusters
 
 ## Architecture
 
@@ -91,7 +91,7 @@ The UI supports two Kafka source types:
 - Displays: ARN, VPC, instance type, CloudWatch metrics, costs
 - Tabs: Cluster, Metrics, Topics, ACLs, Connectors, Clients
 
-**OSK (Open Source Kafka)**
+**Apache Kafka**
 - Flat cluster list
 - Displays: Bootstrap servers, metadata, labels
 - Tabs: Cluster, Topics, ACLs, Connectors, Clients (no Metrics)
@@ -101,8 +101,8 @@ The UI supports two Kafka source types:
 - Zustand for global state
 - `useAppStore` hook provides access to:
   - `processedState` - unified source data
-  - `selectedSourceType` - 'msk' | 'osk'
-  - `selectOSKCluster(clusterId)` - navigate to OSK cluster
+  - `selectedSourceType` - 'msk' | 'apache-kafka'
+  - `selectApacheKafkaCluster(clusterId)` - navigate to Apache Kafka cluster
   - `selectCluster(region, arn)` - navigate to MSK cluster
 
 ### Type Guards
@@ -110,10 +110,10 @@ The UI supports two Kafka source types:
 Use type guards from `lib/sourceUtils.ts` to safely access source-specific data:
 
 ```typescript
-import { isMSKSource, isOSKSource } from '@/lib/sourceUtils'
+import { isMSKSource, isApacheKafkaSource } from '@/lib/sourceUtils'
 
 const mskSource = processedState?.sources.find(isMSKSource)
-const oskSource = processedState?.sources.find(isOSKSource)
+const apacheKafkaSource = processedState?.sources.find(isApacheKafkaSource)
 ```
 
 ## Tech Stack

@@ -25,8 +25,8 @@ var (
 
 	sourceType               string
 	clusterId                string
-	oskVpcId                 string
-	oskRegion                string
+	apacheKafkaVpcId         string
+	apacheKafkaRegion        string
 	sourceSaslScramMechanism string
 
 	existingInternetGateway   bool
@@ -104,19 +104,19 @@ Type options:
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk' (required)")
-	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
+	requiredFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'apache-kafka' (required)")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for Apache Kafka).")
 	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options.")
 	migrationInfraCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
-	oskFlags := pflag.NewFlagSet("osk", pflag.ExitOnError)
-	oskFlags.SortFlags = false
-	oskFlags.StringVar(&oskVpcId, "vpc-id", "", "The VPC ID where the OSK cluster resides. (required for OSK)")
-	oskFlags.StringVar(&oskRegion, "region", "", "The AWS region where the OSK cluster's VPC resides. (required for OSK)")
-	oskFlags.StringVar(&sourceSaslScramMechanism, "source-sasl-scram-mechanism", "", "[Optional] The SASL/SCRAM mechanism for the source cluster (SCRAM-SHA-256 or SCRAM-SHA-512). Overrides the value from the state file.")
-	migrationInfraCmd.Flags().AddFlagSet(oskFlags)
-	groups[oskFlags] = "OSK Flags"
+	apacheKafkaFlags := pflag.NewFlagSet("apache-kafka", pflag.ExitOnError)
+	apacheKafkaFlags.SortFlags = false
+	apacheKafkaFlags.StringVar(&apacheKafkaVpcId, "vpc-id", "", "The VPC ID where the Apache Kafka cluster resides. (required for Apache Kafka)")
+	apacheKafkaFlags.StringVar(&apacheKafkaRegion, "region", "", "The AWS region where the Apache Kafka cluster's VPC resides. (required for Apache Kafka)")
+	apacheKafkaFlags.StringVar(&sourceSaslScramMechanism, "source-sasl-scram-mechanism", "", "[Optional] The SASL/SCRAM mechanism for the source cluster (SCRAM-SHA-256 or SCRAM-SHA-512). Overrides the value from the state file.")
+	migrationInfraCmd.Flags().AddFlagSet(apacheKafkaFlags)
+	groups[apacheKafkaFlags] = "Apache Kafka Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
@@ -166,8 +166,8 @@ Type options:
 	groups[typeFiveFlags] = "Type Five Flags"
 
 	migrationInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		flagOrder := []*pflag.FlagSet{requiredFlags, oskFlags, optionalFlags, baseFlags, typeTwoThreeFlags, typeFourFlags, typeFiveFlags}
-		groupNames := []string{"Required Flags", "OSK Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four Flags", "Type Five Flags"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, apacheKafkaFlags, optionalFlags, baseFlags, typeTwoThreeFlags, typeFourFlags, typeFiveFlags}
+		groupNames := []string{"Required Flags", "Apache Kafka Flags", "Optional Flags", "Base Migration Flags", "Type Two/Three Flags", "Type Four Flags", "Type Five Flags"}
 
 		/*
 			Type 1 = `HasPublicMskEndpoints` = true
@@ -182,11 +182,11 @@ Type options:
 		fmt.Println(`
 Available Migration Types:
   Public MSK Endpoints:
-    Type 1: Cluster Link [SASL/SCRAM] (MSK & OSK)
+    Type 1: Cluster Link [SASL/SCRAM] (MSK & Apache Kafka)
   Private MSK Endpoints:
-    Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise clusters only) (MSK & OSK)
-    Type 3: External Outbound Cluster Link [Unauthenticated Plaintext] (Enterprise clusters only) (MSK & OSK)
-    Type 4: Jump Cluster [SASL/SCRAM] (MSK & OSK)
+    Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise clusters only) (MSK & Apache Kafka)
+    Type 3: External Outbound Cluster Link [Unauthenticated Plaintext] (Enterprise clusters only) (MSK & Apache Kafka)
+    Type 4: Jump Cluster [SASL/SCRAM] (MSK & Apache Kafka)
     Type 5: Jump Cluster [IAM] (MSK)
 
 Note: Types 2 and 3 are only supported for Enterprise clusters. Dedicated clusters with private endpoints must use Type 4 or 5.
@@ -263,19 +263,19 @@ func runMigrationInfra(cmd *cobra.Command, args []string) error {
 	switch sourceType {
 	case "msk":
 		// clusterId is validated by MarkFlagRequired
-	case "osk":
-		if oskVpcId == "" {
-			return fmt.Errorf("--vpc-id is required when --source-type is osk")
+	case "apache-kafka":
+		if apacheKafkaVpcId == "" {
+			return fmt.Errorf("--vpc-id is required when --source-type is apache-kafka")
 		}
-		if oskRegion == "" {
-			return fmt.Errorf("--region is required when --source-type is osk")
+		if apacheKafkaRegion == "" {
+			return fmt.Errorf("--region is required when --source-type is apache-kafka")
 		}
 		targetType, _ := types.ToMigrationType(migrationInfraType)
 		if targetType == types.JumpClusterIam {
-			return fmt.Errorf("migration type 5 (Jump Cluster [IAM]) is not supported for OSK sources")
+			return fmt.Errorf("migration type 5 (Jump Cluster [IAM]) is not supported for Apache Kafka sources")
 		}
 	default:
-		return fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)
+		return fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'apache-kafka')", sourceType)
 	}
 
 	opts, err := parseMigrationInfraOpts()
@@ -295,8 +295,8 @@ func parseMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	switch sourceType {
 	case "msk":
 		return parseMSKMigrationInfraOpts()
-	case "osk":
-		return parseOSKMigrationInfraOpts()
+	case "apache-kafka":
+		return parseApacheKafkaMigrationInfraOpts()
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s", sourceType)
 	}
@@ -492,7 +492,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	return opts, nil
 }
 
-func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
+func parseApacheKafkaMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	targetType, _ := types.ToMigrationType(migrationInfraType)
 
 	file, err := os.ReadFile(stateFile)
@@ -505,28 +505,28 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	oskCluster, err := state.GetOSKClusterByID(clusterId)
+	apacheKafkaCluster, err := state.GetApacheKafkaClusterByID(clusterId)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
+		return nil, fmt.Errorf("failed to get Apache Kafka cluster: %w", err)
 	}
 
-	if oskCluster.KafkaAdminClientInformation.ClusterID == "" {
-		return nil, fmt.Errorf("OSK cluster '%s' has no cluster ID. Run 'kcp scan clusters --source-type osk' first", clusterId)
+	if apacheKafkaCluster.KafkaAdminClientInformation.ClusterID == "" {
+		return nil, fmt.Errorf("no cluster ID for Apache Kafka cluster '%s'; run 'kcp scan clusters --source-type apache-kafka' first", clusterId)
 	}
 
-	sourceClusterId := oskCluster.KafkaAdminClientInformation.ClusterID
-	bootstrapServers := strings.Join(oskCluster.BootstrapServers, ",")
+	sourceClusterId := apacheKafkaCluster.KafkaAdminClientInformation.ClusterID
+	bootstrapServers := strings.Join(apacheKafkaCluster.BootstrapServers, ",")
 
 	opts := &MigrationInfraOpts{
 		MigrationWizardRequest: types.MigrationWizardRequest{
 			HasExistingInternetGateway: existingInternetGateway,
-			VpcId:                      oskVpcId,
-			SourceRegion:               oskRegion,
+			VpcId:                      apacheKafkaVpcId,
+			SourceRegion:               apacheKafkaRegion,
 			SourceClusterId:            sourceClusterId,
 			ClusterLinkName:            clusterLinkName,
 			TargetClusterId:            targetClusterId,
 			TargetRestEndpoint:         targetRestEndpoint,
-			SourceSaslScramMechanism:   oskCluster.KafkaAdminClientInformation.SaslMechanism,
+			SourceSaslScramMechanism:   apacheKafkaCluster.KafkaAdminClientInformation.SaslMechanism,
 		},
 		OutputDir:     outputDir,
 		MigrationType: targetType,
@@ -548,8 +548,8 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
-		slog.Warn("no cluster link name provided, using default", "default", "kcp-osk-to-cc-link")
-		opts.MigrationWizardRequest.ClusterLinkName = "kcp-osk-to-cc-link"
+		slog.Warn("no cluster link name provided, using default", "default", "kcp-apache-kafka-to-cc-link")
+		opts.MigrationWizardRequest.ClusterLinkName = "kcp-apache-kafka-to-cc-link"
 	}
 
 	switch targetType {
@@ -562,16 +562,16 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = false
 		if extOutboundSubnetId == "" {
-			return nil, fmt.Errorf("--subnet-id is required for OSK sources with migration type 2")
+			return nil, fmt.Errorf("--subnet-id is required for Apache Kafka sources with migration type 2")
 		}
 		if extOutboundSecurityGroupId == "" {
-			return nil, fmt.Errorf("--security-group-id is required for OSK sources with migration type 2")
+			return nil, fmt.Errorf("--security-group-id is required for Apache Kafka sources with migration type 2")
 		}
 		opts.MigrationWizardRequest.ExtOutboundSubnetId = extOutboundSubnetId
 		opts.MigrationWizardRequest.ExtOutboundSecurityGroupId = extOutboundSecurityGroupId
 		opts.MigrationWizardRequest.TargetEnvironmentId = targetEnvironmentId
 		opts.MigrationWizardRequest.SourceSaslScramBootstrapServers = bootstrapServers
-		extOutboundBrokers, err := buildOSKExtOutboundBrokers(oskCluster)
+		extOutboundBrokers, err := buildApacheKafkaExtOutboundBrokers(apacheKafkaCluster)
 		if err != nil {
 			return nil, fmt.Errorf("failed to build external outbound brokers: %w", err)
 		}
@@ -581,10 +581,10 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = true
 		if jumpClusterInstanceType == "" {
-			return nil, fmt.Errorf("--jump-cluster-instance-type is required for OSK sources with migration type 3")
+			return nil, fmt.Errorf("--jump-cluster-instance-type is required for Apache Kafka sources with migration type 3")
 		}
 		if jumpClusterBrokerStorage == 0 {
-			return nil, fmt.Errorf("--jump-cluster-broker-storage is required for OSK sources with migration type 3")
+			return nil, fmt.Errorf("--jump-cluster-broker-storage is required for Apache Kafka sources with migration type 3")
 		}
 		opts.MigrationWizardRequest.TargetEnvironmentId = targetEnvironmentId
 		opts.MigrationWizardRequest.TargetBootstrapEndpoint = targetBootstrapEndpoint
@@ -600,9 +600,9 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	return opts, nil
 }
 
-func buildOSKExtOutboundBrokers(cluster *types.OSKDiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
+func buildApacheKafkaExtOutboundBrokers(cluster *types.ApacheKafkaDiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
 	if len(cluster.BootstrapServers) == 0 {
-		return nil, fmt.Errorf("no bootstrap servers found for OSK cluster %s", cluster.ID)
+		return nil, fmt.Errorf("no bootstrap servers found for Apache Kafka cluster %s", cluster.ID)
 	}
 
 	var brokers []types.ExtOutboundClusterKafkaBroker
@@ -616,7 +616,7 @@ func buildOSKExtOutboundBrokers(cluster *types.OSKDiscoveredCluster) ([]types.Ex
 			return nil, fmt.Errorf("failed to parse port from '%s': %w", server, err)
 		}
 		brokers = append(brokers, types.ExtOutboundClusterKafkaBroker{
-			ID: fmt.Sprintf("osk-broker-%d", i),
+			ID: fmt.Sprintf("apache-kafka-broker-%d", i),
 			Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
 				{Host: host, Port: port},
 			},

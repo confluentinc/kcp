@@ -6,7 +6,7 @@ import { ClusterMetrics } from '@/components/explore/clusters/ClusterMetrics'
 import { DEFAULTS, SOURCE_TYPES } from '@/constants'
 import { findClusterInRegions } from '@/lib/clusterUtils'
 import { useTCOClusters } from '@/hooks/useTCOClusters'
-import { useOSKTCOClusters } from '@/hooks/useOSKTCOClusters'
+import { useApacheKafkaTCOClusters } from '@/hooks/useApacheKafkaTCOClusters'
 import { useTCOModal } from '@/hooks/useTCOModal'
 import { generateTCOCSV } from '@/lib/tcoUtils'
 import { TCOInputRow } from './TCOInputRow'
@@ -20,11 +20,11 @@ export const TCOInputs = () => {
   const initializeTCOData = useAppStore((state) => state.initializeTCOData)
 
   const mskClusters = useTCOClusters()
-  const oskClusters = useOSKTCOClusters()
-  const allClusters = useMemo(() => [...mskClusters, ...oskClusters], [mskClusters, oskClusters])
+  const apacheKafkaClusters = useApacheKafkaTCOClusters()
+  const allClusters = useMemo(() => [...mskClusters, ...apacheKafkaClusters], [mskClusters, apacheKafkaClusters])
 
   const [activeTab, setActiveTab] = useState<SourceType>(SOURCE_TYPES.MSK)
-  const activeClusters = activeTab === SOURCE_TYPES.MSK ? mskClusters : oskClusters
+  const activeClusters = activeTab === SOURCE_TYPES.MSK ? mskClusters : apacheKafkaClusters
 
   const { modalState, openModal, closeModal } = useTCOModal(allClusters)
 
@@ -65,11 +65,11 @@ export const TCOInputs = () => {
 
   const tabs: { id: SourceType; label: string; count: number }[] = [
     { id: SOURCE_TYPES.MSK, label: 'MSK', count: mskClusters.length },
-    { id: SOURCE_TYPES.OSK, label: 'OSK', count: oskClusters.length },
+    { id: SOURCE_TYPES.APACHE_KAFKA, label: 'Apache Kafka', count: apacheKafkaClusters.length },
   ]
 
   const renderColumnHeader = (cluster: typeof activeClusters[number]) => {
-    if (cluster.sourceType === SOURCE_TYPES.OSK && cluster.metadata) {
+    if (cluster.sourceType === SOURCE_TYPES.APACHE_KAFKA && cluster.metadata) {
       const meta = cluster.metadata
       return (
         <div className="flex flex-col">
@@ -148,7 +148,7 @@ export const TCOInputs = () => {
       {activeClusters.length === 0 ? (
         <div className="bg-warning/10 border border-warning/20 rounded-md p-4">
           <p className="text-warning">
-            No {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'OSK'} clusters found. Upload a KCP state file with {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'OSK'} cluster data.
+            No {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'Apache Kafka'} clusters found. Upload a KCP state file with {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'Apache Kafka'} cluster data.
           </p>
         </div>
       ) : (
@@ -263,7 +263,7 @@ export const TCOInputs = () => {
                     tcoWorkloadData={tcoWorkloadData}
                     readOnly={true}
                     readOnlyValue={(tcoCluster) => {
-                      if (tcoCluster.sourceType === SOURCE_TYPES.OSK) return undefined
+                      if (tcoCluster.sourceType === SOURCE_TYPES.APACHE_KAFKA) return undefined
                       const clusterObj = findClusterInRegions(regions, tcoCluster.regionName, tcoCluster.name)
                       return clusterObj?.metrics?.metadata?.follower_fetching
                     }}
@@ -274,7 +274,7 @@ export const TCOInputs = () => {
                     tcoWorkloadData={tcoWorkloadData}
                     readOnly={true}
                     readOnlyValue={(tcoCluster) => {
-                      if (tcoCluster.sourceType === SOURCE_TYPES.OSK) return undefined
+                      if (tcoCluster.sourceType === SOURCE_TYPES.APACHE_KAFKA) return undefined
                       const clusterObj = findClusterInRegions(regions, tcoCluster.regionName, tcoCluster.name)
                       return clusterObj?.metrics?.metadata?.tiered_storage
                     }}
@@ -337,7 +337,7 @@ export const TCOInputs = () => {
             isActive={modalState.isOpen}
             inModal={true}
             sourceType={modalState.cluster.sourceType}
-            clusterId={modalState.cluster.sourceType === SOURCE_TYPES.OSK ? modalState.cluster.key : undefined}
+            clusterId={modalState.cluster.sourceType === SOURCE_TYPES.APACHE_KAFKA ? modalState.cluster.key : undefined}
             modalPreselectedMetric={modalState.preselectedMetric || undefined}
             modalWorkloadAssumption={modalState.workloadAssumption || undefined}
           />

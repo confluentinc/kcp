@@ -334,47 +334,47 @@ func withRegion(c types.ProcessedCluster, region string) types.ProcessedCluster 
 	return c
 }
 
-// State with OSKSources but no MSK clusters MUST surface the
-// osk_source_unsupported OQ so the customer knows on-prem clusters
+// State with ApacheKafkaSources but no MSK clusters MUST surface the
+// apache_kafka_source_unsupported OQ so the customer knows on-prem clusters
 // were silently dropped. Today the plan only covers MSK.
-func TestDetectOSKSourceOpenQuestion_FiresWhenOSKClustersPresent(t *testing.T) {
+func TestDetectApacheKafkaSourceOpenQuestion_FiresWhenApacheKafkaClustersPresent(t *testing.T) {
 	state := types.ProcessedState{
 		Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "onprem-1"}, {ID: "onprem-2"}},
+			{Type: types.SourceTypeApacheKafka, ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+				Clusters: []types.ProcessedApacheKafkaCluster{{ID: "onprem-1"}, {ID: "onprem-2"}},
 			}},
 		},
 	}
-	oqs := detectOSKSourceOpenQuestion(state)
+	oqs := detectApacheKafkaSourceOpenQuestion(state)
 	require.Len(t, oqs, 1)
-	assert.Equal(t, "osk_source_unsupported", oqs[0].ID)
+	assert.Equal(t, "apache_kafka_source_unsupported", oqs[0].ID)
 	assert.Contains(t, oqs[0].Title, "2 on-prem Kafka clusters")
 }
 
-func TestDetectOSKSourceOpenQuestion_NoOQWhenOSKAbsent(t *testing.T) {
+func TestDetectApacheKafkaSourceOpenQuestion_NoOQWhenApacheKafkaAbsent(t *testing.T) {
 	state := types.ProcessedState{}
-	assert.Empty(t, detectOSKSourceOpenQuestion(state))
+	assert.Empty(t, detectApacheKafkaSourceOpenQuestion(state))
 }
 
 // Singular vs plural verb agreement in the OQ title.
-func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
+func TestDetectApacheKafkaSourceOpenQuestion_VerbAgreement(t *testing.T) {
 	t.Run("1 cluster → 'isn't' + singular noun", func(t *testing.T) {
 		state := types.ProcessedState{Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "solo"}},
+			{Type: types.SourceTypeApacheKafka, ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+				Clusters: []types.ProcessedApacheKafkaCluster{{ID: "solo"}},
 			}},
 		}}
-		oqs := detectOSKSourceOpenQuestion(state)
+		oqs := detectApacheKafkaSourceOpenQuestion(state)
 		require.Len(t, oqs, 1)
 		assert.Contains(t, oqs[0].Title, "1 on-prem Kafka cluster in the state file isn't")
 	})
 	t.Run("2 clusters → 'aren't' + plural noun", func(t *testing.T) {
 		state := types.ProcessedState{Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "a"}, {ID: "b"}},
+			{Type: types.SourceTypeApacheKafka, ApacheKafkaData: &types.ProcessedApacheKafkaSource{
+				Clusters: []types.ProcessedApacheKafkaCluster{{ID: "a"}, {ID: "b"}},
 			}},
 		}}
-		oqs := detectOSKSourceOpenQuestion(state)
+		oqs := detectApacheKafkaSourceOpenQuestion(state)
 		require.Len(t, oqs, 1)
 		assert.Contains(t, oqs[0].Title, "2 on-prem Kafka clusters in the state file aren't")
 	})

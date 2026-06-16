@@ -205,7 +205,7 @@
       }
     ]
   },
-  "osk_sources": {
+  "apache_kafka_sources": {
     "clusters": [
       {
         "id": "production-kafka-us-east",
@@ -215,7 +215,7 @@
           "broker3.prod-kafka.example.com:9092"
         ],
         "kafka_admin_client_information": {
-          "cluster_id": "osk-cluster-id-001",
+          "cluster_id": "apache-kafka-cluster-id-001",
           "sasl_mechanism": "SCRAM-SHA-256",
           "topics": {
             "summary": {

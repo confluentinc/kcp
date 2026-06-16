@@ -1,10 +1,10 @@
 import type { Region } from '@/types'
-import type { ProcessedOSKSource } from '@/types/osk'
+import type { ProcessedApacheKafkaSource } from '@/types/apache-kafka'
 
 /**
  * Source type discriminator
  */
-export type SourceType = 'msk' | 'osk'
+export type SourceType = 'msk' | 'apache-kafka'
 
 /**
  * Processed MSK Source (contains regions)
@@ -19,7 +19,7 @@ export interface ProcessedMSKSource {
 export interface ProcessedSource {
   type: SourceType
   msk_data?: ProcessedMSKSource
-  osk_data?: ProcessedOSKSource
+  apache_kafka_data?: ProcessedApacheKafkaSource
 }
 
 /**
@@ -101,7 +101,7 @@ export interface StateUploadRequest {
   msk_sources?: {
     regions: Region[]
   }
-  osk_sources?: {
+  apache_kafka_sources?: {
     clusters: any[] // Will be processed by backend
   }
   schema_registries?: SchemaRegistriesState

@@ -2,14 +2,14 @@ import { useMemo } from 'react'
 import { useRegions } from '@/stores/store'
 import { getClusterArn } from '@/lib/clusterUtils'
 import { SOURCE_TYPES } from '@/constants'
-import type { SourceType, OSKClusterMetadata } from '@/types'
+import type { SourceType, ApacheKafkaClusterMetadata } from '@/types'
 
 export interface TCOCluster {
   name: string
   key: string
   sourceType: SourceType
   regionName: string
-  metadata?: OSKClusterMetadata
+  metadata?: ApacheKafkaClusterMetadata
 }
 
 export const useTCOClusters = (): TCOCluster[] => {

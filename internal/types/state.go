@@ -14,11 +14,11 @@ import (
 
 // State represents the unified state file (kcp-state.json)
 type State struct {
-	MSKSources       *MSKSourcesState       `json:"msk_sources,omitempty"`
-	OSKSources       *OSKSourcesState       `json:"osk_sources,omitempty"`
-	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
-	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
-	Timestamp        time.Time              `json:"timestamp"`
+	MSKSources         *MSKSourcesState         `json:"msk_sources,omitempty"`
+	ApacheKafkaSources *ApacheKafkaSourcesState `json:"apache_kafka_sources,omitempty"`
+	SchemaRegistries   *SchemaRegistriesState   `json:"schema_registries,omitempty"`
+	KcpBuildInfo       KcpBuildInfo             `json:"kcp_build_info"`
+	Timestamp          time.Time                `json:"timestamp"`
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -37,8 +37,8 @@ func NewStateFrom(fromState *State) *State {
 		workingState.MSKSources = &MSKSourcesState{
 			Regions: []DiscoveredRegion{},
 		}
-		workingState.OSKSources = &OSKSourcesState{
-			Clusters: []OSKDiscoveredCluster{},
+		workingState.ApacheKafkaSources = &ApacheKafkaSourcesState{
+			Clusters: []ApacheKafkaDiscoveredCluster{},
 		}
 	} else {
 		// Copy existing MSK data or initialize empty
@@ -54,16 +54,16 @@ func NewStateFrom(fromState *State) *State {
 			}
 		}
 
-		// Copy existing OSK data or initialize empty
-		if fromState.OSKSources != nil {
-			oskSources := &OSKSourcesState{
-				Clusters: make([]OSKDiscoveredCluster, len(fromState.OSKSources.Clusters)),
+		// Copy existing Apache Kafka data or initialize empty
+		if fromState.ApacheKafkaSources != nil {
+			apacheKafkaSources := &ApacheKafkaSourcesState{
+				Clusters: make([]ApacheKafkaDiscoveredCluster, len(fromState.ApacheKafkaSources.Clusters)),
 			}
-			copy(oskSources.Clusters, fromState.OSKSources.Clusters)
-			workingState.OSKSources = oskSources
+			copy(apacheKafkaSources.Clusters, fromState.ApacheKafkaSources.Clusters)
+			workingState.ApacheKafkaSources = apacheKafkaSources
 		} else {
-			workingState.OSKSources = &OSKSourcesState{
-				Clusters: []OSKDiscoveredCluster{},
+			workingState.ApacheKafkaSources = &ApacheKafkaSourcesState{
+				Clusters: []ApacheKafkaDiscoveredCluster{},
 			}
 		}
 	}
@@ -95,11 +95,11 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		}
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
+				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
 			}
-			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
+			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
 		}
-		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
+		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
 	}
 
 	if state.KcpBuildInfo.Version == "" {
@@ -245,17 +245,17 @@ func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
 	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
 }
 
-// GetOSKClusterByID looks up an OSK cluster by the user-provided ID from credentials
-func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
-	if s.OSKSources == nil {
-		return nil, fmt.Errorf("no OSK sources in state file")
+// GetApacheKafkaClusterByID looks up an Apache Kafka cluster by the user-provided ID from credentials
+func (s *State) GetApacheKafkaClusterByID(id string) (*ApacheKafkaDiscoveredCluster, error) {
+	if s.ApacheKafkaSources == nil {
+		return nil, fmt.Errorf("no Apache Kafka sources in state file")
 	}
 
-	for i := range s.OSKSources.Clusters {
-		if s.OSKSources.Clusters[i].ID == id {
-			return &s.OSKSources.Clusters[i], nil
+	for i := range s.ApacheKafkaSources.Clusters {
+		if s.ApacheKafkaSources.Clusters[i].ID == id {
+			return &s.ApacheKafkaSources.Clusters[i], nil
 		}
 	}
 
-	return nil, fmt.Errorf("OSK cluster with ID '%s' not found in state file", id)
+	return nil, fmt.Errorf("no Apache Kafka cluster with ID '%s' in state file", id)
 }
