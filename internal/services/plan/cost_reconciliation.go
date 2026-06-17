@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -54,7 +55,7 @@ func mskUsageTypeRegex(cfg *PlanConfig) *regexp.Regexp {
 // desc; no materiality threshold (the customer decides what's
 // "real"). Returns nil when there are no candidates or no MSK source
 // data — the renderer omits the section in that case.
-func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *types.CostReconciliationSection {
+func detectCostReconciliation(state report.ProcessedState, cfg *PlanConfig) *types.CostReconciliationSection {
 	re := mskUsageTypeRegex(cfg)
 	var candidates []types.HiddenClusterCandidate
 	for _, src := range state.Sources {
@@ -108,7 +109,7 @@ func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *type
 // line as a "hidden cluster".
 const serverlessInventoryType = "kafka.Serverless-Hours"
 
-func inventoryInstanceTypes(region types.ProcessedRegion) map[string]struct{} {
+func inventoryInstanceTypes(region report.ProcessedRegion) map[string]struct{} {
 	out := map[string]struct{}{}
 	for _, c := range region.Clusters {
 		if isServerless(c) {
@@ -136,7 +137,7 @@ type costAgg struct {
 	daysObserved   int
 }
 
-func aggregateCostByInstanceType(costs types.ProcessedRegionCosts, re *regexp.Regexp) map[string]*costAgg {
+func aggregateCostByInstanceType(costs report.ProcessedRegionCosts, re *regexp.Regexp) map[string]*costAgg {
 	out := map[string]*costAgg{}
 	for _, r := range costs.Results {
 		instType := parseMSKInstanceType(r.UsageType, re)
@@ -194,7 +195,7 @@ func parseMSKInstanceType(usageType string, re *regexp.Regexp) string {
 // data is empty across all regions — the diff isn't actionable
 // without cost data. Returns nil when at least one region has cost
 // data (even if the diff was clean).
-func detectCostReconciliationOpenQuestions(state types.ProcessedState) []types.OpenQuestion {
+func detectCostReconciliationOpenQuestions(state report.ProcessedState) []types.OpenQuestion {
 	hasCost := false
 	for _, src := range state.Sources {
 		if src.MSKData == nil {
@@ -227,7 +228,7 @@ func detectCostReconciliationOpenQuestions(state types.ProcessedState) []types.O
 	}}
 }
 
-func hasAnyMSKRegion(state types.ProcessedState) bool {
+func hasAnyMSKRegion(state report.ProcessedState) bool {
 	for _, src := range state.Sources {
 		if src.MSKData != nil && len(src.MSKData.Regions) > 0 {
 			return true

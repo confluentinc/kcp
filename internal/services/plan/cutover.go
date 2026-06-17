@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -40,7 +41,7 @@ const (
 // distinct from "the customer set `prefer_gateway: false`" but
 // indistinguishable at this layer. Callers from tests should construct
 // inputs via the resolver, not by struct literal.
-func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) types.CutoverDecision {
+func decideCutover(clusters []report.ProcessedCluster, inputs types.PlanInputsResolved) types.CutoverDecision {
 	style, sub := resolveStyle(inputs)
 
 	// Blue/Green sidesteps the gateway question entirely — the gateway
