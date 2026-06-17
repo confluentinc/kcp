@@ -1,9 +1,16 @@
-site_name: KCP — Kafka Copy Paste
-site_description: CLI tool for planning and executing Kafka migrations from AWS MSK and Open Source Kafka to Confluent Cloud.
+site_name: KCP
+site_description: CLI tool for planning and executing Kafka migrations from AWS MSK and Apache Kafka® to Confluent Cloud.
 site_url: https://confluentinc.github.io/kcp/
 repo_url: https://github.com/confluentinc/kcp
 repo_name: confluentinc/kcp
 edit_uri: edit/main/docs/assets/
+
+# ASF trademark attribution — rendered site-wide in the footer by the Material theme.
+copyright: >
+  Apache®, Apache Kafka®, Kafka®, and the Kafka logo are either registered trademarks
+  or trademarks of the Apache Software Foundation in the United States and/or other
+  countries. No endorsement by the Apache Software Foundation is implied by the use of
+  these marks.
 
 docs_dir: docs/assets
 

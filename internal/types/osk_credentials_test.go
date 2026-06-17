@@ -594,7 +594,7 @@ clusters:
       username: admin
       password: secret
 `
-	tmpFile := filepath.Join(t.TempDir(), "osk-credentials.yaml")
+	tmpFile := filepath.Join(t.TempDir(), "apache-kafka-credentials.yaml")
 	require.NoError(t, os.WriteFile(tmpFile, []byte(content), 0644))
 
 	creds, errs := NewOSKCredentialsFromFile(tmpFile)
