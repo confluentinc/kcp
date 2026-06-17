@@ -586,8 +586,8 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	}
 
 	if opts.MigrationWizardRequest.ClusterLinkName == "" {
-		slog.Warn("no cluster link name provided, using default", "default", "kcp-osk-to-cc-link")
-		opts.MigrationWizardRequest.ClusterLinkName = "kcp-osk-to-cc-link"
+		slog.Warn("no cluster link name provided, using default", "default", "kcp-kafka-to-cc-link")
+		opts.MigrationWizardRequest.ClusterLinkName = "kcp-kafka-to-cc-link"
 	}
 
 	switch targetType {
@@ -654,7 +654,7 @@ func buildOSKExtOutboundBrokers(cluster *types.OSKDiscoveredCluster) ([]types.Ex
 			return nil, fmt.Errorf("failed to parse port from '%s': %w", server, err)
 		}
 		brokers = append(brokers, types.ExtOutboundClusterKafkaBroker{
-			ID: fmt.Sprintf("osk-broker-%d", i),
+			ID: fmt.Sprintf("kafka-broker-%d", i),
 			Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
 				{Host: host, Port: port},
 			},
