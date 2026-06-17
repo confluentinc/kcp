@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,7 +13,7 @@ import (
 func TestDecideClusterType_DefaultEnterprise(t *testing.T) {
 	cfg := defaultCfg(t)
 	sizing := types.ClusterSizing{ClusterID: "x", FinalECKU: 5}
-	d := decideClusterType(types.ProcessedCluster{Name: "x"}, sizing, cfg, defaultInputs())
+	d := decideClusterType(report.ProcessedCluster{Name: "x"}, sizing, cfg, defaultInputs())
 	assert.Equal(t, types.ClusterTypeEnterprise, d.Verdict)
 	assert.Empty(t, d.Triggers)
 }
@@ -21,7 +22,7 @@ func TestDecideClusterType_DedicatedWhenSizedOverPNICap(t *testing.T) {
 	cfg := defaultCfg(t)
 	// pni_max_eCKU = 32; size at 33 to fire the rule.
 	sizing := types.ClusterSizing{ClusterID: "huge", FinalECKU: 33}
-	d := decideClusterType(types.ProcessedCluster{Name: "huge"}, sizing, cfg, defaultInputs())
+	d := decideClusterType(report.ProcessedCluster{Name: "huge"}, sizing, cfg, defaultInputs())
 	assert.Equal(t, types.ClusterTypeDedicated, d.Verdict)
 	assert.Len(t, d.Triggers, 1)
 	assert.Equal(t, "eCKU_exceeds_pni_cap", d.Triggers[0].RowID)
@@ -39,8 +40,8 @@ func TestDecideClusterType_DedicatedWhenSizedOverPNICap(t *testing.T) {
 // model "scan didn't run / --skip-acls" and `[]Acls{}` to model
 // "successful scan with 0 ACLs"). Pass non-empty Acls to exercise rules
 // that need real ACL counts.
-func provisionedClusterWithScan(name string, acls []types.Acls) types.ProcessedCluster {
-	c := types.ProcessedCluster{Name: name}
+func provisionedClusterWithScan(name string, acls []types.Acls) report.ProcessedCluster {
+	c := report.ProcessedCluster{Name: name}
 	c.KafkaAdminClientInformation.Acls = acls
 	c.KafkaAdminClientInformation.Topics = &types.Topics{}
 	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
@@ -93,7 +94,7 @@ func TestDecideClusterType_ACLRuleNilVsEmpty(t *testing.T) {
 	})
 
 	t.Run("SERVERLESS cluster — rule skipped regardless of ACL slice", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "serverless"}
+		c := report.ProcessedCluster{Name: "serverless"}
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		d := decideClusterType(c, sizing, cfg, defaultInputs())
@@ -104,7 +105,7 @@ func TestDecideClusterType_ACLRuleNilVsEmpty(t *testing.T) {
 func TestDecideClusterType_CustomerDeclaredFlags(t *testing.T) {
 	cfg := defaultCfg(t)
 	sizing := types.ClusterSizing{ClusterID: "small", FinalECKU: 5}
-	c := types.ProcessedCluster{Name: "small"}
+	c := report.ProcessedCluster{Name: "small"}
 
 	cases := []struct {
 		name        string
@@ -150,7 +151,7 @@ func TestDecideClusterType_MTLSOnNonAWSTarget(t *testing.T) {
 	cfg := defaultCfg(t)
 	sizing := types.ClusterSizing{ClusterID: "mtls", FinalECKU: 5}
 	enabled := true
-	c := types.ProcessedCluster{Name: "mtls"}
+	c := report.ProcessedCluster{Name: "mtls"}
 	c.AWSClientInformation.MskClusterConfig.Provisioned = &kafkatypes.Provisioned{
 		ClientAuthentication: &kafkatypes.ClientAuthentication{
 			Tls: &kafkatypes.Tls{Enabled: &enabled},
@@ -175,7 +176,7 @@ func TestDecideClusterType_MTLSOnNonAWSTarget(t *testing.T) {
 	})
 
 	t.Run("no mTLS source — rule skipped regardless of target", func(t *testing.T) {
-		c2 := types.ProcessedCluster{Name: "scram"}
+		c2 := report.ProcessedCluster{Name: "scram"}
 		in := defaultInputs()
 		in.TargetCloud = "gcp"
 		d := decideClusterType(c2, sizing, cfg, in)
@@ -186,7 +187,7 @@ func TestDecideClusterType_MTLSOnNonAWSTarget(t *testing.T) {
 func TestDecideClusterType_Topology(t *testing.T) {
 	cfg := defaultCfg(t)
 	sizing := types.ClusterSizing{ClusterID: "x", FinalECKU: 4}
-	c := types.ProcessedCluster{Name: "x"}
+	c := report.ProcessedCluster{Name: "x"}
 
 	t.Run("Enterprise verdict has no topology", func(t *testing.T) {
 		d := decideClusterType(c, sizing, cfg, defaultInputs())

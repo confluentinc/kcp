@@ -119,3 +119,34 @@ func FormatQueryDuration(d time.Duration) string {
 		return fmt.Sprintf("%dd", days)
 	}
 }
+
+type ProcessedClusterMetrics struct {
+	Region     string                     `json:"region"`
+	ClusterArn string                     `json:"cluster_arn"`
+	Metadata   MetricMetadata             `json:"metadata"`
+	Metrics    []ProcessedMetric          `json:"results"`
+	Aggregates map[string]MetricAggregate `json:"aggregates"`
+	QueryInfo  []MetricQueryInfo          `json:"query_info"`
+	// OSK-specific fields (optional, omitempty for MSK clusters)
+	Environment string `json:"environment,omitempty"`
+	Location    string `json:"location,omitempty"`
+}
+
+type ProcessedMetric struct {
+	Start string   `json:"start"`
+	End   string   `json:"end"`
+	Label string   `json:"label"`
+	Value *float64 `json:"value"`
+}
+
+type MetricAggregate struct {
+	Average *float64 `json:"avg"`
+	Maximum *float64 `json:"max"`
+	Minimum *float64 `json:"min"`
+	P95     *float64 `json:"p95"`
+	P99     *float64 `json:"p99"`
+	// Count is the sample size of the aggregate. With `omitempty`,
+	// "unknown" and "exactly 0 samples" both render as absent — treat
+	// absence as "no sample data".
+	Count int `json:"count,omitempty"`
+}
