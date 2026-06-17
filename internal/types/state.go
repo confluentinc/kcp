@@ -190,6 +190,31 @@ func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
 	s.MSKSources.Regions = append(s.MSKSources.Regions, newRegion)
 }
 
+// UpsertTargetedClusters refreshes region-level data (costs, configurations) and creates
+// or replaces only the clusters present in newRegion.Clusters, preserving every other
+// existing cluster in the region. Used by targeted (--cluster-arn) discovery. If the
+// region does not yet exist it is added as-is (fresh-state / new-region case).
+func (s *State) UpsertTargetedClusters(newRegion DiscoveredRegion) {
+	if s.MSKSources == nil {
+		s.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
+	}
+	for i := range s.MSKSources.Regions {
+		if s.MSKSources.Regions[i].Name == newRegion.Name {
+			// refresh region-level data discovered this run
+			s.MSKSources.Regions[i].Configurations = newRegion.Configurations
+			s.MSKSources.Regions[i].Costs = newRegion.Costs
+			// create-or-replace only the targeted clusters
+			for _, targeted := range newRegion.Clusters {
+				s.MSKSources.Regions[i].UpsertCluster(targeted)
+			}
+			return
+		}
+	}
+	s.MSKSources.Regions = append(s.MSKSources.Regions, newRegion)
+}
+
 func (s *State) UpsertDiscoveredClients(regionName string, clusterName string, discoveredClients []DiscoveredClient) error {
 	slog.Info("🔍 looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
 	if s.MSKSources == nil {
