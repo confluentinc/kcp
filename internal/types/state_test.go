@@ -2,6 +2,8 @@ package types
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1239,5 +1241,126 @@ func TestFormatQueryDuration(t *testing.T) {
 				t.Errorf("FormatQueryDuration(%v) = %q, want %q", tt.d, got, tt.expected)
 			}
 		})
+	}
+}
+
+// skipIfWindows skips file-mode assertions on Windows, where POSIX permission
+// bits are not meaningfully enforced.
+func skipIfWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file-mode semantics do not apply on Windows")
+	}
+}
+
+// TestWriteToFile_NewFileHasOwnerOnlyPerms verifies a freshly written state
+// file is created with mode 0600 (owner read/write only), not world/group
+// readable. (R1)
+func TestWriteToFile_NewFileHasOwnerOnlyPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600", got)
+	}
+}
+
+// TestWriteToFile_StaleLooseTempDoesNotLeak verifies that a leftover legacy
+// fixed-name temp file (<path>.tmp) at 0644 from a crashed run cannot cause the
+// final state file to be written world/group readable. (R3 abuse case)
+func TestWriteToFile_StaleLooseTempDoesNotLeak(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	// Simulate a crash leaving a fixed-name temp at loose perms.
+	if err := os.WriteFile(path+".tmp", []byte("{}"), 0644); err != nil {
+		t.Fatalf("seed stale temp: %v", err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600 (stale 0644 temp leaked into result)", got)
+	}
+}
+
+// TestWriteToFile_SecondWritePreservesPerms verifies a rewrite of an existing
+// state file keeps mode 0600 rather than loosening it back to 0644 -- so the
+// hardening holds across every command that persists state, not just the first.
+// (R4 regression guard)
+func TestWriteToFile_SecondWritePreservesPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	for i := 0; i < 2; i++ {
+		if err := (&State{}).WriteToFile(path); err != nil {
+			t.Fatalf("WriteToFile (write %d): %v", i+1, err)
+		}
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms after second write = %#o, want 0600", got)
+	}
+}
+
+// TestWriteToFile_TightensExistingLooseFile verifies that an existing state
+// file already at 0644 (e.g. created by an older kcp build) is tightened to
+// 0600 on the next write -- no separate migration step required. (R5 regression
+// guard)
+func TestWriteToFile_TightensExistingLooseFile(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+		t.Fatalf("seed legacy 0644 state file: %v", err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600 (existing 0644 file not tightened)", got)
+	}
+}
+
+// TestWriteToFile_RoundTripsContent verifies the permission change did not break
+// the write/load round trip -- content is still valid JSON and reloads via the
+// existing loader. (R6 regression guard)
+func TestWriteToFile_RoundTripsContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	want := "round-trip-test-1.2.3"
+	if err := (&State{KcpBuildInfo: KcpBuildInfo{Version: want}}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	got, err := NewStateFromFile(path)
+	if err != nil {
+		t.Fatalf("NewStateFromFile: %v", err)
+	}
+	if got.KcpBuildInfo.Version != want {
+		t.Fatalf("reloaded version = %q, want %q", got.KcpBuildInfo.Version, want)
 	}
 }

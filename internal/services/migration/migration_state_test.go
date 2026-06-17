@@ -3,6 +3,7 @@ package migration
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -268,4 +269,75 @@ func TestMigrationConfig_PauseConsumerOffsetSync_ForwardCompat(t *testing.T) {
 
 	assert.Contains(t, contents, `"pause_consumer_offset_sync"`, "field should be present in JSON even when false")
 	assert.Contains(t, contents, `"pause_consumer_offset_sync_flipped"`, "flipped field should be present in JSON even when false")
+}
+
+// skipIfWindows skips file-mode assertions on Windows, where POSIX permission
+// bits are not meaningfully enforced.
+func skipIfWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file-mode semantics do not apply on Windows")
+	}
+}
+
+// TestMigrationState_WriteToFile_NewFileHasOwnerOnlyPerms verifies the migration
+// state file is written 0600 (owner read/write only), since it holds sensitive
+// migration metadata. (R2)
+func TestMigrationState_WriteToFile_NewFileHasOwnerOnlyPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), ".kcp-migration-state.json")
+	require.NoError(t, NewMigrationState().WriteToFile(path))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "migration state file should be 0600")
+}
+
+// TestMigrationState_WriteToFile_StaleLooseTempDoesNotLeak verifies a leftover
+// legacy fixed-name temp (<path>.tmp) at 0644 from a crashed run cannot cause
+// the final migration state file to be world/group readable. (R3 abuse case)
+func TestMigrationState_WriteToFile_StaleLooseTempDoesNotLeak(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), ".kcp-migration-state.json")
+	require.NoError(t, os.WriteFile(path+".tmp", []byte("{}"), 0644))
+
+	require.NoError(t, NewMigrationState().WriteToFile(path))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "stale 0644 temp must not leak into result")
+}
+
+// TestMigrationState_WriteToFile_SecondWritePreservesPerms verifies a rewrite of
+// an existing migration state file keeps mode 0600 rather than loosening it back
+// to 0644. (R4 regression guard)
+func TestMigrationState_WriteToFile_SecondWritePreservesPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), ".kcp-migration-state.json")
+	for i := 0; i < 2; i++ {
+		require.NoError(t, NewMigrationState().WriteToFile(path))
+	}
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "perms should stay 0600 after second write")
+}
+
+// TestMigrationState_WriteToFile_TightensExistingLooseFile verifies an existing
+// migration state file at 0644 is tightened to 0600 on the next write. (R5
+// regression guard)
+func TestMigrationState_WriteToFile_TightensExistingLooseFile(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), ".kcp-migration-state.json")
+	require.NoError(t, os.WriteFile(path, []byte("{}"), 0644))
+
+	require.NoError(t, NewMigrationState().WriteToFile(path))
+
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "existing 0644 file should be tightened to 0600")
 }
