@@ -133,11 +133,15 @@ func NewDiscoverCmd() *cobra.Command {
 
 	groups := map[*pflag.FlagSet]string{}
 
+	// Exactly one of --region / --cluster-arn must be provided (enforced below via
+	// MarkFlagsMutuallyExclusive + MarkFlagsOneRequired), so they share a group whose
+	// label reflects that either-or requirement rather than implying both are needed.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
+	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag). Mutually exclusive with --cluster-arn.")
+	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "Discover only the specified MSK cluster ARN(s) (comma separated or repeated flag). Region is inferred from each ARN. Mutually exclusive with --region.")
 	discoverCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags"
+	groups[requiredFlags] = "Required Flags (provide exactly one)"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
@@ -145,7 +149,6 @@ func NewDiscoverCmd() *cobra.Command {
 	optionalFlags.BoolVar(&skipCosts, "skip-costs", false, "Skips the cost discovery through the AWS Cost Explorer API")
 	optionalFlags.BoolVar(&skipMetrics, "skip-metrics", false, "Skips the metrics discovery through the AWS CloudWatch API")
 	optionalFlags.StringVar(&metricsGranularity, "metrics-granularity", "1d", "The granularity for which to query for CloudWatch metrics. Valid values: 60s, 5m, 1h, 1d.  The maximum time range for each granularity is: 60s = 15 days, 5m = 63 days, 1h = 365 days, 1d = 365 days.")
-	optionalFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "Discover only the specified MSK cluster ARN(s) (comma separated or repeated flag). Region is inferred from each ARN. Mutually exclusive with --region.")
 	discoverCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -157,7 +160,7 @@ func NewDiscoverCmd() *cobra.Command {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
-		groupNames := []string{"Required Flags", "Optional Flags"}
+		groupNames := []string{"Required Flags (provide exactly one)", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
