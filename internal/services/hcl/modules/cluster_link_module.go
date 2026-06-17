@@ -1,6 +1,9 @@
 package modules
 
-import "github.com/confluentinc/kcp/internal/types"
+import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
+	"github.com/confluentinc/kcp/internal/types"
+)
 
 func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	return []ModuleVariable[types.MigrationWizardRequest]{
@@ -71,7 +74,7 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 		},
 		{
 			Name: "source_sasl_scram_mechanism",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "source_sasl_scram_mechanism",
 				Description: "The SASL/SCRAM mechanism of the source Kafka cluster (SCRAM-SHA-256 or SCRAM-SHA-512).",
 				Sensitive:   false,
@@ -84,6 +87,6 @@ func GetClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	}
 }
 
-func GetClusterLinkModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
+func GetClusterLinkModuleVariableDefinitions(request types.MigrationWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetClusterLinkVariables(), request)
 }

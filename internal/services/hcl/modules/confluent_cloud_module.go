@@ -3,6 +3,7 @@ package modules
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -10,7 +11,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 	return []ModuleVariable[types.TargetClusterWizardRequest]{
 		{
 			Name: "aws_region",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "aws_region",
 				Description: "The AWS region in which the Confluent Cloud cluster is provisioned in.",
 				Sensitive:   false,
@@ -23,7 +24,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 		},
 		{
 			Name: "environment_id",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "environment_id",
 				Description: "ID of the environment",
 				Sensitive:   false,
@@ -38,7 +39,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 		},
 		{
 			Name: "environment_name",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "environment_name",
 				Description: "Name of the environment",
 				Sensitive:   false,
@@ -53,7 +54,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 		},
 		{
 			Name: "cluster_name",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "cluster_name",
 				Description: "Name of the cluster",
 				Sensitive:   false,
@@ -68,7 +69,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 		},
 		{
 			Name: "cluster_type",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "cluster_type",
 				Description: "Type of the cluster",
 				Sensitive:   false,
@@ -83,7 +84,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 		},
 		{
 			Name: "cluster_availability",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "cluster_availability",
 				Description: "Cluster availability zone type (SINGLE_ZONE or MULTI_ZONE)",
 				Sensitive:   false,
@@ -98,7 +99,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 		},
 		{
 			Name: "cluster_cku",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "cluster_cku",
 				Description: "Number of CKUs for dedicated clusters",
 				Sensitive:   false,
@@ -114,7 +115,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 	}
 }
 
-func GetConfluentCloudVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
+func GetConfluentCloudVariableDefinitions(request types.TargetClusterWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetConfluentCloudVariables(), request)
 }
 
@@ -126,8 +127,8 @@ type ConfluentCloudOutputParams struct {
 	KafkaAPIKeyName    string
 }
 
-func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardRequest, params ConfluentCloudOutputParams) []types.TerraformOutput {
-	var definitions []types.TerraformOutput
+func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardRequest, params ConfluentCloudOutputParams) []hcltypes.TerraformOutput {
+	var definitions []hcltypes.TerraformOutput
 
 	var envIdValue string
 	if request.NeedsEnvironment {
@@ -136,7 +137,7 @@ func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardR
 		envIdValue = fmt.Sprintf("data.confluent_environment.%s.id", params.EnvironmentName)
 	}
 
-	definitions = append(definitions, types.TerraformOutput{
+	definitions = append(definitions, hcltypes.TerraformOutput{
 		Name:        "environment_id",
 		Description: "ID of the environment",
 		Sensitive:   false,
@@ -145,17 +146,17 @@ func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardR
 
 	// Cluster outputs
 	definitions = append(definitions,
-		types.TerraformOutput{
+		hcltypes.TerraformOutput{
 			Name:        "cluster_id",
 			Description: "ID of the Kafka cluster",
 			Value:       fmt.Sprintf("confluent_kafka_cluster.%s.id", params.ClusterName),
 		},
-		types.TerraformOutput{
+		hcltypes.TerraformOutput{
 			Name:        "cluster_bootstrap_endpoint",
 			Description: "Bootstrap endpoint of the Kafka cluster",
 			Value:       fmt.Sprintf("confluent_kafka_cluster.%s.bootstrap_endpoint", params.ClusterName),
 		},
-		types.TerraformOutput{
+		hcltypes.TerraformOutput{
 			Name:        "cluster_rest_endpoint",
 			Description: "REST endpoint of the Kafka cluster",
 			Value:       fmt.Sprintf("confluent_kafka_cluster.%s.rest_endpoint", params.ClusterName),
@@ -163,7 +164,7 @@ func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardR
 	)
 
 	// Service account output
-	definitions = append(definitions, types.TerraformOutput{
+	definitions = append(definitions, hcltypes.TerraformOutput{
 		Name:        "service_account_id",
 		Description: "ID of the service account",
 		Value:       fmt.Sprintf("confluent_service_account.%s.id", params.ServiceAccountName),
@@ -171,12 +172,12 @@ func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardR
 
 	// Kafka API key outputs
 	definitions = append(definitions,
-		types.TerraformOutput{
+		hcltypes.TerraformOutput{
 			Name:        "kafka_api_key_id",
 			Description: "ID of the Kafka API key",
 			Value:       fmt.Sprintf("confluent_api_key.%s.id", params.KafkaAPIKeyName),
 		},
-		types.TerraformOutput{
+		hcltypes.TerraformOutput{
 			Name:        "kafka_api_key_secret",
 			Description: "Secret of the Kafka API key",
 			Sensitive:   true,
@@ -187,22 +188,22 @@ func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardR
 	// Network outputs (only for dedicated clusters with private link)
 	if request.NeedsPrivateLink && request.ClusterType == "dedicated" {
 		definitions = append(definitions,
-			types.TerraformOutput{
+			hcltypes.TerraformOutput{
 				Name:        "network_id",
 				Description: "ID of the Confluent Cloud network",
 				Value:       fmt.Sprintf("confluent_network.%s.id", params.NetworkName),
 			},
-			types.TerraformOutput{
+			hcltypes.TerraformOutput{
 				Name:        "network_dns_domain",
 				Description: "DNS domain of the Confluent Cloud network",
 				Value:       fmt.Sprintf("confluent_network.%s.dns_domain", params.NetworkName),
 			},
-			types.TerraformOutput{
+			hcltypes.TerraformOutput{
 				Name:        "network_private_link_endpoint_service",
 				Description: "AWS VPC endpoint service name for the Confluent Cloud network",
 				Value:       fmt.Sprintf("confluent_network.%s.aws[0].private_link_endpoint_service", params.NetworkName),
 			},
-			types.TerraformOutput{
+			hcltypes.TerraformOutput{
 				Name:        "network_zones",
 				Description: "Availability zone IDs supported by the Confluent Cloud network",
 				Value:       fmt.Sprintf("confluent_network.%s.zones", params.NetworkName),
