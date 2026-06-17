@@ -65,8 +65,8 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
 	requiredFlags.StringVar(&ccEnvironment, "cc-environment", "", "The Confluent Cloud destination type: 'cc' (Standard) or 'cc-gov' (Confluent Cloud for Government).")
-	requiredFlags.StringVar(&sourceType, "source-type", "msk", "Source type: 'msk' or 'osk'")
-	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
+	requiredFlags.StringVar(&sourceType, "source-type", "msk", "Source type: 'msk' or 'apache-kafka'")
+	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for Apache Kafka).")
 	requiredFlags.StringVar(&mode, "mode", "", "Migration mode: 'mirror' (cluster-link mirror topics, forwards data) or 'new' (plain CC topics, no data).")
 	requiredFlags.StringVar(&targetClusterId, "target-cluster-id", "", "The Confluent Cloud cluster ID (e.g., lkc-xxxxxx).")
 	requiredFlags.StringVar(&targetClusterRestEndpoint, "target-rest-endpoint", "", "The Confluent Cloud cluster REST endpoint (e.g., https://xxx.xxx.aws.confluent.cloud:443).")
@@ -146,6 +146,13 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 	// --cc-environment / --mode / --cluster-link-name are validated in
 	// preRunMigrateTopics (PreRunE), so by here they are known-good.
 
+	// "apache-kafka" is the user-facing value; normalize to the internal "osk" token.
+	normalizedSourceType, err := types.ParseSourceTypeFlag(sourceType)
+	if err != nil {
+		return nil, err
+	}
+	sourceType = string(normalizedSourceType)
+
 	// __consumer_offsets survives the internal-topic filter in mirror mode only:
 	// a cluster link can mirror the offset topic, but `--mode new` emits a
 	// confluent_kafka_topic that CC rejects at apply time (reserved __ prefix).
@@ -176,11 +183,11 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 	case "osk":
 		cluster, err := state.GetOSKClusterByID(clusterId)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
+			return nil, fmt.Errorf("failed to get Apache Kafka cluster: %w", err)
 		}
 		kafkaAdminInfo = &cluster.KafkaAdminClientInformation
 	default:
-		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)
+		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'apache-kafka')", sourceType)
 	}
 
 	var allTopics []types.TopicDetails

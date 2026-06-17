@@ -342,7 +342,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 }
 
 // detectOSKSourceOpenQuestion surfaces a fleet-wide OQ when the
-// state file contains OSK (open-source Kafka, on-prem) clusters.
+// state file contains Apache Kafka (self-managed, on-prem) clusters.
 // `kcp report plan` covers MSK only today; without this OQ those
 // clusters would be silently dropped from the plan.
 func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestion {
@@ -362,8 +362,8 @@ func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestio
 	return []types.OpenQuestion{{
 		ID:         "osk_source_unsupported",
 		Title:      fmt.Sprintf("%d on-prem Kafka %s in the state file %s covered by `kcp report plan`", oskCount, noun, verb),
-		Body:       "The state file includes `osk_sources` clusters (open-source Kafka, e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the OSK clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
-		HowToClose: "Plan the OSK clusters separately: run `kcp report plan` against a state file slice that only contains the OSK clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
+		Body:       "The state file includes `osk_sources` clusters (Apache Kafka, e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the Apache Kafka clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
+		HowToClose: "Plan the Apache Kafka clusters separately: run `kcp report plan` against a state file slice that only contains the Apache Kafka clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
 	}}
 }
 

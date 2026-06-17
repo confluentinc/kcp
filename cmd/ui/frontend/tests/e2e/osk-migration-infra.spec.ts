@@ -5,7 +5,7 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.goto('/')
     await page.waitForSelector('nav button', { timeout: 10000 })
     await page.locator('nav button:has-text("Migrate")').click()
-    await page.waitForSelector('text=Open Source Kafka', { timeout: 10000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 10000 })
   })
 
   test('Public path - generates Terraform for OSK cluster', async ({ page }) => {

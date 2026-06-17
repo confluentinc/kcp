@@ -538,7 +538,7 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 
 		require.Error(t, err)
 		assert.Nil(t, result)
-		assert.Contains(t, err.Error(), "not found in OSK sources")
+		assert.Contains(t, err.Error(), "not found in Apache Kafka sources")
 		assert.Contains(t, err.Error(), "nonexistent-cluster")
 	})
 

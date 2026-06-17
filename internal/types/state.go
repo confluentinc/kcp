@@ -95,11 +95,11 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		}
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
+				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
 			}
-			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
+			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
 		}
-		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
+		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
 	}
 
 	if state.KcpBuildInfo.Version == "" {
@@ -248,7 +248,7 @@ func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
 // GetOSKClusterByID looks up an OSK cluster by the user-provided ID from credentials
 func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
 	if s.OSKSources == nil {
-		return nil, fmt.Errorf("no OSK sources in state file")
+		return nil, fmt.Errorf("no Apache Kafka sources in state file")
 	}
 
 	for i := range s.OSKSources.Clusters {
@@ -257,5 +257,5 @@ func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("OSK cluster with ID '%s' not found in state file", id)
+	return nil, fmt.Errorf("no Apache Kafka cluster with ID '%s' found in state file", id)
 }

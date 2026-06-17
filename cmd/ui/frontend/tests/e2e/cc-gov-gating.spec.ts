@@ -75,7 +75,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
   })
 
   test('OSK infra wizard — Gov is blocked, Standard proceeds', async ({ page }) => {
-    await page.waitForSelector('text=Open Source Kafka', { timeout: 10000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 10000 })
     await page.locator('text=production-kafka-us-east').click()
     await page.waitForTimeout(500)
 

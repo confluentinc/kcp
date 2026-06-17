@@ -21,8 +21,8 @@ test.describe('OSK Sidebar', () => {
   })
 
   test('displays OSK section when OSK clusters present', async ({ page }) => {
-    // Verify "OPEN SOURCE KAFKA" section appears
-    await expect(page.locator('text=OPEN SOURCE KAFKA')).toBeVisible()
+    // Verify "Apache Kafka" section appears
+    await expect(page.locator('text=Apache Kafka')).toBeVisible()
 
     // Verify OSK cluster is listed
     await expect(page.locator('button:has-text("prod-kafka-cluster")')).toBeVisible()
