@@ -1273,15 +1273,22 @@ func TestWriteToFile_NewFileHasOwnerOnlyPerms(t *testing.T) {
 	}
 }
 
-// TestWriteToFile_StaleLooseTempDoesNotLeak verifies that a leftover legacy
-// fixed-name temp file (<path>.tmp) at 0644 from a crashed run cannot cause the
-// final state file to be written world/group readable. (R3 abuse case)
+// TestWriteToFile_StaleLooseTempDoesNotLeak guards against regressing to the old
+// fixed-name temp scheme, whose bug was that a leftover <path>.tmp at 0644 from a
+// crashed run kept its loose mode and the rename carried it through. We seed that
+// exact condition and assert (a) the final state file is still 0600, (b) the
+// stale fixed-name temp is left untouched -- proving the writer created its own
+// unique temp rather than reusing the leftover one -- and (c) the writer's own
+// unique temp is cleaned up on success. (R3 abuse case)
 func TestWriteToFile_StaleLooseTempDoesNotLeak(t *testing.T) {
 	skipIfWindows(t)
 
-	path := filepath.Join(t.TempDir(), "kcp-state.json")
-	// Simulate a crash leaving a fixed-name temp at loose perms.
-	if err := os.WriteFile(path+".tmp", []byte("{}"), 0644); err != nil {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+	// Simulate a crash leaving a fixed-name temp at loose perms -- the exact
+	// condition the old os.WriteFile(path+".tmp", ...) code mishandled.
+	stale := path + ".tmp"
+	if err := os.WriteFile(stale, []byte("{}"), 0644); err != nil {
 		t.Fatalf("seed stale temp: %v", err)
 	}
 
@@ -1295,6 +1302,25 @@ func TestWriteToFile_StaleLooseTempDoesNotLeak(t *testing.T) {
 	}
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Fatalf("state file perms = %#o, want 0600 (stale 0644 temp leaked into result)", got)
+	}
+
+	// The writer must not reuse the stale fixed-name temp: it should still exist,
+	// untouched at 0644, proving a fresh unique temp was used instead.
+	staleInfo, err := os.Stat(stale)
+	if err != nil {
+		t.Fatalf("stale fixed-name temp should be left untouched, but stat failed: %v", err)
+	}
+	if got := staleInfo.Mode().Perm(); got != 0o644 {
+		t.Fatalf("stale fixed-name temp perms = %#o, want 0644 untouched (writer must not reuse the fixed name)", got)
+	}
+
+	// The writer's own unique temp (.kcp-state.json.tmp-*) must be cleaned up on success.
+	matches, err := filepath.Glob(filepath.Join(dir, ".kcp-state.json.tmp-*"))
+	if err != nil {
+		t.Fatalf("glob unique temp: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("unique temp file(s) left behind after success: %v", matches)
 	}
 }
 

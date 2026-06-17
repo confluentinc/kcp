@@ -76,10 +76,12 @@ func TestMigrationState_WriteToFile_AtomicWrite(t *testing.T) {
 	_, err := os.Stat(filePath)
 	require.NoError(t, err, "expected state file to exist")
 
-	// Verify no .tmp file remains after successful write
-	tmpFile := filePath + ".tmp"
-	_, err = os.Stat(tmpFile)
-	assert.True(t, os.IsNotExist(err), "expected .tmp file to not exist after successful write")
+	// Verify no temp file remains after successful write. The writer uses a
+	// uniquely-named temp (..migration-state.json.tmp-*), so match its glob
+	// rather than the legacy fixed name the code no longer creates.
+	matches, err := filepath.Glob(filepath.Join(dir, "."+filepath.Base(filePath)+".tmp-*"))
+	require.NoError(t, err)
+	assert.Empty(t, matches, "expected no temp file to remain after successful write")
 }
 
 func TestMigrationState_UpsertMigration_Insert(t *testing.T) {
@@ -294,20 +296,41 @@ func TestMigrationState_WriteToFile_NewFileHasOwnerOnlyPerms(t *testing.T) {
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "migration state file should be 0600")
 }
 
-// TestMigrationState_WriteToFile_StaleLooseTempDoesNotLeak verifies a leftover
-// legacy fixed-name temp (<path>.tmp) at 0644 from a crashed run cannot cause
-// the final migration state file to be world/group readable. (R3 abuse case)
+// TestMigrationState_WriteToFile_StaleLooseTempDoesNotLeak guards against
+// regressing to the old fixed-name temp scheme, whose bug was that a leftover
+// <path>.tmp at 0644 from a crashed run kept its loose mode and the rename
+// carried it through. We seed that exact condition and assert (a) the final
+// migration state file is still 0600, (b) the stale fixed-name temp is left
+// untouched -- proving the writer created its own unique temp rather than reusing
+// the leftover one -- and (c) the writer's own unique temp is cleaned up on
+// success. (R3 abuse case)
 func TestMigrationState_WriteToFile_StaleLooseTempDoesNotLeak(t *testing.T) {
 	skipIfWindows(t)
 
-	path := filepath.Join(t.TempDir(), ".kcp-migration-state.json")
-	require.NoError(t, os.WriteFile(path+".tmp", []byte("{}"), 0644))
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".kcp-migration-state.json")
+	// Simulate a crash leaving a fixed-name temp at loose perms -- the exact
+	// condition the old os.WriteFile(path+".tmp", ...) code mishandled.
+	stale := path + ".tmp"
+	require.NoError(t, os.WriteFile(stale, []byte("{}"), 0644))
 
 	require.NoError(t, NewMigrationState().WriteToFile(path))
 
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "stale 0644 temp must not leak into result")
+
+	// The writer must not reuse the stale fixed-name temp: it should still exist,
+	// untouched at 0644, proving a fresh unique temp was used instead.
+	staleInfo, err := os.Stat(stale)
+	require.NoError(t, err, "stale fixed-name temp should be left untouched")
+	assert.Equal(t, os.FileMode(0o644), staleInfo.Mode().Perm(), "writer must not reuse the fixed-name temp")
+
+	// The writer's own unique temp (..kcp-migration-state.json.tmp-*) must be
+	// cleaned up on success.
+	matches, err := filepath.Glob(filepath.Join(dir, "."+filepath.Base(path)+".tmp-*"))
+	require.NoError(t, err)
+	assert.Empty(t, matches, "unique temp file(s) left behind after success")
 }
 
 // TestMigrationState_WriteToFile_SecondWritePreservesPerms verifies a rewrite of

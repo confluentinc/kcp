@@ -113,7 +113,7 @@ func NewStateFromBytes(data []byte) (*State, error) {
 func (s *State) WriteToFile(filePath string) error {
 	data, err := json.Marshal(s)
 	if err != nil {
-		return fmt.Errorf("failed to marshal state: %v", err)
+		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
 	// Write to a uniquely-named temp file in the same directory, then atomically
