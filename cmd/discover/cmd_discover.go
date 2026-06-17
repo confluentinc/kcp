@@ -112,7 +112,7 @@ func NewDiscoverCmd() *cobra.Command {
   - 1h = 365 days
   - 1d = 365 days
 
-  The finer the granularity, the more detailed the metrics data, but also more data is stored in the state-file, resulting in state--file growth.  Coarser granularity is recommended for averaging workloads over longer time periods, but will smooth out spikes, while finer granularity is recommended for analyzing more bursty workloads and uncovering spikes over short time periods.
+  The finer the granularity, the more detailed the metrics data, but also more data is stored in the state-file, resulting in state-file growth. Coarser granularity is recommended for averaging workloads over longer time periods, but will smooth out spikes, while finer granularity is recommended for analyzing more bursty workloads and uncovering spikes over short time periods.
 
   # Discover a single cluster (region inferred from the ARN); create or replace it in state
   kcp discover --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/uuid
@@ -146,7 +146,7 @@ func NewDiscoverCmd() *cobra.Command {
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skips the topic discovery through the AWS MSK API")
 	optionalFlags.BoolVar(&skipCosts, "skip-costs", false, "Skips the cost discovery through the AWS Cost Explorer API")
 	optionalFlags.BoolVar(&skipMetrics, "skip-metrics", false, "Skips the metrics discovery through the AWS CloudWatch API")
-	optionalFlags.StringVar(&metricsGranularity, "metrics-granularity", "1d", "The granularity for which to query for CloudWatch metrics. Valid values: 60s, 5m, 1h, 1d.  The maximum time range for each granularity is: 60s = 15 days, 5m = 63 days, 1h = 365 days, 1d = 365 days.")
+	optionalFlags.StringVar(&metricsGranularity, "metrics-granularity", "1d", "The granularity for which to query for CloudWatch metrics. Valid values: 60s, 5m, 1h, 1d. The maximum time range for each granularity is: 60s = 15 days, 5m = 63 days, 1h = 365 days, 1d = 365 days.")
 	discoverCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -180,9 +180,11 @@ func preRunDiscover(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// Validate source type if provided
-	if metricsGranularity != "60s" && metricsGranularity != "5m" && metricsGranularity != "1h" && metricsGranularity != "1d" {
-		return fmt.Errorf("invalid metrics-granularity '%s':  must be 60s, 5m, 1h or 1d", metricsGranularity)
+	// Validate metrics granularity.
+	switch metricsGranularity {
+	case "60s", "5m", "1h", "1d":
+	default:
+		return fmt.Errorf("invalid metrics-granularity %q: must be one of: 60s, 5m, 1h, 1d", metricsGranularity)
 	}
 
 	// Validate cluster ARNs are well-formed (region is parsed from each ARN).
