@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -112,18 +113,40 @@ func NewStateFromBytes(data []byte) (*State, error) {
 func (s *State) WriteToFile(filePath string) error {
 	data, err := json.Marshal(s)
 	if err != nil {
-		return fmt.Errorf("failed to marshal state: %v", err)
+		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	// Write to temporary file first for atomic operation
-	tmpFile := filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	// Write to a uniquely-named temp file in the same directory, then atomically
+	// rename it onto the target. os.CreateTemp creates the file with mode 0600,
+	// and we pin it explicitly so the state file (which holds sensitive
+	// infrastructure metadata) is never group/world readable, even briefly and
+	// even under an unusual umask. The real file is only ever replaced by the
+	// rename and is never deleted directly, so a crash before the rename leaves
+	// the previous state file intact.
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+
+	if err := tmpFile.Chmod(0600); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to set temp file permissions: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomic rename (on most filesystems)
-	if err := os.Rename(tmpFile, filePath); err != nil {
-		os.Remove(tmpFile) // Clean up temp file
+	if err := os.Rename(tmpName, filePath); err != nil {
+		_ = os.Remove(tmpName) // Clean up temp file
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
