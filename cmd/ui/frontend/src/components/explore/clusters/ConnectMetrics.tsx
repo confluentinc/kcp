@@ -7,7 +7,6 @@ import { useConnectMetricsFetch } from '@/hooks/useConnectMetricsFetch'
 import { useClusterMetricsZoom } from '@/hooks/useClusterMetricsZoom'
 import { useDownloadHandlers } from '@/hooks/useDownloadHandlers'
 import { DateRangePicker } from '@/components/common/DateRangePicker'
-import { ErrorDisplay } from '@/components/common/ErrorDisplay'
 import { DataViewTabs } from '@/components/common/DataViewTabs'
 import { MetricsChartTab } from './MetricsChartTab'
 import { MetricsTableTab } from './MetricsTableTab'
@@ -94,16 +93,6 @@ export const ConnectMetrics = ({
     filename: generateMetricsFilename(`${clusterId}-connect`, ''),
   })
 
-  if (error) {
-    return (
-      <ErrorDisplay
-        title="Connect Metrics"
-        error={error}
-        context="metrics"
-      />
-    )
-  }
-
   return (
     <div className="bg-card rounded-lg border border-border p-6 transition-colors">
       <h4 className="text-lg font-semibold text-foreground mb-4">Connect Cluster Metrics</h4>
@@ -119,6 +108,15 @@ export const ConnectMetrics = ({
         showResetBothButton={true}
         className="mb-6"
       />
+
+      {error && (
+        <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-border rounded-lg">
+          <div className="text-red-500 dark:text-red-400">
+            <p className="font-medium">Error loading metrics:</p>
+            <p className="text-sm mt-1">{error}</p>
+          </div>
+        </div>
+      )}
 
       {metricsResponse && (
         <DataViewTabs
