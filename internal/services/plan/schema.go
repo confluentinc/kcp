@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -50,7 +51,7 @@ func knownSchemaCPEdition(value string) bool {
 // The result's `Paths` slice carries every verdict that applies —
 // usually one entry, two for the dual-source case so JSON consumers
 // branching on a single slot don't miss the second arm.
-func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.SchemaDecision {
+func decideSchema(state report.ProcessedState, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.SchemaDecision {
 	source, confluentURLs, glueNames := detectSchemaSource(state)
 	strategy := inputs.SchemaStrategy
 	if strategy == "" {
@@ -178,7 +179,7 @@ func hasPath(dec *types.SchemaDecision, p types.SchemaPath) bool {
 // (state.SchemaRegistries.ConfluentSchemaRegistry +
 // state.SchemaRegistries.AWSGlue) into a single enum + the lookups the
 // renderer needs (URLs + registry names).
-func detectSchemaSource(state types.ProcessedState) (types.SchemaSource, []string, []string) {
+func detectSchemaSource(state report.ProcessedState) (types.SchemaSource, []string, []string) {
 	srs := state.SchemaRegistries
 	if srs == nil {
 		return types.SchemaSourceNone, nil, nil

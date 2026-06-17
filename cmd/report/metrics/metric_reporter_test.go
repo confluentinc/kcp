@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -15,12 +16,12 @@ type MockReportService struct {
 	mock.Mock
 }
 
-func (m *MockReportService) ProcessState(state types.State) types.ProcessedState {
+func (m *MockReportService) ProcessState(state types.State) report.ProcessedState {
 	args := m.Called(state)
-	return args.Get(0).(types.ProcessedState)
+	return args.Get(0).(report.ProcessedState)
 }
 
-func (m *MockReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (m *MockReportService) FilterClusterMetrics(processedState report.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	args := m.Called(processedState, clusterArn, sourceType, startTime, endTime)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
