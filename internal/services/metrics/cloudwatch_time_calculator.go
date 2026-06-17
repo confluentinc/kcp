@@ -11,16 +11,14 @@ type TimePeriod string
 
 const (
 	// debugging period
-	OneMinutePeriodInSeconds int32 = 60
-	FiveMinutePeriodInSeconds   int32 = 60 * 5 // 60 seconds * 5 minutes
-	OneHourPeriodInSeconds     int32 = 60 * 60 // 60 seconds * 60 minutes
-	OneDayPeriodInSeconds      int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
+	OneMinutePeriodInSeconds  int32 = 60
+	FiveMinutePeriodInSeconds int32 = 60 * 5       // 60 seconds * 5 minutes
+	OneHourPeriodInSeconds    int32 = 60 * 60      // 60 seconds * 60 minutes
+	OneDayPeriodInSeconds     int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
 
-	Last15Days TimePeriod = "last15Days"
-	Last63Days    TimePeriod = "last63Days"
-	Last365Days   TimePeriod = "last365Days"
-
-
+	Last15Days  TimePeriod = "last15Days"
+	Last63Days  TimePeriod = "last63Days"
+	Last365Days TimePeriod = "last365Days"
 )
 
 // // GetTimeWindow calculates CloudWatch time windows for different periods based on a end time

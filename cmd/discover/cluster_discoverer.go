@@ -396,8 +396,6 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	previousMidnight := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC)
 	endTime := previousMidnight.Add(24 * time.Hour)
 
-
-
 	timeWindow, err := metrics.GetTimeWindowForGranularity(endTime, metricsGranularity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate time window: %v", err)
