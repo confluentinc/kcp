@@ -3,7 +3,7 @@ import { getClusterDataBySourceType } from '@/stores/store'
 import {
   destinationTypeStepMeta,
   govUnsupportedStepMeta,
-  DESTINATION_CC_GOV,
+  DESTINATION_GOVERNMENT,
   DESTINATION_FIELD,
   CC_GOV_PRODUCT_NAME,
 } from './sharedWizardSchemas'
@@ -231,7 +231,7 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
       is_gov_and_mirror: ({ context, event }) =>
         (context.allData?.destination_type as Record<string, unknown> | undefined)?.[
           DESTINATION_FIELD
-        ] === DESTINATION_CC_GOV && event.data?.mode === MODE_MIRROR,
+        ] === DESTINATION_GOVERNMENT && event.data?.mode === MODE_MIRROR,
       is_mirror_mode: ({ event }) => event.data?.mode === MODE_MIRROR,
       is_new_mode: ({ event }) => event.data?.mode === MODE_NEW,
       came_from_topic_selection: ({ context }) => context.previousStep === 'topic_selection',
