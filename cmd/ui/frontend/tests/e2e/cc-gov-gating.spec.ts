@@ -23,7 +23,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     await page.waitForTimeout(500)
 
     // Select Gov (index 1)
-    await page.locator('#root_cc_environment-1').click()
+    await page.locator('#root_cc_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -44,7 +44,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     await page.waitForTimeout(500)
 
     // Select Standard (index 0)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -62,7 +62,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
     await page.waitForTimeout(500)
 
-    await page.locator('#root_cc_environment-1').click()
+    await page.locator('#root_cc_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -71,7 +71,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     // Back must not be a dead-end — it returns to the destination question.
     await page.getByRole('button', { name: 'Back', exact: true }).click()
     await page.waitForTimeout(500)
-    await expect(page.locator('#root_cc_environment-0')).toBeVisible({ timeout: 5000 })
+    await expect(page.locator('#root_cc_type-0')).toBeVisible({ timeout: 5000 })
   })
 
   test('OSK infra wizard — Gov is blocked, Standard proceeds', async ({ page }) => {
@@ -83,7 +83,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     await page.waitForTimeout(500)
 
     // Gov → blocked
-    await page.locator('#root_cc_environment-1').click()
+    await page.locator('#root_cc_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
     await expect(page.locator(`h2:has-text("${BLOCKED_TITLE}")`)).toBeVisible({ timeout: 5000 })
@@ -92,7 +92,7 @@ test.describe('CC for Government gating — migration-infra wizards', () => {
     // Back to destination, then Standard → existing flow
     await page.getByRole('button', { name: 'Back', exact: true }).click()
     await page.waitForTimeout(500)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
     await expect(page.locator('#root_has_public_brokers-0')).toBeVisible({ timeout: 5000 })
@@ -119,7 +119,7 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
     await openTopicsWizard(page)
 
     // Gov (index 1)
-    await page.locator('#root_cc_environment-1').click()
+    await page.locator('#root_cc_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -136,7 +136,7 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
   test('Gov + new proceeds to new-topic inputs (AE3)', async ({ page }) => {
     await openTopicsWizard(page)
 
-    await page.locator('#root_cc_environment-1').click()
+    await page.locator('#root_cc_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -155,7 +155,7 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
     await openTopicsWizard(page)
 
     // Standard (index 0)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -173,7 +173,7 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
     await openTopicsWizard(page)
 
     // Standard (index 0)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -193,7 +193,7 @@ test.describe('CC for Government gating — topic migration scripts wizard', () 
   }) => {
     await openTopicsWizard(page)
 
-    await page.locator('#root_cc_environment-1').click()
+    await page.locator('#root_cc_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -231,7 +231,7 @@ test.describe('CC for Government gating — schema registry (exporter) wizard', 
   test('Exporter wizard — Gov is blocked (AE6)', async ({ page }) => {
     await openSchemaRegistryWizard(page)
 
-    await page.locator('#root_cc_environment-1').click()
+    await page.locator('#root_cc_type-1').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -243,7 +243,7 @@ test.describe('CC for Government gating — schema registry (exporter) wizard', 
   test('Exporter wizard — Standard proceeds to the CC SR URL step', async ({ page }) => {
     await openSchemaRegistryWizard(page)
 
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -268,7 +268,7 @@ test.describe('CC for Government gating — schema registry (exporter) wizard', 
     await page.waitForTimeout(500)
 
     // No destination radio; the wizard's own first step is shown.
-    await expect(page.locator('#root_cc_environment-0')).toHaveCount(0)
+    await expect(page.locator('#root_cc_type-0')).toHaveCount(0)
     await expect(page.locator('button[type="submit"]')).toBeVisible({ timeout: 5000 })
   })
 })

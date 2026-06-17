@@ -15,7 +15,7 @@ import (
 
 var (
 	stateFile                 string
-	ccEnvironment             string
+	ccType                    string
 	clusterId                 string
 	sourceType                string
 	targetClusterId           string
@@ -35,7 +35,7 @@ func NewMigrateTopicsCmd() *cobra.Command {
 		Example: `  # Mirror mode (forwards data via cluster link)
   kcp create-asset migrate-topics \
       --mode mirror \
-      --cc-environment cc \
+      --cc-type commercial \
       --state-file kcp-state.json \
       --source-type msk \
       --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
@@ -46,7 +46,7 @@ func NewMigrateTopicsCmd() *cobra.Command {
   # New mode (greenfield CC topics, no data forward)
   kcp create-asset migrate-topics \
       --mode new \
-      --cc-environment cc \
+      --cc-type commercial \
       --state-file kcp-state.json \
       --source-type msk \
       --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
@@ -64,7 +64,7 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&ccEnvironment, "cc-environment", "", "The Confluent Cloud destination type: 'cc' (Standard) or 'cc-gov' (Confluent Cloud for Government).")
+	requiredFlags.StringVar(&ccType, "cc-type", "", "The Confluent Cloud destination type: 'commercial' (Standard) or 'government' (Confluent Cloud for Government).")
 	requiredFlags.StringVar(&sourceType, "source-type", "msk", "Source type: 'msk' or 'osk'")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
 	requiredFlags.StringVar(&mode, "mode", "", "Migration mode: 'mirror' (cluster-link mirror topics, forwards data) or 'new' (plain CC topics, no data).")
@@ -117,11 +117,11 @@ func preRunMigrateTopics(cmd *cobra.Command, args []string) error {
 	}
 
 	// Validate the destination declaration and mode here (PreRunE) — before
-	// cobra's required-flag check — so a missing/invalid --cc-environment or a
+	// cobra's required-flag check — so a missing/invalid --cc-type or a
 	// Confluent Cloud for Government refusal surfaces consistently with the
 	// other create-asset commands rather than behind an unrelated required-flag
 	// error.
-	if err := validateModeFlags(ccEnvironment, mode, clusterLinkName); err != nil {
+	if err := validateModeFlags(ccType, mode, clusterLinkName); err != nil {
 		return err
 	}
 
@@ -143,7 +143,7 @@ func runMigrateTopics(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
-	// --cc-environment / --mode / --cluster-link-name are validated in
+	// --cc-type / --mode / --cluster-link-name are validated in
 	// preRunMigrateTopics (PreRunE), so by here they are known-good.
 
 	// __consumer_offsets survives the internal-topic filter in mirror mode only:
@@ -261,8 +261,8 @@ func noMatchError(all []types.TopicDetails, internalTopicsToInclude, include, ex
 
 // validateModeFlags enforces the destination declaration and mode-dependent
 // flag combinations.
-//   - --cc-environment is required and must be "cc" or "cc-gov".
-//   - --cc-environment cc-gov refuses --mode mirror (mirror topics rely on
+//   - --cc-type is required and must be "commercial" or "government".
+//   - --cc-type government refuses --mode mirror (mirror topics rely on
 //     Cluster Linking, unsupported on Confluent Cloud for Government); --mode new
 //     proceeds.
 //   - --mode is required and must be one of "mirror" or "new".
@@ -271,13 +271,13 @@ func noMatchError(all []types.TopicDetails, internalTopicsToInclude, include, ex
 //
 // Destination validation is ordered before mode validation so a missing or
 // invalid declaration errors regardless of mode.
-func validateModeFlags(ccEnvironment, mode, clusterLinkName string) error {
-	if ccEnvironment == "" {
-		return fmt.Errorf("--cc-environment is required (values: %s, %s)", types.DestinationCC, types.DestinationCCGov)
+func validateModeFlags(ccType, mode, clusterLinkName string) error {
+	if ccType == "" {
+		return fmt.Errorf("--cc-type is required (values: %s, %s)", types.DestinationCommercial, types.DestinationGovernment)
 	}
-	destination, err := types.ToDestinationType(ccEnvironment)
+	destination, err := types.ToDestinationType(ccType)
 	if err != nil {
-		return fmt.Errorf("invalid --cc-environment: %v", err)
+		return fmt.Errorf("invalid --cc-type: %v", err)
 	}
 	if destination.IsGov() && mode == types.MigrateTopicsModeMirror {
 		return fmt.Errorf("--mode %s is not supported on Confluent Cloud for Government: mirror topics rely on Cluster Linking, which Confluent Cloud for Government does not provide. Use --mode %s instead", types.MigrateTopicsModeMirror, types.MigrateTopicsModeNew)

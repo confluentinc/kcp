@@ -16,7 +16,7 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     // Select Standard (commercial) Confluent Cloud destination (index 0)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -57,7 +57,7 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     // Select Standard (commercial) Confluent Cloud destination (index 0)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -99,7 +99,7 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     // Select Standard (commercial) Confluent Cloud destination (index 0)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
@@ -168,7 +168,7 @@ test.describe('MSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     // Select Standard (commercial) Confluent Cloud destination (index 0)
-    await page.locator('#root_cc_environment-0').click()
+    await page.locator('#root_cc_type-0').click()
     await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
