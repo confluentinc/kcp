@@ -295,7 +295,7 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	}
 
 	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found in OSK sources", clusterID)
+		return nil, fmt.Errorf("cluster '%s' not found in Apache Kafka sources", clusterID)
 	}
 
 	// Handle cluster without metrics (nil ClusterMetrics)

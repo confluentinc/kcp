@@ -13,7 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// OSKSource implements the Source interface for Open Source Kafka clusters
+// OSKSource implements the Source interface for Apache Kafka clusters
 type OSKSource struct {
 	credentials *types.OSKCredentials
 }
@@ -32,10 +32,10 @@ func (s *OSKSource) Type() types.SourceType {
 func (s *OSKSource) LoadCredentials(credentialsPath string) error {
 	creds, errs := types.NewOSKCredentialsFromFile(credentialsPath)
 	if len(errs) > 0 {
-		return fmt.Errorf("failed to load OSK credentials: %v", errs)
+		return fmt.Errorf("failed to load Apache Kafka credentials: %v", errs)
 	}
 	s.credentials = creds
-	slog.Info("loaded OSK credentials", "clusters", len(creds.Clusters))
+	slog.Info("loaded Apache Kafka credentials", "clusters", len(creds.Clusters))
 	return nil
 }
 
@@ -62,7 +62,7 @@ func (s *OSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 		return nil, fmt.Errorf("credentials not loaded")
 	}
 
-	slog.Info("starting OSK cluster scan", "clusters", len(s.credentials.Clusters))
+	slog.Info("starting Apache Kafka cluster scan", "clusters", len(s.credentials.Clusters))
 
 	result := &sources.ScanResult{
 		SourceType: types.SourceTypeOSK,
@@ -72,12 +72,12 @@ func (s *OSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 	var scanErrors []error
 
 	for _, clusterCreds := range s.credentials.Clusters {
-		slog.Info("scanning OSK cluster", "id", clusterCreds.ID)
+		slog.Info("scanning Apache Kafka cluster", "id", clusterCreds.ID)
 
 		clusterResult, err := s.scanCluster(ctx, clusterCreds, opts)
 		if err != nil {
 			// Log error but continue with other clusters
-			slog.Error("failed to scan OSK cluster",
+			slog.Error("failed to scan Apache Kafka cluster",
 				"id", clusterCreds.ID,
 				"error", err)
 			scanErrors = append(scanErrors, fmt.Errorf("cluster '%s': %w",
@@ -123,7 +123,7 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 		return nil, fmt.Errorf("failed to determine auth type for cluster %s: %w", clusterCreds.ID, err)
 	}
 
-	slog.Info("starting Kafka Admin API scan for OSK cluster",
+	slog.Info("starting Kafka Admin API scan for Apache Kafka cluster",
 		"cluster", clusterCreds.ID,
 		"auth_type", authType,
 		"bootstrap_servers", clusterCreds.BootstrapServers)
@@ -250,7 +250,7 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 			),
 		)
 	default:
-		return nil, fmt.Errorf("unsupported auth type for OSK: %v", authType)
+		return nil, fmt.Errorf("unsupported auth type for Apache Kafka: %v", authType)
 	}
 
 	if err != nil {

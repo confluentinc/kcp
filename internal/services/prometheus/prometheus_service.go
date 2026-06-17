@@ -190,7 +190,7 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 
 	if len(allMetrics) == 0 {
 		slog.Warn("No metrics data was collected from Prometheus. Ensure your Prometheus instance is scraping the expected metrics.",
-			"docs", build_info.DocsURL()+"osk-configuration/metrics-collection/#prometheus-promql-queries")
+			"docs", build_info.DocsURL()+"apache-kafka-configuration/metrics-collection/#prometheus-promql-queries")
 	}
 
 	aggregates := calculateAggregates(valuesByLabel)

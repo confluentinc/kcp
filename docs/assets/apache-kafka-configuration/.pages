@@ -1,5 +1,5 @@
-title: OSK Configuration
+title: Apache Kafka®
 nav:
-  - OSK credentials: osk-credentials.md
+  - Credentials: credentials.md
   - Metrics collection: metrics-collection.md
   - Connect metrics collection: connect-metrics-collection.md
