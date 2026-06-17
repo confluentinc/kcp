@@ -1,11 +1,12 @@
 package modules
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRequest] {
-	return []ModuleVariable[types.MigrationWizardRequest]{
+func GetJumpClusterSetupHostVariables() []ModuleVariable[hclrequests.MigrationWizardRequest] {
+	return []ModuleVariable[hclrequests.MigrationWizardRequest]{
 		{
 			Name: "jump_cluster_setup_host_subnet_id",
 			Definition: types.TerraformVariable{
@@ -14,7 +15,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return ""
 			},
 			Condition:        nil,
@@ -23,7 +24,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 		{
 			Name:       SchemaJumpClusterSecurityGroupIDs.Name,
 			Definition: SchemaJumpClusterSecurityGroupIDs.ToDefinition(),
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return []string{}
 			},
 			Condition:        nil,
@@ -32,7 +33,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 		{
 			Name:       SchemaJumpClusterSSHKeyPairName.Name,
 			Definition: SchemaJumpClusterSSHKeyPairName.ToDefinition(),
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return ""
 			},
 			Condition:        nil,
@@ -46,7 +47,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return []string{}
 			},
 			Condition:        nil,
@@ -60,7 +61,7 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 				Sensitive:   true,
 				Type:        "string",
 			},
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return ""
 			},
 			Condition:        nil,
@@ -69,6 +70,6 @@ func GetJumpClusterSetupHostVariables() []ModuleVariable[types.MigrationWizardRe
 	}
 }
 
-func GetJumpClusterSetupHostVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
+func GetJumpClusterSetupHostVariableDefinitions(request hclrequests.MigrationWizardRequest) []types.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetJumpClusterSetupHostVariables(), request)
 }

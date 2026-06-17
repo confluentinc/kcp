@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -254,7 +255,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 
 	opts := parseTargetInfraOpts()
 
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:              opts.AwsRegion,
 		NeedsEnvironment:       opts.NeedsEnvironment,
 		EnvironmentName:        opts.EnvironmentName,

@@ -1,6 +1,7 @@
 package confluent
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -32,7 +33,7 @@ var SchemaExporterVariables = []types.TerraformVariable{
 
 // GenerateSchemaExporter creates a confluent_schema_exporter resource block.
 // schemaRegistryClusterID overrides the random placeholder ID when non-empty (for deterministic tests).
-func GenerateSchemaExporter(schemaRegistry types.SchemaRegistryExporterConfig, schemaRegistryClusterID ...string) *hclwrite.Block {
+func GenerateSchemaExporter(schemaRegistry hclrequests.SchemaRegistryExporterConfig, schemaRegistryClusterID ...string) *hclwrite.Block {
 	resourceName := "kcp_schema_exporter"
 	exporterBlock := hclwrite.NewBlock("resource", []string{"confluent_schema_exporter", resourceName})
 

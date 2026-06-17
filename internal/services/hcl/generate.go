@@ -3,6 +3,7 @@ package hcl
 import (
 	"sort"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -109,7 +110,7 @@ func GenerateInputsAutoTfvars(values map[string]any) string {
 			rootBody.SetAttributeValue(varName, cty.BoolVal(v))
 		case int:
 			rootBody.SetAttributeValue(varName, cty.NumberIntVal(int64(v)))
-		case []types.ExtOutboundClusterKafkaBroker:
+		case []hclrequests.ExtOutboundClusterKafkaBroker:
 			brokerObjects := make([]cty.Value, len(v))
 			for i, broker := range v {
 				endpoints := make([]cty.Value, len(broker.Endpoints))
