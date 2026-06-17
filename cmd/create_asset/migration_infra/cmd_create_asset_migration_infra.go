@@ -20,7 +20,7 @@ import (
 
 var (
 	stateFile          string
-	ccEnvironment      string
+	ccType             string
 	migrationInfraType string
 	clusterLinkName    string
 
@@ -69,7 +69,7 @@ Type options:
 		Example: `  # Type 4 — Jump Cluster with SASL/SCRAM, against a private MSK
   kcp create-asset migration-infra \
       --state-file kcp-state.json \
-      --cc-environment cc \
+      --cc-type commercial \
       --source-type msk \
       --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
       --type 4 \
@@ -87,7 +87,7 @@ Type options:
   # Type 1 — Public MSK, simple cluster link
   kcp create-asset migration-infra \
       --state-file kcp-state.json \
-      --cc-environment cc \
+      --cc-type commercial \
       --source-type msk \
       --cluster-id arn:aws:kafka:us-east-1:XXX:cluster/my-cluster/abc-5 \
       --type 1 \
@@ -107,7 +107,7 @@ Type options:
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the cluster discovery reports have been written to.")
-	requiredFlags.StringVar(&ccEnvironment, "cc-environment", "", "The Confluent Cloud destination type: 'cc' (Standard) or 'cc-gov' (Confluent Cloud for Government).")
+	requiredFlags.StringVar(&ccType, "cc-type", "", "The Confluent Cloud destination type: 'commercial' (Standard) or 'government' (Confluent Cloud for Government).")
 	requiredFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'apache-kafka' (required)")
 	requiredFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for Apache Kafka).")
 	requiredFlags.StringVar(&migrationInfraType, "type", "", "The migration-infra type. See README for available options.")
@@ -228,7 +228,7 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 
 	// Gate before reading --type so a Confluent Cloud for Government user is not
 	// asked for type-specific flags on a path that is unsupported regardless.
-	if err := validateMigrationInfraDestination(ccEnvironment); err != nil {
+	if err := validateMigrationInfraDestination(ccType); err != nil {
 		return err
 	}
 
@@ -269,18 +269,18 @@ func preRunMigrationInfra(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// validateMigrationInfraDestination enforces the required --cc-environment
+// validateMigrationInfraDestination enforces the required --cc-type
 // declaration and refuses migration-infra entirely when targeting Confluent
 // Cloud for Government: every migration type relies on Cluster Linking, which
 // Confluent Cloud for Government does not support.
-func validateMigrationInfraDestination(ccEnvironment string) error {
-	if ccEnvironment == "" {
-		return fmt.Errorf("--cc-environment is required (values: %s, %s)", types.DestinationCC, types.DestinationCCGov)
+func validateMigrationInfraDestination(ccType string) error {
+	if ccType == "" {
+		return fmt.Errorf("--cc-type is required (values: %s, %s)", types.DestinationCommercial, types.DestinationGovernment)
 	}
 
-	destination, err := types.ToDestinationType(ccEnvironment)
+	destination, err := types.ToDestinationType(ccType)
 	if err != nil {
-		return fmt.Errorf("invalid --cc-environment: %v", err)
+		return fmt.Errorf("invalid --cc-type: %v", err)
 	}
 
 	if destination.IsGov() {

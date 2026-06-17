@@ -11,17 +11,38 @@ func TestToDestinationType(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		want    DestinationType
+		wantStr string // canonical (normalized, lowercase) value when valid
+		wantGov bool
 		wantErr bool
 	}{
-		{name: "cc is commercial", input: "cc", want: DestinationCC},
-		{name: "cc-gov is government", input: "cc-gov", want: DestinationCCGov},
-		{name: "empty is required-style error", input: "", wantErr: true},
-		{name: "leading/trailing whitespace rejected", input: " cc ", wantErr: true},
-		{name: "wrong case rejected", input: "CC", wantErr: true},
-		{name: "gov alone rejected", input: "gov", wantErr: true},
-		{name: "ccgov without hyphen rejected", input: "ccgov", wantErr: true},
-		{name: "arbitrary value rejected", input: "commercial", wantErr: true},
+		// Happy path.
+		{name: "commercial", input: "commercial", wantStr: "commercial", wantGov: false},
+		{name: "government", input: "government", wantStr: "government", wantGov: true},
+
+		// Case-insensitive: accepted and normalized to canonical lowercase (R2).
+		{name: "Commercial title case", input: "Commercial", wantStr: "commercial", wantGov: false},
+		{name: "COMMERCIAL upper", input: "COMMERCIAL", wantStr: "commercial", wantGov: false},
+		{name: "Government title case", input: "Government", wantStr: "government", wantGov: true},
+		{name: "GOVERNMENT upper", input: "GOVERNMENT", wantStr: "government", wantGov: true},
+		{name: "gOvErNmEnT scrambled case", input: "gOvErNmEnT", wantStr: "government", wantGov: true},
+
+		// Legacy values rejected — clean break (R3).
+		{name: "legacy cc rejected", input: "cc", wantErr: true},
+		{name: "legacy cc-gov rejected", input: "cc-gov", wantErr: true},
+
+		// Empty and unknown rejected (R3).
+		{name: "empty rejected", input: "", wantErr: true},
+		{name: "unknown fedramp rejected", input: "fedramp", wantErr: true},
+		{name: "typo comercial rejected", input: "comercial", wantErr: true},
+		{name: "unknown prod rejected", input: "prod", wantErr: true},
+
+		// Whitespace rejected — case-fold only, no trimming (R3, D4).
+		{name: "leading and trailing space rejected", input: " government ", wantErr: true},
+		{name: "trailing tab rejected", input: "government\t", wantErr: true},
+		{name: "leading space rejected", input: " commercial", wantErr: true},
+
+		// Overlong arbitrary input rejected, no panic (fail-closed).
+		{name: "overlong arbitrary rejected", input: strings.Repeat("x", 10000), wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -35,16 +56,19 @@ func TestToDestinationType(t *testing.T) {
 				}
 				// Error must list the allowed values so callers surface R3 directly.
 				msg := err.Error()
-				if !strings.Contains(msg, "cc") || !strings.Contains(msg, "cc-gov") {
-					t.Errorf("ToDestinationType(%q) error %q should list cc and cc-gov", tt.input, msg)
+				if !strings.Contains(msg, "commercial") || !strings.Contains(msg, "government") {
+					t.Errorf("ToDestinationType(%q) error %q should list commercial and government", tt.input, msg)
 				}
 				return
 			}
 			if err != nil {
 				t.Fatalf("ToDestinationType(%q) unexpected error: %v", tt.input, err)
 			}
-			if got != tt.want {
-				t.Errorf("ToDestinationType(%q) = %q, want %q", tt.input, got, tt.want)
+			if string(got) != tt.wantStr {
+				t.Errorf("ToDestinationType(%q) = %q, want %q", tt.input, got, tt.wantStr)
+			}
+			if got.IsGov() != tt.wantGov {
+				t.Errorf("ToDestinationType(%q).IsGov() = %v, want %v", tt.input, got.IsGov(), tt.wantGov)
 			}
 		})
 	}
@@ -53,10 +77,19 @@ func TestToDestinationType(t *testing.T) {
 func TestDestinationTypeIsGov(t *testing.T) {
 	t.Parallel()
 
-	if !DestinationCCGov.IsGov() {
-		t.Errorf("DestinationCCGov.IsGov() = false, want true")
+	gov, err := ToDestinationType("government")
+	if err != nil {
+		t.Fatalf("ToDestinationType(\"government\") unexpected error: %v", err)
 	}
-	if DestinationCC.IsGov() {
-		t.Errorf("DestinationCC.IsGov() = true, want false")
+	if !gov.IsGov() {
+		t.Errorf("government IsGov() = false, want true")
+	}
+
+	com, err := ToDestinationType("commercial")
+	if err != nil {
+		t.Fatalf("ToDestinationType(\"commercial\") unexpected error: %v", err)
+	}
+	if com.IsGov() {
+		t.Errorf("commercial IsGov() = true, want false")
 	}
 }

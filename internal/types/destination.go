@@ -1,6 +1,9 @@
 package types
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // ----- Confluent Cloud destination type -----
 
@@ -10,15 +13,15 @@ import "fmt"
 type DestinationType string
 
 const (
-	// DestinationCC is commercial (Standard) Confluent Cloud.
-	DestinationCC DestinationType = "cc"
-	// DestinationCCGov is Confluent Cloud for Government.
-	DestinationCCGov DestinationType = "cc-gov"
+	// DestinationCommercial is commercial (Standard) Confluent Cloud.
+	DestinationCommercial DestinationType = "commercial"
+	// DestinationGovernment is Confluent Cloud for Government.
+	DestinationGovernment DestinationType = "government"
 )
 
 func (d DestinationType) IsValid() bool {
 	switch d {
-	case DestinationCC, DestinationCCGov:
+	case DestinationCommercial, DestinationGovernment:
 		return true
 	default:
 		return false
@@ -27,16 +30,18 @@ func (d DestinationType) IsValid() bool {
 
 // IsGov reports whether the destination is Confluent Cloud for Government.
 func (d DestinationType) IsGov() bool {
-	return d == DestinationCCGov
+	return d == DestinationGovernment
 }
 
-// ToDestinationType parses a CLI/declaration value into a DestinationType. An
-// empty or unrecognised value returns an error naming the allowed values so
-// callers can surface it directly.
+// ToDestinationType parses a CLI/declaration value into a DestinationType.
+// Matching is case-insensitive — the input is lowercased before validation and
+// the returned value is the canonical lowercase form. Surrounding whitespace is
+// not trimmed, so padded values are rejected. An empty or unrecognised value
+// returns an error naming the allowed values so callers can surface it directly.
 func ToDestinationType(input string) (DestinationType, error) {
-	d := DestinationType(input)
+	d := DestinationType(strings.ToLower(input))
 	if !d.IsValid() {
-		return "", fmt.Errorf("invalid value %q: must be one of %s, %s", input, DestinationCC, DestinationCCGov)
+		return "", fmt.Errorf("invalid value %q: must be one of %s, %s", input, DestinationCommercial, DestinationGovernment)
 	}
 	return d, nil
 }

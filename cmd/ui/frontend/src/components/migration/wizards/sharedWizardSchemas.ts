@@ -8,20 +8,21 @@ import type { WizardContext, WizardEvent } from './types'
 /**
  * Confluent Cloud destination declaration. Gates linking-based wizard paths
  * that are unsupported on Confluent Cloud for Government (Cluster Linking,
- * Schema Linking). The string values match the CLI's --cc-environment values
- * and are sent to the backend unchanged.
+ * Schema Linking). The string values match the CLI's --cc-type values. The
+ * field is included in the wizard POST body, but the backend does not parse it —
+ * destination gating is enforced here in the frontend wizard only.
  */
-export const DESTINATION_FIELD = 'cc_environment'
-export const DESTINATION_CC = 'cc'
-export const DESTINATION_CC_GOV = 'cc-gov'
+export const DESTINATION_FIELD = 'cc_type'
+export const DESTINATION_COMMERCIAL = 'commercial'
+export const DESTINATION_GOVERNMENT = 'government'
 
 /** Exact product name — rendered verbatim wherever Gov is referenced. */
 export const CC_GOV_PRODUCT_NAME = 'Confluent Cloud for Government'
 
 /**
  * Shared destination-type question step meta (radio: Standard | Gov).
- * Standard → 'cc', Gov → 'cc-gov'. Spread into a wizard's initial state so the
- * same question and field name are reused everywhere.
+ * Standard → 'commercial', Gov → 'government'. Spread into a wizard's initial
+ * state so the same question and field name are reused everywhere.
  */
 export const destinationTypeStepMeta = () => ({
   title: 'Confluent Cloud Destination',
@@ -29,19 +30,19 @@ export const destinationTypeStepMeta = () => ({
   schema: {
     type: 'object' as const,
     properties: {
-      cc_environment: {
+      cc_type: {
         type: 'string' as const,
         title: 'Confluent Cloud destination type',
         oneOf: [
-          { type: 'string' as const, title: 'Standard', const: DESTINATION_CC },
-          { type: 'string' as const, title: `Gov (${CC_GOV_PRODUCT_NAME})`, const: DESTINATION_CC_GOV },
+          { type: 'string' as const, title: 'Standard', const: DESTINATION_COMMERCIAL },
+          { type: 'string' as const, title: `Gov (${CC_GOV_PRODUCT_NAME})`, const: DESTINATION_GOVERNMENT },
         ],
       },
     },
-    required: ['cc_environment'],
+    required: ['cc_type'],
   },
   uiSchema: {
-    cc_environment: {
+    cc_type: {
       'ui:widget': 'radio',
     },
   },
@@ -64,9 +65,9 @@ export const govUnsupportedStepMeta = (message: string) => ({
  */
 export const destinationGuards = {
   is_gov: ({ event }: { context: WizardContext; event: WizardEvent }) =>
-    event.data?.[DESTINATION_FIELD] === DESTINATION_CC_GOV,
+    event.data?.[DESTINATION_FIELD] === DESTINATION_GOVERNMENT,
   is_standard: ({ event }: { context: WizardContext; event: WizardEvent }) =>
-    event.data?.[DESTINATION_FIELD] === DESTINATION_CC,
+    event.data?.[DESTINATION_FIELD] === DESTINATION_COMMERCIAL,
 }
 
 /**
