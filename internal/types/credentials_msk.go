@@ -236,7 +236,7 @@ type SASLScramConfig struct {
 	Use       bool   `yaml:"use"`
 	Username  string `yaml:"username"`
 	Password  string `yaml:"password"`
-	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512". MSK requires "SHA512", OSK commonly uses "SHA256"
+	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512". MSK requires "SHA512", Apache Kafka commonly uses "SHA256"
 }
 
 // NormalizeSaslMechanism converts shorthand mechanism values (e.g. "SHA256")

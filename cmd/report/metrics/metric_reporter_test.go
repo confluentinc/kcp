@@ -67,7 +67,7 @@ func TestDetermineReportTitle(t *testing.T) {
 		}
 
 		title := reporter.determineReportTitle(clusters)
-		assert.Equal(t, "OSK Metrics Report", title)
+		assert.Equal(t, "Apache Kafka Metrics Report", title)
 	})
 
 	t.Run("Mixed MSK and OSK clusters", func(t *testing.T) {
@@ -219,7 +219,7 @@ func TestGenerateReport_OSKCluster(t *testing.T) {
 	report := md.String()
 
 	// Check title
-	assert.Contains(t, report, "OSK Metrics Report")
+	assert.Contains(t, report, "Apache Kafka Metrics Report")
 
 	// Check OSK-specific fields are present
 	assert.Contains(t, report, "Cluster ID")

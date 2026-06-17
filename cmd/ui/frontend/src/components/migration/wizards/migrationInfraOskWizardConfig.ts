@@ -15,7 +15,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
     const host = parts[0] || server
     const port = parseInt(parts[1] || '9092', 10)
     return {
-      broker_id: `osk-broker-${index}`,
+      broker_id: `kafka-broker-${index}`,
       subnet_id: '',
       endpoints: [{ host, port, ip: '' }],
     }

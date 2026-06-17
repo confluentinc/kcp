@@ -128,9 +128,9 @@ func (r *MetricReporter) determineReportTitle(clusters []types.ProcessedClusterM
 	if hasMSK && hasOSK {
 		return "Kafka Metrics Report"
 	}
-	// Only OSK clusters
+	// Only Apache Kafka clusters
 	if hasOSK {
-		return "OSK Metrics Report"
+		return "Apache Kafka Metrics Report"
 	}
 	// Only MSK clusters (default)
 	return "AWS MSK Metrics Report"

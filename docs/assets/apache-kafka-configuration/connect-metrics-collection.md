@@ -1,17 +1,17 @@
 ---
-title: Connect metrics collection (OSK)
+title: Connect metrics collection
 ---
 
-# Connect metrics collection — OSK
+# Connect metrics collection — Apache Kafka®
 
 [`kcp scan self-managed-connectors`](../command-reference/scan/self-managed-connectors.md)
 supports collecting Kafka Connect worker metrics using the same two backends
 as [broker metrics collection](metrics-collection.md):
 
-| Backend      | Mode                  | Required flags                                                  | Required `osk-credentials.yaml` block |
+| Backend      | Mode                  | Required flags                                                  | Required `apache-kafka-credentials.yaml` block |
 | ------------ | --------------------- | --------------------------------------------------------------- | ------------------------------------- |
-| `jolokia`    | Live polling          | `--metrics jolokia` + `--metrics-duration` (`--metrics-interval` optional, default `10s`) | [`jolokia:`](osk-credentials.md) |
-| `prometheus` | Historical query      | `--metrics prometheus` + `--metrics-range`                      | [`prometheus:`](osk-credentials.md) |
+| `jolokia`    | Live polling          | `--metrics jolokia` + `--metrics-duration` (`--metrics-interval` optional, default `10s`) | [`jolokia:`](credentials.md) |
+| `prometheus` | Historical query      | `--metrics prometheus` + `--metrics-range`                      | [`prometheus:`](credentials.md) |
 
 Both backends produce the same `ProcessedClusterMetrics` shape inside
 `kcp-state.json`, stored under `self_managed_connectors.metrics` for the
@@ -25,7 +25,7 @@ matched cluster.
    Jolokia or Prometheus using the credentials file (`--credentials-file`).
 3. Both connector details and metrics are written to the state file.
 
-The `--credentials-file` uses the same `osk-credentials.yaml` format as
+The `--credentials-file` uses the same `apache-kafka-credentials.yaml` format as
 `kcp scan clusters`, but the Jolokia endpoints should point to **Connect
 worker** Jolokia instances, not Kafka broker instances.
 
@@ -86,7 +86,7 @@ collecting the remaining metrics.
 
 ## Credentials file
 
-The same `osk-credentials.yaml` is used, with the `jolokia` or `prometheus`
+The same `apache-kafka-credentials.yaml` is used, with the `jolokia` or `prometheus`
 block pointing to the Connect worker endpoints:
 
 ```yaml
@@ -157,7 +157,7 @@ kcp scan self-managed-connectors \
   --connect-rest-url http://connect:8083 \
   --cluster-id my-kafka-cluster \
   --use-unauthenticated \
-  --credentials-file osk-credentials.yaml \
+  --credentials-file apache-kafka-credentials.yaml \
   --metrics jolokia --metrics-duration 5m --metrics-interval 10s
 
 # Discover connectors + pull historical Prometheus metrics (last 7 days)
@@ -166,7 +166,7 @@ kcp scan self-managed-connectors \
   --connect-rest-url http://connect:8083 \
   --cluster-id my-kafka-cluster \
   --use-unauthenticated \
-  --credentials-file osk-credentials.yaml \
+  --credentials-file apache-kafka-credentials.yaml \
   --metrics prometheus --metrics-range 7d
 ```
 

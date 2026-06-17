@@ -1,13 +1,13 @@
 ---
-title: OSK credentials file
+title: Apache Kafka credentials
 ---
 
-# `osk-credentials.yaml`
+# `apache-kafka-credentials.yaml`
 
-The Open Source Kafka source has no automated discovery step — instead, you
-hand-author an `osk-credentials.yaml` describing how `kcp` should connect to
-your cluster(s). It is consumed by [`kcp scan clusters --source-type osk`](../command-reference/scan/clusters.md)
-and any downstream `kcp create-asset` commands that target an OSK source.
+The Apache Kafka® source has no automated discovery step — instead, you
+hand-author an `apache-kafka-credentials.yaml` describing how `kcp` should connect to
+your cluster(s). It is consumed by [`kcp scan clusters --source-type apache-kafka`](../command-reference/scan/clusters.md)
+and any downstream `kcp create-asset` commands that target an Apache Kafka source.
 
 For comparison, the MSK equivalent (`msk-credentials.yaml`) is generated for
 you by [`kcp discover`](../command-reference/discover.md) — there is no MSK
@@ -32,8 +32,8 @@ clusters:
 ## Full example — multiple clusters, mixed auth, metrics
 
 ```yaml
-# OSK Credentials Configuration
-# Configure your Open Source Kafka cluster connection details.
+# Apache Kafka Credentials Configuration
+# Configure your Apache Kafka cluster connection details.
 
 clusters:
   # Production cluster: SASL/SCRAM + Jolokia metrics collection.
@@ -118,9 +118,9 @@ clusters:
 | `tls`                       | TLS / mTLS with client certs          | `use: true`, `ca_cert`, `client_cert`, `client_key`              |
 | `unauthenticated_plaintext` | No auth (test environments only)      | `use: true`                                                      |
 
-!!! note "SCRAM mechanism for OSK vs MSK"
+!!! note "SCRAM mechanism for Apache Kafka vs MSK"
 
-    OSK supports both `SHA256` and `SHA512`. `SHA256` is the more common open-source default, so `kcp` does not infer one for you — set `mechanism` explicitly.
+    Apache Kafka supports both `SHA256` and `SHA512`. `SHA256` is the more common default, so `kcp` does not infer one for you — set `mechanism` explicitly.
 
     AWS MSK only supports `SHA512`; `kcp discover` sets that automatically when generating `msk-credentials.yaml`.
 
