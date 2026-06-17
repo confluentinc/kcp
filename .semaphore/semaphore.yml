@@ -121,8 +121,6 @@ blocks:
 
   - name: 'integration: schema registry scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
-    run:
-      when: "change_in(['/cmd/scan/schema_registry/', '/internal/client/schema_registry.go', '/internal/services/schema_registry/', '/integration-tests/schema-registry/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       jobs:
         - name: 'schema registry scan'
