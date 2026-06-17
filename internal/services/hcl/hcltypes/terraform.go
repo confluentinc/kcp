@@ -1,4 +1,4 @@
-package types
+package hcltypes
 
 type TerraformState struct {
 	Outputs TerraformOutputOld `json:"outputs"`
