@@ -61,7 +61,7 @@ the migration state file and must be provided each time.`,
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-sasl-iam --aws-region us-east-1
 
-  # OSK source with TLS
+  # Apache Kafka source with TLS
   kcp migration execute \
       --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
       --lag-threshold 0 \

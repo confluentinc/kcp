@@ -9,7 +9,7 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-// OSKCredentials represents the osk-credentials.yaml file
+// OSKCredentials represents the apache-kafka-credentials.yaml file
 type OSKCredentials struct {
 	Clusters []OSKClusterAuth `yaml:"clusters"`
 }
@@ -81,7 +81,7 @@ type PrometheusTLSConfig struct {
 func NewOSKCredentialsFromFile(credentialsYamlPath string) (*OSKCredentials, []error) {
 	data, err := os.ReadFile(credentialsYamlPath)
 	if err != nil {
-		return nil, []error{fmt.Errorf("failed to read osk-credentials.yaml file: %w", err)}
+		return nil, []error{fmt.Errorf("failed to read apache-kafka-credentials.yaml file: %w", err)}
 	}
 
 	var credsFile OSKCredentials
@@ -101,7 +101,7 @@ func (c OSKCredentials) Validate() (bool, []error) {
 	errs := []error{}
 
 	if len(c.Clusters) == 0 {
-		errs = append(errs, fmt.Errorf("no clusters defined in osk-credentials.yaml"))
+		errs = append(errs, fmt.Errorf("no clusters defined in apache-kafka-credentials.yaml"))
 	}
 
 	// Track duplicate IDs

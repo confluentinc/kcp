@@ -6,12 +6,12 @@ test.describe('Switching Between MSK and OSK', () => {
     // State is pre-loaded via --state-file flag (state-migration.json with both MSK and OSK)
     // Wait for both sections to appear in sidebar
     await page.waitForSelector('text=AWS MSK', { timeout: 10000 })
-    await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 5000 })
   })
 
   test('displays both MSK and OSK sections', async ({ page }) => {
     await expect(page.locator('text=AWS MSK')).toBeVisible()
-    await expect(page.locator('text=OPEN SOURCE KAFKA')).toBeVisible()
+    await expect(page.locator('text=Apache Kafka')).toBeVisible()
   })
 
   test('can switch from MSK cluster to OSK cluster', async ({ page }) => {

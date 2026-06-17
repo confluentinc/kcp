@@ -13,7 +13,7 @@ test.describe('Region Costs', () => {
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(stateWithMetrics)),
     })
-    await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 5000 })
   })
 
   test('region cost overview renders with service and cost type selectors', async ({ page }) => {
