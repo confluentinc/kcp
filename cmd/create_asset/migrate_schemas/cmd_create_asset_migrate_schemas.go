@@ -12,6 +12,7 @@ import (
 
 var (
 	stateFile        string
+	ccEnvironment    string
 	url              string
 	glueRegistryName string
 	glueRegion       string
@@ -30,12 +31,14 @@ Output is written to ` + "`migrate_schemas/`" + ` (override with ` + "`--output-
 		Example: `  # From a Confluent Schema Registry (uses schema exporter resources)
   kcp create-asset migrate-schemas \
       --state-file kcp-state.json \
+      --cc-environment cc \
       --url https://my-schema-registry.example.com \
       --cc-sr-rest-endpoint https://psrc-xxxxx.us-east-2.aws.confluent.cloud
 
   # From an AWS Glue Schema Registry (generates confluent_schema resources)
   kcp create-asset migrate-schemas \
       --state-file kcp-state.json \
+      --cc-environment cc \
       --glue-registry my-glue-registry \
       --region us-east-1 \
       --cc-sr-rest-endpoint https://psrc-xxxxx.us-east-2.aws.confluent.cloud`,
@@ -50,6 +53,7 @@ Output is written to ` + "`migrate_schemas/`" + ` (override with ` + "`--output-
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file where the MSK cluster discovery reports have been written to.")
+	requiredFlags.StringVar(&ccEnvironment, "cc-environment", "", "The Confluent Cloud destination type: 'cc' (Standard) or 'cc-gov' (Confluent Cloud for Government).")
 	requiredFlags.StringVar(&ccSRRestEndpoint, "cc-sr-rest-endpoint", "", "The REST endpoint of the Confluent Cloud target schema registry.")
 	migrateSchemasCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
@@ -105,6 +109,33 @@ func preRunMigrateSchemas(cmd *cobra.Command, args []string) error {
 	}
 	if url != "" && glueRegistryName != "" {
 		return fmt.Errorf("--url and --glue-registry are mutually exclusive")
+	}
+
+	if err := validateMigrateSchemasDestination(ccEnvironment, url); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateMigrateSchemasDestination enforces the required --cc-environment
+// declaration and refuses the Confluent Schema Registry (--url) path under
+// Confluent Cloud for Government: it generates Schema Exporter resources that
+// rely on Schema Linking, which Confluent Cloud for Government does not support.
+// The AWS Glue (--glue-registry) path proceeds, as it emits plain confluent_schema
+// resources with no linking dependency.
+func validateMigrateSchemasDestination(ccEnvironment, url string) error {
+	if ccEnvironment == "" {
+		return fmt.Errorf("--cc-environment is required (values: %s, %s)", types.DestinationCC, types.DestinationCCGov)
+	}
+
+	destination, err := types.ToDestinationType(ccEnvironment)
+	if err != nil {
+		return fmt.Errorf("invalid --cc-environment: %v", err)
+	}
+
+	if destination.IsGov() && url != "" {
+		return fmt.Errorf("--url (Schema Exporter) is not supported on Confluent Cloud for Government: it relies on Schema Linking, which Confluent Cloud for Government does not provide. Use --glue-registry instead")
 	}
 
 	return nil
