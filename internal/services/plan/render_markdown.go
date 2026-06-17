@@ -8,8 +8,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-
-	"github.com/confluentinc/kcp/internal/types"
 )
 
 // regionFlagToken matches the inline `--region <value>` flag that
@@ -27,7 +25,7 @@ var regionFlagToken = regexp.MustCompile(`--region\s+[a-zA-Z0-9-]+`)
 // `cfg` must be the same PlanConfig the PlanService used to build the
 // plan (product-fact numbers in the Definitions block and the partition
 // cap in the appendix read from it).
-func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
+func RenderMarkdown(p *Plan, cfg *PlanConfig) ([]byte, error) {
 	var b bytes.Buffer
 
 	fmt.Fprintf(&b, "# Migration Plan — %s → Confluent Cloud\n\n", p.Header.Source)
@@ -88,7 +86,7 @@ func RenderMarkdown(p *types.Plan, cfg *PlanConfig) ([]byte, error) {
 	return b.Bytes(), nil
 }
 
-func writeOpenQuestions(b *bytes.Buffer, p *types.Plan, section int) {
+func writeOpenQuestions(b *bytes.Buffer, p *Plan, section int) {
 	if len(p.OpenQuestions) == 0 {
 		fmt.Fprintf(b, "## %d. Actions Needed\n\n", section)
 		b.WriteString("_No actions outstanding — the Plan above renders without unresolved questions._\n\n")
@@ -165,7 +163,7 @@ func severityLegend(present map[string]bool) string {
 // oqIDSet returns a lookup of OQ IDs present in this Plan. Used to
 // drive sibling-aware severity promotions through the OQ registry
 // (see oq_registry.go — `promoteSeverity`).
-func oqIDSet(oqs []types.OpenQuestion) map[string]bool {
+func oqIDSet(oqs []OpenQuestion) map[string]bool {
 	out := make(map[string]bool, len(oqs))
 	for _, oq := range oqs {
 		out[oq.ID] = true
@@ -181,14 +179,14 @@ func oqIDSet(oqs []types.OpenQuestion) map[string]bool {
 // region for a `<region>` placeholder when the collapsed group spans
 // multiple regions, since each cluster lives in exactly one region.
 type oqGroup struct {
-	oq       types.OpenQuestion
+	oq       OpenQuestion
 	clusters []string
 	regions  map[string]struct{}
 }
 
 // groupOpenQuestions returns first-seen-order groups; callers must pass
 // a priority-sorted input slice if they want priority order preserved.
-func groupOpenQuestions(oqs []types.OpenQuestion) []oqGroup {
+func groupOpenQuestions(oqs []OpenQuestion) []oqGroup {
 	groups := make([]oqGroup, 0, len(oqs))
 	byKey := make(map[string]int, len(oqs))
 	for _, oq := range oqs {
@@ -273,7 +271,7 @@ func writeDefinitions(b *bytes.Buffer, cfg *PlanConfig) {
 	b.WriteString("\n</details>\n\n")
 }
 
-func writeSourceEnvironment(b *bytes.Buffer, p *types.Plan, section int) {
+func writeSourceEnvironment(b *bytes.Buffer, p *Plan, section int) {
 	fmt.Fprintf(b, "## %d. Source Environment\n\n", section)
 	if len(p.SourceEnvironment.Clusters) == 0 {
 		b.WriteString("_No clusters found in the state file. Re-run `kcp discover` / `kcp scan ...` and try again._\n\n")
@@ -341,7 +339,7 @@ func sourceAuthCell(auths []string) string {
 	return strings.Join(parts, ", ")
 }
 
-func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, section int) {
+func writeSizingAndDecisions(b *bytes.Buffer, p *Plan, cfg *PlanConfig, section int) {
 	fmt.Fprintf(b, "## %d. Sizing & Cluster Decisions\n\n", section)
 	if len(p.Sizing) == 0 {
 		b.WriteString("_No clusters to size._\n\n")
@@ -353,11 +351,11 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 	// mis-pair a cluster's sizing with another cluster's verdict — earlier
 	// the loop indexed all three slices by `i`, which was correct for plans
 	// built by PlanService.Build() but fragile under any other construction.
-	ctByID := make(map[string]types.ClusterTypeDecision, len(p.ClusterTypeDecision))
+	ctByID := make(map[string]ClusterTypeDecision, len(p.ClusterTypeDecision))
 	for _, d := range p.ClusterTypeDecision {
 		ctByID[d.ClusterID] = d
 	}
-	netByID := make(map[string]types.NetworkingDecision, len(p.NetworkingDecision))
+	netByID := make(map[string]NetworkingDecision, len(p.NetworkingDecision))
 	for _, d := range p.NetworkingDecision {
 		netByID[d.ClusterID] = d
 	}
@@ -415,7 +413,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 	// the networking decision. Reads cleanly even for 30+ clusters because
 	// each entry is one or two lines.
 	b.WriteString("### Why These Recommendations\n\n")
-	srcByID := make(map[string]types.SourceClusterSummary, len(p.SourceEnvironment.Clusters))
+	srcByID := make(map[string]SourceClusterSummary, len(p.SourceEnvironment.Clusters))
 	for _, sc := range p.SourceEnvironment.Clusters {
 		srcByID[sc.ClusterID] = sc
 	}
@@ -480,7 +478,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 			continue
 		}
 		var pieces []string
-		var customerDeclaredTriggers []types.HardLimitTrigger
+		var customerDeclaredTriggers []HardLimitTrigger
 		skippedRuleCount := countSkippedRules(ct.EvaluatedRules)
 		if len(ct.Triggers) == 0 {
 			noFire := fmt.Sprintf("Cluster type **%s** — no hard-limit rule fired", clusterTypeLabel(ct))
@@ -512,15 +510,15 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 		if len(perClusterTriggers) > 0 {
 			writeCostCallout(&extras, perClusterTriggers, calloutPerCluster)
 		}
-		if !hoistStateDerivedBanner && ct.Verdict == types.ClusterTypeDedicated && len(customerDeclaredTriggers) == 0 && len(ct.Triggers) > 0 {
+		if !hoistStateDerivedBanner && ct.Verdict == ClusterTypeDedicated && len(customerDeclaredTriggers) == 0 && len(ct.Triggers) > 0 {
 			extras.WriteString("  - ℹ **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.\n")
 		}
-		if ct.Verdict == types.ClusterTypeDedicated && ct.Topology == types.TopologySingleZone && !szIsGlobal(globalCustomerTriggers) {
+		if ct.Verdict == ClusterTypeDedicated && ct.Topology == TopologySingleZone && !szIsGlobal(globalCustomerTriggers) {
 			writeSZTradeoff(&extras, cfg, calloutPerCluster)
 		}
 		if (s.SpikyIngress || s.SpikyEgress) && s.FinalECKU > s.SLAFloorECKU {
 			absorbed := "Enterprise elasticity absorbs"
-			if ct.Verdict == types.ClusterTypeDedicated {
+			if ct.Verdict == ClusterTypeDedicated {
 				absorbed = "the sized Dedicated capacity absorbs"
 			}
 			fmt.Fprintf(&extras, "  - _Note: %s. Sizing is P95-based and %s the spike; set `sizing_percentile: p99` in `plan-inputs.yaml` if you'd rather size to the peak._\n", spikyDescription(s), absorbed)
@@ -566,7 +564,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig, se
 // for the FYI note on spiky clusters. Guards against P95==0 (the spiky
 // flag fires for any positive peak when P95 is zero — `peak > 2.0 * 0`)
 // so the ratio doesn't render as +Inf.
-func spikyDescription(s types.ClusterSizing) string {
+func spikyDescription(s ClusterSizing) string {
 	var parts []string
 	if s.SpikyIngress {
 		parts = append(parts, formatSpikeRatio("ingress", s.PeakInMBps, s.SizedInMBps))
@@ -629,7 +627,7 @@ func pluralize(singular string, n int) string {
 // hasProvisional reports whether any cluster has at least one
 // load-bearing scan signal missing — used to decide whether to emit
 // the `*` legend after the Sizing & Cluster Decisions table.
-func hasProvisional(sizings []types.ClusterSizing) bool {
+func hasProvisional(sizings []ClusterSizing) bool {
 	for _, s := range sizings {
 		if len(s.InputsMissing) > 0 || s.Degraded {
 			return true
@@ -643,10 +641,10 @@ func hasProvisional(sizings []types.ClusterSizing) bool {
 // renderer uses this to append a one-liner note to "no hard-limit rule
 // fired" verdicts so the reader doesn't mistake the silence for
 // certainty.
-func countSkippedRules(rules []types.RuleEvaluation) int {
+func countSkippedRules(rules []RuleEvaluation) int {
 	n := 0
 	for _, r := range rules {
-		if r.Outcome == types.RuleSkipped {
+		if r.Outcome == RuleSkipped {
 			n++
 		}
 	}
@@ -674,14 +672,14 @@ func slaFloorList(cfg *PlanConfig) string {
 // finalSizeUnit returns "eCKU" or "CKU" for the given cluster-type
 // verdict so rendered prose matches the unit in the Sizing & Cluster
 // Decisions table.
-func finalSizeUnit(ct types.ClusterTypeDecision) string {
-	if ct.Verdict == types.ClusterTypeDedicated {
+func finalSizeUnit(ct ClusterTypeDecision) string {
+	if ct.Verdict == ClusterTypeDedicated {
 		return "CKU"
 	}
 	return "eCKU"
 }
 
-func writeSizingAppendix(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
+func writeSizingAppendix(b *bytes.Buffer, p *Plan, cfg *PlanConfig) {
 	if len(p.SizingAppendix) == 0 {
 		return
 	}
@@ -721,7 +719,7 @@ func writeSizingAppendix(b *bytes.Buffer, p *types.Plan, cfg *PlanConfig) {
 // evidence or skip-reason. Lets a reviewer audit "what would the rules
 // engine have said given this state" without re-running the tool.
 // Collapsed by default since most readers don't need it.
-func writeRulesAppendix(b *bytes.Buffer, p *types.Plan) {
+func writeRulesAppendix(b *bytes.Buffer, p *Plan) {
 	hasAny := false
 	for _, ct := range p.ClusterTypeDecision {
 		if len(ct.EvaluatedRules) > 0 {
@@ -746,7 +744,7 @@ func writeRulesAppendix(b *bytes.Buffer, p *types.Plan) {
 		b.WriteString("| Rule | Outcome | Detail |\n|---|---|---|\n")
 		for _, r := range ct.EvaluatedRules {
 			detail := r.Evidence
-			if r.Outcome == types.RuleSkipped {
+			if r.Outcome == RuleSkipped {
 				detail = r.SkipReason
 			}
 			fmt.Fprintf(b, "| `%s` (%s) | `%s` | %s |\n",
@@ -791,7 +789,7 @@ const szTradeoffBody = "**Single-Zone resilience tradeoff:** the 99.95%% SLA sel
 // writeCostCallout emits the cost-callout block. Global scope renders
 // the top-of-section banner once; per-cluster scope renders the inline
 // nested-list-item version attached to one cluster's bullet.
-func writeCostCallout(b *bytes.Buffer, triggers []types.HardLimitTrigger, scope calloutScope) {
+func writeCostCallout(b *bytes.Buffer, triggers []HardLimitTrigger, scope calloutScope) {
 	labels := formatCustomerTriggerLabels(triggers)
 	switch scope {
 	case calloutGlobal:
@@ -817,8 +815,8 @@ func writeSZTradeoff(b *bytes.Buffer, cfg *PlanConfig, scope calloutScope) {
 // szIsGlobal reports whether the SZ-SLA customer trigger appears in
 // the global-banner set — if it does, per-cluster sites must suppress
 // their inline SZ tradeoff to avoid duplicating the message.
-func szIsGlobal(global []types.HardLimitTrigger) bool {
-	return slices.ContainsFunc(global, func(t types.HardLimitTrigger) bool { return t.RowID == szTriggerRowID })
+func szIsGlobal(global []HardLimitTrigger) bool {
+	return slices.ContainsFunc(global, func(t HardLimitTrigger) bool { return t.RowID == szTriggerRowID })
 }
 
 // detectGlobalCustomerTriggers finds customer-declared triggers that
@@ -833,10 +831,10 @@ func szIsGlobal(global []types.HardLimitTrigger) bool {
 // fleet-level "Cost direction" banner when many clusters share the
 // state-forced escalation — at small N the per-cluster inline note
 // is fine; at fleet scale it becomes noise.
-func countStateDerivedDedicated(decisions []types.ClusterTypeDecision) int {
+func countStateDerivedDedicated(decisions []ClusterTypeDecision) int {
 	n := 0
 	for _, ct := range decisions {
-		if ct.Verdict != types.ClusterTypeDedicated || len(ct.Triggers) == 0 {
+		if ct.Verdict != ClusterTypeDedicated || len(ct.Triggers) == 0 {
 			continue
 		}
 		anyCustomer := false
@@ -853,7 +851,7 @@ func countStateDerivedDedicated(decisions []types.ClusterTypeDecision) int {
 	return n
 }
 
-func detectGlobalCustomerTriggers(decisions []types.ClusterTypeDecision) []types.HardLimitTrigger {
+func detectGlobalCustomerTriggers(decisions []ClusterTypeDecision) []HardLimitTrigger {
 	if len(decisions) == 0 {
 		return nil
 	}
@@ -863,7 +861,7 @@ func detectGlobalCustomerTriggers(decisions []types.ClusterTypeDecision) []types
 	// most once) doesn't inflate the count past `len(decisions)` and
 	// fool the "fires on every cluster" check.
 	count := make(map[string]int)
-	firstSeen := make(map[string]types.HardLimitTrigger)
+	firstSeen := make(map[string]HardLimitTrigger)
 	for _, d := range decisions {
 		seen := make(map[string]bool, len(d.Triggers))
 		for _, t := range d.Triggers {
@@ -877,7 +875,7 @@ func detectGlobalCustomerTriggers(decisions []types.ClusterTypeDecision) []types
 			}
 		}
 	}
-	var global []types.HardLimitTrigger
+	var global []HardLimitTrigger
 	for rowID, n := range count {
 		if n == len(decisions) {
 			global = append(global, firstSeen[rowID])
@@ -893,7 +891,7 @@ func detectGlobalCustomerTriggers(decisions []types.ClusterTypeDecision) []types
 // NOT appear in `global`. Used at the per-cluster cost-callout site
 // so a trigger that already got the top-of-section banner isn't
 // repeated inline.
-func filterNonGlobalTriggers(cluster, global []types.HardLimitTrigger) []types.HardLimitTrigger {
+func filterNonGlobalTriggers(cluster, global []HardLimitTrigger) []HardLimitTrigger {
 	if len(global) == 0 {
 		return cluster
 	}
@@ -901,7 +899,7 @@ func filterNonGlobalTriggers(cluster, global []types.HardLimitTrigger) []types.H
 	for _, t := range global {
 		globalIDs[t.RowID] = struct{}{}
 	}
-	var out []types.HardLimitTrigger
+	var out []HardLimitTrigger
 	for _, t := range cluster {
 		if _, isGlobal := globalIDs[t.RowID]; !isGlobal {
 			out = append(out, t)
@@ -915,7 +913,7 @@ func filterNonGlobalTriggers(cluster, global []types.HardLimitTrigger) []types.H
 // (e.g. "99.95% single-zone SLA required") rather than the raw RowID
 // (e.g. "sla_99_95_single_zone") so a customer sees something they
 // recognise from the YAML comments.
-func formatCustomerTriggerLabels(triggers []types.HardLimitTrigger) string {
+func formatCustomerTriggerLabels(triggers []HardLimitTrigger) string {
 	labels := make([]string, len(triggers))
 	for i, t := range triggers {
 		labels[i] = fmt.Sprintf("%s (`%s`)", t.Description, t.RowID)
@@ -941,14 +939,14 @@ func percentileHeader(percentile string) string {
 // decision. Dedicated clusters carry a topology suffix (MZ vs SZ) so the
 // reader can see at a glance whether the verdict is Multi-Zone or the
 // 99.95%-SLA-driven Single-Zone variant. Enterprise renders as-is.
-func clusterTypeLabel(ct types.ClusterTypeDecision) string {
-	if ct.Verdict != types.ClusterTypeDedicated {
+func clusterTypeLabel(ct ClusterTypeDecision) string {
+	if ct.Verdict != ClusterTypeDedicated {
 		return string(ct.Verdict)
 	}
 	switch ct.Topology {
-	case types.TopologySingleZone:
+	case TopologySingleZone:
 		return "Dedicated Single-Zone (SZ)"
-	case types.TopologyMultiZone:
+	case TopologyMultiZone:
 		return "Dedicated Multi-Zone (MZ)"
 	default:
 		return "Dedicated"
@@ -958,10 +956,10 @@ func clusterTypeLabel(ct types.ClusterTypeDecision) string {
 // formatSizeCell renders the "Final size" column. Enterprise clusters
 // are sized in eCKU; Dedicated clusters are sized in CKU (same integer,
 // different unit per the Confluent product taxonomy).
-func formatSizeCell(finalECKU int, ct types.ClusterTypeDecision, degraded bool) string {
+func formatSizeCell(finalECKU int, ct ClusterTypeDecision, degraded bool) string {
 	suffix := "eCKU"
 	value := finalECKU
-	if ct.Verdict == types.ClusterTypeDedicated && ct.FinalCKU != nil {
+	if ct.Verdict == ClusterTypeDedicated && ct.FinalCKU != nil {
 		suffix = "CKU"
 		value = *ct.FinalCKU
 	}
@@ -979,7 +977,7 @@ func formatSizeCell(finalECKU int, ct types.ClusterTypeDecision, degraded bool) 
 // per-cluster exceptions — clusters whose resolved style differs from
 // the fleet default. Skips the section entirely when there's no
 // cutover decision (empty fleet).
-func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, overrides []types.ClusterCutoverOverride, cfg *PlanConfig, section int) {
+func writeCutover(b *bytes.Buffer, c *CutoverDecision, overrides []ClusterCutoverOverride, cfg *PlanConfig, section int) {
 	if c == nil {
 		return
 	}
@@ -1000,7 +998,7 @@ func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, overrides []types.C
 	// orchestration. Promote the runbook hint to its own sub-heading
 	// so the multi-sentence content reads as a separate concern, not
 	// a comically heavy list item.
-	if c.Style == types.CutoverBlueGreen {
+	if c.Style == CutoverBlueGreen {
 		linkingURL := "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html"
 		if cfg != nil && cfg.ClusterLinking.Source != "" {
 			linkingURL = cfg.ClusterLinking.Source
@@ -1017,23 +1015,23 @@ func writeCutover(b *bytes.Buffer, c *types.CutoverDecision, overrides []types.C
 // cutoverStyleLabel renders the style + sub-pattern label. Stop-Restart-Repeat
 // carries the sub-pattern suffix (app-by-app vs topic-by-topic); other
 // styles render as-is.
-func cutoverStyleLabel(style types.CutoverStyle, sub types.CutoverSubPattern) string {
+func cutoverStyleLabel(style CutoverStyle, sub CutoverSubPattern) string {
 	base := cutoverStyleName(style)
-	if style == types.CutoverStopRestartRepeat && sub != "" {
+	if style == CutoverStopRestartRepeat && sub != "" {
 		return fmt.Sprintf("%s (%s)", base, sub)
 	}
 	return base
 }
 
-func cutoverStyleName(style types.CutoverStyle) string {
+func cutoverStyleName(style CutoverStyle) string {
 	switch style {
-	case types.CutoverStopRestartRepeat:
+	case CutoverStopRestartRepeat:
 		return "Stop-Restart-Repeat"
-	case types.CutoverStopWaitRestart:
+	case CutoverStopWaitRestart:
 		return "Stop-Wait-Restart"
-	case types.CutoverRestartAllAtOnce:
+	case CutoverRestartAllAtOnce:
 		return "Restart-All-At-Once"
-	case types.CutoverBlueGreen:
+	case CutoverBlueGreen:
 		return "Blue/Green"
 	default:
 		return string(style)
@@ -1045,16 +1043,16 @@ func cutoverStyleName(style types.CutoverStyle) string {
 // Plain Cluster Linking gets a tradeoff hint so it doesn't read as
 // second-class — it's a fully supported path that some customers
 // deliberately pick.
-func cutoverGatewayLabel(m types.GatewayMediated, status types.RecommendationStatus) string {
+func cutoverGatewayLabel(m GatewayMediated, status RecommendationStatus) string {
 	switch m {
-	case types.GatewayMediatedTrue:
+	case GatewayMediatedTrue:
 		return "CC Gateway-mediated (transparent per-service cutover, 30–90 s `BROKER_NOT_AVAILABLE` window)"
-	case types.GatewayMediatedFalse:
-		if status == types.RecommendationCustomerChoice {
+	case GatewayMediatedFalse:
+		if status == RecommendationCustomerChoice {
 			return "Plain Cluster Linking (gateway opted out via `prefer_gateway: false`). Simpler ops; requires per-service producer restart at cutover. Pick this when the CFK + Gateway Add-On license aren't justifiable for the fleet's downtime budget."
 		}
 		return "Plain Cluster Linking"
-	case types.GatewayMediatedNotApplicable:
+	case GatewayMediatedNotApplicable:
 		return "Not applicable — Blue/Green doesn't sit on a single cutover step"
 	default:
 		return string(m)
@@ -1067,11 +1065,11 @@ func cutoverGatewayLabel(m types.GatewayMediated, status types.RecommendationSta
 // "Awaiting" framing, not "Degraded" — plain Cluster Linking is a fully
 // supported path; the marker just signals an open decision, not a
 // broken state.
-func recommendationStatusMarker(status types.RecommendationStatus) string {
+func recommendationStatusMarker(status RecommendationStatus) string {
 	switch status {
-	case types.RecommendationDegradedAwaitingOQ:
+	case RecommendationDegradedAwaitingOQ:
 		return "ℹ **Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose."
-	case types.RecommendationDegradedPrereqsPending:
+	case RecommendationDegradedPrereqsPending:
 		return "ℹ **Awaiting gateway prereqs** — gateway path requested but one or more prereqs are still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
 	default:
 		return ""
@@ -1081,7 +1079,7 @@ func recommendationStatusMarker(status types.RecommendationStatus) string {
 // writeCutoverAlternatives renders a short bullet list explaining the
 // styles the plan considered and didn't pick. Keeps the reader's trust
 // without forcing them to walk the full decision tree.
-func writeCutoverAlternatives(b *bytes.Buffer, alts []types.CutoverStyle) {
+func writeCutoverAlternatives(b *bytes.Buffer, alts []CutoverStyle) {
 	if len(alts) == 0 {
 		return
 	}
@@ -1093,15 +1091,15 @@ func writeCutoverAlternatives(b *bytes.Buffer, alts []types.CutoverStyle) {
 
 // cutoverAlternativeWhy returns the one-line "why this isn't the
 // recommendation" string for each style.
-func cutoverAlternativeWhy(s types.CutoverStyle) string {
+func cutoverAlternativeWhy(s CutoverStyle) string {
 	switch s {
-	case types.CutoverStopRestartRepeat:
+	case CutoverStopRestartRepeat:
 		return "phased per-service rollout; recoverable steps, longer elapsed time. Pick via `downtime_tolerance: seconds_per_service | minutes_per_service | let_confluent_choose`."
-	case types.CutoverStopWaitRestart:
+	case CutoverStopWaitRestart:
 		return "single coordinated window; needs the window to be long enough for re-mirroring + validation. Pick via `downtime_tolerance: scheduled_window_sequential`."
-	case types.CutoverRestartAllAtOnce:
+	case CutoverRestartAllAtOnce:
 		return "single window; every client reconfigures at the same instant. Highest blast radius. Pick via `downtime_tolerance: scheduled_window_all_at_once`."
-	case types.CutoverBlueGreen:
+	case CutoverBlueGreen:
 		return "parallel run via Cluster Linking; zero downtime, highest operational complexity. Pick via `downtime_tolerance: zero`."
 	default:
 		return ""
@@ -1115,7 +1113,7 @@ func cutoverAlternativeWhy(s types.CutoverStyle) string {
 // whether a row went missing. When IAM prereq is absent from a
 // non-empty list, adds a one-line note clarifying it was suppressed
 // because no IAM source was detected.
-func writeCutoverPrereqs(b *bytes.Buffer, prereqs []types.Prereq) {
+func writeCutoverPrereqs(b *bytes.Buffer, prereqs []Prereq) {
 	if len(prereqs) == 0 {
 		b.WriteString("- **Prerequisites:** _none required for this path._\n")
 		return
@@ -1140,7 +1138,7 @@ func writeCutoverPrereqs(b *bytes.Buffer, prereqs []types.Prereq) {
 // to a different cutover style than the fleet default. Empty slice =
 // homogeneous fleet → nothing emitted. Rejected overrides carry a `*`
 // marker + footnote (mirrors §4 Auth's OverrideRejected handling).
-func writeCutoverOverrides(b *bytes.Buffer, overrides []types.ClusterCutoverOverride) {
+func writeCutoverOverrides(b *bytes.Buffer, overrides []ClusterCutoverOverride) {
 	if len(overrides) == 0 {
 		return
 	}
@@ -1154,9 +1152,9 @@ func writeCutoverOverrides(b *bytes.Buffer, overrides []types.ClusterCutoverOver
 		}
 		fmt.Fprintf(b, "  - `%s` → %s%s", o.ClusterID, cutoverStyleLabel(o.Style, o.SubPattern), marker)
 		switch o.GatewayMediated {
-		case types.GatewayMediatedTrue:
+		case GatewayMediatedTrue:
 			b.WriteString(" (gateway-mediated)")
-		case types.GatewayMediatedNotApplicable:
+		case GatewayMediatedNotApplicable:
 			b.WriteString(" (gateway N/A for this style)")
 		}
 		b.WriteString("\n")
@@ -1167,15 +1165,15 @@ func writeCutoverOverrides(b *bytes.Buffer, overrides []types.ClusterCutoverOver
 	b.WriteString("\n")
 }
 
-func prereqStatusLabel(s types.PrereqStatus) string {
+func prereqStatusLabel(s PrereqStatus) string {
 	switch s {
-	case types.PrereqMet:
+	case PrereqMet:
 		return "✅ met"
-	case types.PrereqInProgress:
+	case PrereqInProgress:
 		return "🚧 in progress"
-	case types.PrereqBlocked:
+	case PrereqBlocked:
 		return "⛔ not started"
-	case types.PrereqUnconfirmed:
+	case PrereqUnconfirmed:
 		return "❓ unconfirmed"
 	default:
 		return string(s)
@@ -1192,7 +1190,7 @@ func prereqStatusLabel(s types.PrereqStatus) string {
 // complete` AND the gateway is mediated, the §4 source row is a
 // pre-migration snapshot and the prereq says clients have already
 // moved off IAM — surface that so §3 and §4 don't read as contradictory.
-func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.CutoverDecision, inputs types.PlanInputsResolved, section int) {
+func writeAuth(b *bytes.Buffer, auths []AuthDecision, cutover *CutoverDecision, inputs PlanInputsResolved, section int) {
 	if len(auths) == 0 {
 		return
 	}
@@ -1240,7 +1238,7 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 	// IAM-transition footnote — when prereq is `complete` and
 	// gateway is in play, the IAM rows above are a pre-migration
 	// snapshot, not the post-migration auth.
-	if cutover != nil && inputs.IAMPreMigrationStatus == PrereqStatusCompleteInput && cutover.GatewayMediated == types.GatewayMediatedTrue {
+	if cutover != nil && inputs.IAMPreMigrationStatus == PrereqStatusCompleteInput && cutover.GatewayMediated == GatewayMediatedTrue {
 		anyIAM := false
 		for _, a := range auths {
 			for _, row := range a.TargetMappings {
@@ -1262,7 +1260,7 @@ func writeAuth(b *bytes.Buffer, auths []types.AuthDecision, cutover *types.Cutov
 // last_verified date so a reviewer can audit where each auth-mapping
 // recommendation came from. Walks the unique (SourceAuth, Source,
 // LastVerified) tuples and emits one bullet per source row.
-func writeAuthMappingProvenance(b *bytes.Buffer, auths []types.AuthDecision) {
+func writeAuthMappingProvenance(b *bytes.Buffer, auths []AuthDecision) {
 	type provKey struct{ source, lastVerified, sourceAuth string }
 	seen := map[provKey]bool{}
 	var rows []provKey
@@ -1314,7 +1312,7 @@ func gatewayCompatibleLabel(compatible, transparent bool) string {
 // p.Schema in that branch). For mixed Confluent+Glue deployments
 // both verdicts render — Glue Terraform command and a Schema-Linking
 // eligibility table.
-func writeSchema(b *bytes.Buffer, dec *types.SchemaDecision, inputs types.PlanInputsResolved, cfg *PlanConfig, section int) {
+func writeSchema(b *bytes.Buffer, dec *SchemaDecision, inputs PlanInputsResolved, cfg *PlanConfig, section int) {
 	if dec == nil {
 		return
 	}
@@ -1348,13 +1346,13 @@ func writeSchema(b *bytes.Buffer, dec *types.SchemaDecision, inputs types.PlanIn
 	suppressEligibilityTable := strategy == SchemaStrategyNoSchemas
 
 	switch dec.Source {
-	case types.SchemaSourceGlue:
+	case SchemaSourceGlue:
 		writeGluePathCommand(b, dec.GlueRegistries)
-	case types.SchemaSourceConfluent:
+	case SchemaSourceConfluent:
 		if !suppressEligibilityTable {
 			writeSchemaLinkingEligibility(b, dec, cfg)
 		}
-	case types.SchemaSourceConfluentAndGlue:
+	case SchemaSourceConfluentAndGlue:
 		// Both registries present: render each path side-by-side so the
 		// customer sees both recommendations without having to re-run
 		// the Plan against a narrowed scan.
@@ -1371,15 +1369,15 @@ func writeSchema(b *bytes.Buffer, dec *types.SchemaDecision, inputs types.PlanIn
 // the source. Glue-only paths cite the `kcp create-asset migrate-schemas`
 // docs (the active recommendation); Confluent paths cite the Schema
 // Linking docs (the eligibility floor); dual-source cites both.
-func writeSchemaProvenance(b *bytes.Buffer, dec *types.SchemaDecision, cfg *PlanConfig) {
+func writeSchemaProvenance(b *bytes.Buffer, dec *SchemaDecision, cfg *PlanConfig) {
 	const glueRef = "https://confluentinc.github.io/kcp/command-reference/create-asset/migrate-schemas/"
 	switch dec.Source {
-	case types.SchemaSourceGlue:
+	case SchemaSourceGlue:
 		fmt.Fprintf(b, "\n_Mapping provenance: Glue migration command → %s._\n\n", glueRef)
-	case types.SchemaSourceConfluent:
+	case SchemaSourceConfluent:
 		fmt.Fprintf(b, "\n_Mapping provenance: Schema Linking eligibility (CP %s+ %s + outbound reachable) → %s (last verified %s)._\n\n",
 			cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition, cfg.SchemaLinking.Source, cfg.SchemaLinking.LastVerified)
-	case types.SchemaSourceConfluentAndGlue:
+	case SchemaSourceConfluentAndGlue:
 		fmt.Fprintf(b, "\n_Mapping provenance: Glue migration → %s; Schema Linking eligibility (CP %s+ %s + outbound reachable) → %s (last verified %s)._\n\n",
 			glueRef, cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition, cfg.SchemaLinking.Source, cfg.SchemaLinking.LastVerified)
 	default:
@@ -1394,9 +1392,9 @@ func writeSchemaProvenance(b *bytes.Buffer, dec *types.SchemaDecision, cfg *Plan
 // dual-source decisions uniformly. Joiner is " — **also:** " to keep
 // the inline-bold labels readable (each label already ends with `**`,
 // so a `**also**` joiner would collide asterisks).
-func schemaPathsLabel(paths []types.SchemaPath) string {
+func schemaPathsLabel(paths []SchemaPath) string {
 	if len(paths) == 0 {
-		return schemaPathLabel(types.SchemaPathUnknown)
+		return schemaPathLabel(SchemaPathUnknown)
 	}
 	if len(paths) == 1 {
 		return schemaPathLabel(paths[0])
@@ -1420,11 +1418,11 @@ func schemaPathsLabel(paths []types.SchemaPath) string {
 //     one. Don't render "Pending — declare the missing input" (the
 //     declaration is already complete); instead point the reader at
 //     re-running the scan or correcting the strategy.
-func schemaPathsLabelForContext(paths []types.SchemaPath, strategy string, source types.SchemaSource) string {
-	if strategy == SchemaStrategyNoSchemas && source != types.SchemaSourceNone {
+func schemaPathsLabelForContext(paths []SchemaPath, strategy string, source SchemaSource) string {
+	if strategy == SchemaStrategyNoSchemas && source != SchemaSourceNone {
 		return "**Conflict** — strategy declares `no_schemas` but the scan found a Schema Registry; see §Actions Needed for reconciliation"
 	}
-	if strategy == SchemaStrategyMigrateExistingSchemaRegistry && source == types.SchemaSourceNone {
+	if strategy == SchemaStrategyMigrateExistingSchemaRegistry && source == SchemaSourceNone {
 		return "**Scan gap** — strategy declares `migrate_existing_schema_registry` but no SR was found in the state file; re-run `kcp scan schema-registry` / `kcp scan glue-schema-registry` against the source, OR correct `schema_strategy` if the source genuinely has no registry"
 	}
 	return schemaPathsLabel(paths)
@@ -1434,14 +1432,14 @@ func schemaPathsLabelForContext(paths []types.SchemaPath, strategy string, sourc
 // status glyph when the declared value conflicts with what the scan
 // found, so a reader doesn't have to cross-reference §Schema with
 // §Actions Needed to spot the contradiction.
-func schemaStrategyDeclaredLabel(strategy string, dec *types.SchemaDecision) string {
+func schemaStrategyDeclaredLabel(strategy string, dec *SchemaDecision) string {
 	if strategy == "" {
 		strategy = SchemaStrategyUnknown
 	}
-	if strategy == SchemaStrategyNoSchemas && dec.Source != types.SchemaSourceNone {
+	if strategy == SchemaStrategyNoSchemas && dec.Source != SchemaSourceNone {
 		return fmt.Sprintf("`%s` ⚠ (scan found a Schema Registry)", strategy)
 	}
-	if strategy == SchemaStrategyMigrateExistingSchemaRegistry && dec.Source == types.SchemaSourceNone {
+	if strategy == SchemaStrategyMigrateExistingSchemaRegistry && dec.Source == SchemaSourceNone {
 		return fmt.Sprintf("`%s` ⚠ (scan found no Schema Registry — re-scan or correct the strategy)", strategy)
 	}
 	if !knownSchemaStrategy(strategy) && strategy != SchemaStrategyUnknown {
@@ -1450,30 +1448,30 @@ func schemaStrategyDeclaredLabel(strategy string, dec *types.SchemaDecision) str
 	return fmt.Sprintf("`%s`", strategy)
 }
 
-func schemaSourceLabel(src types.SchemaSource, confluentURLs, glueNames []string) string {
+func schemaSourceLabel(src SchemaSource, confluentURLs, glueNames []string) string {
 	switch src {
-	case types.SchemaSourceConfluent:
+	case SchemaSourceConfluent:
 		return fmt.Sprintf("Confluent Schema Registry (%d URL%s: %s)",
 			len(confluentURLs), pluralize("", len(confluentURLs)), strings.Join(quoteAll(confluentURLs), ", "))
-	case types.SchemaSourceGlue:
+	case SchemaSourceGlue:
 		return fmt.Sprintf("AWS Glue Schema Registry (%d %s: %s)",
 			len(glueNames), pluralize("registry", len(glueNames)), strings.Join(quoteAll(glueNames), ", "))
-	case types.SchemaSourceConfluentAndGlue:
+	case SchemaSourceConfluentAndGlue:
 		return "Confluent Schema Registry AND AWS Glue Schema Registry (each handled independently below)"
 	default:
 		return "_none detected_ — neither `kcp scan schema-registry` nor `kcp scan glue-schema-registry` found a registry on the source"
 	}
 }
 
-func schemaPathLabel(p types.SchemaPath) string {
+func schemaPathLabel(p SchemaPath) string {
 	switch p {
-	case types.SchemaPathSchemaLinking:
+	case SchemaPathSchemaLinking:
 		return "**Schema Linking** — source SR pushes schema updates to CC SR over TCP; alternative is manual REST export/import"
-	case types.SchemaPathMigrateGlue:
+	case SchemaPathMigrateGlue:
 		return "**`kcp create-asset migrate-schemas --glue-registry`** — one Terraform apply imports every schema in the Glue registry into CC SR"
-	case types.SchemaPathDeferToAccount:
+	case SchemaPathDeferToAccount:
 		return "**Defer to your Confluent account team** — REST API export/import is possible but not deterministic; see §Actions Needed for the failing constraint"
-	case types.SchemaPathSchemaless:
+	case SchemaPathSchemaless:
 		return "**Schemaless** — `schema_strategy: no_schemas` and no source SR was scanned; this section will not render"
 	default:
 		return "**Pending** — declare the missing input in `plan-inputs.yaml`; see §Actions Needed for the specific field"
@@ -1499,7 +1497,7 @@ func writeGluePathCommand(b *bytes.Buffer, glueNames []string) {
 // table for the Confluent SR path. Verdict comes first so the
 // reader's eye lands on ✅/❌/❔ before the constraint text — at a
 // glance you see whether to read further or fix YAML.
-func writeSchemaLinkingEligibility(b *bytes.Buffer, dec *types.SchemaDecision, cfg *PlanConfig) {
+func writeSchemaLinkingEligibility(b *bytes.Buffer, dec *SchemaDecision, cfg *PlanConfig) {
 	b.WriteString("\n**Schema Linking eligibility (Confluent SR path):** all three rows must be **✅ yes** for the Schema Linking path to apply. Any **❌ no** falls to `defer_to_account_team`; any **❔ unknown** keeps the path at `unknown` until you declare the missing input.\n\n")
 	b.WriteString("| Verdict | Constraint | Input |\n")
 	b.WriteString("|---|---|---|\n")
@@ -1539,18 +1537,18 @@ func quoteAll(values []string) []string {
 // and Unknown rows collapse into a tail summary (count + comma list)
 // so the customer can scan triggered items in one screenful even on
 // a 15-row table.
-func writeRedFlags(b *bytes.Buffer, rf *types.RedFlagsSection, section int) {
+func writeRedFlags(b *bytes.Buffer, rf *RedFlagsSection, section int) {
 	if rf == nil || len(rf.Rows) == 0 {
 		return
 	}
 	fmt.Fprintf(b, "## %d. Red Flags\n\n", section)
 	b.WriteString("Items below aren't blockers — they're things to discuss with your Confluent SE. Each row's evidence is the field path + value from the scan so the conversation grounds in scan facts, not inference.\n\n")
-	var triggered, unknown, notTriggered []types.RedFlag
+	var triggered, unknown, notTriggered []RedFlag
 	for _, r := range rf.Rows {
 		switch r.Status {
-		case types.RedFlagTriggered:
+		case RedFlagTriggered:
 			triggered = append(triggered, r)
-		case types.RedFlagUnknown:
+		case RedFlagUnknown:
 			unknown = append(unknown, r)
 		default:
 			notTriggered = append(notTriggered, r)
@@ -1614,7 +1612,7 @@ func writeRedFlags(b *bytes.Buffer, rf *types.RedFlagsSection, section int) {
 //   - Structurally-unobservable zero (e.g. IAM client count when the
 //     client-inventory scan didn't run) renders as `_unknown_`
 //     instead of `0` so the customer doesn't read it as "no work".
-func writeEffortSignals(b *bytes.Buffer, es *types.EffortSignalsSection, section int) {
+func writeEffortSignals(b *bytes.Buffer, es *EffortSignalsSection, section int) {
 	if es == nil || len(es.Signals) == 0 {
 		return
 	}
@@ -1685,7 +1683,7 @@ func writeEffortSignals(b *bytes.Buffer, es *types.EffortSignalsSection, section
 // run); render it as `_unknown_` so the customer doesn't read it as
 // "no work". Concrete 0 stays as `0` — the scan ran and returned
 // zero hits.
-func effortSignalCountCell(s types.EffortSignal) string {
+func effortSignalCountCell(s EffortSignal) string {
 	if s.Count == nil {
 		return "_unknown_"
 	}
@@ -1708,7 +1706,7 @@ func effortSignalSuperscript(n int) string {
 // dollar estimate, no recommendation — kcp surfaces the mechanism /
 // duration / cost-direction so the customer (and account team) can
 // decide whether the cold data is worth re-fetching.
-func writeTieredStorage(b *bytes.Buffer, ts *types.TieredStorageSection, section int) {
+func writeTieredStorage(b *bytes.Buffer, ts *TieredStorageSection, section int) {
 	if ts == nil || len(ts.Clusters) == 0 {
 		return
 	}
@@ -1784,7 +1782,7 @@ func formatBytesHuman(v float64) string {
 // No materiality threshold — the customer (FinOps / cloud lead /
 // platform engineer) decides which candidates are "real" hidden
 // clusters vs. decommissioned-but-still-billed ones.
-func writeCostReconciliation(b *bytes.Buffer, cr *types.CostReconciliationSection, section int) {
+func writeCostReconciliation(b *bytes.Buffer, cr *CostReconciliationSection, section int) {
 	if cr == nil || len(cr.Candidates) == 0 {
 		return
 	}
