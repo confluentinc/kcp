@@ -330,6 +330,49 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	}, nil
 }
 
+// FilterConnectMetrics filters Connect metrics for an OSK cluster by cluster ID and date range
+func (rs *ReportService) FilterConnectMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	var targetCluster *types.ProcessedOSKCluster
+
+	for _, source := range processedState.Sources {
+		if source.Type == types.SourceTypeOSK && source.OSKData != nil {
+			for _, cluster := range source.OSKData.Clusters {
+				if strings.EqualFold(cluster.ID, clusterID) {
+					targetCluster = &cluster
+					break
+				}
+			}
+		}
+		if targetCluster != nil {
+			break
+		}
+	}
+
+	if targetCluster == nil {
+		return nil, fmt.Errorf("cluster '%s' not found in OSK sources", clusterID)
+	}
+
+	smc := targetCluster.KafkaAdminClientInformation.SelfManagedConnectors
+	if smc == nil || smc.Metrics == nil {
+		return &types.ProcessedClusterMetrics{
+			ClusterArn: clusterID,
+		}, nil
+	}
+
+	filteredMetrics := rs.filterMetricsByDateRange(smc.Metrics.Metrics, startTime, endTime)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
+
+	return &types.ProcessedClusterMetrics{
+		ClusterArn:  clusterID,
+		Metadata:    smc.Metrics.Metadata,
+		Metrics:     filteredMetrics,
+		Aggregates:  aggregates,
+		QueryInfo:   smc.Metrics.QueryInfo,
+		Environment: targetCluster.Metadata.Environment,
+		Location:    targetCluster.Metadata.Location,
+	}, nil
+}
+
 // filterMetrics filters the processed state by region, cluster, and date range
 func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	// Find the specified region in MSK sources

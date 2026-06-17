@@ -153,7 +153,7 @@ func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -185,7 +185,7 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -222,7 +222,7 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 func TestBuildJMXQueryInfo(t *testing.T) {
 	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
 	defs := BrokerMetricDefinitions()
-	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second, defs)
+	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second, defs, "broker")
 
 	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
 	assert.Len(t, infos, expectedCount)
@@ -256,8 +256,8 @@ func TestBuildJMXQueryInfo(t *testing.T) {
 	assert.Contains(t, infos[6].AggregationNote, "Wildcard")
 
 	// Empty brokerURLs should return nil
-	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second, defs))
-	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second, defs))
+	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second, defs, "broker"))
+	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second, defs, "broker"))
 }
 
 func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
@@ -296,7 +296,7 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -320,7 +320,7 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 }
 
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
-	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions())
+	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions(), "broker")
 	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)
 
 	require.Error(t, err)
