@@ -480,4 +480,3 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(), labels)
 	return promService.CollectMetrics(ctx, queryRange)
 }
-

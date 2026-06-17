@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -59,7 +60,7 @@ var broadTopicPatterns = []struct {
 // independently and produces a {Status, Evidence} pair — Triggered
 // rows render at the top of §Red Flags, with NotTriggered / Unknown
 // collapsed into a tail summary.
-func detectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.RedFlagsSection {
+func detectRedFlags(state report.ProcessedState, plan *types.Plan, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.RedFlagsSection {
 	clusters := collectClusters(state)
 	if len(clusters) == 0 {
 		return nil
@@ -124,7 +125,7 @@ func evalSchemalessSource(plan *types.Plan, inputs types.PlanInputsResolved) typ
 // Versions are dot-separated integer segments; the comparator
 // (`versionAtLeast`) already strips pre-release suffixes and handles
 // the "latest" alias.
-func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConfig) types.RedFlag {
+func evalKafkaVersionBelowFloor(clusters []report.ProcessedCluster, cfg *PlanConfig) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDKafkaVersionBelowCLFloor, Title: "Kafka version below the Cluster Linking floor"}
 	floor := cfg.ClusterLinking.SourceMinKafkaVersion
 	type versionHit struct {
@@ -175,7 +176,7 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 // version transparently and never populates
 // `Provisioned.CurrentBrokerSoftwareInfo`. Callers MUST guard with
 // `isServerless` before interpreting "" as "scan didn't run".
-func kafkaVersionOf(c types.ProcessedCluster) string {
+func kafkaVersionOf(c report.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.CurrentBrokerSoftwareInfo == nil || prov.CurrentBrokerSoftwareInfo.KafkaVersion == nil {
 		return ""
@@ -185,7 +186,7 @@ func kafkaVersionOf(c types.ProcessedCluster) string {
 
 // ----- Row 3: IAM auth enabled -----
 
-func evalIAMAuthEnabled(clusters []types.ProcessedCluster) types.RedFlag {
+func evalIAMAuthEnabled(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDIAMAuthEnabled, Title: "IAM authentication enabled on the source"}
 	var hits []string
 	for _, c := range clusters {
@@ -267,7 +268,7 @@ func evalPartitionApproachingCap(plan *types.Plan, cfg *PlanConfig) types.RedFla
 // topic-population + cluster type per the spec: a PROVISIONED cluster
 // with topics populated AND an empty `connectors` slice counts as
 // "actually zero".
-func evalMSKConnectPresent(clusters []types.ProcessedCluster) types.RedFlag {
+func evalMSKConnectPresent(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDMSKConnectPresent, Title: "MSK Connect managed connectors present"}
 	var triggered []string
 	var unscanned []string
@@ -307,7 +308,7 @@ func evalMSKConnectPresent(clusters []types.ProcessedCluster) types.RedFlag {
 // Same nil-vs-empty disambiguation as row 6: empty struct with topics
 // populated counts as "no Connect clusters"; nil struct = scan didn't
 // run.
-func evalSelfManagedConnectPresent(clusters []types.ProcessedCluster) types.RedFlag {
+func evalSelfManagedConnectPresent(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDSelfManagedConnectPresent, Title: "Self-managed Connect clusters present"}
 	var triggered []string
 	var unscanned []string
@@ -344,7 +345,7 @@ func evalSelfManagedConnectPresent(clusters []types.ProcessedCluster) types.RedF
 
 // ----- Row 8: multi-region source -----
 
-func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
+func evalMultiRegionSource(state report.ProcessedState) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDMultiRegionSource, Title: "Source clusters span multiple AWS regions"}
 	regions := map[string]struct{}{}
 	for _, src := range state.Sources {
@@ -389,7 +390,7 @@ func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
 // cluster_signals.go) so semantics stay in lockstep with V1 — when
 // `aclScanRan` returns true the scan succeeded; an empty slice in
 // that case is "actually zero", not "scan didn't run".
-func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
+func evalZeroACLsWithIAM(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDZeroACLsWithIAM, Title: "Zero ACLs with IAM auth enabled — verify SE expected behavior"}
 	var hits []string
 	var serverlessIAM []string // Serverless+IAM clusters can't expose ACLs via the kcp scan path
@@ -448,7 +449,7 @@ func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
 
 // ----- Row 10: client inventory gap -----
 
-func evalClientInventoryGap(clusters []types.ProcessedCluster) types.RedFlag {
+func evalClientInventoryGap(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDClientInventoryGap, Title: "Client inventory not populated"}
 	var hits []string
 	for _, c := range clusters {
@@ -472,7 +473,7 @@ func evalClientInventoryGap(clusters []types.ProcessedCluster) types.RedFlag {
 
 // ----- Row 11: MSK Express broker tier -----
 
-func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
+func evalMSKExpressBrokerTier(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDMSKExpressBrokerTier, Title: "MSK Express broker tier in use"}
 	type expressHit struct {
 		Cluster      string `json:"cluster"`
@@ -520,7 +521,7 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 // treating "" as "scan didn't run"; for Serverless inventory accounting,
 // see `inventoryInstanceTypes` (cost_reconciliation.go), which registers
 // Serverless clusters under the synthetic `Serverless-Hours` type.
-func brokerInstanceType(c types.ProcessedCluster) string {
+func brokerInstanceType(c report.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.BrokerNodeGroupInfo == nil || prov.BrokerNodeGroupInfo.InstanceType == nil {
 		return ""
@@ -530,7 +531,7 @@ func brokerInstanceType(c types.ProcessedCluster) string {
 
 // ----- Row 12: tiered storage in use -----
 
-func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
+func evalTieredStorageInUse(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDTieredStorageInUse, Title: "Tiered storage in use on the source"}
 	var hits []string
 	for _, c := range clusters {
@@ -579,7 +580,7 @@ func evalEOSInUse(inputs types.PlanInputsResolved) types.RedFlag {
 // Two signals: explicit customer declaration OR topic-pattern scan
 // for `-changelog` / `-repartition` artifacts. Either one fires the
 // row; the evidence string names which signal won.
-func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) types.RedFlag {
+func evalKafkaStreamsInUse(clusters []report.ProcessedCluster, inputs types.PlanInputsResolved) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDKafkaStreamsInUse, Title: "Kafka Streams apps consuming from the source"}
 	if inputs.KafkaStreamsInUse != nil && *inputs.KafkaStreamsInUse {
 		rf.Status = types.RedFlagTriggered
@@ -619,7 +620,7 @@ func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanI
 // changelog/repartition, transactions, heartbeats) against every
 // topic on every cluster. Surfaces deployments with custom prefixes
 // that the structured rows above might miss.
-func evalBroadTopicPatternMatch(clusters []types.ProcessedCluster) types.RedFlag {
+func evalBroadTopicPatternMatch(clusters []report.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDBroadTopicPatternMatch, Title: "Broad topic-name pattern scan — items the structured rows might miss"}
 	hitsByPattern := map[string][]string{}
 	anyHits := false

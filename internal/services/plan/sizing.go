@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -26,7 +27,7 @@ const bytesPerMBps = 1_048_576.0
 // FinalECKU = SLA floor and Degraded = true rather than failing the whole
 // plan build. The renderer surfaces the gap so the customer knows the
 // sizing column is a placeholder.
-func computeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterSizing {
+func computeClusterSizing(c report.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterSizing {
 	caps := cfg.EnterpriseCaps
 	aggs := c.ClusterMetrics.Aggregates
 
@@ -159,7 +160,7 @@ func pickMaxDriver(ingress, egress, partitions float64) (float64, string) {
 	return maxR, driver
 }
 
-func userPartitionsOf(c types.ProcessedCluster) int {
+func userPartitionsOf(c report.ProcessedCluster) int {
 	if c.KafkaAdminClientInformation.Topics == nil {
 		return 0
 	}
