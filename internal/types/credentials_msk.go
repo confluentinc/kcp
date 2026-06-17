@@ -44,6 +44,21 @@ func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) 
 	return &credsFile, nil
 }
 
+// UpsertTargetedClusters creates or replaces only the clusters present in newRegion.Clusters,
+// preserving the auth config of every other cluster in the region. If the region does not
+// exist it is added as-is. Mirrors State.UpsertTargetedClusters for the credentials file.
+func (c *Credentials) UpsertTargetedClusters(newRegion RegionAuth) {
+	for i := range c.Regions {
+		if c.Regions[i].Name == newRegion.Name {
+			for _, targeted := range newRegion.Clusters {
+				c.Regions[i].UpsertCluster(targeted)
+			}
+			return
+		}
+	}
+	c.Regions = append(c.Regions, newRegion)
+}
+
 // UpsertRegion inserts a new region or updates an existing one by name
 // Automatically preserves existing cluster auth configurations
 func (c *Credentials) UpsertRegion(newRegion RegionAuth) {
@@ -125,6 +140,19 @@ func (ra *RegionAuth) MergeClusterConfigs(existingRegion RegionAuth) {
 			ra.Clusters[i].AuthMethod.MergeWith(existingCluster.AuthMethod)
 		}
 	}
+}
+
+// UpsertCluster creates or replaces a single cluster auth by ARN, preserving the auth
+// configs of every other cluster and merging auth-method config onto the replaced entry.
+func (ra *RegionAuth) UpsertCluster(newCluster ClusterAuth) {
+	for i := range ra.Clusters {
+		if ra.Clusters[i].Arn == newCluster.Arn {
+			newCluster.AuthMethod.MergeWith(ra.Clusters[i].AuthMethod)
+			ra.Clusters[i] = newCluster
+			return
+		}
+	}
+	ra.Clusters = append(ra.Clusters, newCluster)
 }
 
 type ClusterAuth struct {

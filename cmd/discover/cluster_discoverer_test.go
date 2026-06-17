@@ -33,7 +33,7 @@ func TestClusterDiscoverer_NilClusterInfo(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil ClusterInfo")
@@ -46,7 +46,7 @@ func TestClusterDiscoverer_DescribeClusterError(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
 
 	require.Error(t, err)
 }
@@ -62,7 +62,7 @@ func TestClusterDiscoverer_NilBrokerNodeGroupInfo(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
 
 	// Expect an error (networking cannot proceed without BrokerNodeGroupInfo),
 	// but NOT a panic.
@@ -81,7 +81,7 @@ func TestClusterDiscoverer_EmptySubnets(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "subnet")
@@ -95,7 +95,7 @@ func TestClusterDiscoverer_ServerlessCluster(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
-	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
 
 	require.NoError(t, err)
 	assert.Equal(t, testClusterName, result.Name)
@@ -126,7 +126,7 @@ func TestClusterDiscoverer_SkipMetrics(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true /* skipTopics */, true /* skipMetrics */)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true /* skipTopics */, true /* skipMetrics */, "60s")
 
 	require.NoError(t, err)
 	assert.False(t, metricsCalled, "metric service should not be called when skipMetrics=true")
@@ -160,7 +160,7 @@ func TestClusterDiscoverer_NilClusterInfoInDiscoverMetrics(t *testing.T) {
 	}
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
-	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, false /* skipMetrics=false */)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, false /* skipMetrics=false */, "60s")
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil ClusterInfo")
