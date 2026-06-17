@@ -6,6 +6,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -82,7 +83,7 @@ func NewTargetInfraHCLService() *TargetInfraHCLService {
 	}
 }
 
-func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClusterWizardRequest) types.MigrationInfraTerraformProject {
+func (ti *TargetInfraHCLService) GenerateTerraformFiles(request hclrequests.TargetClusterWizardRequest) types.MigrationInfraTerraformProject {
 	requiredModules := []types.MigrationInfraTerraformModule{
 		{
 			Name:        "confluent_cloud",
@@ -117,7 +118,7 @@ func (ti *TargetInfraHCLService) GenerateTerraformFiles(request types.TargetClus
 // Root-Level Generation
 // ============================================================================
 
-func (ti *TargetInfraHCLService) generateRootMainTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateRootMainTf(request hclrequests.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -189,7 +190,7 @@ func (ti *TargetInfraHCLService) generateRootProvidersTf() string {
 	return string(f.Bytes())
 }
 
-func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateRootOutputsTf(request hclrequests.TargetClusterWizardRequest) string {
 	// Root outputs reference module outputs so users can see key values after terraform apply
 	confluentCloudOutputs := modules.GetConfluentCloudModuleOutputDefinitions(request, modules.ConfluentCloudOutputParams{
 		EnvironmentName:    ti.ResourceNames.Environment,
@@ -254,7 +255,7 @@ func (ti *TargetInfraHCLService) generateRootOutputsTf(request types.TargetClust
 	return GenerateOutputsTf(rootOutputs)
 }
 
-func (ti *TargetInfraHCLService) generateInputsAutoTfvars(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateInputsAutoTfvars(request hclrequests.TargetClusterWizardRequest) string {
 	return GenerateInputsAutoTfvars(modules.GetTargetClusterModuleVariableValues(request))
 }
 
@@ -262,7 +263,7 @@ func (ti *TargetInfraHCLService) generateInputsAutoTfvars(request types.TargetCl
 // Confluent Cloud Module
 // ============================================================================
 
-func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request hclrequests.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -371,11 +372,11 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleMainTf(request type
 	return string(f.Bytes())
 }
 
-func (ti *TargetInfraHCLService) generateConfluentCloudModuleVariablesTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateConfluentCloudModuleVariablesTf(request hclrequests.TargetClusterWizardRequest) string {
 	return GenerateVariablesTf(modules.GetConfluentCloudVariableDefinitions(request))
 }
 
-func (ti *TargetInfraHCLService) generateConfluentCloudModuleOutputsTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateConfluentCloudModuleOutputsTf(request hclrequests.TargetClusterWizardRequest) string {
 	outputs := modules.GetConfluentCloudModuleOutputDefinitions(request, modules.ConfluentCloudOutputParams{
 		EnvironmentName:    ti.ResourceNames.Environment,
 		NetworkName:        ti.ResourceNames.Network,
@@ -399,14 +400,14 @@ func (ti *TargetInfraHCLService) generateConfluentCloudModuleVersionsTf() string
 // Private Link Module
 // ============================================================================
 
-func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generatePrivateLinkModuleMainTf(request hclrequests.TargetClusterWizardRequest) string {
 	if request.ClusterType == "dedicated" {
 		return ti.generateDedicatedPrivateLinkModuleMainTf(request)
 	}
 	return ti.generateEnterprisePrivateLinkModuleMainTf(request)
 }
 
-func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(request hclrequests.TargetClusterWizardRequest) string {
 	networkDnsDomainVarRef := "var." + modules.VarNetworkDNSDomain
 	networkPlEndpointServiceVarRef := "var." + modules.VarNetworkPrivateLinkEndpointService
 
@@ -471,7 +472,7 @@ func (ti *TargetInfraHCLService) generateDedicatedPrivateLinkModuleMainTf(reques
 	return string(f.Bytes())
 }
 
-func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(request hclrequests.TargetClusterWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -539,7 +540,7 @@ func (ti *TargetInfraHCLService) generateEnterprisePrivateLinkModuleMainTf(reque
 	return string(f.Bytes())
 }
 
-func (ti *TargetInfraHCLService) generatePrivateLinkModuleVariablesTf(request types.TargetClusterWizardRequest) string {
+func (ti *TargetInfraHCLService) generatePrivateLinkModuleVariablesTf(request hclrequests.TargetClusterWizardRequest) string {
 	return GenerateVariablesTf(modules.GetTargetClusterPrivateLinkModuleVariableDefinitions(request))
 }
 

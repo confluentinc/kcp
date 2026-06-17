@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -365,7 +366,7 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	mskClusterId := aws.ToString(&cluster.KafkaAdminClientInformation.ClusterID)
 
 	opts := &MigrationInfraOpts{
-		MigrationWizardRequest: types.MigrationWizardRequest{
+		MigrationWizardRequest: hclrequests.MigrationWizardRequest{
 			HasExistingInternetGateway: existingInternetGateway,
 
 			VpcId:           vpcId,
@@ -549,7 +550,7 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	bootstrapServers := strings.Join(oskCluster.BootstrapServers, ",")
 
 	opts := &MigrationInfraOpts{
-		MigrationWizardRequest: types.MigrationWizardRequest{
+		MigrationWizardRequest: hclrequests.MigrationWizardRequest{
 			HasExistingInternetGateway: existingInternetGateway,
 			VpcId:                      oskVpcId,
 			SourceRegion:               oskRegion,
@@ -631,12 +632,12 @@ func parseOSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 	return opts, nil
 }
 
-func buildOSKExtOutboundBrokers(cluster *types.OSKDiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
+func buildOSKExtOutboundBrokers(cluster *types.OSKDiscoveredCluster) ([]hclrequests.ExtOutboundClusterKafkaBroker, error) {
 	if len(cluster.BootstrapServers) == 0 {
 		return nil, fmt.Errorf("no bootstrap servers found for OSK cluster %s", cluster.ID)
 	}
 
-	var brokers []types.ExtOutboundClusterKafkaBroker
+	var brokers []hclrequests.ExtOutboundClusterKafkaBroker
 	for i, server := range cluster.BootstrapServers {
 		host, portStr, err := net.SplitHostPort(server)
 		if err != nil {
@@ -646,9 +647,9 @@ func buildOSKExtOutboundBrokers(cluster *types.OSKDiscoveredCluster) ([]types.Ex
 		if err != nil {
 			return nil, fmt.Errorf("failed to parse port from '%s': %w", server, err)
 		}
-		brokers = append(brokers, types.ExtOutboundClusterKafkaBroker{
+		brokers = append(brokers, hclrequests.ExtOutboundClusterKafkaBroker{
 			ID: fmt.Sprintf("osk-broker-%d", i),
-			Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
+			Endpoints: []hclrequests.ExtOutboundClusterKafkaEndpoint{
 				{Host: host, Port: port},
 			},
 		})
@@ -687,7 +688,7 @@ func getBootstrapBrokers(cluster *types.DiscoveredCluster, migrationType types.M
 	return bootstrap, nil
 }
 
-func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
+func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]hclrequests.ExtOutboundClusterKafkaBroker, error) {
 	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerStringSaslScram)
 	if bootstrapStr == "" {
 		return nil, fmt.Errorf("sasl/scram bootstrap brokers string is empty for cluster %s", cluster.Name)
@@ -696,7 +697,7 @@ func buildExtOutboundBrokers(cluster *types.DiscoveredCluster) ([]types.ExtOutbo
 	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9096)
 }
 
-func buildExtOutboundBrokersForPlaintext(cluster *types.DiscoveredCluster) ([]types.ExtOutboundClusterKafkaBroker, error) {
+func buildExtOutboundBrokersForPlaintext(cluster *types.DiscoveredCluster) ([]hclrequests.ExtOutboundClusterKafkaBroker, error) {
 	bootstrapStr := aws.ToString(cluster.AWSClientInformation.BootstrapBrokers.BootstrapBrokerString)
 	if bootstrapStr == "" {
 		return nil, fmt.Errorf("plaintext bootstrap brokers string is empty for cluster %s", cluster.Name)
@@ -705,7 +706,7 @@ func buildExtOutboundBrokersForPlaintext(cluster *types.DiscoveredCluster) ([]ty
 	return buildExtOutboundBrokersFromBootstrap(cluster, bootstrapStr, 9092)
 }
 
-func buildExtOutboundBrokersFromBootstrap(cluster *types.DiscoveredCluster, bootstrapStr string, port int) ([]types.ExtOutboundClusterKafkaBroker, error) {
+func buildExtOutboundBrokersFromBootstrap(cluster *types.DiscoveredCluster, bootstrapStr string, port int) ([]hclrequests.ExtOutboundClusterKafkaBroker, error) {
 	bootstrapBrokers := strings.Split(bootstrapStr, ",")
 
 	var formattedBootstrapBrokers []string
@@ -716,17 +717,17 @@ func buildExtOutboundBrokersFromBootstrap(cluster *types.DiscoveredCluster, boot
 	}
 	slices.Sort(formattedBootstrapBrokers)
 
-	var brokers []types.ExtOutboundClusterKafkaBroker
+	var brokers []hclrequests.ExtOutboundClusterKafkaBroker
 	for _, subnet := range cluster.AWSClientInformation.ClusterNetworking.Subnets {
 		brokerIndex := subnet.SubnetMskBrokerId - 1
 		if brokerIndex < 0 || brokerIndex >= len(formattedBootstrapBrokers) {
 			return nil, fmt.Errorf("broker ID %d is out of range for the available bootstrap brokers (count: %d)", subnet.SubnetMskBrokerId, len(formattedBootstrapBrokers))
 		}
 
-		broker := types.ExtOutboundClusterKafkaBroker{
+		broker := hclrequests.ExtOutboundClusterKafkaBroker{
 			ID:       fmt.Sprintf("%d", subnet.SubnetMskBrokerId),
 			SubnetID: subnet.SubnetId,
-			Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
+			Endpoints: []hclrequests.ExtOutboundClusterKafkaEndpoint{
 				{
 					Host: formattedBootstrapBrokers[brokerIndex],
 					Port: port,

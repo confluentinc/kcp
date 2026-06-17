@@ -12,6 +12,7 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
@@ -324,7 +325,7 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrationAssets(c echo.Context) error {
-	var req types.MigrationWizardRequest
+	var req hclrequests.MigrationWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -370,7 +371,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	return c.JSON(http.StatusCreated, terraformModules)
 }
 
-func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
+func validateClusterLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	if req.TargetClusterId == "" {
@@ -393,7 +394,7 @@ func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	return nil
 }
 
-func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
+func validatePrivateLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	// Check required fields
@@ -439,7 +440,7 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	return nil
 }
 
-func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
+func validatePrivateClusterLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	if req.VpcId == "" {
@@ -484,7 +485,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 	// Default PreventDestroy to true before binding. If the JSON request includes
 	// "prevent_destroy": false, the binding will override this. If the field is
 	// omitted from the request, this default of true is preserved.
-	req := types.TargetClusterWizardRequest{
+	req := hclrequests.TargetClusterWizardRequest{
 		PreventDestroy: true,
 	}
 	if err := c.Bind(&req); err != nil {
@@ -543,7 +544,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
-	var req types.MigrateAclsRequest
+	var req hclrequests.MigrateAclsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -614,7 +615,7 @@ func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
-	var req types.MirrorTopicsRequest
+	var req hclrequests.MirrorTopicsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -625,7 +626,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 	// Default mode is mirror for back-compat with pre-mode-flag clients;
 	// the new wizard always sends Mode explicitly.
 	if req.Mode == "" {
-		req.Mode = types.MigrateTopicsModeMirror
+		req.Mode = hclrequests.MigrateTopicsModeMirror
 	}
 
 	// --mode new emits confluent_kafka_topic resources with partitions and
@@ -633,7 +634,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 	// payload. Hydrate from state using the (source_type, cluster_id) the
 	// wizard sends as hidden fields and the selected_topics name list as the
 	// filter. Mirror mode doesn't need this (cluster link drives configs).
-	if req.Mode == types.MigrateTopicsModeNew {
+	if req.Mode == hclrequests.MigrateTopicsModeNew {
 		if err := ui.hydrateTopicsFromState(c, &req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Failed to hydrate topic details for new mode",
@@ -663,7 +664,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 // populates req.Topics with full TopicDetails (partitions, configurations) for
 // each name in req.SelectedTopics. New-mode HCL generation needs partition
 // counts and config maps that the wizard's name-only selection can't carry.
-func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequest) error {
+func (ui *UI) hydrateTopicsFromState(c echo.Context, req *hclrequests.MirrorTopicsRequest) error {
 	if req.ClusterId == "" || req.SourceType == "" {
 		return fmt.Errorf("source_type and cluster_id are required for --mode new (wizard should send these as hidden fields)")
 	}
@@ -738,7 +739,7 @@ func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject)
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
-	var req types.MigrateSchemasRequest
+	var req hclrequests.MigrateSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -758,7 +759,7 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateGlueSchemasAssets(c echo.Context) error {
-	var req types.MigrateGlueSchemasRequest
+	var req hclrequests.MigrateGlueSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
