@@ -226,9 +226,9 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 // Private Helper Functions - Query Building
 func (ms *MetricService) buildBrokerMetricQueries(clusterName string, period int32) ([]cloudwatchtypes.MetricDataQuery, []types.MetricQueryInfo) {
 	metricStatMap := map[string]string{
-		"BytesInPerSec":    "Maximum",
-		"BytesOutPerSec":   "Maximum",
-		"MessagesInPerSec": "Maximum",
+		"BytesInPerSec":    "Average",
+		"BytesOutPerSec":   "Average",
+		"MessagesInPerSec": "Average",
 		"PartitionCount":   "Maximum",
 	}
 
