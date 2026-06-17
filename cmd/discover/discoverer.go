@@ -14,7 +14,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/services/msk"
-	"github.com/confluentinc/kcp/internal/services/msk_connect"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -102,13 +101,6 @@ func (d *Discoverer) discoverRegions() error {
 			continue
 		}
 
-		mskConnectClient, err := client.NewMSKConnectClient(region)
-		if err != nil {
-			slog.Error("failed to create msk connect client", "region", region, "error", err)
-			continue
-		}
-		mskConnectService := msk_connect.NewMSKConnectService(mskConnectClient)
-
 		// discover region-level resources (costs, configurations, cluster ARNs)
 		regionDiscoverer := NewRegionDiscoverer(mskService, costService)
 		discoveredRegion, err := regionDiscoverer.Discover(context.Background(), region, d.skipCosts)
@@ -118,7 +110,7 @@ func (d *Discoverer) discoverRegions() error {
 		}
 
 		// discover detailed cluster information for each cluster in the region
-		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService, mskConnectService)
+		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService)
 		discoveredClusters := []types.DiscoveredCluster{}
 
 		arnsToDiscover := filterArnsToDiscover(discoveredRegion.ClusterArns, d.clusterArns)
@@ -304,7 +296,7 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 		return nil
 	}
 
-	headers := []string{"Cluster Name", "Region", "# of Brokers", "Public Access", "Kafka Version", "MSK Connectors"}
+	headers := []string{"Cluster Name", "Region", "# of Brokers", "Public Access", "Kafka Version"}
 	data := [][]string{}
 	arnData := [][]string{}
 
@@ -315,7 +307,6 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 		numBrokers := strconv.Itoa(cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
 		publicAccess := getPublicAccess(cluster)
 		kafkaVersion := utils.GetKafkaVersion(cluster.AWSClientInformation)
-		connectorCount := len(cluster.AWSClientInformation.Connectors)
 
 		data = append(data, []string{
 			clusterName,
@@ -323,7 +314,6 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 			numBrokers,
 			publicAccess,
 			kafkaVersion,
-			strconv.Itoa(connectorCount),
 		})
 		arnData = append(arnData, []string{clusterName, clusterArn})
 	}

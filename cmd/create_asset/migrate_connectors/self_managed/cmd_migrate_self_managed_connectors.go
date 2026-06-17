@@ -26,7 +26,7 @@ func NewMigrateSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd := &cobra.Command{
 		Use:   "self-managed",
 		Short: "Migrate self-managed connectors to Confluent Cloud",
-		Long:  "Generate Terraform configuration that recreates self-managed Kafka Connect connectors (discovered by `kcp scan self-managed-connectors`) as Confluent Cloud fully-managed connectors.",
+		Long:  "Generate Terraform configuration that recreates self-managed Kafka Connect connectors recorded in the state file as Confluent Cloud fully-managed connectors.",
 		Example: `  kcp create-asset migrate-connectors self-managed \
       --state-file kcp-state.json \
       --source-type msk \

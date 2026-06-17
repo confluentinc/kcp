@@ -14,6 +14,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	connector_utils "github.com/confluentinc/kcp/internal/utils"
 )
@@ -88,6 +89,11 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 	}
 
 	fmt.Printf("🔍 Found %d connector(s) to migrate\n", len(mc.Connectors))
+
+	// Write shared Terraform infrastructure files (providers.tf, variables.tf)
+	if err := hcl.WriteMigrateConnectorsInfraFiles(mc.OutputDir); err != nil {
+		return err
+	}
 
 	tmplContent, err := assetsFs.ReadFile("assets/connector.tmpl")
 	if err != nil {

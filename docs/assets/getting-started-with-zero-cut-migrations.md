@@ -58,6 +58,9 @@ For MSK clusters, when the source is not publicly accessible, KCP can provision 
 
 For non-MSK clusters and full Cluster Linking configuration guidance, see the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html). For AWS MSK over private networking specifically, see [Cluster Linking with Private Networking](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html).
 
+> [!NOTE]
+> **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking. The linking-based `create-asset` paths (`migration-infra` for all types, `migrate-topics --mode mirror`, and `migrate-schemas --url`) are unsupported there and are refused when you declare `--cc-environment cc-gov`. See [Source compatibility](source-compatibility.md#confluent-cloud-destination) for the full matrix.
+
 ---
 
 ## 5. Authentication Support Matrix

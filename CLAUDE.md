@@ -112,6 +112,8 @@ A single Docker Compose environment (`integration-tests/osk-scan/`) runs all OSK
 |---|---|---|---|
 | kafka-plaintext | 9092 | — | None |
 | kafka-sasl | 9093 | — | SASL/SCRAM-SHA-256 |
+| kafka-sasl-sha512 | 9093 | — | SASL/SCRAM-SHA-512 |
+| kafka-sasl-sha512-only | 9099 | — | SASL/SCRAM-SHA-512 (dedicated broker, SHA-512 only) |
 | kafka-tls | 9094 | — | mTLS |
 | kafka-sasl-ssl | 9095 | — | SASL/SCRAM + TLS |
 | jmx-noauth | 9092 | 8778 (Jolokia) | None |
@@ -417,12 +419,12 @@ kcp ui
 kcp create-asset target-infra --state-file kcp-state.json --cluster-arn <arn> ...
 
 # 6. Generate migration infrastructure Terraform
-kcp create-asset migration-infra --state-file kcp-state.json --cluster-arn <arn> --type 3 ...
+kcp create-asset migration-infra --state-file kcp-state.json --cc-environment cc --cluster-arn <arn> --type 3 ...
 
 # 7. Generate migration assets
-kcp create-asset migrate-topics --state-file kcp-state.json --cluster-arn <arn> ...
+kcp create-asset migrate-topics --state-file kcp-state.json --cc-environment cc --cluster-arn <arn> ...
 kcp create-asset migrate-acls kafka --state-file kcp-state.json --cluster-arn <arn>
-kcp create-asset migrate-schemas --state-file kcp-state.json --url <schema-registry-url>
+kcp create-asset migrate-schemas --state-file kcp-state.json --cc-environment cc --url <schema-registry-url>
 
 # 8. Initialize migration
 kcp migration init --state-file kcp-state.json --cluster-arn <arn>

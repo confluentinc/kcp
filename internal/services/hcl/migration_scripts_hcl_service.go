@@ -69,7 +69,7 @@ func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.Mir
 	}
 
 	folder := types.MigrationScriptsTerraformFolder{
-		ProvidersTf:     s.generateProvidersTf(),
+		ProvidersTf:     s.GenerateProvidersTf(),
 		VariablesTf:     s.generateMirrorTopicsVariablesTf(),
 		AdditionalFiles: perTopicFiles,
 	}
@@ -126,7 +126,7 @@ func topicsForRequest(request types.MirrorTopicsRequest) []types.TopicDetails {
 func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles(request types.MigrateAclsRequest) (types.TerraformFiles, error) {
 	return types.TerraformFiles{
 		PerPrincipalTf:   s.generatePerPrincipalACLsTf(request),
-		ProvidersTf:      s.generateProvidersTf(),
+		ProvidersTf:      s.GenerateProvidersTf(),
 		VariablesTf:      s.generateMigrateACLsVariablesTf(),
 		InputsAutoTfvars: s.generateMigrateACLsInputsAutoTfvars(request),
 	}, nil
@@ -155,7 +155,11 @@ func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.M
 	return ms, nil
 }
 
-func (s *MigrationScriptsHCLService) generateProvidersTf() string {
+// GenerateProvidersTf returns the providers.tf content declaring the Confluent
+// Terraform provider. Exported so that commands that bypass the full HCL
+// project pipeline (e.g. migrate-connectors) can still emit a valid provider
+// block.
+func (s *MigrationScriptsHCLService) GenerateProvidersTf() string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -319,6 +323,17 @@ func (s *MigrationScriptsHCLService) generateMigrateACLsInputsAutoTfvars(request
 }
 
 // ============================================================================
+// Migrate Connectors Generation Methods
+// ============================================================================
+
+// GenerateMigrateConnectorsVariablesTf returns the variables.tf content for the
+// migrate-connectors output. It declares the Confluent Cloud API key/secret
+// variables required by the provider block in providers.tf.
+func (s *MigrationScriptsHCLService) GenerateMigrateConnectorsVariablesTf() string {
+	return GenerateVariablesTf(confluent.ConfluentProviderVariables)
+}
+
+// ============================================================================
 // Migrate Glue Schemas Generation Methods
 // ============================================================================
 
@@ -337,7 +352,7 @@ func (s *MigrationScriptsHCLService) GenerateMigrateGlueSchemasFiles(request typ
 		}
 		folder := types.MigrationScriptsTerraformFolder{
 			Name:             registry.RegistryName,
-			ProvidersTf:      s.generateProvidersTf(),
+			ProvidersTf:      s.GenerateProvidersTf(),
 			VariablesTf:      s.generateMigrateGlueSchemasVariablesTf(),
 			InputsAutoTfvars: s.generateMigrateGlueSchemasInputsAutoTfvars(request.ConfluentCloudSchemaRegistryURL),
 			AdditionalFiles:  generatedFiles,

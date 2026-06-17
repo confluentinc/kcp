@@ -10,6 +10,19 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+// WriteMigrateConnectorsInfraFiles writes the shared Terraform infrastructure
+// files (providers.tf, variables.tf) needed by migrate-connectors output.
+func WriteMigrateConnectorsInfraFiles(outputDir string) error {
+	svc := NewMigrationScriptsHCLService()
+	if err := os.WriteFile(filepath.Join(outputDir, "providers.tf"), []byte(svc.GenerateProvidersTf()), 0644); err != nil {
+		return fmt.Errorf("failed to write providers.tf: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(outputDir, "variables.tf"), []byte(svc.GenerateMigrateConnectorsVariablesTf()), 0644); err != nil {
+		return fmt.Errorf("failed to write variables.tf: %w", err)
+	}
+	return nil
+}
+
 // WriteTerraformProject writes a MigrationInfraTerraformProject to disk at the given output directory.
 func WriteTerraformProject(outputDir string, project types.MigrationInfraTerraformProject) error {
 	if project.MainTf != "" {
