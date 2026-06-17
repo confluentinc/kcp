@@ -29,6 +29,8 @@ const (
 	RedFlagIDEOSInUse                  = "eos_in_use"
 	RedFlagIDKafkaStreamsInUse         = "kafka_streams_in_use"
 	RedFlagIDBroadTopicPatternMatch    = "broad_topic_pattern_match"
+	RedFlagIDCostInventoryHidden       = "cost_inventory_hidden_clusters"
+	RedFlagIDMidMigrationDetected      = "mid_migration_detected"
 )
 
 // expressInstanceFamilies are the MSK Express broker instance-type
@@ -80,8 +82,99 @@ func detectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfi
 		evalEOSInUse(inputs),
 		evalKafkaStreamsInUse(clusters, inputs),
 		evalBroadTopicPatternMatch(clusters),
+		evalCostInventoryHidden(state, plan),
+		evalMidMigrationDetected(clusters),
 	}
 	return &types.RedFlagsSection{Rows: rows}
+}
+
+// ----- Row 17: mid-migration detection -----
+
+// Triggered when the source shows any signal of an active migration to
+// Confluent Cloud. Two signal classes:
+//
+//  1. `_confluent-link-*` internal topics — Confluent Cloud creates
+//     them on the source MSK when a Cluster Link is active.
+//  2. Connector configs (MSK Connect OR self-managed Connect)
+//     containing a `*.confluent.cloud` bootstrap server — the
+//     connector is pointing at a CC destination (Replicator / MM2 /
+//     Sink to CC).
+//
+// Presence of either means the source is already mid-migration (or
+// running parallel-run); the plan should NOT frame the cutover as
+// greenfield. Each signal degrades independently: topic-pattern signal
+// resolves Unknown when no Topics scan is available; the connector
+// signal needs no scan beyond the discovery pass.
+func evalMidMigrationDetected(clusters []types.ProcessedCluster) types.RedFlag {
+	rf := types.RedFlag{ID: RedFlagIDMidMigrationDetected, Title: "Source already mid-migration (active Cluster Link / replicator to Confluent Cloud detected)"}
+	var topicHits []string
+	var connectorHits []string
+	unscannedTopics := 0
+	for _, c := range clusters {
+		if c.KafkaAdminClientInformation.Topics == nil {
+			unscannedTopics++
+		} else if ok, topic := topicPatternFound(c, confluentLinkPattern); ok {
+			topicHits = append(topicHits, fmt.Sprintf("%s (`%s`)", c.Name, topic))
+		}
+		if key := mskConnectCCBootstrap(c); key != "" {
+			connectorHits = append(connectorHits, fmt.Sprintf("%s MSK Connect (`%s`)", c.Name, key))
+		}
+		if key := selfManagedConnectCCBootstrap(c); key != "" {
+			connectorHits = append(connectorHits, fmt.Sprintf("%s self-managed Connect (`%s`)", c.Name, key))
+		}
+	}
+	if len(topicHits) == 0 && len(connectorHits) == 0 {
+		if unscannedTopics == len(clusters) {
+			rf.Status = types.RedFlagUnknown
+			rf.Evidence = "no Topics scan available on any cluster (the topic-pattern signal can't evaluate); connector configs scanned, no CC bootstrap found. Re-run `kcp scan clusters` with topics enumeration to fully evaluate this row."
+			return rf
+		}
+		rf.Status = types.RedFlagNotTriggered
+		return rf
+	}
+	var parts []string
+	if len(topicHits) > 0 {
+		parts = append(parts, "`_confluent-link-*` topics on: "+strings.Join(topicHits, ", "))
+	}
+	if len(connectorHits) > 0 {
+		parts = append(parts, "connectors pointing at CC: "+strings.Join(connectorHits, ", "))
+	}
+	rf.Status = types.RedFlagTriggered
+	rf.Evidence = strings.Join(parts, "; ") + ". Confirm whether this is an in-progress migration vs a parallel-run posture — the plan's cutover framing assumes greenfield by default."
+	return rf
+}
+
+// mskConnectCCBootstrap scans MSK Connect connector configurations for
+// any value containing `.confluent.cloud` — the canonical bootstrap
+// suffix for Confluent Cloud Kafka endpoints. Returns the first
+// `connector_name:config_key` match for evidence, or "" when none.
+func mskConnectCCBootstrap(c types.ProcessedCluster) string {
+	for _, conn := range c.AWSClientInformation.Connectors {
+		for k, v := range conn.ConnectorConfiguration {
+			if strings.Contains(v, ".confluent.cloud") {
+				return conn.ConnectorName + ":" + k
+			}
+		}
+	}
+	return ""
+}
+
+// selfManagedConnectCCBootstrap mirrors mskConnectCCBootstrap for the
+// self-managed Connect path. Config values are `any`, so we coerce to
+// string before substring matching.
+func selfManagedConnectCCBootstrap(c types.ProcessedCluster) string {
+	smc := c.KafkaAdminClientInformation.SelfManagedConnectors
+	if smc == nil {
+		return ""
+	}
+	for _, conn := range smc.Connectors {
+		for k, raw := range conn.Config {
+			if v, ok := raw.(string); ok && strings.Contains(v, ".confluent.cloud") {
+				return conn.Name + ":" + k
+			}
+		}
+	}
+	return ""
 }
 
 // ----- Row 1: schemaless source -----
@@ -529,6 +622,63 @@ func brokerInstanceType(c types.ProcessedCluster) string {
 }
 
 // ----- Row 12: tiered storage in use -----
+
+// ----- Row 16: cost-vs-inventory hidden clusters -----
+
+// Fires Triggered when `kcp report costs` found MSK broker spend on
+// instance types NOT in the discovered inventory. The §Cost vs
+// Inventory Reconciliation section carries the per-candidate detail
+// (region, instance type, total spend, months / days observed); this
+// row is the boolean signal that pulls the customer's eye to that
+// section. Same pattern as row 12 (TieredStorageInUse) + §Tiered
+// Storage section.
+//
+// Tri-state shape: Triggered when the section has candidates;
+// Unknown when no cost data was collected (cost_data_not_collected
+// OQ already nudges the customer to run `kcp report costs`);
+// NotTriggered when the diff was clean.
+func evalCostInventoryHidden(state types.ProcessedState, plan *types.Plan) types.RedFlag {
+	rf := types.RedFlag{ID: RedFlagIDCostInventoryHidden, Title: "Cost data shows MSK spend on undiscovered cluster shapes"}
+	if plan.CostReconciliation != nil && len(plan.CostReconciliation.Candidates) > 0 {
+		hits := make([]string, 0, len(plan.CostReconciliation.Candidates))
+		for _, cand := range plan.CostReconciliation.Candidates {
+			hits = append(hits, fmt.Sprintf("%s (region %s)", cand.InstanceType, cand.Region))
+		}
+		rf.Status = types.RedFlagTriggered
+		rf.Evidence = fmt.Sprintf("instance type(s) billed by AWS but not in `kcp discover` inventory: %s — see §Cost vs Inventory Reconciliation for spend + months observed. Likely indicates a cluster in a different region / account or excluded by scan parameters.", strings.Join(hits, ", "))
+		return rf
+	}
+	// detectCostReconciliation returns nil for both "no cost data" and
+	// "clean diff" — disambiguate by inspecting the state directly.
+	// The cost_data_not_collected OQ already prompts the customer in
+	// the no-data case; here we just keep the row from misleadingly
+	// claiming NotTriggered when there was nothing to diff against.
+	if hasAnyCostData(state) {
+		rf.Status = types.RedFlagNotTriggered
+		return rf
+	}
+	rf.Status = types.RedFlagUnknown
+	rf.Evidence = "no cost data in state file — run `kcp report costs` (see `cost_data_not_collected` in Actions Needed) to evaluate this row"
+	return rf
+}
+
+// hasAnyCostData reports whether at least one MSK region in the state
+// carries Cost Explorer results. Mirrors the check
+// detectCostReconciliationOpenQuestions does for the
+// cost_data_not_collected OQ.
+func hasAnyCostData(state types.ProcessedState) bool {
+	for _, src := range state.Sources {
+		if src.MSKData == nil {
+			continue
+		}
+		for _, region := range src.MSKData.Regions {
+			if len(region.Costs.Results) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
 	rf := types.RedFlag{ID: RedFlagIDTieredStorageInUse, Title: "Tiered storage in use on the source"}

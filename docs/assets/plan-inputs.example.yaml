@@ -1,6 +1,6 @@
 # plan-inputs.yaml — per-customer overrides for `kcp report plan`.
 #
-# All fields are optional. Pinned defaults live in plan-config.yaml
+# All top-level fields are optional. Pinned defaults live in plan-config.yaml
 # (embedded in the KCP binary). A missing field falls back to its default.
 #
 # Field groups:
@@ -11,10 +11,19 @@
 #   - cutover approach + gateway prereqs
 #   - client auth migration (target auth, per-cluster overrides)
 #   - schema migration (strategy + CP/edition/reachability for Schema Linking)
+#   - per-cluster facts (`clusters:` block) — either OVERLAY a scanned
+#     cluster or SYNTHESISE one when no scan file is available
 #
 # Usage:
+#   # From a kcp scan (with your overrides):
 #   kcp report plan \
 #     --state-file kcp-state.json \
+#     --plan-inputs plan-inputs.yaml \
+#     --output-dir ./plan-output
+#
+#   # From manual inputs (no scan file).
+#   # Requires at least one entry under `clusters:` with a `region`.
+#   kcp report plan \
 #     --plan-inputs plan-inputs.yaml \
 #     --output-dir ./plan-output
 
@@ -77,19 +86,24 @@
 # downtime_tolerance: let_confluent_choose
 # sub_pattern: app-by-app             # app-by-app (default) | topic-by-topic — only used with Stop-Restart-Repeat
 
-# CC Gateway opt-out. Default true follows Confluent's canonical
-# recommendation; set false to use plain Cluster Linking even when eligible.
-# prefer_gateway: true
+# CC Gateway opt-in. Default `false` — plain Cluster Linking is the
+# canonical recommendation for most migrations. Set `true` for genuinely
+# complex environments where the gateway earns its keep (sub-minute
+# cutovers via seconds_per_service, very large client surfaces, etc.).
+# prefer_gateway: false
 
-# Gateway prereq statuses. All three default to `not_started`. Move to
-# `in_progress` to declare intent, `complete` once the prereq is satisfied.
-# The Plan can recommend the canonical gateway-mediated path only when all
-# applicable prereqs are at `in_progress` or `complete` (the IAM prereq is
-# only consulted if IAM is detected on any source cluster).
+# Gateway-infra prereq statuses (only consulted when prefer_gateway: true).
+# Both default to `not_started`. Move to `in_progress` to declare intent,
+# `complete` once the prereq is satisfied. The gateway-mediated path can
+# be recommended only when both are at `in_progress` or `complete`.
+#
+# Note: IAM client migration is NOT a gateway prereq. Confluent Cloud
+# doesn't support AWS IAM auth at all, so IAM clients have to move to
+# SCRAM / mTLS / OAuth regardless of cutover path — see §Auth + the
+# IAM-client effort signal in the rendered Plan.
 #
 # confluent_for_kubernetes_status: not_started   # not_started | in_progress | complete
 # cc_gateway_license_status: not_started         # not_started | in_progress | complete
-# iam_pre_migration_status: not_started          # not_started | in_progress | complete
 
 # ---------------------------------------------------------------------------
 # Client auth migration
@@ -101,3 +115,97 @@
 # auth — e.g. consolidating onto OAuth.
 #
 # target_auth_method: ""              # "" (default; per-source mapping) | confluent_cloud_api_keys | mtls | oauth
+
+# ---------------------------------------------------------------------------
+# Per-cluster facts (`clusters:` block)
+# ---------------------------------------------------------------------------
+# Each key under `clusters:` is a source cluster Name. Two modes:
+#
+#   1. OVERLAY — when a scan file is provided AND the name matches a
+#      scanned cluster, declared fields overlay on top of the scan;
+#      undeclared fields keep their scan values.
+#
+#   2. SYNTHESISE — when no scan file is provided (or the name doesn't
+#      match a scanned cluster), kcp builds a fresh cluster from the
+#      declaration. Synthesis requires `region`; entries without it
+#      are dropped. Per-cluster Cutover / Sizing / Auth / SLA overrides
+#      (downtime_tolerance, sla_target, target_auth_method, etc.) layer
+#      on top of the global defaults exactly as in OVERLAY mode.
+#
+# Minimum for a useful synthesised verdict (anything missing falls
+# through to the matching scan-gap Open Question — the Plan still
+# renders, just with degraded confidence on the affected sections):
+#
+#   region              — REQUIRED for synthesis.
+#   cluster_type        — PROVISIONED (default) | SERVERLESS.
+#   auth_methods        — subset of {scram, iam, mtls, unauth}. Without
+#                         this, `auth_posture_unknown` fires.
+#   broker_count        — drives §1 + cap rules. Without this,
+#                         `broker_inventory_empty` fires.
+#   peak_ingress_mbps   — drives Sizing. Without it, sizing falls back
+#   peak_egress_mbps      to the SLA floor and `degraded_sizing` fires.
+#   partition_count     — drives the partition-cap rule.
+#   topic_count         — surfaces in §1.
+#   acl_count           — drives `acl_count_exceeds_cap`. Omit to suppress
+#                         the rule (then `acls_not_scanned` fires).
+#
+# Drives Red Flags / Effort signals (optional but valuable):
+#
+#   kafka_version       — Red Flag #2 (version floor).
+#   broker_instance_type — Express tier Red Flag + cost reconciliation.
+#   storage_mode        — LOCAL (default) | TIERED. Drives the
+#                         Tiered Storage section + Red Flag #12.
+#
+# Decision-level per-cluster overrides (also valid in OVERLAY mode):
+#
+#   sla_target, headroom_fraction, sizing_percentile (not per-cluster),
+#   downtime_tolerance, sub_pattern, target_auth_method,
+#   enforce_schemas_at_the_broker, requires_high_throughput_rest_produce_api,
+#   requires_99_95_sla_within_a_single_zone, target_cloud,
+#   existing_vpc_connectivity, cc_egress_required, projected_pni_gateway_count.
+#
+# Worked example — single Provisioned cluster, no scan file:
+#
+# clusters:
+#   payments-prod:
+#     region: us-east-1
+#     cluster_type: PROVISIONED                    # PROVISIONED (default) | SERVERLESS
+#     kafka_version: "3.6.0"
+#     broker_count: 12
+#     broker_instance_type: kafka.m7g.4xlarge
+#     storage_mode: TIERED                         # LOCAL (default) | TIERED
+#     auth_methods: [scram, mtls]                  # subset of {scram, iam, mtls, unauth}
+#     peak_ingress_mbps: 320
+#     peak_egress_mbps: 880
+#     p95_ingress_mbps: 180                        # optional; defaults to peak when unset
+#     p95_egress_mbps: 520
+#     partition_count: 4800
+#     topic_count: 180
+#     acl_count: 240
+#     # Decision-level per-cluster overrides (optional):
+#     sla_target: "99.95"
+#     downtime_tolerance: minutes_per_service
+#     target_auth_method: confluent_cloud_api_keys
+#
+# Multi-cluster, mixed-tier fleet:
+#
+# clusters:
+#   events-streaming:
+#     region: us-west-2
+#     cluster_type: PROVISIONED
+#     broker_count: 6
+#     broker_instance_type: kafka.m7g.2xlarge
+#     auth_methods: [iam]
+#     peak_ingress_mbps: 120
+#     peak_egress_mbps: 360
+#     partition_count: 1200
+#     topic_count: 60
+#     acl_count: 0                                 # IAM-only cluster — 0 ACLs is correct
+#   experiments:
+#     region: us-west-2
+#     cluster_type: SERVERLESS                     # Serverless: IAM-only, partition cap 120
+#     auth_methods: [iam]
+#     partition_count: 80
+#     topic_count: 24
+#
+# clusters: {}

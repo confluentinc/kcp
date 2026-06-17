@@ -133,7 +133,7 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 			ID:         "tiered_consumer_history_invalid",
 			Title:      "`consumer_history_requirement` is not a recognised value",
 			Body:       "Recognised values: `required` (default) | `not_required` | `unknown`. The current value falls outside the enum; the Plan treats it as `required` until corrected.",
-			HowToClose: "Set `consumer_history_requirement` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
+			HowToClose: "In `plan-inputs.yaml`:\n```yaml\nconsumer_history_requirement: required   # required (default) | not_required | unknown\n```",
 		})
 	}
 	if inputs.HistoricalDataStrategy != "" && !knownHistoricalStrategy(inputs.HistoricalDataStrategy) {
@@ -141,7 +141,7 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 			ID:         "tiered_historical_strategy_invalid",
 			Title:      "`historical_data_strategy` is not a recognised value",
 			Body:       "Recognised values: `keep_msk_running_until_data_expires` | `bulk_load_historical_via_external_tool` | `defer_to_account_team`. The current value falls outside the enum; the Plan ignores it and treats the strategy as undeclared.",
-			HowToClose: "Set `historical_data_strategy` in `plan-inputs.yaml` to one of the recognised values, then re-run `kcp report plan`.",
+			HowToClose: "In `plan-inputs.yaml`:\n```yaml\nhistorical_data_strategy: defer_to_account_team   # keep_msk_running_until_data_expires | bulk_load_historical_via_external_tool | defer_to_account_team\n```",
 		})
 	}
 	// Strategy undeclared AND the customer either hasn't expressed a
@@ -152,10 +152,11 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 	consumerHistory := defaultedConsumerHistory(inputs.ConsumerHistoryRequirement)
 	if section.HistoricalDataStrategy == "" && consumerHistory != ConsumerHistoryNotRequired {
 		oqs = append(oqs, types.OpenQuestion{
-			ID:         "tiered_strategy_undeclared",
-			Title:      "Tiered storage detected — declare `historical_data_strategy` in `plan-inputs.yaml`",
-			Body:       "Cluster Linking does NOT carry historical tiered data forward. Pick the path that matches your operational constraints: keep MSK running until your retention window expires (lowest engineering cost, highest infra cost), bulk-load historical data via an external tool, or defer the cascade to your Confluent account team.",
-			HowToClose: "Set `historical_data_strategy` in `plan-inputs.yaml` to `keep_msk_running_until_data_expires` | `bulk_load_historical_via_external_tool` | `defer_to_account_team`, then re-run `kcp report plan`. If you set `consumer_history_requirement: not_required`, the Plan defaults this to `defer_to_account_team` automatically.",
+			ID:    "tiered_strategy_undeclared",
+			Title: "Tiered storage detected — declare `historical_data_strategy` in `plan-inputs.yaml`",
+			Body:  "Cluster Linking does NOT carry historical tiered data forward. Pick the path that matches your operational constraints.",
+			HowToClose: "In `plan-inputs.yaml`, set `historical_data_strategy`:\n\n" +
+				"```yaml\n# Pick ONE — uncomment the line that matches your operational constraints:\n# historical_data_strategy: keep_msk_running_until_data_expires    # lowest engineering cost; highest infra cost (MSK runs through retention window)\n# historical_data_strategy: bulk_load_historical_via_external_tool # bulk-load via Kafka Connect / Replicator / custom tool\n# historical_data_strategy: defer_to_account_team                  # work with Confluent on the cascade decisions per topic\n```\n\nShortcut: if downstream consumers don't actually need history, set `consumer_history_requirement: not_required` and `historical_data_strategy` defaults to `defer_to_account_team` automatically.",
 		})
 	}
 	return oqs

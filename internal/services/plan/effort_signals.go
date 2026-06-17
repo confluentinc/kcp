@@ -50,12 +50,13 @@ func detectEffortSignals(state types.ProcessedState) *types.EffortSignalsSection
 // to 0 means "scan ran, returned zero".
 func intPtr(n int) *int { return &n }
 
-// ----- Signal 1: IAM → SCRAM workstream size -----
+// ----- Signal 1: IAM client re-credentialing workstream size -----
 
 // Count of `discovered_clients[]` where Auth == "IAM" across the
-// fleet. This is the count of client apps a customer would need to
-// migrate off IAM to use the CC Gateway path (IAM clients can't
-// connect to the gateway).
+// fleet. Confluent Cloud doesn't support AWS IAM auth at all, so
+// every IAM client has to re-credential to SCRAM, mTLS, or OAuth as
+// part of any CC migration — this signal sizes that workstream. It
+// applies regardless of cutover path (plain CL, gateway, Blue/Green).
 //
 // The scanner (`cmd/scan/client_inventory/kafka_trace_line_parser.go`)
 // emits the literal string "IAM" — NOT "AWS_MSK_IAM" or "SASL/IAM".
@@ -82,10 +83,10 @@ func signalIAMClientCount(clusters []types.ProcessedCluster) types.EffortSignal 
 	}
 	sig := types.EffortSignal{
 		ID:    EffortSignalIDIAMClientCount,
-		Label: "IAM → SCRAM workstream size — clients that need re-credentialing before the CC Gateway path",
+		Label: "IAM client re-credentialing workstream — clients to move off IAM to a CC-supported auth (SCRAM / mTLS / OAuth)",
 	}
 	if !scanRan {
-		sig.Note = "`kcp scan client-inventory` hasn't been run on any cluster (see §Red Flags → \"Client inventory not populated\") — re-run it to enumerate IAM clients before the CC Gateway path is scoped"
+		sig.Note = "`kcp scan client-inventory` hasn't been run on any cluster (see §Red Flags → \"Client inventory not populated\") — re-run it to size the IAM re-credentialing workstream"
 		return sig
 	}
 	sig.Count = intPtr(count)
