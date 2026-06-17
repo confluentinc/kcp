@@ -1,11 +1,12 @@
 package modules
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetPrivateClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequest] {
-	return []ModuleVariable[types.MigrationWizardRequest]{
+func GetPrivateClusterLinkVariables() []ModuleVariable[hclrequests.MigrationWizardRequest] {
+	return []ModuleVariable[hclrequests.MigrationWizardRequest]{
 		{
 			Name: "aws_region",
 			Definition: types.TerraformVariable{
@@ -14,7 +15,7 @@ func GetPrivateClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.SourceRegion
 			},
 			Condition:        nil,
@@ -28,7 +29,7 @@ func GetPrivateClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.VpcId
 			},
 			Condition:        nil,
@@ -42,7 +43,7 @@ func GetPrivateClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequ
 				Sensitive:   false,
 				Type:        "list(object({id=string,subnet_id=string,endpoints=list(object({host=string,port=number,ip=string}))}))",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.ExtOutboundBrokers
 			},
 			Condition:        nil,
@@ -56,7 +57,7 @@ func GetPrivateClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.TargetEnvironmentId
 			},
 			Condition:        nil,
@@ -70,7 +71,7 @@ func GetPrivateClusterLinkVariables() []ModuleVariable[types.MigrationWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.TargetClusterId
 			},
 			Condition:        nil,

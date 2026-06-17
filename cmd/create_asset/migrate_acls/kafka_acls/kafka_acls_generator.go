@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -59,7 +60,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		principalNames = append(principalNames, principal)
 	}
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           kg.opts.TargetClusterId,
 		TargetClusterRestEndpoint: kg.opts.TargetClusterRestEndpoint,

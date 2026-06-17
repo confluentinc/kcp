@@ -1,6 +1,7 @@
 package hcl
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -18,7 +19,7 @@ func NewMigrationInfraHCLService() *MigrationInfraHCLService {
 	return &MigrationInfraHCLService{}
 }
 
-func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) GenerateTerraformModules(request hclrequests.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	if request.HasPublicEndpoints {
 		return mi.handlePublicMigrationInfrastructure(request)
 	}
@@ -30,7 +31,7 @@ func (mi *MigrationInfraHCLService) GenerateTerraformModules(request types.Migra
 	return mi.handleExternalOutboundClusterLinkingInfrastructure(request)
 }
 
-func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request hclrequests.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
 
 	return types.MigrationInfraTerraformProject{
@@ -48,7 +49,7 @@ func (mi *MigrationInfraHCLService) handlePublicMigrationInfrastructure(request 
 	}
 }
 
-func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request hclrequests.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
 
 	return types.MigrationInfraTerraformProject{
@@ -88,7 +89,7 @@ func (mi *MigrationInfraHCLService) handlePrivateMigrationInfrastructure(request
 	}
 }
 
-func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastructure(request types.MigrationWizardRequest) types.MigrationInfraTerraformProject {
+func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastructure(request hclrequests.MigrationWizardRequest) types.MigrationInfraTerraformProject {
 	requiredVariables := modules.GetMigrationInfraRootVariableDefinitions(request)
 
 	return types.MigrationInfraTerraformProject{
@@ -109,6 +110,6 @@ func (mi *MigrationInfraHCLService) handleExternalOutboundClusterLinkingInfrastr
 	}
 }
 
-func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateInputsAutoTfvars(request hclrequests.MigrationWizardRequest) string {
 	return GenerateInputsAutoTfvars(modules.GetMigrationInfraRootVariableValues(request))
 }
