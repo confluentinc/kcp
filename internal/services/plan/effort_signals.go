@@ -31,18 +31,18 @@ const (
 //
 // Returns nil when there are no MSK clusters to evaluate (renderer
 // omits the section).
-func detectEffortSignals(state types.ProcessedState) *types.EffortSignalsSection {
+func detectEffortSignals(state types.ProcessedState) *EffortSignalsSection {
 	clusters := collectClusters(state)
 	if len(clusters) == 0 {
 		return nil
 	}
-	signals := []types.EffortSignal{
+	signals := []EffortSignal{
 		signalIAMClientCount(clusters),
 		signalMM2CheckpointTopics(clusters),
 		signalSelfManagedConnectFleets(clusters),
 		signalGlueSerializerMigration(state, clusters),
 	}
-	return &types.EffortSignalsSection{Signals: signals}
+	return &EffortSignalsSection{Signals: signals}
 }
 
 // intPtr is a tiny constructor for Effort-Signal Counts. nil means
@@ -62,7 +62,7 @@ func intPtr(n int) *int { return &n }
 // Don't be tempted to swap in `types.AuthTypeIAM` from `types.go` —
 // that constant resolves to "SASL/IAM" and would silently mismatch
 // every real state file.
-func signalIAMClientCount(clusters []types.ProcessedCluster) types.EffortSignal {
+func signalIAMClientCount(clusters []types.ProcessedCluster) EffortSignal {
 	// Distinguish "scan ran, found 0 IAM clients" from "scan didn't
 	// run at all": if no cluster has any discovered_clients populated,
 	// the count is structurally unobservable → return nil. Otherwise
@@ -80,7 +80,7 @@ func signalIAMClientCount(clusters []types.ProcessedCluster) types.EffortSignal 
 			}
 		}
 	}
-	sig := types.EffortSignal{
+	sig := EffortSignal{
 		ID:    EffortSignalIDIAMClientCount,
 		Label: "IAM → SCRAM workstream size — clients that need re-credentialing before the CC Gateway path",
 	}
@@ -101,7 +101,7 @@ func signalIAMClientCount(clusters []types.ProcessedCluster) types.EffortSignal 
 // IdentityReplicationPolicy suppress the prefix — those won't show
 // up here. The renderer surfaces the caveat in the Note. Regex lives
 // in topic_patterns.go so red_flags can share it.
-func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) types.EffortSignal {
+func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) EffortSignal {
 	// De-dupe by topic name so a Cluster-Linking mirror that
 	// replicates the same `*.checkpoints.internal` topic across N
 	// clusters doesn't inflate the count to N. Each distinct
@@ -121,7 +121,7 @@ func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) types.EffortSi
 		}
 	}
 	count := len(seen)
-	sig := types.EffortSignal{
+	sig := EffortSignal{
 		ID:    EffortSignalIDMM2CheckpointTopics,
 		Label: "MirrorMaker 2 checkpoint topics — replication fleets to enumerate",
 		Count: intPtr(count),
@@ -138,7 +138,7 @@ func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) types.EffortSi
 // (`connect-offsets`) may not exist with the same prefix, so we
 // require only two of three — AND-of-all-three would miss real
 // fleets per the spec. Regex lives in topic_patterns.go.
-func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) types.EffortSignal {
+func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) EffortSignal {
 	// Walk every topic, group by (cluster, prefix), collect which
 	// suffixes appear. Per-cluster scoping prevents two distinct
 	// fleets that both use the default unprefixed `connect-configs`
@@ -201,7 +201,7 @@ func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) types.Eff
 	if scannerConnectorCount > count {
 		count = scannerConnectorCount
 	}
-	return types.EffortSignal{
+	return EffortSignal{
 		ID:    EffortSignalIDSelfManagedConnectFleets,
 		Label: "Self-managed Connect fleets — review surface area beyond what kcp can describe",
 		Count: intPtr(count),
@@ -217,8 +217,8 @@ func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) types.Eff
 // Server-side schema export is automated by `kcp create-asset
 // migrate-schemas --glue-registry`; this row scopes the *client-side*
 // serializer-swap workstream.
-func signalGlueSerializerMigration(state types.ProcessedState, clusters []types.ProcessedCluster) types.EffortSignal {
-	sig := types.EffortSignal{
+func signalGlueSerializerMigration(state types.ProcessedState, clusters []types.ProcessedCluster) EffortSignal {
+	sig := EffortSignal{
 		ID:    EffortSignalIDGlueSerializerMigration,
 		Label: "Glue → CC SR client serializer migration size — clients that need `AWSKafkaAvroSerializer` → `KafkaAvroSerializer`",
 	}

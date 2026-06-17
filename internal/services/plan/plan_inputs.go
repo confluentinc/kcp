@@ -1,4 +1,4 @@
-package types
+package plan
 
 // PlanInputs is the parsed plan-inputs.yaml. Pointers distinguish "unset"
 // from the zero value so the loader can echo only the fields the customer

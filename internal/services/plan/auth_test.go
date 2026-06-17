@@ -12,8 +12,8 @@ import (
 // unset — decideAuth falls back to the per-source default from
 // auth_mapping. Tests that want an override-everywhere behavior set
 // inputs.TargetAuthMethod explicitly.
-func authInputs() types.PlanInputsResolved {
-	return types.PlanInputsResolved{}
+func authInputs() PlanInputsResolved {
+	return PlanInputsResolved{}
 }
 
 func TestDecideAuth_NoSourceAuthsDetected(t *testing.T) {
@@ -75,7 +75,7 @@ func TestDecideAuth_MultipleSourceAuthsAllRendered(t *testing.T) {
 	assert.Len(t, d.TargetMappings, 2, "one row per source auth — plan never picks one")
 }
 
-func requireRow(t *testing.T, d types.AuthDecision, sourceAuth string) types.AuthMappingRow {
+func requireRow(t *testing.T, d AuthDecision, sourceAuth string) AuthMappingRow {
 	t.Helper()
 	for _, row := range d.TargetMappings {
 		if row.SourceAuth == sourceAuth {
@@ -83,7 +83,7 @@ func requireRow(t *testing.T, d types.AuthDecision, sourceAuth string) types.Aut
 		}
 	}
 	t.Fatalf("AuthDecision missing row for source auth %q; got: %+v", sourceAuth, d.TargetMappings)
-	return types.AuthMappingRow{}
+	return AuthMappingRow{}
 }
 
 // When `target_auth_method` is set to a string outside the recognised
@@ -92,7 +92,7 @@ func requireRow(t *testing.T, d types.AuthDecision, sourceAuth string) types.Aut
 // can detect rejected overrides structurally — not just as an OQ.
 func TestDecideAuth_OverrideRejectedRecordedOnTypo(t *testing.T) {
 	c := withSourceAuth("iam-cluster", SourceAuthIAM)
-	inputs := types.PlanInputsResolved{TargetAuthMethod: "oauthhh"}
+	inputs := PlanInputsResolved{TargetAuthMethod: "oauthhh"}
 	d := decideAuth(c, defaultCfg(t), inputs)
 	assert.True(t, d.OverrideRejected, "typo'd override must set OverrideRejected")
 	assert.Equal(t, "oauthhh", d.RejectedOverrideValue)
@@ -143,7 +143,7 @@ func TestSourceUsesMTLS_ServerlessAlwaysFalse(t *testing.T) {
 func TestDecideAuth_OverrideRejectedFalseForGoodValues(t *testing.T) {
 	c := withSourceAuth("scram-cluster", SourceAuthSCRAM)
 	for _, override := range []string{"", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth} {
-		d := decideAuth(c, defaultCfg(t), types.PlanInputsResolved{TargetAuthMethod: override})
+		d := decideAuth(c, defaultCfg(t), PlanInputsResolved{TargetAuthMethod: override})
 		assert.False(t, d.OverrideRejected, "good override %q must not be marked rejected", override)
 		assert.Empty(t, d.RejectedOverrideValue, "good override %q must not leak a rejected value", override)
 	}

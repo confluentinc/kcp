@@ -54,9 +54,9 @@ func mskUsageTypeRegex(cfg *PlanConfig) *regexp.Regexp {
 // desc; no materiality threshold (the customer decides what's
 // "real"). Returns nil when there are no candidates or no MSK source
 // data — the renderer omits the section in that case.
-func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *types.CostReconciliationSection {
+func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *CostReconciliationSection {
 	re := mskUsageTypeRegex(cfg)
-	var candidates []types.HiddenClusterCandidate
+	var candidates []HiddenClusterCandidate
 	for _, src := range state.Sources {
 		if src.MSKData == nil {
 			continue
@@ -68,7 +68,7 @@ func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *type
 				if _, present := inventory[instType]; present {
 					continue
 				}
-				candidates = append(candidates, types.HiddenClusterCandidate{
+				candidates = append(candidates, HiddenClusterCandidate{
 					Region:         region.Name,
 					InstanceType:   instType,
 					TotalSpend:     agg.totalSpend,
@@ -93,7 +93,7 @@ func detectCostReconciliation(state types.ProcessedState, cfg *PlanConfig) *type
 		}
 		return candidates[i].InstanceType < candidates[j].InstanceType
 	})
-	return &types.CostReconciliationSection{Candidates: candidates}
+	return &CostReconciliationSection{Candidates: candidates}
 }
 
 // inventoryInstanceTypes returns the set of instance types
@@ -194,7 +194,7 @@ func parseMSKInstanceType(usageType string, re *regexp.Regexp) string {
 // data is empty across all regions — the diff isn't actionable
 // without cost data. Returns nil when at least one region has cost
 // data (even if the diff was clean).
-func detectCostReconciliationOpenQuestions(state types.ProcessedState) []types.OpenQuestion {
+func detectCostReconciliationOpenQuestions(state types.ProcessedState) []OpenQuestion {
 	hasCost := false
 	for _, src := range state.Sources {
 		if src.MSKData == nil {
@@ -219,7 +219,7 @@ func detectCostReconciliationOpenQuestions(state types.ProcessedState) []types.O
 	if !hasAnyMSKRegion(state) {
 		return nil
 	}
-	return []types.OpenQuestion{{
+	return []OpenQuestion{{
 		ID:         "cost_data_not_collected",
 		Title:      "Cost-vs-inventory reconciliation skipped — run `kcp report costs`",
 		Body:       "No AWS Cost Explorer data is present in the state file. The cost-vs-inventory diff (which surfaces MSK instance types billed by AWS but NOT discovered by `kcp discover`) needs cost data to run.",

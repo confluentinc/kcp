@@ -13,7 +13,7 @@ const defaultTargetCloud = "aws"
 // targetCloud returns the customer's `target_cloud` plan-input or the
 // default ("aws") when unset. Centralizes the empty-string fallback so
 // every decision rule reads it the same way.
-func targetCloud(inputs types.PlanInputsResolved) string {
+func targetCloud(inputs PlanInputsResolved) string {
 	if inputs.TargetCloud == "" {
 		return defaultTargetCloud
 	}
