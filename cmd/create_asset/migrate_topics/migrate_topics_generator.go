@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -81,7 +82,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 // writeProject writes the single-folder migrate-topics project flat into
 // outputDir: providers.tf, variables.tf, plus one .tf per topic from
 // AdditionalFiles.
-func (mt *MigrateTopicsAssetGenerator) writeProject(outputDir string, project types.MigrationScriptsTerraformProject) error {
+func (mt *MigrateTopicsAssetGenerator) writeProject(outputDir string, project hcltypes.MigrationScriptsTerraformProject) error {
 	if len(project.Folders) == 0 {
 		return nil
 	}

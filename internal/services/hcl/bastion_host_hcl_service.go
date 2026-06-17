@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -29,8 +30,8 @@ func NewBastionHostHCLService() *BastionHostHCLService {
 	return &BastionHostHCLService{}
 }
 
-func (s *BastionHostHCLService) GenerateBastionHostFiles(request types.BastionHostRequest) (types.TerraformFiles, error) {
-	return types.TerraformFiles{
+func (s *BastionHostHCLService) GenerateBastionHostFiles(request types.BastionHostRequest) (hcltypes.TerraformFiles, error) {
+	return hcltypes.TerraformFiles{
 		MainTf:           s.generateMainTf(request),
 		ProvidersTf:      s.generateProvidersTf(),
 		VariablesTf:      s.generateVariablesTf(),
@@ -261,7 +262,7 @@ func (s *BastionHostHCLService) generateProvidersTf() string {
 }
 
 func (s *BastionHostHCLService) generateVariablesTf() string {
-	return GenerateVariablesTf([]types.TerraformVariable{
+	return GenerateVariablesTf([]hcltypes.TerraformVariable{
 		{Name: "vpc_id", Description: "The ID of the VPC", Type: "string"},
 		{Name: "public_subnet_cidr", Description: "CIDR block for the public subnet", Type: "string"},
 		{Name: "aws_region", Description: "The AWS region", Type: "string"},
@@ -270,7 +271,7 @@ func (s *BastionHostHCLService) generateVariablesTf() string {
 }
 
 func (s *BastionHostHCLService) generateOutputsTf() string {
-	return GenerateOutputsTf([]types.TerraformOutput{
+	return GenerateOutputsTf([]hcltypes.TerraformOutput{
 		{Name: "bastion_host_public_ip", Value: "aws_instance.migration_bastion_host.public_ip"},
 	})
 }
