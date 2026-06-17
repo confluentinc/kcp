@@ -917,3 +917,103 @@ func TestCalculateMetricsAggregates(t *testing.T) {
 		assert.InDelta(t, 96.0, *aggs["M"].P95, 0.0001)
 	})
 }
+
+func TestFilterConnectMetrics(t *testing.T) {
+	rs := NewReportService()
+
+	connectMetrics := &types.ProcessedClusterMetrics{
+		Metrics: []types.ProcessedMetric{
+			{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "connector-count", Value: ptr(2.0)},
+			{Start: "2025-01-01T00:01:00Z", End: "2025-01-01T00:02:00Z", Label: "connector-count", Value: ptr(2.0)},
+			{Start: "2025-01-02T00:00:00Z", End: "2025-01-02T00:01:00Z", Label: "connector-count", Value: ptr(3.0)},
+		},
+		Metadata: types.MetricMetadata{Period: 60},
+		QueryInfo: []types.MetricQueryInfo{
+			{MetricName: "connector-count", Statistic: "Point-in-time value (per worker)"},
+		},
+	}
+
+	stateWithConnect := types.ProcessedState{
+		Sources: []types.ProcessedSource{
+			{
+				Type: types.SourceTypeOSK,
+				OSKData: &types.ProcessedOSKSource{
+					Clusters: []types.ProcessedOSKCluster{
+						{
+							ID: "osk-kafka",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								SelfManagedConnectors: &types.SelfManagedConnectors{
+									Connectors: []types.SelfManagedConnector{
+										{Name: "test-connector"},
+									},
+									Metrics: connectMetrics,
+								},
+							},
+							Metadata: types.OSKClusterMetadata{
+								Environment: "test",
+								Location:    "local",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	stateNoConnect := types.ProcessedState{
+		Sources: []types.ProcessedSource{
+			{
+				Type: types.SourceTypeOSK,
+				OSKData: &types.ProcessedOSKSource{
+					Clusters: []types.ProcessedOSKCluster{
+						{
+							ID: "osk-kafka-no-connect",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("returns Connect metrics for existing cluster", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 3)
+		assert.Equal(t, "osk-kafka", result.ClusterArn)
+		assert.Equal(t, "test", result.Environment)
+		assert.Equal(t, "local", result.Location)
+		assert.Len(t, result.QueryInfo, 1)
+		assert.Equal(t, "connector-count", result.QueryInfo[0].MetricName)
+	})
+
+	t.Run("filters by date range", func(t *testing.T) {
+		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", &start, &end)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 2) // only Jan 1 metrics
+	})
+
+	t.Run("cluster not found returns error", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("cluster without self-managed connectors returns empty metrics", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Nil(t, result.Metrics)
+		assert.Equal(t, "osk-kafka-no-connect", result.ClusterArn)
+	})
+
+	t.Run("case-insensitive cluster ID match", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 3)
+	})
+}

@@ -290,7 +290,6 @@ export const ClusterConnectors = ({
           <ConnectMetrics
             clusterId={clusterId}
             connectMetricsMetadata={connectMetrics.metadata}
-            isActive={activeTab === CONNECTOR_TABS.SELF_MANAGED}
           />
         )}
 

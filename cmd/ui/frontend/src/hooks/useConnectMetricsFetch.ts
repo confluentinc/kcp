@@ -4,7 +4,6 @@ import type { MetricsApiResponse } from '@/types/api'
 import { useSessionId } from '@/stores/store'
 
 interface ConnectMetricsFetchConfig {
-  isActive: boolean
   clusterId: string
   startDate: Date | undefined
   endDate: Date | undefined
@@ -21,7 +20,6 @@ interface ConnectMetricsFetchReturn {
  * Automatically refetches when dates change or cluster changes.
  */
 export const useConnectMetricsFetch = ({
-  isActive,
   clusterId,
   startDate,
   endDate,
@@ -32,7 +30,7 @@ export const useConnectMetricsFetch = ({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!isActive || !clusterId) {
+    if (!clusterId) {
       setIsLoading(false)
       return
     }
@@ -55,7 +53,7 @@ export const useConnectMetricsFetch = ({
     }
 
     fetchMetrics()
-  }, [isActive, clusterId, startDate, endDate, sessionId])
+  }, [clusterId, startDate, endDate, sessionId])
 
   return {
     metricsResponse,

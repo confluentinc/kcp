@@ -11,7 +11,8 @@ import { DataViewTabs } from '@/components/common/DataViewTabs'
 import { MetricsChartTab } from './MetricsChartTab'
 import { MetricsTableTab } from './MetricsTableTab'
 import { ClusterMetricsQueryTab } from './ClusterMetricsQueryTab'
-import { useAppStore } from '@/stores/store'
+import { TAB_IDS } from '@/constants'
+import type { TabId } from '@/types'
 import type { ApiMetadata } from '@/types/api/common'
 
 interface ConnectMetricsProps {
@@ -21,19 +22,17 @@ interface ConnectMetricsProps {
     end_date?: string
     period?: number
   }
-  isActive: boolean
 }
 
 export const ConnectMetrics = ({
   clusterId,
   connectMetricsMetadata,
-  isActive,
 }: ConnectMetricsProps) => {
   const [startDate, setStartDate] = useState<Date | undefined>(undefined)
   const [endDate, setEndDate] = useState<Date | undefined>(undefined)
+  const [activeTab, setActiveTab] = useState<TabId>(TAB_IDS.CHART)
 
   const { metricsResponse, isLoading, error } = useConnectMetricsFetch({
-    isActive,
     clusterId,
     startDate,
     endDate,
@@ -84,9 +83,6 @@ export const ConnectMetrics = ({
     clusterRegion: '',
   })
 
-  const activeMetricsTab = useAppStore((state) => state.activeMetricsTab)
-  const setActiveMetricsTab = useAppStore((state) => state.setActiveMetricsTab)
-
   const { handleDownloadCSV, handleDownloadJSON } = useDownloadHandlers({
     csvData: processedData.csvData,
     jsonData: metricsResponse,
@@ -120,8 +116,8 @@ export const ConnectMetrics = ({
 
       {metricsResponse && (
         <DataViewTabs
-          activeTab={activeMetricsTab}
-          onTabChange={(id) => setActiveMetricsTab(id)}
+          activeTab={activeTab}
+          onTabChange={(id) => setActiveTab(id)}
           onDownloadJSON={handleDownloadJSON}
           onDownloadCSV={handleDownloadCSV}
           jsonData={metricsResponse}
