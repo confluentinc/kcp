@@ -7,34 +7,18 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type TimePeriod string
-
+// CloudWatch query periods (in seconds) selected per metrics granularity.
 const (
-	// debugging period
 	OneMinutePeriodInSeconds  int32 = 60
 	FiveMinutePeriodInSeconds int32 = 60 * 5       // 60 seconds * 5 minutes
 	OneHourPeriodInSeconds    int32 = 60 * 60      // 60 seconds * 60 minutes
 	OneDayPeriodInSeconds     int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
-
-	Last15Days  TimePeriod = "last15Days"
-	Last63Days  TimePeriod = "last63Days"
-	Last365Days TimePeriod = "last365Days"
 )
 
-// // GetTimeWindow calculates CloudWatch time windows for different periods based on a end time
-// func GetTimeWindow(endTime time.Time, desiredPeriod TimePeriod) (types.CloudWatchTimeWindow, error) {
-// 	switch desiredPeriod {
-// 	case Last15Days:
-// 		return calculateLast15Days(endTime), nil
-// 	case Last63Days:
-// 		return calculateLast63Days(endTime), nil
-// 	case Last365Days:
-// 		return calculateLast365Days(endTime), nil
-// 	default:
-// 		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported time period: %s", desiredPeriod)
-// 	}
-// }
-
+// GetTimeWindowForGranularity returns the CloudWatch query window ending at
+// endTime for the requested metrics granularity. The window length is bounded
+// by CloudWatch's per-period data retention: 60s→15 days, 5m→63 days, and both
+// 1h and 1d→365 days. The returned window's Period matches the granularity.
 func GetTimeWindowForGranularity(endTime time.Time, granularity string) (types.CloudWatchTimeWindow, error) {
 	switch granularity {
 	case "60s":
@@ -48,7 +32,6 @@ func GetTimeWindowForGranularity(endTime time.Time, granularity string) (types.C
 	default:
 		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported metrics granularity: %s", granularity)
 	}
-
 }
 
 func calculateLast15Days(endTime time.Time) types.CloudWatchTimeWindow {
