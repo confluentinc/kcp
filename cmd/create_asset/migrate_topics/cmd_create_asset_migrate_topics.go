@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -150,7 +151,7 @@ func parseMigrateTopicsOpts() (*MigrateTopicsOpts, error) {
 	// a cluster link can mirror the offset topic, but `--mode new` emits a
 	// confluent_kafka_topic that CC rejects at apply time (reserved __ prefix).
 	var internalTopicsToInclude []string
-	if mode == types.MigrateTopicsModeMirror {
+	if mode == hclrequests.MigrateTopicsModeMirror {
 		internalTopicsToInclude = []string{"__consumer_offsets"}
 	}
 
@@ -279,23 +280,23 @@ func validateModeFlags(ccEnvironment, mode, clusterLinkName string) error {
 	if err != nil {
 		return fmt.Errorf("invalid --cc-environment: %v", err)
 	}
-	if destination.IsGov() && mode == types.MigrateTopicsModeMirror {
-		return fmt.Errorf("--mode %s is not supported on Confluent Cloud for Government: mirror topics rely on Cluster Linking, which Confluent Cloud for Government does not provide. Use --mode %s instead", types.MigrateTopicsModeMirror, types.MigrateTopicsModeNew)
+	if destination.IsGov() && mode == hclrequests.MigrateTopicsModeMirror {
+		return fmt.Errorf("--mode %s is not supported on Confluent Cloud for Government: mirror topics rely on Cluster Linking, which Confluent Cloud for Government does not provide. Use --mode %s instead", hclrequests.MigrateTopicsModeMirror, hclrequests.MigrateTopicsModeNew)
 	}
 
 	switch mode {
 	case "":
-		return fmt.Errorf("--mode is required (values: %s, %s)", types.MigrateTopicsModeMirror, types.MigrateTopicsModeNew)
-	case types.MigrateTopicsModeMirror:
+		return fmt.Errorf("--mode is required (values: %s, %s)", hclrequests.MigrateTopicsModeMirror, hclrequests.MigrateTopicsModeNew)
+	case hclrequests.MigrateTopicsModeMirror:
 		if clusterLinkName == "" {
-			return fmt.Errorf("--cluster-link-name is required when --mode %s", types.MigrateTopicsModeMirror)
+			return fmt.Errorf("--cluster-link-name is required when --mode %s", hclrequests.MigrateTopicsModeMirror)
 		}
-	case types.MigrateTopicsModeNew:
+	case hclrequests.MigrateTopicsModeNew:
 		if clusterLinkName != "" {
-			return fmt.Errorf("--cluster-link-name is not valid when --mode %s", types.MigrateTopicsModeNew)
+			return fmt.Errorf("--cluster-link-name is not valid when --mode %s", hclrequests.MigrateTopicsModeNew)
 		}
 	default:
-		return fmt.Errorf("invalid --mode: %q (values: %s, %s)", mode, types.MigrateTopicsModeMirror, types.MigrateTopicsModeNew)
+		return fmt.Errorf("invalid --mode: %q (values: %s, %s)", mode, hclrequests.MigrateTopicsModeMirror, hclrequests.MigrateTopicsModeNew)
 	}
 	return nil
 }

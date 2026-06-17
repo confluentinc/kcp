@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -43,7 +44,7 @@ func (bh *BastionHostAssetGenerator) Run() error {
 		return fmt.Errorf("failed to create bastion host directory: %w", err)
 	}
 
-	request := types.BastionHostRequest{
+	request := hclrequests.BastionHostRequest{
 		Region:                     bh.opts.Region,
 		VPCId:                      bh.opts.VPCId,
 		PublicSubnetCidr:           bh.opts.PublicSubnetCidr,
