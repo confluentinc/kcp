@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
@@ -42,7 +42,7 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 	}
 
 	// Create request from opts
-	request := types.ReverseProxyRequest{
+	request := hclrequests.ReverseProxyRequest{
 		Region:                                 rp.opts.Region,
 		VPCId:                                  rp.opts.VPCId,
 		PublicSubnetCidr:                       rp.opts.PublicSubnetCidr,

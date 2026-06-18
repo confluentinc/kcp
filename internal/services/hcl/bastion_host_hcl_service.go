@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
@@ -30,7 +30,7 @@ func NewBastionHostHCLService() *BastionHostHCLService {
 	return &BastionHostHCLService{}
 }
 
-func (s *BastionHostHCLService) GenerateBastionHostFiles(request types.BastionHostRequest) (hcltypes.TerraformFiles, error) {
+func (s *BastionHostHCLService) GenerateBastionHostFiles(request hclrequests.BastionHostRequest) (hcltypes.TerraformFiles, error) {
 	return hcltypes.TerraformFiles{
 		MainTf:           s.generateMainTf(request),
 		ProvidersTf:      s.generateProvidersTf(),
@@ -44,7 +44,7 @@ func (s *BastionHostHCLService) GenerateBastionHostUserDataTemplate() string {
 	return bastionHostUserDataTpl
 }
 
-func (s *BastionHostHCLService) generateMainTf(request types.BastionHostRequest) string {
+func (s *BastionHostHCLService) generateMainTf(request hclrequests.BastionHostRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -276,7 +276,7 @@ func (s *BastionHostHCLService) generateOutputsTf() string {
 	})
 }
 
-func (s *BastionHostHCLService) generateInputsAutoTfvars(request types.BastionHostRequest) string {
+func (s *BastionHostHCLService) generateInputsAutoTfvars(request hclrequests.BastionHostRequest) string {
 	return GenerateInputsAutoTfvars(map[string]any{
 		"aws_region":             request.Region,
 		"public_subnet_cidr":     request.PublicSubnetCidr,
