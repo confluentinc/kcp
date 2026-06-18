@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -51,7 +52,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 		selectedNames[i] = t.Name
 	}
 
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		SelectedTopics:            selectedNames,
 		Topics:                    mt.opts.Topics,
 		ClusterLinkName:           mt.opts.ClusterLinkName,
@@ -71,7 +72,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 	}
 
 	fmt.Printf("✅ migrate-topics Terraform files generated: %s (%d topics, mode=%s)\n", outputDir, len(mt.opts.Topics), mt.opts.Mode)
-	if mt.opts.Mode == types.MigrateTopicsModeNew {
+	if mt.opts.Mode == hclrequests.MigrateTopicsModeNew {
 		fmt.Println(newModeCLINote)
 	}
 
