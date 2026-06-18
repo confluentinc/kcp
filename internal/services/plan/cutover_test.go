@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -107,11 +107,11 @@ func TestDecideCutover_IAMPrereqOnlyMattersWhenIAMInFleet(t *testing.T) {
 	inputs.IAMPreMigrationStatus = PrereqNotStarted
 
 	// Without IAM in the fleet, still eligible / canonical.
-	d := decideCutover([]types.ProcessedCluster{withSourceAuth("nofleetiam", SourceAuthSCRAM)}, inputs)
+	d := decideCutover([]report.ProcessedCluster{withSourceAuth("nofleetiam", SourceAuthSCRAM)}, inputs)
 	assert.Equal(t, RecommendationCanonical, d.RecommendationStatus, "no IAM in fleet → IAM prereq irrelevant")
 
 	// With IAM in the fleet, the IAM-not-started prereq now blocks eligibility.
-	d = decideCutover([]types.ProcessedCluster{withSourceAuth("fleetiam", SourceAuthIAM)}, inputs)
+	d = decideCutover([]report.ProcessedCluster{withSourceAuth("fleetiam", SourceAuthIAM)}, inputs)
 	assert.Equal(t, RecommendationDegradedPrereqsPending, d.RecommendationStatus, "IAM in fleet → IAM prereq required")
 }
 
@@ -128,12 +128,12 @@ func TestDecideCutover_AlternativesShown(t *testing.T) {
 func TestDecideCutover_IAMPrereqRowOnlyWhenIAMInFleet(t *testing.T) {
 	inputs := styleInputs(DowntimeMinutesPerService)
 
-	noIAM := decideCutover([]types.ProcessedCluster{withSourceAuth("c", SourceAuthSCRAM)}, inputs)
+	noIAM := decideCutover([]report.ProcessedCluster{withSourceAuth("c", SourceAuthSCRAM)}, inputs)
 	for _, p := range noIAM.Prereqs {
 		assert.False(t, strings.Contains(p.Description, "IAM"), "IAM prereq must NOT appear when fleet has no IAM")
 	}
 
-	iam := decideCutover([]types.ProcessedCluster{withSourceAuth("c", SourceAuthIAM)}, inputs)
+	iam := decideCutover([]report.ProcessedCluster{withSourceAuth("c", SourceAuthIAM)}, inputs)
 	var sawIAM bool
 	for _, p := range iam.Prereqs {
 		if strings.Contains(p.Description, "IAM") {
@@ -146,8 +146,8 @@ func TestDecideCutover_IAMPrereqRowOnlyWhenIAMInFleet(t *testing.T) {
 // withSourceAuth returns a minimal ProcessedCluster with the named
 // source auth enabled on the AWS-side ClientAuthentication. Used to
 // drive fleetUsesIAM() through decideCutover.
-func withSourceAuth(name, auth string) types.ProcessedCluster {
-	c := types.ProcessedCluster{Name: name}
+func withSourceAuth(name, auth string) report.ProcessedCluster {
+	c := report.ProcessedCluster{Name: name}
 	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 	enabled := true
 	clientAuth := &kafkatypes.ClientAuthentication{}
@@ -272,7 +272,7 @@ func TestComputeCutoverOverrides_PerClusterDifference(t *testing.T) {
 			"c": {},                          // no cutover override → no entry
 		},
 	}
-	clusters := []types.ProcessedCluster{
+	clusters := []report.ProcessedCluster{
 		{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}, // d has no entry in Clusters map
 	}
 	out := computeCutoverOverrides(clusters, fleet, inputs)
@@ -303,7 +303,7 @@ func TestDetectClusterCutoverOpenQuestions_TypoPerCluster(t *testing.T) {
 			},
 		},
 	}
-	oqs := detectClusterCutoverOpenQuestions([]types.ProcessedCluster{{Name: "a"}}, inputs)
+	oqs := detectClusterCutoverOpenQuestions([]report.ProcessedCluster{{Name: "a"}}, inputs)
 	require := 1
 	assert.Len(t, oqs, require)
 	assert.Equal(t, "downtime_tolerance_unknown", oqs[0].ID)
@@ -334,8 +334,8 @@ func TestPerCluster_AuthAndCutoverOverridesCoexistOnSameCluster(t *testing.T) {
 	assert.Equal(t, DowntimeZero, resolved.DowntimeTolerance, "per-cluster downtime_tolerance must layer on top of fleet inputs")
 	assert.Equal(t, "oauth", resolved.TargetAuthMethod, "per-cluster target_auth_method must layer on top of fleet inputs")
 
-	fleet := decideCutover([]types.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}, base)
-	overrides := computeCutoverOverrides([]types.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}, fleet, base)
+	fleet := decideCutover([]report.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}, base)
+	overrides := computeCutoverOverrides([]report.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}, fleet, base)
 	require.Len(t, overrides, 1, "per-cluster downtime_tolerance must produce a cutover override entry")
 	assert.Equal(t, CutoverBlueGreen, overrides[0].Style)
 
@@ -364,7 +364,7 @@ func TestPerCluster_SubPatternOnlyOverride(t *testing.T) {
 	assert.Equal(t, CutoverStopRestartRepeat, fleet.Style, "fleet must still resolve to SRR")
 	assert.Equal(t, SubPatternAppByApp, fleet.SubPattern, "fleet sub-pattern unchanged")
 
-	overrides := computeCutoverOverrides([]types.ProcessedCluster{{Name: "alpha"}}, fleet, base)
+	overrides := computeCutoverOverrides([]report.ProcessedCluster{{Name: "alpha"}}, fleet, base)
 	require.Len(t, overrides, 1, "sub_pattern-only override must still produce a CutoverOverrides entry")
 	assert.Equal(t, "alpha", overrides[0].ClusterID)
 	assert.Equal(t, CutoverStopRestartRepeat, overrides[0].Style, "style inherits the fleet's")
@@ -391,7 +391,7 @@ func TestPerCluster_BlueGreenOverrideOnIAMClusterWithCompletePrereqs(t *testing.
 	// so the fleet decision is canonical, not degraded.
 	base.IAMPreMigrationStatus = PrereqStatusCompleteInput
 	base.Raw = raw
-	clusters := []types.ProcessedCluster{withSourceAuth("iam-cluster", SourceAuthIAM)}
+	clusters := []report.ProcessedCluster{withSourceAuth("iam-cluster", SourceAuthIAM)}
 
 	fleet := decideCutover(clusters, base)
 	assert.Equal(t, RecommendationCanonical, fleet.RecommendationStatus, "all prereqs complete + IAM in fleet must still resolve canonical")
@@ -422,7 +422,7 @@ func TestComputeCutoverOverrides_GatewayMediationInheritedFromFleet(t *testing.T
 	base.IAMPreMigrationStatus = PrereqNotStarted // not_started — relevant ONLY if fleet uses IAM
 	// Fleet has an IAM cluster → IAM prereq is consulted → fleet is
 	// degraded (not gateway-mediated).
-	clusters := []types.ProcessedCluster{
+	clusters := []report.ProcessedCluster{
 		withSourceAuth("iam-cluster", SourceAuthIAM),
 		withSourceAuth("scram-override", SourceAuthSCRAM),
 	}
@@ -470,7 +470,7 @@ func TestPerCluster_SecondsPerServiceWithoutFleetGateway(t *testing.T) {
 		IAMPreMigrationStatus:        PrereqNotStarted,
 		Raw:                          raw,
 	}
-	clusters := []types.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}
+	clusters := []report.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}
 
 	fleet := decideCutover(clusters, base)
 	require.NotEqual(t, GatewayMediatedTrue, fleet.GatewayMediated, "fleet must NOT be gateway-mediated for this scenario")

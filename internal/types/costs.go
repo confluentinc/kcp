@@ -38,3 +38,13 @@ type CostMetadata struct {
 	Tags        map[string][]string `json:"tags"`
 	Services    []string            `json:"services"`
 }
+
+// AWS service name constants — single source of truth for Cost Explorer service filters.
+// Frontend constants (cmd/ui/frontend/src/constants/index.ts AWS_SERVICES) should mirror these.
+const (
+	ServiceAWSCertificateManager = "AWS Certificate Manager"
+	ServiceMSK                   = "Amazon Managed Streaming for Apache Kafka"
+	ServiceEC2Other              = "EC2 - Other"
+	ServiceELB                   = "Amazon Elastic Load Balancing"
+	ServiceVPC                   = "Amazon Virtual Private Cloud"
+)

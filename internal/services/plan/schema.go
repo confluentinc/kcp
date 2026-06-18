@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // Plan-input enum tokens for schema migration. Stable customer-facing
@@ -50,7 +50,7 @@ func knownSchemaCPEdition(value string) bool {
 // The result's `Paths` slice carries every verdict that applies —
 // usually one entry, two for the dual-source case so JSON consumers
 // branching on a single slot don't miss the second arm.
-func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs PlanInputsResolved) *SchemaDecision {
+func decideSchema(state report.ProcessedState, cfg *PlanConfig, inputs PlanInputsResolved) *SchemaDecision {
 	source, confluentURLs, glueNames := detectSchemaSource(state)
 	strategy := inputs.SchemaStrategy
 	if strategy == "" {
@@ -178,7 +178,7 @@ func hasPath(dec *SchemaDecision, p SchemaPath) bool {
 // (state.SchemaRegistries.ConfluentSchemaRegistry +
 // state.SchemaRegistries.AWSGlue) into a single enum + the lookups the
 // renderer needs (URLs + registry names).
-func detectSchemaSource(state types.ProcessedState) (SchemaSource, []string, []string) {
+func detectSchemaSource(state report.ProcessedState) (SchemaSource, []string, []string) {
 	srs := state.SchemaRegistries
 	if srs == nil {
 		return SchemaSourceNone, nil, nil
