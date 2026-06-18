@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 )
@@ -17,7 +18,7 @@ func authInputs() types.PlanInputsResolved {
 }
 
 func TestDecideAuth_NoSourceAuthsDetected(t *testing.T) {
-	c := types.ProcessedCluster{Name: "blank"}
+	c := report.ProcessedCluster{Name: "blank"}
 	d := decideAuth(c, defaultCfg(t), authInputs())
 	assert.Equal(t, "blank", d.ClusterID)
 	assert.Empty(t, d.SourceAuths, "no auth flags enabled → empty SourceAuths")
@@ -117,7 +118,7 @@ func TestDecideAuth_ServerlessIAM(t *testing.T) {
 // Serverless cluster with no Serverless.ClientAuthentication block.
 // DecideAuth must return empty SourceAuths without panicking.
 func TestDecideAuth_ServerlessNoAuth(t *testing.T) {
-	c := types.ProcessedCluster{Name: "srv-noauth"}
+	c := report.ProcessedCluster{Name: "srv-noauth"}
 	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 	c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
 		VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}, SecurityGroupIds: []string{"g"}}},

@@ -3,6 +3,7 @@ package plan
 import (
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,5 +117,5 @@ func TestEffortSignal_GlueAbsent_ZeroWithNote(t *testing.T) {
 // detectEffortSignals returns nil on an empty fleet so the renderer
 // omits §Effort Signals.
 func TestDetectEffortSignals_EmptyFleetReturnsNil(t *testing.T) {
-	assert.Nil(t, detectEffortSignals(types.ProcessedState{}))
+	assert.Nil(t, detectEffortSignals(report.ProcessedState{}))
 }

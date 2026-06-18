@@ -3,6 +3,7 @@ package plan
 import (
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -10,12 +11,12 @@ import (
 
 // fixtureCluster builds a ProcessedCluster with the metric aggregates that
 // drive the sizing formula. Caller passes in P95/peak values in MBps.
-func fixtureCluster(name string, partitions int, p95InMBps, p95OutMBps, peakInMBps, peakOutMBps float64) types.ProcessedCluster {
+func fixtureCluster(name string, partitions int, p95InMBps, p95OutMBps, peakInMBps, peakOutMBps float64) report.ProcessedCluster {
 	p95In := p95InMBps * bytesPerMBps
 	p95Out := p95OutMBps * bytesPerMBps
 	peakIn := peakInMBps * bytesPerMBps
 	peakOut := peakOutMBps * bytesPerMBps
-	return types.ProcessedCluster{
+	return report.ProcessedCluster{
 		Name:   name,
 		Region: "us-east-1",
 		ClusterMetrics: types.ProcessedClusterMetrics{
@@ -78,7 +79,7 @@ func TestComputeClusterSizing_SLAFloorBinds(t *testing.T) {
 func TestComputeClusterSizing_DegradedOnMissingP95(t *testing.T) {
 	// State file that has zero metric aggregates (kcp discover ran without
 	// kcp scan metrics) should not abort — surface a degraded sizing.
-	c := types.ProcessedCluster{
+	c := report.ProcessedCluster{
 		Name:                        "no-metrics",
 		ClusterMetrics:              types.ProcessedClusterMetrics{Aggregates: map[string]types.MetricAggregate{}},
 		KafkaAdminClientInformation: types.KafkaAdminClientInformation{Topics: &types.Topics{Summary: types.TopicSummary{TotalPartitions: 50}}},
