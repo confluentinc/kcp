@@ -1,8 +1,6 @@
 package plan
 
-import (
-	"github.com/confluentinc/kcp/internal/types"
-)
+import "github.com/confluentinc/kcp/internal/services/report"
 
 // downtime_tolerance enum values. Stable identifiers — used as YAML
 // input tokens AND as keys in the style mapping.
@@ -40,7 +38,7 @@ const (
 // distinct from "the customer set `prefer_gateway: false`" but
 // indistinguishable at this layer. Callers from tests should construct
 // inputs via the resolver, not by struct literal.
-func decideCutover(clusters []types.ProcessedCluster, inputs PlanInputsResolved) CutoverDecision {
+func decideCutover(clusters []report.ProcessedCluster, inputs PlanInputsResolved) CutoverDecision {
 	style, sub := resolveStyle(inputs)
 
 	// Blue/Green sidesteps the gateway question entirely — the gateway

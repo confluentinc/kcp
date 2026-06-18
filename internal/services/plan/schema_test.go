@@ -3,6 +3,7 @@ package plan
 import (
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -12,9 +13,9 @@ import (
 // registries. nil omits the SchemaRegistries block entirely (the
 // `source = none` case); empty slices model a scanner that ran but
 // found nothing (still resolves to `none`).
-func schemaState(confluentURLs, glueNames []string) types.ProcessedState {
+func schemaState(confluentURLs, glueNames []string) report.ProcessedState {
 	if confluentURLs == nil && glueNames == nil {
-		return types.ProcessedState{}
+		return report.ProcessedState{}
 	}
 	srs := &types.SchemaRegistriesState{}
 	for _, u := range confluentURLs {
@@ -23,7 +24,7 @@ func schemaState(confluentURLs, glueNames []string) types.ProcessedState {
 	for _, n := range glueNames {
 		srs.AWSGlue = append(srs.AWSGlue, types.GlueSchemaRegistryInformation{RegistryName: n})
 	}
-	return types.ProcessedState{SchemaRegistries: srs}
+	return report.ProcessedState{SchemaRegistries: srs}
 }
 
 func schemaInputs(strategy string) PlanInputsResolved {

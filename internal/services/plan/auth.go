@@ -1,8 +1,6 @@
 package plan
 
-import (
-	"github.com/confluentinc/kcp/internal/types"
-)
+import "github.com/confluentinc/kcp/internal/services/report"
 
 // Target auth method tokens. Customer-facing values written into
 // `plan-inputs.yaml` and rendered back in the AuthDecision JSON.
@@ -30,7 +28,7 @@ func knownTargetAuthMethod(t string) bool {
 // target across all source rows for that cluster — the renderer
 // surfaces the source/target pair and a `Note` so the customer can
 // see the trade-off.
-func decideAuth(c types.ProcessedCluster, cfg *PlanConfig, inputs PlanInputsResolved) AuthDecision {
+func decideAuth(c report.ProcessedCluster, cfg *PlanConfig, inputs PlanInputsResolved) AuthDecision {
 	sources := sourceAuthsDetected(c)
 	out := AuthDecision{
 		ClusterID:   c.Name,

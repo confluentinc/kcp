@@ -10,7 +10,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/report"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
 // Function-naming convention across this package:
@@ -52,7 +51,7 @@ func NewPlanService(cfg *PlanConfig, now func() time.Time) *PlanService {
 // Build produces a Plan from a ProcessedState and resolved plan-inputs.
 // Each step is a pure function so the test surface is the orchestration,
 // not its parts.
-func (s *PlanService) Build(state types.ProcessedState, inputs PlanInputsResolved, stateFilePath string) (*Plan, error) {
+func (s *PlanService) Build(state report.ProcessedState, inputs PlanInputsResolved, stateFilePath string) (*Plan, error) {
 	// Backfill `ClusterMetrics.Aggregates` once, in-place, against the
 	// canonical state. Every downstream caller (the per-cluster Build
 	// loop, plus every fleet-wide detector that re-runs
@@ -204,7 +203,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs PlanInputsResolve
 // will upgrade that recommendation. SERVERLESS-specific suppressions for
 // "ACLs not populated" and "0 brokers" live in cluster_signals.go so the
 // same logic is shared with the rule evaluator.
-func detectOpenQuestions(c types.ProcessedCluster, sizing ClusterSizing, ct ClusterTypeDecision, net NetworkingDecision, auth AuthDecision, cfg *PlanConfig, inputs PlanInputsResolved) []OpenQuestion {
+func detectOpenQuestions(c report.ProcessedCluster, sizing ClusterSizing, ct ClusterTypeDecision, net NetworkingDecision, auth AuthDecision, cfg *PlanConfig, inputs PlanInputsResolved) []OpenQuestion {
 	var oqs []OpenQuestion
 	// Auth posture undetectable. Fires whenever the source has no
 	// detected auth methods — auth is its own concern, surfaced
@@ -345,7 +344,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing ClusterSizing, ct Clus
 // state file contains Apache Kafka (self-managed, on-prem) clusters.
 // `kcp report plan` covers MSK only today; without this OQ those
 // clusters would be silently dropped from the plan.
-func detectOSKSourceOpenQuestion(state types.ProcessedState) []OpenQuestion {
+func detectOSKSourceOpenQuestion(state report.ProcessedState) []OpenQuestion {
 	var oskCount int
 	for _, src := range state.Sources {
 		if src.OSKData != nil {
@@ -473,7 +472,7 @@ func detectCutoverOpenQuestions(cutover CutoverDecision, overrides []ClusterCuto
 // affected cluster is obvious). Per-cluster typos silently fall back
 // to the per-source default in decideAuth via effectiveTarget, so
 // without this detector they're invisible to the customer.
-func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
+func detectAuthFleetOpenQuestions(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
 	var oqs []OpenQuestion
 	if !knownTargetAuthMethod(inputs.TargetAuthMethod) {
 		oqs = append(oqs, OpenQuestion{
@@ -508,7 +507,7 @@ func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs Plan
 // stable alphabetical order. Unknown-cluster overrides are filtered
 // out here; `detectUnknownClusterOverrides` handles surfacing them as
 // their own OQ. Returns nil when no Raw inputs exist.
-func sortedKnownClusterOverrideNames(clusters []types.ProcessedCluster, inputs PlanInputsResolved) []string {
+func sortedKnownClusterOverrideNames(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []string {
 	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
 		return nil
 	}
@@ -532,7 +531,7 @@ func sortedKnownClusterOverrideNames(clusters []types.ProcessedCluster, inputs P
 // cluster. Without this, a typo'd cluster name (e.g. `clusters[trust]`
 // against a fleet with no `trust` cluster) silently produces no
 // override and the reader has no signal that their input was rejected.
-func detectUnknownClusterOverrides(clusters []types.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
+func detectUnknownClusterOverrides(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
 	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
 		return nil
 	}
@@ -572,7 +571,7 @@ func detectUnknownClusterOverrides(clusters []types.ProcessedCluster, inputs Pla
 // When the override value isn't in the recognised enum, the entry
 // carries OverrideRejected + RejectedOverrideValue so a JSON consumer
 // can detect rejected overrides structurally (mirrors AuthDecision).
-func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet CutoverDecision, inputs PlanInputsResolved) []ClusterCutoverOverride {
+func computeCutoverOverrides(clusters []report.ProcessedCluster, fleet CutoverDecision, inputs PlanInputsResolved) []ClusterCutoverOverride {
 	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
 		return nil
 	}
@@ -583,7 +582,7 @@ func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet CutoverDec
 			continue
 		}
 		clusterInputs := applyClusterOverride(inputs, inputs.Raw, c.Name)
-		dec := decideCutover([]types.ProcessedCluster{c}, clusterInputs)
+		dec := decideCutover([]report.ProcessedCluster{c}, clusterInputs)
 		// Gateway prereqs are fleet-scoped — a per-cluster override
 		// can't earn its own gateway path. Inherit the fleet's
 		// mediation verdict unless the override is Blue/Green, which
@@ -622,7 +621,7 @@ func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet CutoverDec
 // this, the customer's per-cluster choice is silently lost — the
 // cluster falls back to the fleet's plain Cluster Linking shape and
 // the reader has no signal.
-func detectPerClusterGatewayIncompat(clusters []types.ProcessedCluster, fleet CutoverDecision, inputs PlanInputsResolved) []OpenQuestion {
+func detectPerClusterGatewayIncompat(clusters []report.ProcessedCluster, fleet CutoverDecision, inputs PlanInputsResolved) []OpenQuestion {
 	if fleet.GatewayMediated == GatewayMediatedTrue {
 		return nil
 	}
@@ -681,7 +680,7 @@ func rejectedCutoverOverride(raw ClusterPlanInputs) (bool, string) {
 // for cluster names that match an actual scanned cluster;
 // unknown-name overrides are handled by
 // detectUnknownClusterOverrides.
-func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
+func detectClusterCutoverOpenQuestions(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
 	var oqs []OpenQuestion
 	for _, name := range sortedKnownClusterOverrideNames(clusters, inputs) {
 		cluster := inputs.Raw.Clusters[name]
@@ -747,7 +746,7 @@ func openQuestionPriority(id string) int {
 // CalculateMetricsAggregates per invocation. Skips clusters where
 // Aggregates is already populated (e.g. test fixtures that pre-set it)
 // or where there are no raw metrics to fold.
-func backfillAggregates(state *types.ProcessedState) {
+func backfillAggregates(state *report.ProcessedState) {
 	for i := range state.Sources {
 		if state.Sources[i].MSKData == nil {
 			continue
@@ -763,8 +762,8 @@ func backfillAggregates(state *types.ProcessedState) {
 	}
 }
 
-func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
-	var out []types.ProcessedCluster
+func collectClusters(state report.ProcessedState) []report.ProcessedCluster {
+	var out []report.ProcessedCluster
 	for _, src := range state.Sources {
 		if src.MSKData == nil {
 			continue
@@ -776,7 +775,7 @@ func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
 	return out
 }
 
-func countRegions(state types.ProcessedState) int {
+func countRegions(state report.ProcessedState) int {
 	regions := map[string]struct{}{}
 	for _, src := range state.Sources {
 		if src.MSKData != nil {
@@ -799,14 +798,14 @@ func regionFlag(region string) string {
 	return " --region " + region
 }
 
-func topicCount(c types.ProcessedCluster) int {
+func topicCount(c report.ProcessedCluster) int {
 	if c.KafkaAdminClientInformation.Topics == nil {
 		return 0
 	}
 	return c.KafkaAdminClientInformation.Topics.Summary.Topics
 }
 
-func brokerCount(c types.ProcessedCluster) int {
+func brokerCount(c report.ProcessedCluster) int {
 	return len(c.AWSClientInformation.Nodes)
 }
 

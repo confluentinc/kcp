@@ -5,6 +5,7 @@ import (
 	"time"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,17 +15,17 @@ func fixedNow() time.Time {
 	return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
 }
 
-func twoClusterState() types.ProcessedState {
+func twoClusterState() report.ProcessedState {
 	// b-cluster intentionally listed first so the sort proves it works.
-	return types.ProcessedState{
-		Sources: []types.ProcessedSource{
+	return report.ProcessedState{
+		Sources: []report.ProcessedSource{
 			{
 				Type: types.SourceTypeMSK,
-				MSKData: &types.ProcessedMSKSource{
-					Regions: []types.ProcessedRegion{
+				MSKData: &report.ProcessedMSKSource{
+					Regions: []report.ProcessedRegion{
 						{
 							Name: "us-east-1",
-							Clusters: []types.ProcessedCluster{
+							Clusters: []report.ProcessedCluster{
 								fixtureCluster("b-cluster", 100, 5.0, 5.0, 6.0, 6.0),
 								fixtureCluster("a-cluster", 50, 1.0, 1.0, 2.0, 2.0),
 							},
@@ -71,16 +72,16 @@ func TestPlanServiceBuild_DeterministicByteIdenticalJSON(t *testing.T) {
 }
 
 func TestPlanServiceBuild_StableSortAcrossRegions(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{
 					// Same cluster name in two regions to prove (Region, Name) sort.
-					{Name: "us-west-2", Clusters: []types.ProcessedCluster{
+					{Name: "us-west-2", Clusters: []report.ProcessedCluster{
 						withRegion(fixtureCluster("collide", 10, 1.0, 1.0, 1.0, 1.0), "us-west-2"),
 					}},
-					{Name: "us-east-1", Clusters: []types.ProcessedCluster{
+					{Name: "us-east-1", Clusters: []report.ProcessedCluster{
 						withRegion(fixtureCluster("collide", 10, 1.0, 1.0, 1.0, 1.0), "us-east-1"),
 					}},
 				},
@@ -108,12 +109,12 @@ func TestPlanServiceBuild_SourceEnvironmentBrokerAndTopicCount(t *testing.T) {
 	c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 	c.KafkaAdminClientInformation.Topics.Summary.Topics = 42
 
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{
-					{Name: "us-east-1", Clusters: []types.ProcessedCluster{c}},
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{
+					{Name: "us-east-1", Clusters: []report.ProcessedCluster{c}},
 				},
 			},
 		}},
@@ -132,8 +133,8 @@ func TestPlanServiceBuild_SourceEnvironmentBrokerAndTopicCount(t *testing.T) {
 // the action that upgrades it.
 func TestDetectOpenQuestions(t *testing.T) {
 	cfg := defaultCfg(t)
-	provisioned := func(name string) types.ProcessedCluster {
-		c := types.ProcessedCluster{Name: name}
+	provisioned := func(name string) report.ProcessedCluster {
+		c := report.ProcessedCluster{Name: name}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.AWSClientInformation.MskClusterConfig.Provisioned = &kafkatypes.Provisioned{} // non-nil to satisfy cluster_type_unrecognised guard
@@ -184,7 +185,7 @@ func TestDetectOpenQuestions(t *testing.T) {
 	})
 
 	t.Run("no topics scan + nil ACLs → acls_not_scanned OQ", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "noAcls"}
+		c := report.ProcessedCluster{Name: "noAcls"}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		// Topics nil → scan didn't run; ACLs nil follows from same gap
@@ -193,7 +194,7 @@ func TestDetectOpenQuestions(t *testing.T) {
 	})
 
 	t.Run("SERVERLESS cluster suppresses acls_not_scanned and broker_inventory_empty", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "serverless"}
+		c := report.ProcessedCluster{Name: "serverless"}
 		c.AWSClientInformation.Nodes = nil
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
@@ -220,7 +221,7 @@ func TestDetectOpenQuestions(t *testing.T) {
 	})
 
 	t.Run("Serverless with nil Topics → scan-gap body, not 'Summary.Topics is 0'", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "srv-nil"}
+		c := report.ProcessedCluster{Name: "srv-nil"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
 			VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}}},
@@ -297,7 +298,7 @@ func assertContainsOQ(t *testing.T, oqs []OpenQuestion, id, expectedSubstring st
 
 func TestPlanServiceBuild_EmptyState(t *testing.T) {
 	svc := NewPlanService(defaultCfg(t), fixedNow)
-	p, err := svc.Build(types.ProcessedState{}, defaultInputs(), "")
+	p, err := svc.Build(report.ProcessedState{}, defaultInputs(), "")
 	require.NoError(t, err)
 	assert.Empty(t, p.Sizing)
 	assert.Empty(t, p.SourceEnvironment.Clusters)
@@ -305,13 +306,13 @@ func TestPlanServiceBuild_EmptyState(t *testing.T) {
 }
 
 func TestPlanServiceBuild_DegradedClusterStillRenders(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{
 					Name: "us-east-1",
-					Clusters: []types.ProcessedCluster{{
+					Clusters: []report.ProcessedCluster{{
 						Name:                        "no-metrics",
 						Region:                      "us-east-1",
 						KafkaAdminClientInformation: types.KafkaAdminClientInformation{Topics: &types.Topics{Summary: types.TopicSummary{TotalPartitions: 5}}},
@@ -329,7 +330,7 @@ func TestPlanServiceBuild_DegradedClusterStillRenders(t *testing.T) {
 	assert.Empty(t, p.SizingAppendix)
 }
 
-func withRegion(c types.ProcessedCluster, region string) types.ProcessedCluster {
+func withRegion(c report.ProcessedCluster, region string) report.ProcessedCluster {
 	c.Region = region
 	return c
 }
@@ -338,10 +339,10 @@ func withRegion(c types.ProcessedCluster, region string) types.ProcessedCluster 
 // osk_source_unsupported OQ so the customer knows on-prem clusters
 // were silently dropped. Today the plan only covers MSK.
 func TestDetectOSKSourceOpenQuestion_FiresWhenOSKClustersPresent(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "onprem-1"}, {ID: "onprem-2"}},
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &report.ProcessedOSKSource{
+				Clusters: []report.ProcessedOSKCluster{{ID: "onprem-1"}, {ID: "onprem-2"}},
 			}},
 		},
 	}
@@ -352,16 +353,16 @@ func TestDetectOSKSourceOpenQuestion_FiresWhenOSKClustersPresent(t *testing.T) {
 }
 
 func TestDetectOSKSourceOpenQuestion_NoOQWhenOSKAbsent(t *testing.T) {
-	state := types.ProcessedState{}
+	state := report.ProcessedState{}
 	assert.Empty(t, detectOSKSourceOpenQuestion(state))
 }
 
 // Singular vs plural verb agreement in the OQ title.
 func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
 	t.Run("1 cluster → 'isn't' + singular noun", func(t *testing.T) {
-		state := types.ProcessedState{Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "solo"}},
+		state := report.ProcessedState{Sources: []report.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &report.ProcessedOSKSource{
+				Clusters: []report.ProcessedOSKCluster{{ID: "solo"}},
 			}},
 		}}
 		oqs := detectOSKSourceOpenQuestion(state)
@@ -369,9 +370,9 @@ func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
 		assert.Contains(t, oqs[0].Title, "1 on-prem Kafka cluster in the state file isn't")
 	})
 	t.Run("2 clusters → 'aren't' + plural noun", func(t *testing.T) {
-		state := types.ProcessedState{Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "a"}, {ID: "b"}},
+		state := report.ProcessedState{Sources: []report.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &report.ProcessedOSKSource{
+				Clusters: []report.ProcessedOSKCluster{{ID: "a"}, {ID: "b"}},
 			}},
 		}}
 		oqs := detectOSKSourceOpenQuestion(state)
@@ -386,7 +387,7 @@ func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
 // empty for that cluster.
 func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 	t.Run("empty ClusterType → msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-type"}
+		c := report.ProcessedCluster{Name: "no-type"}
 		// ClusterType left as zero-value
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
@@ -394,7 +395,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
 	})
 	t.Run("PROVISIONED with nil Provisioned → msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "nil-prov"}
+		c := report.ProcessedCluster{Name: "nil-prov"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		// Provisioned block left as nil
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
@@ -403,7 +404,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
 	})
 	t.Run("Future variant ClusterType → msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "future"}
+		c := report.ProcessedCluster{Name: "future"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = "HYBRID"
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
@@ -411,7 +412,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
 	})
 	t.Run("Serverless does NOT report msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "srv"}
+		c := report.ProcessedCluster{Name: "srv"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
 			VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}}},
@@ -423,7 +424,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 
 func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 	t.Run("fully-scanned PROVISIONED cluster reports no missing inputs", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "ok"}
+		c := report.ProcessedCluster{Name: "ok"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		// Provisioned block must be populated — without it, the
 		// Provisioned-only helpers return empty and the new
@@ -435,21 +436,21 @@ func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 		assert.Empty(t, inputsMissing(c))
 	})
 	t.Run("Topics nil → 'topics' in the list", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-topics"}
+		c := report.ProcessedCluster{Name: "no-topics"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
 		assert.Contains(t, inputsMissing(c), "topics")
 	})
 	t.Run("Acls nil on PROVISIONED → 'acls' in the list", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-acls"}
+		c := report.ProcessedCluster{Name: "no-acls"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		assert.Contains(t, inputsMissing(c), "acls")
 	})
 	t.Run("Serverless suppresses 'acls' and 'brokers'", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "sl"}
+		c := report.ProcessedCluster{Name: "sl"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		missing := inputsMissing(c)
@@ -457,7 +458,7 @@ func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 		assert.NotContains(t, missing, "brokers", "serverless: no broker nodes by design; not a gap")
 	})
 	t.Run("0 broker Nodes on PROVISIONED → 'brokers' in the list", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-brokers"}
+		c := report.ProcessedCluster{Name: "no-brokers"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
@@ -518,13 +519,13 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 // despite the global default. This is the regression guard for the
 // heterogeneous-fleet failure mode that motivated A3.
 func TestPlanServiceBuild_PerClusterOverride_FlipsOnlyTargetCluster(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{
 					Name: "us-east-1",
-					Clusters: []types.ProcessedCluster{
+					Clusters: []report.ProcessedCluster{
 						fixtureCluster("alpha", 100, 5.0, 5.0, 6.0, 6.0),
 						fixtureCluster("bravo", 100, 5.0, 5.0, 6.0, 6.0),
 					},
@@ -558,13 +559,13 @@ func TestPlanServiceBuild_PerClusterOverride_FlipsOnlyTargetCluster(t *testing.T
 // only for the named cluster; everything else stays on the per-source
 // auth_mapping default.
 func TestPlanServiceBuild_PerClusterTargetAuthOverride(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{
 					Name: "us-east-1",
-					Clusters: []types.ProcessedCluster{
+					Clusters: []report.ProcessedCluster{
 						attachAuth(fixtureCluster("alpha", 100, 5.0, 5.0, 6.0, 6.0), SourceAuthSCRAM),
 						attachAuth(fixtureCluster("bravo", 100, 5.0, 5.0, 6.0, 6.0), SourceAuthSCRAM),
 					},
@@ -642,7 +643,7 @@ func TestDetectAuthFleetOpenQuestions_PerClusterTargetAuthTypo(t *testing.T) {
 			"bravo": {TargetAuthMethod: &good},
 		},
 	}
-	clusters := []types.ProcessedCluster{{Name: "alpha"}, {Name: "bravo"}}
+	clusters := []report.ProcessedCluster{{Name: "alpha"}, {Name: "bravo"}}
 	resolved := PlanInputsResolved{Raw: raw}
 	oqs := detectAuthFleetOpenQuestions(clusters, resolved)
 	require.Len(t, oqs, 1, "only the typo cluster should emit an OQ")
@@ -706,7 +707,7 @@ func TestSeverityLegend_OnlyPresent(t *testing.T) {
 // attachAuth gives a fixture cluster a SCRAM (or other) source auth so
 // it surfaces in decideAuth output. Mirrors withSourceAuth in
 // cutover_test.go but layers on top of an existing fixtureCluster.
-func attachAuth(c types.ProcessedCluster, sourceAuth string) types.ProcessedCluster {
+func attachAuth(c report.ProcessedCluster, sourceAuth string) report.ProcessedCluster {
 	enabled := true
 	clientAuth := &kafkatypes.ClientAuthentication{}
 	switch sourceAuth {

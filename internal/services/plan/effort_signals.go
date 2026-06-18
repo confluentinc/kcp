@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // pluralizeY appends "y" or "ies" based on count — "registry" /
@@ -31,7 +31,7 @@ const (
 //
 // Returns nil when there are no MSK clusters to evaluate (renderer
 // omits the section).
-func detectEffortSignals(state types.ProcessedState) *EffortSignalsSection {
+func detectEffortSignals(state report.ProcessedState) *EffortSignalsSection {
 	clusters := collectClusters(state)
 	if len(clusters) == 0 {
 		return nil
@@ -62,7 +62,7 @@ func intPtr(n int) *int { return &n }
 // Don't be tempted to swap in `types.AuthTypeIAM` from `types.go` —
 // that constant resolves to "SASL/IAM" and would silently mismatch
 // every real state file.
-func signalIAMClientCount(clusters []types.ProcessedCluster) EffortSignal {
+func signalIAMClientCount(clusters []report.ProcessedCluster) EffortSignal {
 	// Distinguish "scan ran, found 0 IAM clients" from "scan didn't
 	// run at all": if no cluster has any discovered_clients populated,
 	// the count is structurally unobservable → return nil. Otherwise
@@ -101,7 +101,7 @@ func signalIAMClientCount(clusters []types.ProcessedCluster) EffortSignal {
 // IdentityReplicationPolicy suppress the prefix — those won't show
 // up here. The renderer surfaces the caveat in the Note. Regex lives
 // in topic_patterns.go so red_flags can share it.
-func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) EffortSignal {
+func signalMM2CheckpointTopics(clusters []report.ProcessedCluster) EffortSignal {
 	// De-dupe by topic name so a Cluster-Linking mirror that
 	// replicates the same `*.checkpoints.internal` topic across N
 	// clusters doesn't inflate the count to N. Each distinct
@@ -138,7 +138,7 @@ func signalMM2CheckpointTopics(clusters []types.ProcessedCluster) EffortSignal {
 // (`connect-offsets`) may not exist with the same prefix, so we
 // require only two of three — AND-of-all-three would miss real
 // fleets per the spec. Regex lives in topic_patterns.go.
-func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) EffortSignal {
+func signalSelfManagedConnectFleets(clusters []report.ProcessedCluster) EffortSignal {
 	// Walk every topic, group by (cluster, prefix), collect which
 	// suffixes appear. Per-cluster scoping prevents two distinct
 	// fleets that both use the default unprefixed `connect-configs`
@@ -217,7 +217,7 @@ func signalSelfManagedConnectFleets(clusters []types.ProcessedCluster) EffortSig
 // Server-side schema export is automated by `kcp create-asset
 // migrate-schemas --glue-registry`; this row scopes the *client-side*
 // serializer-swap workstream.
-func signalGlueSerializerMigration(state types.ProcessedState, clusters []types.ProcessedCluster) EffortSignal {
+func signalGlueSerializerMigration(state report.ProcessedState, clusters []report.ProcessedCluster) EffortSignal {
 	sig := EffortSignal{
 		ID:    EffortSignalIDGlueSerializerMigration,
 		Label: "Glue → CC SR client serializer migration size — clients that need `AWSKafkaAvroSerializer` → `KafkaAvroSerializer`",
