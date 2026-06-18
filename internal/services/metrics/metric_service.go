@@ -722,6 +722,9 @@ func (s *resultStitcher) add(results []cloudwatchtypes.MetricDataResult) {
 	}
 }
 
+// output returns the stitched results. Per-window Messages are intentionally not
+// carried through (they are consumed during collection via isPartial); current
+// callers only read MetricDataResults.
 func (s *resultStitcher) output() *cloudwatch.GetMetricDataOutput {
 	results := make([]cloudwatchtypes.MetricDataResult, 0, len(s.order))
 	for _, id := range s.order {
@@ -760,6 +763,8 @@ func getBrokerType(instanceType string) types.BrokerType {
 }
 
 // isPartial reports whether a window response was truncated by the datapoint cap.
+// The per-result PartialData status is the primary, reliable signal; the
+// MaxMetricsExceeded top-level message is a documented secondary signal.
 func isPartial(out *cloudwatch.GetMetricDataOutput) bool {
 	for _, r := range out.MetricDataResults {
 		if r.StatusCode == cloudwatchtypes.StatusCodePartialData {
@@ -767,8 +772,7 @@ func isPartial(out *cloudwatch.GetMetricDataOutput) bool {
 		}
 	}
 	for _, m := range out.Messages {
-		switch aws.ToString(m.Code) {
-		case "MaxMetricsExceeded", "TooManyDatapoints", "Paginated":
+		if aws.ToString(m.Code) == "MaxMetricsExceeded" {
 			return true
 		}
 	}
@@ -785,8 +789,13 @@ func (ms *MetricService) collectWindow(ctx context.Context, queries []cloudwatch
 	}
 	if isPartial(out) {
 		windowSeconds := int64(end.Sub(start).Seconds())
-		if windowSeconds > int64(period) {
-			mid := start.Add(time.Duration(windowSeconds/2) * time.Second)
+		// Snap the split to a period boundary so neither half re-buckets the
+		// datapoint straddling mid (CloudWatch aligns buckets from each call's
+		// StartTime). If the window is too small to split into two period-aligned
+		// halves, we can't reduce further — record partial and keep what we got.
+		halfPeriods := (windowSeconds / 2) / int64(period)
+		if windowSeconds > int64(period) && halfPeriods >= 1 {
+			mid := start.Add(time.Duration(halfPeriods*int64(period)) * time.Second)
 			if mid.After(start) && mid.Before(end) {
 				if err := ms.collectWindow(ctx, queries, start, mid, period, st); err != nil {
 					return err

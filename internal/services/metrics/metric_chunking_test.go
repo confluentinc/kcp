@@ -259,3 +259,48 @@ func TestExecuteChunkedQuery_EmptyQueriesReturnsEmpty(t *testing.T) {
 		t.Errorf("expected no calls and empty results, got %d calls / %d results", len(fake.calls), len(out.MetricDataResults))
 	}
 }
+
+func TestExecuteChunkedQuery_StitchesContiguousTimestampsAcrossSeams(t *testing.T) {
+	period := int32(60)
+	seriesEst := 250 // chunkSeconds = (100000/250)*60 = 24000s = 400 pts/chunk
+	start := time.Unix(0, 0)
+	end := time.Unix(96000, 0) // 1600 pts across 4 chunks
+	fake := &fakeCWClient{respond: func(_ int, in *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
+		var ts []time.Time
+		var vals []float64
+		for s := in.StartTime.Unix(); s < in.EndTime.Unix(); s += int64(period) {
+			ts = append(ts, time.Unix(s, 0))
+			vals = append(vals, float64(s))
+		}
+		return &cloudwatch.GetMetricDataOutput{MetricDataResults: []cloudwatchtypes.MetricDataResult{
+			{Id: aws.String("sum_x"), Timestamps: ts, Values: vals, StatusCode: cloudwatchtypes.StatusCodeComplete},
+		}}, nil
+	}}
+	ms := &MetricService{client: fake}
+	out, err := ms.executeChunkedQuery(context.Background(), dummyQueries(), start, end, period, seriesEst, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	res := out.MetricDataResults[0]
+	if len(res.Timestamps) != 1600 {
+		t.Fatalf("expected 1600 timestamps, got %d", len(res.Timestamps))
+	}
+	for i := 1; i < len(res.Timestamps); i++ {
+		if diff := res.Timestamps[i].Unix() - res.Timestamps[i-1].Unix(); diff != int64(period) {
+			t.Fatalf("non-contiguous timestamps at index %d: diff %d, want %d", i, diff, period)
+		}
+	}
+}
+
+func TestIsPartial_DetectsMaxMetricsExceededMessage(t *testing.T) {
+	out := &cloudwatch.GetMetricDataOutput{
+		Messages: []cloudwatchtypes.MessageData{{Code: aws.String("MaxMetricsExceeded"), Value: aws.String("limit hit")}},
+	}
+	if !isPartial(out) {
+		t.Error("expected isPartial=true for MaxMetricsExceeded message code")
+	}
+	clean := &cloudwatch.GetMetricDataOutput{MetricDataResults: completeResult("sum_x", 1)}
+	if isPartial(clean) {
+		t.Error("expected isPartial=false for a complete result")
+	}
+}
