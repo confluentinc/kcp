@@ -758,3 +758,82 @@ func getBrokerType(instanceType string) types.BrokerType {
 	}
 	return types.BrokerTypeStandard
 }
+
+// isPartial reports whether a window response was truncated by the datapoint cap.
+func isPartial(out *cloudwatch.GetMetricDataOutput) bool {
+	for _, r := range out.MetricDataResults {
+		if r.StatusCode == cloudwatchtypes.StatusCodePartialData {
+			return true
+		}
+	}
+	for _, m := range out.Messages {
+		switch aws.ToString(m.Code) {
+		case "MaxMetricsExceeded", "TooManyDatapoints", "Paginated":
+			return true
+		}
+	}
+	return false
+}
+
+// collectWindow fetches one window into the stitcher. If the response is partial
+// and the window spans more than one period, it bisects and recurses; at the
+// one-period floor it records a partial flag (warned once by executeChunkedQuery).
+func (ms *MetricService) collectWindow(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, start, end time.Time, period int32, st *resultStitcher) error {
+	out, err := ms.executeWindow(ctx, queries, start, end)
+	if err != nil {
+		return err
+	}
+	if isPartial(out) {
+		windowSeconds := int64(end.Sub(start).Seconds())
+		if windowSeconds > int64(period) {
+			mid := start.Add(time.Duration(windowSeconds/2) * time.Second)
+			if mid.After(start) && mid.Before(end) {
+				if err := ms.collectWindow(ctx, queries, start, mid, period, st); err != nil {
+					return err
+				}
+				return ms.collectWindow(ctx, queries, mid, end, period, st)
+			}
+		}
+		st.markPartial()
+	}
+	st.add(out.MetricDataResults)
+	return nil
+}
+
+// executeChunkedQuery fetches metrics across [startTime, endTime), splitting into
+// sub-windows sized to stay under datapointBudget for seriesEstimate series at the
+// given period (seriesEstimate <= 0 means "unknown" -> full window + fallback).
+// Results are stitched per Id; a single warning is emitted if any data remained
+// partial. label identifies the query group/cluster in that warning.
+func (ms *MetricService) executeChunkedQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time, period int32, seriesEstimate int, label string) (*cloudwatch.GetMetricDataOutput, error) {
+	if !endTime.After(startTime) {
+		return &cloudwatch.GetMetricDataOutput{}, nil
+	}
+
+	st := newResultStitcher()
+	cs := chunkSeconds(period, seriesEstimate)
+	totalSeconds := int64(endTime.Sub(startTime).Seconds())
+
+	if cs <= 0 || totalSeconds <= cs {
+		if err := ms.collectWindow(ctx, queries, startTime, endTime, period, st); err != nil {
+			return nil, err
+		}
+	} else {
+		for chunkStart := startTime; chunkStart.Before(endTime); {
+			chunkEnd := chunkStart.Add(time.Duration(cs) * time.Second)
+			if chunkEnd.After(endTime) {
+				chunkEnd = endTime
+			}
+			if err := ms.collectWindow(ctx, queries, chunkStart, chunkEnd, period, st); err != nil {
+				return nil, err
+			}
+			chunkStart = chunkEnd
+		}
+	}
+
+	if st.partial {
+		slog.Warn("metrics may be incomplete: CloudWatch returned partial data at the minimum window",
+			"query", label, "period", period, "start", startTime, "end", endTime)
+	}
+	return st.output(), nil
+}

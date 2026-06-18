@@ -1,7 +1,10 @@
 package metrics
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,5 +129,112 @@ func TestResultStitcher_MarkPartial(t *testing.T) {
 	s.markPartial()
 	if !s.partial {
 		t.Error("expected partial after markPartial")
+	}
+}
+
+// completeResult returns a single complete series with n points for an Id.
+func completeResult(id string, n int) []cloudwatchtypes.MetricDataResult {
+	vals := make([]float64, n)
+	ts := make([]time.Time, n)
+	for i := 0; i < n; i++ {
+		vals[i] = float64(i)
+		ts[i] = time.Unix(int64(i*60), 0)
+	}
+	return []cloudwatchtypes.MetricDataResult{{
+		Id: aws.String(id), Values: vals, Timestamps: ts, StatusCode: cloudwatchtypes.StatusCodeComplete,
+	}}
+}
+
+func TestExecuteChunkedQuery_SingleCallWhenUnderBudget(t *testing.T) {
+	fake := &fakeCWClient{respond: func(_ int, _ *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
+		return &cloudwatch.GetMetricDataOutput{MetricDataResults: completeResult("sum_x", 10)}, nil
+	}}
+	ms := &MetricService{client: fake}
+	start, end := time.Unix(0, 0), time.Unix(600, 0) // 10 points at 60s
+	out, err := ms.executeChunkedQuery(context.Background(), nil, start, end, 60, 4, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fake.calls) != 1 {
+		t.Fatalf("expected 1 call, got %d", len(fake.calls))
+	}
+	if len(out.MetricDataResults[0].Values) != 10 {
+		t.Errorf("expected 10 stitched values, got %d", len(out.MetricDataResults[0].Values))
+	}
+}
+
+func TestExecuteChunkedQuery_ChunksAndStaysUnderCap(t *testing.T) {
+	// period 60s, seriesEstimate 250 => chunkSeconds = (100000/250)*60 = 24000s (400 pts).
+	// total window 96000s (1600 pts) => ceil(96000/24000) = 4 chunks.
+	period := int32(60)
+	seriesEst := 250
+	start := time.Unix(0, 0)
+	end := time.Unix(96000, 0)
+	cs := chunkSeconds(period, seriesEst)
+
+	fake := &fakeCWClient{respond: func(_ int, in *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
+		win := int64(in.EndTime.Sub(*in.StartTime).Seconds())
+		if win > cs {
+			t.Errorf("chunk window %d exceeds chunkSeconds %d", win, cs)
+		}
+		return &cloudwatch.GetMetricDataOutput{MetricDataResults: completeResult("sum_x", int(win/int64(period)))}, nil
+	}}
+	ms := &MetricService{client: fake}
+	out, err := ms.executeChunkedQuery(context.Background(), nil, start, end, period, seriesEst, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fake.calls) != 4 {
+		t.Fatalf("expected 4 chunks, got %d", len(fake.calls))
+	}
+	if got := len(out.MetricDataResults[0].Values); got != 1600 {
+		t.Errorf("expected 1600 stitched values, got %d", got)
+	}
+}
+
+func TestExecuteChunkedQuery_BisectsOnPartialData(t *testing.T) {
+	// seriesEstimate 0 => no deterministic chunking; full window returns PartialData,
+	// each half returns Complete. Bisection should recover full data.
+	start, end := time.Unix(0, 0), time.Unix(120, 0) // 2 periods at 60s
+	fake := &fakeCWClient{respond: func(_ int, in *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
+		win := int64(in.EndTime.Sub(*in.StartTime).Seconds())
+		if win > 60 {
+			return &cloudwatch.GetMetricDataOutput{MetricDataResults: []cloudwatchtypes.MetricDataResult{
+				{Id: aws.String("sum_x"), StatusCode: cloudwatchtypes.StatusCodePartialData, Values: []float64{0}, Timestamps: []time.Time{time.Unix(60, 0)}},
+			}}, nil
+		}
+		return &cloudwatch.GetMetricDataOutput{MetricDataResults: completeResult("sum_x", 1)}, nil
+	}}
+	ms := &MetricService{client: fake}
+	out, err := ms.executeChunkedQuery(context.Background(), nil, start, end, 60, 0, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(fake.calls) != 3 {
+		t.Fatalf("expected 3 calls (1 partial + 2 halves), got %d", len(fake.calls))
+	}
+	if got := len(out.MetricDataResults[0].Values); got != 2 {
+		t.Errorf("expected 2 recovered values, got %d", got)
+	}
+}
+
+func TestExecuteChunkedQuery_WarnsAtFloor(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	defer slog.SetDefault(prev)
+
+	fake := &fakeCWClient{respond: func(_ int, _ *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
+		return &cloudwatch.GetMetricDataOutput{MetricDataResults: []cloudwatchtypes.MetricDataResult{
+			{Id: aws.String("sum_x"), StatusCode: cloudwatchtypes.StatusCodePartialData, Values: []float64{0}, Timestamps: []time.Time{time.Unix(0, 0)}},
+		}}, nil
+	}}
+	ms := &MetricService{client: fake}
+	_, err := ms.executeChunkedQuery(context.Background(), nil, time.Unix(0, 0), time.Unix(60, 0), 60, 0, "broker metrics for cluster c1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), "metrics may be incomplete") || !strings.Contains(buf.String(), "broker metrics for cluster c1") {
+		t.Errorf("expected one incomplete-metrics warning mentioning the label, got: %q", buf.String())
 	}
 }
