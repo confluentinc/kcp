@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -40,9 +41,9 @@ func NewMigrationScriptsHCLService() *MigrationScriptsHCLService {
 //
 // Filename collisions across sanitized topic names are surfaced as a hard
 // error — auto-disambiguating would hide a real surprise from the user.
-func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.MirrorTopicsRequest) (types.MigrationScriptsTerraformProject, error) {
+func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.MirrorTopicsRequest) (hcltypes.MigrationScriptsTerraformProject, error) {
 	if request.Mode != types.MigrateTopicsModeMirror && request.Mode != types.MigrateTopicsModeNew {
-		return types.MigrationScriptsTerraformProject{}, fmt.Errorf("invalid mode: %q (values: %s, %s)", request.Mode, types.MigrateTopicsModeMirror, types.MigrateTopicsModeNew)
+		return hcltypes.MigrationScriptsTerraformProject{}, fmt.Errorf("invalid mode: %q (values: %s, %s)", request.Mode, types.MigrateTopicsModeMirror, types.MigrateTopicsModeNew)
 	}
 
 	topics := topicsForRequest(request)
@@ -65,16 +66,16 @@ func (s *MigrationScriptsHCLService) GenerateMirrorTopicsFiles(request types.Mir
 		perTopicFiles[filename] = content
 	}
 	if len(collisions) > 0 {
-		return types.MigrationScriptsTerraformProject{}, fmt.Errorf("filename collisions detected: %v — rename or exclude one of the colliding source topics", collisions)
+		return hcltypes.MigrationScriptsTerraformProject{}, fmt.Errorf("filename collisions detected: %v — rename or exclude one of the colliding source topics", collisions)
 	}
 
-	folder := types.MigrationScriptsTerraformFolder{
+	folder := hcltypes.MigrationScriptsTerraformFolder{
 		ProvidersTf:     s.GenerateProvidersTf(),
 		VariablesTf:     s.generateMirrorTopicsVariablesTf(),
 		AdditionalFiles: perTopicFiles,
 	}
-	return types.MigrationScriptsTerraformProject{
-		Folders: []types.MigrationScriptsTerraformFolder{folder},
+	return hcltypes.MigrationScriptsTerraformProject{
+		Folders: []hcltypes.MigrationScriptsTerraformFolder{folder},
 	}, nil
 }
 
@@ -123,8 +124,8 @@ func topicsForRequest(request types.MirrorTopicsRequest) []types.TopicDetails {
 	return out
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles(request types.MigrateAclsRequest) (types.TerraformFiles, error) {
-	return types.TerraformFiles{
+func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles(request types.MigrateAclsRequest) (hcltypes.TerraformFiles, error) {
+	return hcltypes.TerraformFiles{
 		PerPrincipalTf:   s.generatePerPrincipalACLsTf(request),
 		ProvidersTf:      s.GenerateProvidersTf(),
 		VariablesTf:      s.generateMigrateACLsVariablesTf(),
@@ -132,13 +133,13 @@ func (s *MigrationScriptsHCLService) GenerateMigrateAclsFiles(request types.Migr
 	}, nil
 }
 
-func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (types.MigrationScriptsTerraformProject, error) {
-	ms := types.MigrationScriptsTerraformProject{}
-	folders := []types.MigrationScriptsTerraformFolder{}
+func (s *MigrationScriptsHCLService) GenerateMigrateSchemasFiles(request types.MigrateSchemasRequest) (hcltypes.MigrationScriptsTerraformProject, error) {
+	ms := hcltypes.MigrationScriptsTerraformProject{}
+	folders := []hcltypes.MigrationScriptsTerraformFolder{}
 	for _, schemaRegistry := range request.SchemaRegistries {
 		if schemaRegistry.Migrate {
 			folderName := utils.URLToFolderName(schemaRegistry.SourceURL)
-			folder := types.MigrationScriptsTerraformFolder{
+			folder := hcltypes.MigrationScriptsTerraformFolder{
 				Name:             folderName,
 				MainTf:           s.generateMigrateSchemasMainTf(schemaRegistry),
 				ProvidersTf:      s.generateMigrateSchemasProvidersTf(),
@@ -337,9 +338,9 @@ func (s *MigrationScriptsHCLService) GenerateMigrateConnectorsVariablesTf() stri
 // Migrate Glue Schemas Generation Methods
 // ============================================================================
 
-func (s *MigrationScriptsHCLService) GenerateMigrateGlueSchemasFiles(request types.MigrateGlueSchemasRequest) (types.MigrationScriptsTerraformProject, error) {
-	ms := types.MigrationScriptsTerraformProject{}
-	folders := []types.MigrationScriptsTerraformFolder{}
+func (s *MigrationScriptsHCLService) GenerateMigrateGlueSchemasFiles(request types.MigrateGlueSchemasRequest) (hcltypes.MigrationScriptsTerraformProject, error) {
+	ms := hcltypes.MigrationScriptsTerraformProject{}
+	folders := []hcltypes.MigrationScriptsTerraformFolder{}
 
 	for _, registry := range request.GlueRegistries {
 		if !registry.Migrate || len(registry.Schemas) == 0 {
@@ -348,9 +349,9 @@ func (s *MigrationScriptsHCLService) GenerateMigrateGlueSchemasFiles(request typ
 
 		generatedFiles, err := confluent.GenerateGlueSchemaMigrationHCL(registry.Schemas)
 		if err != nil {
-			return types.MigrationScriptsTerraformProject{}, fmt.Errorf("failed to generate HCL for Glue registry %q: %w", registry.RegistryName, err)
+			return hcltypes.MigrationScriptsTerraformProject{}, fmt.Errorf("failed to generate HCL for Glue registry %q: %w", registry.RegistryName, err)
 		}
-		folder := types.MigrationScriptsTerraformFolder{
+		folder := hcltypes.MigrationScriptsTerraformFolder{
 			Name:             registry.RegistryName,
 			ProvidersTf:      s.GenerateProvidersTf(),
 			VariablesTf:      s.generateMigrateGlueSchemasVariablesTf(),

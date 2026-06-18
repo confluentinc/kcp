@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -71,7 +72,7 @@ func (bh *BastionHostAssetGenerator) Run() error {
 	return nil
 }
 
-func (bh *BastionHostAssetGenerator) writeTerraformFiles(outputDir string, files types.TerraformFiles) error {
+func (bh *BastionHostAssetGenerator) writeTerraformFiles(outputDir string, files hcltypes.TerraformFiles) error {
 	if files.MainTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)

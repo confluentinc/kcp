@@ -12,6 +12,7 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
@@ -714,8 +715,8 @@ func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequ
 // flattenMigrateTopicsProject concatenates per-topic .tf files into a single
 // main.tf string so the legacy UI wizard contract stays intact while the CLI
 // uses the per-file layout.
-func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject) types.TerraformFiles {
-	out := types.TerraformFiles{}
+func flattenMigrateTopicsProject(project hcltypes.MigrationScriptsTerraformProject) hcltypes.TerraformFiles {
+	out := hcltypes.TerraformFiles{}
 	if len(project.Folders) == 0 {
 		return out
 	}
