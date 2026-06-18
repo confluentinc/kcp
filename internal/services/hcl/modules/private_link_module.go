@@ -3,12 +3,12 @@ package modules
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
-	return []ModuleVariable[types.TargetClusterWizardRequest]{
+func GetTargetClusterPrivateLinkVariables() []ModuleVariable[hclrequests.TargetClusterWizardRequest] {
+	return []ModuleVariable[hclrequests.TargetClusterWizardRequest]{
 		{
 			Name: "aws_region",
 			Definition: hcltypes.TerraformVariable{
@@ -17,7 +17,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.AwsRegion
 			},
 			Condition: nil,
@@ -30,7 +30,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.VpcId
 			},
 			Condition: nil,
@@ -43,7 +43,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.SubnetCidrRanges
 			},
 			Condition: nil,
@@ -70,7 +70,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 			},
 			ValueExtractor:   nil,
 			FromModuleOutput: "confluent_cloud",
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
 		},
@@ -84,7 +84,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 			},
 			ValueExtractor:   nil,
 			FromModuleOutput: "confluent_cloud",
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
 		},
@@ -98,7 +98,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 			},
 			ValueExtractor:   nil,
 			FromModuleOutput: "confluent_cloud",
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
 		},
@@ -112,7 +112,7 @@ func GetTargetClusterPrivateLinkVariables() []ModuleVariable[types.TargetCluster
 			},
 			ValueExtractor:   nil,
 			FromModuleOutput: "confluent_cloud",
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return request.ClusterType == "dedicated"
 			},
 		},
@@ -129,6 +129,6 @@ func GetPrivateLinkModuleOutputDefinitions(vpcEndpointResourceName string) []hcl
 	}
 }
 
-func GetTargetClusterPrivateLinkModuleVariableDefinitions(request types.TargetClusterWizardRequest) []hcltypes.TerraformVariable {
+func GetTargetClusterPrivateLinkModuleVariableDefinitions(request hclrequests.TargetClusterWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetTargetClusterPrivateLinkVariables(), request)
 }

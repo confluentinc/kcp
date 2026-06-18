@@ -1,12 +1,12 @@
 package modules
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
-	return []ModuleVariable[types.MigrationWizardRequest]{
+func GetJumpClusterVariables() []ModuleVariable[hclrequests.MigrationWizardRequest] {
+	return []ModuleVariable[hclrequests.MigrationWizardRequest]{
 		{
 			Name: "jump_cluster_broker_subnet_ids",
 			Definition: hcltypes.TerraformVariable{
@@ -15,7 +15,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return []string{} // Retrieved from networking module output.
 			},
 			Condition:        nil,
@@ -29,7 +29,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.JumpClusterInstanceType
 			},
 			Condition: nil,
@@ -37,7 +37,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 		{
 			Name:       SchemaJumpClusterSecurityGroupIDs.Name,
 			Definition: SchemaJumpClusterSecurityGroupIDs.ToDefinition(),
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return []string{} // Retrieved from networking module output.
 			},
 			Condition:        nil,
@@ -46,7 +46,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 		{
 			Name:       SchemaJumpClusterSSHKeyPairName.Name,
 			Definition: SchemaJumpClusterSSHKeyPairName.ToDefinition(),
-			ValueExtractor: func(_ types.MigrationWizardRequest) any {
+			ValueExtractor: func(_ hclrequests.MigrationWizardRequest) any {
 				return "" // Retrieved from networking module output.
 			},
 			Condition:        nil,
@@ -60,10 +60,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.JumpClusterIamAuthRoleName
 			},
-			Condition: func(request types.MigrationWizardRequest) bool {
+			Condition: func(request hclrequests.MigrationWizardRequest) bool {
 				return request.JumpClusterAuthType == "iam"
 			},
 		},
@@ -75,7 +75,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.JumpClusterBrokerStorage
 			},
 			Condition: nil,
@@ -88,7 +88,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.TargetClusterId
 			},
 			Condition: nil,
@@ -101,7 +101,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.TargetBootstrapEndpoint
 			},
 			Condition: nil,
@@ -114,7 +114,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.TargetRestEndpoint
 			},
 			Condition: nil,
@@ -128,7 +128,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   true,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return "" // User prompted for value at Terraform apply.
 			},
 			Condition:        nil,
@@ -142,7 +142,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   true,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return "" // User prompted for value at Terraform apply.
 			},
 			Condition:        nil,
@@ -156,7 +156,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.SourceClusterId
 			},
 			Condition: nil,
@@ -169,7 +169,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				switch request.JumpClusterAuthType {
 				case "sasl_scram":
 					return request.SourceSaslScramBootstrapServers
@@ -189,10 +189,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   true,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return "" // User prompted for value at Terraform apply.
 			},
-			Condition: func(request types.MigrationWizardRequest) bool {
+			Condition: func(request hclrequests.MigrationWizardRequest) bool {
 				return request.JumpClusterAuthType == "sasl_scram"
 			},
 		},
@@ -204,10 +204,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   true,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return "" // User prompted for value at Terraform apply.
 			},
-			Condition: func(request types.MigrationWizardRequest) bool {
+			Condition: func(request hclrequests.MigrationWizardRequest) bool {
 				return request.JumpClusterAuthType == "sasl_scram"
 			},
 		},
@@ -219,10 +219,10 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.SourceSaslScramMechanism
 			},
-			Condition: func(request types.MigrationWizardRequest) bool {
+			Condition: func(request hclrequests.MigrationWizardRequest) bool {
 				return request.JumpClusterAuthType == "sasl_scram"
 			},
 		},
@@ -234,7 +234,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.ClusterLinkName
 			},
 			Condition: nil,
@@ -242,7 +242,7 @@ func GetJumpClusterVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	}
 }
 
-func GetJumpClusterModuleVariableDefinitions(request types.MigrationWizardRequest) []hcltypes.TerraformVariable {
+func GetJumpClusterModuleVariableDefinitions(request hclrequests.MigrationWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetJumpClusterVariables(), request)
 }
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	iamservice "github.com/confluentinc/kcp/internal/services/iam"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
@@ -97,7 +98,7 @@ func (ig *IamAclsGenerator) Run() error {
 		principalNames = append(principalNames, principal)
 	}
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        principalNames,
 		TargetClusterId:           ig.opts.TargetClusterId,
 		TargetClusterRestEndpoint: ig.opts.TargetClusterRestEndpoint,
