@@ -3,7 +3,7 @@ package plan
 import (
 	"regexp"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // Shared topic-name regexes used by both the Red Flags detector
@@ -70,7 +70,7 @@ var (
 // evidence. Returns (false, "") when the topics scan didn't populate
 // — the upstream `topic_inventory_empty` OQ already surfaces that
 // gap, so callers shouldn't conflate "no match" with "no scan".
-func topicPatternFound(c types.ProcessedCluster, re *regexp.Regexp) (bool, string) {
+func topicPatternFound(c report.ProcessedCluster, re *regexp.Regexp) (bool, string) {
 	if c.KafkaAdminClientInformation.Topics == nil {
 		return false, ""
 	}

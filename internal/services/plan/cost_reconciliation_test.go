@@ -3,7 +3,7 @@ package plan
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -36,11 +36,11 @@ func TestDetectCostReconciliation_DiffSurfacesHiddenType(t *testing.T) {
 	discovered := redFlagCluster("discovered-cluster", "3.5.0", "kafka.m5.large", "")
 	state := wrapClusters(discovered)
 	// Inject cost data: m5.large (present in inventory) + m7g.large (NOT in inventory)
-	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+	state.Sources[0].MSKData.Regions[0].Costs = report.ProcessedRegionCosts{
 		Region: "us-east-1",
-		Results: []types.ProcessedCost{
-			{Start: "2026-04-01", UsageType: "USE1-Kafka.m5.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 100.50}},
-			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 250.75}},
+		Results: []report.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m5.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 100.50}},
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 250.75}},
 		},
 	}
 	section := detectCostReconciliation(state, defaultCfg(t))
@@ -53,12 +53,12 @@ func TestDetectCostReconciliation_DiffSurfacesHiddenType(t *testing.T) {
 // Candidates are sorted by TotalSpend descending.
 func TestDetectCostReconciliation_SortedByTotalSpendDesc(t *testing.T) {
 	state := wrapClusters(redFlagCluster("only-known", "3.5.0", "kafka.t3.small", ""))
-	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+	state.Sources[0].MSKData.Regions[0].Costs = report.ProcessedRegionCosts{
 		Region: "us-east-1",
-		Results: []types.ProcessedCost{
-			{Start: "2026-04-01", UsageType: "USE1-Kafka.m5.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 100.0}},
-			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 500.0}},
-			{Start: "2026-04-01", UsageType: "USE1-Express.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 250.0}},
+		Results: []report.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m5.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 100.0}},
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 500.0}},
+			{Start: "2026-04-01", UsageType: "USE1-Express.m7g.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 250.0}},
 		},
 	}
 	section := detectCostReconciliation(state, defaultCfg(t))
@@ -83,11 +83,11 @@ func TestDetectCostReconciliation_EmptyCostDataEmitsOQ(t *testing.T) {
 // Non-broker usage strings (data transfer, EBS, etc.) are ignored.
 func TestDetectCostReconciliation_NonBrokerRowsIgnored(t *testing.T) {
 	state := wrapClusters(redFlagCluster("only-known", "3.5.0", "kafka.t3.small", ""))
-	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+	state.Sources[0].MSKData.Regions[0].Costs = report.ProcessedRegionCosts{
 		Region: "us-east-1",
-		Results: []types.ProcessedCost{
-			{Start: "2026-04-01", UsageType: "USE1-DataTransfer-Out-Bytes", Values: types.ProcessedCostBreakdown{UnblendedCost: 500.0}},
-			{Start: "2026-04-01", UsageType: "USE1-EBS:VolumeUsage.gp3", Values: types.ProcessedCostBreakdown{UnblendedCost: 200.0}},
+		Results: []report.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-DataTransfer-Out-Bytes", Values: report.ProcessedCostBreakdown{UnblendedCost: 500.0}},
+			{Start: "2026-04-01", UsageType: "USE1-EBS:VolumeUsage.gp3", Values: report.ProcessedCostBreakdown{UnblendedCost: 200.0}},
 		},
 	}
 	section := detectCostReconciliation(state, defaultCfg(t))
@@ -97,12 +97,12 @@ func TestDetectCostReconciliation_NonBrokerRowsIgnored(t *testing.T) {
 // Months / days observed roll up across distinct timestamps.
 func TestDetectCostReconciliation_ObservationCounts(t *testing.T) {
 	state := wrapClusters(redFlagCluster("only-known", "3.5.0", "kafka.t3.small", ""))
-	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+	state.Sources[0].MSKData.Regions[0].Costs = report.ProcessedRegionCosts{
 		Region: "us-east-1",
-		Results: []types.ProcessedCost{
-			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 100.0}},
-			{Start: "2026-04-02", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 100.0}},
-			{Start: "2026-05-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 100.0}},
+		Results: []report.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 100.0}},
+			{Start: "2026-04-02", UsageType: "USE1-Kafka.m7g.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 100.0}},
+			{Start: "2026-05-01", UsageType: "USE1-Kafka.m7g.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 100.0}},
 		},
 	}
 	section := detectCostReconciliation(state, defaultCfg(t))
@@ -123,11 +123,11 @@ func TestDetectCostReconciliation_ServerlessInventoryMatchesCostShape(t *testing
 	state := wrapClusters(srv)
 	// Inject cost data: the Serverless-Hours line should match the
 	// inventory; the m7g.large line should still flag as hidden.
-	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+	state.Sources[0].MSKData.Regions[0].Costs = report.ProcessedRegionCosts{
 		Region: "us-east-1",
-		Results: []types.ProcessedCost{
-			{Start: "2026-04-01", UsageType: "USE1-Kafka.Serverless-Hours", Values: types.ProcessedCostBreakdown{UnblendedCost: 500.00}},
-			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: types.ProcessedCostBreakdown{UnblendedCost: 250.00}},
+		Results: []report.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.Serverless-Hours", Values: report.ProcessedCostBreakdown{UnblendedCost: 500.00}},
+			{Start: "2026-04-01", UsageType: "USE1-Kafka.m7g.large", Values: report.ProcessedCostBreakdown{UnblendedCost: 250.00}},
 		},
 	}
 	section := detectCostReconciliation(state, defaultCfg(t))

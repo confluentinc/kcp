@@ -1,9 +1,8 @@
 package plan
 
 import (
-	"github.com/confluentinc/kcp/internal/types"
-
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // Plan-input enum tokens for tiered-storage knobs. Stable
@@ -28,7 +27,7 @@ const (
 // trade-off (mechanism / duration / cost direction) so the customer
 // (and account team) can decide whether the cold data is worth
 // re-fetching.
-func detectTieredStorage(state types.ProcessedState, inputs PlanInputsResolved) *TieredStorageSection {
+func detectTieredStorage(state report.ProcessedState, inputs PlanInputsResolved) *TieredStorageSection {
 	clusters := collectClusters(state)
 	var tiered []TieredStorageCluster
 	for _, c := range clusters {
@@ -67,7 +66,7 @@ func detectTieredStorage(state types.ProcessedState, inputs PlanInputsResolved) 
 // whereas Average over a 30-day window for a fixed 7-day retention
 // would report ~half the real current footprint. Falls back to
 // Average when Maximum isn't populated.
-func remoteLogSizeBytesOf(c types.ProcessedCluster) float64 {
+func remoteLogSizeBytesOf(c report.ProcessedCluster) float64 {
 	agg, ok := c.ClusterMetrics.Aggregates["RemoteLogSizeBytes"]
 	if !ok {
 		return 0

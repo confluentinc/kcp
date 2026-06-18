@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
@@ -29,7 +30,7 @@ func targetCloud(inputs PlanInputsResolved) string {
 // clusters don't have broker nodes and don't expose ACLs through the
 // admin API path used by `kcp scan clusters`, so several "looks like an
 // incomplete scan" signals are actually expected emptiness.
-func isServerless(c types.ProcessedCluster) bool {
+func isServerless(c report.ProcessedCluster) bool {
 	return c.AWSClientInformation.MskClusterConfig.ClusterType == kafkatypes.ClusterTypeServerless
 }
 
@@ -48,7 +49,7 @@ func isServerless(c types.ProcessedCluster) bool {
 // `--skip-acls`, which would recommend Enterprise when Dedicated may
 // actually be required. Serverless clusters don't expose ACLs via this
 // API and are excluded.
-func aclScanRan(c types.ProcessedCluster) bool {
+func aclScanRan(c report.ProcessedCluster) bool {
 	if isServerless(c) {
 		return false
 	}
@@ -61,7 +62,7 @@ func aclScanRan(c types.ProcessedCluster) bool {
 // not a gap; the gap is "MSK PROVISIONED cluster with no Nodes
 // populated" — that's almost certainly a missing or incomplete discover
 // run.
-func brokerInventoryGap(c types.ProcessedCluster) bool {
+func brokerInventoryGap(c report.ProcessedCluster) bool {
 	if isServerless(c) {
 		return false
 	}
@@ -80,7 +81,7 @@ func brokerInventoryGap(c types.ProcessedCluster) bool {
 // that iterate clusters MUST also guard with `isServerless` if they
 // want to skip Serverless explicitly (recommended: silent fall-through
 // is fragile if helper semantics change later).
-func clusterStorageMode(c types.ProcessedCluster) kafkatypes.StorageMode {
+func clusterStorageMode(c report.ProcessedCluster) kafkatypes.StorageMode {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil {
 		return ""
@@ -144,7 +145,7 @@ const (
 //
 // Multiple auths can be enabled simultaneously; the plan renders all
 // detected source auths and never picks one when more than one is on.
-func sourceAuthsDetected(c types.ProcessedCluster) []string {
+func sourceAuthsDetected(c report.ProcessedCluster) []string {
 	if isServerless(c) {
 		return serverlessSourceAuths(c)
 	}
@@ -193,7 +194,7 @@ func authFromSaslMechanism(mech string) string {
 	}
 }
 
-func serverlessSourceAuths(c types.ProcessedCluster) []string {
+func serverlessSourceAuths(c report.ProcessedCluster) []string {
 	srv := c.AWSClientInformation.MskClusterConfig.Serverless
 	if srv == nil || srv.ClientAuthentication == nil || srv.ClientAuthentication.Sasl == nil {
 		return nil
@@ -208,7 +209,7 @@ func serverlessSourceAuths(c types.ProcessedCluster) []string {
 // IAM enabled on the source side. Drives gateway eligibility —
 // IAM clients cannot connect to the CC Gateway and must pre-migrate
 // to SCRAM or mTLS first.
-func fleetUsesIAM(clusters []types.ProcessedCluster) bool {
+func fleetUsesIAM(clusters []report.ProcessedCluster) bool {
 	for _, c := range clusters {
 		for _, auth := range sourceAuthsDetected(c) {
 			if auth == SourceAuthIAM {
@@ -231,7 +232,7 @@ func fleetUsesIAM(clusters []types.ProcessedCluster) bool {
 // inlines directly rather than going through aclScanRan (which
 // returns false for serverless AND for nil-on-provisioned, an
 // ambiguity the caller would have to re-disambiguate).
-func inputsMissing(c types.ProcessedCluster) []string {
+func inputsMissing(c report.ProcessedCluster) []string {
 	var missing []string
 	// MskClusterConfig.Provisioned shape gap — affects every
 	// Provisioned-only helper (kafkaVersionOf, brokerInstanceType,
@@ -259,7 +260,7 @@ func inputsMissing(c types.ProcessedCluster) []string {
 // `Provisioned` block entirely. Both cases mean the Provisioned-only
 // helpers will return empty/false silently. Callers should treat this
 // as an inputs-missing gap and surface a cluster-type OQ.
-func hasUnknownClusterType(c types.ProcessedCluster) bool {
+func hasUnknownClusterType(c report.ProcessedCluster) bool {
 	ct := c.AWSClientInformation.MskClusterConfig.ClusterType
 	if ct == kafkatypes.ClusterTypeServerless {
 		return false

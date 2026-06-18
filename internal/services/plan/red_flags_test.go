@@ -3,6 +3,7 @@ package plan
 import (
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -123,7 +124,7 @@ func TestRedFlags_BroadTopicPatternMatch(t *testing.T) {
 // Empty fleet (no MSK clusters) → detectRedFlags returns nil so the
 // renderer omits the §Red Flags section entirely.
 func TestDetectRedFlags_EmptyFleetReturnsNil(t *testing.T) {
-	assert.Nil(t, detectRedFlags(types.ProcessedState{}, &Plan{}, defaultCfg(t), defaultInputs()))
+	assert.Nil(t, detectRedFlags(report.ProcessedState{}, &Plan{}, defaultCfg(t), defaultInputs()))
 }
 
 // ----- helpers -----
@@ -131,8 +132,8 @@ func TestDetectRedFlags_EmptyFleetReturnsNil(t *testing.T) {
 // redFlagCluster constructs a ProcessedCluster with the AWS SDK
 // MskClusterConfig fields the Red Flag detectors read. Pass empty
 // strings to leave a field unset.
-func redFlagCluster(name, kafkaVersion, instanceType, storageMode string) types.ProcessedCluster {
-	c := types.ProcessedCluster{Name: name, Region: "us-east-1"}
+func redFlagCluster(name, kafkaVersion, instanceType, storageMode string) report.ProcessedCluster {
+	c := report.ProcessedCluster{Name: name, Region: "us-east-1"}
 	prov := &kafkatypes.Provisioned{}
 	if kafkaVersion != "" {
 		v := kafkaVersion
@@ -153,12 +154,12 @@ func redFlagCluster(name, kafkaVersion, instanceType, storageMode string) types.
 	return c
 }
 
-func wrapClusters(clusters ...types.ProcessedCluster) types.ProcessedState {
-	return types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+func wrapClusters(clusters ...report.ProcessedCluster) report.ProcessedState {
+	return report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{Name: "us-east-1", Clusters: clusters}},
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{Name: "us-east-1", Clusters: clusters}},
 			},
 		}},
 	}
@@ -168,7 +169,7 @@ func wrapClusters(clusters ...types.ProcessedCluster) types.ProcessedState {
 // the full integration (V2 detector + V1 plumbing) rather than
 // calling detectRedFlags in isolation. Same default time / cfg used
 // by the rest of the plan tests.
-func buildPlanForRedFlags(t *testing.T, state types.ProcessedState, cfg *PlanConfig, inputs PlanInputsResolved) *Plan {
+func buildPlanForRedFlags(t *testing.T, state report.ProcessedState, cfg *PlanConfig, inputs PlanInputsResolved) *Plan {
 	t.Helper()
 	svc := NewPlanService(cfg, fixedNow)
 	p, err := svc.Build(state, inputs, "redflags-test.json")
@@ -180,8 +181,8 @@ func buildPlanForRedFlags(t *testing.T, state types.ProcessedState, cfg *PlanCon
 // Serverless cluster: ClusterType=Serverless, `Provisioned` left nil,
 // and the Serverless block carries the (IAM-only) ClientAuthentication.
 // Mirrors the JSON shape AWS returns — see PR #317 review by adrian-januzi.
-func serverlessCluster(name string) types.ProcessedCluster {
-	c := types.ProcessedCluster{Name: name, Region: "us-east-1"}
+func serverlessCluster(name string) report.ProcessedCluster {
+	c := report.ProcessedCluster{Name: name, Region: "us-east-1"}
 	enabled := true
 	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 	c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
@@ -237,7 +238,7 @@ func TestRedFlags_ServerlessDoesntPolluteVersionEvidence(t *testing.T) {
 // Environment table with `_none detected_` rather than crashing or
 // being silently dropped.
 func TestRedFlags_ServerlessNoClientAuthentication(t *testing.T) {
-	c := types.ProcessedCluster{Name: "srv-noauth", Region: "us-east-1"}
+	c := report.ProcessedCluster{Name: "srv-noauth", Region: "us-east-1"}
 	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 	c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
 		VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"subnet-x"}, SecurityGroupIds: []string{"sg-x"}}},
@@ -262,13 +263,13 @@ func TestRedFlags_ServerlessMultiRegion(t *testing.T) {
 	srvEast.Region = "us-east-1"
 	srvWest := serverlessCluster("srv-west")
 	srvWest.Region = "us-west-2"
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{
-					{Name: "us-east-1", Clusters: []types.ProcessedCluster{srvEast}},
-					{Name: "us-west-2", Clusters: []types.ProcessedCluster{srvWest}},
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{
+					{Name: "us-east-1", Clusters: []report.ProcessedCluster{srvEast}},
+					{Name: "us-west-2", Clusters: []report.ProcessedCluster{srvWest}},
 				},
 			},
 		}},
@@ -342,7 +343,7 @@ func TestRedFlags_ZeroACLsWithIAM_MixedFleetSurfacesExclusion(t *testing.T) {
 // Pre-fix, the OQ was suppressed entirely for Serverless, leaving §4's
 // "see Actions Needed" pointer dangling.
 func TestRedFlags_ServerlessNoAuthFiresAuthPostureOQ(t *testing.T) {
-	c := types.ProcessedCluster{Name: "srv-noauth", Region: "us-east-1"}
+	c := report.ProcessedCluster{Name: "srv-noauth", Region: "us-east-1"}
 	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 	c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
 		VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}, SecurityGroupIds: []string{"g"}}},
@@ -383,10 +384,10 @@ func TestRedFlags_ZeroACLs_SkipACLsCaseSurfacesAsUnknown(t *testing.T) {
 func TestDetectCostReconciliation_ServerlessClusterWithoutMatchingCostLine(t *testing.T) {
 	srv := serverlessCluster("srv-no-billing")
 	state := wrapClusters(srv)
-	state.Sources[0].MSKData.Regions[0].Costs = types.ProcessedRegionCosts{
+	state.Sources[0].MSKData.Regions[0].Costs = report.ProcessedRegionCosts{
 		Region: "us-east-1",
-		Results: []types.ProcessedCost{
-			{Start: "2026-04-01", UsageType: "USE1-DataTransfer-Out-Bytes", Values: types.ProcessedCostBreakdown{UnblendedCost: 12.50}},
+		Results: []report.ProcessedCost{
+			{Start: "2026-04-01", UsageType: "USE1-DataTransfer-Out-Bytes", Values: report.ProcessedCostBreakdown{UnblendedCost: 12.50}},
 		},
 	}
 	section := detectCostReconciliation(state, defaultCfg(t))
