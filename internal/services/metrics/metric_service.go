@@ -687,6 +687,49 @@ func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloud
 	return ms.executeWindow(ctx, queries, startTime, endTime)
 }
 
+// resultStitcher concatenates MetricDataResult points per Id across sub-window
+// calls, preserving first-seen Id order and tracking whether any chunk was partial.
+type resultStitcher struct {
+	order   []string
+	byID    map[string]*cloudwatchtypes.MetricDataResult
+	partial bool
+}
+
+func newResultStitcher() *resultStitcher {
+	return &resultStitcher{byID: map[string]*cloudwatchtypes.MetricDataResult{}}
+}
+
+func (s *resultStitcher) markPartial() { s.partial = true }
+
+func (s *resultStitcher) add(results []cloudwatchtypes.MetricDataResult) {
+	for _, r := range results {
+		id := aws.ToString(r.Id)
+		existing, ok := s.byID[id]
+		if !ok {
+			cp := r
+			s.byID[id] = &cp
+			s.order = append(s.order, id)
+			continue
+		}
+		existing.Timestamps = append(existing.Timestamps, r.Timestamps...)
+		existing.Values = append(existing.Values, r.Values...)
+		if r.Label != nil {
+			existing.Label = r.Label
+		}
+		if r.StatusCode == cloudwatchtypes.StatusCodePartialData {
+			existing.StatusCode = cloudwatchtypes.StatusCodePartialData
+		}
+	}
+}
+
+func (s *resultStitcher) output() *cloudwatch.GetMetricDataOutput {
+	results := make([]cloudwatchtypes.MetricDataResult, 0, len(s.order))
+	for _, id := range s.order {
+		results = append(results, *s.byID[id])
+	}
+	return &cloudwatch.GetMetricDataOutput{MetricDataResults: results}
+}
+
 // chunkSeconds returns the maximum sub-window length (seconds) that keeps a
 // request under datapointBudget for the given period and series count. Returns
 // 0 when the estimate is unknown (<=0) or period is non-positive, signalling the

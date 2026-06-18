@@ -89,3 +89,42 @@ func TestExecuteWindow_SetsAscendingScanAndPaginates(t *testing.T) {
 		t.Errorf("expected 2 stitched page results, got %d", len(out.MetricDataResults))
 	}
 }
+
+func TestResultStitcher_ConcatenatesPerIdPreservingOrder(t *testing.T) {
+	s := newResultStitcher()
+	t0, t1, t2 := time.Unix(0, 0), time.Unix(60, 0), time.Unix(120, 0)
+
+	s.add([]cloudwatchtypes.MetricDataResult{
+		{Id: aws.String("sum_a"), Label: aws.String("A"), Timestamps: []time.Time{t0}, Values: []float64{1}},
+		{Id: aws.String("sum_b"), Label: aws.String("B"), Timestamps: []time.Time{t0}, Values: []float64{10}},
+	})
+	s.add([]cloudwatchtypes.MetricDataResult{
+		{Id: aws.String("sum_a"), Timestamps: []time.Time{t1, t2}, Values: []float64{2, 3}},
+	})
+
+	out := s.output()
+	if len(out.MetricDataResults) != 2 {
+		t.Fatalf("expected 2 ids, got %d", len(out.MetricDataResults))
+	}
+	if aws.ToString(out.MetricDataResults[0].Id) != "sum_a" {
+		t.Errorf("expected first-seen order sum_a first, got %s", aws.ToString(out.MetricDataResults[0].Id))
+	}
+	a := out.MetricDataResults[0]
+	if len(a.Values) != 3 || a.Values[0] != 1 || a.Values[2] != 3 {
+		t.Errorf("sum_a values not concatenated in order: %v", a.Values)
+	}
+	if aws.ToString(a.Label) != "A" {
+		t.Errorf("expected label preserved, got %s", aws.ToString(a.Label))
+	}
+}
+
+func TestResultStitcher_MarkPartial(t *testing.T) {
+	s := newResultStitcher()
+	if s.partial {
+		t.Fatal("expected not partial initially")
+	}
+	s.markPartial()
+	if !s.partial {
+		t.Error("expected partial after markPartial")
+	}
+}
