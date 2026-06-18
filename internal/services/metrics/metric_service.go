@@ -687,6 +687,28 @@ func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloud
 	return ms.executeWindow(ctx, queries, startTime, endTime)
 }
 
+// chunkSeconds returns the maximum sub-window length (seconds) that keeps a
+// request under datapointBudget for the given period and series count. Returns
+// 0 when the estimate is unknown (<=0) or period is non-positive, signalling the
+// caller to use the full window and rely on the partial-data fallback.
+func chunkSeconds(period int32, seriesEstimate int) int64 {
+	if period <= 0 || seriesEstimate <= 0 {
+		return 0
+	}
+	maxPtsPerSeries := datapointBudget / seriesEstimate
+	if maxPtsPerSeries < 1 {
+		maxPtsPerSeries = 1
+	}
+	return int64(maxPtsPerSeries) * int64(period)
+}
+
+// Series-count estimates count fan-out series (one per broker) PLUS the returned
+// math-result series, since both consume the datapoint budget. They err high so
+// chunks never exceed the cap; the fallback splitter self-heals any under-estimate.
+func brokerSeriesEstimate(numBrokers int) int     { return 4 * (numBrokers + 1) }                    // 4 metrics
+func clientConnSeriesEstimate(numBrokers int) int { return 2 * (numBrokers*maxClientAuthTypes + 1) } // 2 stats
+func storageSeriesEstimate(numBrokers int) int    { return numBrokers + 2 }                          // 1 returned + 1 intermediate
+
 func getBrokerType(instanceType string) types.BrokerType {
 	if strings.HasPrefix(instanceType, "express.") {
 		return types.BrokerTypeExpress

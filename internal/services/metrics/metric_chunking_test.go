@@ -30,17 +30,33 @@ func TestFakeClientSatisfiesInterface(t *testing.T) {
 	}
 }
 
-// TestChunkingConstantsDefined verifies the chunking constants are declared with
-// the expected values. The constants are consumed by chunking logic added in
-// later tasks; this test keeps them reachable so the linter does not flag them.
-func TestChunkingConstantsDefined(t *testing.T) {
-	const wantBudget = 100_000
-	if datapointBudget != wantBudget {
-		t.Errorf("datapointBudget = %d, want %d", datapointBudget, wantBudget)
+func TestChunkSeconds(t *testing.T) {
+	// 100_000 budget / 12 series = 8333 pts; * 60s period = per-chunk seconds.
+	if got := chunkSeconds(60, 12); got != int64(100_000/12)*60 {
+		t.Errorf("got %d, want %d", got, int64(100_000/12)*60)
 	}
-	const wantAuthTypes = 4
-	if maxClientAuthTypes != wantAuthTypes {
-		t.Errorf("maxClientAuthTypes = %d, want %d", maxClientAuthTypes, wantAuthTypes)
+	// Unknown estimate or non-positive period => 0 (caller uses full window).
+	if got := chunkSeconds(60, 0); got != 0 {
+		t.Errorf("seriesEstimate 0 => 0, got %d", got)
+	}
+	if got := chunkSeconds(0, 12); got != 0 {
+		t.Errorf("period 0 => 0, got %d", got)
+	}
+	// Huge series count clamps to >= 1 point per series (one period).
+	if got := chunkSeconds(60, 1_000_000); got != 60 {
+		t.Errorf("expected floor of one period (60), got %d", got)
+	}
+}
+
+func TestSeriesEstimates(t *testing.T) {
+	if got := brokerSeriesEstimate(3); got != 4*(3+1) {
+		t.Errorf("broker: got %d, want %d", got, 4*(3+1))
+	}
+	if got := clientConnSeriesEstimate(3); got != 2*(3*maxClientAuthTypes+1) {
+		t.Errorf("clientconn: got %d, want %d", got, 2*(3*maxClientAuthTypes+1))
+	}
+	if got := storageSeriesEstimate(3); got != 3+2 {
+		t.Errorf("storage: got %d, want %d", got, 3+2)
 	}
 }
 
