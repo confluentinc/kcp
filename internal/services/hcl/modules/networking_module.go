@@ -1,16 +1,16 @@
 package modules
 
 import (
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
-	return []ModuleVariable[types.MigrationWizardRequest]{
+func GetNetworkingVariables() []ModuleVariable[hclrequests.MigrationWizardRequest] {
+	return []ModuleVariable[hclrequests.MigrationWizardRequest]{
 		{
 			Name:       SchemaVpcID.Name,
 			Definition: SchemaVpcID.ToDefinition(),
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.VpcId
 			},
 			Condition: nil,
@@ -23,7 +23,7 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.JumpClusterBrokerSubnetCidr
 			},
 			Condition: nil,
@@ -36,7 +36,7 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.JumpClusterSetupHostSubnetCidr
 			},
 			Condition: nil,
@@ -49,7 +49,7 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.ExistingPrivateLinkVpceId
 			},
 			Condition: nil,
@@ -57,7 +57,7 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	}
 }
 
-func GetNetworkingModuleVariableDefinitions(request types.MigrationWizardRequest) []hcltypes.TerraformVariable {
+func GetNetworkingModuleVariableDefinitions(request hclrequests.MigrationWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetNetworkingVariables(), request)
 }
 

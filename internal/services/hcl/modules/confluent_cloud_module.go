@@ -3,12 +3,12 @@ package modules
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
-func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequest] {
-	return []ModuleVariable[types.TargetClusterWizardRequest]{
+func GetConfluentCloudVariables() []ModuleVariable[hclrequests.TargetClusterWizardRequest] {
+	return []ModuleVariable[hclrequests.TargetClusterWizardRequest]{
 		{
 			Name: "aws_region",
 			Definition: hcltypes.TerraformVariable{
@@ -17,7 +17,7 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.AwsRegion
 			},
 			Condition: nil,
@@ -30,10 +30,10 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.EnvironmentId
 			},
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return !request.NeedsEnvironment
 			},
 		},
@@ -45,10 +45,10 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.EnvironmentName
 			},
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return request.NeedsEnvironment
 			},
 		},
@@ -60,10 +60,10 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.ClusterName
 			},
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return request.NeedsEnvironment || request.NeedsCluster
 			},
 		},
@@ -75,10 +75,10 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.ClusterType
 			},
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return request.NeedsEnvironment || request.NeedsCluster
 			},
 		},
@@ -90,10 +90,10 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.ClusterAvailability
 			},
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return (request.NeedsEnvironment || request.NeedsCluster) && request.ClusterType == "dedicated"
 			},
 		},
@@ -105,17 +105,17 @@ func GetConfluentCloudVariables() []ModuleVariable[types.TargetClusterWizardRequ
 				Sensitive:   false,
 				Type:        "number",
 			},
-			ValueExtractor: func(request types.TargetClusterWizardRequest) any {
+			ValueExtractor: func(request hclrequests.TargetClusterWizardRequest) any {
 				return request.ClusterCku
 			},
-			Condition: func(request types.TargetClusterWizardRequest) bool {
+			Condition: func(request hclrequests.TargetClusterWizardRequest) bool {
 				return (request.NeedsEnvironment || request.NeedsCluster) && request.ClusterType == "dedicated"
 			},
 		},
 	}
 }
 
-func GetConfluentCloudVariableDefinitions(request types.TargetClusterWizardRequest) []hcltypes.TerraformVariable {
+func GetConfluentCloudVariableDefinitions(request hclrequests.TargetClusterWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetConfluentCloudVariables(), request)
 }
 
@@ -127,7 +127,7 @@ type ConfluentCloudOutputParams struct {
 	KafkaAPIKeyName    string
 }
 
-func GetConfluentCloudModuleOutputDefinitions(request types.TargetClusterWizardRequest, params ConfluentCloudOutputParams) []hcltypes.TerraformOutput {
+func GetConfluentCloudModuleOutputDefinitions(request hclrequests.TargetClusterWizardRequest, params ConfluentCloudOutputParams) []hcltypes.TerraformOutput {
 	var definitions []hcltypes.TerraformOutput
 
 	var envIdValue string

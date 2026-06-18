@@ -5,9 +5,9 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclsyntax"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -30,7 +30,7 @@ func NewReverseProxyHCLService() *ReverseProxyHCLService {
 	return &ReverseProxyHCLService{}
 }
 
-func (s *ReverseProxyHCLService) GenerateReverseProxyFiles(request types.ReverseProxyRequest) (hcltypes.TerraformFiles, error) {
+func (s *ReverseProxyHCLService) GenerateReverseProxyFiles(request hclrequests.ReverseProxyRequest) (hcltypes.TerraformFiles, error) {
 	return hcltypes.TerraformFiles{
 		MainTf:           s.generateMainTf(request),
 		ProvidersTf:      s.generateProvidersTf(),
@@ -47,7 +47,7 @@ func (s *ReverseProxyHCLService) GenerateReverseProxyShellScript() string {
 	return generateDnsEntriesScript
 }
 
-func (s *ReverseProxyHCLService) generateMainTf(request types.ReverseProxyRequest) string {
+func (s *ReverseProxyHCLService) generateMainTf(request hclrequests.ReverseProxyRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -328,7 +328,7 @@ func (s *ReverseProxyHCLService) generateVariablesTf() string {
 	return string(f.Bytes())
 }
 
-func (s *ReverseProxyHCLService) generateInputsAutoTfvars(request types.ReverseProxyRequest) string {
+func (s *ReverseProxyHCLService) generateInputsAutoTfvars(request hclrequests.ReverseProxyRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
