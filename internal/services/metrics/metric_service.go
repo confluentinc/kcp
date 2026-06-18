@@ -806,7 +806,7 @@ func (ms *MetricService) collectWindow(ctx context.Context, queries []cloudwatch
 // Results are stitched per Id; a single warning is emitted if any data remained
 // partial. label identifies the query group/cluster in that warning.
 func (ms *MetricService) executeChunkedQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time, period int32, seriesEstimate int, label string) (*cloudwatch.GetMetricDataOutput, error) {
-	if !endTime.After(startTime) {
+	if len(queries) == 0 || !endTime.After(startTime) {
 		return &cloudwatch.GetMetricDataOutput{}, nil
 	}
 

@@ -132,6 +132,12 @@ func TestResultStitcher_MarkPartial(t *testing.T) {
 	}
 }
 
+// dummyQueries returns a minimal non-empty queries slice for tests where the
+// fake client ignores the query content entirely.
+func dummyQueries() []cloudwatchtypes.MetricDataQuery {
+	return []cloudwatchtypes.MetricDataQuery{{Id: aws.String("q")}}
+}
+
 // completeResult returns a single complete series with n points for an Id.
 func completeResult(id string, n int) []cloudwatchtypes.MetricDataResult {
 	vals := make([]float64, n)
@@ -151,7 +157,7 @@ func TestExecuteChunkedQuery_SingleCallWhenUnderBudget(t *testing.T) {
 	}}
 	ms := &MetricService{client: fake}
 	start, end := time.Unix(0, 0), time.Unix(600, 0) // 10 points at 60s
-	out, err := ms.executeChunkedQuery(context.Background(), nil, start, end, 60, 4, "test")
+	out, err := ms.executeChunkedQuery(context.Background(), dummyQueries(), start, end, 60, 4, "test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -180,7 +186,7 @@ func TestExecuteChunkedQuery_ChunksAndStaysUnderCap(t *testing.T) {
 		return &cloudwatch.GetMetricDataOutput{MetricDataResults: completeResult("sum_x", int(win/int64(period)))}, nil
 	}}
 	ms := &MetricService{client: fake}
-	out, err := ms.executeChunkedQuery(context.Background(), nil, start, end, period, seriesEst, "test")
+	out, err := ms.executeChunkedQuery(context.Background(), dummyQueries(), start, end, period, seriesEst, "test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -206,7 +212,7 @@ func TestExecuteChunkedQuery_BisectsOnPartialData(t *testing.T) {
 		return &cloudwatch.GetMetricDataOutput{MetricDataResults: completeResult("sum_x", 1)}, nil
 	}}
 	ms := &MetricService{client: fake}
-	out, err := ms.executeChunkedQuery(context.Background(), nil, start, end, 60, 0, "test")
+	out, err := ms.executeChunkedQuery(context.Background(), dummyQueries(), start, end, 60, 0, "test")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -230,11 +236,26 @@ func TestExecuteChunkedQuery_WarnsAtFloor(t *testing.T) {
 		}}, nil
 	}}
 	ms := &MetricService{client: fake}
-	_, err := ms.executeChunkedQuery(context.Background(), nil, time.Unix(0, 0), time.Unix(60, 0), 60, 0, "broker metrics for cluster c1")
+	_, err := ms.executeChunkedQuery(context.Background(), dummyQueries(), time.Unix(0, 0), time.Unix(60, 0), 60, 0, "broker metrics for cluster c1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "metrics may be incomplete") || !strings.Contains(buf.String(), "broker metrics for cluster c1") {
 		t.Errorf("expected one incomplete-metrics warning mentioning the label, got: %q", buf.String())
+	}
+}
+
+func TestExecuteChunkedQuery_EmptyQueriesReturnsEmpty(t *testing.T) {
+	fake := &fakeCWClient{respond: func(_ int, _ *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
+		t.Fatal("client should not be called for empty queries")
+		return nil, nil
+	}}
+	ms := &MetricService{client: fake}
+	out, err := ms.executeChunkedQuery(context.Background(), nil, time.Unix(0, 0), time.Unix(600, 0), 60, 4, "test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out.MetricDataResults) != 0 || len(fake.calls) != 0 {
+		t.Errorf("expected no calls and empty results, got %d calls / %d results", len(fake.calls), len(out.MetricDataResults))
 	}
 }
