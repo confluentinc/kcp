@@ -108,21 +108,23 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	}
 
 	metricsMetadata := buildProvisionedMetadata(cluster, timeWindow, followerFetching)
+	numBrokers := metricsMetadata.NumberOfBrokerNodes
+	clusterName := aws.ToString(cluster.ClusterName)
 
-	brokerQueries, brokerQueryInfos := ms.buildBrokerMetricQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	brokerQueryResult, err := ms.executeMetricQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime)
+	brokerQueries, brokerQueryInfos := ms.buildBrokerMetricQueries(clusterName, timeWindow.Period)
+	brokerQueryResult, err := ms.executeChunkedQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, brokerSeriesEstimate(numBrokers), "broker metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
 
-	clientConnectionQueries, clientConnQueryInfos := ms.buildClientConnectionQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	clientConnectionQueryResult, err := ms.executeMetricQuery(ctx, clientConnectionQueries, timeWindow.StartTime, timeWindow.EndTime)
+	clientConnectionQueries, clientConnQueryInfos := ms.buildClientConnectionQueries(clusterName, timeWindow.Period)
+	clientConnectionQueryResult, err := ms.executeChunkedQuery(ctx, clientConnectionQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, clientConnSeriesEstimate(numBrokers), "client-connection metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
 
-	clusterQueries, clusterQueryInfos := ms.buildClusterMetricQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	clusterQueryResult, err := ms.executeMetricQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime)
+	clusterQueries, clusterQueryInfos := ms.buildClusterMetricQueries(clusterName, timeWindow.Period)
+	clusterQueryResult, err := ms.executeChunkedQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, 1, "cluster metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -154,14 +156,14 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	} else {
 		slog.Warn("EBS volume size unavailable, local storage metrics may be inaccurate", "cluster", aws.ToString(cluster.ClusterName))
 	}
-	localStorageQueries, localStorageQueryInfos := ms.buildLocalStorageUsageQuery(aws.ToString(cluster.ClusterName), timeWindow.Period, clusterVolumeSizeGB)
-	storageQueryResult, err := ms.executeMetricQuery(ctx, localStorageQueries, timeWindow.StartTime, timeWindow.EndTime)
+	localStorageQueries, localStorageQueryInfos := ms.buildLocalStorageUsageQuery(clusterName, timeWindow.Period, clusterVolumeSizeGB)
+	storageQueryResult, err := ms.executeChunkedQuery(ctx, localStorageQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, storageSeriesEstimate(numBrokers), "local-storage metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
 
-	remoteStorageQueries, remoteStorageQueryInfos := ms.buildRemoteStorageUsageQuery(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	remoteStorageQueryResult, err := ms.executeMetricQuery(ctx, remoteStorageQueries, timeWindow.StartTime, timeWindow.EndTime)
+	remoteStorageQueries, remoteStorageQueryInfos := ms.buildRemoteStorageUsageQuery(clusterName, timeWindow.Period)
+	remoteStorageQueryResult, err := ms.executeChunkedQuery(ctx, remoteStorageQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, storageSeriesEstimate(numBrokers), "remote-storage metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -226,7 +228,7 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	populateCLICommands(queryInfos, queries, timeWindow.StartTime, timeWindow.EndTime, regionFromArn(cluster.ClusterArn))
 
 	// Execute the metric query
-	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
+	queryResult, err := ms.executeChunkedQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, 0, "serverless metrics for "+aws.ToString(cluster.ClusterName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute serverless metric queries: %w", err)
 	}
@@ -679,12 +681,6 @@ func (ms *MetricService) executeWindow(ctx context.Context, queries []cloudwatch
 	}
 
 	return &cloudwatch.GetMetricDataOutput{MetricDataResults: allResults, Messages: allMessages}, nil
-}
-
-// executeMetricQuery is the legacy single-window entrypoint; retained until
-// callers migrate to executeChunkedQuery (a later task).
-func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
-	return ms.executeWindow(ctx, queries, startTime, endTime)
 }
 
 // resultStitcher concatenates MetricDataResult points per Id across sub-window
