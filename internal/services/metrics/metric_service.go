@@ -651,35 +651,40 @@ func regionFromArn(arn *string) string {
 
 // Private Helper Functions - Query Execution
 
-func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
+// executeWindow fetches one [startTime, endTime) window, following NextToken
+// pagination. ScanBy is ascending so callers can concatenate windows in time order.
+func (ms *MetricService) executeWindow(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
 	input := &cloudwatch.GetMetricDataInput{
 		MetricDataQueries: queries,
 		StartTime:         aws.Time(startTime),
 		EndTime:           aws.Time(endTime),
+		ScanBy:            cloudwatchtypes.ScanByTimestampAscending,
 	}
 
 	var allResults []cloudwatchtypes.MetricDataResult
+	var allMessages []cloudwatchtypes.MessageData
 	var nextToken *string
-
 	for {
 		input.NextToken = nextToken
 		result, err := ms.client.GetMetricData(ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get metric data: %w", err)
 		}
-
 		allResults = append(allResults, result.MetricDataResults...)
-
+		allMessages = append(allMessages, result.Messages...)
 		if result.NextToken == nil {
 			break
 		}
 		nextToken = result.NextToken
 	}
 
-	// Return a consolidated result with all metric data
-	return &cloudwatch.GetMetricDataOutput{
-		MetricDataResults: allResults,
-	}, nil
+	return &cloudwatch.GetMetricDataOutput{MetricDataResults: allResults, Messages: allMessages}, nil
+}
+
+// executeMetricQuery is the legacy single-window entrypoint; retained until
+// callers migrate to executeChunkedQuery (a later task).
+func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
+	return ms.executeWindow(ctx, queries, startTime, endTime)
 }
 
 func getBrokerType(instanceType string) types.BrokerType {
