@@ -15,8 +15,25 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+// cloudWatchGetMetricDataAPI is the subset of the CloudWatch client used by
+// MetricService. It exists so the chunking/stitching logic can be unit-tested
+// with a fake. *cloudwatch.Client satisfies it.
+type cloudWatchGetMetricDataAPI interface {
+	GetMetricData(ctx context.Context, in *cloudwatch.GetMetricDataInput, optFns ...func(*cloudwatch.Options)) (*cloudwatch.GetMetricDataOutput, error)
+}
+
+const (
+	// datapointBudget is CloudWatch's per-request GetMetricData limit (100,800)
+	// with a safety margin. Chunk windows are sized so the datapoints from all
+	// series in a request (fan-out + returned math) stay under it.
+	datapointBudget = 100_000
+	// maxClientAuthTypes bounds the "Client Authentication" dimension cardinality
+	// (TLS, SASL/SCRAM, IAM, Unauthenticated) for the ClientConnectionCount estimate.
+	maxClientAuthTypes = 4
+)
+
 type MetricService struct {
-	client *cloudwatch.Client
+	client cloudWatchGetMetricDataAPI
 }
 
 func NewMetricService(client *cloudwatch.Client) *MetricService {
