@@ -13,10 +13,10 @@ import (
 // styleInputs returns a base PlanInputsResolved with the given
 // downtime_tolerance plus sensible defaults (eligible gateway, no IAM).
 // Each test layers its own modifications on top.
-func styleInputs(tolerance string) types.PlanInputsResolved {
-	return types.PlanInputsResolved{
+func styleInputs(tolerance string) PlanInputsResolved {
+	return PlanInputsResolved{
 		DowntimeTolerance:            tolerance,
-		SubPattern:                   string(types.SubPatternAppByApp),
+		SubPattern:                   string(SubPatternAppByApp),
 		PreferGateway:                true,
 		ConfluentForKubernetesStatus: PrereqStatusCompleteInput,
 		CCGatewayLicenseStatus:       PrereqStatusCompleteInput,
@@ -27,14 +27,14 @@ func styleInputs(tolerance string) types.PlanInputsResolved {
 func TestDecideCutover_StyleMapping(t *testing.T) {
 	cases := []struct {
 		tolerance string
-		want      types.CutoverStyle
+		want      CutoverStyle
 	}{
-		{DowntimeZero, types.CutoverBlueGreen},
-		{DowntimeSecondsPerService, types.CutoverStopRestartRepeat},
-		{DowntimeMinutesPerService, types.CutoverStopRestartRepeat},
-		{DowntimeScheduledWindowSequential, types.CutoverStopWaitRestart},
-		{DowntimeScheduledWindowAllAtOnce, types.CutoverRestartAllAtOnce},
-		{DowntimeLetConfluentChoose, types.CutoverStopRestartRepeat},
+		{DowntimeZero, CutoverBlueGreen},
+		{DowntimeSecondsPerService, CutoverStopRestartRepeat},
+		{DowntimeMinutesPerService, CutoverStopRestartRepeat},
+		{DowntimeScheduledWindowSequential, CutoverStopWaitRestart},
+		{DowntimeScheduledWindowAllAtOnce, CutoverRestartAllAtOnce},
+		{DowntimeLetConfluentChoose, CutoverStopRestartRepeat},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tolerance, func(t *testing.T) {
@@ -46,35 +46,35 @@ func TestDecideCutover_StyleMapping(t *testing.T) {
 
 func TestDecideCutover_SubPatternOnlyForSRR(t *testing.T) {
 	srr := styleInputs(DowntimeMinutesPerService)
-	srr.SubPattern = string(types.SubPatternTopicByTopic)
+	srr.SubPattern = string(SubPatternTopicByTopic)
 	d := decideCutover(nil, srr)
-	assert.Equal(t, types.SubPatternTopicByTopic, d.SubPattern, "SRR should carry the sub-pattern")
+	assert.Equal(t, SubPatternTopicByTopic, d.SubPattern, "SRR should carry the sub-pattern")
 
 	bg := styleInputs(DowntimeZero)
-	bg.SubPattern = string(types.SubPatternTopicByTopic)
+	bg.SubPattern = string(SubPatternTopicByTopic)
 	d = decideCutover(nil, bg)
 	assert.Empty(t, d.SubPattern, "non-SRR styles must not surface a sub-pattern")
 }
 
 func TestDecideCutover_Canonical(t *testing.T) {
 	d := decideCutover(nil, styleInputs(DowntimeLetConfluentChoose))
-	assert.Equal(t, types.RecommendationCanonical, d.RecommendationStatus)
-	assert.Equal(t, types.GatewayMediatedTrue, d.GatewayMediated)
+	assert.Equal(t, RecommendationCanonical, d.RecommendationStatus)
+	assert.Equal(t, GatewayMediatedTrue, d.GatewayMediated)
 }
 
 func TestDecideCutover_CustomerChoiceOptOut(t *testing.T) {
 	inputs := styleInputs(DowntimeMinutesPerService)
 	inputs.PreferGateway = false
 	d := decideCutover(nil, inputs)
-	assert.Equal(t, types.RecommendationCustomerChoice, d.RecommendationStatus)
-	assert.Equal(t, types.GatewayMediatedFalse, d.GatewayMediated)
+	assert.Equal(t, RecommendationCustomerChoice, d.RecommendationStatus)
+	assert.Equal(t, GatewayMediatedFalse, d.GatewayMediated)
 }
 
 func TestDecideCutover_BlueGreenIsCustomerChoice(t *testing.T) {
 	d := decideCutover(nil, styleInputs(DowntimeZero))
-	assert.Equal(t, types.CutoverBlueGreen, d.Style)
-	assert.Equal(t, types.GatewayMediatedNotApplicable, d.GatewayMediated)
-	assert.Equal(t, types.RecommendationCustomerChoice, d.RecommendationStatus)
+	assert.Equal(t, CutoverBlueGreen, d.Style)
+	assert.Equal(t, GatewayMediatedNotApplicable, d.GatewayMediated)
+	assert.Equal(t, RecommendationCustomerChoice, d.RecommendationStatus)
 }
 
 // Ambiguous = prefer_gateway default true + all three prereqs at
@@ -85,8 +85,8 @@ func TestDecideCutover_DegradedAwaitingOQ(t *testing.T) {
 	inputs.CCGatewayLicenseStatus = PrereqNotStarted
 	inputs.IAMPreMigrationStatus = PrereqNotStarted
 	d := decideCutover(nil, inputs)
-	assert.Equal(t, types.RecommendationDegradedAwaitingOQ, d.RecommendationStatus)
-	assert.Equal(t, types.GatewayMediatedFalse, d.GatewayMediated)
+	assert.Equal(t, RecommendationDegradedAwaitingOQ, d.RecommendationStatus)
+	assert.Equal(t, GatewayMediatedFalse, d.GatewayMediated)
 }
 
 // Pending = prefer_gateway true + at least one prereq advanced but
@@ -96,8 +96,8 @@ func TestDecideCutover_DegradedPrereqsPending(t *testing.T) {
 	inputs.ConfluentForKubernetesStatus = PrereqStatusInProgressInput
 	inputs.CCGatewayLicenseStatus = PrereqNotStarted
 	d := decideCutover(nil, inputs)
-	assert.Equal(t, types.RecommendationDegradedPrereqsPending, d.RecommendationStatus)
-	assert.Equal(t, types.GatewayMediatedFalse, d.GatewayMediated)
+	assert.Equal(t, RecommendationDegradedPrereqsPending, d.RecommendationStatus)
+	assert.Equal(t, GatewayMediatedFalse, d.GatewayMediated)
 }
 
 // IAM prereq is only consulted when the fleet actually has IAM enabled.
@@ -108,19 +108,19 @@ func TestDecideCutover_IAMPrereqOnlyMattersWhenIAMInFleet(t *testing.T) {
 
 	// Without IAM in the fleet, still eligible / canonical.
 	d := decideCutover([]types.ProcessedCluster{withSourceAuth("nofleetiam", SourceAuthSCRAM)}, inputs)
-	assert.Equal(t, types.RecommendationCanonical, d.RecommendationStatus, "no IAM in fleet → IAM prereq irrelevant")
+	assert.Equal(t, RecommendationCanonical, d.RecommendationStatus, "no IAM in fleet → IAM prereq irrelevant")
 
 	// With IAM in the fleet, the IAM-not-started prereq now blocks eligibility.
 	d = decideCutover([]types.ProcessedCluster{withSourceAuth("fleetiam", SourceAuthIAM)}, inputs)
-	assert.Equal(t, types.RecommendationDegradedPrereqsPending, d.RecommendationStatus, "IAM in fleet → IAM prereq required")
+	assert.Equal(t, RecommendationDegradedPrereqsPending, d.RecommendationStatus, "IAM in fleet → IAM prereq required")
 }
 
 func TestDecideCutover_AlternativesShown(t *testing.T) {
 	d := decideCutover(nil, styleInputs(DowntimeLetConfluentChoose))
-	assert.Equal(t, types.CutoverStopRestartRepeat, d.Style)
+	assert.Equal(t, CutoverStopRestartRepeat, d.Style)
 	assert.Len(t, d.AlternativesShown, 3, "alternatives = all styles except the recommended one")
-	assert.NotContains(t, d.AlternativesShown, types.CutoverStopRestartRepeat)
-	assert.Contains(t, d.AlternativesShown, types.CutoverBlueGreen)
+	assert.NotContains(t, d.AlternativesShown, CutoverStopRestartRepeat)
+	assert.Contains(t, d.AlternativesShown, CutoverBlueGreen)
 }
 
 // IAM prereq row only appears in the rendered prereq table when IAM is
@@ -168,7 +168,7 @@ func withSourceAuth(name, auth string) types.ProcessedCluster {
 // ----- detectCutoverOpenQuestions -----
 
 // hasOQ returns whether any OQ matches the given ID.
-func hasOQ(oqs []types.OpenQuestion, id string) bool {
+func hasOQ(oqs []OpenQuestion, id string) bool {
 	for _, oq := range oqs {
 		if oq.ID == id {
 			return true
@@ -265,8 +265,8 @@ func TestComputeCutoverOverrides_PerClusterDifference(t *testing.T) {
 	inputs := styleInputs(DowntimeMinutesPerService)
 	zero := DowntimeZero
 	sched := DowntimeScheduledWindowAllAtOnce
-	inputs.Raw = &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	inputs.Raw = &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"a": {DowntimeTolerance: &zero},  // override → Blue/Green
 			"b": {DowntimeTolerance: &sched}, // override → Restart-All-At-Once
 			"c": {},                          // no cutover override → no entry
@@ -278,10 +278,10 @@ func TestComputeCutoverOverrides_PerClusterDifference(t *testing.T) {
 	out := computeCutoverOverrides(clusters, fleet, inputs)
 	require := []struct {
 		id    string
-		style types.CutoverStyle
+		style CutoverStyle
 	}{
-		{"a", types.CutoverBlueGreen},
-		{"b", types.CutoverRestartAllAtOnce},
+		{"a", CutoverBlueGreen},
+		{"b", CutoverRestartAllAtOnce},
 	}
 	assert.Len(t, out, len(require), "only clusters whose resolved style differs surface")
 	for i, want := range require {
@@ -296,9 +296,9 @@ func TestComputeCutoverOverrides_PerClusterDifference(t *testing.T) {
 // tell why their override didn't take effect.
 func TestDetectClusterCutoverOpenQuestions_TypoPerCluster(t *testing.T) {
 	typo := "zerooo"
-	inputs := types.PlanInputsResolved{
-		Raw: &types.PlanInputs{
-			Clusters: map[string]types.ClusterPlanInputs{
+	inputs := PlanInputsResolved{
+		Raw: &PlanInputs{
+			Clusters: map[string]ClusterPlanInputs{
 				"a": {DowntimeTolerance: &typo},
 			},
 		},
@@ -319,8 +319,8 @@ func TestDetectClusterCutoverOpenQuestions_TypoPerCluster(t *testing.T) {
 func TestPerCluster_AuthAndCutoverOverridesCoexistOnSameCluster(t *testing.T) {
 	zero := DowntimeZero
 	oauth := "oauth"
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {
 				DowntimeTolerance: &zero,
 				TargetAuthMethod:  &oauth,
@@ -337,7 +337,7 @@ func TestPerCluster_AuthAndCutoverOverridesCoexistOnSameCluster(t *testing.T) {
 	fleet := decideCutover([]types.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}, base)
 	overrides := computeCutoverOverrides([]types.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}, fleet, base)
 	require.Len(t, overrides, 1, "per-cluster downtime_tolerance must produce a cutover override entry")
-	assert.Equal(t, types.CutoverBlueGreen, overrides[0].Style)
+	assert.Equal(t, CutoverBlueGreen, overrides[0].Style)
 
 	auth := decideAuth(withSourceAuth("alpha", SourceAuthSCRAM), defaultCfg(t), resolved)
 	row := requireRow(t, auth, SourceAuthSCRAM)
@@ -350,25 +350,25 @@ func TestPerCluster_AuthAndCutoverOverridesCoexistOnSameCluster(t *testing.T) {
 // computeCutoverOverrides could miss the sub_pattern-only path
 // because `raw.DowntimeTolerance == nil` looks like "no override".
 func TestPerCluster_SubPatternOnlyOverride(t *testing.T) {
-	tbt := string(types.SubPatternTopicByTopic)
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	tbt := string(SubPatternTopicByTopic)
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {SubPattern: &tbt},
 		},
 	}
 	base := styleInputs(DowntimeMinutesPerService)
-	base.SubPattern = string(types.SubPatternAppByApp) // fleet default
+	base.SubPattern = string(SubPatternAppByApp) // fleet default
 	base.Raw = raw
 
 	fleet := decideCutover(nil, base)
-	assert.Equal(t, types.CutoverStopRestartRepeat, fleet.Style, "fleet must still resolve to SRR")
-	assert.Equal(t, types.SubPatternAppByApp, fleet.SubPattern, "fleet sub-pattern unchanged")
+	assert.Equal(t, CutoverStopRestartRepeat, fleet.Style, "fleet must still resolve to SRR")
+	assert.Equal(t, SubPatternAppByApp, fleet.SubPattern, "fleet sub-pattern unchanged")
 
 	overrides := computeCutoverOverrides([]types.ProcessedCluster{{Name: "alpha"}}, fleet, base)
 	require.Len(t, overrides, 1, "sub_pattern-only override must still produce a CutoverOverrides entry")
 	assert.Equal(t, "alpha", overrides[0].ClusterID)
-	assert.Equal(t, types.CutoverStopRestartRepeat, overrides[0].Style, "style inherits the fleet's")
-	assert.Equal(t, types.SubPatternTopicByTopic, overrides[0].SubPattern, "sub-pattern reflects the override")
+	assert.Equal(t, CutoverStopRestartRepeat, overrides[0].Style, "style inherits the fleet's")
+	assert.Equal(t, SubPatternTopicByTopic, overrides[0].SubPattern, "sub-pattern reflects the override")
 }
 
 // Fleet has all 3 gateway prereqs complete (so canonical recommendation
@@ -381,8 +381,8 @@ func TestPerCluster_SubPatternOnlyOverride(t *testing.T) {
 //     and `gateway_prereqs_pending` MUST stay silent.
 func TestPerCluster_BlueGreenOverrideOnIAMClusterWithCompletePrereqs(t *testing.T) {
 	zero := DowntimeZero
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"iam-cluster": {DowntimeTolerance: &zero},
 		},
 	}
@@ -394,13 +394,13 @@ func TestPerCluster_BlueGreenOverrideOnIAMClusterWithCompletePrereqs(t *testing.
 	clusters := []types.ProcessedCluster{withSourceAuth("iam-cluster", SourceAuthIAM)}
 
 	fleet := decideCutover(clusters, base)
-	assert.Equal(t, types.RecommendationCanonical, fleet.RecommendationStatus, "all prereqs complete + IAM in fleet must still resolve canonical")
-	assert.Equal(t, types.GatewayMediatedTrue, fleet.GatewayMediated)
+	assert.Equal(t, RecommendationCanonical, fleet.RecommendationStatus, "all prereqs complete + IAM in fleet must still resolve canonical")
+	assert.Equal(t, GatewayMediatedTrue, fleet.GatewayMediated)
 
 	overrides := computeCutoverOverrides(clusters, fleet, base)
 	require.Len(t, overrides, 1)
-	assert.Equal(t, types.CutoverBlueGreen, overrides[0].Style)
-	assert.Equal(t, types.GatewayMediatedNotApplicable, overrides[0].GatewayMediated, "BG override on IAM cluster still sidesteps the gateway")
+	assert.Equal(t, CutoverBlueGreen, overrides[0].Style)
+	assert.Equal(t, GatewayMediatedNotApplicable, overrides[0].GatewayMediated, "BG override on IAM cluster still sidesteps the gateway")
 
 	oqs := detectCutoverOpenQuestions(fleet, overrides, base, fleetUsesIAM(clusters))
 	for _, oq := range oqs {
@@ -427,9 +427,9 @@ func TestComputeCutoverOverrides_GatewayMediationInheritedFromFleet(t *testing.T
 		withSourceAuth("scram-override", SourceAuthSCRAM),
 	}
 	srr := DowntimeMinutesPerService
-	tbt := string(types.SubPatternTopicByTopic)
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	tbt := string(SubPatternTopicByTopic)
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			// scram-override flips sub-pattern only — same style as fleet.
 			// Pre-fix, decideCutover on a single SCRAM cluster would
 			// IGNORE the IAM prereq (fleetUsesIAM=false for this slice)
@@ -439,7 +439,7 @@ func TestComputeCutoverOverrides_GatewayMediationInheritedFromFleet(t *testing.T
 	}
 	base.Raw = raw
 	fleet := decideCutover(clusters, base)
-	require.NotEqual(t, types.GatewayMediatedTrue, fleet.GatewayMediated, "fleet must be degraded by the IAM-not-started prereq")
+	require.NotEqual(t, GatewayMediatedTrue, fleet.GatewayMediated, "fleet must be degraded by the IAM-not-started prereq")
 
 	overrides := computeCutoverOverrides(clusters, fleet, base)
 	require.Len(t, overrides, 1, "scram-override must surface (sub-pattern differs)")
@@ -455,15 +455,15 @@ func TestComputeCutoverOverrides_GatewayMediationInheritedFromFleet(t *testing.T
 // silently lost.
 func TestPerCluster_SecondsPerServiceWithoutFleetGateway(t *testing.T) {
 	sps := DowntimeSecondsPerService
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {DowntimeTolerance: &sps},
 		},
 	}
 	// Fleet doesn't have any gateway prereqs advanced → plain CL.
-	base := types.PlanInputsResolved{
+	base := PlanInputsResolved{
 		DowntimeTolerance:            DowntimeMinutesPerService,
-		SubPattern:                   string(types.SubPatternAppByApp),
+		SubPattern:                   string(SubPatternAppByApp),
 		PreferGateway:                true,
 		ConfluentForKubernetesStatus: PrereqNotStarted,
 		CCGatewayLicenseStatus:       PrereqNotStarted,
@@ -473,7 +473,7 @@ func TestPerCluster_SecondsPerServiceWithoutFleetGateway(t *testing.T) {
 	clusters := []types.ProcessedCluster{withSourceAuth("alpha", SourceAuthSCRAM)}
 
 	fleet := decideCutover(clusters, base)
-	require.NotEqual(t, types.GatewayMediatedTrue, fleet.GatewayMediated, "fleet must NOT be gateway-mediated for this scenario")
+	require.NotEqual(t, GatewayMediatedTrue, fleet.GatewayMediated, "fleet must NOT be gateway-mediated for this scenario")
 
 	oqs := detectPerClusterGatewayIncompat(clusters, fleet, base)
 	require.Len(t, oqs, 1, "per-cluster seconds_per_service must fire the gateway-incompat OQ when fleet isn't mediated")
@@ -485,6 +485,6 @@ func TestPerCluster_SecondsPerServiceWithoutFleetGateway(t *testing.T) {
 	base.ConfluentForKubernetesStatus = PrereqStatusCompleteInput
 	base.CCGatewayLicenseStatus = PrereqStatusCompleteInput
 	mediatedFleet := decideCutover(clusters, base)
-	require.Equal(t, types.GatewayMediatedTrue, mediatedFleet.GatewayMediated)
+	require.Equal(t, GatewayMediatedTrue, mediatedFleet.GatewayMediated)
 	assert.Empty(t, detectPerClusterGatewayIncompat(clusters, mediatedFleet, base), "mediated fleet → no per-cluster OQ")
 }
