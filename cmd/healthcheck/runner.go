@@ -63,6 +63,7 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 	}
 
 	timestamp := time.Now()
+	reportPaths := make([]string, 0, len(scanResult.Clusters))
 	for _, c := range scanResult.Clusters {
 		path := resolveOutputPath(c, timestamp)
 
@@ -70,6 +71,7 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 		if err := md.Print(markdown.PrintOptions{ToTerminal: false, ToFile: path}); err != nil {
 			return fmt.Errorf("failed to write healthcheck report for cluster %s: %w", c.Identifier.Name, err)
 		}
+		reportPaths = append(reportPaths, path)
 
 		userTopics := 0
 		internalTopics := 0
@@ -86,6 +88,28 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 			"acls", len(c.KafkaAdminInfo.Acls),
 			"report", path,
 		)
+
+		// User-facing per-cluster summary. slog.Info above goes to kcp.log
+		// only (the console handler defaults to WARN+); fmt.Printf gives
+		// the operator immediate visible confirmation that the cluster
+		// was scanned and where the report landed. Same pattern as
+		// `scan clusters`.
+		fmt.Printf("   • %s — %d broker(s), %d user topic(s), %d internal topic(s), %d ACL(s)\n",
+			c.Identifier.Name,
+			len(c.KafkaAdminInfo.DiscoveredBrokers),
+			userTopics,
+			internalTopics,
+			len(c.KafkaAdminInfo.Acls),
+		)
+		fmt.Printf("     Report: %s\n", path)
+	}
+
+	fmt.Printf("\n✅ Healthcheck completed successfully\n")
+	fmt.Printf("   Scanned %d cluster(s) (source: %s)\n", len(scanResult.Clusters), sourceType)
+	if len(reportPaths) == 1 {
+		fmt.Printf("   Report: %s\n\n", reportPaths[0])
+	} else {
+		fmt.Printf("   Reports written: %d\n\n", len(reportPaths))
 	}
 
 	return nil
