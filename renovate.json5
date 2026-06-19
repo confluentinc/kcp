@@ -1,0 +1,17 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  // Repo-local rules merged on top of Confluent's global Renovate config.
+  packageRules: [
+    {
+      // confluent-kafka-go v2.13.0+ makes the pure-Go `schemaregistry` client
+      // import the cgo `kafka` package: schemaregistry/internal/rest_service.go
+      // calls kafka.LibraryVersion(). kcp builds its Linux/Windows binaries with
+      // CGO_ENABLED=0 (cross-compile), so that package compiles in stub mode
+      // without LibraryVersion, breaking the build:
+      //   undefined: kafka.LibraryVersion
+      // Pin to < v2.13 until upstream decouples schemaregistry from cgo.
+      matchPackageNames: ['github.com/confluentinc/confluent-kafka-go/v2'],
+      allowedVersions: '<2.13.0',
+    },
+  ],
+}
