@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"regexp"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/sources"
+	"github.com/confluentinc/kcp/internal/sources/msk"
 	"github.com/confluentinc/kcp/internal/sources/osk"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/spf13/cobra"
 )
 
@@ -18,21 +21,24 @@ import (
 var filenameSafe = regexp.MustCompile(`[^A-Za-z0-9._-]+`)
 
 // runHealthcheck is the entry point invoked by Cobra. It loads credentials
-// via the OSK source, scans each cluster via the Kafka Admin API, renders
-// a markdown report per cluster, and writes it to disk. A per-cluster
-// summary is logged via slog (which fans out to both kcp.log and the
-// console).
+// via the configured source (OSK or MSK), scans each cluster via the Kafka
+// Admin API, renders a markdown report per cluster, and writes it to disk.
+// A per-cluster summary is logged via slog (which fans out to both kcp.log
+// and the console).
 func runHealthcheck(cmd *cobra.Command, args []string) error {
 	ctx := context.Background()
 
-	source := osk.NewOSKSource()
+	source, state, err := buildSource(sourceType, stateFile)
+	if err != nil {
+		return err
+	}
 
 	if err := source.LoadCredentials(credentialsFile); err != nil {
 		return fmt.Errorf("failed to load credentials: %w", err)
 	}
 
 	clusters := source.GetClusters()
-	slog.Info("clusters to healthcheck", "count", len(clusters))
+	slog.Info("clusters to healthcheck", "count", len(clusters), "source", sourceType)
 	for _, cluster := range clusters {
 		slog.Info("cluster", "name", cluster.Name, "id", cluster.UniqueID)
 	}
@@ -47,6 +53,7 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 	scanOpts := sources.ScanOptions{
 		SkipTopics: false,
 		SkipACLs:   false,
+		State:      state,
 	}
 
 	slog.Info("starting healthcheck scan")
@@ -82,6 +89,39 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// buildSource constructs the configured Source. For MSK we also load the
+// discovery state file (required to resolve cluster ARNs to broker
+// addresses); OSK does not use the state file.
+func buildSource(sourceType, stateFilePath string) (sources.Source, *types.State, error) {
+	switch sourceType {
+	case "osk":
+		return osk.NewOSKSource(), nil, nil
+	case "msk":
+		state, err := loadStateFile(stateFilePath)
+		if err != nil {
+			return nil, nil, err
+		}
+		return msk.NewMSKSource(), state, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported source type: %s", sourceType)
+	}
+}
+
+// loadStateFile reads the discovery state. Unlike `scan clusters` we do not
+// fall back to creating a fresh state file — healthcheck has nothing to
+// discover; an empty state for MSK means `kcp discover` has not been run.
+func loadStateFile(path string) (*types.State, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("state file %q not found; run 'kcp discover' before healthchecking MSK clusters", path)
+	}
+	state, err := types.NewStateFromFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load state file %q: %w", path, err)
+	}
+	slog.Info("loaded existing state file", "file", path)
+	return state, nil
 }
 
 // resolveOutputPath returns the markdown output path for a cluster. When
