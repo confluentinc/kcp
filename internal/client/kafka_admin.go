@@ -108,14 +108,23 @@ func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConf
 	case types.AuthTypeIAM:
 		return WithIAMAuth(), nil
 	case types.AuthTypeSASLSCRAM:
+		if auth.SASLScram == nil {
+			return nil, fmt.Errorf("auth type %q selected but sasl_scram config is nil", authType)
+		}
 		return WithSASLSCRAMAuth(auth.SASLScram.Username, auth.SASLScram.Password, auth.SASLScram.Mechanism, skipTLSVerify), nil
 	case types.AuthTypeSASLPlain:
+		if auth.SASLPlain == nil {
+			return nil, fmt.Errorf("auth type %q selected but sasl_plain config is nil", authType)
+		}
 		return WithSASLPlainAuthNoTLS(auth.SASLPlain.Username, auth.SASLPlain.Password), nil
 	case types.AuthTypeUnauthenticatedTLS:
 		return WithUnauthenticatedTlsAuth(), nil
 	case types.AuthTypeUnauthenticatedPlaintext:
 		return WithUnauthenticatedPlaintextAuth(), nil
 	case types.AuthTypeTLS:
+		if auth.TLS == nil {
+			return nil, fmt.Errorf("auth type %q selected but tls config is nil", authType)
+		}
 		return WithTLSAuth(auth.TLS.CACert, auth.TLS.ClientCert, auth.TLS.ClientKey), nil
 	default:
 		return nil, fmt.Errorf("auth type %q not supported", authType)

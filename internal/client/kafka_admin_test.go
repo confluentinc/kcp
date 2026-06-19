@@ -880,4 +880,19 @@ func TestAdminOptionForAuthMethod(t *testing.T) {
 		_, err := AdminOptionForAuthMethod(types.AuthType("bogus"), types.AuthMethodConfig{}, false)
 		require.Error(t, err)
 	})
+
+	t.Run("SASL/SCRAM with nil config returns error", func(t *testing.T) {
+		_, err := AdminOptionForAuthMethod(types.AuthTypeSASLSCRAM, types.AuthMethodConfig{}, false)
+		require.Error(t, err)
+	})
+
+	t.Run("SASL/PLAIN with nil config returns error", func(t *testing.T) {
+		_, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, types.AuthMethodConfig{}, false)
+		require.Error(t, err)
+	})
+
+	t.Run("TLS with nil config returns error", func(t *testing.T) {
+		_, err := AdminOptionForAuthMethod(types.AuthTypeTLS, types.AuthMethodConfig{}, false)
+		require.Error(t, err)
+	})
 }
