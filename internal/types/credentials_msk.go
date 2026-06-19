@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/goccy/go-yaml"
 )
@@ -27,21 +26,7 @@ func NewCredentialsFrom(fromCredentials *Credentials) *Credentials {
 }
 
 func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) {
-	data, err := os.ReadFile(credentialsYamlPath)
-	if err != nil {
-		return nil, []error{fmt.Errorf("failed to read creds.yaml file: %w", err)}
-	}
-
-	var credsFile Credentials
-	if err := yaml.Unmarshal(data, &credsFile); err != nil {
-		return nil, []error{fmt.Errorf("failed to unmarshal YAML: %w", err)}
-	}
-
-	if valid, errs := credsFile.Validate(); !valid {
-		return nil, errs
-	}
-
-	return &credsFile, nil
+	return loadCredentialsFile[Credentials](credentialsYamlPath)
 }
 
 // UpsertTargetedClusters creates or replaces only the clusters present in newRegion.Clusters,
@@ -75,14 +60,7 @@ func (c *Credentials) UpsertRegion(newRegion RegionAuth) {
 }
 
 func (c *Credentials) WriteToFile(filePath string) error {
-	yamlData, err := c.ToYaml()
-	if err != nil {
-		return fmt.Errorf("failed to marshal YAML: %w", err)
-	}
-	if err := os.WriteFile(filePath, yamlData, 0600); err != nil {
-		return fmt.Errorf("failed to write YAML file: %w", err)
-	}
-	return nil
+	return writeYAMLFile(filePath, c)
 }
 
 func (c *Credentials) ToYaml() ([]byte, error) {
