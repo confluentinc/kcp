@@ -22,15 +22,14 @@ export interface ChartDataPoint {
 }
 
 export interface TooltipPayload {
-  name?: string
-  value?: number | string
+  name?: string | number
+  value?: number | string | ReadonlyArray<number | string>
   color?: string
-  [key: string]: unknown
 }
 
 export interface TooltipContentProps {
   active?: boolean
-  payload?: TooltipPayload[]
+  payload?: readonly TooltipPayload[]
   label?: number | string
 }
 
@@ -38,7 +37,7 @@ interface DateRangeChartProps {
   data: ChartDataPoint[]
   children: ReactNode
   chartType?: 'area' | 'line'
-  height?: number | string
+  height?: number | `${number}%`
   yAxisFormatter?: (value: number) => string
   tooltipLabelFormatter?: (label: number | string) => string
   customTooltip?: (props: TooltipContentProps) => ReactNode
