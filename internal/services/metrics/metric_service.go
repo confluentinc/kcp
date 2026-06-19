@@ -465,7 +465,10 @@ func newSearchMetricQueryInfo(metricName, searchExpr, mathExpr, stat string, per
 		Period:           period,
 		SearchExpression: searchExpr,
 		MathExpression:   mathExpr,
-		AggregationNote:  fmt.Sprintf("Uses SEARCH to find %s across all %s, then aggregates with %s.", metricName, dimensions, mathExpr),
+		AggregationNote: fmt.Sprintf("Uses SEARCH to find %s across all %s, then aggregates with %s. "+
+			"kcp fetches this metric in time-chunked GetMetricData sub-windows to stay under CloudWatch's 100,800-datapoint per-request limit; "+
+			"the single CLI command above queries the whole window in one request and may return only the most-recent data for large windows or "+
+			"many-broker clusters — split --start-time/--end-time into smaller sub-windows to reproduce the complete series.", metricName, dimensions, mathExpr),
 	}
 }
 
