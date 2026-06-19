@@ -245,6 +245,26 @@ func TestExecuteChunkedQuery_WarnsAtFloor(t *testing.T) {
 	}
 }
 
+func TestExecuteChunkedQuery_NonPositivePeriodErrors(t *testing.T) {
+	fake := &fakeCWClient{respond: func(_ int, _ *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
+		t.Fatal("client should not be called for a non-positive period")
+		return nil, nil
+	}}
+	ms := &MetricService{client: fake}
+	for _, period := range []int32{0, -60} {
+		out, err := ms.executeChunkedQuery(context.Background(), dummyQueries(), time.Unix(0, 0), time.Unix(600, 0), period, 4, "test")
+		if err == nil {
+			t.Errorf("period %d: expected error, got nil", period)
+		}
+		if out != nil {
+			t.Errorf("period %d: expected nil output on error, got %+v", period, out)
+		}
+	}
+	if len(fake.calls) != 0 {
+		t.Errorf("expected no client calls, got %d", len(fake.calls))
+	}
+}
+
 func TestExecuteChunkedQuery_EmptyQueriesReturnsEmpty(t *testing.T) {
 	fake := &fakeCWClient{respond: func(_ int, _ *cloudwatch.GetMetricDataInput) (*cloudwatch.GetMetricDataOutput, error) {
 		t.Fatal("client should not be called for empty queries")

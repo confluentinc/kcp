@@ -811,6 +811,12 @@ func (ms *MetricService) collectWindow(ctx context.Context, queries []cloudwatch
 // Results are stitched per Id; a single warning is emitted if any data remained
 // partial. label identifies the query group/cluster in that warning.
 func (ms *MetricService) executeChunkedQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time, period int32, seriesEstimate int, label string) (*cloudwatch.GetMetricDataOutput, error) {
+	// period drives the bisection's integer division in collectWindow; reject a
+	// non-positive period up front so an invalid caller fails fast rather than
+	// panicking on divide-by-zero (or behaving oddly for negatives) deeper down.
+	if period <= 0 {
+		return nil, fmt.Errorf("executeChunkedQuery: period must be positive, got %d", period)
+	}
 	if len(queries) == 0 || !endTime.After(startTime) {
 		return &cloudwatch.GetMetricDataOutput{}, nil
 	}
