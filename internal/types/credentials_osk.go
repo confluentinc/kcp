@@ -164,37 +164,15 @@ func (c OSKCredentials) Validate() (bool, []error) {
 	return len(errs) == 0, errs
 }
 
-// GetAuthMethods returns the enabled authentication methods for this cluster
+// GetAuthMethods returns the enabled authentication methods for this cluster.
+// IAM is not supported for OSK, so it is excluded (includeIAM=false).
 func (c OSKClusterAuth) GetAuthMethods() []AuthType {
-	enabledMethods := []AuthType{}
-
-	if c.AuthMethod.UnauthenticatedPlaintext != nil && c.AuthMethod.UnauthenticatedPlaintext.Use {
-		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedPlaintext)
-	}
-	if c.AuthMethod.UnauthenticatedTLS != nil && c.AuthMethod.UnauthenticatedTLS.Use {
-		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedTLS)
-	}
-	if c.AuthMethod.SASLScram != nil && c.AuthMethod.SASLScram.Use {
-		enabledMethods = append(enabledMethods, AuthTypeSASLSCRAM)
-	}
-	if c.AuthMethod.SASLPlain != nil && c.AuthMethod.SASLPlain.Use {
-		enabledMethods = append(enabledMethods, AuthTypeSASLPlain)
-	}
-	if c.AuthMethod.TLS != nil && c.AuthMethod.TLS.Use {
-		enabledMethods = append(enabledMethods, AuthTypeTLS)
-	}
-	// Note: IAM not supported for OSK
-
-	return enabledMethods
+	return c.AuthMethod.EnabledAuthMethods(false)
 }
 
 // GetSelectedAuthType returns the selected auth type for the cluster
 func (c OSKClusterAuth) GetSelectedAuthType() (AuthType, error) {
-	enabledMethods := c.GetAuthMethods()
-	if len(enabledMethods) == 0 {
-		return "", fmt.Errorf("no authentication method enabled for cluster")
-	}
-	return enabledMethods[0], nil
+	return c.AuthMethod.SelectedAuthType(false)
 }
 
 // HasJolokiaConfig returns true if the cluster has Jolokia configuration
