@@ -100,25 +100,37 @@ func WithInsecureSkipVerify() AdminOption {
 	}
 }
 
-// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
-func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+// AdminOptionForAuthMethod maps an auth type + method config to the corresponding
+// AdminOption. skipTLSVerify applies to SASL/SCRAM (MSK passes false — AWS-managed
+// certs; Apache Kafka passes its InsecureSkipTLSVerify).
+func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConfig, skipTLSVerify bool) (AdminOption, error) {
 	switch authType {
 	case types.AuthTypeIAM:
-		return WithIAMAuth()
+		return WithIAMAuth(), nil
 	case types.AuthTypeSASLSCRAM:
-		return WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password, clusterAuth.AuthMethod.SASLScram.Mechanism, false)
-	case types.AuthTypeUnauthenticatedTLS:
-		return WithUnauthenticatedTlsAuth()
-	case types.AuthTypeUnauthenticatedPlaintext:
-		return WithUnauthenticatedPlaintextAuth()
-	case types.AuthTypeTLS:
-		return WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey)
+		return WithSASLSCRAMAuth(auth.SASLScram.Username, auth.SASLScram.Password, auth.SASLScram.Mechanism, skipTLSVerify), nil
 	case types.AuthTypeSASLPlain:
-		return WithSASLPlainAuthNoTLS(clusterAuth.AuthMethod.SASLPlain.Username, clusterAuth.AuthMethod.SASLPlain.Password)
+		return WithSASLPlainAuthNoTLS(auth.SASLPlain.Username, auth.SASLPlain.Password), nil
+	case types.AuthTypeUnauthenticatedTLS:
+		return WithUnauthenticatedTlsAuth(), nil
+	case types.AuthTypeUnauthenticatedPlaintext:
+		return WithUnauthenticatedPlaintextAuth(), nil
+	case types.AuthTypeTLS:
+		return WithTLSAuth(auth.TLS.CACert, auth.TLS.ClientCert, auth.TLS.ClientKey), nil
 	default:
+		return nil, fmt.Errorf("auth type %q not supported", authType)
+	}
+}
+
+// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
+// Retained for callers keyed to types.ClusterAuth; delegates to AdminOptionForAuthMethod.
+func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+	opt, err := AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
+	if err != nil {
 		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
 		return WithIAMAuth()
 	}
+	return opt
 }
 
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
