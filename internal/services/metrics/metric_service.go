@@ -666,12 +666,18 @@ func (ms *MetricService) executeWindow(ctx context.Context, queries []cloudwatch
 	var allResults []cloudwatchtypes.MetricDataResult
 	var allMessages []cloudwatchtypes.MessageData
 	var nextToken *string
+	pages := 0
 	for {
 		input.NextToken = nextToken
 		result, err := ms.client.GetMetricData(ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get metric data: %w", err)
 		}
+		pages++
+		slog.Debug("GetMetricData request",
+			"start", startTime, "end", endTime, "page", pages,
+			"continuation", nextToken != nil, "resultSeries", len(result.MetricDataResults),
+			"morePages", result.NextToken != nil)
 		allResults = append(allResults, result.MetricDataResults...)
 		allMessages = append(allMessages, result.Messages...)
 		if result.NextToken == nil {
@@ -680,6 +686,7 @@ func (ms *MetricService) executeWindow(ctx context.Context, queries []cloudwatch
 		nextToken = result.NextToken
 	}
 
+	slog.Debug("fetched metric window", "start", startTime, "end", endTime, "pages", pages, "resultSeries", len(allResults))
 	return &cloudwatch.GetMetricDataOutput{MetricDataResults: allResults, Messages: allMessages}, nil
 }
 
@@ -793,12 +800,14 @@ func (ms *MetricService) collectWindow(ctx context.Context, queries []cloudwatch
 		if windowSeconds > int64(period) && halfPeriods >= 1 {
 			mid := start.Add(time.Duration(halfPeriods*int64(period)) * time.Second)
 			if mid.After(start) && mid.Before(end) {
+				slog.Debug("partial metric window, bisecting", "start", start, "mid", mid, "end", end, "windowSeconds", windowSeconds)
 				if err := ms.collectWindow(ctx, queries, start, mid, period, st); err != nil {
 					return err
 				}
 				return ms.collectWindow(ctx, queries, mid, end, period, st)
 			}
 		}
+		slog.Debug("partial metric window at minimum resolution, keeping partial data", "start", start, "end", end, "windowSeconds", windowSeconds)
 		st.markPartial()
 	}
 	st.add(out.MetricDataResults)
@@ -825,6 +834,20 @@ func (ms *MetricService) executeChunkedQuery(ctx context.Context, queries []clou
 	cs := chunkSeconds(period, seriesEstimate)
 	totalSeconds := int64(endTime.Sub(startTime).Seconds())
 
+	chunked := cs > 0 && totalSeconds > cs
+	numChunks := 1
+	if chunked {
+		numChunks = int((totalSeconds + cs - 1) / cs)
+	}
+	slog.Debug("executing chunked metric query",
+		"query", label, "period", period, "seriesEstimate", seriesEstimate,
+		"start", startTime, "end", endTime, "chunkSeconds", cs, "chunked", chunked, "chunks", numChunks)
+	for _, q := range queries {
+		slog.Debug("metric query expression",
+			"query", label, "id", aws.ToString(q.Id), "label", aws.ToString(q.Label),
+			"expression", aws.ToString(q.Expression), "returnData", aws.ToBool(q.ReturnData))
+	}
+
 	if cs <= 0 || totalSeconds <= cs {
 		if err := ms.collectWindow(ctx, queries, startTime, endTime, period, st); err != nil {
 			return nil, err
@@ -842,9 +865,17 @@ func (ms *MetricService) executeChunkedQuery(ctx context.Context, queries []clou
 		}
 	}
 
+	out := st.output()
+	datapoints := 0
+	for _, r := range out.MetricDataResults {
+		datapoints += len(r.Values)
+	}
+	slog.Debug("completed chunked metric query",
+		"query", label, "series", len(out.MetricDataResults), "datapoints", datapoints, "partial", st.partial)
+
 	if st.partial {
 		slog.Warn("metrics may be incomplete: CloudWatch returned partial data at the minimum window",
 			"query", label, "period", period, "start", startTime, "end", endTime)
 	}
-	return st.output(), nil
+	return out, nil
 }
