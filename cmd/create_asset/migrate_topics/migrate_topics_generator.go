@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -51,7 +53,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 		selectedNames[i] = t.Name
 	}
 
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		SelectedTopics:            selectedNames,
 		Topics:                    mt.opts.Topics,
 		ClusterLinkName:           mt.opts.ClusterLinkName,
@@ -71,7 +73,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 	}
 
 	fmt.Printf("✅ migrate-topics Terraform files generated: %s (%d topics, mode=%s)\n", outputDir, len(mt.opts.Topics), mt.opts.Mode)
-	if mt.opts.Mode == types.MigrateTopicsModeNew {
+	if mt.opts.Mode == hclrequests.MigrateTopicsModeNew {
 		fmt.Println(newModeCLINote)
 	}
 
@@ -81,7 +83,7 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 // writeProject writes the single-folder migrate-topics project flat into
 // outputDir: providers.tf, variables.tf, plus one .tf per topic from
 // AdditionalFiles.
-func (mt *MigrateTopicsAssetGenerator) writeProject(outputDir string, project types.MigrationScriptsTerraformProject) error {
+func (mt *MigrateTopicsAssetGenerator) writeProject(outputDir string, project hcltypes.MigrationScriptsTerraformProject) error {
 	if len(project.Folders) == 0 {
 		return nil
 	}

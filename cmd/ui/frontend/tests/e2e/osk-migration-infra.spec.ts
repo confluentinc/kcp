@@ -5,7 +5,7 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.goto('/')
     await page.waitForSelector('nav button', { timeout: 10000 })
     await page.locator('nav button:has-text("Migrate")').click()
-    await page.waitForSelector('text=Open Source Kafka', { timeout: 10000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 10000 })
   })
 
   test('Public path - generates Terraform for OSK cluster', async ({ page }) => {
@@ -13,6 +13,11 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Standard (commercial) Confluent Cloud destination (index 0)
+    await page.locator('#root_cc_type-0').click()
+    await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
     // Select "Yes" for public brokers (index 0 = Yes)
@@ -40,6 +45,11 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Standard (commercial) Confluent Cloud destination (index 0)
+    await page.locator('#root_cc_type-0').click()
+    await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
     // Select "No" for private networking (index 1 = No)
@@ -77,6 +87,11 @@ test.describe('OSK Migration Infrastructure Wizard', () => {
     await page.waitForTimeout(500)
 
     await page.locator('button:has-text("Generate Terraform")').nth(1).click()
+    await page.waitForTimeout(500)
+
+    // Select Standard (commercial) Confluent Cloud destination (index 0)
+    await page.locator('#root_cc_type-0').click()
+    await page.locator('button[type="submit"]').click()
     await page.waitForTimeout(500)
 
     // Select private (index 1 = No)

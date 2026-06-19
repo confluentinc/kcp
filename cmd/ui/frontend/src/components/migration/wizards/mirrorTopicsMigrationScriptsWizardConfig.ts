@@ -1,5 +1,12 @@
 import type { WizardConfig } from './types'
 import { getClusterDataBySourceType } from '@/stores/store'
+import {
+  destinationTypeStepMeta,
+  govUnsupportedStepMeta,
+  DESTINATION_GOVERNMENT,
+  DESTINATION_FIELD,
+  CC_GOV_PRODUCT_NAME,
+} from './sharedWizardSchemas'
 
 const MODE_MIRROR = 'mirror'
 const MODE_NEW = 'new'
@@ -16,9 +23,25 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
     title: 'Migrate Topics Migration Scripts Wizard',
     description: 'Configure your migrate-topics Terraform — mirror existing topics with data forward, or scaffold plain Confluent Cloud topics for a greenfield migration.',
     apiEndpoint: '/assets/migration-scripts/topics',
-    initial: 'mode_selection',
+    initial: 'destination_type',
 
     states: {
+      destination_type: {
+        meta: destinationTypeStepMeta(),
+        on: {
+          // Both Standard and Gov proceed to mode selection — the Gov block is
+          // precise (Gov + mirror only) and evaluated there.
+          NEXT: { target: 'mode_selection', actions: 'save_step_data' },
+        },
+      },
+      gov_unsupported: {
+        meta: govUnsupportedStepMeta(
+          `Mirror topics are not supported on ${CC_GOV_PRODUCT_NAME}: they rely on Cluster Linking, which ${CC_GOV_PRODUCT_NAME} does not provide. Go back and choose the "new" mode to create plain Confluent Cloud topics instead.`
+        ),
+        on: {
+          BACK: { target: 'mode_selection', actions: 'undo_save_step_data' },
+        },
+      },
       mode_selection: {
         meta: {
           title: 'Migration Mode',
@@ -62,6 +85,13 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
         on: {
           NEXT: [
             {
+              // Ordered before is_mirror_mode so Gov + mirror is blocked while
+              // Gov + new still falls through to the new-topics path.
+              target: 'gov_unsupported',
+              guard: 'is_gov_and_mirror',
+              actions: 'save_step_data',
+            },
+            {
               target: 'target_cluster_inputs_mirror',
               guard: 'is_mirror_mode',
               actions: 'save_step_data',
@@ -72,6 +102,7 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
               actions: 'save_step_data',
             },
           ],
+          BACK: { target: 'destination_type', actions: 'undo_save_step_data' },
         },
       },
 
@@ -197,6 +228,10 @@ export const createMirrorTopicsMigrationScriptsWizardConfig = (clusterKey: strin
     },
 
     guards: {
+      is_gov_and_mirror: ({ context, event }) =>
+        (context.allData?.destination_type as Record<string, unknown> | undefined)?.[
+          DESTINATION_FIELD
+        ] === DESTINATION_GOVERNMENT && event.data?.mode === MODE_MIRROR,
       is_mirror_mode: ({ event }) => event.data?.mode === MODE_MIRROR,
       is_new_mode: ({ event }) => event.data?.mode === MODE_NEW,
       came_from_topic_selection: ({ context }) => context.previousStep === 'topic_selection',

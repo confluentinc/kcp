@@ -23,7 +23,7 @@ services:
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
       # SASL configuration
-      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,PLAIN
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-256,SCRAM-SHA-512,PLAIN
       KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
       KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
       # SASL/PLAIN per-listener JAAS config (avoids modifying the shared JAAS file)
@@ -74,10 +74,97 @@ services:
         echo 'Creating SCRAM credentials...'
         kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=admin-secret]' --entity-type users --entity-name admin 2>/dev/null || true
         kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-256=[password=kafkapass]' --entity-type users --entity-name kafkauser 2>/dev/null || true
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-512=[password=admin-secret]' --entity-type users --entity-name admin 2>/dev/null || true
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-512=[password=kafkapass]' --entity-type users --entity-name kafkauser 2>/dev/null || true
         echo 'SCRAM credentials created.'
 
         wait
       "
+
+  kafka-sasl-sha512-only:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: osk-kafka-sasl-sha512-only
+    container_name: kcp-test-osk-kafka-sasl-sha512-only
+    ports:
+      - "9099:9099"
+    volumes:
+      - ./kafka_server_jaas.conf:/etc/kafka/kafka_server_jaas.conf
+      - ./certs:/etc/kafka/secrets
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@osk-kafka-sasl-sha512-only:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://osk-kafka-sasl-sha512-only:29093,SASL_HOST://0.0.0.0:9099'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://osk-kafka-sasl-sha512-only:29092,SASL_HOST://localhost:9099'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,SASL_HOST:SASL_SSL'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_SASL_ENABLED_MECHANISMS: SCRAM-SHA-512
+      KAFKA_SASL_MECHANISM_INTER_BROKER_PROTOCOL: PLAIN
+      KAFKA_OPTS: -Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf
+      KAFKA_SSL_KEYSTORE_LOCATION: /etc/kafka/secrets/kafka.server.keystore.jks
+      KAFKA_SSL_KEYSTORE_PASSWORD: keystorepass
+      KAFKA_SSL_KEY_PASSWORD: keystorepass
+      KAFKA_SSL_TRUSTSTORE_LOCATION: /etc/kafka/secrets/kafka.server.truststore.jks
+      KAFKA_SSL_TRUSTSTORE_PASSWORD: truststorepass
+      KAFKA_SSL_CLIENT_AUTH: none
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ''
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      CLUSTER_ID: 'Sha512OnLyTeStClUsTr01'
+      KAFKA_AUTHORIZER_CLASS_NAME: org.apache.kafka.metadata.authorizer.StandardAuthorizer
+      KAFKA_ALLOW_EVERYONE_IF_NO_ACL_FOUND: 'true'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS;User:admin;User:kafkauser'
+    command: >
+      bash -c "
+        kafka-storage format -t Sha512OnLyTeStClUsTr01 -c /etc/kafka/kafka.properties --ignore-formatted 2>/dev/null || true
+
+        KAFKA_OPTS=\"-Djava.security.auth.login.config=/etc/kafka/kafka_server_jaas.conf\" /etc/confluent/docker/run &
+        KAFKA_PID=$$!
+
+        echo 'Waiting for Kafka SHA-512-only broker to start...'
+        MAX_WAIT=60
+        WAIT_TIME=0
+        while [ $$WAIT_TIME -lt $$MAX_WAIT ]; do
+          if kafka-broker-api-versions --bootstrap-server localhost:29092 > /dev/null 2>&1; then
+            break
+          fi
+          sleep 2
+          WAIT_TIME=$$((WAIT_TIME + 2))
+        done
+
+        echo 'Creating SCRAM-SHA-512 credentials...'
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-512=[password=admin-secret]' --entity-type users --entity-name admin 2>/dev/null || true
+        kafka-configs --bootstrap-server localhost:29092 --alter --add-config 'SCRAM-SHA-512=[password=kafkapass]' --entity-type users --entity-name kafkauser 2>/dev/null || true
+        echo 'SCRAM-SHA-512 credentials created.'
+
+        wait
+      "
+
+  kafka-sasl-sha512-only-producer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-sasl-sha512-only-producer
+    depends_on:
+      - kafka-sasl-sha512-only
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka-sasl-sha512-only:29092 1 60
+        kafka-producer-perf-test --topic test-topic-1 --throughput 100 --num-records 999999999 --record-size 1000 --producer-props bootstrap.servers=osk-kafka-sasl-sha512-only:29092
+
+  kafka-sasl-sha512-only-consumer:
+    image: confluentinc/cp-kafka:7.6.0
+    container_name: kcp-test-osk-kafka-sasl-sha512-only-consumer
+    depends_on:
+      - kafka-sasl-sha512-only
+    command:
+      - bash
+      - -c
+      - |
+        cub kafka-ready -b osk-kafka-sasl-sha512-only:29092 1 60
+        kafka-console-consumer --bootstrap-server osk-kafka-sasl-sha512-only:29092 --topic test-topic-1 --group osk-sasl-sha512-only-consumer > /dev/null
 
   kafka-producer:
     image: confluentinc/cp-kafka:7.6.0
@@ -113,6 +200,7 @@ services:
       - kafka
     ports:
       - "8083:8083"
+      - "8781:8781"
     environment:
       CONNECT_BOOTSTRAP_SERVERS: 'osk-kafka:29092'
       CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
@@ -134,7 +222,11 @@ services:
         echo "Waiting for Kafka to be ready..."
         cub kafka-ready -b osk-kafka:29092 1 120
 
-        echo "Starting Kafka Connect..."
+        echo "Downloading Jolokia agent..."
+        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+
+        echo "Starting Kafka Connect with Jolokia..."
+        export KAFKA_OPTS="-javaagent:/tmp/jolokia-agent.jar=port=8781,host=0.0.0.0"
         /etc/confluent/docker/run &
         CONNECT_PID=$$!
 
@@ -149,20 +241,6 @@ services:
           sleep 2
           WAIT_TIME=$$((WAIT_TIME + 2))
         done
-
-        # Create a sample connector for testing
-        echo "Creating sample MirrorHeartbeat connector..."
-        curl -X POST http://localhost:8083/connectors -H "Content-Type: application/json" -d '{
-          "name": "test-heartbeat",
-          "config": {
-            "connector.class": "org.apache.kafka.connect.mirror.MirrorHeartbeatConnector",
-            "tasks.max": "1",
-            "source.cluster.alias": "source",
-            "target.cluster.alias": "target",
-            "source.cluster.bootstrap.servers": "osk-kafka:29092",
-            "target.cluster.bootstrap.servers": "osk-kafka:29092"
-          }
-        }' || true
 
         wait $$CONNECT_PID
 

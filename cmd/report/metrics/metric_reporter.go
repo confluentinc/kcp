@@ -6,13 +6,14 @@ import (
 
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ReportService interface {
-	ProcessState(state types.State) types.ProcessedState
-	FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	ProcessState(state types.State) report.ProcessedState
+	FilterClusterMetrics(processedState report.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type MetricReporterOpts struct {
@@ -128,9 +129,9 @@ func (r *MetricReporter) determineReportTitle(clusters []types.ProcessedClusterM
 	if hasMSK && hasOSK {
 		return "Kafka Metrics Report"
 	}
-	// Only OSK clusters
+	// Only Apache Kafka clusters
 	if hasOSK {
-		return "OSK Metrics Report"
+		return "Apache Kafka Metrics Report"
 	}
 	// Only MSK clusters (default)
 	return "AWS MSK Metrics Report"

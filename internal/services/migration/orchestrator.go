@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/looplab/fsm"
 )
@@ -21,11 +20,11 @@ type WorkflowStep struct {
 
 // canonicalWorkflow is the single source of truth for the migration workflow sequence
 var canonicalWorkflow = []WorkflowStep{
-	{types.EventInitialize, "initializing migration", types.StateUninitialized, types.StateInitialized, "🔍 Initializing migration..."},
-	{types.EventWaitForLags, "checking replication lags", types.StateInitialized, types.StateLagsOk, "⏳ Checking replication lags..."},
-	{types.EventFence, "fencing gateway", types.StateLagsOk, types.StateFenced, "🚧 Fencing gateway..."},
-	{types.EventPromote, "promoting topics", types.StateFenced, types.StatePromoted, "📤 Promoting mirror topics..."},
-	{types.EventSwitch, "switching gateway config", types.StatePromoted, types.StateSwitched, "🔄 Switching gateway to Confluent Cloud..."},
+	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized, "🔍 Initializing migration..."},
+	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk, "⏳ Checking replication lags..."},
+	{EventFence, "fencing gateway", StateLagsOk, StateFenced, "🚧 Fencing gateway..."},
+	{EventPromote, "promoting topics", StateFenced, StatePromoted, "📤 Promoting mirror topics..."},
+	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched, "🔄 Switching gateway to Confluent Cloud..."},
 }
 
 // ExecutionParams holds runtime parameters needed during migration execution
@@ -37,19 +36,19 @@ type ExecutionParams struct {
 
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
 type MigrationOrchestrator struct {
-	config         *types.MigrationConfig
+	config         *MigrationConfig
 	fsm            *fsm.FSM
 	workflow       *MigrationWorkflow
-	migrationState *types.MigrationState
+	migrationState *MigrationState
 	stateFilePath  string
 	execParams     ExecutionParams // Runtime execution parameters
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
 func NewMigrationOrchestrator(
-	config *types.MigrationConfig,
+	config *MigrationConfig,
 	workflow *MigrationWorkflow,
-	migrationState *types.MigrationState,
+	migrationState *MigrationState,
 	stateFilePath string,
 ) *MigrationOrchestrator {
 	orchestrator := &MigrationOrchestrator{
@@ -74,15 +73,15 @@ func NewMigrationOrchestrator(
 		config.CurrentState,
 		events,
 		fsm.Callbacks{
-			"before_event":                      orchestrator.beforeEventCallback,
-			"after_event":                       orchestrator.afterEventCallback,
-			"enter_state":                       orchestrator.enterStateCallback,
-			"leave_state":                       orchestrator.leaveStateCallback,
-			"leave_" + types.StateUninitialized: orchestrator.leaveUninitializedCallback,
-			"leave_" + types.StateInitialized:   orchestrator.leaveInitializedCallback,
-			"leave_" + types.StateLagsOk:        orchestrator.leaveLagsOkCallback,
-			"leave_" + types.StateFenced:        orchestrator.leaveFencedCallback,
-			"leave_" + types.StatePromoted:      orchestrator.leavePromotedCallback,
+			"before_event":                orchestrator.beforeEventCallback,
+			"after_event":                 orchestrator.afterEventCallback,
+			"enter_state":                 orchestrator.enterStateCallback,
+			"leave_state":                 orchestrator.leaveStateCallback,
+			"leave_" + StateUninitialized: orchestrator.leaveUninitializedCallback,
+			"leave_" + StateInitialized:   orchestrator.leaveInitializedCallback,
+			"leave_" + StateLagsOk:        orchestrator.leaveLagsOkCallback,
+			"leave_" + StateFenced:        orchestrator.leaveFencedCallback,
+			"leave_" + StatePromoted:      orchestrator.leavePromotedCallback,
 		},
 	)
 
@@ -95,7 +94,7 @@ func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, c
 	o.execParams.ClusterApiKey = clusterApiKey
 	o.execParams.ClusterApiSecret = clusterApiSecret
 
-	if err := o.fsm.Event(ctx, types.EventInitialize); err != nil {
+	if err := o.fsm.Event(ctx, EventInitialize); err != nil {
 		return err
 	}
 	return o.persistState()

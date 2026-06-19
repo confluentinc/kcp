@@ -29,6 +29,7 @@
         "ec2:DescribeVpcs",
         "ec2:RevokeSecurityGroupEgress",
         "route53:AssociateVPCWithHostedZone",
+        "route53:ChangeResourceRecordSets",
         "route53:ChangeTagsForResource",
         "route53:CreateHostedZone",
         "route53:DeleteHostedZone",

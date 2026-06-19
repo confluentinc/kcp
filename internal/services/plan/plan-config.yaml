@@ -1,0 +1,156 @@
+# plan-config.yaml — Embedded defaults for `kcp report plan`.
+#
+# Single source of truth for Confluent product facts and the customer-tunable
+# sizing defaults.
+#
+# Override precedence (lowest → highest):
+#   1. This file (embedded in the KCP binary at build time)
+#   2. --config <path> CLI flag (admin override)
+#   3. plan-inputs.yaml (per-customer override of plan_input_defaults only)
+
+schema_version: 1
+last_verified: 2026-05-20
+kcp_version_at_verification: 0.8.0
+
+enterprise_caps:
+  # All values below are published in the Confluent Cloud cluster-types
+  # "Fixed limits and recommended guidelines" table (see `source` URL).
+  per_eCKU_ingress_mbps: 60        # cluster-types: Ingress (MBps) row, Enterprise column
+  per_eCKU_egress_mbps: 180        # cluster-types: Egress (MBps) row, Enterprise column
+  per_eCKU_partition_rate: 3000    # cluster-types: Partitions (pre-replication) row, Enterprise column = 3,000
+  privatelink_max_eCKU: 10         # cluster-types: "Enterprise clusters that use PrivateLink networking on AWS are limited to a maximum of 10 eCKU"
+  pni_max_eCKU: 32                 # cluster-types: "Enterprise clusters with a maximum of 32 eCKU on AWS... must use Private Network Interface (PNI)"
+  acl_count_cap: 4000              # cluster-types: ACLs row — Basic 1k / Standard 1k / Enterprise 4k / Dedicated 10k / Freight 10k
+  source: https://docs.confluent.io/cloud/current/clusters/cluster-types.html
+
+cluster_linking:
+  source_min_kafka_version: "2.4.0"  # "Kafka 2.4.0 or later" — migration use cases footnote
+  express_tier_supported: unknown    # verify per release
+  source: https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/
+
+# Schema Linking eligibility floor. Source Confluent SR clusters below
+# any of these floors fall to `defer_to_account_team` rather than the
+# Schema Linking path — the REST API export/import alternative is real
+# but its rollout sequencing is workload-specific and not deterministic.
+schema_linking:
+  min_cp_version: "7.0"
+  requires_cp_edition: enterprise
+  source: https://docs.confluent.io/platform/current/schema-registry/schema-linking-cp.html
+  last_verified: "2026-05-27"
+
+plan_input_defaults:
+  sizing_percentile: p95           # alternatives: p99, max — lowercase to match Confluent dashboards
+  headroom_fraction: 0.30          # 0.0..1.0 — safety margin above the chosen percentile; overrideable via plan-inputs
+  spiky_workload_ratio: 2.0        # peak / P95 ratio above which a workload is flagged "spiky" (FYI-only signal)
+  sla_floor_eCKU:                  # Source: cluster-types.html SLA table — "Enterprise 1 (99.9% SLA), 2 (99.99% SLA)"; Dedicated SZ supports 99.95%
+    "99.9":  1
+    "99.95": 1
+    "99.99": 2
+
+  # Customer-declared hard requirements (all default false). A wrong `true`
+  # flips Enterprise → Dedicated (higher monthly cost); the renderer surfaces
+  # a ⚠ cost callout on the verdict when one of these is the trigger.
+  enforce_schemas_at_the_broker: false
+  requires_high_throughput_rest_produce_api: false
+  requires_99_95_sla_within_a_single_zone: false
+
+  # Target cloud + existing VPC connectivity (Dedicated-path networking).
+  target_cloud: aws                              # MSK is AWS-only; hidden on the MSK path
+  existing_vpc_connectivity: privatelink_or_pni  # privatelink_or_pni (default) | transit_gateway | vpc_peering
+
+  # Networking triggers (PNI→PrivateLink). PNI is the AWS-Enterprise default;
+  # PrivateLink fires when one of these triggers is set, or when
+  # `target_cloud != aws`.
+  cc_egress_required: false        # CC→customer VPC egress not natively supported by PNI
+  projected_pni_gateway_count: 1   # ≥2 → flip to PrivateLink
+
+  # Cutover defaults. `let_confluent_choose` resolves to
+  # Stop-Restart-Repeat — Confluent's canonical recommendation. The
+  # gateway prereq statuses default to `not_started`; a customer who
+  # hasn't engaged with the gateway question stays in the "ambiguous
+  # intent" branch (degraded_awaiting_oq) until they answer.
+  downtime_tolerance: let_confluent_choose
+  sub_pattern: app-by-app
+  prefer_gateway: true
+  confluent_for_kubernetes_status: not_started
+  cc_gateway_license_status: not_started
+  iam_pre_migration_status: not_started
+
+  # Auth default target. Intentionally empty — the per-source
+  # default lives in `auth_mapping` below. Only set via plan-inputs.yaml
+  # when the customer wants to force a single target across all source
+  # auths detected on a cluster.
+  target_auth_method: ""
+
+  # Schema-migration defaults. `unknown` keeps first-run plans honest:
+  # the customer answers the strategy OQ once and the verdict pins.
+  # CP version/edition stay empty (= unknown) for the same reason —
+  # the scanner doesn't backfill them today.
+  schema_strategy: unknown
+  confluent_sr_cp_version: ""
+  confluent_sr_cp_edition: ""
+
+# Source → target auth lookup. Keyed by source-auth token. The
+# plan renders all detected source auths and the recommended target
+# for each — it doesn't pick one when a cluster has multiple enabled.
+auth_mapping:
+  scram:
+    target: confluent_cloud_api_keys
+    gateway_compatible: true
+    transparent_swap: true   # gateway swaps credentials transparently
+    # Note left empty — the "transparent swap" label in the Gateway
+    # column already conveys this row's behavior; repeating it as a
+    # Note on every SCRAM cluster adds noise without information.
+    note: ""
+    source: https://docs.confluent.io/cloud/current/security/authenticate/overview.html
+    last_verified: "2026-05-20"
+  iam:
+    target: confluent_cloud_api_keys
+    gateway_compatible: false   # IAM clients cannot connect to the gateway
+    transparent_swap: false
+    note: "Source-side IAM clients can't traverse the CC Gateway — the gateway barrier is on the MSK side, independent of which target auth you pick. Pre-migrate source clients to SCRAM or mTLS first."
+    source: https://github.com/confluentinc/kcp/blob/main/docs/assets/getting-started-with-zero-cut-migrations.md
+    last_verified: "2026-05-20"
+  mtls:
+    target: mtls
+    gateway_compatible: true
+    transparent_swap: false   # gateway terminates TLS and re-issues an ACM-PCA cert source-side
+    note: "Gateway terminates TLS and re-issues an ACM-PCA cert source-side (auth-swap mode)."
+    source: https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/mtls/configure.html
+    last_verified: "2026-05-20"
+  unauth:
+    target: confluent_cloud_api_keys
+    gateway_compatible: true
+    transparent_swap: false
+    note: "Plaintext on production is unusual; review with the customer."
+    source: https://docs.confluent.io/cloud/current/security/authenticate/overview.html
+    last_verified: "2026-05-20"
+
+# Threshold cutoffs — numeric levers the rule engine and renderer need
+# but that aren't customer-facing knobs. Tune here if a tenant has a
+# genuinely different operating envelope (older state files acceptable,
+# different PNI/PrivateLink breakeven, etc.).
+thresholds:
+  # Emit a 🟡 state-file-stale OQ when the source state.json is older
+  # than this many days. Conservative default: 7. Anything younger is
+  # silent; anything older surfaces a re-discover prompt.
+  stale_state_days: 7
+  # Projected PNI gateway count at or above which the networking
+  # recommendation flips from PNI to PrivateLink. 2 = first additional
+  # gateway crosses the cost line.
+  pni_gateway_breakeven: 2
+  # Red Flag row 5 (partition_approaching_cap) fires when user-topic
+  # partitions exceed this fraction of the cluster's sized eCKU
+  # capacity (per_eCKU_partition_rate * FinalECKU). 0.30 = "fire at
+  # 30% of sized capacity" — early enough that a discussion with the
+  # SE has time to consider headroom or a sizing bump.
+  partition_approaching_fraction: 0.30
+
+# Cost-explorer usage-string families that count as MSK broker spend.
+# AWS bills MSK under `Kafka.*` and `Express.*` today; new broker
+# tiers ship as new family tokens. Extend this list when a new tier
+# lands without waiting for a kcp release.
+cost_reconciliation:
+  usage_families:
+    - Kafka
+    - Express
