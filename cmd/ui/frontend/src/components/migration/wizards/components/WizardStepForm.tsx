@@ -40,6 +40,7 @@ export const WizardStepForm = ({
       </div>
 
       <Form
+        key={step.id || step.title}
         schema={schema}
         uiSchema={uiSchema}
         formData={Object.keys(formData).length > 0 ? formData : undefined}
