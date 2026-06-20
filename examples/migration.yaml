@@ -1,0 +1,29 @@
+# migration.yaml — describes the desired end state of a migration.
+# Apply with: kcp migrate validate -f migration.yaml   (then, later phases, apply/status)
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: msk-prod-to-confluent-cloud
+spec:
+  source:
+    type: apache-kafka
+    credentials: ./source-creds.yaml      # external file; no secrets in this manifest
+
+  target:
+    type: confluent-cloud                  # or: confluent-platform
+    cluster: lkc-xxxxx
+    credentials: ./target-creds.yaml
+
+  clusterLink:
+    name: source-to-cc
+
+  topics:
+    mode: mirror
+    include: ["*"]
+    exclude: ["__consumer_offsets", "_schemas"]
+
+  acls:
+    include: ["*"]
+
+  schemas:
+    include: ["*"]
