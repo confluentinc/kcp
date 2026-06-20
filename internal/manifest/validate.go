@@ -53,5 +53,33 @@ func (m *Migration) Validate() []error {
 		add("spec.target.credentials: must not be empty")
 	}
 
+	if t := m.Spec.Topics; t != nil {
+		switch t.Mode {
+		case TopicModeMirror:
+			if m.Spec.ClusterLink == nil || strings.TrimSpace(m.Spec.ClusterLink.Name) == "" {
+				add("spec.clusterLink.name: required when spec.topics.mode is %q", TopicModeMirror)
+			}
+		case TopicModeNew:
+			// ok
+		case "":
+			add("spec.topics.mode: must not be empty")
+		default:
+			add("spec.topics.mode: unsupported value %q (supported: %s, %s)", t.Mode, TopicModeMirror, TopicModeNew)
+		}
+		if len(t.Include) == 0 {
+			add("spec.topics.include: must not be empty")
+		}
+	}
+
+	if a := m.Spec.ACLs; a != nil && len(a.Include) == 0 {
+		add("spec.acls.include: must not be empty")
+	}
+	if s := m.Spec.Schemas; s != nil && len(s.Include) == 0 {
+		add("spec.schemas.include: must not be empty")
+	}
+	if c := m.Spec.Connectors; c != nil && len(c.Include) == 0 {
+		add("spec.connectors.include: must not be empty")
+	}
+
 	return errs
 }
