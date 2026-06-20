@@ -144,3 +144,26 @@ func TestValidate_MirrorRequiresClusterLinkName(t *testing.T) {
 	m.Spec.ClusterLink = &ClusterLink{Name: ""}
 	require.True(t, errorContains(m.Validate(), "spec.clusterLink.name"))
 }
+
+func TestValidate_TopicsIncludeBlankEntry(t *testing.T) {
+	m := validCC()
+	m.Spec.Topics = &Topics{Mode: TopicModeNew, Include: []string{""}}
+	require.True(t, errorContains(m.Validate(), "spec.topics.include"))
+}
+
+func TestValidate_CCTargetRejectsKafkaBlock(t *testing.T) {
+	m := validCC()
+	m.Spec.Target.Kafka = &TargetKafka{RestEndpoint: "https://broker:8090"}
+	require.True(t, errorContains(m.Validate(), "spec.target.kafka"))
+}
+
+func TestValidate_CPTargetRejectsCluster(t *testing.T) {
+	m := validCC()
+	m.Spec.Target = Target{
+		Type:        TargetConfluentPlatform,
+		Credentials: "./t.yaml",
+		Kafka:       &TargetKafka{RestEndpoint: "https://broker:8090"},
+		Cluster:     "lkc-1",
+	}
+	require.True(t, errorContains(m.Validate(), "spec.target.cluster"))
+}
