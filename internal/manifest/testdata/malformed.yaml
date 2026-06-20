@@ -1,0 +1,5 @@
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+    name: broken
+  spec: oops

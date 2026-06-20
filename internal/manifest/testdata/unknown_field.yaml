@@ -1,0 +1,13 @@
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: example-migration
+spec:
+  source:
+    type: apache-kafka
+    credentials: ./source-creds.yaml
+    notAField: true
+  target:
+    type: confluent-cloud
+    cluster: lkc-xxxxx
+    credentials: ./target-creds.yaml
