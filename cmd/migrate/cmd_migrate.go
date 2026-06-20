@@ -9,6 +9,7 @@ func NewMigrateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate",
 		Short: "Migrate Kafka resources directly to Confluent Cloud or Confluent Platform",
+		Args:  cobra.NoArgs,
 	}
 	cmd.AddCommand(validate.NewMigrateValidateCmd())
 	return cmd

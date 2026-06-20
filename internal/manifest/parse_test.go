@@ -31,6 +31,8 @@ func TestParse_Valid(t *testing.T) {
 	require.NotNil(t, m.Spec.ACLs)
 	require.Equal(t, []string{"*"}, m.Spec.ACLs.Include)
 	require.NotNil(t, m.Spec.Schemas)
+	require.Equal(t, "src.", m.Spec.Topics.Prefix)
+	require.Equal(t, map[string]string{"consumer.offset.sync.enable": "true"}, m.Spec.ClusterLink.Configs)
 }
 
 func TestParse_Malformed(t *testing.T) {
