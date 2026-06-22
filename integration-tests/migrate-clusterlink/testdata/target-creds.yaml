@@ -1,0 +1,7 @@
+# Confluent Platform target credentials. The Phase-1 docker env runs the
+# embedded Admin REST API without auth, so this basic block is accepted and
+# ignored by the broker; it exercises the credentials-loading path. Real
+# basic/mTLS/bearer REST auth is covered in a later auth phase.
+basic:
+  username: admin
+  password: admin-secret

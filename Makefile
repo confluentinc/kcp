@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate-clusterlink test-env-down-migrate-clusterlink test-migrate-clusterlink
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -125,6 +125,17 @@ test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, 
 	@bash integration-tests/schema-registry/setup.sh
 	@bash integration-tests/schema-registry/run.sh || (bash integration-tests/schema-registry/teardown.sh; exit 1)
 	@bash integration-tests/schema-registry/teardown.sh
+
+test-env-up-migrate-clusterlink: ## Start the cluster-link migrate test env (source + dest cp-server)
+	docker compose -f integration-tests/migrate-clusterlink/docker-compose.yml up -d
+
+test-env-down-migrate-clusterlink: ## Stop the cluster-link migrate test env
+	docker compose -f integration-tests/migrate-clusterlink/docker-compose.yml down -v
+
+test-migrate-clusterlink: build ## Run the cluster-link migrate apply E2E test (PLAINTEXT)
+	$(MAKE) test-env-up-migrate-clusterlink
+	cd integration-tests/migrate-clusterlink && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate-clusterlink ; exit $$status
 
 # ==============================================================================
 # Documentation (MkDocs Material + mike)

@@ -1,0 +1,8 @@
+# Apache Kafka source credentials. KCP reads the source over the host-published
+# PLAINTEXT listener (localhost:19092) to discover its cluster id.
+clusters:
+  - id: source
+    bootstrap_servers: ["localhost:19092"]
+    auth_method:
+      unauthenticated_plaintext:
+        use: true
