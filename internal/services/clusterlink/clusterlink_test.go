@@ -515,7 +515,7 @@ func TestGetClusterLink_Unauthorized(t *testing.T) {
 	assert.Nil(t, link)
 	assert.Contains(t, err.Error(), "401")
 	assert.Contains(t, err.Error(), "authentication failed")
-	assert.Contains(t, err.Error(), "--cluster-api-key")
+	assert.Contains(t, err.Error(), "target REST credentials")
 }
 
 func TestGetClusterLink_Forbidden(t *testing.T) {

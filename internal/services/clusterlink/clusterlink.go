@@ -166,7 +166,7 @@ func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Confi
 			case http.StatusNotFound:
 				return nil, fmt.Errorf("cluster link %q not found on cluster %s: %w", config.LinkName, config.ClusterID, ErrLinkNotFound)
 			case http.StatusUnauthorized, http.StatusForbidden:
-				return nil, fmt.Errorf("authentication failed (status %d) — verify --cluster-api-key and --cluster-api-secret", statusErr.StatusCode)
+				return nil, fmt.Errorf("authentication failed (status %d) — verify the target REST credentials", statusErr.StatusCode)
 			}
 		}
 		return nil, fmt.Errorf("failed to get cluster link: %w", err)
