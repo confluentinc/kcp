@@ -1,0 +1,11 @@
+clusters:
+  - id: source
+    bootstrap_servers: ["localhost:19093"]   # SASL_SSL host listener
+    insecure_skip_tls_verify: true
+    auth_method:
+      sasl_scram:
+        use: true
+        username: kcp
+        password: kcp-secret
+        mechanism: SHA256
+        ca_cert: ./certs/ca.crt               # used by the LINK truststore

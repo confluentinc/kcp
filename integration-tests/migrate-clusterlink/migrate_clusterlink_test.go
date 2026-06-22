@@ -2,7 +2,8 @@
 
 // Package migrateclusterlink is an end-to-end test of `kcp migrate apply` for a
 // cluster link, against two Confluent Platform (cp-server) brokers brought up
-// via docker-compose (see the Makefile target test-migrate-clusterlink).
+// via docker-compose (see the Makefile target test-migrate-clusterlink). It
+// exercises every source authentication method the link can use.
 package migrateclusterlink
 
 import (
@@ -17,41 +18,53 @@ import (
 
 const destREST = "http://localhost:28090"
 
-// TestMigrateApply_ClusterLink_Plaintext drives the built kcp binary end-to-end:
-// dry-run previews without creating, apply creates the link (which reaches
-// ACTIVE), and a second apply is an idempotent no-op.
-func TestMigrateApply_ClusterLink_Plaintext(t *testing.T) {
+// TestMigrateApply_ClusterLink_AuthMatrix drives the built kcp binary end-to-end
+// once per source auth method: dry-run previews without creating, apply creates
+// the link (which reaches ACTIVE), and a second apply is an idempotent no-op.
+func TestMigrateApply_ClusterLink_AuthMatrix(t *testing.T) {
 	waitForClusterID(t, destREST)
-	waitForClusterID(t, "http://localhost:18090") // source REST: cluster id populated => broker ready
+	waitForClusterID(t, "http://localhost:18090") // source REST ready => broker up
 	destID := clusterID(destREST)
 	require.NotEmpty(t, destID)
 
-	// 1. dry-run previews a create and changes nothing.
-	out, err := runKCP(t, "--dry-run")
-	require.NoError(t, err, out)
-	require.Contains(t, out, `cluster link "src-to-dest"`)
-	require.Contains(t, out, "Planned")
-	require.Equal(t, "", linkState(destID), "dry-run must not create the link")
+	for _, m := range []struct{ dir, link string }{
+		{"plaintext", "src-to-dest"},
+		{"scram256", "scram256"},
+		{"scram512", "scram512"},
+		{"plain", "plain"},
+		{"tls", "tlsenc"},
+		{"mtls", "mtls"},
+	} {
+		t.Run(m.dir, func(t *testing.T) {
+			manifest := "testdata/" + m.dir + "/migration.yaml"
 
-	// 2. apply creates the link.
-	out, err = runKCP(t)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "1 created")
+			// dry-run previews a create and changes nothing.
+			out, err := runKCP(t, manifest, "--dry-run")
+			require.NoError(t, err, out)
+			require.Contains(t, out, "Planned")
+			require.Equal(t, "", linkState(destID, m.link), "dry-run must not create the link")
 
-	// 3. the link reaches ACTIVE (cp-server's healthy cluster-link state).
-	requireLinkState(t, destID, "ACTIVE")
+			// apply creates the link.
+			out, err = runKCP(t, manifest)
+			require.NoError(t, err, out)
+			require.Contains(t, out, "1 created")
 
-	// 4. re-apply is an idempotent no-op (read-first; never re-creates).
-	out, err = runKCP(t)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "1 already present")
+			// the link reaches ACTIVE (cp-server's healthy cluster-link state).
+			requireLinkState(t, destID, m.link, "ACTIVE")
+
+			// re-apply is an idempotent no-op (read-first; never re-creates).
+			out, err = runKCP(t, manifest)
+			require.NoError(t, err, out)
+			require.Contains(t, out, "1 already present")
+		})
+	}
 }
 
-// runKCP runs the built ../../kcp binary with the migrate-apply args from this
-// directory (so the manifest's ./testdata/* relative paths resolve).
-func runKCP(t *testing.T, extra ...string) (string, error) {
+// runKCP runs the built ../../kcp binary with `migrate apply -f <manifest>` from
+// this directory (so the manifest's ./testdata/* and ./certs/* relative paths resolve).
+func runKCP(t *testing.T, manifest string, extra ...string) (string, error) {
 	t.Helper()
-	args := append([]string{"migrate", "apply", "-f", "testdata/migration.yaml"}, extra...)
+	args := append([]string{"migrate", "apply", "-f", manifest}, extra...)
 	cmd := exec.Command("../../kcp", args...)
 	b, err := cmd.CombinedOutput()
 	return string(b), err
@@ -89,12 +102,12 @@ func clusterID(restURL string) string {
 	return body.Data[0].ClusterID
 }
 
-// linkState returns the dest link's link_state, or "" if the link does not
+// linkState returns the named dest link's link_state, or "" if the link does not
 // exist or the endpoint is momentarily unreachable. Returning "" on transport
-// error (rather than failing) lets the poll in requireLinkState retry through
-// a transient REST blip instead of hard-failing the test.
-func linkState(destID string) string {
-	resp, err := http.Get(destREST + "/kafka/v3/clusters/" + destID + "/links/src-to-dest")
+// error (rather than failing) lets the poll in requireLinkState retry through a
+// transient REST blip instead of hard-failing the test.
+func linkState(destID, linkName string) string {
+	resp, err := http.Get(destREST + "/kafka/v3/clusters/" + destID + "/links/" + linkName)
 	if err != nil {
 		return ""
 	}
@@ -111,15 +124,15 @@ func linkState(destID string) string {
 	return body.LinkState
 }
 
-// requireLinkState polls until the link reaches want, failing on timeout.
-func requireLinkState(t *testing.T, destID, want string) {
+// requireLinkState polls until the named link reaches want, failing on timeout.
+func requireLinkState(t *testing.T, destID, linkName, want string) {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		if linkState(destID) == want {
+		if linkState(destID, linkName) == want {
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
-	t.Fatalf("link did not reach state %q (last: %q)", want, linkState(destID))
+	t.Fatalf("link %q did not reach state %q (last: %q)", linkName, want, linkState(destID, linkName))
 }

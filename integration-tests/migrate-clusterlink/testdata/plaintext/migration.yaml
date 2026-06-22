@@ -5,7 +5,7 @@ metadata:
 spec:
   source:
     type: apache-kafka
-    credentials: ./testdata/source-creds.yaml
+    credentials: ./testdata/plaintext/source-creds.yaml
   target:
     type: confluent-platform
     credentials: ./testdata/target-creds.yaml
