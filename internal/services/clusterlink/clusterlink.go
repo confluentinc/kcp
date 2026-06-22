@@ -552,6 +552,11 @@ func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Co
 		put("sasl.mechanism", req.SaslMechanism)
 		put("sasl.jaas.config", req.SaslJaasConfig)
 	}
+	// req.Configs is an operator escape hatch for advanced link settings and
+	// for overriding bootstrap.servers (see above). Callers should not use it to
+	// override the protocol-defining keys (link.mode, security.protocol,
+	// sasl.mechanism, sasl.jaas.config), which are set from the typed request
+	// fields; doing so is unsupported and may conflict with validation.
 	overrideKeys := make([]string, 0, len(req.Configs))
 	for k := range req.Configs {
 		overrideKeys = append(overrideKeys, k)

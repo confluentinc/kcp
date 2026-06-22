@@ -23,13 +23,15 @@ const destREST = "http://localhost:28090"
 func TestMigrateApply_ClusterLink_Plaintext(t *testing.T) {
 	waitForClusterID(t, destREST)
 	waitForClusterID(t, "http://localhost:18090") // source REST: cluster id populated => broker ready
+	destID := clusterID(destREST)
+	require.NotEmpty(t, destID)
 
 	// 1. dry-run previews a create and changes nothing.
 	out, err := runKCP(t, "--dry-run")
 	require.NoError(t, err, out)
 	require.Contains(t, out, `cluster link "src-to-dest"`)
 	require.Contains(t, out, "Planned")
-	require.Equal(t, "", linkState(t), "dry-run must not create the link")
+	require.Equal(t, "", linkState(destID), "dry-run must not create the link")
 
 	// 2. apply creates the link.
 	out, err = runKCP(t)
@@ -37,7 +39,7 @@ func TestMigrateApply_ClusterLink_Plaintext(t *testing.T) {
 	require.Contains(t, out, "1 created")
 
 	// 3. the link reaches ACTIVE (cp-server's healthy cluster-link state).
-	requireLinkState(t, "ACTIVE")
+	requireLinkState(t, destID, "ACTIVE")
 
 	// 4. re-apply is an idempotent no-op (read-first; never re-creates).
 	out, err = runKCP(t)
@@ -87,11 +89,15 @@ func clusterID(restURL string) string {
 	return body.Data[0].ClusterID
 }
 
-// linkState returns the dest link's link_state, or "" if the link does not exist.
-func linkState(t *testing.T) string {
-	t.Helper()
-	resp, err := http.Get(destREST + "/kafka/v3/clusters/" + clusterID(destREST) + "/links/src-to-dest")
-	require.NoError(t, err)
+// linkState returns the dest link's link_state, or "" if the link does not
+// exist or the endpoint is momentarily unreachable. Returning "" on transport
+// error (rather than failing) lets the poll in requireLinkState retry through
+// a transient REST blip instead of hard-failing the test.
+func linkState(destID string) string {
+	resp, err := http.Get(destREST + "/kafka/v3/clusters/" + destID + "/links/src-to-dest")
+	if err != nil {
+		return ""
+	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		return ""
@@ -106,14 +112,14 @@ func linkState(t *testing.T) string {
 }
 
 // requireLinkState polls until the link reaches want, failing on timeout.
-func requireLinkState(t *testing.T, want string) {
+func requireLinkState(t *testing.T, destID, want string) {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		if linkState(t) == want {
+		if linkState(destID) == want {
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
-	t.Fatalf("link did not reach state %q (last: %q)", want, linkState(t))
+	t.Fatalf("link did not reach state %q (last: %q)", want, linkState(destID))
 }

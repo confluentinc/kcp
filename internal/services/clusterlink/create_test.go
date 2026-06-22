@@ -114,6 +114,18 @@ func TestCreateClusterLink_ConfigOverrideReplacesByName(t *testing.T) {
 	require.Equal(t, 1, count, "bootstrap.servers must not be duplicated when overridden")
 }
 
+func TestCreateClusterLink_SaslJaasRequiredWithMechanism(t *testing.T) {
+	svc := NewConfluentCloudService(http.DefaultClient)
+	cfg := Config{RestEndpoint: "http://unused.invalid", ClusterID: "d", LinkName: "l"}
+	// SaslMechanism set without SaslJaasConfig must fail fast, before any HTTP call.
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID:  "s",
+		SecurityProtocol: "SASL_SSL",
+		SaslMechanism:    "PLAIN",
+	})
+	require.ErrorContains(t, err, "SaslJaasConfig is required")
+}
+
 // configMapFromBody flattens the request body's "configs":[{name,value}] array.
 func configMapFromBody(t *testing.T, body map[string]any) map[string]string {
 	t.Helper()
