@@ -2,6 +2,8 @@
 // and a strict parser. (Validation is added in a later change.)
 package manifest
 
+//go:generate go run ./schemagen/gen
+
 const (
 	SupportedAPIVersion = "kcp.confluent.io/v1alpha1"
 	KindMigration       = "Migration"

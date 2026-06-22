@@ -2,6 +2,7 @@ package schemagen
 
 import (
 	"encoding/json"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -72,4 +73,13 @@ func TestGenerate_AllRequiredSets(t *testing.T) {
 	for _, sec := range []string{"acls", "schemas", "connectors"} {
 		require.ElementsMatch(t, []any{"include"}, requiredOf(spec[sec].(map[string]any)))
 	}
+}
+
+func TestSchemaInSync(t *testing.T) {
+	got, err := Generate()
+	require.NoError(t, err)
+	want, err := os.ReadFile("../migration.schema.json")
+	require.NoError(t, err)
+	require.Equal(t, string(want), string(got),
+		"migration.schema.json is stale — run: go generate ./internal/manifest/...")
 }
