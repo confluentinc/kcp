@@ -14,7 +14,9 @@ type LinkAuth struct {
 	SaslMechanism    string // SCRAM-SHA-256 | SCRAM-SHA-512 | PLAIN | ""
 	SaslJaasConfig   string // "" unless SASL
 	// TLS material (paths to PEM files) for SSL/SASL_SSL truststore and mTLS keystore.
-	CACertPath     string // truststore CA path; populated only for the mTLS (tls) source method
+	// CACertPath is populated from the source's ca_cert for the mTLS (tls),
+	// sasl_scram, sasl_plain, and unauthenticated_tls credential methods.
+	CACertPath     string // truststore CA path
 	ClientCertPath string // mTLS keystore cert chain ("" unless mTLS)
 	ClientKeyPath  string // mTLS keystore key ("" unless mTLS)
 }
@@ -29,24 +31,24 @@ func LinkAuthFromSource(c types.OSKClusterAuth) (LinkAuth, error) {
 	case types.AuthTypeUnauthenticatedPlaintext:
 		return LinkAuth{SecurityProtocol: "PLAINTEXT"}, nil
 	case types.AuthTypeUnauthenticatedTLS:
-		// TLS encryption, no client auth. The source-creds format carries no CA
-		// for this method, so CACertPath is empty; a truststore CA for a private-CA
-		// source is supplied via the manifest's clusterLink.configs if needed.
-		return LinkAuth{SecurityProtocol: "SSL"}, nil
+		// TLS encryption, no client auth. CACertPath is populated from the source's
+		// ca_cert when set; required when the source uses a private CA that the link
+		// must trust.
+		return LinkAuth{SecurityProtocol: "SSL", CACertPath: c.AuthMethod.UnauthenticatedTLS.CACert}, nil
 	case types.AuthTypeSASLSCRAM:
 		mech := types.NormalizeSaslMechanism(c.AuthMethod.SASLScram.Mechanism) // "SCRAM-SHA-256"/"512"
 		return LinkAuth{
 			SecurityProtocol: "SASL_SSL",
 			SaslMechanism:    mech,
 			SaslJaasConfig:   scramJaas(c.AuthMethod.SASLScram.Username, c.AuthMethod.SASLScram.Password),
-			CACertPath:       tlsCA(c),
+			CACertPath:       c.AuthMethod.SASLScram.CACert,
 		}, nil
 	case types.AuthTypeSASLPlain:
 		return LinkAuth{
 			SecurityProtocol: "SASL_SSL",
 			SaslMechanism:    "PLAIN",
 			SaslJaasConfig:   plainJaas(c.AuthMethod.SASLPlain.Username, c.AuthMethod.SASLPlain.Password),
-			CACertPath:       tlsCA(c),
+			CACertPath:       c.AuthMethod.SASLPlain.CACert,
 		}, nil
 	case types.AuthTypeTLS: // mTLS
 		return LinkAuth{
@@ -66,13 +68,4 @@ func scramJaas(u, p string) string {
 
 func plainJaas(u, p string) string {
 	return fmt.Sprintf(`org.apache.kafka.common.security.plain.PlainLoginModule required username="%s" password="%s";`, u, p)
-}
-
-// tlsCA returns the source TLS CA path if the source is configured with one
-// (used as the link's truststore for SASL_SSL/SSL); "" otherwise.
-func tlsCA(c types.OSKClusterAuth) string {
-	if c.AuthMethod.TLS != nil {
-		return c.AuthMethod.TLS.CACert
-	}
-	return ""
 }

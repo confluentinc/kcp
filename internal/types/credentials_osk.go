@@ -261,6 +261,11 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 		default:
 			return fmt.Errorf("unsupported sasl_scram mechanism %q: must be SHA256, SHA512, SCRAM-SHA-256, or SCRAM-SHA-512", authMethod.SASLScram.Mechanism)
 		}
+		if authMethod.SASLScram.CACert != "" {
+			if _, err := os.Stat(authMethod.SASLScram.CACert); err != nil {
+				return fmt.Errorf("sasl_scram ca_cert file not found: %s", authMethod.SASLScram.CACert)
+			}
+		}
 
 	case AuthTypeSASLPlain:
 		if authMethod.SASLPlain == nil {
@@ -271,6 +276,21 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 		}
 		if authMethod.SASLPlain.Password == "" {
 			return fmt.Errorf("sasl_plain password is required")
+		}
+		if authMethod.SASLPlain.CACert != "" {
+			if _, err := os.Stat(authMethod.SASLPlain.CACert); err != nil {
+				return fmt.Errorf("sasl_plain ca_cert file not found: %s", authMethod.SASLPlain.CACert)
+			}
+		}
+
+	case AuthTypeUnauthenticatedTLS:
+		if authMethod.UnauthenticatedTLS == nil {
+			return fmt.Errorf("unauthenticated_tls config is nil")
+		}
+		if authMethod.UnauthenticatedTLS.CACert != "" {
+			if _, err := os.Stat(authMethod.UnauthenticatedTLS.CACert); err != nil {
+				return fmt.Errorf("unauthenticated_tls ca_cert file not found: %s", authMethod.UnauthenticatedTLS.CACert)
+			}
 		}
 
 	case AuthTypeTLS:

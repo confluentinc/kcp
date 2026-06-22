@@ -14,7 +14,7 @@ func TestLinkAuthFromSource(t *testing.T) {
 		wantProto string
 		wantMech  string
 		jaasHas   string // substring expected in SaslJaasConfig ("" => must be empty)
-		wantTLS   bool   // expect non-nil TLS material
+		wantCA    string // expected CACertPath ("" => must be empty)
 	}{
 		{
 			name:      "unauthenticated_plaintext",
@@ -27,11 +27,25 @@ func TestLinkAuthFromSource(t *testing.T) {
 			wantProto: "SSL",
 		},
 		{
+			name:      "unauthenticated_tls_with_ca",
+			auth:      types.AuthMethodConfig{UnauthenticatedTLS: &types.UnauthenticatedTLSConfig{Use: true, CACert: "/certs/ca.pem"}},
+			wantProto: "SSL",
+			wantCA:    "/certs/ca.pem",
+		},
+		{
 			name:      "sasl_scram_256",
 			auth:      types.AuthMethodConfig{SASLScram: &types.SASLScramConfig{Use: true, Username: "kcp", Password: "kcp-secret", Mechanism: "SHA256"}},
 			wantProto: "SASL_SSL",
 			wantMech:  "SCRAM-SHA-256",
 			jaasHas:   `ScramLoginModule required username="kcp" password="kcp-secret"`,
+		},
+		{
+			name:      "sasl_scram_256_with_ca",
+			auth:      types.AuthMethodConfig{SASLScram: &types.SASLScramConfig{Use: true, Username: "kcp", Password: "kcp-secret", Mechanism: "SHA256", CACert: "/certs/ca.pem"}},
+			wantProto: "SASL_SSL",
+			wantMech:  "SCRAM-SHA-256",
+			jaasHas:   `ScramLoginModule required username="kcp" password="kcp-secret"`,
+			wantCA:    "/certs/ca.pem",
 		},
 		{
 			name:      "sasl_scram_512",
@@ -47,6 +61,14 @@ func TestLinkAuthFromSource(t *testing.T) {
 			wantMech:  "PLAIN",
 			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
 		},
+		{
+			name:      "sasl_plain_with_ca",
+			auth:      types.AuthMethodConfig{SASLPlain: &types.SASLPlainConfig{Use: true, Username: "admin", Password: "admin-secret", CACert: "/certs/ca.pem"}},
+			wantProto: "SASL_SSL",
+			wantMech:  "PLAIN",
+			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
+			wantCA:    "/certs/ca.pem",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,6 +81,7 @@ func TestLinkAuthFromSource(t *testing.T) {
 			} else {
 				require.Contains(t, la.SaslJaasConfig, tc.jaasHas)
 			}
+			require.Equal(t, tc.wantCA, la.CACertPath)
 		})
 	}
 }

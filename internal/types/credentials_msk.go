@@ -210,6 +210,7 @@ func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
 	// Only preserve existing configs if the auth method still exists in the new discovery
 	if amc.UnauthenticatedTLS != nil && existing.UnauthenticatedTLS != nil {
 		amc.UnauthenticatedTLS.Use = existing.UnauthenticatedTLS.Use
+		amc.UnauthenticatedTLS.CACert = existing.UnauthenticatedTLS.CACert
 	}
 
 	if amc.UnauthenticatedPlaintext != nil && existing.UnauthenticatedPlaintext != nil {
@@ -232,12 +233,14 @@ func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
 		amc.SASLScram.Username = existing.SASLScram.Username
 		amc.SASLScram.Password = existing.SASLScram.Password
 		amc.SASLScram.Mechanism = existing.SASLScram.Mechanism
+		amc.SASLScram.CACert = existing.SASLScram.CACert
 	}
 
 	if amc.SASLPlain != nil && existing.SASLPlain != nil {
 		amc.SASLPlain.Use = existing.SASLPlain.Use
 		amc.SASLPlain.Username = existing.SASLPlain.Username
 		amc.SASLPlain.Password = existing.SASLPlain.Password
+		amc.SASLPlain.CACert = existing.SASLPlain.CACert
 	}
 }
 
@@ -246,7 +249,8 @@ type UnauthenticatedPlaintextConfig struct {
 }
 
 type UnauthenticatedTLSConfig struct {
-	Use bool `yaml:"use"`
+	Use    bool   `yaml:"use"`
+	CACert string `yaml:"ca_cert,omitempty"`
 }
 
 type IAMConfig struct {
@@ -265,6 +269,7 @@ type SASLScramConfig struct {
 	Username  string `yaml:"username"`
 	Password  string `yaml:"password"`
 	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512". MSK requires "SHA512", Apache Kafka commonly uses "SHA256"
+	CACert    string `yaml:"ca_cert,omitempty"`   // optional CA cert path for SASL_SSL link truststore
 }
 
 // NormalizeSaslMechanism converts shorthand mechanism values (e.g. "SHA256")
@@ -285,4 +290,5 @@ type SASLPlainConfig struct {
 	Use      bool   `yaml:"use"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+	CACert   string `yaml:"ca_cert,omitempty"` // optional CA cert path for SASL_SSL link truststore
 }
