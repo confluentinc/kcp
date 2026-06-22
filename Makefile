@@ -126,13 +126,15 @@ test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, 
 	@bash integration-tests/schema-registry/run.sh || (bash integration-tests/schema-registry/teardown.sh; exit 1)
 	@bash integration-tests/schema-registry/teardown.sh
 
-test-env-up-migrate-clusterlink: ## Start the cluster-link migrate test env (source + dest cp-server)
+test-env-up-migrate-clusterlink: ## Start the cluster-link migrate test env (source + dest cp-server, all auth listeners)
+	bash integration-tests/migrate-clusterlink/generate-certs.sh
 	docker compose -f integration-tests/migrate-clusterlink/docker-compose.yml up -d
+	bash integration-tests/migrate-clusterlink/setup-scram.sh
 
 test-env-down-migrate-clusterlink: ## Stop the cluster-link migrate test env
 	docker compose -f integration-tests/migrate-clusterlink/docker-compose.yml down -v
 
-test-migrate-clusterlink: build ## Run the cluster-link migrate apply E2E test (PLAINTEXT)
+test-migrate-clusterlink: build ## Run the cluster-link migrate apply E2E test (all source auth methods)
 	$(MAKE) test-env-up-migrate-clusterlink
 	cd integration-tests/migrate-clusterlink && go test -tags integration -v ./... ; \
 	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate-clusterlink ; exit $$status

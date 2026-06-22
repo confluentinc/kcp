@@ -3,17 +3,38 @@ services:
     image: confluentinc/cp-server:8.1.2
     hostname: source
     container_name: kcp-mcl-source
-    ports: ["19092:19092", "18090:8090"]
+    ports: ["19092:19092", "19093:19093", "19094:19094", "18090:8090"]
+    volumes: ["./certs:/etc/kafka/secrets"]
     environment:
       CLUSTER_ID: '6ub6fPVJRzKjE4i-REkq-A'
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: 'broker,controller'
       KAFKA_CONTROLLER_QUORUM_VOTERS: '1@source:29093'
-      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:19092'
-      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://source:29092,HOST://localhost:19092'
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT'
+      # Listeners: HOST(PLAINTEXT,19092) + SASLSSL(SASL_SSL,19093) + SSL(19094) are
+      # host-published for KCP's source read; INTERNAL + *_DOCKER are docker-network
+      # listeners the link (running on dest) connects to (source:29092/29094/29095).
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:29092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:19092,SASLSSL://0.0.0.0:19093,SASLSSL_DOCKER://0.0.0.0:29094,SSL://0.0.0.0:19094,SSL_DOCKER://0.0.0.0:29095'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://source:29092,HOST://localhost:19092,SASLSSL://localhost:19093,SASLSSL_DOCKER://source:29094,SSL://localhost:19094,SSL_DOCKER://source:29095'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT,SASLSSL:SASL_SSL,SASLSSL_DOCKER:SASL_SSL,SSL:SSL,SSL_DOCKER:SSL'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_SASL_ENABLED_MECHANISMS: 'SCRAM-SHA-256,SCRAM-SHA-512,PLAIN'
+      KAFKA_SSL_KEYSTORE_FILENAME: 'source.keystore.jks'
+      KAFKA_SSL_KEYSTORE_CREDENTIALS: 'keystore_creds'
+      KAFKA_SSL_KEY_CREDENTIALS: 'key_creds'
+      KAFKA_SSL_TRUSTSTORE_FILENAME: 'source.truststore.jks'
+      KAFKA_SSL_TRUSTSTORE_CREDENTIALS: 'truststore_creds'
+      KAFKA_SSL_CLIENT_AUTH: 'requested'
+      KAFKA_SSL_ENDPOINT_IDENTIFICATION_ALGORITHM: ''
+      KAFKA_LISTENER_NAME_SASLSSL_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_kcp="kcp-secret";'
+      # SCRAM listener JAAS (empty module — validates against stored creds). The
+      # cp image encodes dashes in the mechanism as triple underscores.
+      KAFKA_LISTENER_NAME_SASLSSL_SCRAM___SHA___256_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required;'
+      KAFKA_LISTENER_NAME_SASLSSL_SCRAM___SHA___512_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required;'
+      # Same JAAS for the docker-network SASL_SSL listener (the one the link uses).
+      KAFKA_LISTENER_NAME_SASLSSL__DOCKER_PLAIN_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.plain.PlainLoginModule required username="admin" password="admin-secret" user_admin="admin-secret" user_kcp="kcp-secret";'
+      KAFKA_LISTENER_NAME_SASLSSL__DOCKER_SCRAM___SHA___256_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required;'
+      KAFKA_LISTENER_NAME_SASLSSL__DOCKER_SCRAM___SHA___512_SASL_JAAS_CONFIG: 'org.apache.kafka.common.security.scram.ScramLoginModule required;'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
