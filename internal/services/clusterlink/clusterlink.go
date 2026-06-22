@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 )
 
 // httpStatusError is returned by doRequest/doPostRequest when the server
@@ -102,7 +103,11 @@ type PromoteMirrorTopicsResponse struct {
 	} `json:"data"`
 }
 
-// Service defines cluster link operations
+// Service defines cluster link operations.
+//
+// Lifecycle operations (CreateClusterLink, DeleteClusterLink) are intentionally
+// NOT part of this interface — they live on *ConfluentCloudService directly,
+// because they are setup/teardown operations rather than ongoing monitoring.
 type Service interface {
 	GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error)
 	ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error)
@@ -489,4 +494,105 @@ func CountActiveMirrorTopics(mirrors []MirrorTopic) int {
 		}
 	}
 	return count
+}
+
+// ErrLinkExists is returned by CreateClusterLink when the target reports the
+// link already exists. The reconcile model reads first so this is normally
+// avoided; it is a belt-and-braces signal for the read-write race (§8.6).
+var ErrLinkExists = errors.New("cluster link already exists")
+
+// CreateClusterLinkRequest describes a destination-initiated cluster link.
+// Phase 1 populates only the PLAINTEXT fields; SASL/TLS fields are wired in
+// later auth phases.
+type CreateClusterLinkRequest struct {
+	SourceClusterID        string
+	SourceBootstrapServers []string
+	SecurityProtocol       string            // PLAINTEXT | SSL | SASL_SSL | SASL_PLAINTEXT
+	SaslMechanism          string            // optional (SASL_*)
+	SaslJaasConfig         string            // required when SaslMechanism is set (SASL_*)
+	Configs                map[string]string // optional overrides from manifest spec.clusterLink.configs
+}
+
+// linkConfigEntry is one {name,value} pair in a create-link request body.
+type linkConfigEntry struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+// CreateClusterLink issues POST /kafka/v3/clusters/{ClusterID}/links/?link_name={LinkName}.
+// Body shape matches the proven Terraform path (hcl/confluent/cluster_link.go).
+func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Config, req CreateClusterLinkRequest) error {
+	if req.SaslMechanism != "" && req.SaslJaasConfig == "" {
+		return fmt.Errorf("SaslJaasConfig is required when SaslMechanism is set (link %q)", config.LinkName)
+	}
+	configs := []linkConfigEntry{
+		{Name: "bootstrap.servers", Value: strings.Join(req.SourceBootstrapServers, ",")},
+		{Name: "link.mode", Value: "DESTINATION"},
+	}
+	if req.SecurityProtocol != "" {
+		configs = append(configs, linkConfigEntry{Name: "security.protocol", Value: req.SecurityProtocol})
+	}
+	if req.SaslMechanism != "" {
+		configs = append(configs,
+			linkConfigEntry{Name: "sasl.mechanism", Value: req.SaslMechanism},
+			linkConfigEntry{Name: "sasl.jaas.config", Value: req.SaslJaasConfig})
+	}
+	for k, v := range req.Configs {
+		configs = append(configs, linkConfigEntry{Name: k, Value: v})
+	}
+
+	body := struct {
+		SourceClusterID string            `json:"source_cluster_id"`
+		Configs         []linkConfigEntry `json:"configs"`
+	}{SourceClusterID: req.SourceClusterID, Configs: configs}
+
+	// Create uses .../links/?link_name=NAME (linkPath embeds the name in the
+	// path, which is what GET/DELETE want — so build the create path explicitly).
+	createPath := fmt.Sprintf("/kafka/v3/clusters/%s/links/?link_name=%s",
+		url.PathEscape(config.ClusterID), url.QueryEscape(config.LinkName))
+
+	if err := s.doPostRequestExpectStatus(ctx, config, createPath, body); err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusConflict {
+			return ErrLinkExists
+		}
+		return fmt.Errorf("failed to create cluster link %q on cluster %s: %w", config.LinkName, config.ClusterID, err)
+	}
+	return nil
+}
+
+// DeleteClusterLink issues DELETE /kafka/v3/clusters/{ClusterID}/links/{LinkName}.
+// Used by integration-test teardown.
+func (s *ConfluentCloudService) DeleteClusterLink(ctx context.Context, config Config) error {
+	return s.doDeleteRequest(ctx, config, linkPath(config))
+}
+
+// doPostRequestExpectStatus posts a body and treats 200/201/204 as success,
+// returning *httpStatusError otherwise. (doPostRequest unmarshals a result and
+// only accepts 200/204; create returns 201 with no body we need.)
+func (s *ConfluentCloudService) doPostRequestExpectStatus(ctx context.Context, config Config, path string, requestBody any) error {
+	jsonBody, err := json.Marshal(requestBody)
+	if err != nil {
+		return fmt.Errorf("failed to marshal request body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, config.RestEndpoint+path, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	req.Header.Set("Authorization", basicAuthHeader(config))
+	req.Header.Set("Content-Type", "application/json")
+
+	res, err := s.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to execute request: %w", err)
+	}
+	defer func() { _, _ = io.Copy(io.Discard, res.Body); _ = res.Body.Close() }()
+
+	switch res.StatusCode {
+	case http.StatusOK, http.StatusCreated, http.StatusNoContent:
+		return nil
+	default:
+		b, _ := io.ReadAll(res.Body)
+		return &httpStatusError{StatusCode: res.StatusCode, Body: string(b)}
+	}
 }
