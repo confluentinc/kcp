@@ -513,9 +513,9 @@ type SourceTLSMaterial struct {
 	ClientKeyPEM  string // "" unless mTLS
 }
 
-// CreateClusterLinkRequest describes a destination-initiated cluster link.
-// Phase 1 populates only the PLAINTEXT fields; SASL/TLS fields are wired in
-// later auth phases.
+// CreateClusterLinkRequest describes a destination-initiated cluster link:
+// security.protocol plus optional SASL (mechanism + JAAS) and TLS material
+// (SourceTLS), all derived from the source credentials.
 type CreateClusterLinkRequest struct {
 	SourceClusterID        string
 	SourceBootstrapServers []string
