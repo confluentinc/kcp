@@ -1,0 +1,7 @@
+# dest-mtls embedded Admin REST API — mutual TLS. KCP presents the kcp client
+# cert; the CA verifies the dest's server cert. (Paths relative to the
+# integration-tests/migrate-clusterlink dir, where the test runs kcp.)
+mtls:
+  ca_cert: ./certs/ca.crt
+  client_cert: ./certs/client.crt
+  client_key: ./certs/client.key

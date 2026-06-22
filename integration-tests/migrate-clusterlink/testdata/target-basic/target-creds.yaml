@@ -1,0 +1,4 @@
+# dest-basic embedded Admin REST API — HTTP Basic auth.
+basic:
+  username: admin
+  password: admin-secret

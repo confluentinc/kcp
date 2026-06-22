@@ -1,2 +1,5 @@
 # Generated TLS material (produced by generate-certs.sh).
 certs/
+
+# Bearer target creds — written at test runtime with a fresh MDS JWT.
+testdata/target-bearer/target-creds.yaml

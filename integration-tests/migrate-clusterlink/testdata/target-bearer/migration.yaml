@@ -1,0 +1,21 @@
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: mcl-e2e-target-bearer
+spec:
+  source:
+    type: apache-kafka
+    credentials: ./testdata/plaintext/source-creds.yaml
+  target:
+    type: confluent-platform
+    # target-creds.yaml is written by the test at runtime: it fetches a fresh
+    # JWT from MDS (tokens expire) and writes the bearer block. Gitignored.
+    credentials: ./testdata/target-bearer/target-creds.yaml
+    kafka:
+      # dest-bearer: embedded REST API requires an MDS-issued bearer token.
+      restEndpoint: http://localhost:28093
+      bootstrapServers: ["localhost:29392"]
+  clusterLink:
+    name: tgt-bearer
+    configs:
+      bootstrap.servers: source:29092
