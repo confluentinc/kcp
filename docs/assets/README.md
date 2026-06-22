@@ -13,11 +13,22 @@ KCP is a CLI tool for planning and executing Apache Kafka® migrations to Conflu
 ## Installation
 
 > [!TIP]
-> **Recommended:** download the binary for your platform directly from the [latest release on GitHub](https://github.com/confluentinc/kcp/releases/latest), make it executable, and place it on your `PATH`. Binaries are published for macOS, Linux (amd64/arm64), and Windows (amd64).
+> **Recommended:** on macOS or Linux, install the latest stable release with the install script. It detects your OS/architecture, downloads the matching binary, verifies its checksum, and places it on your `PATH`:
+>
+> ```shell
+> curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | sh
+> ```
+>
+> Pin a version with `KCP_VERSION=v0.8.5` or change the target directory with `KCP_INSTALL_DIR="$HOME/.local/bin"`.
+
+Binaries are published for macOS, Linux (amd64/arm64), and Windows (amd64) with every [release on GitHub](https://github.com/confluentinc/kcp/releases/latest).
+
+> [!IMPORTANT]
+> Always install a released binary. Building from the `main` branch produces an unreleased, in-development build — see [CONTRIBUTING](https://github.com/confluentinc/kcp/blob/main/CONTRIBUTING.md) if you intend to build from source.
 
 Run `uname -m` if you're unsure of your architecture: `arm64` / `aarch64` → `arm64` build, `x86_64` → `amd64` build. Apple Silicon Macs are `arm64`; older Intel Macs are `amd64`.
 
-The tabs below show the equivalent terminal flow for headless or scripted installs.
+To download manually instead of using the install script, the tabs below show the equivalent terminal flow for headless or scripted installs.
 
 === "macOS"
 
