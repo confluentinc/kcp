@@ -10,10 +10,179 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCountRedactedConnectors(t *testing.T) {
+	tests := []struct {
+		name       string
+		connectors []types.SelfManagedConnector
+		want       int
+	}{
+		{
+			name: "flat redacted",
+			connectors: []types.SelfManagedConnector{
+				{Name: "a", Config: map[string]any{"database.password": redact.Placeholder, "tasks.max": "3"}},
+			},
+			want: 1,
+		},
+		{
+			name: "nested redacted",
+			connectors: []types.SelfManagedConnector{
+				{Name: "a", Config: map[string]any{
+					"connection": map[string]any{"password": redact.Placeholder},
+				}},
+			},
+			want: 1,
+		},
+		{
+			name: "none redacted",
+			connectors: []types.SelfManagedConnector{
+				{Name: "a", Config: map[string]any{"connector.class": "io.x"}},
+			},
+			want: 0,
+		},
+		{
+			name:       "empty list",
+			connectors: []types.SelfManagedConnector{},
+			want:       0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countRedactedConnectors(tt.connectors); got != tt.want {
+				t.Errorf("countRedactedConnectors() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// echoTranslateServer returns a translate-API stub that echoes back the config
+// it receives, so the generated Terraform reflects the (already-redacted) source
+// config exactly.
+func echoTranslateServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		var cfg map[string]any
+		require.NoError(t, json.Unmarshal(body, &cfg))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(TranslateResponse{Config: cfg})
+	}))
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
+// The real trust boundary (R5): the persisted *.tf must carry <kcp-redacted> for
+// a redacted field, never a raw secret.
+func TestSelfManagedConnectorMigrator_Run_GeneratedTerraformIsLeakFree(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewSelfManagedConnectorMigrator(MigrateSelfManagedConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.SelfManagedConnector{
+			{
+				Name: "pg-sink",
+				Config: map[string]any{
+					"connector.class":   "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"database.password": redact.Placeholder,
+					"tasks.max":         "3",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	require.NoError(t, migrator.Run())
+
+	tf, err := os.ReadFile(filepath.Join(outDir, "pg-sink-connector.tf"))
+	require.NoError(t, err)
+	assert.Contains(t, string(tf), redact.Placeholder, "redacted placeholder must survive into the generated Terraform")
+	assert.NotContains(t, string(tf), "hunter2", "no raw secret may appear in the generated Terraform")
+}
+
+func TestSelfManagedConnectorMigrator_Run_WarnsWhenConfigRedacted(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewSelfManagedConnectorMigrator(MigrateSelfManagedConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.SelfManagedConnector{
+			{
+				Name: "pg-sink",
+				Config: map[string]any{
+					"connector.class":   "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"database.password": redact.Placeholder,
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	out := captureStdout(t, func() { require.NoError(t, migrator.Run()) })
+
+	assert.Contains(t, out, "1 of 1", "warning must be count-based")
+	assert.Contains(t, out, redact.Placeholder, "warning must name the placeholder")
+	assert.NotContains(t, out, "pg-sink", "warning must not include the connector name")
+	assert.NotContains(t, out, "database.password", "warning must not include the field key")
+}
+
+func TestSelfManagedConnectorMigrator_Run_NoWarningWhenNoRedaction(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewSelfManagedConnectorMigrator(MigrateSelfManagedConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.SelfManagedConnector{
+			{
+				Name: "clean",
+				Config: map[string]any{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"tasks.max":       "3",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	out := captureStdout(t, func() { require.NoError(t, migrator.Run()) })
+
+	assert.NotContains(t, out, redact.Placeholder, "no warning when nothing is redacted")
+	assert.NotContains(t, out, "redacted sensitive fields", "no warning when nothing is redacted")
+}
 
 func TestSelfManagedConnectorMigrator_Run_NoConnectors(t *testing.T) {
 	tmpDir := t.TempDir()
