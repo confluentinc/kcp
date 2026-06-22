@@ -505,16 +505,25 @@ var ErrLinkExists = errors.New("cluster link already exists")
 // no link of that name (HTTP 404), so callers can branch with errors.Is.
 var ErrLinkNotFound = errors.New("cluster link not found")
 
+// SourceTLSMaterial is inline PEM for the link's TLS connection to the source:
+// the CA to trust the source (SSL/SASL_SSL) and, for mTLS, the client cert+key.
+type SourceTLSMaterial struct {
+	CACertPEM     string
+	ClientCertPEM string // "" unless mTLS
+	ClientKeyPEM  string // "" unless mTLS
+}
+
 // CreateClusterLinkRequest describes a destination-initiated cluster link.
 // Phase 1 populates only the PLAINTEXT fields; SASL/TLS fields are wired in
 // later auth phases.
 type CreateClusterLinkRequest struct {
 	SourceClusterID        string
 	SourceBootstrapServers []string
-	SecurityProtocol       string            // PLAINTEXT | SSL | SASL_SSL | SASL_PLAINTEXT
-	SaslMechanism          string            // optional (SASL_*)
-	SaslJaasConfig         string            // required when SaslMechanism is set (SASL_*)
-	Configs                map[string]string // optional overrides from manifest spec.clusterLink.configs
+	SecurityProtocol       string             // PLAINTEXT | SSL | SASL_SSL | SASL_PLAINTEXT
+	SaslMechanism          string             // optional (SASL_*)
+	SaslJaasConfig         string             // required when SaslMechanism is set (SASL_*)
+	SourceTLS              *SourceTLSMaterial // optional: truststore (CA) and, for mTLS, keystore (client cert+key), as inline PEM
+	Configs                map[string]string  // optional overrides from manifest spec.clusterLink.configs
 }
 
 // linkConfigEntry is one {name,value} pair in a create-link request body.
@@ -528,6 +537,9 @@ type linkConfigEntry struct {
 func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Config, req CreateClusterLinkRequest) error {
 	if req.SaslMechanism != "" && req.SaslJaasConfig == "" {
 		return fmt.Errorf("SaslJaasConfig is required when SaslMechanism is set (link %q)", config.LinkName)
+	}
+	if req.SourceTLS != nil && (req.SourceTLS.ClientCertPEM == "") != (req.SourceTLS.ClientKeyPEM == "") {
+		return fmt.Errorf("SourceTLS: ClientCertPEM and ClientKeyPEM must both be set or both empty (link %q)", config.LinkName)
 	}
 	// Assemble link configs. Derived defaults are added first; explicit
 	// req.Configs then override any of them by name (so a single config key
@@ -551,6 +563,17 @@ func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Co
 	if req.SaslMechanism != "" {
 		put("sasl.mechanism", req.SaslMechanism)
 		put("sasl.jaas.config", req.SaslJaasConfig)
+	}
+	if req.SourceTLS != nil {
+		if req.SourceTLS.CACertPEM != "" {
+			put("ssl.truststore.type", "PEM")
+			put("ssl.truststore.certificates", req.SourceTLS.CACertPEM)
+		}
+		if req.SourceTLS.ClientCertPEM != "" {
+			put("ssl.keystore.type", "PEM")
+			put("ssl.keystore.certificate.chain", req.SourceTLS.ClientCertPEM)
+			put("ssl.keystore.key", req.SourceTLS.ClientKeyPEM)
+		}
 	}
 	// req.Configs is an operator escape hatch for advanced link settings and
 	// for overriding bootstrap.servers (see above). Callers should not use it to

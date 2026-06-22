@@ -126,6 +126,70 @@ func TestCreateClusterLink_SaslJaasRequiredWithMechanism(t *testing.T) {
 	require.ErrorContains(t, err, "SaslJaasConfig is required")
 }
 
+func TestCreateClusterLink_TLSMaterialEmitsSSLConfigs(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "d", LinkName: "l", APIKey: "a", APISecret: "b"}
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID:        "s",
+		SourceBootstrapServers: []string{"source:29095"},
+		SecurityProtocol:       "SSL",
+		SourceTLS: &SourceTLSMaterial{
+			CACertPEM:     "CA-PEM",
+			ClientCertPEM: "CERT-PEM",
+			ClientKeyPEM:  "KEY-PEM",
+		},
+	})
+	require.NoError(t, err)
+	configs := configMapFromBody(t, gotBody)
+	require.Equal(t, "PEM", configs["ssl.truststore.type"])
+	require.Equal(t, "CA-PEM", configs["ssl.truststore.certificates"])
+	require.Equal(t, "PEM", configs["ssl.keystore.type"])
+	require.Equal(t, "CERT-PEM", configs["ssl.keystore.certificate.chain"])
+	require.Equal(t, "KEY-PEM", configs["ssl.keystore.key"])
+}
+
+func TestCreateClusterLink_TLSMaterialCAOnly(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "d", LinkName: "l", APIKey: "a", APISecret: "b"}
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID:        "s",
+		SourceBootstrapServers: []string{"source:29095"},
+		SecurityProtocol:       "SSL",
+		SourceTLS:              &SourceTLSMaterial{CACertPEM: "CA-PEM"},
+	})
+	require.NoError(t, err)
+	configs := configMapFromBody(t, gotBody)
+	require.Equal(t, "CA-PEM", configs["ssl.truststore.certificates"])
+	require.NotContains(t, configs, "ssl.keystore.key", "no keystore for one-way SSL")
+	require.NotContains(t, configs, "ssl.keystore.certificate.chain")
+}
+
+func TestCreateClusterLink_KeystorePairRequired(t *testing.T) {
+	svc := NewConfluentCloudService(http.DefaultClient)
+	cfg := Config{RestEndpoint: "http://unused.invalid", ClusterID: "d", LinkName: "l"}
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID: "s", SecurityProtocol: "SSL",
+		SourceTLS: &SourceTLSMaterial{CACertPEM: "CA", ClientCertPEM: "CERT"}, // no key
+	})
+	require.ErrorContains(t, err, "ClientCertPEM and ClientKeyPEM must both be set")
+}
+
 // configMapFromBody flattens the request body's "configs":[{name,value}] array.
 func configMapFromBody(t *testing.T, body map[string]any) map[string]string {
 	t.Helper()
