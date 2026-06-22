@@ -8,11 +8,11 @@ import (
 )
 
 func TestExampleManifestIsValid(t *testing.T) {
-	data, err := os.ReadFile("../../examples/migration.yaml")
+	data, err := os.ReadFile("../../docs/assets/migration-manifest/migration.example.yaml")
 	require.NoError(t, err)
 	m, err := Parse(data)
 	require.NoError(t, err)
-	require.Empty(t, m.Validate(), "examples/migration.yaml must validate clean")
+	require.Empty(t, m.Validate(), "docs/assets/migration-manifest/migration.example.yaml must validate clean")
 }
 
 func TestValidCPFixtureIsValid(t *testing.T) {

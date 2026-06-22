@@ -19,7 +19,7 @@ func runCmd(t *testing.T, args ...string) (stdout, stderr string, err error) {
 }
 
 func TestValidateCmd_Valid(t *testing.T) {
-	stdout, _, err := runCmd(t, "-f", "../../../examples/migration.yaml")
+	stdout, _, err := runCmd(t, "-f", "testdata/valid.yaml")
 	require.NoError(t, err)
 	require.Contains(t, stdout, "is valid")
 }
