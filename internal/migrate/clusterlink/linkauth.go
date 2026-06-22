@@ -12,12 +12,13 @@ import (
 // credentials and applied to the cluster-link config (security.protocol, SASL,
 // and TLS material). It is target-agnostic.
 type LinkAuth struct {
-	SecurityProtocol string // PLAINTEXT | SSL | SASL_SSL
+	SecurityProtocol string // PLAINTEXT | SSL | SASL_SSL | SASL_PLAINTEXT
 	SaslMechanism    string // SCRAM-SHA-256 | SCRAM-SHA-512 | PLAIN | ""
 	SaslJaasConfig   string // "" unless SASL
 	// TLS material (paths to PEM files) for SSL/SASL_SSL truststore and mTLS keystore.
 	// CACertPath is populated from the source's ca_cert for the mTLS (tls),
-	// sasl_scram, sasl_plain, and unauthenticated_tls credential methods.
+	// sasl_scram, and unauthenticated_tls credential methods.
+	// sasl_plain does NOT carry a truststore — it uses SASL_PLAINTEXT (no TLS).
 	CACertPath     string // truststore CA path
 	ClientCertPath string // mTLS keystore cert chain ("" unless mTLS)
 	ClientKeyPath  string // mTLS keystore key ("" unless mTLS)
@@ -77,11 +78,12 @@ func LinkAuthFromSource(c types.OSKClusterAuth) (LinkAuth, error) {
 			CACertPath:       c.AuthMethod.SASLScram.CACert,
 		}, nil
 	case types.AuthTypeSASLPlain:
+		// SASL/PLAIN uses SASL_PLAINTEXT to match KCP's source read path
+		// (WithSASLPlainAuthNoTLS): no TLS, so no truststore/CA.
 		return LinkAuth{
-			SecurityProtocol: "SASL_SSL",
+			SecurityProtocol: "SASL_PLAINTEXT",
 			SaslMechanism:    "PLAIN",
 			SaslJaasConfig:   plainJaas(c.AuthMethod.SASLPlain.Username, c.AuthMethod.SASLPlain.Password),
-			CACertPath:       c.AuthMethod.SASLPlain.CACert,
 		}, nil
 	case types.AuthTypeTLS: // mTLS
 		return LinkAuth{

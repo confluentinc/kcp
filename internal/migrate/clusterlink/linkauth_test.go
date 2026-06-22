@@ -58,17 +58,19 @@ func TestLinkAuthFromSource(t *testing.T) {
 		{
 			name:      "sasl_plain",
 			auth:      types.AuthMethodConfig{SASLPlain: &types.SASLPlainConfig{Use: true, Username: "admin", Password: "admin-secret"}},
-			wantProto: "SASL_SSL",
+			wantProto: "SASL_PLAINTEXT",
 			wantMech:  "PLAIN",
 			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
 		},
 		{
+			// sasl_plain_with_ca: even when the creds carry a ca_cert, SASL/PLAIN uses
+			// SASL_PLAINTEXT (no TLS), so no truststore is wired. CACertPath must be empty.
 			name:      "sasl_plain_with_ca",
 			auth:      types.AuthMethodConfig{SASLPlain: &types.SASLPlainConfig{Use: true, Username: "admin", Password: "admin-secret", CACert: "/certs/ca.pem"}},
-			wantProto: "SASL_SSL",
+			wantProto: "SASL_PLAINTEXT",
 			wantMech:  "PLAIN",
 			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
-			wantCA:    "/certs/ca.pem",
+			wantCA:    "", // PLAIN has no TLS; truststore ignored even if ca_cert is set
 		},
 	}
 	for _, tc := range tests {

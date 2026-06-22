@@ -227,12 +227,16 @@ func buildKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType)
 			),
 		)
 	case types.AuthTypeUnauthenticatedTLS:
+		unauthTLSOpts := []client.AdminOption{client.WithUnauthenticatedTlsAuth()}
+		if clusterCreds.InsecureSkipTLSVerify {
+			unauthTLSOpts = append(unauthTLSOpts, client.WithInsecureSkipVerify())
+		}
 		kafkaAdmin, err = client.NewKafkaAdmin(
 			clusterCreds.BootstrapServers,
 			clientBrokerEncryptionInTransit,
 			region,
 			kafkaVersion,
-			client.WithUnauthenticatedTlsAuth(),
+			unauthTLSOpts...,
 		)
 	case types.AuthTypeUnauthenticatedPlaintext:
 		kafkaAdmin, err = client.NewKafkaAdmin(
