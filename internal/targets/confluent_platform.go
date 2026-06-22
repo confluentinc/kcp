@@ -28,13 +28,11 @@ func NewConfluentPlatformTarget(restEndpoint string, creds *Credentials, httpCli
 }
 
 func (t *ConfluentPlatformTarget) config(linkName string) clusterlink.Config {
-	user, pass := t.creds.basicPair()
 	return clusterlink.Config{
 		RestEndpoint: t.restEndpoint,
 		ClusterID:    t.clusterID,
 		LinkName:     linkName,
-		APIKey:       user,
-		APISecret:    pass,
+		Auth:         t.creds.authenticator(),
 	}
 }
 

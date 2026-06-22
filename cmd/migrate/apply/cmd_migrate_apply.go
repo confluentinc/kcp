@@ -84,7 +84,11 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	tgt := targets.NewConfluentPlatformTarget(m.Spec.Target.Kafka.RestEndpoint, tgtCreds, nil)
+	tgtClient, err := tgtCreds.HTTPClient()
+	if err != nil {
+		return err
+	}
+	tgt := targets.NewConfluentPlatformTarget(m.Spec.Target.Kafka.RestEndpoint, tgtCreds, tgtClient)
 
 	// --- reconciler ---
 	auth, err := mclusterlink.LinkAuthFromSource(srcCluster)
