@@ -5,7 +5,10 @@
 // redacted even at the cost of occasionally redacting a benign value.
 package redact
 
-import "strings"
+import (
+	"slices"
+	"strings"
+)
 
 // Placeholder is the literal value substituted for a redacted config value.
 const Placeholder = "<kcp-redacted>"
@@ -60,6 +63,49 @@ func RedactAnyMap(in map[string]any) (map[string]any, int) {
 		count += n
 	}
 	return out, count
+}
+
+// MapContainsRedacted reports whether any value in in has already been redacted,
+// i.e. equals Placeholder exactly. Matching is exact-equality (not substring)
+// because redaction replaces the whole value, so a benign value that merely
+// embeds the placeholder text is not treated as redacted. A nil or empty map
+// yields false. The input is not mutated.
+func MapContainsRedacted(in map[string]string) bool {
+	for _, v := range in {
+		if v == Placeholder {
+			return true
+		}
+	}
+	return false
+}
+
+// AnyMapContainsRedacted reports whether any value in in has already been
+// redacted, recursing into nested maps and lists so that placeholders buried in
+// structured values are also found. As with MapContainsRedacted, a value counts
+// only when it equals Placeholder exactly. A nil or empty map yields false. The
+// input is not mutated.
+func AnyMapContainsRedacted(in map[string]any) bool {
+	for _, v := range in {
+		if anyValueContainsRedacted(v) {
+			return true
+		}
+	}
+	return false
+}
+
+// anyValueContainsRedacted recurses into container values, returning true if any
+// scalar within equals Placeholder.
+func anyValueContainsRedacted(v any) bool {
+	switch t := v.(type) {
+	case string:
+		return t == Placeholder
+	case map[string]any:
+		return AnyMapContainsRedacted(t)
+	case []any:
+		return slices.ContainsFunc(t, anyValueContainsRedacted)
+	default:
+		return false
+	}
 }
 
 // redactValue recurses into container values, returning the redacted value and

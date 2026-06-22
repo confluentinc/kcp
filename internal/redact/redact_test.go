@@ -209,6 +209,122 @@ func TestPlaceholderValue(t *testing.T) {
 	}
 }
 
+func TestMapContainsRedacted(t *testing.T) {
+	tests := []struct {
+		name string
+		in   map[string]string
+		want bool
+	}{
+		{
+			name: "value equal to placeholder",
+			in:   map[string]string{"database.password": Placeholder, "tasks.max": "3"},
+			want: true,
+		},
+		{
+			name: "no placeholder",
+			in:   map[string]string{"connector.class": "io.x", "tasks.max": "3"},
+			want: false,
+		},
+		{
+			name: "nil map",
+			in:   nil,
+			want: false,
+		},
+		{
+			name: "empty map",
+			in:   map[string]string{},
+			want: false,
+		},
+		{
+			// Exact-equality rule: redaction sets the WHOLE value to Placeholder.
+			// A benign value that merely embeds the placeholder text as a substring
+			// is NOT considered redacted, so it must not trip the warning.
+			name: "placeholder as substring is not a match",
+			in:   map[string]string{"notes": "see <kcp-redacted> docs for details"},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MapContainsRedacted(tt.in); got != tt.want {
+				t.Errorf("MapContainsRedacted(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestAnyMapContainsRedacted(t *testing.T) {
+	tests := []struct {
+		name string
+		in   map[string]any
+		want bool
+	}{
+		{
+			name: "flat value equal to placeholder",
+			in:   map[string]any{"database.password": Placeholder, "tasks.max": "3"},
+			want: true,
+		},
+		{
+			name: "flat no placeholder",
+			in:   map[string]any{"connector.class": "io.x"},
+			want: false,
+		},
+		{
+			name: "placeholder nested inside a map",
+			in: map[string]any{
+				"config": map[string]any{
+					"nested.password": Placeholder,
+					"nested.timeout":  "30",
+				},
+			},
+			want: true,
+		},
+		{
+			name: "placeholder nested inside a list",
+			in: map[string]any{
+				"items": []any{
+					map[string]any{"id": "1"},
+					map[string]any{"token": Placeholder},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "deeply nested non-placeholder",
+			in: map[string]any{
+				"a": map[string]any{
+					"b": []any{
+						map[string]any{"c": "value", "d": "30"},
+					},
+				},
+			},
+			want: false,
+		},
+		{
+			name: "placeholder as substring is not a match",
+			in:   map[string]any{"notes": "see <kcp-redacted> docs for details"},
+			want: false,
+		},
+		{
+			name: "nil map",
+			in:   nil,
+			want: false,
+		},
+		{
+			name: "empty map",
+			in:   map[string]any{},
+			want: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := AnyMapContainsRedacted(tt.in); got != tt.want {
+				t.Errorf("AnyMapContainsRedacted(%v) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
 // Guards that a benign config typical of a real connector survives untouched.
 func TestRedactStringMap_RealisticBenignConfigUntouched(t *testing.T) {
 	in := map[string]string{
