@@ -93,7 +93,11 @@ kcp version
 
 ### Windows
 
-Download `kcp_windows_amd64.exe` from the [latest release](https://github.com/confluentinc/kcp/releases/latest), rename it to `kcp.exe`, move it to a folder on your `PATH`, then verify in PowerShell:
+1. Download `kcp_windows_amd64.exe` from the [latest release](https://github.com/confluentinc/kcp/releases/latest).
+2. Rename it to `kcp.exe`.
+3. Create a folder to keep it in, for example `C:\Program Files\kcp`, and move `kcp.exe` there.
+4. Add that folder to your `PATH` so you can run `kcp` from any terminal: open the Start menu, search for **"Edit environment variables for your account"**, select **Path**, click **Edit → New**, paste the folder path, then **OK**.
+5. Open a **new** PowerShell window (so it picks up the updated `PATH`) and verify:
 
 ```powershell
 kcp version
