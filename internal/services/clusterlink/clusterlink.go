@@ -529,20 +529,40 @@ func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Co
 	if req.SaslMechanism != "" && req.SaslJaasConfig == "" {
 		return fmt.Errorf("SaslJaasConfig is required when SaslMechanism is set (link %q)", config.LinkName)
 	}
-	configs := []linkConfigEntry{
-		{Name: "bootstrap.servers", Value: strings.Join(req.SourceBootstrapServers, ",")},
-		{Name: "link.mode", Value: "DESTINATION"},
+	// Assemble link configs. Derived defaults are added first; explicit
+	// req.Configs then override any of them by name (so a single config key
+	// never appears twice in the request body). This lets the manifest point
+	// the link at the source's network-reachable address — which can differ
+	// from the address KCP itself used to read the source — by overriding
+	// bootstrap.servers.
+	ordered := []string{}
+	values := map[string]string{}
+	put := func(name, value string) {
+		if _, seen := values[name]; !seen {
+			ordered = append(ordered, name)
+		}
+		values[name] = value
 	}
+	put("bootstrap.servers", strings.Join(req.SourceBootstrapServers, ","))
+	put("link.mode", "DESTINATION")
 	if req.SecurityProtocol != "" {
-		configs = append(configs, linkConfigEntry{Name: "security.protocol", Value: req.SecurityProtocol})
+		put("security.protocol", req.SecurityProtocol)
 	}
 	if req.SaslMechanism != "" {
-		configs = append(configs,
-			linkConfigEntry{Name: "sasl.mechanism", Value: req.SaslMechanism},
-			linkConfigEntry{Name: "sasl.jaas.config", Value: req.SaslJaasConfig})
+		put("sasl.mechanism", req.SaslMechanism)
+		put("sasl.jaas.config", req.SaslJaasConfig)
 	}
-	for k, v := range req.Configs {
-		configs = append(configs, linkConfigEntry{Name: k, Value: v})
+	overrideKeys := make([]string, 0, len(req.Configs))
+	for k := range req.Configs {
+		overrideKeys = append(overrideKeys, k)
+	}
+	slices.Sort(overrideKeys) // deterministic order for newly-added keys
+	for _, k := range overrideKeys {
+		put(k, req.Configs[k])
+	}
+	configs := make([]linkConfigEntry, len(ordered))
+	for i, name := range ordered {
+		configs[i] = linkConfigEntry{Name: name, Value: values[name]}
 	}
 
 	body := struct {

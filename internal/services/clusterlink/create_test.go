@@ -82,6 +82,38 @@ func TestCreateClusterLink_ConfigOverridesAppear(t *testing.T) {
 	require.Equal(t, "true", configs["consumer.offset.sync.enable"])
 }
 
+func TestCreateClusterLink_ConfigOverrideReplacesByName(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "dest-1", LinkName: "l", APIKey: "a", APISecret: "b"}
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID:        "src",
+		SourceBootstrapServers: []string{"kcp-reachable:9092"},
+		SecurityProtocol:       "PLAINTEXT",
+		// Explicit override of a derived default (bootstrap.servers).
+		Configs: map[string]string{"bootstrap.servers": "link-reachable:29092"},
+	})
+	require.NoError(t, err)
+
+	// The override wins, and the key must appear exactly once (no duplicate).
+	configs := configMapFromBody(t, gotBody)
+	require.Equal(t, "link-reachable:29092", configs["bootstrap.servers"])
+	count := 0
+	for _, e := range gotBody["configs"].([]any) {
+		if e.(map[string]any)["name"].(string) == "bootstrap.servers" {
+			count++
+		}
+	}
+	require.Equal(t, 1, count, "bootstrap.servers must not be duplicated when overridden")
+}
+
 // configMapFromBody flattens the request body's "configs":[{name,value}] array.
 func configMapFromBody(t *testing.T, body map[string]any) map[string]string {
 	t.Helper()
