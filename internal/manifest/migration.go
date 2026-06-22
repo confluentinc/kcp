@@ -19,75 +19,75 @@ const (
 
 // Migration is the top-level migration manifest.
 type Migration struct {
-	APIVersion string   `yaml:"apiVersion"`
-	Kind       string   `yaml:"kind"`
-	Metadata   Metadata `yaml:"metadata"`
-	Spec       Spec     `yaml:"spec"`
+	APIVersion string   `yaml:"apiVersion" json:"apiVersion"`
+	Kind       string   `yaml:"kind" json:"kind"`
+	Metadata   Metadata `yaml:"metadata" json:"metadata"`
+	Spec       Spec     `yaml:"spec" json:"spec"`
 }
 
 type Metadata struct {
-	Name string `yaml:"name"`
+	Name string `yaml:"name" json:"name"`
 }
 
 type Spec struct {
-	Source      Source       `yaml:"source"`
-	Target      Target       `yaml:"target"`
-	ClusterLink *ClusterLink `yaml:"clusterLink,omitempty"`
-	Topics      *Topics      `yaml:"topics,omitempty"`
-	ACLs        *ACLs        `yaml:"acls,omitempty"`
-	Schemas     *Schemas     `yaml:"schemas,omitempty"`
-	Connectors  *Connectors  `yaml:"connectors,omitempty"`
+	Source      Source       `yaml:"source" json:"source"`
+	Target      Target       `yaml:"target" json:"target"`
+	ClusterLink *ClusterLink `yaml:"clusterLink,omitempty" json:"clusterLink,omitempty"`
+	Topics      *Topics      `yaml:"topics,omitempty" json:"topics,omitempty"`
+	ACLs        *ACLs        `yaml:"acls,omitempty" json:"acls,omitempty"`
+	Schemas     *Schemas     `yaml:"schemas,omitempty" json:"schemas,omitempty"`
+	Connectors  *Connectors  `yaml:"connectors,omitempty" json:"connectors,omitempty"`
 }
 
 type Source struct {
-	Type        string `yaml:"type"`
-	Credentials string `yaml:"credentials"`
+	Type        string `yaml:"type" json:"type"`
+	Credentials string `yaml:"credentials" json:"credentials"`
 }
 
 type Target struct {
-	Type           string       `yaml:"type"`
-	Credentials    string       `yaml:"credentials"`
-	Cluster        string       `yaml:"cluster,omitempty"`
-	Kafka          *TargetKafka `yaml:"kafka,omitempty"`
-	SchemaRegistry *Endpoint    `yaml:"schemaRegistry,omitempty"`
-	Connect        *Endpoint    `yaml:"connect,omitempty"`
+	Type           string       `yaml:"type" json:"type"`
+	Credentials    string       `yaml:"credentials" json:"credentials"`
+	Cluster        string       `yaml:"cluster,omitempty" json:"cluster,omitempty"`
+	Kafka          *TargetKafka `yaml:"kafka,omitempty" json:"kafka,omitempty"`
+	SchemaRegistry *Endpoint    `yaml:"schemaRegistry,omitempty" json:"schemaRegistry,omitempty"`
+	Connect        *Endpoint    `yaml:"connect,omitempty" json:"connect,omitempty"`
 }
 
 type TargetKafka struct {
-	RestEndpoint     string   `yaml:"restEndpoint"`
-	BootstrapServers []string `yaml:"bootstrapServers,omitempty"`
+	RestEndpoint     string   `yaml:"restEndpoint" json:"restEndpoint"`
+	BootstrapServers []string `yaml:"bootstrapServers,omitempty" json:"bootstrapServers,omitempty"`
 }
 
 type Endpoint struct {
-	URL string `yaml:"url"`
+	URL string `yaml:"url" json:"url"`
 }
 
 type ClusterLink struct {
-	Name    string            `yaml:"name"`
-	Configs map[string]string `yaml:"configs,omitempty"`
+	Name    string            `yaml:"name" json:"name"`
+	Configs map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
 }
 
 type Topics struct {
-	Mode    string   `yaml:"mode"`
-	Include []string `yaml:"include"`
-	Exclude []string `yaml:"exclude,omitempty"`
-	Prefix  string   `yaml:"prefix,omitempty"`
+	Mode    string   `yaml:"mode" json:"mode"`
+	Include []string `yaml:"include" json:"include"`
+	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	Prefix  string   `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 }
 
 // ACLs, Schemas, and Connectors are provisional ("stub") sections for this
 // phase: their shape may change when their per-resource designs land.
 type ACLs struct {
-	Include          []string          `yaml:"include"`
-	Exclude          []string          `yaml:"exclude,omitempty"`
-	PrincipalMapping map[string]string `yaml:"principalMapping,omitempty"`
+	Include          []string          `yaml:"include" json:"include"`
+	Exclude          []string          `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	PrincipalMapping map[string]string `yaml:"principalMapping,omitempty" json:"principalMapping,omitempty"`
 }
 
 type Schemas struct {
-	Include []string `yaml:"include"`
-	Exclude []string `yaml:"exclude,omitempty"`
+	Include []string `yaml:"include" json:"include"`
+	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
 }
 
 type Connectors struct {
-	Include []string `yaml:"include"`
-	Exclude []string `yaml:"exclude,omitempty"`
+	Include []string `yaml:"include" json:"include"`
+	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
 }
