@@ -206,6 +206,52 @@ func TestListMirrorTopics_Success(t *testing.T) {
 	assert.Equal(t, 5, topics[2].MirrorLags[0].Lag)
 }
 
+// TestService_AuthHeader_PerAuthenticator verifies that requests carry the
+// Authorization header produced by Config.authenticator(): an explicit
+// BearerAuth sends "Bearer ...", while a Config with only APIKey/APISecret
+// falls back to HTTP basic (the existing migration-execute / CC behaviour).
+func TestService_AuthHeader_PerAuthenticator(t *testing.T) {
+	clusterID := "lkc-abc123"
+	linkName := "my-cluster-link"
+
+	tests := []struct {
+		name       string
+		cfg        Config
+		wantHeader string
+	}{
+		{
+			name:       "explicit bearer",
+			cfg:        Config{ClusterID: clusterID, LinkName: linkName, Auth: BearerAuth{Token: "jwt-token-123"}},
+			wantHeader: "Bearer jwt-token-123",
+		},
+		{
+			name:       "basic fallback from api key/secret",
+			cfg:        Config{ClusterID: clusterID, LinkName: linkName, APIKey: "key", APISecret: "secret"},
+			wantHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte("key:secret")),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotAuth string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"link_name": linkName, "link_state": "ACTIVE"})
+			}))
+			defer server.Close()
+
+			svc := NewConfluentCloudService(server.Client())
+			cfg := tt.cfg
+			cfg.RestEndpoint = server.URL
+
+			_, err := svc.GetClusterLink(context.Background(), cfg)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantHeader, gotAuth)
+		})
+	}
+}
+
 func TestListMirrorTopics_FiltersByTopics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{

@@ -3,7 +3,6 @@ package clusterlink
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,12 +24,6 @@ type httpStatusError struct {
 
 func (e *httpStatusError) Error() string {
 	return fmt.Sprintf("unexpected status code %d: %s", e.StatusCode, e.Body)
-}
-
-// basicAuthHeader returns the full "Basic <base64>" header value built from
-// the config's API key and secret.
-func basicAuthHeader(config Config) string {
-	return "Basic " + base64.StdEncoding.EncodeToString(fmt.Appendf(nil, "%s:%s", config.APIKey, config.APISecret))
 }
 
 // linkPath returns the escaped base path for the cluster link resource.
@@ -76,6 +69,19 @@ type Config struct {
 	APIKey       string
 	APISecret    string
 	Topics       []string
+	// Auth authenticates each REST request. When nil, requests fall back to
+	// HTTP basic using APIKey/APISecret (so the existing migration-execute and
+	// Confluent Cloud api-key callers keep working unchanged).
+	Auth Authenticator
+}
+
+// authenticator returns the configured Authenticator, or a basic-auth fallback
+// built from APIKey/APISecret when none is set.
+func (c Config) authenticator() Authenticator {
+	if c.Auth != nil {
+		return c.Auth
+	}
+	return BasicAuth{Username: c.APIKey, Password: c.APISecret}
 }
 
 // Operation values accepted by AlterConfigs. They mirror the Confluent REST v3
@@ -312,7 +318,7 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", basicAuthHeader(config))
+	config.authenticator().Apply(req)
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -348,7 +354,7 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", basicAuthHeader(config))
+	config.authenticator().Apply(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient.Do(req)
@@ -389,7 +395,7 @@ func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config,
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", basicAuthHeader(config))
+	config.authenticator().Apply(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient.Do(req)
@@ -415,7 +421,7 @@ func (s *ConfluentCloudService) doDeleteRequest(ctx context.Context, config Conf
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", basicAuthHeader(config))
+	config.authenticator().Apply(req)
 
 	res, err := s.httpClient.Do(req)
 	if err != nil {
@@ -642,7 +648,7 @@ func (s *ConfluentCloudService) doPostRequestExpectStatus(ctx context.Context, c
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
-	req.Header.Set("Authorization", basicAuthHeader(config))
+	config.authenticator().Apply(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := s.httpClient.Do(req)
