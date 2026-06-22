@@ -5,30 +5,39 @@ project_name: kcp
 before:
   hooks:
     - go mod tidy
+    # The binary embeds the web UI via //go:embed all:dist, so the frontend must
+    # be built before GoReleaser compiles, otherwise the build fails with
+    # "pattern all:dist: no matching files found".
+    - sh -c "cd cmd/ui/frontend && yarn install && yarn build"
 
 builds:
-  - main: ./cmd/cli
+  - main: .
     env:
       - CGO_ENABLED=0
     goos:
       - linux
       - darwin
+      - windows
     goarch:
       - amd64
       - arm64
+    ignore:
+      # No Windows arm64 binary is published.
+      - goos: windows
+        goarch: arm64
     binary: kcp
     ldflags:
-      - -s -w 
+      - -s -w
       - -X github.com/confluentinc/kcp/internal/build_info.Version={{.Version}}
       - -X github.com/confluentinc/kcp/internal/build_info.Commit={{.Commit}}
       - -X github.com/confluentinc/kcp/internal/build_info.Date={{.Date}}
 
+# Publish raw binaries named kcp_<os>_<arch> (e.g. kcp_darwin_arm64,
+# kcp_windows_amd64.exe). This matches install.sh, the docs curl snippets, and
+# the `kcp update` self-updater (creativeprojects/go-selfupdate).
 archives:
-  - formats: [tar.gz]
-    name_template: >-
-      {{ .Binary }}_ {{- title .Os | tolower }}_ {{- if eq .Arch "386" }}i386
-      {{- else }}{{ .Arch }}{{ end }} {{- if .Arm }}v{{ .Arm }}{{ end }}
-    wrap_in_directory: '{{ .ProjectName }}'
+  - formats: [binary]
+    name_template: "{{ .Binary }}_{{ .Os }}_{{ .Arch }}"
 
 checksum:
   name_template: checksums.txt

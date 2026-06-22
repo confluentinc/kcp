@@ -8,7 +8,10 @@ GOTEST_FLAGS ?= -v
 
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
-VERSION := 0.0.0-localdev
+# Derive the version from the most recent git tag (e.g. v0.8.5, or v0.8.5-3-gabc123-dirty
+# for commits past a tag). Falls back to 0.0.0-localdev when there are no tags, which
+# build_info.IsDev() treats as a development build. Override with `make build VERSION=...`.
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "0.0.0-localdev")
 LD_FLAGS := -X github.com/confluentinc/kcp/internal/build_info.Version=$(VERSION) \
             -X github.com/confluentinc/kcp/internal/build_info.Commit=$(COMMIT) \
             -X github.com/confluentinc/kcp/internal/build_info.Date=$(DATE)
@@ -57,6 +60,23 @@ install: build ## Build and install to /usr/local/bin (requires sudo)
 uninstall: ## Uninstall from /usr/local/bin (requires sudo)
 	sudo rm -f /usr/local/bin/$(BINARY_NAME)
 	@echo "$(BINARY_NAME) uninstalled from /usr/local/bin"
+
+# ==============================================================================
+# Release (GoReleaser)
+# ==============================================================================
+# Releases are cut from a git tag. The frontend is built first because the binary
+# embeds it via //go:embed; GoReleaser then cross-compiles, checksums, and (for
+# `make release`) publishes the GitHub release. Asset names are kcp_<os>_<arch>.
+
+.PHONY: release release-snapshot
+
+release: build-frontend ## Build and publish a release from the current git tag (requires goreleaser + GITHUB_TOKEN)
+	@command -v goreleaser >/dev/null 2>&1 || { echo "goreleaser not found. Install: https://goreleaser.com/install/"; exit 1; }
+	goreleaser release --clean
+
+release-snapshot: build-frontend ## Build release artifacts locally into ./dist without publishing (dry run)
+	@command -v goreleaser >/dev/null 2>&1 || { echo "goreleaser not found. Install: https://goreleaser.com/install/"; exit 1; }
+	goreleaser release --snapshot --clean
 
 # ==============================================================================
 # Code Quality
@@ -151,7 +171,7 @@ docs-build: docs-gen ## Build the docs site into ./site
 .PHONY: clean help
 
 clean: ## Clean build artifacts
-	rm -rf $(BINARY_NAME) coverage.out site/
+	rm -rf $(BINARY_NAME) coverage.out site/ dist/
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \
