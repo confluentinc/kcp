@@ -128,6 +128,9 @@ test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, 
 
 test-env-up-migrate-clusterlink: ## Start the cluster-link migrate test env (source + dest cp-server, all auth listeners)
 	bash integration-tests/migrate-clusterlink/generate-certs.sh
+	# MDS (dest-bearer) refuses a world-readable user store; git does not preserve
+	# a 0600 mode across a fresh checkout, so enforce it before the broker mounts it.
+	chmod 600 integration-tests/migrate-clusterlink/rest-auth/mds-users.properties
 	docker compose -f integration-tests/migrate-clusterlink/docker-compose.yml up -d
 	bash integration-tests/migrate-clusterlink/setup-scram.sh
 

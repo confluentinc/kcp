@@ -53,6 +53,32 @@ openssl req -new -newkey rsa:2048 -nodes -keyout client.key -out client.csr \
 openssl x509 -req -CA ca.crt -CAkey ca.key -in client.csr -out client.crt \
     -days 365 -CAcreateserial 2>/dev/null
 
+echo "Generating dest broker keystore (SAN: dest-mtls, localhost) for the HTTPS REST listener..."
+keytool -genkey -noprompt -alias dest -keyalg RSA -validity 365 \
+    -dname "CN=dest-mtls,OU=Test,O=Test,L=SF,S=CA,C=US" \
+    -keystore dest.keystore.jks -storepass $KS_PW -keypass $KS_PW 2>/dev/null
+keytool -keystore dest.keystore.jks -alias dest -certreq -file dest.csr \
+    -storepass $KS_PW -keypass $KS_PW 2>/dev/null
+cat > dest-ext.cnf <<EOF
+subjectAltName = DNS:dest-mtls,DNS:localhost,IP:127.0.0.1
+EOF
+openssl x509 -req -CA ca.crt -CAkey ca.key -in dest.csr -out dest-signed.crt \
+    -days 365 -CAcreateserial -extfile dest-ext.cnf 2>/dev/null
+keytool -keystore dest.keystore.jks -alias CARoot -import -file ca.crt \
+    -storepass $KS_PW -keypass $KS_PW -noprompt 2>/dev/null
+keytool -keystore dest.keystore.jks -alias dest -import -file dest-signed.crt \
+    -storepass $KS_PW -keypass $KS_PW -noprompt 2>/dev/null
+
+echo "Generating dest broker truststore (trusts CA -> accepts the kcp client cert for mTLS)..."
+keytool -keystore dest.truststore.jks -alias CARoot -import -file ca.crt \
+    -storepass $TS_PW -keypass $TS_PW -noprompt 2>/dev/null
+
+echo "Generating MDS token-signing RSA keypair (RBAC bearer tokens for dest-bearer)..."
+# MDS signs JWTs with the private key (token.key.path); the embedded REST API
+# verifies them with the public key (public.key.path).
+openssl genrsa -out tokenKeypair.pem 2048 2>/dev/null
+openssl rsa -in tokenKeypair.pem -pubout -out tokenPublicKey.pem 2>/dev/null
+
 # Credential files: the cp-server image reads JKS passwords from files in the
 # mounted secrets dir (KAFKA_SSL_*_CREDENTIALS point at these by filename).
 echo "$KS_PW" > keystore_creds
@@ -60,5 +86,6 @@ echo "$KS_PW" > key_creds
 echo "$TS_PW" > truststore_creds
 
 # Tidy intermediate files; keep what the broker/KCP/link consume.
-rm -f source.csr source-signed.crt source-ext.cnf client.csr ca.srl ca.key
+rm -f source.csr source-signed.crt source-ext.cnf client.csr \
+      dest.csr dest-signed.crt dest-ext.cnf ca.srl ca.key
 echo "Done. Artifacts in $CERTS_DIR: source.{keystore,truststore}.jks {keystore,key,truststore}_creds ca.crt client.crt client.key"

@@ -87,3 +87,147 @@ services:
       KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_CONFLUENT_BALANCER_ENABLE: 'false'
+
+  # ---------------------------------------------------------------------------
+  # dest-basic: destination broker whose embedded Admin REST API requires HTTP
+  # Basic auth (Phase 3 target-REST auth surface). The REST app authenticates
+  # via a Jetty PropertyFileLoginModule realm (rest-auth/rest-jaas.properties +
+  # rest-password.properties). The link it creates still reaches the source over
+  # the docker network (source:29092), same as the no-auth dest.
+  # ---------------------------------------------------------------------------
+  dest-basic:
+    image: confluentinc/cp-server:8.1.2
+    hostname: dest-basic
+    container_name: kcp-mcl-dest-basic
+    ports: ["29192:29192", "28091:8090"]
+    volumes: ["./rest-auth:/etc/kafka/rest-auth"]
+    environment:
+      CLUSTER_ID: 'gFoyBzWLw8b-Q-4UDIXcvw'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@dest-basic:29093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:39092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:29192'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://dest-basic:39092,HOST://localhost:29192'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CONFLUENT_CLUSTER_LINK_ENABLE: 'true'
+      KAFKA_CONFLUENT_HTTP_SERVER_LISTENERS: 'http://0.0.0.0:8090'
+      # Embedded Admin REST API HTTP Basic auth (verified against CP docs):
+      # method=BASIC + a JAAS realm whose name matches the realm property.
+      KAFKA_OPTS: '-Djava.security.auth.login.config=/etc/kafka/rest-auth/rest-jaas.properties'
+      KAFKA_KAFKA_REST_AUTHENTICATION_METHOD: 'BASIC'
+      KAFKA_KAFKA_REST_AUTHENTICATION_REALM: 'KafkaRest'
+      KAFKA_KAFKA_REST_AUTHENTICATION_ROLES: 'Administrators'
+      # Single-broker: all Confluent internal topics must use RF=1 (default 3).
+      KAFKA_CONFLUENT_CLUSTER_LINK_METADATA_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_COMMAND_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_TELEMETRY_METRICS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false'
+
+  # ---------------------------------------------------------------------------
+  # dest-mtls: destination broker whose embedded Admin REST API runs over HTTPS
+  # with mutual TLS — client.authentication=REQUIRED means a caller must present
+  # a client cert signed by the CA the truststore trusts (the kcp client cert).
+  # Auth is the TLS client cert; no Authorization header (NoHeaderAuth).
+  # ---------------------------------------------------------------------------
+  dest-mtls:
+    image: confluentinc/cp-server:8.1.2
+    hostname: dest-mtls
+    container_name: kcp-mcl-dest-mtls
+    ports: ["29292:29292", "28092:8090"]
+    volumes: ["./certs:/etc/kafka/secrets"]
+    environment:
+      CLUSTER_ID: 'CA6bwVKcQR_Mn-E_v1oPlw'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@dest-mtls:29093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:39092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:29292'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://dest-mtls:39092,HOST://localhost:29292'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CONFLUENT_CLUSTER_LINK_ENABLE: 'true'
+      # HTTPS embedded REST listener with mutual TLS (verified against CP docs).
+      KAFKA_CONFLUENT_HTTP_SERVER_LISTENERS: 'https://0.0.0.0:8090'
+      KAFKA_CONFLUENT_HTTP_SERVER_SSL_KEYSTORE_LOCATION: '/etc/kafka/secrets/dest.keystore.jks'
+      KAFKA_CONFLUENT_HTTP_SERVER_SSL_KEYSTORE_PASSWORD: 'keystorepass'
+      KAFKA_CONFLUENT_HTTP_SERVER_SSL_KEY_PASSWORD: 'keystorepass'
+      KAFKA_CONFLUENT_HTTP_SERVER_SSL_TRUSTSTORE_LOCATION: '/etc/kafka/secrets/dest.truststore.jks'
+      KAFKA_CONFLUENT_HTTP_SERVER_SSL_TRUSTSTORE_PASSWORD: 'truststorepass'
+      KAFKA_CONFLUENT_HTTP_SERVER_SSL_CLIENT_AUTHENTICATION: 'REQUIRED'
+      # Single-broker: all Confluent internal topics must use RF=1 (default 3).
+      KAFKA_CONFLUENT_CLUSTER_LINK_METADATA_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_COMMAND_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_TELEMETRY_METRICS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false'
+
+  # ---------------------------------------------------------------------------
+  # dest-bearer: destination broker running the Metadata Service (MDS) as an
+  # RBAC token issuer. KCP authenticates to MDS (basic, file user store) to mint
+  # a JWT, then calls the embedded REST API with `Authorization: Bearer <jwt>`
+  # (BearerAuth). The embedded REST API verifies the JWT with the MDS public key
+  # and authorizes via the ConfluentServerAuthorizer. The MDS HTTP server serves
+  # both /security/1.0/* (MDS) and /kafka/v3/* (REST) on one listener.
+  # ---------------------------------------------------------------------------
+  dest-bearer:
+    image: confluentinc/cp-server:8.1.2
+    hostname: dest-bearer
+    container_name: kcp-mcl-dest-bearer
+    ports: ["29392:29392", "28093:8090"]
+    volumes: ["./certs:/etc/kafka/secrets", "./rest-auth:/etc/kafka/rest-auth"]
+    environment:
+      CLUSTER_ID: 'nCfjnCUInkjOvoJqi621RA'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@dest-bearer:29093'
+      KAFKA_LISTENERS: 'INTERNAL://0.0.0.0:39092,CONTROLLER://0.0.0.0:29093,HOST://0.0.0.0:29392'
+      KAFKA_ADVERTISED_LISTENERS: 'INTERNAL://dest-bearer:39092,HOST://localhost:29392'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,INTERNAL:PLAINTEXT,HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'INTERNAL'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_CONFLUENT_CLUSTER_LINK_ENABLE: 'true'
+      # --- RBAC authorizer. INTERNAL/CONTROLLER are PLAINTEXT => the broker's own
+      # principal is User:ANONYMOUS, which must be a super user or the broker
+      # cannot operate once the authorizer is on. User:kcp is the bearer principal.
+      KAFKA_AUTHORIZER_CLASS_NAME: 'io.confluent.kafka.security.authorizer.ConfluentServerAuthorizer'
+      KAFKA_CONFLUENT_AUTHORIZER_ACCESS_RULE_PROVIDERS: 'CONFLUENT'
+      KAFKA_SUPER_USERS: 'User:ANONYMOUS;User:kcp'
+      # --- Metadata Service (MDS) as token issuer, file-based user store.
+      KAFKA_CONFLUENT_METADATA_SERVER_LISTENERS: 'http://0.0.0.0:8090'
+      KAFKA_CONFLUENT_METADATA_SERVER_ADVERTISED_LISTENERS: 'http://dest-bearer:8090'
+      # BEARER turns on MDS basic-auth (to the file user store) + token
+      # generation/validation; without it authentication.method=NONE and the
+      # /security/1.0/authenticate token endpoint is not mounted (404).
+      KAFKA_CONFLUENT_METADATA_SERVER_AUTHENTICATION_METHOD: 'BEARER'
+      KAFKA_CONFLUENT_METADATA_SERVER_TOKEN_KEY_PATH: '/etc/kafka/secrets/tokenKeypair.pem'
+      KAFKA_CONFLUENT_METADATA_SERVER_USER_STORE: 'FILE'
+      KAFKA_CONFLUENT_METADATA_SERVER_USER_STORE_FILE_PATH: '/etc/kafka/rest-auth/mds-users.properties'
+      # Single-broker: the RBAC auth store topic _confluent-metadata-auth defaults
+      # to RF=3 and never initializes on one broker without this.
+      KAFKA_CONFLUENT_METADATA_TOPIC_REPLICATION_FACTOR: 1
+      # --- Embedded REST API verifies bearer JWTs against the MDS public key and
+      # installs the bearer-or-basic security handler.
+      KAFKA_KAFKA_REST_REST_SERVLET_INITIALIZOR_CLASSES: 'io.confluent.common.security.jetty.initializer.InstallBearerOrBasicSecurityHandler'
+      KAFKA_KAFKA_REST_PUBLIC_KEY_PATH: '/etc/kafka/secrets/tokenPublicKey.pem'
+      KAFKA_KAFKA_REST_CONFLUENT_METADATA_BOOTSTRAP_SERVER_URLS: 'http://dest-bearer:8090'
+      # Single-broker: all Confluent internal topics must use RF=1 (default 3).
+      KAFKA_CONFLUENT_CLUSTER_LINK_METADATA_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_COMMAND_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_TELEMETRY_METRICS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_LICENSE_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_CONFLUENT_BALANCER_ENABLE: 'false'
