@@ -445,6 +445,7 @@ func TestGetClusterLink_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing-link")
 	assert.Contains(t, err.Error(), "lkc-missing")
 	assert.Contains(t, err.Error(), "not found")
+	require.ErrorIs(t, err, ErrLinkNotFound)
 }
 
 func TestGetClusterLink_Unauthorized(t *testing.T) {

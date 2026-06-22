@@ -158,7 +158,7 @@ func (s *ConfluentCloudService) GetClusterLink(ctx context.Context, config Confi
 		if errors.As(err, &statusErr) {
 			switch statusErr.StatusCode {
 			case http.StatusNotFound:
-				return nil, fmt.Errorf("cluster link %q not found on cluster %s", config.LinkName, config.ClusterID)
+				return nil, fmt.Errorf("cluster link %q not found on cluster %s: %w", config.LinkName, config.ClusterID, ErrLinkNotFound)
 			case http.StatusUnauthorized, http.StatusForbidden:
 				return nil, fmt.Errorf("authentication failed (status %d) — verify --cluster-api-key and --cluster-api-secret", statusErr.StatusCode)
 			}
@@ -501,6 +501,10 @@ func CountActiveMirrorTopics(mirrors []MirrorTopic) int {
 // avoided; it is a belt-and-braces signal for the read-write race (§8.6).
 var ErrLinkExists = errors.New("cluster link already exists")
 
+// ErrLinkNotFound is returned (wrapped) by GetClusterLink when the target has
+// no link of that name (HTTP 404), so callers can branch with errors.Is.
+var ErrLinkNotFound = errors.New("cluster link not found")
+
 // CreateClusterLinkRequest describes a destination-initiated cluster link.
 // Phase 1 populates only the PLAINTEXT fields; SASL/TLS fields are wired in
 // later auth phases.
@@ -565,6 +569,23 @@ func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Co
 // Used by integration-test teardown.
 func (s *ConfluentCloudService) DeleteClusterLink(ctx context.Context, config Config) error {
 	return s.doDeleteRequest(ctx, config, linkPath(config))
+}
+
+// GetKafkaClusterID returns the (single) Kafka cluster id from
+// GET /kafka/v3/clusters. Confluent Server exposes exactly one entry.
+func (s *ConfluentCloudService) GetKafkaClusterID(ctx context.Context, config Config) (string, error) {
+	var resp struct {
+		Data []struct {
+			ClusterID string `json:"cluster_id"`
+		} `json:"data"`
+	}
+	if err := s.doRequest(ctx, config, "/kafka/v3/clusters", &resp); err != nil {
+		return "", fmt.Errorf("failed to list kafka clusters: %w", err)
+	}
+	if len(resp.Data) == 0 {
+		return "", fmt.Errorf("no kafka cluster returned by %s/kafka/v3/clusters", config.RestEndpoint)
+	}
+	return resp.Data[0].ClusterID, nil
 }
 
 // doPostRequestExpectStatus posts a body and treats 200/201/204 as success,
