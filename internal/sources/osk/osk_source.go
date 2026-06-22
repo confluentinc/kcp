@@ -180,19 +180,24 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	}, nil
 }
 
-// createKafkaAdmin creates a Kafka Admin client for the OSK cluster
-func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
-	// OSK clusters don't have AWS-specific encryption settings, so we default to TLS
-	// For unauthenticated plaintext, the client will handle disabling TLS
+// BuildKafkaAdmin builds a Kafka admin client for an Apache Kafka cluster from
+// its credentials, dispatching on the single enabled auth method. Shared by the
+// scan path and the migrate (cluster-link) path so Surface-1 auth lives in one
+// place.
+func BuildKafkaAdmin(clusterCreds types.OSKClusterAuth) (client.KafkaAdmin, error) {
+	authType, err := clusterCreds.GetSelectedAuthType()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine auth type for cluster %s: %w", clusterCreds.ID, err)
+	}
+	return buildKafkaAdmin(clusterCreds, authType)
+}
+
+// buildKafkaAdmin is the existing switch, moved verbatim out of the method.
+func buildKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
 	clientBrokerEncryptionInTransit := kafkatypes.ClientBrokerTls
-
-	// Default Kafka version for OSK clusters (can be overridden if needed)
 	kafkaVersion := "3.6.0"
-
-	// Region is not applicable for OSK, use empty string
 	region := ""
 
-	// Create admin client with appropriate auth options
 	var kafkaAdmin client.KafkaAdmin
 	var err error
 
@@ -258,4 +263,9 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 	}
 
 	return kafkaAdmin, nil
+}
+
+// createKafkaAdmin is the scan path's entry point; it delegates to buildKafkaAdmin.
+func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
+	return buildKafkaAdmin(clusterCreds, authType)
 }
