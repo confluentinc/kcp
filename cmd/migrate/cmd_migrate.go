@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"github.com/confluentinc/kcp/cmd/migrate/apply"
 	"github.com/confluentinc/kcp/cmd/migrate/validate"
 	"github.com/spf13/cobra"
 )
@@ -15,5 +16,6 @@ func NewMigrateCmd() *cobra.Command {
 		},
 	}
 	cmd.AddCommand(validate.NewMigrateValidateCmd())
+	cmd.AddCommand(apply.NewMigrateApplyCmd())
 	return cmd
 }
