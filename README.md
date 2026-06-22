@@ -57,11 +57,11 @@ Full documentation is published at **[confluentinc.github.io/kcp](https://conflu
 > [!IMPORTANT]
 > Install a **released binary** as described below. Do not build from `main` for normal use — `main` is an in-development branch and is not a defined release.
 
-kcp ships pre-built binaries for macOS, Linux (amd64/arm64), and Windows (amd64) with every [GitHub release](https://github.com/confluentinc/kcp/releases/latest).
+kcp ships pre-built binaries with every [GitHub release](https://github.com/confluentinc/kcp/releases/latest): macOS and Linux (amd64/arm64), and Windows (amd64).
 
-### Recommended: install script (macOS / Linux)
+### macOS & Linux
 
-The install script detects your OS and architecture, downloads the latest stable release, verifies its checksum, and installs it onto your `PATH`:
+**Recommended — install script.** Detects your OS and architecture, downloads the latest stable release, verifies its checksum, and installs it onto your `PATH`:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | sh
@@ -77,12 +77,10 @@ curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | 
 curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | KCP_INSTALL_DIR="$HOME/.local/bin" sh
 ```
 
-### Manual download
-
-Prefer to download by hand? Grab the binary for your platform from the [latest release](https://github.com/confluentinc/kcp/releases/latest). Run `uname -m` if unsure of your architecture (`arm64`/`aarch64` → `arm64`; `x86_64` → `amd64`).
+**Manual download.** Prefer to do it by hand? Run `uname -m` if unsure of your architecture (`arm64`/`aarch64` → `arm64`; `x86_64` → `amd64`):
 
 ```bash
-# macOS (Apple Silicon: darwin_arm64, Intel: darwin_amd64) / Linux (linux_amd64, linux_arm64)
+# Apple Silicon: darwin_arm64. Intel Mac: darwin_amd64. Linux: linux_amd64 or linux_arm64.
 PLATFORM=darwin_arm64
 LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
   | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
@@ -93,7 +91,13 @@ sudo mv kcp /usr/local/bin/kcp
 kcp version
 ```
 
-**Windows:** download `kcp_windows_amd64.exe` from the [latest release](https://github.com/confluentinc/kcp/releases/latest), put it on a folder on your `PATH`, and verify with `kcp version`.
+### Windows
+
+Download `kcp_windows_amd64.exe` from the [latest release](https://github.com/confluentinc/kcp/releases/latest), rename it to `kcp.exe`, move it to a folder on your `PATH`, then verify in PowerShell:
+
+```powershell
+kcp version
+```
 
 ## Upgrading
 
