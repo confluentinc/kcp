@@ -20,6 +20,7 @@ require (
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/fatih/color v1.18.0
 	github.com/goccy/go-yaml v1.19.1
+	github.com/google/jsonschema-go v0.4.3
 	github.com/gruntwork-io/terratest v1.0.0
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/labstack/echo/v4 v4.13.4
