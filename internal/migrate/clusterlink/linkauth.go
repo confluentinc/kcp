@@ -2,7 +2,9 @@ package clusterlink
 
 import (
 	"fmt"
+	"os"
 
+	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -19,6 +21,37 @@ type LinkAuth struct {
 	CACertPath     string // truststore CA path
 	ClientCertPath string // mTLS keystore cert chain ("" unless mTLS)
 	ClientKeyPath  string // mTLS keystore key ("" unless mTLS)
+}
+
+// LoadTLS reads the PEM material referenced by the auth's cert paths into the
+// inline form a cluster-link request needs. Returns (nil, nil) when no TLS
+// material is required (PLAINTEXT).
+func (a LinkAuth) LoadTLS() (*svclink.SourceTLSMaterial, error) {
+	if a.CACertPath == "" && a.ClientCertPath == "" && a.ClientKeyPath == "" {
+		return nil, nil
+	}
+	read := func(p string) (string, error) {
+		if p == "" {
+			return "", nil
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return "", fmt.Errorf("reading TLS material %s: %w", p, err)
+		}
+		return string(b), nil
+	}
+	m := &svclink.SourceTLSMaterial{}
+	var err error
+	if m.CACertPEM, err = read(a.CACertPath); err != nil {
+		return nil, err
+	}
+	if m.ClientCertPEM, err = read(a.ClientCertPath); err != nil {
+		return nil, err
+	}
+	if m.ClientKeyPEM, err = read(a.ClientKeyPath); err != nil {
+		return nil, err
+	}
+	return m, nil
 }
 
 // LinkAuthFromSource maps the source's single enabled auth method to link config.

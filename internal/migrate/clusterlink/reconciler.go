@@ -28,9 +28,7 @@ type target interface {
 type Config struct {
 	LinkName               string
 	SourceBootstrapServers []string
-	SecurityProtocol       string            // Phase 1: always "PLAINTEXT"
-	SaslMechanism          string            // Phase 2+
-	SaslJaasConfig         string            // Phase 2+
+	Auth                   LinkAuth          // Surface-3 link→source auth (from LinkAuthFromSource)
 	Configs                map[string]string // spec.clusterLink.configs
 }
 
@@ -90,15 +88,20 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	summary := fmt.Sprintf("cluster link %q", r.cfg.LinkName)
 
 	if actual == nil {
+		tls, err := r.cfg.Auth.LoadTLS()
+		if err != nil {
+			return nil, fmt.Errorf("loading source TLS material: %w", err)
+		}
 		return plan{
 			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
 				Detail: fmt.Sprintf("source %s", sourceID)},
 			req: &svclink.CreateClusterLinkRequest{
 				SourceClusterID:        sourceID,
 				SourceBootstrapServers: r.cfg.SourceBootstrapServers,
-				SecurityProtocol:       r.cfg.SecurityProtocol,
-				SaslMechanism:          r.cfg.SaslMechanism,
-				SaslJaasConfig:         r.cfg.SaslJaasConfig,
+				SecurityProtocol:       r.cfg.Auth.SecurityProtocol,
+				SaslMechanism:          r.cfg.Auth.SaslMechanism,
+				SaslJaasConfig:         r.cfg.Auth.SaslJaasConfig,
+				SourceTLS:              tls,
 				Configs:                r.cfg.Configs,
 			},
 		}, nil

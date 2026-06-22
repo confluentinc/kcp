@@ -2,6 +2,7 @@ package clusterlink
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -34,7 +35,11 @@ func newReconciler(src fakeSource, tgt *fakeTarget) *Reconciler {
 	return New(Config{
 		LinkName:               "src-to-dest",
 		SourceBootstrapServers: []string{"source:29092"},
-		SecurityProtocol:       "PLAINTEXT",
+		Auth: LinkAuth{
+			SecurityProtocol: "SASL_SSL",
+			SaslMechanism:    "SCRAM-SHA-256",
+			SaslJaasConfig:   "jaas",
+		},
 	}, src, tgt)
 }
 
@@ -82,7 +87,47 @@ func TestApply_CreatesWithDerivedRequest(t *testing.T) {
 	require.Len(t, out.Created, 1)
 	require.Equal(t, "src-to-dest", tgt.createdName)
 	require.Equal(t, "src-1", tgt.createdReq.SourceClusterID)
+	require.Equal(t, "SASL_SSL", tgt.createdReq.SecurityProtocol)
+	require.Equal(t, "SCRAM-SHA-256", tgt.createdReq.SaslMechanism)
+	require.Equal(t, "jaas", tgt.createdReq.SaslJaasConfig)
+}
+
+func TestPlan_Plaintext_NoTLSMaterial(t *testing.T) {
+	tgt := &fakeTarget{clusterID: "dest-1", existing: nil}
+	r := New(Config{
+		LinkName:               "l",
+		SourceBootstrapServers: []string{"s:9092"},
+		Auth:                   LinkAuth{SecurityProtocol: "PLAINTEXT"},
+	}, fakeSource{id: "src-1"}, tgt)
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	_, err = r.Apply(context.Background(), plan)
+	require.NoError(t, err)
 	require.Equal(t, "PLAINTEXT", tgt.createdReq.SecurityProtocol)
+	require.Nil(t, tgt.createdReq.SourceTLS)
+}
+
+func TestPlan_TLSMaterialForwarded(t *testing.T) {
+	dir := t.TempDir()
+	ca := dir + "/ca.crt"
+	require.NoError(t, os.WriteFile(ca, []byte("CA-PEM"), 0600))
+	tgt := &fakeTarget{clusterID: "dest-1", existing: nil}
+	r := New(Config{
+		LinkName:               "l",
+		SourceBootstrapServers: []string{"s:9092"},
+		Auth: LinkAuth{
+			SecurityProtocol: "SASL_SSL",
+			SaslMechanism:    "SCRAM-SHA-256",
+			SaslJaasConfig:   "j",
+			CACertPath:       ca,
+		},
+	}, fakeSource{id: "src-1"}, tgt)
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	_, err = r.Apply(context.Background(), plan)
+	require.NoError(t, err)
+	require.NotNil(t, tgt.createdReq.SourceTLS)
+	require.Equal(t, "CA-PEM", tgt.createdReq.SourceTLS.CACertPEM)
 }
 
 func TestApply_DriftDoesNotCreate(t *testing.T) {

@@ -1,6 +1,7 @@
 package clusterlink
 
 import (
+	"os"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/types"
@@ -102,5 +103,47 @@ func TestLinkAuthFromSource_MTLS(t *testing.T) {
 
 func TestLinkAuthFromSource_NoMethod(t *testing.T) {
 	_, err := LinkAuthFromSource(types.OSKClusterAuth{})
+	require.Error(t, err)
+}
+
+func TestLinkAuth_LoadTLS_Plaintext(t *testing.T) {
+	m, err := LinkAuth{SecurityProtocol: "PLAINTEXT"}.LoadTLS()
+	require.NoError(t, err)
+	require.Nil(t, m)
+}
+
+func TestLinkAuth_LoadTLS_CAOnly(t *testing.T) {
+	dir := t.TempDir()
+	ca := dir + "/ca.crt"
+	require.NoError(t, os.WriteFile(ca, []byte("CA-PEM"), 0600))
+	m, err := LinkAuth{SecurityProtocol: "SASL_SSL", CACertPath: ca}.LoadTLS()
+	require.NoError(t, err)
+	require.NotNil(t, m)
+	require.Equal(t, "CA-PEM", m.CACertPEM)
+	require.Empty(t, m.ClientCertPEM)
+}
+
+func TestLinkAuth_LoadTLS_MTLS(t *testing.T) {
+	dir := t.TempDir()
+	write := func(n, c string) string {
+		p := dir + "/" + n
+		require.NoError(t, os.WriteFile(p, []byte(c), 0600))
+		return p
+	}
+	m, err := LinkAuth{
+		SecurityProtocol: "SSL",
+		CACertPath:       write("ca", "CA"),
+		ClientCertPath:   write("crt", "CERT"),
+		ClientKeyPath:    write("key", "KEY"),
+	}.LoadTLS()
+	require.NoError(t, err)
+	require.NotNil(t, m)
+	require.Equal(t, "CA", m.CACertPEM)
+	require.Equal(t, "CERT", m.ClientCertPEM)
+	require.Equal(t, "KEY", m.ClientKeyPEM)
+}
+
+func TestLinkAuth_LoadTLS_MissingFile(t *testing.T) {
+	_, err := LinkAuth{CACertPath: "/no/such/ca.crt"}.LoadTLS()
 	require.Error(t, err)
 }

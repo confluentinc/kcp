@@ -87,10 +87,14 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	tgt := targets.NewConfluentPlatformTarget(m.Spec.Target.Kafka.RestEndpoint, tgtCreds, nil)
 
 	// --- reconciler ---
+	auth, err := mclusterlink.LinkAuthFromSource(srcCluster)
+	if err != nil {
+		return fmt.Errorf("deriving cluster-link source auth: %w", err)
+	}
 	rec := mclusterlink.New(mclusterlink.Config{
 		LinkName:               m.Spec.ClusterLink.Name,
 		SourceBootstrapServers: srcCluster.BootstrapServers,
-		SecurityProtocol:       "PLAINTEXT", // Phase 1
+		Auth:                   auth,
 		Configs:                m.Spec.ClusterLink.Configs,
 	}, src, tgt)
 
