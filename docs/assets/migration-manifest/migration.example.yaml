@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
 # migration.yaml — describes the desired end state of a migration.
 # Apply with: kcp migrate validate -f migration.yaml   (then, later phases, apply/status)
 apiVersion: kcp.confluent.io/v1alpha1
