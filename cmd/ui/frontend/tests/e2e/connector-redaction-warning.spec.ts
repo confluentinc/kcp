@@ -27,8 +27,9 @@ async function openConnectorsView(page: import('@playwright/test').Page, state: 
     mimeType: 'application/json',
     buffer: Buffer.from(JSON.stringify(state)),
   })
-  await page.waitForTimeout(500)
-  await page.click('text=prod-kafka-cluster')
+  // Click auto-waits for the uploaded state to render the cluster button — no
+  // fixed sleep. The role-scoped locator avoids matching the detail heading.
+  await page.getByRole('button', { name: 'prod-kafka-cluster' }).click()
   await page.click('nav button:has-text("Connectors")')
 }
 

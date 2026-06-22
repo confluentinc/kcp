@@ -302,9 +302,11 @@ export const ClusterConnectors = ({
 
   // Whether any displayed connector (either tab) still carries the redaction
   // placeholder and therefore needs manual secret replacement before applying.
+  // Guard against null props (a state file may carry `connectors: null`); the
+  // `= []` default only covers undefined.
   const hasRedactedConnectorConfig =
-    connectors.some((c) => hasRedactedConfig(c.connector_configuration)) ||
-    selfManagedConnectors.some((c) => hasRedactedConfig(c.config))
+    (connectors ?? []).some((c) => hasRedactedConfig(c.connector_configuration)) ||
+    (selfManagedConnectors ?? []).some((c) => hasRedactedConfig(c.config))
 
   if (!hasMSKConnectors && !hasSelfManagedConnectors) {
     return (

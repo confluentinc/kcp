@@ -120,8 +120,11 @@ func TestSelfManagedConnectorMigrator_Run_GeneratedTerraformIsLeakFree(t *testin
 
 	tf, err := os.ReadFile(filepath.Join(outDir, "pg-sink-connector.tf"))
 	require.NoError(t, err)
-	assert.Contains(t, string(tf), redact.Placeholder, "redacted placeholder must survive into the generated Terraform")
-	assert.NotContains(t, string(tf), "hunter2", "no raw secret may appear in the generated Terraform")
+	// The sensitive key must render with the placeholder as its value, proving a
+	// redacted value round-trips into the persisted artifact as <kcp-redacted>
+	// (fail-closed) rather than as a working credential.
+	assert.Contains(t, string(tf), fmt.Sprintf("%q = %q", "database.password", redact.Placeholder),
+		"sensitive field must render as the redaction placeholder in the generated Terraform")
 }
 
 func TestSelfManagedConnectorMigrator_Run_WarnsWhenConfigRedacted(t *testing.T) {
@@ -142,6 +145,13 @@ func TestSelfManagedConnectorMigrator_Run_WarnsWhenConfigRedacted(t *testing.T) 
 					"database.password": redact.Placeholder,
 				},
 			},
+			{
+				Name: "clean-sink",
+				Config: map[string]any{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"tasks.max":       "3",
+				},
+			},
 		},
 		OutputDir: outDir,
 	})
@@ -149,7 +159,9 @@ func TestSelfManagedConnectorMigrator_Run_WarnsWhenConfigRedacted(t *testing.T) 
 
 	out := captureStdout(t, func() { require.NoError(t, migrator.Run()) })
 
-	assert.Contains(t, out, "1 of 1", "warning must be count-based")
+	// "1 of 2" exercises the numerator and denominator independently, guarding
+	// against an "N of N" regression that a 1-of-1 case would miss.
+	assert.Contains(t, out, "1 of 2", "warning must be count-based")
 	assert.Contains(t, out, redact.Placeholder, "warning must name the placeholder")
 	assert.NotContains(t, out, "pg-sink", "warning must not include the connector name")
 	assert.NotContains(t, out, "database.password", "warning must not include the field key")
