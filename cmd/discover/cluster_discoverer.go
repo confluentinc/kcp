@@ -182,65 +182,81 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 	fmt.Printf("  🔍 Scanning for matching connectors\n")
 	var matchingConnectors []types.ConnectorSummary
 
-	mskConnectResult, err := cd.mskConnectService.ListConnectors(ctx, &kafkaconnect.ListConnectorsInput{})
-	if err != nil {
-		slog.Warn("failed to list MSK Connect connectors; skipping connector discovery", "error", err)
-		return nil, nil
-	}
-
 	totalRedacted := 0
-	for _, connector := range mskConnectResult.Connectors {
-		describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
-			ConnectorArn: connector.ConnectorArn,
-		})
+	// Page through ListConnectors so accounts with more than one page of
+	// connectors are not silently truncated (R3). Mirrors the manual NextToken
+	// loop used by ListClientVpcConnections.
+	var input kafkaconnect.ListConnectorsInput
+	for {
+		mskConnectResult, err := cd.mskConnectService.ListConnectors(ctx, &input)
 		if err != nil {
-			slog.Warn("failed to describe connector; skipping", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
-			continue
+			// Non-fatal (R3). On a first-page error nothing has been collected, so
+			// this returns empty; on a mid-pagination error it returns the
+			// connectors gathered from earlier pages rather than discarding them —
+			// the merge-on-rerun seam (U3) then keeps any connector that lived only
+			// on the un-fetched page via its prior redacted copy in state.
+			slog.Warn("failed to list MSK Connect connectors; skipping remaining connector discovery", "error", err)
+			return matchingConnectors, nil
 		}
 
-		// Guard against partial AWS responses so a malformed connector is skipped
-		// rather than panicking and aborting discovery (R3).
-		if connector.KafkaClusterClientAuthentication == nil ||
-			connector.KafkaCluster == nil || connector.KafkaCluster.ApacheKafkaCluster == nil ||
-			connector.Capacity == nil || connector.CreationTime == nil {
-			slog.Warn("skipping connector with incomplete description", "connectorArn", aws.ToString(connector.ConnectorArn))
-			continue
+		for _, connector := range mskConnectResult.Connectors {
+			describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
+				ConnectorArn: connector.ConnectorArn,
+			})
+			if err != nil {
+				slog.Warn("failed to describe connector; skipping", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
+				continue
+			}
+
+			// Guard against partial AWS responses so a malformed connector is skipped
+			// rather than panicking and aborting discovery (R3).
+			if connector.KafkaClusterClientAuthentication == nil ||
+				connector.KafkaCluster == nil || connector.KafkaCluster.ApacheKafkaCluster == nil ||
+				connector.Capacity == nil || connector.CreationTime == nil {
+				slog.Warn("skipping connector with incomplete description", "connectorArn", aws.ToString(connector.ConnectorArn))
+				continue
+			}
+
+			authType, err := connectorAuthType(connector)
+			if err != nil {
+				slog.Warn("skipping connector with unsupported auth/encryption type", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
+				continue
+			}
+
+			brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
+			if err != nil {
+				slog.Warn("failed to resolve bootstrap brokers; skipping connector", "authType", authType, "error", err)
+				continue
+			}
+
+			// A connector belongs to this cluster only if its bootstrap servers match the cluster's.
+			connectorBootstrap := aws.ToString(connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers)
+			if !bootstrapMatches(connectorBootstrap, brokerAddresses) {
+				continue
+			}
+
+			// Redact sensitive values before they enter the persisted summary (R11).
+			redactedConfig, redactedCount := redact.RedactStringMap(describeConnector.ConnectorConfiguration)
+			totalRedacted += redactedCount
+
+			fmt.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
+			matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
+				ConnectorArn:                     aws.ToString(connector.ConnectorArn),
+				ConnectorName:                    aws.ToString(connector.ConnectorName),
+				ConnectorState:                   string(connector.ConnectorState),
+				CreationTime:                     connector.CreationTime.Format(time.RFC3339),
+				KafkaCluster:                     *connector.KafkaCluster.ApacheKafkaCluster,
+				KafkaClusterClientAuthentication: *connector.KafkaClusterClientAuthentication,
+				Capacity:                         *connector.Capacity,
+				Plugins:                          describeConnector.Plugins,
+				ConnectorConfiguration:           redactedConfig,
+			})
 		}
 
-		authType, err := connectorAuthType(connector)
-		if err != nil {
-			slog.Warn("skipping connector with unsupported auth/encryption type", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
-			continue
+		if mskConnectResult.NextToken == nil {
+			break
 		}
-
-		brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
-		if err != nil {
-			slog.Warn("failed to resolve bootstrap brokers; skipping connector", "authType", authType, "error", err)
-			continue
-		}
-
-		// A connector belongs to this cluster only if its bootstrap servers match the cluster's.
-		connectorBootstrap := aws.ToString(connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers)
-		if !bootstrapMatches(connectorBootstrap, brokerAddresses) {
-			continue
-		}
-
-		// Redact sensitive values before they enter the persisted summary (R11).
-		redactedConfig, redactedCount := redact.RedactStringMap(describeConnector.ConnectorConfiguration)
-		totalRedacted += redactedCount
-
-		fmt.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
-		matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
-			ConnectorArn:                     aws.ToString(connector.ConnectorArn),
-			ConnectorName:                    aws.ToString(connector.ConnectorName),
-			ConnectorState:                   string(connector.ConnectorState),
-			CreationTime:                     connector.CreationTime.Format(time.RFC3339),
-			KafkaCluster:                     *connector.KafkaCluster.ApacheKafkaCluster,
-			KafkaClusterClientAuthentication: *connector.KafkaClusterClientAuthentication,
-			Capacity:                         *connector.Capacity,
-			Plugins:                          describeConnector.Plugins,
-			ConnectorConfiguration:           redactedConfig,
-		})
+		input.NextToken = mskConnectResult.NextToken
 	}
 
 	if totalRedacted > 0 {

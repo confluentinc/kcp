@@ -80,6 +80,55 @@ func TestDiscoverMatchingConnectors_RedactsConfigBeforeReturn(t *testing.T) {
 	assert.Equal(t, "3", cfg["tasks.max"], "benign config preserved")
 }
 
+func TestDiscoverMatchingConnectors_PaginatesAllPages(t *testing.T) {
+	// ListConnectors returns two pages; discovery must follow NextToken and
+	// collect connectors from every page, not just the first (R3).
+	page1 := iamConnectorSummary("conn-page1")
+	page2 := iamConnectorSummary("conn-page2")
+	connect := &stubMSKConnectService{
+		listConnectorsFn: func(_ context.Context, params *kafkaconnect.ListConnectorsInput, _ ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+			if params.NextToken == nil {
+				return &kafkaconnect.ListConnectorsOutput{
+					Connectors: []kafkaconnecttypes.ConnectorSummary{page1},
+					NextToken:  aws.String("page-2-token"),
+				}, nil
+			}
+			return &kafkaconnect.ListConnectorsOutput{
+				Connectors: []kafkaconnecttypes.ConnectorSummary{page2},
+			}, nil
+		},
+		describeConnectorFn: describeWithConfig(map[string]string{"tasks.max": "3"}),
+	}
+	msk, ec2svc, metrics := defaultStubs()
+	cd := newTestClusterDiscovererWithConnect(msk, ec2svc, metrics, connect)
+
+	connectors, err := cd.discoverMatchingConnectors(context.Background(), awsClientInfoWithIAMBrokers())
+	require.NoError(t, err)
+	require.Len(t, connectors, 2, "connectors from both pages must be collected")
+	names := []string{connectors[0].ConnectorName, connectors[1].ConnectorName}
+	assert.ElementsMatch(t, []string{"conn-page1", "conn-page2"}, names)
+}
+
+func TestDiscoverMatchingConnectors_SinglePageTerminates(t *testing.T) {
+	// A lone page (NextToken=nil) terminates after exactly one call — no extra
+	// fetch, no infinite loop.
+	calls := 0
+	connect := &stubMSKConnectService{
+		listConnectorsFn: func(_ context.Context, _ *kafkaconnect.ListConnectorsInput, _ ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+			calls++
+			return &kafkaconnect.ListConnectorsOutput{Connectors: []kafkaconnecttypes.ConnectorSummary{iamConnectorSummary("only")}}, nil
+		},
+		describeConnectorFn: describeWithConfig(map[string]string{"tasks.max": "3"}),
+	}
+	msk, ec2svc, metrics := defaultStubs()
+	cd := newTestClusterDiscovererWithConnect(msk, ec2svc, metrics, connect)
+
+	connectors, err := cd.discoverMatchingConnectors(context.Background(), awsClientInfoWithIAMBrokers())
+	require.NoError(t, err)
+	require.Len(t, connectors, 1)
+	assert.Equal(t, 1, calls, "single page must result in exactly one ListConnectors call")
+}
+
 func TestDiscoverMatchingConnectors_AccessDeniedIsNonFatal(t *testing.T) {
 	connect := &stubMSKConnectService{
 		listConnectorsFn: func(context.Context, *kafkaconnect.ListConnectorsInput, ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
@@ -92,6 +141,33 @@ func TestDiscoverMatchingConnectors_AccessDeniedIsNonFatal(t *testing.T) {
 	connectors, err := cd.discoverMatchingConnectors(context.Background(), awsClientInfoWithIAMBrokers())
 	require.NoError(t, err, "access-denied on ListConnectors must be non-fatal")
 	assert.Empty(t, connectors)
+}
+
+func TestDiscoverMatchingConnectors_MidPaginationErrorReturnsCollectedSoFar(t *testing.T) {
+	// Page 1 succeeds, page 2 errors. The error is non-fatal and the connectors
+	// already collected from page 1 must be preserved (not discarded), so a
+	// connector on an un-fetched page keeps its prior redacted copy in state via
+	// the merge-on-rerun seam.
+	page1 := iamConnectorSummary("conn-page1")
+	connect := &stubMSKConnectService{
+		listConnectorsFn: func(_ context.Context, params *kafkaconnect.ListConnectorsInput, _ ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+			if params.NextToken == nil {
+				return &kafkaconnect.ListConnectorsOutput{
+					Connectors: []kafkaconnecttypes.ConnectorSummary{page1},
+					NextToken:  aws.String("page-2-token"),
+				}, nil
+			}
+			return nil, errors.New("AccessDeniedException on page 2")
+		},
+		describeConnectorFn: describeWithConfig(map[string]string{"tasks.max": "3"}),
+	}
+	msk, ec2svc, metrics := defaultStubs()
+	cd := newTestClusterDiscovererWithConnect(msk, ec2svc, metrics, connect)
+
+	connectors, err := cd.discoverMatchingConnectors(context.Background(), awsClientInfoWithIAMBrokers())
+	require.NoError(t, err, "mid-pagination error must be non-fatal")
+	require.Len(t, connectors, 1, "connectors collected before the error must be preserved")
+	assert.Equal(t, "conn-page1", connectors[0].ConnectorName)
 }
 
 func TestDiscoverMatchingConnectors_NonMatchingExcluded(t *testing.T) {
