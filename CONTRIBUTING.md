@@ -194,29 +194,17 @@ make docs-serve     # Serve the docs locally with live reload
 make docs-build     # Build the docs site into ./site
 ```
 
-## Cutting a release
+## Versioning
 
-Releases are driven by [GoReleaser](https://goreleaser.com/) from a git tag. Each
-release publishes raw binaries named `kcp_<os>_<arch>` (plus `kcp_windows_amd64.exe`)
-and a `checksums.txt`, which is what `install.sh`, the docs install commands, and the
-`kcp update` self-updater all expect.
+kcp follows [semantic versioning](https://semver.org/) with `v`-prefixed git tags
+(e.g. `v0.8.5`). The binary stamps its version from the nearest git tag via
+`git describe`, so a local build between releases reports something like
+`v0.8.5-3-gabc1234` (3 commits past `v0.8.5`). A checkout with no tags reports
+`0.0.0-localdev` and is treated as a development build. Check what you're running with:
 
 ```bash
-# 1. Tag the release (semantic version, v-prefixed)
-git tag v0.9.0
-git push-external origin v0.9.0
-
-# 2. Dry-run locally to inspect the artifacts (writes to ./dist, publishes nothing)
-make release-snapshot
-
-# 3. Publish (requires goreleaser + a GITHUB_TOKEN with repo scope)
-make release
+kcp version
 ```
-
-> [!NOTE]
-> The authoritative release is produced by the Confluent Semaphore release pipeline.
-> The targets above mirror what that pipeline runs (`goreleaser`) and are useful for
-> local dry-runs and verification.
 
 ## Pull requests
 
