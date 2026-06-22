@@ -1,7 +1,6 @@
 package apply
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -14,6 +13,12 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
+
+// newSourceReader builds the live source reader. It is a package-level var so
+// tests can substitute a fake without opening a live Kafka connection.
+var newSourceReader = func(cluster types.OSKClusterAuth) migrate.Source {
+	return migrate.NewOSKSourceReader(cluster)
+}
 
 func NewMigrateApplyCmd() *cobra.Command {
 	var file string
@@ -69,10 +74,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	}
 	srcCluster := srcCreds.Clusters[0]
 
-	var src migrate.Source = migrate.NewOSKSourceReader(srcCluster)
-	if id := os.Getenv("KCP_TEST_SOURCE_CLUSTER_ID"); id != "" {
-		src = staticSource(id) // test hook: avoids a live Kafka connection in unit tests
-	}
+	src := newSourceReader(srcCluster)
 
 	// --- target (confluent-platform) ---
 	if m.Spec.Target.Type != manifest.TargetConfluentPlatform {
@@ -93,11 +95,8 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	}, src, tgt)
 
 	eng := reconcile.NewEngine(cmd.OutOrStdout())
+	// Phase 1 relies on the engine to render outcomes; the structured Report is
+	// not consumed yet (a later phase may use it for a machine-readable summary).
 	_, err = eng.Run(cmd.Context(), []reconcile.Reconciler{rec}, dryRun)
 	return err
 }
-
-// staticSource is a test hook returning a fixed cluster id.
-type staticSource string
-
-func (s staticSource) ClusterID(context.Context) (string, error) { return string(s), nil }

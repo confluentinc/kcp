@@ -2,14 +2,21 @@ package apply
 
 import (
 	"bytes"
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	migrate "github.com/confluentinc/kcp/internal/migrate"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/require"
 )
+
+type staticSource string
+
+func (s staticSource) ClusterID(context.Context) (string, error) { return string(s), nil }
 
 // startStubTarget serves the minimal CP REST surface: list clusters + get/create link.
 func startStubTarget(t *testing.T, linkExists bool) *httptest.Server {
@@ -32,7 +39,7 @@ func startStubTarget(t *testing.T, linkExists bool) *httptest.Server {
 }
 
 // run executes the apply command with a source whose ClusterID is faked via the
-// KCP_TEST_SOURCE_CLUSTER_ID test hook (see cmd implementation).
+// newSourceReader package-level seam (see cmd implementation).
 func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err error) {
 	t.Helper()
 	dir := t.TempDir()
@@ -47,7 +54,9 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 			"\n  target:\n    type: confluent-platform\n    credentials: "+targetCreds+
 			"\n    kafka:\n      restEndpoint: "+srvURL+"\n      bootstrapServers: [\"dest:29092\"]\n  clusterLink:\n    name: src-to-dest\n"), 0600))
 
-	t.Setenv("KCP_TEST_SOURCE_CLUSTER_ID", "src-1") // test hook: skip live source read
+	old := newSourceReader
+	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return staticSource("src-1") }
+	t.Cleanup(func() { newSourceReader = old })
 	cmd := NewMigrateApplyCmd()
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)

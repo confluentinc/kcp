@@ -105,9 +105,9 @@ type PromoteMirrorTopicsResponse struct {
 
 // Service defines cluster link operations.
 //
-// Lifecycle operations (CreateClusterLink, DeleteClusterLink) are intentionally
-// NOT part of this interface — they live on *ConfluentCloudService directly,
-// because they are setup/teardown operations rather than ongoing monitoring.
+// Lifecycle operations (CreateClusterLink) are intentionally NOT part of this
+// interface — they live on *ConfluentCloudService directly, because they are
+// setup operations rather than ongoing monitoring.
 type Service interface {
 	GetClusterLink(ctx context.Context, config Config) (*ClusterLink, error)
 	ListMirrorTopics(ctx context.Context, config Config) ([]MirrorTopic, error)
@@ -588,12 +588,6 @@ func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Co
 		return fmt.Errorf("failed to create cluster link %q on cluster %s: %w", config.LinkName, config.ClusterID, err)
 	}
 	return nil
-}
-
-// DeleteClusterLink issues DELETE /kafka/v3/clusters/{ClusterID}/links/{LinkName}.
-// Used by integration-test teardown.
-func (s *ConfluentCloudService) DeleteClusterLink(ctx context.Context, config Config) error {
-	return s.doDeleteRequest(ctx, config, linkPath(config))
 }
 
 // GetKafkaClusterID returns the (single) Kafka cluster id from

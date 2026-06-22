@@ -104,7 +104,10 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		}, nil
 	}
 
-	if actual.SourceClusterID == sourceID {
+	if actual.SourceClusterID == "" || actual.SourceClusterID == sourceID {
+		// Present: the link matches the desired source, OR the target did not
+		// report a source id (older CP) so we cannot prove drift — treat as
+		// present rather than fabricate drift (both are non-mutating anyway).
 		return plan{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}}, nil
 	}
 

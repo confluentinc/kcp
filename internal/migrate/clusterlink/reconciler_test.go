@@ -65,6 +65,14 @@ func TestPlan_PresentDifferentSource_IsDrift(t *testing.T) {
 	require.True(t, plan.Empty(), "drift plan must not be treated as requiring a create")
 }
 
+func TestPlan_PresentWhenTargetOmitsSourceID(t *testing.T) {
+	r := newReconciler(fakeSource{id: "src-1"}, &fakeTarget{clusterID: "dest-1",
+		existing: &svclink.ClusterLink{LinkName: "src-to-dest", SourceClusterID: ""}})
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, reconcile.ActionPresent, plan.Changes()[0].Action)
+}
+
 func TestApply_CreatesWithDerivedRequest(t *testing.T) {
 	tgt := &fakeTarget{clusterID: "dest-1", existing: nil}
 	r := newReconciler(fakeSource{id: "src-1"}, tgt)
