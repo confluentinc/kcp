@@ -167,3 +167,175 @@ func TestValidate_CPTargetRejectsCluster(t *testing.T) {
 	}
 	require.True(t, errorContains(m.Validate(), "spec.target.cluster"))
 }
+
+func TestValidate_ClusterLinkModes(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(m *Migration)
+		wantErr string // substring; "" means expect valid
+	}{
+		{
+			name: "valid destination mode",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:              "cl",
+					Mode:              "destination",
+					SourceCredentials: "./src.yaml",
+				}
+			},
+		},
+		{
+			name: "default empty mode treated as destination",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:              "cl",
+					SourceCredentials: "./src.yaml",
+				}
+			},
+		},
+		{
+			name: "destination missing sourceCredentials",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{Name: "cl", Mode: "destination"}
+			},
+			wantErr: "spec.clusterLink.sourceCredentials",
+		},
+		{
+			name: "destination with sourceRest set rejected",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:              "cl",
+					Mode:              "destination",
+					SourceCredentials: "./src.yaml",
+					SourceRest:        &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+				}
+			},
+			wantErr: "spec.clusterLink.sourceRest",
+		},
+		{
+			name: "destination with destinationCredentials set rejected",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:                   "cl",
+					Mode:                   "destination",
+					SourceCredentials:      "./src.yaml",
+					DestinationCredentials: "./dst.yaml",
+				}
+			},
+			wantErr: "spec.clusterLink.destinationCredentials",
+		},
+		{
+			name: "source missing sourceRest",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = TargetConfluentPlatform
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:                   "cl",
+					Mode:                   "source",
+					DestinationCredentials: "./dst.yaml",
+				}
+			},
+			wantErr: "spec.clusterLink.sourceRest",
+		},
+		{
+			name: "source sourceRest missing endpoint",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = TargetConfluentPlatform
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:                   "cl",
+					Mode:                   "source",
+					SourceRest:             &RestRef{Credentials: "./rest.yaml"},
+					DestinationCredentials: "./dst.yaml",
+				}
+			},
+			wantErr: "spec.clusterLink.sourceRest.endpoint",
+		},
+		{
+			name: "source sourceRest missing credentials",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = TargetConfluentPlatform
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:                   "cl",
+					Mode:                   "source",
+					SourceRest:             &RestRef{Endpoint: "https://src:8090"},
+					DestinationCredentials: "./dst.yaml",
+				}
+			},
+			wantErr: "spec.clusterLink.sourceRest.credentials",
+		},
+		{
+			name: "source missing destinationCredentials",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = TargetConfluentPlatform
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:       "cl",
+					Mode:       "source",
+					SourceRest: &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+				}
+			},
+			wantErr: "spec.clusterLink.destinationCredentials",
+		},
+		{
+			name: "source with sourceCredentials set rejected",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = TargetConfluentPlatform
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:                   "cl",
+					Mode:                   "source",
+					SourceCredentials:      "./src.yaml",
+					SourceRest:             &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					DestinationCredentials: "./dst.yaml",
+				}
+			},
+			wantErr: "spec.clusterLink.sourceCredentials",
+		},
+		{
+			name: "source mode rejected for apache-kafka source",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = SourceApacheKafka
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:                   "cl",
+					Mode:                   "source",
+					SourceRest:             &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					DestinationCredentials: "./dst.yaml",
+				}
+			},
+			wantErr: "spec.clusterLink.mode",
+		},
+		{
+			name: "bidirectional mode rejected with clear message",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:              "cl",
+					Mode:              "bidirectional",
+					SourceCredentials: "./src.yaml",
+				}
+			},
+			wantErr: "not supported",
+		},
+		{
+			name: "unknown mode rejected",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:              "cl",
+					Mode:              "sideways",
+					SourceCredentials: "./src.yaml",
+				}
+			},
+			wantErr: "spec.clusterLink.mode",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := validCC()
+			tc.mutate(m)
+			errs := m.Validate()
+			if tc.wantErr == "" {
+				require.Empty(t, errs)
+				return
+			}
+			require.True(t, errorContains(errs, tc.wantErr),
+				"expected error containing %q, got %v", tc.wantErr, errs)
+		})
+	}
+}

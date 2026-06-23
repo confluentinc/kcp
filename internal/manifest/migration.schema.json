@@ -127,6 +127,38 @@
             "name": {
               "type": "string"
             },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "destination",
+                "source"
+              ]
+            },
+            "sourceCredentials": {
+              "type": "string"
+            },
+            "sourceRest": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "endpoint": {
+                  "type": "string"
+                },
+                "credentials": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "endpoint",
+                "credentials"
+              ],
+              "additionalProperties": false
+            },
+            "destinationCredentials": {
+              "type": "string"
+            },
             "configs": {
               "type": "object",
               "additionalProperties": {
@@ -135,7 +167,9 @@
             }
           },
           "required": [
-            "name"
+            "name",
+            "mode",
+            "sourceCredentials"
           ],
           "additionalProperties": false
         },

@@ -16,6 +16,8 @@ spec:
       url: https://sr.internal:8081
   clusterLink:
     name: source-to-cp
+    mode: destination
+    sourceCredentials: ./source-creds.yaml
   topics:
     mode: mirror
     include: ["orders.*"]

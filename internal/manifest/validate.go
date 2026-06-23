@@ -102,6 +102,52 @@ func (m *Migration) Validate() []error {
 		errs = append(errs, validateSelection("spec.topics.include", t.Include)...)
 	}
 
+	if cl := m.Spec.ClusterLink; cl != nil {
+		if blank(cl.Name) {
+			add("spec.clusterLink.name: must not be empty")
+		}
+		mode := cl.Mode
+		if mode == "" {
+			mode = ClusterLinkModeDestination
+		}
+		switch mode {
+		case ClusterLinkModeDestination:
+			if blank(cl.SourceCredentials) {
+				add("spec.clusterLink.sourceCredentials: required for mode %q", ClusterLinkModeDestination)
+			}
+			if cl.SourceRest != nil {
+				add("spec.clusterLink.sourceRest: not valid for mode %q", ClusterLinkModeDestination)
+			}
+			if !blank(cl.DestinationCredentials) {
+				add("spec.clusterLink.destinationCredentials: not valid for mode %q", ClusterLinkModeDestination)
+			}
+		case ClusterLinkModeSource:
+			if cl.SourceRest == nil {
+				add("spec.clusterLink.sourceRest: required for mode %q", ClusterLinkModeSource)
+			} else {
+				if blank(cl.SourceRest.Endpoint) {
+					add("spec.clusterLink.sourceRest.endpoint: must not be empty")
+				}
+				if blank(cl.SourceRest.Credentials) {
+					add("spec.clusterLink.sourceRest.credentials: must not be empty")
+				}
+			}
+			if blank(cl.DestinationCredentials) {
+				add("spec.clusterLink.destinationCredentials: required for mode %q", ClusterLinkModeSource)
+			}
+			if !blank(cl.SourceCredentials) {
+				add("spec.clusterLink.sourceCredentials: not valid for mode %q", ClusterLinkModeSource)
+			}
+			if m.Spec.Source.Type == SourceApacheKafka {
+				add("spec.clusterLink.mode: %q is not supported when spec.source.type is %q (only confluent-platform/confluent-cloud can initiate a link)", ClusterLinkModeSource, SourceApacheKafka)
+			}
+		case "bidirectional":
+			add(`spec.clusterLink.mode: "bidirectional" is not supported (DR/active-active, not migration); use two unidirectional links`)
+		default:
+			add("spec.clusterLink.mode: unsupported value %q (supported: %s, %s)", cl.Mode, ClusterLinkModeDestination, ClusterLinkModeSource)
+		}
+	}
+
 	if a := m.Spec.ACLs; a != nil {
 		errs = append(errs, validateSelection("spec.acls.include", a.Include)...)
 	}

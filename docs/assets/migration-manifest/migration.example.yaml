@@ -17,6 +17,8 @@ spec:
 
   clusterLink:
     name: source-to-cc
+    mode: destination                      # destination (default) | source
+    sourceCredentials: ./source-creds.yaml # link→source credentials (destination mode)
 
   topics:
     mode: mirror

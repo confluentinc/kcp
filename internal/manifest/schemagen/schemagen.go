@@ -23,10 +23,12 @@ func Generate() ([]byte, error) {
 	source := spec.Properties["source"]
 	target := spec.Properties["target"]
 	topics := spec.Properties["topics"]
+	clusterLink := spec.Properties["clusterLink"]
 
 	source.Properties["type"].Enum = []any{manifest.SourceApacheKafka}
 	target.Properties["type"].Enum = []any{manifest.TargetConfluentCloud, manifest.TargetConfluentPlatform}
 	topics.Properties["mode"].Enum = []any{manifest.TopicModeMirror, manifest.TopicModeNew}
+	clusterLink.Properties["mode"].Enum = []any{manifest.ClusterLinkModeDestination, manifest.ClusterLinkModeSource}
 
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {

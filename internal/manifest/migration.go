@@ -17,6 +17,13 @@ const (
 
 	TopicModeMirror = "mirror"
 	TopicModeNew    = "new"
+
+	// ClusterLinkModeDestination is the default cluster-link mode: the link is
+	// created on the destination (target) cluster and pulls from the source.
+	ClusterLinkModeDestination = "destination"
+	// ClusterLinkModeSource creates the link on the source cluster (source-initiated),
+	// pushing to the destination. Only valid when the source can initiate (CP/CC).
+	ClusterLinkModeSource = "source"
 )
 
 // Migration is the top-level migration manifest.
@@ -65,8 +72,25 @@ type Endpoint struct {
 }
 
 type ClusterLink struct {
-	Name    string            `yaml:"name" json:"name"`
-	Configs map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
+	Name string `yaml:"name" json:"name"`
+	// Mode is the cluster-link mode: "destination" (default) or "source".
+	// Empty is treated as "destination".
+	Mode string `yaml:"mode" json:"mode"`
+	// SourceCredentials is the path to an apache-kafka credentials file: the
+	// link→source credentials used in destination mode.
+	SourceCredentials string `yaml:"sourceCredentials" json:"sourceCredentials"`
+	// SourceRest is the KCP→source REST endpoint for source-initiated mode.
+	SourceRest *RestRef `yaml:"sourceRest,omitempty" json:"sourceRest,omitempty"`
+	// DestinationCredentials is the path to an apache-kafka credentials file: the
+	// source-side link→destination credentials used in source mode.
+	DestinationCredentials string            `yaml:"destinationCredentials,omitempty" json:"destinationCredentials,omitempty"`
+	Configs                map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
+}
+
+// RestRef references a REST endpoint plus a credentials file for it.
+type RestRef struct {
+	Endpoint    string `yaml:"endpoint" json:"endpoint"`
+	Credentials string `yaml:"credentials" json:"credentials"`
 }
 
 type Topics struct {
