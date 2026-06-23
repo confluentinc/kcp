@@ -19,6 +19,14 @@ spec:
     name: source-to-cc
     mode: destination                      # destination (default) | source
     sourceCredentials: ./source-creds.yaml # link→source credentials (destination mode)
+    # Source-initiated alternative — for a private/firewalled Confluent source the
+    # destination cannot reach inbound (requires spec.source.type: confluent-platform).
+    # Replace the two lines above with:
+    #   mode: source
+    #   sourceRest:                              # KCP → source REST (creates the source-side link)
+    #     endpoint: https://source:8090
+    #     credentials: ./source-rest-creds.yaml
+    #   destinationCredentials: ./dest-creds.yaml # source-side link → destination
 
   topics:
     mode: mirror
