@@ -3,6 +3,7 @@ import { Button } from '@/components/common/ui/button'
 import { formatDate } from '@/lib/formatters'
 import { hasRedactedConfig } from '@/lib/redaction'
 import { CONNECTOR_TABS, REDACTED_PLACEHOLDER } from '@/constants'
+import { ConnectMetrics } from './ConnectMetrics'
 import type { ConnectorTab } from '@/types'
 
 interface Connector {
@@ -52,13 +53,33 @@ interface SelfManagedConnector {
 interface ClusterConnectorsProps {
   connectors: Connector[]
   selfManagedConnectors?: SelfManagedConnector[]
+  connectMetrics?: {
+    metadata?: {
+      start_date?: string
+      end_date?: string
+      period?: number
+    }
+  }
+  clusterId?: string
 }
 
 export const ClusterConnectors = ({
   connectors,
   selfManagedConnectors = [],
+  connectMetrics,
+  clusterId,
 }: ClusterConnectorsProps) => {
   const [activeTab, setActiveTab] = useState<ConnectorTab>(CONNECTOR_TABS.MSK)
+  const [copiedConnector, setCopiedConnector] = useState<string | null>(null)
+
+  const handleCopyConfig = (connectorName: string, config: Record<string, string>) => {
+    const configText = Object.entries(config)
+      .map(([key, value]) => `${key}=${value}`)
+      .join('\n')
+    navigator.clipboard.writeText(configText)
+    setCopiedConnector(connectorName)
+    setTimeout(() => setCopiedConnector(null), 2000)
+  }
 
   const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
     <div
@@ -83,16 +104,11 @@ export const ClusterConnectors = ({
         <div className="flex items-center justify-between mb-3">
           <h5 className="font-medium text-foreground">Connector Configuration</h5>
           <Button
-            onClick={() => {
-              const configText = Object.entries(connector.config)
-                .map(([key, value]) => `${key}=${value}`)
-                .join('\n')
-              navigator.clipboard.writeText(configText)
-            }}
+            onClick={() => handleCopyConfig(connector.name, connector.config)}
             variant="outline"
             size="sm"
           >
-            Copy Config
+            {copiedConnector === connector.name ? 'Copied!' : 'Copy Config'}
           </Button>
         </div>
 
@@ -222,16 +238,11 @@ export const ClusterConnectors = ({
                     Connector Configuration
                   </h5>
                   <Button
-                    onClick={() => {
-                      const configText = Object.entries(connector.connector_configuration)
-                        .map(([key, value]) => `${key}=${value}`)
-                        .join('\n')
-                      navigator.clipboard.writeText(configText)
-                    }}
+                    onClick={() => handleCopyConfig(connector.connector_arn, connector.connector_configuration)}
                     variant="outline"
                     size="sm"
                   >
-                    Copy Config
+                    {copiedConnector === connector.connector_arn ? 'Copied!' : 'Copy Config'}
                   </Button>
                 </div>
 
@@ -276,6 +287,13 @@ export const ClusterConnectors = ({
 
     return (
       <div className="space-y-8">
+        {connectMetrics?.metadata && clusterId && (
+          <ConnectMetrics
+            clusterId={clusterId}
+            connectMetricsMetadata={connectMetrics.metadata}
+          />
+        )}
+
         {Object.entries(groupedConnectors).map(([connectHost, connectors]) => (
           <div
             key={connectHost}
