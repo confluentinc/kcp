@@ -331,7 +331,7 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState ProcessedState, 
 }
 
 // FilterConnectMetrics filters Connect metrics for an OSK cluster by cluster ID and date range
-func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
 	var targetCluster *ProcessedOSKCluster
 
 	for _, source := range processedState.Sources {
@@ -354,22 +354,22 @@ func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clu
 
 	smc := targetCluster.KafkaAdminClientInformation.SelfManagedConnectors
 	if smc == nil || smc.Metrics == nil {
-		return &types.ProcessedClusterMetrics{
-			ClusterArn: clusterID,
-		}, nil
+		// No Connect metrics collected for this cluster — the handler detects
+		// the nil Metrics slice and returns a "no metrics" response.
+		return &types.ConnectClusterMetrics{}, nil
 	}
 
 	filteredMetrics := rs.filterMetricsByDateRange(smc.Metrics.Metrics, startTime, endTime)
 	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
-	return &types.ProcessedClusterMetrics{
-		ClusterArn:  clusterID,
-		Metadata:    smc.Metrics.Metadata,
-		Metrics:     filteredMetrics,
-		Aggregates:  aggregates,
-		QueryInfo:   smc.Metrics.QueryInfo,
-		Environment: targetCluster.Metadata.Environment,
-		Location:    targetCluster.Metadata.Location,
+	// Connect metrics carry their own metadata (start/end/period/metrics_source);
+	// region/cluster_arn and the broker-only fields have no meaning here and are
+	// intentionally not part of the Connect shape.
+	return &types.ConnectClusterMetrics{
+		Metadata:   smc.Metrics.Metadata,
+		Metrics:    filteredMetrics,
+		Aggregates: aggregates,
+		QueryInfo:  smc.Metrics.QueryInfo,
 	}, nil
 }
 
