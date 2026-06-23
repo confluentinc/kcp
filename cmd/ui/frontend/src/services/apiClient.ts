@@ -187,6 +187,31 @@ const metrics = {
   },
 
   /**
+   * Get Connect metrics for an OSK cluster
+   */
+  async getOSKConnectMetrics(
+    clusterId: string,
+    sessionId: string,
+    params?: MetricsQueryParams,
+    config?: RequestConfig
+  ): Promise<MetricsApiResponse> {
+    const queryParams: Record<string, string | Date | undefined> = { sessionId }
+    if (params?.startDate) {
+      queryParams.startDate =
+        params.startDate instanceof Date ? params.startDate : new Date(params.startDate)
+    }
+    if (params?.endDate) {
+      queryParams.endDate =
+        params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
+    }
+    return get<MetricsApiResponse>(
+      `${API_ENDPOINTS.METRICS}/osk/${encodeURIComponent(clusterId)}/connect`,
+      queryParams,
+      config
+    )
+  },
+
+  /**
    * Get metrics for an OSK cluster
    */
   async getOSKMetrics(

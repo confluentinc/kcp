@@ -446,7 +446,7 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.Jolokia.TLS.CACert, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
-	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(), jolokiaOpts...)
+	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(), "broker", jolokiaOpts...)
 	return jmxService.CollectOverDuration(ctx, duration, interval)
 }
 
