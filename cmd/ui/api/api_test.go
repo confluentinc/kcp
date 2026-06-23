@@ -34,6 +34,10 @@ func (m *mockReportService) FilterClusterMetrics(processedState report.Processed
 	return nil, nil
 }
 
+func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	return nil, nil
+}
+
 func newTestUI() *UI {
 	return &UI{
 		reportService: &mockReportService{},
