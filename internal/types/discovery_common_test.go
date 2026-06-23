@@ -1,0 +1,75 @@
+package types
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+// smc builds a SelfManagedConnectors with the named connectors and the given
+// metrics pointer (which may be nil).
+func smc(names []string, metrics *ProcessedClusterMetrics) *SelfManagedConnectors {
+	conns := make([]SelfManagedConnector, 0, len(names))
+	for _, n := range names {
+		conns = append(conns, SelfManagedConnector{Name: n})
+	}
+	return &SelfManagedConnectors{Connectors: conns, Metrics: metrics}
+}
+
+// R9: re-running a scan without --metrics must not wipe previously-collected
+// metrics. New connectors take precedence; metrics prefer-new-fall-back-to-old.
+func TestMergeSelfManagedConnectors_NewNilMetrics_KeepsOld(t *testing.T) {
+	oldM := &ProcessedClusterMetrics{}
+	merged := mergeSelfManagedConnectors(smc([]string{"a"}, nil), smc([]string{"a"}, oldM))
+	require.NotNil(t, merged.Metrics)
+	require.Same(t, oldM, merged.Metrics, "old metrics preserved when new run carries none")
+}
+
+func TestMergeSelfManagedConnectors_NewMetrics_Wins(t *testing.T) {
+	oldM := &ProcessedClusterMetrics{}
+	newM := &ProcessedClusterMetrics{}
+	merged := mergeSelfManagedConnectors(smc([]string{"a"}, newM), smc([]string{"a"}, oldM))
+	require.Same(t, newM, merged.Metrics, "freshly-collected metrics take precedence")
+}
+
+// Edge case (R9): the side that survives the early return has zero connectors
+// but carries metrics — those metrics must not be dropped. RED against the
+// current early-return at discovery_common.go.
+func TestMergeSelfManagedConnectors_OldZeroConnectorsButMetrics_Preserved(t *testing.T) {
+	oldM := &ProcessedClusterMetrics{}
+	old := smc(nil, oldM) // zero connectors, but has metrics
+	new := smc([]string{"a"}, nil)
+
+	merged := mergeSelfManagedConnectors(new, old)
+
+	require.Len(t, merged.Connectors, 1, "new connectors retained")
+	require.NotNil(t, merged.Metrics, "metrics must survive the zero-connector early return")
+	require.Same(t, oldM, merged.Metrics)
+}
+
+// Edge case (R9): the new run discovered zero connectors — old connectors and
+// old metrics must both survive.
+func TestMergeSelfManagedConnectors_NewZeroConnectors_KeepsOld(t *testing.T) {
+	oldM := &ProcessedClusterMetrics{}
+	old := smc([]string{"a"}, oldM)
+	new := smc(nil, nil)
+
+	merged := mergeSelfManagedConnectors(new, old)
+
+	require.Len(t, merged.Connectors, 1, "old connectors retained")
+	require.Same(t, oldM, merged.Metrics, "old metrics retained")
+}
+
+// Edge case (R9): new run has zero connectors but freshly-collected metrics —
+// the new metrics win, old connectors survive.
+func TestMergeSelfManagedConnectors_NewZeroConnectorsWithMetrics_PrefersNew(t *testing.T) {
+	oldM := &ProcessedClusterMetrics{}
+	newM := &ProcessedClusterMetrics{}
+	old := smc([]string{"a"}, oldM)
+	new := smc(nil, newM)
+
+	merged := mergeSelfManagedConnectors(new, old)
+
+	require.Len(t, merged.Connectors, 1, "old connectors retained")
+	require.Same(t, newM, merged.Metrics, "freshly-collected metrics take precedence even with zero new connectors")
+}

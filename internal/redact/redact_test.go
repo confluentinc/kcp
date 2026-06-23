@@ -16,6 +16,7 @@ func TestIsSensitive_SensitiveKeys(t *testing.T) {
 		"basic.auth.user.info",
 		"tls.private.key",
 		"bearer.token",
+		"connection.url", // value can embed inline credentials (jdbc/mongo URLs)
 		// pattern matches
 		"password",
 		"some.token",
@@ -95,7 +96,7 @@ func TestIsSensitive_AcceptedOverRedaction(t *testing.T) {
 func TestRedactStringMap_RedactsSensitiveKeepsBenign(t *testing.T) {
 	in := map[string]string{
 		"database.password": "hunter2",
-		"connection.url":    "jdbc:postgresql://db:5432/app",
+		"connection.url":    "jdbc:postgresql://user:pass@db:5432/app",
 		"tasks.max":         "3",
 		"aws.access.key.id": "AKIA-not-secret-id", // contains no pattern; not in static list as substring? -> see below
 	}
@@ -104,8 +105,10 @@ func TestRedactStringMap_RedactsSensitiveKeepsBenign(t *testing.T) {
 	if out["database.password"] != Placeholder {
 		t.Errorf("database.password = %q, want %q", out["database.password"], Placeholder)
 	}
-	if out["connection.url"] != "jdbc:postgresql://db:5432/app" {
-		t.Errorf("connection.url was altered: %q", out["connection.url"])
+	// connection.url is redacted wholesale because the value can embed inline
+	// credentials (e.g. jdbc:postgresql://user:pass@host/db).
+	if out["connection.url"] != Placeholder {
+		t.Errorf("connection.url = %q, want %q", out["connection.url"], Placeholder)
 	}
 	if out["tasks.max"] != "3" {
 		t.Errorf("tasks.max was altered: %q", out["tasks.max"])
