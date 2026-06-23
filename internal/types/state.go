@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -95,11 +96,11 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		}
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
+				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
 			}
-			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
+			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
 		}
-		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (OSK) using the latest KCP release", err)
+		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
 	}
 
 	if state.KcpBuildInfo.Version == "" {
@@ -112,18 +113,40 @@ func NewStateFromBytes(data []byte) (*State, error) {
 func (s *State) WriteToFile(filePath string) error {
 	data, err := json.Marshal(s)
 	if err != nil {
-		return fmt.Errorf("failed to marshal state: %v", err)
+		return fmt.Errorf("failed to marshal state: %w", err)
 	}
 
-	// Write to temporary file first for atomic operation
-	tmpFile := filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	// Write to a uniquely-named temp file in the same directory, then atomically
+	// rename it onto the target. os.CreateTemp creates the file with mode 0600,
+	// and we pin it explicitly so the state file (which holds sensitive
+	// infrastructure metadata) is never group/world readable, even briefly and
+	// even under an unusual umask. The real file is only ever replaced by the
+	// rename and is never deleted directly, so a crash before the rename leaves
+	// the previous state file intact.
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+
+	if err := tmpFile.Chmod(0600); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to set temp file permissions: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to close temp file: %w", err)
 	}
 
 	// Atomic rename (on most filesystems)
-	if err := os.Rename(tmpFile, filePath); err != nil {
-		os.Remove(tmpFile) // Clean up temp file
+	if err := os.Rename(tmpName, filePath); err != nil {
+		_ = os.Remove(tmpName) // Clean up temp file
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
@@ -190,6 +213,31 @@ func (s *State) UpsertRegion(newRegion DiscoveredRegion) {
 	s.MSKSources.Regions = append(s.MSKSources.Regions, newRegion)
 }
 
+// UpsertTargetedClusters refreshes region-level data (costs, configurations) and creates
+// or replaces only the clusters present in newRegion.Clusters, preserving every other
+// existing cluster in the region. Used by targeted (--cluster-arn) discovery. If the
+// region does not yet exist it is added as-is (fresh-state / new-region case).
+func (s *State) UpsertTargetedClusters(newRegion DiscoveredRegion) {
+	if s.MSKSources == nil {
+		s.MSKSources = &MSKSourcesState{
+			Regions: []DiscoveredRegion{},
+		}
+	}
+	for i := range s.MSKSources.Regions {
+		if s.MSKSources.Regions[i].Name == newRegion.Name {
+			// refresh region-level data discovered this run
+			s.MSKSources.Regions[i].Configurations = newRegion.Configurations
+			s.MSKSources.Regions[i].Costs = newRegion.Costs
+			// create-or-replace only the targeted clusters
+			for _, targeted := range newRegion.Clusters {
+				s.MSKSources.Regions[i].UpsertCluster(targeted)
+			}
+			return
+		}
+	}
+	s.MSKSources.Regions = append(s.MSKSources.Regions, newRegion)
+}
+
 func (s *State) UpsertDiscoveredClients(regionName string, clusterName string, discoveredClients []DiscoveredClient) error {
 	slog.Info("🔍 looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
 	if s.MSKSources == nil {
@@ -248,7 +296,7 @@ func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
 // GetOSKClusterByID looks up an OSK cluster by the user-provided ID from credentials
 func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
 	if s.OSKSources == nil {
-		return nil, fmt.Errorf("no OSK sources in state file")
+		return nil, fmt.Errorf("no Apache Kafka sources in state file")
 	}
 
 	for i := range s.OSKSources.Clusters {
@@ -257,5 +305,5 @@ func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
 		}
 	}
 
-	return nil, fmt.Errorf("OSK cluster with ID '%s' not found in state file", id)
+	return nil, fmt.Errorf("no Apache Kafka cluster with ID '%s' found in state file", id)
 }

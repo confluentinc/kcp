@@ -5,6 +5,7 @@ import (
 	"time"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -14,17 +15,17 @@ func fixedNow() time.Time {
 	return time.Date(2026, 5, 12, 12, 0, 0, 0, time.UTC)
 }
 
-func twoClusterState() types.ProcessedState {
+func twoClusterState() report.ProcessedState {
 	// b-cluster intentionally listed first so the sort proves it works.
-	return types.ProcessedState{
-		Sources: []types.ProcessedSource{
+	return report.ProcessedState{
+		Sources: []report.ProcessedSource{
 			{
 				Type: types.SourceTypeMSK,
-				MSKData: &types.ProcessedMSKSource{
-					Regions: []types.ProcessedRegion{
+				MSKData: &report.ProcessedMSKSource{
+					Regions: []report.ProcessedRegion{
 						{
 							Name: "us-east-1",
-							Clusters: []types.ProcessedCluster{
+							Clusters: []report.ProcessedCluster{
 								fixtureCluster("b-cluster", 100, 5.0, 5.0, 6.0, 6.0),
 								fixtureCluster("a-cluster", 50, 1.0, 1.0, 2.0, 2.0),
 							},
@@ -71,16 +72,16 @@ func TestPlanServiceBuild_DeterministicByteIdenticalJSON(t *testing.T) {
 }
 
 func TestPlanServiceBuild_StableSortAcrossRegions(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{
 					// Same cluster name in two regions to prove (Region, Name) sort.
-					{Name: "us-west-2", Clusters: []types.ProcessedCluster{
+					{Name: "us-west-2", Clusters: []report.ProcessedCluster{
 						withRegion(fixtureCluster("collide", 10, 1.0, 1.0, 1.0, 1.0), "us-west-2"),
 					}},
-					{Name: "us-east-1", Clusters: []types.ProcessedCluster{
+					{Name: "us-east-1", Clusters: []report.ProcessedCluster{
 						withRegion(fixtureCluster("collide", 10, 1.0, 1.0, 1.0, 1.0), "us-east-1"),
 					}},
 				},
@@ -108,12 +109,12 @@ func TestPlanServiceBuild_SourceEnvironmentBrokerAndTopicCount(t *testing.T) {
 	c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 	c.KafkaAdminClientInformation.Topics.Summary.Topics = 42
 
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{
-					{Name: "us-east-1", Clusters: []types.ProcessedCluster{c}},
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{
+					{Name: "us-east-1", Clusters: []report.ProcessedCluster{c}},
 				},
 			},
 		}},
@@ -132,8 +133,8 @@ func TestPlanServiceBuild_SourceEnvironmentBrokerAndTopicCount(t *testing.T) {
 // the action that upgrades it.
 func TestDetectOpenQuestions(t *testing.T) {
 	cfg := defaultCfg(t)
-	provisioned := func(name string) types.ProcessedCluster {
-		c := types.ProcessedCluster{Name: name}
+	provisioned := func(name string) report.ProcessedCluster {
+		c := report.ProcessedCluster{Name: name}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.AWSClientInformation.MskClusterConfig.Provisioned = &kafkatypes.Provisioned{} // non-nil to satisfy cluster_type_unrecognised guard
@@ -141,22 +142,22 @@ func TestDetectOpenQuestions(t *testing.T) {
 		c.KafkaAdminClientInformation.Acls = []types.Acls{} // non-nil means "scan ran" under aclScanRan's current heuristic
 		return c
 	}
-	ent := types.ClusterTypeDecision{Verdict: types.ClusterTypeEnterprise}
-	pniNet := func(id string) types.NetworkingDecision {
-		return types.NetworkingDecision{ClusterID: id, Verdict: types.NetworkingPNI}
+	ent := ClusterTypeDecision{Verdict: ClusterTypeEnterprise}
+	pniNet := func(id string) NetworkingDecision {
+		return NetworkingDecision{ClusterID: id, Verdict: NetworkingPNI}
 	}
 	// scramAuth is the default test fixture for AuthDecision — a single
 	// SCRAM source. Non-empty SourceAuths suppresses the
 	// `auth_posture_unknown` OQ, which is what every test here cares
 	// about (those tests assert on other OQ IDs).
-	scramAuth := func(id string) types.AuthDecision {
-		return types.AuthDecision{ClusterID: id, SourceAuths: []string{SourceAuthSCRAM}}
+	scramAuth := func(id string) AuthDecision {
+		return AuthDecision{ClusterID: id, SourceAuths: []string{SourceAuthSCRAM}}
 	}
 
 	t.Run("missing P95 metrics → missing_p95_metrics OQ", func(t *testing.T) {
 		c := provisioned("noMetrics")
-		sizing := types.ClusterSizing{ClusterID: "noMetrics", Degraded: true, DegradedReason: "no BytesInPerSec p95"}
-		oqs := detectOpenQuestions(c, sizing, ent, pniNet("noMetrics"), scramAuth("noMetrics"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		sizing := ClusterSizing{ClusterID: "noMetrics", Degraded: true, DegradedReason: "no BytesInPerSec p95"}
+		oqs := detectOpenQuestions(c, sizing, ent, pniNet("noMetrics"), scramAuth("noMetrics"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		// Metrics are collected by `kcp discover` (not a separate `scan metrics` subcommand).
 		assertContainsOQ(t, oqs, "missing_p95_metrics", "kcp discover")
 	})
@@ -167,7 +168,7 @@ func TestDetectOpenQuestions(t *testing.T) {
 		// trustworthy "scan ran" signal — aclScanRan returns true and
 		// the OQ is suppressed.
 		c := provisioned("provisioned-zero-acls") // helper sets Acls = []types.Acls{}
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "provisioned-zero-acls", FinalECKU: 1}, ent, pniNet("provisioned-zero-acls"), scramAuth("provisioned-zero-acls"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "provisioned-zero-acls", FinalECKU: 1}, ent, pniNet("provisioned-zero-acls"), scramAuth("provisioned-zero-acls"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		for _, oq := range oqs {
 			assert.NotEqual(t, "acls_not_scanned", oq.ID, "scan-ran-with-0 must NOT emit the OQ")
 		}
@@ -179,26 +180,26 @@ func TestDetectOpenQuestions(t *testing.T) {
 		// the customer can rule out the ACL-cap risk.
 		c := provisioned("provisioned-nil-acls")
 		c.KafkaAdminClientInformation.Acls = nil
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "provisioned-nil-acls", FinalECKU: 1}, ent, pniNet("provisioned-nil-acls"), scramAuth("provisioned-nil-acls"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "provisioned-nil-acls", FinalECKU: 1}, ent, pniNet("provisioned-nil-acls"), scramAuth("provisioned-nil-acls"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		assertContainsOQ(t, oqs, "acls_not_scanned", "--skip-acls")
 	})
 
 	t.Run("no topics scan + nil ACLs → acls_not_scanned OQ", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "noAcls"}
+		c := report.ProcessedCluster{Name: "noAcls"}
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		// Topics nil → scan didn't run; ACLs nil follows from same gap
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noAcls", FinalECKU: 1}, ent, pniNet("noAcls"), scramAuth("noAcls"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "noAcls", FinalECKU: 1}, ent, pniNet("noAcls"), scramAuth("noAcls"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		assertContainsOQ(t, oqs, "acls_not_scanned", "admin Kafka credentials")
 	})
 
 	t.Run("SERVERLESS cluster suppresses acls_not_scanned and broker_inventory_empty", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "serverless"}
+		c := report.ProcessedCluster{Name: "serverless"}
 		c.AWSClientInformation.Nodes = nil
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		c.KafkaAdminClientInformation.Acls = nil
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "serverless", FinalECKU: 1}, ent, pniNet("serverless"), scramAuth("serverless"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "serverless", FinalECKU: 1}, ent, pniNet("serverless"), scramAuth("serverless"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		for _, oq := range oqs {
 			assert.NotEqual(t, "acls_not_scanned", oq.ID, "serverless does not expose ACLs via this API")
 			assert.NotEqual(t, "broker_inventory_empty", oq.ID, "serverless has no broker nodes by design")
@@ -208,27 +209,27 @@ func TestDetectOpenQuestions(t *testing.T) {
 	t.Run("zero brokers on PROVISIONED → broker_inventory_empty OQ", func(t *testing.T) {
 		c := provisioned("noBrokers")
 		c.AWSClientInformation.Nodes = nil
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noBrokers", FinalECKU: 1}, ent, pniNet("noBrokers"), scramAuth("noBrokers"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "noBrokers", FinalECKU: 1}, ent, pniNet("noBrokers"), scramAuth("noBrokers"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		assertContainsOQ(t, oqs, "broker_inventory_empty", "kcp discover")
 	})
 
 	t.Run("zero topics → topic_inventory_empty OQ", func(t *testing.T) {
 		c := provisioned("noTopics")
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 0}}
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "noTopics", FinalECKU: 1}, ent, pniNet("noTopics"), scramAuth("noTopics"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "noTopics", FinalECKU: 1}, ent, pniNet("noTopics"), scramAuth("noTopics"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		assertContainsOQ(t, oqs, "topic_inventory_empty", "kcp scan clusters")
 	})
 
 	t.Run("Serverless with nil Topics → scan-gap body, not 'Summary.Topics is 0'", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "srv-nil"}
+		c := report.ProcessedCluster{Name: "srv-nil"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
 			VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}}},
 		}
 		// Topics intentionally left nil.
-		auth := types.AuthDecision{ClusterID: "srv-nil", SourceAuths: []string{SourceAuthIAM}}
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "srv-nil", FinalECKU: 1}, ent, pniNet("srv-nil"), auth, cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
-		var topicOQ *types.OpenQuestion
+		auth := AuthDecision{ClusterID: "srv-nil", SourceAuths: []string{SourceAuthIAM}}
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "srv-nil", FinalECKU: 1}, ent, pniNet("srv-nil"), auth, cfg, PlanInputsResolved{SizingPercentile: "p95"})
+		var topicOQ *OpenQuestion
 		for i, oq := range oqs {
 			if oq.ID == "topic_inventory_empty" {
 				topicOQ = &oqs[i]
@@ -242,17 +243,17 @@ func TestDetectOpenQuestions(t *testing.T) {
 
 	t.Run("PrivateLink trigger + sized > cap → networking_privatelink_over_cap OQ", func(t *testing.T) {
 		c := provisioned("overCap")
-		sizing := types.ClusterSizing{ClusterID: "overCap", FinalECKU: 15} // > 10 eCKU PL cap
-		net := types.NetworkingDecision{ClusterID: "overCap", Verdict: types.NetworkingPrivateLink}
-		oqs := detectOpenQuestions(c, sizing, ent, net, scramAuth(c.Name), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		sizing := ClusterSizing{ClusterID: "overCap", FinalECKU: 15} // > 10 eCKU PL cap
+		net := NetworkingDecision{ClusterID: "overCap", Verdict: NetworkingPrivateLink}
+		oqs := detectOpenQuestions(c, sizing, ent, net, scramAuth(c.Name), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		assertContainsOQ(t, oqs, "networking_privatelink_over_cap", "account team")
 	})
 
 	t.Run("PrivateLink with sized <= cap → no over-cap OQ", func(t *testing.T) {
 		c := provisioned("underCap")
-		sizing := types.ClusterSizing{ClusterID: "underCap", FinalECKU: 5}
-		net := types.NetworkingDecision{ClusterID: "underCap", Verdict: types.NetworkingPrivateLink}
-		oqs := detectOpenQuestions(c, sizing, ent, net, scramAuth(c.Name), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		sizing := ClusterSizing{ClusterID: "underCap", FinalECKU: 5}
+		net := NetworkingDecision{ClusterID: "underCap", Verdict: NetworkingPrivateLink}
+		oqs := detectOpenQuestions(c, sizing, ent, net, scramAuth(c.Name), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		for _, oq := range oqs {
 			assert.NotEqual(t, "networking_privatelink_over_cap", oq.ID)
 		}
@@ -260,9 +261,9 @@ func TestDetectOpenQuestions(t *testing.T) {
 
 	t.Run("PNI with any sizing → no over-cap OQ (only fires on PrivateLink verdict)", func(t *testing.T) {
 		c := provisioned("pniBig")
-		sizing := types.ClusterSizing{ClusterID: "pniBig", FinalECKU: 25}
-		net := types.NetworkingDecision{ClusterID: "pniBig", Verdict: types.NetworkingPNI}
-		oqs := detectOpenQuestions(c, sizing, ent, net, scramAuth(c.Name), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		sizing := ClusterSizing{ClusterID: "pniBig", FinalECKU: 25}
+		net := NetworkingDecision{ClusterID: "pniBig", Verdict: NetworkingPNI}
+		oqs := detectOpenQuestions(c, sizing, ent, net, scramAuth(c.Name), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		for _, oq := range oqs {
 			assert.NotEqual(t, "networking_privatelink_over_cap", oq.ID)
 		}
@@ -270,19 +271,19 @@ func TestDetectOpenQuestions(t *testing.T) {
 
 	t.Run("spiky workload does NOT generate an OQ (FYI only)", func(t *testing.T) {
 		c := provisioned("spiky")
-		sizing := types.ClusterSizing{ClusterID: "spiky", FinalECKU: 2, SpikyIngress: true}
-		oqs := detectOpenQuestions(c, sizing, ent, pniNet("spiky"), scramAuth("spiky"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		sizing := ClusterSizing{ClusterID: "spiky", FinalECKU: 2, SpikyIngress: true}
+		oqs := detectOpenQuestions(c, sizing, ent, pniNet("spiky"), scramAuth("spiky"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		assert.Empty(t, oqs, "spiky clusters should NOT emit an OQ — informational only")
 	})
 
 	t.Run("fully populated cluster emits no OQs", func(t *testing.T) {
 		c := provisioned("complete")
-		oqs := detectOpenQuestions(c, types.ClusterSizing{ClusterID: "complete", FinalECKU: 2}, ent, pniNet("complete"), scramAuth("complete"), cfg, types.PlanInputsResolved{SizingPercentile: "p95"})
+		oqs := detectOpenQuestions(c, ClusterSizing{ClusterID: "complete", FinalECKU: 2}, ent, pniNet("complete"), scramAuth("complete"), cfg, PlanInputsResolved{SizingPercentile: "p95"})
 		assert.Empty(t, oqs, "happy-path clusters should not surface OQs")
 	})
 }
 
-func assertContainsOQ(t *testing.T, oqs []types.OpenQuestion, id, expectedSubstring string) {
+func assertContainsOQ(t *testing.T, oqs []OpenQuestion, id, expectedSubstring string) {
 	t.Helper()
 	for _, oq := range oqs {
 		if oq.ID == id {
@@ -297,7 +298,7 @@ func assertContainsOQ(t *testing.T, oqs []types.OpenQuestion, id, expectedSubstr
 
 func TestPlanServiceBuild_EmptyState(t *testing.T) {
 	svc := NewPlanService(defaultCfg(t), fixedNow)
-	p, err := svc.Build(types.ProcessedState{}, defaultInputs(), "")
+	p, err := svc.Build(report.ProcessedState{}, defaultInputs(), "")
 	require.NoError(t, err)
 	assert.Empty(t, p.Sizing)
 	assert.Empty(t, p.SourceEnvironment.Clusters)
@@ -305,13 +306,13 @@ func TestPlanServiceBuild_EmptyState(t *testing.T) {
 }
 
 func TestPlanServiceBuild_DegradedClusterStillRenders(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{
 					Name: "us-east-1",
-					Clusters: []types.ProcessedCluster{{
+					Clusters: []report.ProcessedCluster{{
 						Name:                        "no-metrics",
 						Region:                      "us-east-1",
 						KafkaAdminClientInformation: types.KafkaAdminClientInformation{Topics: &types.Topics{Summary: types.TopicSummary{TotalPartitions: 5}}},
@@ -329,7 +330,7 @@ func TestPlanServiceBuild_DegradedClusterStillRenders(t *testing.T) {
 	assert.Empty(t, p.SizingAppendix)
 }
 
-func withRegion(c types.ProcessedCluster, region string) types.ProcessedCluster {
+func withRegion(c report.ProcessedCluster, region string) report.ProcessedCluster {
 	c.Region = region
 	return c
 }
@@ -338,10 +339,10 @@ func withRegion(c types.ProcessedCluster, region string) types.ProcessedCluster 
 // osk_source_unsupported OQ so the customer knows on-prem clusters
 // were silently dropped. Today the plan only covers MSK.
 func TestDetectOSKSourceOpenQuestion_FiresWhenOSKClustersPresent(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "onprem-1"}, {ID: "onprem-2"}},
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &report.ProcessedOSKSource{
+				Clusters: []report.ProcessedOSKCluster{{ID: "onprem-1"}, {ID: "onprem-2"}},
 			}},
 		},
 	}
@@ -352,16 +353,16 @@ func TestDetectOSKSourceOpenQuestion_FiresWhenOSKClustersPresent(t *testing.T) {
 }
 
 func TestDetectOSKSourceOpenQuestion_NoOQWhenOSKAbsent(t *testing.T) {
-	state := types.ProcessedState{}
+	state := report.ProcessedState{}
 	assert.Empty(t, detectOSKSourceOpenQuestion(state))
 }
 
 // Singular vs plural verb agreement in the OQ title.
 func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
 	t.Run("1 cluster → 'isn't' + singular noun", func(t *testing.T) {
-		state := types.ProcessedState{Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "solo"}},
+		state := report.ProcessedState{Sources: []report.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &report.ProcessedOSKSource{
+				Clusters: []report.ProcessedOSKCluster{{ID: "solo"}},
 			}},
 		}}
 		oqs := detectOSKSourceOpenQuestion(state)
@@ -369,9 +370,9 @@ func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
 		assert.Contains(t, oqs[0].Title, "1 on-prem Kafka cluster in the state file isn't")
 	})
 	t.Run("2 clusters → 'aren't' + plural noun", func(t *testing.T) {
-		state := types.ProcessedState{Sources: []types.ProcessedSource{
-			{Type: types.SourceTypeOSK, OSKData: &types.ProcessedOSKSource{
-				Clusters: []types.ProcessedOSKCluster{{ID: "a"}, {ID: "b"}},
+		state := report.ProcessedState{Sources: []report.ProcessedSource{
+			{Type: types.SourceTypeOSK, OSKData: &report.ProcessedOSKSource{
+				Clusters: []report.ProcessedOSKCluster{{ID: "a"}, {ID: "b"}},
 			}},
 		}}
 		oqs := detectOSKSourceOpenQuestion(state)
@@ -386,7 +387,7 @@ func TestDetectOSKSourceOpenQuestion_VerbAgreement(t *testing.T) {
 // empty for that cluster.
 func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 	t.Run("empty ClusterType → msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-type"}
+		c := report.ProcessedCluster{Name: "no-type"}
 		// ClusterType left as zero-value
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
@@ -394,7 +395,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
 	})
 	t.Run("PROVISIONED with nil Provisioned → msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "nil-prov"}
+		c := report.ProcessedCluster{Name: "nil-prov"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		// Provisioned block left as nil
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
@@ -403,7 +404,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
 	})
 	t.Run("Future variant ClusterType → msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "future"}
+		c := report.ProcessedCluster{Name: "future"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = "HYBRID"
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
@@ -411,7 +412,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 		assert.Contains(t, inputsMissing(c), "msk_cluster_config")
 	})
 	t.Run("Serverless does NOT report msk_cluster_config", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "srv"}
+		c := report.ProcessedCluster{Name: "srv"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.AWSClientInformation.MskClusterConfig.Serverless = &kafkatypes.Serverless{
 			VpcConfigs: []kafkatypes.VpcConfig{{SubnetIds: []string{"s"}}},
@@ -423,7 +424,7 @@ func TestInputsMissing_UnknownClusterTypeReportsGap(t *testing.T) {
 
 func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 	t.Run("fully-scanned PROVISIONED cluster reports no missing inputs", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "ok"}
+		c := report.ProcessedCluster{Name: "ok"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		// Provisioned block must be populated — without it, the
 		// Provisioned-only helpers return empty and the new
@@ -435,21 +436,21 @@ func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 		assert.Empty(t, inputsMissing(c))
 	})
 	t.Run("Topics nil → 'topics' in the list", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-topics"}
+		c := report.ProcessedCluster{Name: "no-topics"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
 		assert.Contains(t, inputsMissing(c), "topics")
 	})
 	t.Run("Acls nil on PROVISIONED → 'acls' in the list", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-acls"}
+		c := report.ProcessedCluster{Name: "no-acls"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.AWSClientInformation.Nodes = make([]kafkatypes.NodeInfo, 3)
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		assert.Contains(t, inputsMissing(c), "acls")
 	})
 	t.Run("Serverless suppresses 'acls' and 'brokers'", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "sl"}
+		c := report.ProcessedCluster{Name: "sl"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeServerless
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		missing := inputsMissing(c)
@@ -457,7 +458,7 @@ func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 		assert.NotContains(t, missing, "brokers", "serverless: no broker nodes by design; not a gap")
 	})
 	t.Run("0 broker Nodes on PROVISIONED → 'brokers' in the list", func(t *testing.T) {
-		c := types.ProcessedCluster{Name: "no-brokers"}
+		c := report.ProcessedCluster{Name: "no-brokers"}
 		c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
 		c.KafkaAdminClientInformation.Topics = &types.Topics{Summary: types.TopicSummary{Topics: 5}}
 		c.KafkaAdminClientInformation.Acls = []types.Acls{}
@@ -467,7 +468,7 @@ func TestInputsMissing_AllSignalsTracked(t *testing.T) {
 
 func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 	cfg := defaultCfg(t)
-	sizing := types.ClusterSizing{ClusterID: "x", FinalECKU: 5}
+	sizing := ClusterSizing{ClusterID: "x", FinalECKU: 5}
 
 	t.Run("nil-Acls PROVISIONED: skipped rule has SkipReason", func(t *testing.T) {
 		c := provisionedClusterWithScan("nil-acls", nil)
@@ -475,7 +476,7 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 		require.Len(t, d.EvaluatedRules, len(hardLimitCatalog), "EvaluatedRules must carry every catalog entry")
 		for _, r := range d.EvaluatedRules {
 			if r.RowID == ruleACLCountExceedsCap {
-				assert.Equal(t, types.RuleSkipped, r.Outcome)
+				assert.Equal(t, RuleSkipped, r.Outcome)
 				assert.NotEmpty(t, r.SkipReason, "skipped rule must carry a SkipReason")
 				assert.Empty(t, r.Evidence, "skipped rule must NOT carry Evidence")
 				return
@@ -488,7 +489,7 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 		d := decideClusterType(c, sizing, cfg, defaultInputs())
 		for _, r := range d.EvaluatedRules {
 			if r.RowID == ruleACLCountExceedsCap {
-				assert.Equal(t, types.RuleNotFired, r.Outcome)
+				assert.Equal(t, RuleNotFired, r.Outcome)
 				assert.Contains(t, r.Evidence, "≤", "not_fired rule must surface negative evidence")
 				return
 			}
@@ -503,7 +504,7 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 		var found bool
 		for _, r := range d.EvaluatedRules {
 			if r.RowID == ruleBrokerSideSchemaValidation {
-				assert.Equal(t, types.RuleFired, r.Outcome)
+				assert.Equal(t, RuleFired, r.Outcome)
 				assert.NotEmpty(t, r.Evidence)
 				found = true
 				break
@@ -518,13 +519,13 @@ func TestDecideClusterType_EvaluatedRules_CarriesAllOutcomes(t *testing.T) {
 // despite the global default. This is the regression guard for the
 // heterogeneous-fleet failure mode that motivated A3.
 func TestPlanServiceBuild_PerClusterOverride_FlipsOnlyTargetCluster(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{
 					Name: "us-east-1",
-					Clusters: []types.ProcessedCluster{
+					Clusters: []report.ProcessedCluster{
 						fixtureCluster("alpha", 100, 5.0, 5.0, 6.0, 6.0),
 						fixtureCluster("bravo", 100, 5.0, 5.0, 6.0, 6.0),
 					},
@@ -533,8 +534,8 @@ func TestPlanServiceBuild_PerClusterOverride_FlipsOnlyTargetCluster(t *testing.T
 		}},
 	}
 	flag := true
-	rawInputs := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	rawInputs := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {Requires9995SLAWithinSingleZone: &flag}, // SZ for alpha only
 		},
 	}
@@ -544,27 +545,27 @@ func TestPlanServiceBuild_PerClusterOverride_FlipsOnlyTargetCluster(t *testing.T
 	require.NoError(t, err)
 	require.Len(t, p.ClusterTypeDecision, 2)
 
-	byID := map[string]types.ClusterTypeDecision{}
+	byID := map[string]ClusterTypeDecision{}
 	for _, d := range p.ClusterTypeDecision {
 		byID[d.ClusterID] = d
 	}
 
-	assert.Equal(t, types.ClusterTypeDedicated, byID["alpha"].Verdict, "per-cluster override must flip alpha to Dedicated")
-	assert.Equal(t, types.TopologySingleZone, byID["alpha"].Topology, "SLA flag drives SZ topology")
-	assert.Equal(t, types.ClusterTypeEnterprise, byID["bravo"].Verdict, "non-overridden cluster must keep the global default (Enterprise)")
+	assert.Equal(t, ClusterTypeDedicated, byID["alpha"].Verdict, "per-cluster override must flip alpha to Dedicated")
+	assert.Equal(t, TopologySingleZone, byID["alpha"].Topology, "SLA flag drives SZ topology")
+	assert.Equal(t, ClusterTypeEnterprise, byID["bravo"].Verdict, "non-overridden cluster must keep the global default (Enterprise)")
 }
 
 // Per-cluster target_auth_method override flips the effective target
 // only for the named cluster; everything else stays on the per-source
 // auth_mapping default.
 func TestPlanServiceBuild_PerClusterTargetAuthOverride(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{
 					Name: "us-east-1",
-					Clusters: []types.ProcessedCluster{
+					Clusters: []report.ProcessedCluster{
 						attachAuth(fixtureCluster("alpha", 100, 5.0, 5.0, 6.0, 6.0), SourceAuthSCRAM),
 						attachAuth(fixtureCluster("bravo", 100, 5.0, 5.0, 6.0, 6.0), SourceAuthSCRAM),
 					},
@@ -573,8 +574,8 @@ func TestPlanServiceBuild_PerClusterTargetAuthOverride(t *testing.T) {
 		}},
 	}
 	oauth := TargetAuthOAuth
-	rawInputs := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	rawInputs := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {TargetAuthMethod: &oauth},
 		},
 	}
@@ -584,7 +585,7 @@ func TestPlanServiceBuild_PerClusterTargetAuthOverride(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, p.Auth, 2)
 
-	byID := map[string]types.AuthDecision{}
+	byID := map[string]AuthDecision{}
 	for _, a := range p.Auth {
 		byID[a.ClusterID] = a
 	}
@@ -616,7 +617,7 @@ func TestDetectStaleStateOQ_HonorsThreshold(t *testing.T) {
 // the global override is a typo, and stays silent for the recognised
 // values + the empty default.
 func TestDetectAuthFleetOpenQuestions_TargetAuthMethodTypo(t *testing.T) {
-	resolved := types.PlanInputsResolved{TargetAuthMethod: "oauthhh"}
+	resolved := PlanInputsResolved{TargetAuthMethod: "oauthhh"}
 	oqs := detectAuthFleetOpenQuestions(nil, resolved)
 	require.Len(t, oqs, 1)
 	assert.Equal(t, "target_auth_method_unknown", oqs[0].ID)
@@ -636,14 +637,14 @@ func TestDetectAuthFleetOpenQuestions_TargetAuthMethodTypo(t *testing.T) {
 func TestDetectAuthFleetOpenQuestions_PerClusterTargetAuthTypo(t *testing.T) {
 	typo := "oauthhh"
 	good := TargetAuthOAuth
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"alpha": {TargetAuthMethod: &typo},
 			"bravo": {TargetAuthMethod: &good},
 		},
 	}
-	clusters := []types.ProcessedCluster{{Name: "alpha"}, {Name: "bravo"}}
-	resolved := types.PlanInputsResolved{Raw: raw}
+	clusters := []report.ProcessedCluster{{Name: "alpha"}, {Name: "bravo"}}
+	resolved := PlanInputsResolved{Raw: raw}
 	oqs := detectAuthFleetOpenQuestions(clusters, resolved)
 	require.Len(t, oqs, 1, "only the typo cluster should emit an OQ")
 	assert.Equal(t, "target_auth_method_unknown", oqs[0].ID)
@@ -655,7 +656,7 @@ func TestDetectAuthFleetOpenQuestions_PerClusterTargetAuthTypo(t *testing.T) {
 // that don't use IAM — otherwise a non-IAM fleet that accidentally
 // flipped that prereq would lose the `gateway_intent_unconfirmed` OQ.
 func TestAmbiguousGatewayIntent_IgnoresIAMPrereqWhenNoIAM(t *testing.T) {
-	inputs := types.PlanInputsResolved{
+	inputs := PlanInputsResolved{
 		PreferGateway:                true,
 		ConfluentForKubernetesStatus: PrereqNotStarted,
 		CCGatewayLicenseStatus:       PrereqNotStarted,
@@ -706,7 +707,7 @@ func TestSeverityLegend_OnlyPresent(t *testing.T) {
 // attachAuth gives a fixture cluster a SCRAM (or other) source auth so
 // it surfaces in decideAuth output. Mirrors withSourceAuth in
 // cutover_test.go but layers on top of an existing fixtureCluster.
-func attachAuth(c types.ProcessedCluster, sourceAuth string) types.ProcessedCluster {
+func attachAuth(c report.ProcessedCluster, sourceAuth string) report.ProcessedCluster {
 	enabled := true
 	clientAuth := &kafkatypes.ClientAuthentication{}
 	switch sourceAuth {

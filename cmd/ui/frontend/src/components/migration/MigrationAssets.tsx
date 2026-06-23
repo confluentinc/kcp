@@ -252,7 +252,7 @@ export const MigrationAssets = () => {
           {hasOskClusters && (
             <div>
               <h2 className="text-lg font-semibold text-foreground mb-3">
-                Open Source Kafka
+                Apache Kafka
               </h2>
               <div className="space-y-4">
                 {oskClusters.map((oskCluster) => {

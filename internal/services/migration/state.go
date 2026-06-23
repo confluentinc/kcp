@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -120,14 +121,35 @@ func (ms *MigrationState) WriteToFile(filePath string) error {
 		return fmt.Errorf("failed to marshal migration state: %w", err)
 	}
 
-	// Atomic write: write to temp file first, then rename
-	tmpFile := filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	// Atomic write: write to a uniquely-named temp file (created at mode 0600 by
+	// os.CreateTemp and pinned explicitly), then rename it onto the target. The
+	// migration state holds sensitive metadata, so it must never be group/world
+	// readable, even briefly or under an unusual umask. The real file is only
+	// ever replaced by the rename and is never deleted directly, so a crash
+	// before the rename leaves the previous migration state intact.
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+
+	if err := tmpFile.Chmod(0600); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to set temp file permissions: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 
-	if err := os.Rename(tmpFile, filePath); err != nil {
-		_ = os.Remove(tmpFile) // best-effort cleanup of temp file on error
+	if err := os.Rename(tmpName, filePath); err != nil {
+		_ = os.Remove(tmpName) // best-effort cleanup of temp file on error
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 

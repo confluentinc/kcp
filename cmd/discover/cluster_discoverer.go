@@ -52,7 +52,7 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool) (*types.DiscoveredCluster, error) {
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool, metricsGranularity string) (*types.DiscoveredCluster, error) {
 	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
 	if err != nil {
 		return nil, err
@@ -63,7 +63,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 		fmt.Printf("  ⏭️  Skipping metrics discovery\n")
 		clusterMetric = &types.ClusterMetrics{}
 	} else {
-		clusterMetric, err = cd.discoverMetrics(ctx, clusterArn)
+		clusterMetric, err = cd.discoverMetrics(ctx, clusterArn, metricsGranularity)
 		if err != nil {
 			return nil, err
 		}
@@ -358,7 +358,7 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 	return subnetInfo
 }
 
-func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
+func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string, metricsGranularity string) (*types.ClusterMetrics, error) {
 	// TODO: this issues a second DescribeClusterV2 call for the same cluster, and also
 	// drops the caller's ctx by using context.Background(). Consider refactoring to
 	// accept the already-fetched cluster from discoverAWSClientInformation to eliminate
@@ -380,7 +380,8 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	now := time.Now().UTC()
 	previousMidnight := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC)
 	endTime := previousMidnight.Add(24 * time.Hour)
-	timeWindow, err := metrics.GetTimeWindow(endTime, metrics.LastYear)
+
+	timeWindow, err := metrics.GetTimeWindowForGranularity(endTime, metricsGranularity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate time window: %v", err)
 	}

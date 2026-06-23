@@ -6,9 +6,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
-
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // Stable Red Flag IDs. Matches the spec's row numbering — kept stable
@@ -59,12 +58,12 @@ var broadTopicPatterns = []struct {
 // independently and produces a {Status, Evidence} pair — Triggered
 // rows render at the top of §Red Flags, with NotTriggered / Unknown
 // collapsed into a tail summary.
-func detectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.RedFlagsSection {
+func detectRedFlags(state report.ProcessedState, plan *Plan, cfg *PlanConfig, inputs PlanInputsResolved) *RedFlagsSection {
 	clusters := collectClusters(state)
 	if len(clusters) == 0 {
 		return nil
 	}
-	rows := []types.RedFlag{
+	rows := []RedFlag{
 		evalSchemalessSource(plan, inputs),
 		evalKafkaVersionBelowFloor(clusters, cfg),
 		evalIAMAuthEnabled(clusters),
@@ -81,7 +80,7 @@ func detectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfi
 		evalKafkaStreamsInUse(clusters, inputs),
 		evalBroadTopicPatternMatch(clusters),
 	}
-	return &types.RedFlagsSection{Rows: rows}
+	return &RedFlagsSection{Rows: rows}
 }
 
 // ----- Row 1: schemaless source -----
@@ -89,11 +88,11 @@ func detectRedFlags(state types.ProcessedState, plan *types.Plan, cfg *PlanConfi
 // Triggered when no Schema Registry was detected AND the customer
 // declared a non-unknown schema_strategy. While `schema_strategy ==
 // unknown` the row is suppressed to avoid a spurious first-run warning.
-func evalSchemalessSource(plan *types.Plan, inputs types.PlanInputsResolved) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDSchemalessSource, Title: "Schemaless source (no Schema Registry detected)"}
+func evalSchemalessSource(plan *Plan, inputs PlanInputsResolved) RedFlag {
+	rf := RedFlag{ID: RedFlagIDSchemalessSource, Title: "Schemaless source (no Schema Registry detected)"}
 	strategy := inputs.SchemaStrategy
 	if strategy == "" || strategy == SchemaStrategyUnknown {
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "`schema_strategy` not yet declared — set it in `plan-inputs.yaml` to evaluate this row"
 		return rf
 	}
@@ -104,17 +103,17 @@ func evalSchemalessSource(plan *types.Plan, inputs types.PlanInputsResolved) typ
 	// (§5 says "you have an SR but we couldn't see it"; §6 would
 	// say "you don't have an SR"). Resolve as NotTriggered so the
 	// scan-gap copy in §5 is the single source of truth.
-	noScanSource := plan.Schema == nil || plan.Schema.Source == types.SchemaSourceNone
+	noScanSource := plan.Schema == nil || plan.Schema.Source == SchemaSourceNone
 	if noScanSource && strategy == SchemaStrategyMigrateExistingSchemaRegistry {
-		rf.Status = types.RedFlagNotTriggered
+		rf.Status = RedFlagNotTriggered
 		return rf
 	}
 	if noScanSource {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = fmt.Sprintf("`schema_strategy: %s`, no Schema Registry detected by `kcp scan schema-registry` / `kcp scan glue-schema-registry`", strategy)
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -124,8 +123,8 @@ func evalSchemalessSource(plan *types.Plan, inputs types.PlanInputsResolved) typ
 // Versions are dot-separated integer segments; the comparator
 // (`versionAtLeast`) already strips pre-release suffixes and handles
 // the "latest" alias.
-func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConfig) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDKafkaVersionBelowCLFloor, Title: "Kafka version below the Cluster Linking floor"}
+func evalKafkaVersionBelowFloor(clusters []report.ProcessedCluster, cfg *PlanConfig) RedFlag {
+	rf := RedFlag{ID: RedFlagIDKafkaVersionBelowCLFloor, Title: "Kafka version below the Cluster Linking floor"}
 	floor := cfg.ClusterLinking.SourceMinKafkaVersion
 	type versionHit struct {
 		Cluster string `json:"cluster"`
@@ -153,17 +152,17 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 	}
 	switch {
 	case len(below) > 0:
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = fmt.Sprintf("clusters below floor `%s`: %s", floor, strings.Join(belowStrs, ", "))
 		rf.EvidenceFields = map[string]any{
 			"floor":    floor,
 			"clusters": below,
 		}
 	case len(unparseable) > 0:
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = fmt.Sprintf("kafka_version missing for: %s — re-run `kcp discover`", strings.Join(unparseable, ", "))
 	default:
-		rf.Status = types.RedFlagNotTriggered
+		rf.Status = RedFlagNotTriggered
 	}
 	return rf
 }
@@ -175,7 +174,7 @@ func evalKafkaVersionBelowFloor(clusters []types.ProcessedCluster, cfg *PlanConf
 // version transparently and never populates
 // `Provisioned.CurrentBrokerSoftwareInfo`. Callers MUST guard with
 // `isServerless` before interpreting "" as "scan didn't run".
-func kafkaVersionOf(c types.ProcessedCluster) string {
+func kafkaVersionOf(c report.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.CurrentBrokerSoftwareInfo == nil || prov.CurrentBrokerSoftwareInfo.KafkaVersion == nil {
 		return ""
@@ -185,8 +184,8 @@ func kafkaVersionOf(c types.ProcessedCluster) string {
 
 // ----- Row 3: IAM auth enabled -----
 
-func evalIAMAuthEnabled(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDIAMAuthEnabled, Title: "IAM authentication enabled on the source"}
+func evalIAMAuthEnabled(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDIAMAuthEnabled, Title: "IAM authentication enabled on the source"}
 	var hits []string
 	for _, c := range clusters {
 		for _, a := range sourceAuthsDetected(c) {
@@ -197,31 +196,31 @@ func evalIAMAuthEnabled(clusters []types.ProcessedCluster) types.RedFlag {
 		}
 	}
 	if len(hits) > 0 {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "IAM detected on: " + strings.Join(hits, ", ")
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
 // ----- Row 4: AWS Glue Schema Registry in use -----
 
-func evalGlueSRInUse(plan *types.Plan) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDGlueSRInUse, Title: "AWS Glue Schema Registry in use"}
+func evalGlueSRInUse(plan *Plan) RedFlag {
+	rf := RedFlag{ID: RedFlagIDGlueSRInUse, Title: "AWS Glue Schema Registry in use"}
 	if plan.Schema == nil {
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "schema migration verdict unavailable"
 		return rf
 	}
-	if hasPath(plan.Schema, types.SchemaPathMigrateGlue) ||
-		plan.Schema.Source == types.SchemaSourceGlue ||
-		plan.Schema.Source == types.SchemaSourceConfluentAndGlue {
-		rf.Status = types.RedFlagTriggered
+	if hasPath(plan.Schema, SchemaPathMigrateGlue) ||
+		plan.Schema.Source == SchemaSourceGlue ||
+		plan.Schema.Source == SchemaSourceConfluentAndGlue {
+		rf.Status = RedFlagTriggered
 		rf.Evidence = fmt.Sprintf("Glue registries detected: %s", strings.Join(plan.Schema.GlueRegistries, ", "))
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -231,10 +230,10 @@ func evalGlueSRInUse(plan *types.Plan) types.RedFlag {
 // sized eCKU's per-eCKU partition cap. Dynamic to the cluster's
 // sized footprint, not the Enterprise PNI ceiling — so a 5-eCKU
 // cluster trips at 4,500 partitions; a 32-eCKU cluster at 28,800.
-func evalPartitionApproachingCap(plan *types.Plan, cfg *PlanConfig) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDPartitionApproachingCap, Title: "Partition count approaching the cluster's sized partition ceiling"}
+func evalPartitionApproachingCap(plan *Plan, cfg *PlanConfig) RedFlag {
+	rf := RedFlag{ID: RedFlagIDPartitionApproachingCap, Title: "Partition count approaching the cluster's sized partition ceiling"}
 	if cfg.EnterpriseCaps.PerECKUPartitionRate <= 0 {
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "config: per_eCKU_partition_rate missing"
 		return rf
 	}
@@ -252,11 +251,11 @@ func evalPartitionApproachingCap(plan *types.Plan, cfg *PlanConfig) types.RedFla
 		}
 	}
 	if len(hits) > 0 {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = strings.Join(hits, "; ")
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -267,8 +266,8 @@ func evalPartitionApproachingCap(plan *types.Plan, cfg *PlanConfig) types.RedFla
 // topic-population + cluster type per the spec: a PROVISIONED cluster
 // with topics populated AND an empty `connectors` slice counts as
 // "actually zero".
-func evalMSKConnectPresent(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDMSKConnectPresent, Title: "MSK Connect managed connectors present"}
+func evalMSKConnectPresent(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDMSKConnectPresent, Title: "MSK Connect managed connectors present"}
 	var triggered []string
 	var unscanned []string
 	for _, c := range clusters {
@@ -290,13 +289,13 @@ func evalMSKConnectPresent(clusters []types.ProcessedCluster) types.RedFlag {
 	}
 	switch {
 	case len(triggered) > 0:
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = strings.Join(triggered, ", ")
 	case len(unscanned) > 0:
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "scan inconclusive for: " + strings.Join(unscanned, ", ")
 	default:
-		rf.Status = types.RedFlagNotTriggered
+		rf.Status = RedFlagNotTriggered
 	}
 	return rf
 }
@@ -307,8 +306,8 @@ func evalMSKConnectPresent(clusters []types.ProcessedCluster) types.RedFlag {
 // Same nil-vs-empty disambiguation as row 6: empty struct with topics
 // populated counts as "no Connect clusters"; nil struct = scan didn't
 // run.
-func evalSelfManagedConnectPresent(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDSelfManagedConnectPresent, Title: "Self-managed Connect clusters present"}
+func evalSelfManagedConnectPresent(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDSelfManagedConnectPresent, Title: "Self-managed Connect clusters present"}
 	var triggered []string
 	var unscanned []string
 	for _, c := range clusters {
@@ -331,21 +330,21 @@ func evalSelfManagedConnectPresent(clusters []types.ProcessedCluster) types.RedF
 	}
 	switch {
 	case len(triggered) > 0:
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = strings.Join(triggered, ", ")
 	case len(unscanned) > 0:
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "scan inconclusive for: " + strings.Join(unscanned, ", ")
 	default:
-		rf.Status = types.RedFlagNotTriggered
+		rf.Status = RedFlagNotTriggered
 	}
 	return rf
 }
 
 // ----- Row 8: multi-region source -----
 
-func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDMultiRegionSource, Title: "Source clusters span multiple AWS regions"}
+func evalMultiRegionSource(state report.ProcessedState) RedFlag {
+	rf := RedFlag{ID: RedFlagIDMultiRegionSource, Title: "Source clusters span multiple AWS regions"}
 	regions := map[string]struct{}{}
 	for _, src := range state.Sources {
 		if src.MSKData == nil {
@@ -366,7 +365,7 @@ func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
 		// load-bearing for the "same state file + same plan-inputs
 		// → byte-identical plan" guarantee.
 		sort.Strings(names)
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = fmt.Sprintf("%d regions: %s", len(regions), strings.Join(names, ", "))
 		rf.EvidenceFields = map[string]any{
 			"region_count": len(names),
@@ -374,7 +373,7 @@ func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
 		}
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -389,8 +388,8 @@ func evalMultiRegionSource(state types.ProcessedState) types.RedFlag {
 // cluster_signals.go) so semantics stay in lockstep with V1 — when
 // `aclScanRan` returns true the scan succeeded; an empty slice in
 // that case is "actually zero", not "scan didn't run".
-func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDZeroACLsWithIAM, Title: "Zero ACLs with IAM auth enabled — verify SE expected behavior"}
+func evalZeroACLsWithIAM(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDZeroACLsWithIAM, Title: "Zero ACLs with IAM auth enabled — verify SE expected behavior"}
 	var hits []string
 	var serverlessIAM []string // Serverless+IAM clusters can't expose ACLs via the kcp scan path
 	var unscannedIAM []string  // Provisioned+IAM clusters where the ACL scan didn't run (nil ACLs)
@@ -431,25 +430,25 @@ func evalZeroACLsWithIAM(clusters []types.ProcessedCluster) types.RedFlag {
 		excludedNote = fmt.Sprintf(" (Provisioned+IAM clusters %s excluded — ACL scan didn't populate; see `acls_not_scanned` OQ to re-scan)", strings.Join(unscannedIAM, ", "))
 	}
 	if len(hits) > 0 {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "IAM + 0 ACLs on: " + strings.Join(hits, ", ") + excludedNote
 		return rf
 	}
 	// No Provisioned hits but at least one IAM cluster the row can't
 	// evaluate — Serverless or --skip-acls. Don't claim "Not triggered".
 	if len(serverlessIAM) > 0 || len(unscannedIAM) > 0 {
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "Row can't evaluate for one or more IAM clusters" + excludedNote + ". Verify ACL posture manually."
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
 // ----- Row 10: client inventory gap -----
 
-func evalClientInventoryGap(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDClientInventoryGap, Title: "Client inventory not populated"}
+func evalClientInventoryGap(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDClientInventoryGap, Title: "Client inventory not populated"}
 	var hits []string
 	for _, c := range clusters {
 		if len(c.DiscoveredClients) == 0 {
@@ -457,23 +456,23 @@ func evalClientInventoryGap(clusters []types.ProcessedCluster) types.RedFlag {
 		}
 	}
 	if len(hits) == 0 {
-		rf.Status = types.RedFlagNotTriggered
+		rf.Status = RedFlagNotTriggered
 		return rf
 	}
 	if len(hits) == len(clusters) {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "no `discovered_clients` on any cluster — run `kcp scan client-inventory`"
 		return rf
 	}
-	rf.Status = types.RedFlagTriggered
+	rf.Status = RedFlagTriggered
 	rf.Evidence = "missing on: " + strings.Join(hits, ", ")
 	return rf
 }
 
 // ----- Row 11: MSK Express broker tier -----
 
-func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDMSKExpressBrokerTier, Title: "MSK Express broker tier in use"}
+func evalMSKExpressBrokerTier(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDMSKExpressBrokerTier, Title: "MSK Express broker tier in use"}
 	type expressHit struct {
 		Cluster      string `json:"cluster"`
 		InstanceType string `json:"instance_type"`
@@ -502,12 +501,12 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 		}
 	}
 	if len(hits) > 0 {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "Express tier on: " + strings.Join(hitStrs, ", ")
 		rf.EvidenceFields = map[string]any{"clusters": hits}
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -520,7 +519,7 @@ func evalMSKExpressBrokerTier(clusters []types.ProcessedCluster) types.RedFlag {
 // treating "" as "scan didn't run"; for Serverless inventory accounting,
 // see `inventoryInstanceTypes` (cost_reconciliation.go), which registers
 // Serverless clusters under the synthetic `Serverless-Hours` type.
-func brokerInstanceType(c types.ProcessedCluster) string {
+func brokerInstanceType(c report.ProcessedCluster) string {
 	prov := c.AWSClientInformation.MskClusterConfig.Provisioned
 	if prov == nil || prov.BrokerNodeGroupInfo == nil || prov.BrokerNodeGroupInfo.InstanceType == nil {
 		return ""
@@ -530,8 +529,8 @@ func brokerInstanceType(c types.ProcessedCluster) string {
 
 // ----- Row 12: tiered storage in use -----
 
-func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDTieredStorageInUse, Title: "Tiered storage in use on the source"}
+func evalTieredStorageInUse(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDTieredStorageInUse, Title: "Tiered storage in use on the source"}
 	var hits []string
 	for _, c := range clusters {
 		// Serverless has no `StorageMode` concept — the elastic
@@ -544,12 +543,12 @@ func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
 		}
 	}
 	if len(hits) > 0 {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "TIERED on: " + strings.Join(hits, ", ") + " — Cluster Linking does NOT carry historical tiered data forward; see Tiered Storage section"
 		rf.EvidenceFields = map[string]any{"clusters": hits}
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -558,19 +557,19 @@ func evalTieredStorageInUse(clusters []types.ProcessedCluster) types.RedFlag {
 // No state signal exists for EOS / transactions; returns Unknown
 // unless the customer flags it. Surfaces as "not scanned" rather
 // than firing false.
-func evalEOSInUse(inputs types.PlanInputsResolved) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDEOSInUse, Title: "Exactly-once semantics (EOS) / Kafka transactions in use"}
+func evalEOSInUse(inputs PlanInputsResolved) RedFlag {
+	rf := RedFlag{ID: RedFlagIDEOSInUse, Title: "Exactly-once semantics (EOS) / Kafka transactions in use"}
 	if inputs.ExactlyOnceTransactionsInUse == nil {
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "no state signal; declare `exactly_once_transactions_in_use: true|false` in `plan-inputs.yaml`"
 		return rf
 	}
 	if *inputs.ExactlyOnceTransactionsInUse {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "`exactly_once_transactions_in_use: true` declared in plan-inputs"
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -579,10 +578,10 @@ func evalEOSInUse(inputs types.PlanInputsResolved) types.RedFlag {
 // Two signals: explicit customer declaration OR topic-pattern scan
 // for `-changelog` / `-repartition` artifacts. Either one fires the
 // row; the evidence string names which signal won.
-func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDKafkaStreamsInUse, Title: "Kafka Streams apps consuming from the source"}
+func evalKafkaStreamsInUse(clusters []report.ProcessedCluster, inputs PlanInputsResolved) RedFlag {
+	rf := RedFlag{ID: RedFlagIDKafkaStreamsInUse, Title: "Kafka Streams apps consuming from the source"}
 	if inputs.KafkaStreamsInUse != nil && *inputs.KafkaStreamsInUse {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "`kafka_streams_in_use: true` declared in plan-inputs"
 		return rf
 	}
@@ -595,7 +594,7 @@ func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanI
 		}
 	}
 	if len(hits) > 0 {
-		rf.Status = types.RedFlagTriggered
+		rf.Status = RedFlagTriggered
 		rf.Evidence = "Streams topic pattern detected on: " + strings.Join(hits, ", ")
 		return rf
 	}
@@ -605,11 +604,11 @@ func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanI
 	// suffixes. Customer declaration of `kafka_streams_in_use: false`
 	// flips this to NotTriggered explicitly.
 	if inputs.KafkaStreamsInUse == nil {
-		rf.Status = types.RedFlagUnknown
+		rf.Status = RedFlagUnknown
 		rf.Evidence = "no state signal — declare `kafka_streams_in_use: true|false` in `plan-inputs.yaml` if you know"
 		return rf
 	}
-	rf.Status = types.RedFlagNotTriggered
+	rf.Status = RedFlagNotTriggered
 	return rf
 }
 
@@ -619,8 +618,8 @@ func evalKafkaStreamsInUse(clusters []types.ProcessedCluster, inputs types.PlanI
 // changelog/repartition, transactions, heartbeats) against every
 // topic on every cluster. Surfaces deployments with custom prefixes
 // that the structured rows above might miss.
-func evalBroadTopicPatternMatch(clusters []types.ProcessedCluster) types.RedFlag {
-	rf := types.RedFlag{ID: RedFlagIDBroadTopicPatternMatch, Title: "Broad topic-name pattern scan — items the structured rows might miss"}
+func evalBroadTopicPatternMatch(clusters []report.ProcessedCluster) RedFlag {
+	rf := RedFlag{ID: RedFlagIDBroadTopicPatternMatch, Title: "Broad topic-name pattern scan — items the structured rows might miss"}
 	hitsByPattern := map[string][]string{}
 	anyHits := false
 	for _, c := range clusters {
@@ -637,7 +636,7 @@ func evalBroadTopicPatternMatch(clusters []types.ProcessedCluster) types.RedFlag
 		}
 	}
 	if !anyHits {
-		rf.Status = types.RedFlagNotTriggered
+		rf.Status = RedFlagNotTriggered
 		return rf
 	}
 	var parts []string
@@ -659,7 +658,7 @@ func evalBroadTopicPatternMatch(clusters []types.ProcessedCluster) types.RedFlag
 		}
 		parts = append(parts, fmt.Sprintf("%s — %s", p.label, strings.Join(shown, ", ")))
 	}
-	rf.Status = types.RedFlagTriggered
+	rf.Status = RedFlagTriggered
 	rf.Evidence = strings.Join(parts, "; ")
 	return rf
 }

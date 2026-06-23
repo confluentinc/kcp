@@ -1,9 +1,8 @@
 package plan
 
 import (
-	"github.com/confluentinc/kcp/internal/types"
-
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // Plan-input enum tokens for tiered-storage knobs. Stable
@@ -28,9 +27,9 @@ const (
 // trade-off (mechanism / duration / cost direction) so the customer
 // (and account team) can decide whether the cold data is worth
 // re-fetching.
-func detectTieredStorage(state types.ProcessedState, inputs types.PlanInputsResolved) *types.TieredStorageSection {
+func detectTieredStorage(state report.ProcessedState, inputs PlanInputsResolved) *TieredStorageSection {
 	clusters := collectClusters(state)
-	var tiered []types.TieredStorageCluster
+	var tiered []TieredStorageCluster
 	for _, c := range clusters {
 		// Serverless has no `StorageMode` (Provisioned-only field).
 		// Skip explicitly so the empty `clusterStorageMode` return
@@ -41,7 +40,7 @@ func detectTieredStorage(state types.ProcessedState, inputs types.PlanInputsReso
 		if clusterStorageMode(c) != kafkatypes.StorageModeTiered {
 			continue
 		}
-		tiered = append(tiered, types.TieredStorageCluster{
+		tiered = append(tiered, TieredStorageCluster{
 			ClusterID:          c.Name,
 			StorageMode:        string(kafkatypes.StorageModeTiered),
 			RemoteLogSizeBytes: remoteLogSizeBytesOf(c),
@@ -50,7 +49,7 @@ func detectTieredStorage(state types.ProcessedState, inputs types.PlanInputsReso
 	if len(tiered) == 0 {
 		return nil
 	}
-	return &types.TieredStorageSection{
+	return &TieredStorageSection{
 		Clusters:                   tiered,
 		ConsumerHistoryRequirement: defaultedConsumerHistory(inputs.ConsumerHistoryRequirement),
 		HistoricalDataStrategy:     defaultedHistoricalStrategy(inputs.HistoricalDataStrategy, inputs.ConsumerHistoryRequirement),
@@ -67,7 +66,7 @@ func detectTieredStorage(state types.ProcessedState, inputs types.PlanInputsReso
 // whereas Average over a 30-day window for a fixed 7-day retention
 // would report ~half the real current footprint. Falls back to
 // Average when Maximum isn't populated.
-func remoteLogSizeBytesOf(c types.ProcessedCluster) float64 {
+func remoteLogSizeBytesOf(c report.ProcessedCluster) float64 {
 	agg, ok := c.ClusterMetrics.Aggregates["RemoteLogSizeBytes"]
 	if !ok {
 		return 0
@@ -123,13 +122,13 @@ func knownHistoricalStrategy(v string) bool {
 // confidence in the tiered-storage recommendation: typos in the two
 // enums and the "you have tiered storage but haven't picked a
 // strategy" prompt.
-func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, inputs types.PlanInputsResolved) []types.OpenQuestion {
+func detectTieredStorageOpenQuestions(section *TieredStorageSection, inputs PlanInputsResolved) []OpenQuestion {
 	if section == nil {
 		return nil
 	}
-	var oqs []types.OpenQuestion
+	var oqs []OpenQuestion
 	if !knownConsumerHistory(inputs.ConsumerHistoryRequirement) {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "tiered_consumer_history_invalid",
 			Title:      "`consumer_history_requirement` is not a recognised value",
 			Body:       "Recognised values: `required` (default) | `not_required` | `unknown`. The current value falls outside the enum; the Plan treats it as `required` until corrected.",
@@ -137,7 +136,7 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 		})
 	}
 	if inputs.HistoricalDataStrategy != "" && !knownHistoricalStrategy(inputs.HistoricalDataStrategy) {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "tiered_historical_strategy_invalid",
 			Title:      "`historical_data_strategy` is not a recognised value",
 			Body:       "Recognised values: `keep_msk_running_until_data_expires` | `bulk_load_historical_via_external_tool` | `defer_to_account_team`. The current value falls outside the enum; the Plan ignores it and treats the strategy as undeclared.",
@@ -151,7 +150,7 @@ func detectTieredStorageOpenQuestions(section *types.TieredStorageSection, input
 	// stays quiet on that branch.
 	consumerHistory := defaultedConsumerHistory(inputs.ConsumerHistoryRequirement)
 	if section.HistoricalDataStrategy == "" && consumerHistory != ConsumerHistoryNotRequired {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "tiered_strategy_undeclared",
 			Title:      "Tiered storage detected — declare `historical_data_strategy` in `plan-inputs.yaml`",
 			Body:       "Cluster Linking does NOT carry historical tiered data forward. Pick the path that matches your operational constraints: keep MSK running until your retention window expires (lowest engineering cost, highest infra cost), bulk-load historical data via an external tool, or defer the cascade to your Confluent account team.",

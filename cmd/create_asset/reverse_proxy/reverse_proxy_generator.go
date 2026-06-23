@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
@@ -41,7 +42,7 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 	}
 
 	// Create request from opts
-	request := types.ReverseProxyRequest{
+	request := hclrequests.ReverseProxyRequest{
 		Region:                                 rp.opts.Region,
 		VPCId:                                  rp.opts.VPCId,
 		PublicSubnetCidr:                       rp.opts.PublicSubnetCidr,
@@ -81,7 +82,7 @@ func (rp *ReverseProxyAssetGenerator) Run() error {
 	return nil
 }
 
-func (rp *ReverseProxyAssetGenerator) writeTerraformFiles(outputDir string, files types.TerraformFiles) error {
+func (rp *ReverseProxyAssetGenerator) writeTerraformFiles(outputDir string, files hcltypes.TerraformFiles) error {
 	if files.MainTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)

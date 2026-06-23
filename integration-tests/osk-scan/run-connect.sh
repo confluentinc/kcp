@@ -81,7 +81,7 @@ STATE="test-state-kafka-connect.json"
 
 # First, run a basic OSK scan to populate the state file with the cluster
 echo "Populating state file with OSK cluster..."
-./kcp scan clusters --source-type osk \
+./kcp scan clusters --source-type apache-kafka \
     --credentials-file integration-tests/osk-scan/credentials/kafka-plaintext.yaml \
     --state-file "$STATE"
 

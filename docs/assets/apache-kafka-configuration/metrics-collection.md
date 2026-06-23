@@ -1,10 +1,10 @@
 ---
-title: Metrics collection (OSK)
+title: Metrics collection
 ---
 
-# Metrics collection — OSK
+# Metrics collection — Apache Kafka®
 
-For MSK, `kcp discover` pulls cluster metrics straight from CloudWatch. OSK
+For MSK, `kcp discover` pulls cluster metrics straight from CloudWatch. Apache Kafka
 clusters do not have an equivalent metrics surface, so [`kcp scan clusters`](../command-reference/scan/clusters.md)
 supports two collection backends, selected with `--metrics <source>`:
 
@@ -15,10 +15,10 @@ supports two collection backends, selected with `--metrics <source>`:
 > throughput, byte rates), see
 > [Connect metrics collection](connect-metrics-collection.md).
 
-| Backend      | Mode                  | Required flags                                                  | Required `osk-credentials.yaml` block |
+| Backend      | Mode                  | Required flags                                                  | Required `apache-kafka-credentials.yaml` block |
 | ------------ | --------------------- | --------------------------------------------------------------- | ------------------------------------- |
-| `jolokia`    | Live polling          | `--metrics jolokia` + `--metrics-duration` (`--metrics-interval` optional, default `10s`) | [`jolokia:`](osk-credentials.md) |
-| `prometheus` | Historical query      | `--metrics prometheus` + `--metrics-range`                      | [`prometheus:`](osk-credentials.md) |
+| `jolokia`    | Live polling          | `--metrics jolokia` + `--metrics-duration` (`--metrics-interval` optional, default `10s`) | [`jolokia:`](credentials.md) |
+| `prometheus` | Historical query      | `--metrics prometheus` + `--metrics-range`                      | [`prometheus:`](credentials.md) |
 
 Both backends produce the same `ProcessedClusterMetrics` shape inside
 `kcp-state.json`, so reports and the UI work identically regardless of which
@@ -38,7 +38,7 @@ KAFKA_OPTS="-javaagent:/path/to/jolokia-agent.jar=port=8778,host=0.0.0.0"
 ```
 
 Each broker runs its own Jolokia endpoint, so for a multi-broker cluster you
-list every endpoint under `jolokia.endpoints` in `osk-credentials.yaml`.
+list every endpoint under `jolokia.endpoints` in `apache-kafka-credentials.yaml`.
 
 ## Counter-based rates, not EWMA
 
@@ -78,7 +78,7 @@ metric — plenty for meaningful analysis of throughput patterns.
 ## Metrics collected
 
 Names align with the equivalent CloudWatch metric on MSK so that
-state-file consumers (reports, UI) treat MSK and OSK identically.
+state-file consumers (reports, UI) treat MSK and Apache Kafka identically.
 
 | Metric                    | Description                                       | Type                              |
 | ------------------------- | ------------------------------------------------- | --------------------------------- |
@@ -92,7 +92,7 @@ state-file consumers (reports, UI) treat MSK and OSK identically.
 
 ## Jolokia authentication modes
 
-Configured under the `jolokia:` block in `osk-credentials.yaml`:
+Configured under the `jolokia:` block in `apache-kafka-credentials.yaml`:
 
 | Mode                  | Configuration                                                                                                                |
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
@@ -101,7 +101,7 @@ Configured under the `jolokia:` block in `osk-credentials.yaml`:
 | TLS                   | Set `tls.ca_cert` (or `tls.insecure_skip_verify: true` for self-signed). Combinable with password auth.                      |
 
 Prometheus uses the same three modes via its own `auth` and `tls` sub-blocks.
-See the [`osk-credentials.yaml` reference](osk-credentials.md) for the full schema.
+See the [`apache-kafka-credentials.yaml` reference](credentials.md) for the full schema.
 
 ## Prometheus PromQL queries
 
@@ -136,7 +136,7 @@ metric will be omitted from results — all other metrics will still be collecte
 
 Ensure your Prometheus instance is scraping the Kafka controller nodes (not just
 broker nodes). In Kubernetes with KRaft mode, controllers may run as separate
-pods (e.g. `osk-kraftcontroller-*`) that require their own `PodMonitor` or
+pods (e.g. `kafka-kraftcontroller-*`) that require their own `PodMonitor` or
 `ServiceMonitor`.
 
 These metric names (`kafka_server_brokertopicmetrics_*`,
@@ -148,21 +148,21 @@ empty results.
 ## Filtering by cluster (Prometheus)
 
 When a single Prometheus instance scrapes multiple Kafka clusters, use
-`filter.labels` in `osk-credentials.yaml` to scope queries to a specific
-cluster. See the [`prometheus` field reference](osk-credentials.md#prometheus--optional-for-historical-metrics)
+`filter.labels` in `apache-kafka-credentials.yaml` to scope queries to a specific
+cluster. See the [`prometheus` field reference](credentials.md#prometheus--optional-for-historical-metrics)
 for details.
 
 ## Worked examples
 
 ```bash
 # Live polling for 5 minutes, 10s interval (default)
-kcp scan clusters --source-type osk --state-file kcp-state.json \
-  --credentials-file osk-credentials.yaml \
+kcp scan clusters --source-type apache-kafka --state-file kcp-state.json \
+  --credentials-file apache-kafka-credentials.yaml \
   --metrics jolokia --metrics-duration 5m
 
 # Historical pull from Prometheus, last 30 days
-kcp scan clusters --source-type osk --state-file kcp-state.json \
-  --credentials-file osk-credentials.yaml \
+kcp scan clusters --source-type apache-kafka --state-file kcp-state.json \
+  --credentials-file apache-kafka-credentials.yaml \
   --metrics prometheus --metrics-range 30d
 ```
 
