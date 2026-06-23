@@ -82,7 +82,8 @@ func TestCreateClusterLink_SourceInitiatedSourceSide(t *testing.T) {
 	svc := NewConfluentCloudService(srv.Client())
 	cfg := Config{RestEndpoint: srv.URL, ClusterID: "dest-123", LinkName: "l", APIKey: "a", APISecret: "b"}
 	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
-		SourceClusterID:        "src",
+		// SourceClusterID intentionally empty: the SOURCE-side link object must
+		// NOT carry source_cluster_id (only the DESTINATION side does).
 		SourceBootstrapServers: []string{"source:29092"},
 		SecurityProtocol:       "PLAINTEXT",
 		LinkMode:               "SOURCE",
@@ -93,6 +94,7 @@ func TestCreateClusterLink_SourceInitiatedSourceSide(t *testing.T) {
 	configs := configMapFromBody(t, gotBody)
 	require.Equal(t, "SOURCE", configs["link.mode"])
 	require.Equal(t, "OUTBOUND", configs["connection.mode"])
+	require.NotContains(t, gotBody, "source_cluster_id", "source-side link must omit source_cluster_id")
 }
 
 func TestCreateClusterLink_SourceInitiatedDestinationSide(t *testing.T) {
@@ -118,6 +120,7 @@ func TestCreateClusterLink_SourceInitiatedDestinationSide(t *testing.T) {
 	configs := configMapFromBody(t, gotBody)
 	require.Equal(t, "DESTINATION", configs["link.mode"])
 	require.Equal(t, "INBOUND", configs["connection.mode"])
+	require.Equal(t, "src", gotBody["source_cluster_id"], "destination-side link must carry source_cluster_id")
 }
 
 func TestCreateClusterLink_AlreadyExistsIsTyped(t *testing.T) {

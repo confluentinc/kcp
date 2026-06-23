@@ -3,6 +3,8 @@ package apply
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -93,4 +95,108 @@ func TestApply_AlreadyPresent(t *testing.T) {
 	out, _, err := run(t, srv.URL, false)
 	require.NoError(t, err)
 	require.Contains(t, out, "1 already present")
+}
+
+// createCapture records the create requests seen by a stub link endpoint.
+type createCapture struct {
+	clusterID string
+	bodies    []map[string]any
+}
+
+// startStubLinkEndpoint serves the minimal link REST surface (list clusters,
+// get link → 404, create link → 201) and captures create bodies.
+func startStubLinkEndpoint(t *testing.T, cap *createCapture) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/kafka/v3/clusters", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/kafka/v3/clusters" { // only the bare list
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"cluster_id":"` + cap.clusterID + `"}]}`))
+	})
+	// GET link → not found (so reconcile plans a create); POST create → 201.
+	mux.HandleFunc("/kafka/v3/clusters/"+cap.clusterID+"/links/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			b, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(b, &body)
+			cap.bodies = append(cap.bodies, body)
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/kafka/v3/clusters/"+cap.clusterID+"/links/src-to-dest", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	return httptest.NewServer(mux)
+}
+
+func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
+	destCap := &createCapture{clusterID: "dest-1"}
+	srcCap := &createCapture{clusterID: "src-rest-1"}
+	destSrv := startStubLinkEndpoint(t, destCap)
+	defer destSrv.Close()
+	srcSrv := startStubLinkEndpoint(t, srcCap)
+	defer srcSrv.Close()
+
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("basic:\n  username: admin\n  password: admin-secret\n"), 0600))
+	srcRestCreds := filepath.Join(dir, "srcrest.yaml")
+	require.NoError(t, os.WriteFile(srcRestCreds, []byte("basic:\n  username: src\n  password: src-secret\n"), 0600))
+	sourceCreds := filepath.Join(dir, "source.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte(
+		"clusters:\n  - id: src\n    bootstrap_servers: [\"source:29092\"]\n    auth_method:\n      unauthenticated_plaintext:\n        use: true\n"), 0600))
+	destCreds := filepath.Join(dir, "dest.yaml")
+	require.NoError(t, os.WriteFile(destCreds, []byte(
+		"clusters:\n  - id: dest\n    bootstrap_servers: [\"dest:29092\"]\n    auth_method:\n      unauthenticated_plaintext:\n        use: true\n"), 0600))
+
+	mf := filepath.Join(dir, "migration.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n  source:\n    type: confluent-platform\n    credentials: "+sourceCreds+
+			"\n  target:\n    type: confluent-platform\n    credentials: "+targetCreds+
+			"\n    kafka:\n      restEndpoint: "+destSrv.URL+"\n      bootstrapServers: [\"dest:29092\"]\n"+
+			"  clusterLink:\n    name: src-to-dest\n    mode: source\n    destinationCredentials: "+destCreds+
+			"\n    sourceRest:\n      endpoint: "+srcSrv.URL+"\n      credentials: "+srcRestCreds+"\n"), 0600))
+
+	old := newSourceReader
+	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return staticSource("src-1") }
+	t.Cleanup(func() { newSourceReader = old })
+
+	cmd := NewMigrateApplyCmd()
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"-f", mf})
+	require.NoError(t, cmd.Execute(), "stderr: %s", errBuf.String())
+
+	out := outBuf.String()
+	require.Contains(t, out, "2 created")
+
+	// Destination side: created first, INBOUND, carries source_cluster_id, no bootstrap.
+	require.Len(t, destCap.bodies, 1)
+	destCfgs := configMap(destCap.bodies[0])
+	require.Equal(t, "DESTINATION", destCfgs["link.mode"])
+	require.Equal(t, "INBOUND", destCfgs["connection.mode"])
+	require.Equal(t, "src-1", destCap.bodies[0]["source_cluster_id"])
+
+	// Source side: OUTBOUND, dials the destination address, omits source_cluster_id.
+	require.Len(t, srcCap.bodies, 1)
+	srcCfgs := configMap(srcCap.bodies[0])
+	require.Equal(t, "SOURCE", srcCfgs["link.mode"])
+	require.Equal(t, "OUTBOUND", srcCfgs["connection.mode"])
+	require.Equal(t, "dest:29092", srcCfgs["bootstrap.servers"])
+	require.NotContains(t, srcCap.bodies[0], "source_cluster_id", "source-side link must omit source_cluster_id")
+}
+
+func configMap(body map[string]any) map[string]string {
+	out := map[string]string{}
+	raw, _ := body["configs"].([]any)
+	for _, e := range raw {
+		m := e.(map[string]any)
+		out[m["name"].(string)] = m["value"].(string)
+	}
+	return out
 }

@@ -608,8 +608,11 @@ func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Co
 		configs[i] = linkConfigEntry{Name: name, Value: values[name]}
 	}
 
+	// source_cluster_id is omitted entirely when empty: a source-initiated link's
+	// SOURCE-side object must not carry it (only the DESTINATION-side object,
+	// which sets connection.mode=INBOUND, identifies the source cluster id).
 	body := struct {
-		SourceClusterID string            `json:"source_cluster_id"`
+		SourceClusterID string            `json:"source_cluster_id,omitempty"`
 		Configs         []linkConfigEntry `json:"configs"`
 	}{SourceClusterID: req.SourceClusterID, Configs: configs}
 
