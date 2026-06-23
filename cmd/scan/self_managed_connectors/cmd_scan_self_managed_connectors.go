@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -27,6 +28,12 @@ var (
 	tlsCaCert     string
 	tlsClientCert string
 	tlsClientKey  string
+
+	metricsSource   string
+	metricsDuration string
+	metricsInterval string
+	metricsRange    string
+	credentialsFile string
 )
 
 func NewScanSelfManagedConnectorsCmd() *cobra.Command {
@@ -67,11 +74,20 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to client key file (required when using --use-tls).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(tlsFlags)
 
+	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
+	metricsFlags.SortFlags = false
+	metricsFlags.StringVar(&metricsSource, "metrics", "", "Collect Connect worker metrics: 'jolokia' or 'prometheus'. Requires --credentials-file. Endpoints/filters must target the Connect workers, not the Kafka brokers.")
+	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia metrics (e.g. 5m, 1h). Required with --metrics jolokia.")
+	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia metrics (e.g. 10s, 30s). Default: 10s.")
+	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Day range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
+	metricsFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to the apache-kafka-credentials.yaml file providing Jolokia/Prometheus configuration. Required with --metrics.")
+	selfManagedConnectorsCmd.Flags().AddFlagSet(metricsFlags)
+
 	selfManagedConnectorsCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authMethodFlags, saslScramFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, authMethodFlags, saslScramFlags, tlsFlags, metricsFlags}
+		groupNames := []string{"Required Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials", "Metrics Collection (optional)"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -109,6 +125,50 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 		_ = cmd.MarkFlagRequired("tls-ca-cert")
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
+	}
+
+	// Validate metrics flags. Mirrors the cluster-scan validation style
+	// (cmd/scan/clusters): mutual exclusion via Flags().Changed, fail fast
+	// before any collection. Error values carry no credential material.
+	if metricsSource != "" {
+		if credentialsFile == "" {
+			return fmt.Errorf("--credentials-file is required when --metrics is set")
+		}
+		switch metricsSource {
+		case "jolokia":
+			if metricsDuration == "" {
+				return fmt.Errorf("--metrics-duration is required when --metrics jolokia is set")
+			}
+			if _, err := time.ParseDuration(metricsDuration); err != nil {
+				return fmt.Errorf("invalid --metrics-duration '%s': %w", metricsDuration, err)
+			}
+			if _, err := time.ParseDuration(metricsInterval); err != nil {
+				return fmt.Errorf("invalid --metrics-interval '%s': %w", metricsInterval, err)
+			}
+			duration, _ := time.ParseDuration(metricsDuration)
+			interval, _ := time.ParseDuration(metricsInterval)
+			if duration <= interval {
+				return fmt.Errorf("--metrics-duration (%s) must be greater than --metrics-interval (%s) to collect at least one data point", metricsDuration, metricsInterval)
+			}
+			if cmd.Flags().Changed("metrics-range") {
+				return fmt.Errorf("--metrics-range cannot be used with --metrics jolokia")
+			}
+		case "prometheus":
+			if metricsRange == "" {
+				return fmt.Errorf("--metrics-range is required when --metrics prometheus is set")
+			}
+			if _, err := utils.ParseDurationDays(metricsRange); err != nil {
+				return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
+			}
+			if cmd.Flags().Changed("metrics-duration") {
+				return fmt.Errorf("--metrics-duration cannot be used with --metrics prometheus")
+			}
+			if cmd.Flags().Changed("metrics-interval") {
+				return fmt.Errorf("--metrics-interval cannot be used with --metrics prometheus")
+			}
+		default:
+			return fmt.Errorf("invalid --metrics '%s': must be 'jolokia' or 'prometheus'", metricsSource)
+		}
 	}
 
 	return nil
@@ -157,6 +217,27 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		return nil, fmt.Errorf("cluster not found in state file: %v", err)
 	}
 
+	// Resolve metrics cluster credentials only when metrics collection is
+	// requested. Credentials are read from the file here and never persisted to
+	// state or logged. The error path carries the cluster ARN and file path
+	// only — no credential material (R11).
+	var metricsClusterCreds *types.OSKClusterAuth
+	if metricsSource != "" {
+		creds, errs := types.NewOSKCredentialsFromFile(credentialsFile)
+		if len(errs) > 0 {
+			return nil, fmt.Errorf("failed to load credentials file %s: %v", credentialsFile, errs)
+		}
+		for i := range creds.Clusters {
+			if creds.Clusters[i].ID == clusterArn {
+				metricsClusterCreds = &creds.Clusters[i]
+				break
+			}
+		}
+		if metricsClusterCreds == nil {
+			return nil, fmt.Errorf("no matching cluster entry for cluster-arn %q in credentials file %s; metrics collection requires a matching cluster entry", clusterArn, credentialsFile)
+		}
+	}
+
 	opts := SelfManagedConnectorsScannerOpts{
 		StateFile:      stateFile,
 		State:          state,
@@ -172,6 +253,11 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 			ClientCert: tlsClientCert,
 			ClientKey:  tlsClientKey,
 		},
+		MetricsSource:       metricsSource,
+		MetricsClusterCreds: metricsClusterCreds,
+		MetricsDuration:     metricsDuration,
+		MetricsInterval:     metricsInterval,
+		MetricsRange:        metricsRange,
 	}
 
 	return &opts, nil
