@@ -165,7 +165,7 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
       <WizardProgress />
 
       <WizardStepForm
-        step={currentStep as WizardStep}
+        step={{ ...(currentStep as WizardStep), id: (currentStep as WizardStep).id || currentStateId }}
         formData={stepData}
         onSubmit={handleFormSubmit}
         onBack={handleBack}
