@@ -25,7 +25,7 @@ type ReportService interface {
 	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
 	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
 }
 
 type UICmdOpts struct {
