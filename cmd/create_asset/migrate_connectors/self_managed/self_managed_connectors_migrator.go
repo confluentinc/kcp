@@ -153,13 +153,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		}
 
 		filename := fmt.Sprintf("%s-connector.tf", connector.Name)
-		filepath := filepath.Join(mc.OutputDir, filename)
-
-		file, err := os.Create(filepath)
-		if err != nil {
-			return fmt.Errorf("failed to create file %s: %w", filepath, err)
-		}
-		defer func() { _ = file.Close() }()
+		path := filepath.Join(mc.OutputDir, filename)
 
 		templateData := TemplateData{
 			ConnectorName:   connector.Name,
@@ -169,14 +163,38 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 			Warnings:        warnings,
 		}
 
-		if err := tmpl.Execute(file, templateData); err != nil {
-			return fmt.Errorf("failed to execute template for connector %s: %w", connector.Name, err)
+		if err := writeConnectorFile(tmpl, path, templateData); err != nil {
+			return err
 		}
 
 		slog.Debug(fmt.Sprintf("generated: %s", filename))
 	}
 
 	fmt.Printf("✅ Successfully generated connector files for %d connectors in %s\n", len(mc.Connectors), mc.OutputDir)
+
+	return nil
+}
+
+// writeConnectorFile renders templateData into a single connector .tf file at
+// path. It is a standalone function (not inlined in the Run loop) so the file
+// handle is closed when this returns — once per connector — rather than via a
+// deferred close that would accumulate open handles until Run() returns and
+// could exhaust file descriptors (or, on Windows, block subsequent file ops).
+// The deferred Close also surfaces a write error that only manifests on close.
+func writeConnectorFile(tmpl *template.Template, path string, templateData TemplateData) (err error) {
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", path, err)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close file %s: %w", path, cerr)
+		}
+	}()
+
+	if err := tmpl.Execute(file, templateData); err != nil {
+		return fmt.Errorf("failed to execute template for connector %s: %w", templateData.ConnectorName, err)
+	}
 
 	return nil
 }

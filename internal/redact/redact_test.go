@@ -21,6 +21,15 @@ func TestIsSensitive_SensitiveKeys(t *testing.T) {
 		"some.token",
 		"my.secret",
 		"the.credential",
+		// newly-generalized secret families (previously only fully-qualified)
+		"some.connector.api.key",
+		"service.apikey",
+		"gcs.access.key",
+		"minio.accesskey",
+		"keystore.passphrase",
+		"sasl.kerberos.keytab",
+		"ssl.private.key",
+		"client.privatekey",
 		// case-insensitive
 		"DATABASE.PASSWORD",
 		"MY_SECRET_KEY",
@@ -54,6 +63,31 @@ func TestIsSensitive_BenignKeys_NoFalsePositives(t *testing.T) {
 	for _, k := range benign {
 		if IsSensitive(k) {
 			t.Errorf("IsSensitive(%q) = true, want false (false positive)", k)
+		}
+	}
+}
+
+// TestIsSensitive_AcceptedOverRedaction locks in the deliberate fail-closed
+// tradeoff: IsSensitive matches blacklist entries as case-insensitive
+// SUBSTRINGS, so a benign key that merely embeds "password"/"token"/"secret"/
+// "credential" is redacted even though its value is not a secret. This over-
+// redaction is accepted — losing a non-secret value from the persisted config is
+// preferred over leaking a real secret. These keys are NOT secrets; if a future
+// change stops redacting them, that is a conscious narrowing of the blacklist and
+// this test should be updated to match, not silently broken.
+func TestIsSensitive_AcceptedOverRedaction(t *testing.T) {
+	overRedacted := []struct {
+		key string
+		why string
+	}{
+		{"tokenizer.class", `"tokenizer" embeds "token"; this is a class name, not a secret`},
+		{"token.bucket.size", `rate-limiter setting; "token" here is not an auth token`},
+		{"aws.credentials.provider", `names a credentials-provider class; embeds "credential"`},
+		{"credentials.provider.class", `provider class name; embeds "credential"`},
+	}
+	for _, tc := range overRedacted {
+		if !IsSensitive(tc.key) {
+			t.Errorf("IsSensitive(%q) = false, want true (accepted over-redaction: %s)", tc.key, tc.why)
 		}
 	}
 }

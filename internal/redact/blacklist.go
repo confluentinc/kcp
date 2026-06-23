@@ -133,6 +133,14 @@ var sensitivePatterns = []string{
 	"token",
 	"secret",
 	"credential",
+	"passphrase",
+	"keytab",
+	"private.key",
+	"privatekey",
+	"access.key",
+	"accesskey",
+	"apikey",
+	"api.key",
 }
 
 // blacklist is the combined set of substrings (static names ∪ patterns) that
