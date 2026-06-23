@@ -20,6 +20,8 @@ package clusterlink
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/reconcile"
@@ -284,7 +286,7 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 			if s.onSource {
 				tgt = r.srcLinkTgt
 			}
-			if err := tgt.CreateClusterLink(ctx, r.cfg.LinkName, *s.req); err != nil {
+			if err := r.createClusterLink(ctx, tgt, *s.req, s.onSource); err != nil {
 				// Return what we created before the failure so the caller can see
 				// partial progress; the engine surfaces the error.
 				return out, fmt.Errorf("creating cluster link: %w", err)
@@ -297,4 +299,47 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 		}
 	}
 	return out, nil
+}
+
+// linkPropagationRetry* bound the retry of the source-side (OUTBOUND) create
+// against the INBOUND-propagation race (see createClusterLink). Package vars so
+// tests can shrink them.
+var (
+	linkPropagationRetryTimeout = 30 * time.Second
+	linkPropagationRetryBackoff = 500 * time.Millisecond
+)
+
+// linkNotPropagated is the substring cp-server returns when the source-side
+// OUTBOUND link is created before the just-created INBOUND link has propagated
+// to the destination ("...the destination cluster does not have a link named X").
+const linkNotPropagated = "does not have a link named"
+
+// createClusterLink creates a link, retrying ONLY the source-side OUTBOUND create
+// against the INBOUND-propagation race. A single source-initiated `apply` creates
+// the INBOUND link then immediately the OUTBOUND link, whose validation connects
+// to the destination and checks the INBOUND link is present; cp-server propagates
+// that link asynchronously, so the OUTBOUND create can momentarily 400. We retry
+// that specific transient (source side only) with backoff until it propagates, so
+// a single `kcp migrate apply` is reliable rather than requiring a manual re-run.
+// All other errors — and the destination-side create — fail immediately.
+func (r *Reconciler) createClusterLink(ctx context.Context, tgt target, req svclink.CreateClusterLinkRequest, onSource bool) error {
+	deadline := time.Now().Add(linkPropagationRetryTimeout)
+	backoff := linkPropagationRetryBackoff
+	for {
+		err := tgt.CreateClusterLink(ctx, r.cfg.LinkName, req)
+		if err == nil {
+			return nil
+		}
+		if !onSource || !strings.Contains(err.Error(), linkNotPropagated) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 4*time.Second {
+			backoff *= 2
+		}
+	}
 }

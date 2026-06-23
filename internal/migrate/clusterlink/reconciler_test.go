@@ -2,8 +2,10 @@ package clusterlink
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/reconcile"
@@ -150,6 +152,8 @@ type recordingTarget struct {
 	existing  *svclink.ClusterLink
 	side      string // "dest" or "src" — tag for the shared log
 	log       *createLog
+	failN     int   // fail the first failN create calls...
+	failErr   error // ...with this error (simulates a transient)
 }
 
 type createEntry struct {
@@ -165,6 +169,10 @@ func (t *recordingTarget) GetClusterLink(context.Context, string) (*svclink.Clus
 	return t.existing, nil
 }
 func (t *recordingTarget) CreateClusterLink(_ context.Context, name string, req svclink.CreateClusterLinkRequest) error {
+	if t.failN > 0 {
+		t.failN--
+		return t.failErr
+	}
 	t.log.entries = append(t.log.entries, createEntry{side: t.side, name: name, req: req})
 	return nil
 }
@@ -236,6 +244,53 @@ func TestSourceInitiated_Apply_RoutesToCorrectClientInOrder(t *testing.T) {
 	require.Equal(t, "SCRAM-SHA-512", s.req.SaslMechanism)
 	require.Equal(t, "dest-jaas", s.req.SaslJaasConfig)
 	require.Equal(t, "true", s.req.Configs["consumer.offset.sync.enable"])
+}
+
+// shrinkPropagationRetry shrinks the retry timing for fast unit tests.
+func shrinkPropagationRetry(t *testing.T) {
+	t.Helper()
+	ot, ob := linkPropagationRetryTimeout, linkPropagationRetryBackoff
+	linkPropagationRetryTimeout, linkPropagationRetryBackoff = 2*time.Second, time.Millisecond
+	t.Cleanup(func() { linkPropagationRetryTimeout, linkPropagationRetryBackoff = ot, ob })
+}
+
+// The source-side OUTBOUND create races the INBOUND link's propagation to the
+// destination; a single apply must retry that transient rather than fail.
+func TestSourceInitiated_Apply_RetriesSourceSideOnPropagationRace(t *testing.T) {
+	shrinkPropagationRetry(t)
+	log := &createLog{}
+	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log}
+	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log,
+		failN:   2,
+		failErr: fmt.Errorf("unexpected status code 400: the destination cluster does not have a link named src-to-dest"),
+	}
+	r := newSourceInitiated(fakeSource{id: "src-1"}, dest, srcLink)
+
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	out, err := r.Apply(context.Background(), plan)
+	require.NoError(t, err, "transient propagation race must be retried, not surfaced")
+	require.Len(t, out.Created, 2)
+	require.Len(t, log.entries, 2, "both sides eventually created (source after retries)")
+	require.Equal(t, "src", log.entries[1].side)
+}
+
+// A non-propagation error on the source side is NOT retried — it fails fast.
+func TestSourceInitiated_Apply_DoesNotRetryOtherErrors(t *testing.T) {
+	shrinkPropagationRetry(t)
+	log := &createLog{}
+	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log}
+	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log,
+		failN:   1,
+		failErr: fmt.Errorf("unexpected status code 401: authentication failed"),
+	}
+	r := newSourceInitiated(fakeSource{id: "src-1"}, dest, srcLink)
+
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	_, err = r.Apply(context.Background(), plan)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "authentication failed")
 }
 
 func TestSourceInitiated_BothPresent_AllPresent(t *testing.T) {

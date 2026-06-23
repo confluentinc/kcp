@@ -5,72 +5,23 @@ package migrateclusterlink
 import (
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-// applySourcePair applies a source-initiated manifest until it succeeds. KCP
-// creates the INBOUND link on the destination then the OUTBOUND link on the
-// source in a single apply; the OUTBOUND create validates by connecting to the
-// destination and confirming the INBOUND link is present. cp-server propagates
-// the freshly-created INBOUND link asynchronously, so the OUTBOUND validation
-// can momentarily race it (HTTP 400 "the destination cluster does not have a
-// link named X"), most often right after broker startup while the link
-// coordinator warms up. A re-apply is the correct recovery: the INBOUND side is
-// already present (idempotent no-op) and only the OUTBOUND side is retried, by
-// which time the INBOUND link has propagated. The combined created/present
-// count across the final successful apply is always 2 sides.
-//
-// On the FIRST successful apply (no race) the summary is "2 created". After a
-// retry it is "1 created, 1 already present" (INBOUND already there). Either way
-// both sides exist; the caller then asserts both reach ACTIVE.
+// applySourcePair applies a source-initiated manifest once and asserts both
+// sides were created. KCP creates the INBOUND link on the destination then the
+// OUTBOUND link on the source in a single apply; the OUTBOUND create races the
+// INBOUND link's asynchronous propagation to the destination, which KCP itself
+// retries (see reconciler.createClusterLink), so a single `apply` is reliable
+// and yields "2 created" — no test-level retry needed (that would mask the
+// product fix).
 func applySourcePair(t *testing.T, manifest string) {
 	t.Helper()
-	const propagationRace = "the destination cluster does not have a link named"
-	deadline := time.Now().Add(90 * time.Second)
-	for attempt := 1; ; attempt++ {
-		out, err := runKCP(t, manifest)
-		if err == nil {
-			require.Equal(t, 2, sidesAccountedFor(t, out),
-				"both source-link sides must be created or already present\n%s", out)
-			return
-		}
-		if !strings.Contains(out, propagationRace) || time.Now().After(deadline) {
-			require.NoError(t, err, out) // unexpected error or out of retries
-		}
-		t.Logf("source-link INBOUND propagation race (attempt %d), retrying", attempt)
-		time.Sleep(3 * time.Second)
-	}
-}
-
-// sidesAccountedFor sums the created + already-present counts from a reconcile
-// summary line "N created, M already present, K drift".
-func sidesAccountedFor(t *testing.T, out string) int {
-	t.Helper()
-	for _, line := range strings.Split(out, "\n") {
-		ci := strings.Index(line, " created,")
-		pi := strings.Index(line, " already present")
-		if ci < 0 || pi < 0 {
-			continue
-		}
-		created := lastIntBefore(t, line[:ci], line)
-		present := lastIntBefore(t, line[strings.LastIndex(line[:pi], ",")+1:pi], line)
-		return created + present
-	}
-	t.Fatalf("no reconcile summary line in output:\n%s", out)
-	return 0
-}
-
-func lastIntBefore(t *testing.T, s, full string) int {
-	t.Helper()
-	fields := strings.Fields(s)
-	n, err := strconv.Atoi(fields[len(fields)-1])
-	require.NoError(t, err, full)
-	return n
+	out, err := runKCP(t, manifest)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "2 created", out)
 }
 
 // sourceCell is one source-initiated permutation. Two links share one name: the
