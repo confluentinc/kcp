@@ -19,7 +19,7 @@ func sampleConnectClusterMetrics() ConnectClusterMetrics {
 			StartDate:     start,
 			EndDate:       end,
 			Period:        60,
-			MetricsSource: "prometheus",
+			MetricsSource: MetricBackendPrometheus,
 		},
 		Metrics: []ProcessedMetric{
 			{Start: start.Format(time.RFC3339), End: end.Format(time.RFC3339), Label: "connector-count", Value: &v},
@@ -78,7 +78,7 @@ func TestConnectClusterMetrics_RoundTrip(t *testing.T) {
 	assert.True(t, original.Metadata.StartDate.Equal(got.Metadata.StartDate))
 	assert.True(t, original.Metadata.EndDate.Equal(got.Metadata.EndDate))
 	assert.Equal(t, int32(60), got.Metadata.Period)
-	assert.Equal(t, "prometheus", got.Metadata.MetricsSource)
+	assert.Equal(t, MetricBackendPrometheus, got.Metadata.MetricsSource)
 	require.Len(t, got.Metrics, 1)
 	assert.Equal(t, "connector-count", got.Metrics[0].Label)
 	require.NotNil(t, got.Metrics[0].Value)
@@ -136,7 +136,7 @@ func TestConnectClusterMetrics_BackwardCompatUnmarshal(t *testing.T) {
 	assert.Equal(t, time.Date(2026, 6, 23, 14, 54, 3, 0, time.UTC), got.Metadata.EndDate.UTC())
 	assert.Equal(t, int32(300), got.Metadata.Period)
 	// metrics_source absent from legacy data -> empty.
-	assert.Equal(t, "", got.Metadata.MetricsSource)
+	assert.Empty(t, got.Metadata.MetricsSource)
 	// Metric series preserved.
 	require.Len(t, got.Metrics, 1)
 	assert.Equal(t, "connector-count", got.Metrics[0].Label)

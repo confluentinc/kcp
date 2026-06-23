@@ -927,7 +927,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 			{Start: "2025-01-01T00:01:00Z", End: "2025-01-01T00:02:00Z", Label: "connector-count", Value: ptr(2.0)},
 			{Start: "2025-01-02T00:00:00Z", End: "2025-01-02T00:01:00Z", Label: "connector-count", Value: ptr(3.0)},
 		},
-		Metadata: types.ConnectMetricMetadata{Period: 60, MetricsSource: "jolokia"},
+		Metadata: types.ConnectMetricMetadata{Period: 60, MetricsSource: types.MetricBackendJolokia},
 		QueryInfo: []types.MetricQueryInfo{
 			{MetricName: "connector-count", Statistic: "Point-in-time value (per worker)"},
 		},
@@ -983,7 +983,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 		// The clean Connect shape carries the metadata through; broker-only
 		// ClusterArn/Environment/Location are intentionally absent from the type.
 		assert.Equal(t, int32(60), result.Metadata.Period, "period carried through")
-		assert.Equal(t, "jolokia", result.Metadata.MetricsSource, "metrics_source carried through")
+		assert.Equal(t, types.MetricBackendJolokia, result.Metadata.MetricsSource, "metrics_source carried through")
 		assert.Len(t, result.QueryInfo, 1)
 		assert.Equal(t, "connector-count", result.QueryInfo[0].MetricName)
 	})

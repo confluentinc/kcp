@@ -79,7 +79,7 @@ func TestMergeSelfManagedConnectors_NewZeroConnectorsWithMetrics_PrefersNew(t *t
 // Preservation is split across this path and mergeSelfManagedConnectors — guarding
 // both prevents a silent regression through the type change.
 func TestSetSelfManagedConnectors_PreservesExistingMetrics(t *testing.T) {
-	existing := &ConnectClusterMetrics{Metadata: ConnectMetricMetadata{MetricsSource: "jolokia"}}
+	existing := &ConnectClusterMetrics{Metadata: ConnectMetricMetadata{MetricsSource: MetricBackendJolokia}}
 	info := &KafkaAdminClientInformation{
 		SelfManagedConnectors: &SelfManagedConnectors{
 			Connectors: []SelfManagedConnector{{Name: "old"}},

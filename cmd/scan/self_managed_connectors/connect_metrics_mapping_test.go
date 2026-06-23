@@ -33,10 +33,10 @@ func TestToConnectClusterMetrics_InjectsSourceAndCopiesFields(t *testing.T) {
 		QueryInfo:  []types.MetricQueryInfo{{MetricName: "connector-count"}},
 	}
 
-	got := toConnectClusterMetrics(pcm, "prometheus")
+	got := toConnectClusterMetrics(pcm, types.MetricBackendPrometheus)
 
 	require.NotNil(t, got)
-	assert.Equal(t, "prometheus", got.Metadata.MetricsSource, "backend must be injected")
+	assert.Equal(t, types.MetricBackendPrometheus, got.Metadata.MetricsSource, "backend must be injected")
 	assert.True(t, start.Equal(got.Metadata.StartDate))
 	assert.True(t, end.Equal(got.Metadata.EndDate))
 	assert.Equal(t, int32(60), got.Metadata.Period)
@@ -48,5 +48,5 @@ func TestToConnectClusterMetrics_InjectsSourceAndCopiesFields(t *testing.T) {
 // Edge: a nil collector result maps to nil (the collect path returns an error
 // before mapping, but the mapper must not panic if handed nil).
 func TestToConnectClusterMetrics_Nil(t *testing.T) {
-	assert.Nil(t, toConnectClusterMetrics(nil, "jolokia"))
+	assert.Nil(t, toConnectClusterMetrics(nil, types.MetricBackendJolokia))
 }

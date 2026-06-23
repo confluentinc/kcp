@@ -393,7 +393,7 @@ func TestRun_JolokiaMetricsAttached(t *testing.T) {
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
 	// End-to-end: the boundary mapper records the producing backend (U3/R2).
-	require.Equal(t, "jolokia", conns.Metrics.Metadata.MetricsSource, "jolokia run records metrics_source")
+	require.Equal(t, types.MetricBackendJolokia, conns.Metrics.Metadata.MetricsSource, "jolokia run records metrics_source")
 }
 
 func TestRun_PrometheusMetricsAttached(t *testing.T) {
@@ -418,7 +418,7 @@ func TestRun_PrometheusMetricsAttached(t *testing.T) {
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
 	// End-to-end: the boundary mapper records the producing backend (U3/R2).
-	require.Equal(t, "prometheus", conns.Metrics.Metadata.MetricsSource, "prometheus run records metrics_source")
+	require.Equal(t, types.MetricBackendPrometheus, conns.Metrics.Metadata.MetricsSource, "prometheus run records metrics_source")
 }
 
 // R1: with no --metrics the scan behaves exactly as before — connectors

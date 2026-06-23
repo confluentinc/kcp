@@ -371,7 +371,7 @@ func (s *SelfManagedConnectorsScanner) collectConnectMetrics(ctx context.Context
 // metadata and region/cluster_arn are dropped, and the producing backend
 // (jolokia|prometheus) is recorded as metrics_source. The shared JMX/Prometheus
 // services are left untouched so the broker cluster-scan path is unaffected.
-func toConnectClusterMetrics(pcm *types.ProcessedClusterMetrics, source string) *types.ConnectClusterMetrics {
+func toConnectClusterMetrics(pcm *types.ProcessedClusterMetrics, source types.MetricBackend) *types.ConnectClusterMetrics {
 	if pcm == nil {
 		return nil
 	}
@@ -412,7 +412,7 @@ func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.
 	if err != nil {
 		return nil, err
 	}
-	return toConnectClusterMetrics(pcm, "jolokia"), nil
+	return toConnectClusterMetrics(pcm, types.MetricBackendJolokia), nil
 }
 
 func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx context.Context, creds types.OSKClusterAuth) (*types.ConnectClusterMetrics, error) {
@@ -443,5 +443,5 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 	if err != nil {
 		return nil, err
 	}
-	return toConnectClusterMetrics(pcm, "prometheus"), nil
+	return toConnectClusterMetrics(pcm, types.MetricBackendPrometheus), nil
 }
