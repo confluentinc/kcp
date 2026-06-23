@@ -1,67 +1,212 @@
 //go:build integration
 
-// Package migrateclusterlink is an end-to-end test of `kcp migrate apply` for a
-// cluster link, against two Confluent Platform (cp-server) brokers brought up
-// via docker-compose (see the Makefile target test-migrate-clusterlink). It
-// exercises every source authentication method the link can use.
+// Package migrateclusterlink is a live, end-to-end auth matrix for
+// `kcp migrate apply` against cluster links, run against the cp-server brokers
+// brought up by `make test-migrate-clusterlink`.
+//
+// The matrix sweeps each independent authentication surface on its own, holding
+// every other surface fixed, so a failure points at exactly one surface. The
+// surfaces are:
+//
+//   - D1: spec.source.credentials — KCP's read of the (migration-)source cluster
+//     id (apache-kafka creds).
+//   - D2: spec.clusterLink.sourceCredentials — the link→source connection in
+//     DESTINATION mode (apache-kafka creds).
+//   - D3: spec.target.{credentials,kafka.restEndpoint} — the target REST where
+//     the link is created (target REST creds).
+//   - D4: spec.clusterLink.sourceRest — the migration-source REST where the
+//     OUTBOUND link is created in SOURCE mode (target REST creds).
+//   - D5: spec.clusterLink.destinationCredentials — the source→destination
+//     connection in SOURCE mode (apache-kafka creds).
+//
+// Each cell: dry-run (asserts "Planned", nothing created) → apply (asserts the
+// created count + link(s) ACTIVE) → re-apply (asserts "already present") → the
+// link(s) are deleted to keep the concurrent link count low.
 package migrateclusterlink
 
 import (
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-const destREST = "http://localhost:28090"
+// --- broker cluster ids (from docker-compose CLUSTER_ID) ---
+const (
+	sourceClusterID     = "6ub6fPVJRzKjE4i-REkq-A"
+	destClusterID       = "LKsbYRvfTM-TVXKjdjgdxA"
+	destBasicClusterID  = "gFoyBzWLw8b-Q-4UDIXcvw"
+	destMTLSClusterID   = "CA6bwVKcQR_Mn-E_v1oPlw"
+	destBearerClusterID = "nCfjnCUInkjOvoJqi621RA"
+)
 
-// TestMigrateApply_ClusterLink_AuthMatrix drives the built kcp binary end-to-end
-// once per source auth method: dry-run previews without creating, apply creates
-// the link (which reaches ACTIVE), and a second apply is an idempotent no-op.
-func TestMigrateApply_ClusterLink_AuthMatrix(t *testing.T) {
-	waitForClusterID(t, destREST)
-	waitForClusterID(t, "http://localhost:18090") // source REST ready => broker up
-	destID := clusterID(destREST)
-	require.NotEmpty(t, destID)
+// ---------------------------------------------------------------------------
+// apache-kafka credential auth specs (D1 read / D2 link→source / D5 link→dest)
+// ---------------------------------------------------------------------------
 
-	for _, m := range []struct{ dir, link string }{
-		{"plaintext", "src-to-dest"},
-		{"scram256", "scram256"},
-		{"scram512", "scram512"},
-		{"plain", "plain"},
-		{"tls", "tlsenc"},
-		{"mtls", "mtls"},
-	} {
-		t.Run(m.dir, func(t *testing.T) {
-			manifest := "testdata/" + m.dir + "/migration.yaml"
+// kafkaAuthKind enumerates the apache-kafka auth methods the matrix exercises.
+type kafkaAuthKind int
 
-			// dry-run previews a create and changes nothing.
-			out, err := runKCP(t, manifest, "--dry-run")
-			require.NoError(t, err, out)
-			require.Contains(t, out, "Planned")
-			require.Equal(t, "", linkState(destID, m.link), "dry-run must not create the link")
+const (
+	authPlaintext kafkaAuthKind = iota // unauthenticated_plaintext
+	authScram256                       // sasl_scram SHA256
+	authScram512                       // sasl_scram SHA512
+	authPlain                          // sasl_plain
+	authTLS                            // unauthenticated_tls (encryption only)
+	authMTLS                           // tls (mutual)
+)
 
-			// apply creates the link.
-			out, err = runKCP(t, manifest)
-			require.NoError(t, err, out)
-			require.Contains(t, out, "1 created")
-
-			// the link reaches ACTIVE (cp-server's healthy cluster-link state).
-			requireLinkState(t, destID, m.link, "ACTIVE")
-
-			// re-apply is an idempotent no-op (read-first; never re-creates).
-			out, err = runKCP(t, manifest)
-			require.NoError(t, err, out)
-			require.Contains(t, out, "1 already present")
-		})
+func (k kafkaAuthKind) String() string {
+	switch k {
+	case authPlaintext:
+		return "plaintext"
+	case authScram256:
+		return "scram256"
+	case authScram512:
+		return "scram512"
+	case authPlain:
+		return "plain"
+	case authTLS:
+		return "tls"
+	case authMTLS:
+		return "mtls"
 	}
+	return "unknown"
 }
 
+// kafkaAuth is one apache-kafka credentials cluster: an auth method bound to a
+// bootstrap address. The same struct is used for the source read (D1, host
+// listeners) and for the link's source/dest connections (D2/D5, docker
+// listeners) — only the addresses differ.
+type kafkaAuth struct {
+	kind      kafkaAuthKind
+	bootstrap string
+}
+
+// authMethodYAML renders the `auth_method:` block (and any sibling top-level
+// keys like insecure_skip_tls_verify) for this auth kind.
+func (a kafkaAuth) authMethodYAML() string {
+	switch a.kind {
+	case authPlaintext:
+		return "    auth_method: { unauthenticated_plaintext: { use: true } }\n"
+	case authScram256:
+		return "    insecure_skip_tls_verify: true\n" +
+			"    auth_method:\n" +
+			"      sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA256, ca_cert: ./certs/ca.crt }\n"
+	case authScram512:
+		return "    insecure_skip_tls_verify: true\n" +
+			"    auth_method:\n" +
+			"      sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA512, ca_cert: ./certs/ca.crt }\n"
+	case authPlain:
+		return "    auth_method:\n" +
+			"      sasl_plain: { use: true, username: kcp, password: kcp-secret }\n"
+	case authTLS:
+		return "    insecure_skip_tls_verify: true\n" +
+			"    auth_method:\n" +
+			"      unauthenticated_tls: { use: true, ca_cert: ./certs/ca.crt }\n"
+	case authMTLS:
+		return "    insecure_skip_tls_verify: true\n" +
+			"    auth_method:\n" +
+			"      tls: { use: true, ca_cert: ./certs/ca.crt, client_cert: ./certs/client.crt, client_key: ./certs/client.key }\n"
+	}
+	panic("unknown kafka auth kind")
+}
+
+// writeKafkaCreds writes an apache-kafka credentials file with a single cluster.
+func writeKafkaCreds(t *testing.T, path, clusterID string, a kafkaAuth) {
+	t.Helper()
+	body := "clusters:\n" +
+		"  - id: " + clusterID + "\n" +
+		"    bootstrap_servers: [\"" + a.bootstrap + "\"]\n" +
+		a.authMethodYAML()
+	require.NoError(t, os.WriteFile(path, []byte(body), 0600))
+}
+
+// ---------------------------------------------------------------------------
+// target REST auth specs (D3 target / D4 source REST)
+// ---------------------------------------------------------------------------
+
+// restAuthKind enumerates the target-REST auth methods the matrix exercises.
+type restAuthKind int
+
+const (
+	restNone   restAuthKind = iota // no-auth REST (creds block accepted-but-ignored: basic)
+	restBasic                      // HTTP basic
+	restMTLS                       // mutual TLS
+	restBearer                     // MDS-issued bearer JWT
+)
+
+func (k restAuthKind) String() string {
+	switch k {
+	case restNone:
+		return "none"
+	case restBasic:
+		return "basic"
+	case restMTLS:
+		return "mtls"
+	case restBearer:
+		return "bearer"
+	}
+	return "unknown"
+}
+
+// restEndpoint is a target REST surface: a base URL, its auth kind, and the
+// cluster id of the broker behind it (for polling link_state).
+type restEndpoint struct {
+	baseURL   string
+	kind      restAuthKind
+	clusterID string
+}
+
+var (
+	restDest       = restEndpoint{"http://localhost:28090", restNone, destClusterID}
+	restDestBasic  = restEndpoint{"http://localhost:28091", restBasic, destBasicClusterID}
+	restDestMTLS   = restEndpoint{"https://localhost:28092", restMTLS, destMTLSClusterID}
+	restDestBearer = restEndpoint{"http://localhost:28093", restBearer, destBearerClusterID}
+	// restSource is the source broker's no-auth REST (used as a migration-dest
+	// or migration-source REST in source mode).
+	restSource = restEndpoint{"http://localhost:18090", restNone, sourceClusterID}
+)
+
+// writeRestCreds writes a target-creds.yaml for the given REST endpoint and
+// returns the path. For bearer it mints a fresh MDS JWT at call time.
+func writeRestCreds(t *testing.T, dir, name string, e restEndpoint) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	var body string
+	switch e.kind {
+	case restNone, restBasic:
+		// A no-auth REST ignores the basic block; a basic REST requires it.
+		body = "basic:\n  username: admin\n  password: admin-secret\n"
+	case restMTLS:
+		body = "mtls:\n" +
+			"  ca_cert: ./certs/ca.crt\n" +
+			"  client_cert: ./certs/client.crt\n" +
+			"  client_key: ./certs/client.key\n" +
+			"  insecure_skip_verify: true\n"
+	case restBearer:
+		token := fetchMDSToken(t, e.baseURL)
+		body = "bearer:\n  token: " + token + "\n"
+	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0600))
+	return path
+}
+
+// ---------------------------------------------------------------------------
+// kcp invocation
+// ---------------------------------------------------------------------------
+
 // runKCP runs the built ../../kcp binary with `migrate apply -f <manifest>` from
-// this directory (so the manifest's ./testdata/* and ./certs/* relative paths resolve).
+// this directory (so the manifest's ./certs/* relative paths resolve).
 func runKCP(t *testing.T, manifest string, extra ...string) (string, error) {
 	t.Helper()
 	args := append([]string{"migrate", "apply", "-f", manifest}, extra...)
@@ -70,27 +215,65 @@ func runKCP(t *testing.T, manifest string, extra ...string) (string, error) {
 	return string(b), err
 }
 
-// waitForClusterID polls a CP REST endpoint until /kafka/v3/clusters reports a
-// non-empty cluster id, meaning the broker is fully up.
-func waitForClusterID(t *testing.T, restURL string) {
-	t.Helper()
-	deadline := time.Now().Add(120 * time.Second)
-	for time.Now().Before(deadline) {
-		if id := clusterID(restURL); id != "" {
-			return
-		}
-		time.Sleep(2 * time.Second)
-	}
-	t.Fatalf("cluster id at %s never became non-empty", restURL)
+// ---------------------------------------------------------------------------
+// REST poller — reads link_state / cluster id with the right auth, and deletes.
+// ---------------------------------------------------------------------------
+
+type restClient struct {
+	base   string
+	client *http.Client
+	header string // Authorization header value; "" for none/mtls
 }
 
-// clusterID returns data[0].cluster_id from /kafka/v3/clusters, or "" on any error.
-func clusterID(restURL string) string {
-	resp, err := http.Get(restURL + "/kafka/v3/clusters")
+// newRestClient builds an HTTP client + auth header for a REST endpoint. For
+// bearer it mints a fresh token (the poller's token can differ from the one KCP
+// used; both are valid MDS JWTs).
+func newRestClient(t *testing.T, e restEndpoint) restClient {
+	t.Helper()
+	switch e.kind {
+	case restNone:
+		return restClient{base: e.baseURL, client: http.DefaultClient}
+	case restBasic:
+		return restClient{base: e.baseURL, client: http.DefaultClient,
+			header: "Basic " + base64.StdEncoding.EncodeToString([]byte("admin:admin-secret"))}
+	case restMTLS:
+		cert, err := tls.LoadX509KeyPair("certs/client.crt", "certs/client.key")
+		require.NoError(t, err)
+		caPEM, err := os.ReadFile("certs/ca.crt")
+		require.NoError(t, err)
+		pool := x509.NewCertPool()
+		require.True(t, pool.AppendCertsFromPEM(caPEM))
+		return restClient{base: e.baseURL, client: &http.Client{Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{Certificates: []tls.Certificate{cert}, RootCAs: pool},
+		}}}
+	case restBearer:
+		token := fetchMDSToken(t, e.baseURL)
+		return restClient{base: e.baseURL, client: http.DefaultClient, header: "Bearer " + token}
+	}
+	t.Fatalf("unknown rest auth kind %v", e.kind)
+	return restClient{}
+}
+
+func (c restClient) do(method, path string) (*http.Response, error) {
+	req, err := http.NewRequest(method, c.base+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.header != "" {
+		req.Header.Set("Authorization", c.header)
+	}
+	return c.client.Do(req)
+}
+
+func (c restClient) clusterID() string {
+	resp, err := c.do(http.MethodGet, "/kafka/v3/clusters")
 	if err != nil {
 		return ""
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return ""
+	}
 	var body struct {
 		Data []struct {
 			ClusterID string `json:"cluster_id"`
@@ -102,37 +285,127 @@ func clusterID(restURL string) string {
 	return body.Data[0].ClusterID
 }
 
-// linkState returns the named dest link's link_state, or "" if the link does not
-// exist or the endpoint is momentarily unreachable. Returning "" on transport
-// error (rather than failing) lets the poll in requireLinkState retry through a
-// transient REST blip instead of hard-failing the test.
-func linkState(destID, linkName string) string {
-	resp, err := http.Get(destREST + "/kafka/v3/clusters/" + destID + "/links/" + linkName)
-	if err != nil {
-		return ""
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	var body struct {
-		LinkState string `json:"link_state"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		return ""
-	}
-	return body.LinkState
-}
-
-// requireLinkState polls until the named link reaches want, failing on timeout.
-func requireLinkState(t *testing.T, destID, linkName, want string) {
+func (c restClient) waitForClusterID(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(150 * time.Second)
 	for time.Now().Before(deadline) {
-		if linkState(destID, linkName) == want {
+		if c.clusterID() != "" {
 			return
 		}
 		time.Sleep(2 * time.Second)
 	}
-	t.Fatalf("link %q did not reach state %q (last: %q)", linkName, want, linkState(destID, linkName))
+	t.Fatalf("cluster id at %s never became non-empty", c.base)
+}
+
+// link returns the named link's (link_state, link_error), or ("","") if absent
+// or momentarily unreachable (so the poll retries through transient blips).
+func (c restClient) link(clusterID, name string) (state, linkErr string) {
+	resp, err := c.do(http.MethodGet, "/kafka/v3/clusters/"+clusterID+"/links/"+name)
+	if err != nil {
+		return "", ""
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", ""
+	}
+	var body struct {
+		LinkState string `json:"link_state"`
+		LinkError string `json:"link_error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return "", ""
+	}
+	return body.LinkState, body.LinkError
+}
+
+func (c restClient) linkState(clusterID, name string) string {
+	s, _ := c.link(clusterID, name)
+	return s
+}
+
+// requireLinkActive polls until the link reaches ACTIVE, failing with the last
+// observed state + link_error on timeout (link_error explains a FAILED link).
+func (c restClient) requireLinkActive(t *testing.T, clusterID, name string) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	var state, linkErr string
+	for time.Now().Before(deadline) {
+		state, linkErr = c.link(clusterID, name)
+		if state == "ACTIVE" {
+			return
+		}
+		time.Sleep(2 * time.Second)
+	}
+	t.Fatalf("link %q on %s did not reach ACTIVE (last state %q, link_error %q)", name, clusterID, state, linkErr)
+}
+
+// deleteLink removes the link so concurrent links stay sparse. Best-effort:
+// failures are logged, not fatal (a later run recreates idempotently).
+func (c restClient) deleteLink(t *testing.T, clusterID, name string) {
+	t.Helper()
+	resp, err := c.do(http.MethodDelete, "/kafka/v3/clusters/"+clusterID+"/links/"+name)
+	if err != nil {
+		t.Logf("delete link %q on %s: %v", name, clusterID, err)
+		return
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+		t.Logf("delete link %q on %s: unexpected status %d", name, clusterID, resp.StatusCode)
+	}
+}
+
+// fetchMDSToken obtains an MDS auth token from a dest-bearer-style endpoint,
+// retrying until MDS is ready.
+func fetchMDSToken(t *testing.T, baseURL string) string {
+	t.Helper()
+	deadline := time.Now().Add(150 * time.Second)
+	for time.Now().Before(deadline) {
+		req, _ := http.NewRequest(http.MethodGet, baseURL+"/security/1.0/authenticate", nil)
+		req.SetBasicAuth("kcp", "kcp-secret")
+		resp, err := http.DefaultClient.Do(req)
+		if err == nil && resp.StatusCode == http.StatusOK {
+			var body struct {
+				AuthToken string `json:"auth_token"`
+			}
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			_ = resp.Body.Close()
+			if body.AuthToken != "" {
+				return body.AuthToken
+			}
+		}
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		time.Sleep(3 * time.Second)
+	}
+	t.Fatalf("MDS at %s never issued a token", baseURL)
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// manifest generation
+// ---------------------------------------------------------------------------
+
+// runID is a per-process suffix so link names are unique not just across cells
+// in one run but across runs — a previous run that failed before cleanup leaves
+// stale links on the brokers, and a fresh run must not collide with them.
+var runID = fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000)
+
+// linkSeqCh hands out monotonic sequence numbers; cells run in parallel so the
+// counter must be concurrency-safe.
+var linkSeqCh = func() chan int {
+	ch := make(chan int)
+	go func() {
+		for i := 1; ; i++ {
+			ch <- i
+		}
+	}()
+	return ch
+}()
+
+// uniqueLinkName makes link names unique per cell (and per run) so concurrent
+// cells never collide on a shared name (cp-server keys links by name within a
+// cluster).
+func uniqueLinkName(prefix string) string {
+	return fmt.Sprintf("%s-%s-%d", prefix, runID, <-linkSeqCh)
 }

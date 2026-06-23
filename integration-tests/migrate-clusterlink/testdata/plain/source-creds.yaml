@@ -1,8 +1,0 @@
-clusters:
-  - id: source
-    bootstrap_servers: ["localhost:19095"]   # SASL_PLAINTEXT host listener (PLAIN, no TLS)
-    auth_method:
-      sasl_plain:
-        use: true
-        username: kcp
-        password: kcp-secret
