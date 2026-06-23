@@ -33,6 +33,11 @@ var staticSensitiveConfigs = []string{
 	"confluent.topic.ssl.keystore.password",
 	"confluent.topic.ssl.truststore.password",
 	"connection.password",
+	// connection.url often embeds credentials directly in the value, e.g.
+	// "jdbc:mysql://user:pass@host:3306/db" or
+	// "mongodb://user:pass@host:27017/db", so key-based redaction wholesale
+	// replaces the value rather than risk persisting an inline secret.
+	"connection.url",
 	"database.password",
 	"delta.lake.token",
 	"diode.encryption.password",

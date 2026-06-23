@@ -200,20 +200,14 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 		}
 
 		for _, connector := range mskConnectResult.Connectors {
-			describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
-				ConnectorArn: connector.ConnectorArn,
-			})
-			if err != nil {
-				slog.Warn("failed to describe connector; skipping", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
-				continue
-			}
-
 			// Guard against partial AWS responses so a malformed connector is skipped
-			// rather than panicking and aborting discovery (R3).
+			// rather than panicking and aborting discovery (R3). These fields all come
+			// from the ListConnectors summary, so the check runs before any per-connector
+			// DescribeConnector call.
 			if connector.KafkaClusterClientAuthentication == nil ||
 				connector.KafkaCluster == nil || connector.KafkaCluster.ApacheKafkaCluster == nil ||
 				connector.Capacity == nil || connector.CreationTime == nil {
-				slog.Warn("skipping connector with incomplete description", "connectorArn", aws.ToString(connector.ConnectorArn))
+				slog.Warn("skipping connector with incomplete connector summary", "connectorArn", aws.ToString(connector.ConnectorArn))
 				continue
 			}
 
@@ -230,8 +224,21 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 			}
 
 			// A connector belongs to this cluster only if its bootstrap servers match the cluster's.
+			// The match decision uses only ListConnectors summary fields, so DescribeConnector is
+			// deferred until after a match — avoiding C×K DescribeConnector calls (one discover run
+			// per cluster) when only the matching connectors need their full config (R3, perf).
 			connectorBootstrap := aws.ToString(connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers)
 			if !bootstrapMatches(connectorBootstrap, brokerAddresses) {
+				continue
+			}
+
+			// Only matching connectors need a DescribeConnector call (for ConnectorConfiguration
+			// and Plugins, which the summary does not carry).
+			describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
+				ConnectorArn: connector.ConnectorArn,
+			})
+			if err != nil {
+				slog.Warn("failed to describe connector; skipping", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
 				continue
 			}
 

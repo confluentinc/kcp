@@ -1,6 +1,7 @@
 package self_managed_connectors
 
 import (
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
@@ -11,7 +12,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/redact"
+	"github.com/confluentinc/kcp/internal/services/jmx"
+	prometheussvc "github.com/confluentinc/kcp/internal/services/prometheus"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -37,6 +41,12 @@ type SelfManagedConnectorsScannerOpts struct {
 	AuthMethod     types.ConnectAuthMethod
 	SaslScramAuth  types.ConnectSaslScramAuth
 	TlsAuth        types.ConnectTlsAuth
+
+	MetricsSource       string
+	MetricsClusterCreds *types.OSKClusterAuth
+	MetricsDuration     string
+	MetricsInterval     string
+	MetricsRange        string
 }
 
 type SelfManagedConnectorsScanner struct {
@@ -44,6 +54,12 @@ type SelfManagedConnectorsScanner struct {
 	State      *types.State
 	ClusterArn string
 	client     ConnectAPIClient
+
+	metricsSource       string
+	metricsClusterCreds *types.OSKClusterAuth
+	metricsDuration     string
+	metricsInterval     string
+	metricsRange        string
 }
 
 func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*SelfManagedConnectorsScanner, error) {
@@ -64,6 +80,12 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 		State:      opts.State,
 		ClusterArn: opts.ClusterArn,
 		client:     connectClient,
+
+		metricsSource:       opts.MetricsSource,
+		metricsClusterCreds: opts.MetricsClusterCreds,
+		metricsDuration:     opts.MetricsDuration,
+		metricsInterval:     opts.MetricsInterval,
+		metricsRange:        opts.MetricsRange,
 	}, nil
 }
 
@@ -139,6 +161,24 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 
 	if err := s.updateStateWithConnectors(connectors); err != nil {
 		return fmt.Errorf("failed to update state: %v", err)
+	}
+
+	// Metrics collection is best-effort: a failure warns and continues so the
+	// already-scanned connectors are always persisted (KB 003 — graceful
+	// discovery errors). Runs without --metrics skip this entirely.
+	if s.metricsSource != "" {
+		clusterName := utils.ExtractClusterNameFromArn(s.ClusterArn)
+		slog.Info("collecting Connect worker metrics", "source", s.metricsSource, "cluster", clusterName)
+		metrics, err := s.collectConnectMetrics(context.Background())
+		if err != nil {
+			slog.Warn("Connect metrics collection failed; connectors persisted without metrics", "source", s.metricsSource, "error", err)
+			fmt.Printf("  ⚠️  Connect metrics collection failed; connectors persisted without metrics\n")
+		} else if err := s.updateStateWithConnectMetrics(metrics); err != nil {
+			slog.Warn("failed to attach Connect metrics to state; connectors persisted without metrics", "error", err)
+			fmt.Printf("  ⚠️  Could not attach Connect metrics; connectors persisted without metrics\n")
+		} else {
+			fmt.Printf("  📊 Collected %d Connect metric data points\n", len(metrics.Metrics))
+		}
 	}
 
 	if err := s.State.PersistStateFile(s.StateFile); err != nil {
@@ -284,4 +324,93 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 	fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
 
 	return nil
+}
+
+// updateStateWithConnectMetrics attaches collected Connect worker metrics to the
+// connectors object for the MSK cluster identified by ClusterArn. The restored
+// scanner is MSK-only (the OSK branch from 2aaddaaa is deferred — see plan
+// Scope Boundaries). It requires the connectors object to already exist so the
+// metrics have something to hang off; otherwise it returns a clear error.
+func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *types.ProcessedClusterMetrics) error {
+	cluster, err := s.State.GetClusterByArn(s.ClusterArn)
+	if err != nil {
+		return err
+	}
+
+	if cluster.KafkaAdminClientInformation.SelfManagedConnectors == nil {
+		return fmt.Errorf("no self-managed connectors in state for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn))
+	}
+
+	cluster.KafkaAdminClientInformation.SelfManagedConnectors.Metrics = metrics
+	return nil
+}
+
+// collectConnectMetrics dispatches to the configured metrics backend. The
+// services and clients are the same ones the cluster-scan path uses; only the
+// metric/query definitions (ConnectMetricDefinitions / ConnectQueryDefinitions)
+// differ. Credentials come from the resolved cluster entry and are never logged
+// or persisted.
+func (s *SelfManagedConnectorsScanner) collectConnectMetrics(ctx context.Context) (*types.ProcessedClusterMetrics, error) {
+	if s.metricsClusterCreds == nil {
+		return nil, fmt.Errorf("no cluster credentials resolved for metrics collection")
+	}
+
+	switch s.metricsSource {
+	case "jolokia":
+		return s.collectConnectJolokiaMetrics(ctx, *s.metricsClusterCreds)
+	case "prometheus":
+		return s.collectConnectPrometheusMetrics(ctx, *s.metricsClusterCreds)
+	default:
+		return nil, fmt.Errorf("unsupported metrics source: %s", s.metricsSource)
+	}
+}
+
+func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.Context, creds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+	if !creds.HasJolokiaConfig() {
+		return nil, fmt.Errorf("no jolokia configuration in credentials for cluster %s", creds.ID)
+	}
+
+	// Validation already enforced these parse; ignore the errors here.
+	duration, _ := time.ParseDuration(s.metricsDuration)
+	interval, _ := time.ParseDuration(s.metricsInterval)
+
+	slog.Info("collecting Connect Jolokia metrics", "cluster", creds.ID, "duration", duration, "interval", interval)
+
+	var jolokiaOpts []client.JolokiaOption
+	if creds.Jolokia.Auth != nil {
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(creds.Jolokia.Auth.Username, creds.Jolokia.Auth.Password))
+	}
+	if creds.Jolokia.TLS != nil {
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(creds.Jolokia.TLS.CACert, creds.Jolokia.TLS.InsecureSkipVerify))
+	}
+
+	jmxService := jmx.NewJMXService(creds.Jolokia.Endpoints, jmx.ConnectMetricDefinitions(), jolokiaOpts...)
+	return jmxService.CollectOverDuration(ctx, duration, interval)
+}
+
+func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx context.Context, creds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+	if !creds.HasPrometheusConfig() {
+		return nil, fmt.Errorf("no prometheus configuration in credentials for cluster %s", creds.ID)
+	}
+
+	queryRange, _ := utils.ParseDurationDays(s.metricsRange)
+
+	slog.Info("collecting Connect Prometheus metrics", "cluster", creds.ID, "range", s.metricsRange)
+
+	var promOpts []client.PrometheusOption
+	if creds.Prometheus.Auth != nil {
+		promOpts = append(promOpts, client.WithPrometheusBasicAuth(creds.Prometheus.Auth.Username, creds.Prometheus.Auth.Password))
+	}
+	if creds.Prometheus.TLS != nil {
+		promOpts = append(promOpts, client.WithPrometheusTLS(creds.Prometheus.TLS.CACert, creds.Prometheus.TLS.InsecureSkipVerify))
+	}
+
+	var labels map[string]string
+	if creds.Prometheus.Filter != nil {
+		labels = creds.Prometheus.Filter.Labels
+	}
+
+	promClient := client.NewPrometheusClient(creds.Prometheus.URL, promOpts...)
+	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.ConnectQueryDefinitions(), labels)
+	return promService.CollectMetrics(ctx, queryRange)
 }
