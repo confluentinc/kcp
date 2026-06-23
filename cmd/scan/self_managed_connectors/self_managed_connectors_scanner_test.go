@@ -214,7 +214,7 @@ func TestUpdateStateWithConnectMetrics_NoConnectors_Errors(t *testing.T) {
 	// The cluster has no SelfManagedConnectors object yet — attaching metrics
 	// must fail clearly rather than panic on a nil dereference.
 	scanner := &SelfManagedConnectorsScanner{State: stateWithCluster(), ClusterArn: testArn}
-	err := scanner.updateStateWithConnectMetrics(&types.ProcessedClusterMetrics{})
+	err := scanner.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{})
 	require.Error(t, err)
 }
 
@@ -225,7 +225,7 @@ func TestUpdateStateWithConnectMetrics_AttachesMetrics(t *testing.T) {
 	cluster.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "pg-sink"}})
 
 	scanner := &SelfManagedConnectorsScanner{State: st, ClusterArn: testArn}
-	m := &types.ProcessedClusterMetrics{}
+	m := &types.ConnectClusterMetrics{}
 	require.NoError(t, scanner.updateStateWithConnectMetrics(m))
 
 	got, err := st.GetClusterByArn(testArn)
@@ -392,6 +392,8 @@ func TestRun_JolokiaMetricsAttached(t *testing.T) {
 	require.Len(t, conns.Connectors, 1)
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
+	// End-to-end: the boundary mapper records the producing backend (U3/R2).
+	require.Equal(t, types.MetricBackendJolokia, conns.Metrics.Metadata.MetricsSource, "jolokia run records metrics_source")
 }
 
 func TestRun_PrometheusMetricsAttached(t *testing.T) {
@@ -415,6 +417,8 @@ func TestRun_PrometheusMetricsAttached(t *testing.T) {
 	require.NotNil(t, conns)
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
+	// End-to-end: the boundary mapper records the producing backend (U3/R2).
+	require.Equal(t, types.MetricBackendPrometheus, conns.Metrics.Metadata.MetricsSource, "prometheus run records metrics_source")
 }
 
 // R1: with no --metrics the scan behaves exactly as before — connectors
