@@ -152,7 +152,10 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 			}
 		}
 
-		filename := fmt.Sprintf("%s-connector.tf", connector.Name)
+		// connector.Name is untrusted (ListConnectors JSON / state file) and Kafka
+		// Connect allows "/" and ".." in names — sanitize to a single safe path
+		// segment so the write cannot escape OutputDir.
+		filename := fmt.Sprintf("%s-connector.tf", connector_utils.SanitizeConnectorFilename(connector.Name))
 		path := filepath.Join(mc.OutputDir, filename)
 
 		templateData := TemplateData{

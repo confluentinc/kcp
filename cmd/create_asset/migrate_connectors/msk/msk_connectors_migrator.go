@@ -152,7 +152,10 @@ func (mc *MskConnectorMigrator) Run() error {
 			}
 		}
 
-		filename := fmt.Sprintf("%s-connector.tf", connector.ConnectorName)
+		// Sanitize the connector name to a single safe path segment before using it
+		// in a filename. AWS constrains MSK Connect names server-side, but a hostile
+		// state file could still carry "/" or ".." — keep the write inside OutputDir.
+		filename := fmt.Sprintf("%s-connector.tf", connector_utils.SanitizeConnectorFilename(connector.ConnectorName))
 		path := filepath.Join(mc.OutputDir, filename)
 
 		templateData := TemplateData{
