@@ -16,7 +16,12 @@ import (
 )
 
 func newTestClusterDiscoverer(msk *stubMSKService, ec2svc *stubEC2Service, metrics *stubMetricService) *ClusterDiscoverer {
-	cd := NewClusterDiscoverer(msk, ec2svc, metrics)
+	cd := NewClusterDiscoverer(msk, ec2svc, metrics, &stubMSKConnectService{})
+	return &cd
+}
+
+func newTestClusterDiscovererWithConnect(msk *stubMSKService, ec2svc *stubEC2Service, metrics *stubMetricService, connect *stubMSKConnectService) *ClusterDiscoverer {
+	cd := NewClusterDiscoverer(msk, ec2svc, metrics, connect)
 	return &cd
 }
 
