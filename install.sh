@@ -9,7 +9,7 @@
 #   KCP_INSTALL_DIR   Install directory (default: /usr/local/bin).
 #
 # Downloads the platform binary (kcp_<os>_<arch>), verifies it against the
-# release checksums.txt, and installs it onto your PATH. Unix only (macOS/Linux);
+# release kcp_checksums.txt, and installs it onto your PATH. Unix only (macOS/Linux);
 # Windows users should download kcp_windows_amd64.exe from the releases page.
 
 set -eu
@@ -89,13 +89,11 @@ if $DOWNLOAD_TO "${TMP}/${CHECKSUMS}" "${BASE_URL}/${CHECKSUMS}" 2>/dev/null; th
 
   if [ -n "$SHA_CMD" ]; then
     expected=$(grep " ${ASSET}\$" "${TMP}/${CHECKSUMS}" | awk '{print $1}' | head -n1)
-    if [ -n "$expected" ]; then
-      actual=$($SHA_CMD "${TMP}/${ASSET}" | awk '{print $1}')
-      [ "$expected" = "$actual" ] || err "checksum mismatch for ${ASSET} (expected ${expected}, got ${actual})"
-      echo "Checksum verified."
-    else
-      echo "Warning: ${ASSET} not listed in ${CHECKSUMS}; skipping verification." >&2
-    fi
+    # A missing entry means the asset naming is wrong, not an old release — fail loudly.
+    [ -n "$expected" ] || err "${ASSET} not listed in ${CHECKSUMS}; cannot verify download"
+    actual=$($SHA_CMD "${TMP}/${ASSET}" | awk '{print $1}')
+    [ "$expected" = "$actual" ] || err "checksum mismatch for ${ASSET} (expected ${expected}, got ${actual})"
+    echo "Checksum verified."
   else
     echo "Warning: no sha256 tool found; skipping checksum verification." >&2
   fi
@@ -107,13 +105,20 @@ chmod +x "${TMP}/${ASSET}"
 
 # --- install -----------------------------------------------------------------
 TARGET="${INSTALL_DIR}/${BINARY_NAME}"
-if [ -w "$INSTALL_DIR" ] 2>/dev/null; then
+# Create the install dir if it doesn't exist (e.g. a custom KCP_INSTALL_DIR like
+# ~/.local/bin). Only attempt this without sudo — we never create arbitrary system
+# directories on the user's behalf.
+if [ ! -d "$INSTALL_DIR" ]; then
+  mkdir -p "$INSTALL_DIR" 2>/dev/null || true
+fi
+
+if [ -w "$INSTALL_DIR" ]; then
   mv "${TMP}/${ASSET}" "$TARGET"
-elif command -v sudo >/dev/null 2>&1; then
+elif [ -d "$INSTALL_DIR" ] && command -v sudo >/dev/null 2>&1; then
   echo "Installing to ${INSTALL_DIR} (requires sudo)..."
   sudo mv "${TMP}/${ASSET}" "$TARGET"
 else
-  err "cannot write to ${INSTALL_DIR} and sudo is unavailable; set KCP_INSTALL_DIR to a writable directory"
+  err "cannot write to ${INSTALL_DIR}; set KCP_INSTALL_DIR to a writable directory"
 fi
 
 echo "kcp installed to ${TARGET}"
