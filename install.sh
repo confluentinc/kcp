@@ -77,7 +77,8 @@ $DOWNLOAD_TO "${TMP}/${ASSET}" "${BASE_URL}/${ASSET}" \
   || err "failed to download ${BASE_URL}/${ASSET} (no binary published for ${OS}/${ARCH} in ${TAG}?)"
 
 # --- verify checksum ---------------------------------------------------------
-if $DOWNLOAD_TO "${TMP}/checksums.txt" "${BASE_URL}/checksums.txt" 2>/dev/null; then
+CHECKSUMS="kcp_checksums.txt"
+if $DOWNLOAD_TO "${TMP}/${CHECKSUMS}" "${BASE_URL}/${CHECKSUMS}" 2>/dev/null; then
   if command -v sha256sum >/dev/null 2>&1; then
     SHA_CMD="sha256sum"
   elif command -v shasum >/dev/null 2>&1; then
@@ -87,19 +88,19 @@ if $DOWNLOAD_TO "${TMP}/checksums.txt" "${BASE_URL}/checksums.txt" 2>/dev/null; 
   fi
 
   if [ -n "$SHA_CMD" ]; then
-    expected=$(grep " ${ASSET}\$" "${TMP}/checksums.txt" | awk '{print $1}' | head -n1)
+    expected=$(grep " ${ASSET}\$" "${TMP}/${CHECKSUMS}" | awk '{print $1}' | head -n1)
     if [ -n "$expected" ]; then
       actual=$($SHA_CMD "${TMP}/${ASSET}" | awk '{print $1}')
       [ "$expected" = "$actual" ] || err "checksum mismatch for ${ASSET} (expected ${expected}, got ${actual})"
       echo "Checksum verified."
     else
-      echo "Warning: ${ASSET} not listed in checksums.txt; skipping verification." >&2
+      echo "Warning: ${ASSET} not listed in ${CHECKSUMS}; skipping verification." >&2
     fi
   else
     echo "Warning: no sha256 tool found; skipping checksum verification." >&2
   fi
 else
-  echo "Warning: checksums.txt not available for ${TAG}; skipping verification." >&2
+  echo "Warning: ${CHECKSUMS} not available for ${TAG}; skipping verification." >&2
 fi
 
 chmod +x "${TMP}/${ASSET}"

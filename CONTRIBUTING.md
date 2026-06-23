@@ -50,9 +50,9 @@ make build-all
 make clean
 ```
 
-The binary is stamped with a version derived from the latest git tag (via
-`git describe`). Untagged checkouts report `0.0.0-localdev` and are treated as
-development builds.
+Builds from source are stamped as `0.0.0-localdev` and treated as development
+builds (showing a dev warning banner). Official version numbers are assigned only
+by the release pipeline. See [Versioning](#versioning) below.
 
 ## Testing & quality
 
@@ -196,11 +196,12 @@ make docs-build     # Build the docs site into ./site
 
 ## Versioning
 
-kcp follows [semantic versioning](https://semver.org/) with `v`-prefixed git tags
-(e.g. `v0.8.5`). The binary stamps its version from the nearest git tag via
-`git describe`, so a local build between releases reports something like
-`v0.8.5-3-gabc1234` (3 commits past `v0.8.5`). A checkout with no tags reports
-`0.0.0-localdev` and is treated as a development build. Check what you're running with:
+Released versions follow [semantic versioning](https://semver.org/) with
+`v`-prefixed git tags (e.g. `v0.8.5`); the release pipeline injects the version at
+build time. Binaries built from source (`make build`) instead report
+`0.0.0-localdev` and are treated as development builds — the dev sentinel keeps
+local builds reproducible and lets the CLI recognise itself as unreleased (e.g. to
+skip self-update and show the dev docs). Check what you're running with:
 
 ```bash
 kcp version
