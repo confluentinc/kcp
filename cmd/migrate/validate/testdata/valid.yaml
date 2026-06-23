@@ -12,6 +12,7 @@ spec:
     credentials: ./target-creds.yaml
   clusterLink:
     name: source-to-cc
+    sourceCredentials: ./link-source-creds.yaml
   topics:
     mode: mirror
     include: ["*"]

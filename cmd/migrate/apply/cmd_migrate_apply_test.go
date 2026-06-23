@@ -52,7 +52,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	require.NoError(t, os.WriteFile(manifest, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n  source:\n    type: apache-kafka\n    credentials: "+sourceCreds+
 			"\n  target:\n    type: confluent-platform\n    credentials: "+targetCreds+
-			"\n    kafka:\n      restEndpoint: "+srvURL+"\n      bootstrapServers: [\"dest:29092\"]\n  clusterLink:\n    name: src-to-dest\n"), 0600))
+			"\n    kafka:\n      restEndpoint: "+srvURL+"\n      bootstrapServers: [\"dest:29092\"]\n  clusterLink:\n    name: src-to-dest\n    sourceCredentials: "+sourceCreds+"\n"), 0600))
 
 	old := newSourceReader
 	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return staticSource("src-1") }
