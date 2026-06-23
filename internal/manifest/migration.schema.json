@@ -28,7 +28,8 @@
             "type": {
               "type": "string",
               "enum": [
-                "apache-kafka"
+                "apache-kafka",
+                "confluent-platform"
               ]
             },
             "credentials": {

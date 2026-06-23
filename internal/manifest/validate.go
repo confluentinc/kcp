@@ -53,7 +53,7 @@ func (m *Migration) Validate() []error {
 		add("metadata.name: must not be empty")
 	}
 
-	if err := validateEnum("spec.source.type", m.Spec.Source.Type, SourceApacheKafka); err != nil {
+	if err := validateEnum("spec.source.type", m.Spec.Source.Type, SourceApacheKafka, SourceConfluentPlatform); err != nil {
 		errs = append(errs, err)
 	}
 	if blank(m.Spec.Source.Credentials) {

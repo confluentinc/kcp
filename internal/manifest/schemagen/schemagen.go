@@ -25,7 +25,7 @@ func Generate() ([]byte, error) {
 	topics := spec.Properties["topics"]
 	clusterLink := spec.Properties["clusterLink"]
 
-	source.Properties["type"].Enum = []any{manifest.SourceApacheKafka}
+	source.Properties["type"].Enum = []any{manifest.SourceApacheKafka, manifest.SourceConfluentPlatform}
 	target.Properties["type"].Enum = []any{manifest.TargetConfluentCloud, manifest.TargetConfluentPlatform}
 	topics.Properties["mode"].Enum = []any{manifest.TopicModeMirror, manifest.TopicModeNew}
 	clusterLink.Properties["mode"].Enum = []any{manifest.ClusterLinkModeDestination, manifest.ClusterLinkModeSource}

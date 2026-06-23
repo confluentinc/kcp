@@ -225,9 +225,21 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			wantErr: "spec.clusterLink.destinationCredentials",
 		},
 		{
+			name: "valid source mode (confluent-platform source)",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = SourceConfluentPlatform
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:                   "cl",
+					Mode:                   "source",
+					SourceRest:             &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					DestinationCredentials: "./dst.yaml",
+				}
+			},
+		},
+		{
 			name: "source missing sourceRest",
 			mutate: func(m *Migration) {
-				m.Spec.Source.Type = TargetConfluentPlatform
+				m.Spec.Source.Type = SourceConfluentPlatform
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:                   "cl",
 					Mode:                   "source",

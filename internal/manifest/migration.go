@@ -8,9 +8,14 @@ const (
 	SupportedAPIVersion = "kcp.confluent.io/v1alpha1"
 	KindMigration       = "Migration"
 
-	// SourceApacheKafka is the only source type supported in this phase.
-	// MSK support is deferred to a later phase.
+	// SourceApacheKafka covers any non-Confluent Kafka source (Apache Kafka, MSK,
+	// OSK). Such sources can only be the source of a destination-initiated link —
+	// they cannot initiate (host a link object).
 	SourceApacheKafka = "apache-kafka"
+	// SourceConfluentPlatform is a Confluent Platform source. Required for
+	// source-initiated ("external") links, where the source dials out to the
+	// destination (e.g. a private on-prem CP migrating to public Confluent Cloud).
+	SourceConfluentPlatform = "confluent-platform"
 
 	TargetConfluentCloud    = "confluent-cloud"
 	TargetConfluentPlatform = "confluent-platform"
