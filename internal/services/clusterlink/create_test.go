@@ -47,6 +47,79 @@ func TestCreateClusterLink_PlaintextRequestShape(t *testing.T) {
 	require.NotContains(t, configs, "sasl.mechanism", "no SASL for plaintext")
 }
 
+func TestCreateClusterLink_DefaultLinkModeDestinationNoConnectionMode(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "dest-123", LinkName: "l", APIKey: "a", APISecret: "b"}
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID:        "src",
+		SourceBootstrapServers: []string{"source:29092"},
+		SecurityProtocol:       "PLAINTEXT",
+	})
+	require.NoError(t, err)
+
+	configs := configMapFromBody(t, gotBody)
+	require.Equal(t, "DESTINATION", configs["link.mode"], "empty LinkMode defaults to DESTINATION")
+	require.NotContains(t, configs, "connection.mode", "no connection.mode for default destination-initiated link")
+}
+
+func TestCreateClusterLink_SourceInitiatedSourceSide(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "dest-123", LinkName: "l", APIKey: "a", APISecret: "b"}
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID:        "src",
+		SourceBootstrapServers: []string{"source:29092"},
+		SecurityProtocol:       "PLAINTEXT",
+		LinkMode:               "SOURCE",
+		ConnectionMode:         "OUTBOUND",
+	})
+	require.NoError(t, err)
+
+	configs := configMapFromBody(t, gotBody)
+	require.Equal(t, "SOURCE", configs["link.mode"])
+	require.Equal(t, "OUTBOUND", configs["connection.mode"])
+}
+
+func TestCreateClusterLink_SourceInitiatedDestinationSide(t *testing.T) {
+	var gotBody map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "dest-123", LinkName: "l", APIKey: "a", APISecret: "b"}
+	err := svc.CreateClusterLink(context.Background(), cfg, CreateClusterLinkRequest{
+		SourceClusterID:        "src",
+		SourceBootstrapServers: []string{"source:29092"},
+		SecurityProtocol:       "PLAINTEXT",
+		LinkMode:               "DESTINATION",
+		ConnectionMode:         "INBOUND",
+	})
+	require.NoError(t, err)
+
+	configs := configMapFromBody(t, gotBody)
+	require.Equal(t, "DESTINATION", configs["link.mode"])
+	require.Equal(t, "INBOUND", configs["connection.mode"])
+}
+
 func TestCreateClusterLink_AlreadyExistsIsTyped(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusConflict)

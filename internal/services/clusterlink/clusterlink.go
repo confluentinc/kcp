@@ -530,6 +530,8 @@ type CreateClusterLinkRequest struct {
 	SaslJaasConfig         string             // required when SaslMechanism is set (SASL_*)
 	SourceTLS              *SourceTLSMaterial // optional: truststore (CA) and, for mTLS, keystore (client cert+key), as inline PEM
 	Configs                map[string]string  // optional overrides from manifest spec.clusterLink.configs
+	LinkMode               string             // DESTINATION (default when empty) | SOURCE
+	ConnectionMode         string             // "" (omit, default) | INBOUND | OUTBOUND
 }
 
 // linkConfigEntry is one {name,value} pair in a create-link request body.
@@ -562,7 +564,14 @@ func (s *ConfluentCloudService) CreateClusterLink(ctx context.Context, config Co
 		values[name] = value
 	}
 	put("bootstrap.servers", strings.Join(req.SourceBootstrapServers, ","))
-	put("link.mode", "DESTINATION")
+	linkMode := req.LinkMode
+	if linkMode == "" {
+		linkMode = "DESTINATION"
+	}
+	put("link.mode", linkMode)
+	if req.ConnectionMode != "" {
+		put("connection.mode", req.ConnectionMode)
+	}
 	if req.SecurityProtocol != "" {
 		put("security.protocol", req.SecurityProtocol)
 	}
