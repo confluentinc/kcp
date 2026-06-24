@@ -9,89 +9,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLoadMigrateClusterCredentials_SASLScram(t *testing.T) {
-	dir := t.TempDir()
-	ca := filepath.Join(dir, "ca.pem")
-	require.NoError(t, os.WriteFile(ca, []byte("CA"), 0600))
-	p := filepath.Join(dir, "creds.yaml")
-	require.NoError(t, os.WriteFile(p, []byte(
-		"auth_method:\n"+
-			"  sasl_scram: { use: true, username: admin, password: secret, mechanism: SHA256, ca_cert: "+ca+" }\n"), 0600))
-
-	creds, errs := LoadMigrateClusterCredentials(p)
-	require.Empty(t, errs)
-	require.NotNil(t, creds.AuthMethod.SASLScram)
-	require.True(t, creds.AuthMethod.SASLScram.Use)
-	require.Equal(t, "admin", creds.AuthMethod.SASLScram.Username)
-}
-
-func TestLoadMigrateClusterCredentials_Plaintext(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "creds.yaml")
-	require.NoError(t, os.WriteFile(p, []byte(
-		"auth_method: { unauthenticated_plaintext: { use: true } }\n"), 0600))
-	creds, errs := LoadMigrateClusterCredentials(p)
-	require.Empty(t, errs)
-	require.True(t, creds.AuthMethod.UnauthenticatedPlaintext.Use)
-}
-
-func TestLoadMigrateClusterCredentials_NoAuthMethod(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "creds.yaml")
-	require.NoError(t, os.WriteFile(p, []byte("auth_method: {}\n"), 0600))
-	_, errs := LoadMigrateClusterCredentials(p)
-	require.NotEmpty(t, errs)
-	require.Contains(t, joinErrStrings(errs), "authentication method")
-}
-
-func TestLoadMigrateClusterCredentials_MultipleAuthMethods(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "creds.yaml")
-	require.NoError(t, os.WriteFile(p, []byte(
-		"auth_method:\n  unauthenticated_plaintext: { use: true }\n  sasl_plain: { use: true, username: u, password: p }\n"), 0600))
-	_, errs := LoadMigrateClusterCredentials(p)
-	require.NotEmpty(t, errs)
-	require.Contains(t, joinErrStrings(errs), "only one")
-}
-
-func TestLoadMigrateClusterCredentials_RejectsOldClustersFormat(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "creds.yaml")
-	require.NoError(t, os.WriteFile(p, []byte(
-		"clusters:\n  - id: c1\n    bootstrap_servers: [\"b:9092\"]\n    auth_method: { unauthenticated_plaintext: { use: true } }\n"), 0600))
-	_, errs := LoadMigrateClusterCredentials(p)
-	require.NotEmpty(t, errs)
-	// helpful hint pointing at the single-cluster format
-	require.Contains(t, joinErrStrings(errs), "single-cluster")
-}
-
-func TestLoadMigrateClusterCredentials_RejectsBootstrapServersInFile(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "creds.yaml")
-	// bootstrap_servers is a strict-YAML unknown field — should produce a hint about the manifest
-	require.NoError(t, os.WriteFile(p, []byte(
-		"bootstrap_servers: [\"b:9092\"]\nauth_method: { unauthenticated_plaintext: { use: true } }\n"), 0600))
-	_, errs := LoadMigrateClusterCredentials(p)
-	require.NotEmpty(t, errs)
-	require.Contains(t, joinErrStrings(errs), "manifest")
-}
-
-func TestMigrateConn(t *testing.T) {
-	creds := MigrateClusterCredentials{
-		AuthMethod: AuthMethodConfig{
-			UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
-		},
-		InsecureSkipTLSVerify: true,
-	}
-	bootstrapServers := []string{"broker1:9092", "broker2:9092"}
-	got := MigrateConn(bootstrapServers, creds)
-
-	require.Equal(t, bootstrapServers, got.BootstrapServers)
-	require.Equal(t, creds.AuthMethod, got.AuthMethod)
-	require.True(t, got.InsecureSkipTLSVerify)
-	require.Empty(t, got.ID, "MigrateConn must not set an ID")
-}
-
 // joinErrStrings concatenates error messages for test assertions.
 func joinErrStrings(errs []error) string {
 	s := make([]string, len(errs))
@@ -99,4 +16,159 @@ func joinErrStrings(errs []error) string {
 		s[i] = e.Error()
 	}
 	return strings.Join(s, "; ")
+}
+
+// TestLoadMigrateClusterCredentials_SASLScram verifies top-level sasl_scram (no auth_method wrapper,
+// no use: flag) is loaded and the mapped AuthMethodConfig has SASLScram.Use == true.
+func TestLoadMigrateClusterCredentials_SASLScram(t *testing.T) {
+	dir := t.TempDir()
+	ca := filepath.Join(dir, "ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("CA"), 0600))
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"sasl_scram: { username: admin, password: secret, mechanism: SHA256, ca_cert: "+ca+" }\n"), 0600))
+
+	creds, errs := LoadMigrateClusterCredentials(p)
+	require.Empty(t, errs)
+	require.NotNil(t, creds.SASLScram)
+	require.Equal(t, "admin", creds.SASLScram.Username)
+	require.Equal(t, "secret", creds.SASLScram.Password)
+	require.Equal(t, "SHA256", creds.SASLScram.Mechanism)
+
+	// The mapped AuthMethodConfig (via MigrateConn) must have Use == true
+	conn := MigrateConn([]string{"b:9092"}, creds)
+	require.NotNil(t, conn.AuthMethod.SASLScram)
+	require.True(t, conn.AuthMethod.SASLScram.Use)
+	require.Equal(t, "admin", conn.AuthMethod.SASLScram.Username)
+	require.Equal(t, "secret", conn.AuthMethod.SASLScram.Password)
+	require.Equal(t, "SHA256", conn.AuthMethod.SASLScram.Mechanism)
+}
+
+// TestLoadMigrateClusterCredentials_Plaintext verifies that unauthenticated_plaintext: {}
+// (presence selection, empty block) is parsed correctly and the mapped config has Use == true.
+func TestLoadMigrateClusterCredentials_Plaintext(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("unauthenticated_plaintext: {}\n"), 0600))
+
+	creds, errs := LoadMigrateClusterCredentials(p)
+	require.Empty(t, errs)
+	require.NotNil(t, creds.UnauthenticatedPlaintext)
+
+	conn := MigrateConn([]string{"b:9092"}, creds)
+	require.NotNil(t, conn.AuthMethod.UnauthenticatedPlaintext)
+	require.True(t, conn.AuthMethod.UnauthenticatedPlaintext.Use)
+}
+
+// TestLoadMigrateClusterCredentials_TLS verifies mTLS top-level block with real temp cert files.
+func TestLoadMigrateClusterCredentials_TLS(t *testing.T) {
+	dir := t.TempDir()
+	ca := filepath.Join(dir, "ca.pem")
+	cert := filepath.Join(dir, "client.crt")
+	key := filepath.Join(dir, "client.key")
+	require.NoError(t, os.WriteFile(ca, []byte("CA"), 0600))
+	require.NoError(t, os.WriteFile(cert, []byte("CERT"), 0600))
+	require.NoError(t, os.WriteFile(key, []byte("KEY"), 0600))
+
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"tls:\n"+
+			"  ca_cert: "+ca+"\n"+
+			"  client_cert: "+cert+"\n"+
+			"  client_key: "+key+"\n"), 0600))
+
+	creds, errs := LoadMigrateClusterCredentials(p)
+	require.Empty(t, errs)
+	require.NotNil(t, creds.TLS)
+
+	conn := MigrateConn([]string{"b:9092"}, creds)
+	require.NotNil(t, conn.AuthMethod.TLS)
+	require.True(t, conn.AuthMethod.TLS.Use)
+	require.Equal(t, ca, conn.AuthMethod.TLS.CACert)
+	require.Equal(t, cert, conn.AuthMethod.TLS.ClientCert)
+	require.Equal(t, key, conn.AuthMethod.TLS.ClientKey)
+}
+
+// TestLoadMigrateClusterCredentials_NoMethod verifies that a file with zero auth method blocks
+// returns an error about "authentication method".
+func TestLoadMigrateClusterCredentials_NoMethod(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("insecure_skip_tls_verify: false\n"), 0600))
+
+	_, errs := LoadMigrateClusterCredentials(p)
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "authentication method")
+}
+
+// TestLoadMigrateClusterCredentials_TwoMethods verifies that two simultaneous method blocks
+// produce an error mentioning "only one".
+func TestLoadMigrateClusterCredentials_TwoMethods(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"sasl_plain: { username: u, password: p }\n"+
+			"unauthenticated_plaintext: {}\n"), 0600))
+
+	_, errs := LoadMigrateClusterCredentials(p)
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "only one")
+}
+
+// TestLoadMigrateClusterCredentials_RejectsOldAuthMethodWrapper verifies that the old
+// auth_method: wrapper format is rejected with a hint that auth is now top-level.
+func TestLoadMigrateClusterCredentials_RejectsOldAuthMethodWrapper(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"auth_method:\n  sasl_scram: { use: true, username: admin, password: secret }\n"), 0600))
+
+	_, errs := LoadMigrateClusterCredentials(p)
+	require.NotEmpty(t, errs)
+	msg := joinErrStrings(errs)
+	// Hint must indicate top-level, not the old wrapper
+	require.Contains(t, msg, "top-level")
+}
+
+// TestLoadMigrateClusterCredentials_RejectsOldClustersFormat verifies that a file using the
+// OSK scan clusters: list is rejected with a hint about single-cluster format.
+func TestLoadMigrateClusterCredentials_RejectsOldClustersFormat(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"clusters:\n  - id: c1\n    bootstrap_servers: [\"b:9092\"]\n    sasl_scram: { username: u, password: p }\n"), 0600))
+
+	_, errs := LoadMigrateClusterCredentials(p)
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "single-cluster")
+}
+
+// TestLoadMigrateClusterCredentials_RejectsBootstrapServersInFile verifies that a file with
+// bootstrap_servers (which belongs in the manifest) is rejected with a hint about the manifest.
+func TestLoadMigrateClusterCredentials_RejectsBootstrapServersInFile(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"bootstrap_servers: [\"b:9092\"]\n"+
+			"unauthenticated_plaintext: {}\n"), 0600))
+
+	_, errs := LoadMigrateClusterCredentials(p)
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "manifest")
+}
+
+// TestMigrateConn verifies MigrateConn composes bootstrap servers + creds into an OSKClusterAuth.
+func TestMigrateConn(t *testing.T) {
+	creds := MigrateClusterCredentials{
+		UnauthenticatedPlaintext: &MigrateUnauthenticatedPlaintext{},
+		InsecureSkipTLSVerify:    true,
+	}
+	bootstrapServers := []string{"broker1:9092", "broker2:9092"}
+	got := MigrateConn(bootstrapServers, creds)
+
+	require.Equal(t, bootstrapServers, got.BootstrapServers)
+	require.True(t, got.InsecureSkipTLSVerify)
+	require.Empty(t, got.ID, "MigrateConn must not set an ID")
+	require.NotNil(t, got.AuthMethod.UnauthenticatedPlaintext)
+	require.True(t, got.AuthMethod.UnauthenticatedPlaintext.Use)
 }

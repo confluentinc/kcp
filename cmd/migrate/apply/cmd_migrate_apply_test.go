@@ -51,7 +51,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	// Auth-only creds file: no bootstrap_servers (address is in the manifest).
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte(
-		"auth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
+		"unauthenticated_plaintext: {}\n"), 0600))
 	mf := filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(mf, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
@@ -152,10 +152,10 @@ func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
 	// Auth-only creds files: no bootstrap_servers (addresses are in the manifest).
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte(
-		"auth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
+		"unauthenticated_plaintext: {}\n"), 0600))
 	destCreds := filepath.Join(dir, "dest.yaml")
 	require.NoError(t, os.WriteFile(destCreds, []byte(
-		"auth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
+		"unauthenticated_plaintext: {}\n"), 0600))
 
 	mf := filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(mf, []byte(
