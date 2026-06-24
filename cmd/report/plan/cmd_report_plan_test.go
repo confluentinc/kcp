@@ -84,6 +84,7 @@ func TestIsPostLegacyVersion(t *testing.T) {
 		{"v1.2.3", true},
 		{"0.7.0-rc1", true},
 		{"0.0.0-localdev", false},
+		{"v0.8.5-localdev", true},
 		{"garbage", false},
 	}
 	for _, c := range cases {
