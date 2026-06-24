@@ -5,6 +5,7 @@ import { useSessionId } from '@/stores/store'
 
 interface ConnectMetricsFetchConfig {
   clusterId: string
+  sourceType: 'msk' | 'osk'
   startDate: Date | undefined
   endDate: Date | undefined
 }
@@ -21,6 +22,7 @@ interface ConnectMetricsFetchReturn {
  */
 export const useConnectMetricsFetch = ({
   clusterId,
+  sourceType,
   startDate,
   endDate,
 }: ConnectMetricsFetchConfig): ConnectMetricsFetchReturn => {
@@ -40,7 +42,7 @@ export const useConnectMetricsFetch = ({
       setError(null)
 
       try {
-        const data = await apiClient.metrics.getOSKConnectMetrics(clusterId, sessionId, {
+        const data = await apiClient.metrics.getConnectMetrics(sourceType, clusterId, sessionId, {
           startDate,
           endDate,
         })
@@ -53,7 +55,7 @@ export const useConnectMetricsFetch = ({
     }
 
     fetchMetrics()
-  }, [clusterId, startDate, endDate, sessionId])
+  }, [clusterId, sourceType, startDate, endDate, sessionId])
 
   return {
     metricsResponse,
