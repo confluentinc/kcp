@@ -5,6 +5,10 @@ import (
 	"strings"
 )
 
+// linkConfigPrefixReadOnly is the derived link-config key users may reach for by
+// mistake (the settable key is cluster.link.prefix via spec.clusterLink.prefix).
+const linkConfigPrefixReadOnly = "link.prefix"
+
 // blank reports whether s is empty or only whitespace.
 func blank(s string) bool { return strings.TrimSpace(s) == "" }
 
@@ -145,6 +149,38 @@ func (m *Migration) Validate() []error {
 			add(`spec.clusterLink.mode: "bidirectional" is not supported (DR/active-active, not migration); use two unidirectional links`)
 		default:
 			add("spec.clusterLink.mode: unsupported value %q (supported: %s, %s)", cl.Mode, ClusterLinkModeDestination, ClusterLinkModeSource)
+		}
+
+		if cos := cl.ConsumerOffsetSync; cos != nil {
+			if cos.IntervalMs < 0 {
+				add("spec.clusterLink.consumerOffsetSync.intervalMs: must be >= 0 (0 = use server default)")
+			}
+			for i, f := range cos.GroupFilters {
+				if blank(f.Name) {
+					add("spec.clusterLink.consumerOffsetSync.groupFilters[%d].name: must not be blank", i)
+				}
+				if err := validateEnum(fmt.Sprintf("spec.clusterLink.consumerOffsetSync.groupFilters[%d].patternType", i), f.PatternType, PatternTypeLiteral, PatternTypePrefixed); err != nil {
+					errs = append(errs, err)
+				}
+				if err := validateEnum(fmt.Sprintf("spec.clusterLink.consumerOffsetSync.groupFilters[%d].filterType", i), f.FilterType, FilterTypeInclude, FilterTypeExclude); err != nil {
+					errs = append(errs, err)
+				}
+			}
+		}
+		if tcs := cl.TopicConfigSync; tcs != nil && tcs.IntervalMs < 0 {
+			add("spec.clusterLink.topicConfigSync.intervalMs: must be >= 0 (0 = use server default)")
+		}
+		for k := range cl.Configs {
+			if k == linkConfigPrefixReadOnly {
+				add("spec.clusterLink.configs[%q]: read-only/derived key — set spec.clusterLink.prefix (cluster.link.prefix) instead, not configs[%q]", k, k)
+				continue
+			}
+			for _, managed := range ManagedLinkConfigKeys {
+				if k == managed {
+					add("spec.clusterLink.configs[%q]: managed by a typed field — set the typed spec.clusterLink field, not configs[%q]", k, k)
+					break
+				}
+			}
 		}
 	}
 

@@ -7,6 +7,24 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// validCCWithDestinationLink returns a valid CC migration with a minimal
+// destination-mode cluster link set. It must pass Validate() with no errors.
+func validCCWithDestinationLink(t *testing.T) *Migration {
+	t.Helper()
+	m := validCC()
+	m.Spec.ClusterLink = &ClusterLink{Name: "l", SourceCredentials: "./s.yaml"}
+	return m
+}
+
+// joinErrs joins error strings with "; ".
+func joinErrs(errs []error) string {
+	parts := make([]string, len(errs))
+	for i, e := range errs {
+		parts[i] = e.Error()
+	}
+	return strings.Join(parts, "; ")
+}
+
 // validCC returns a minimal, fully-valid Confluent Cloud manifest.
 func validCC() *Migration {
 	return &Migration{
@@ -166,6 +184,63 @@ func TestValidate_CPTargetRejectsCluster(t *testing.T) {
 		Cluster:     "lkc-1",
 	}
 	require.True(t, errorContains(m.Validate(), "spec.target.cluster"))
+}
+
+func TestValidate_ClusterLinkConfigFields(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(cl *ClusterLink)
+		wantSub string
+	}{
+		{"negative offset interval",
+			func(cl *ClusterLink) { cl.ConsumerOffsetSync = &ConsumerOffsetSync{IntervalMs: -1} },
+			"consumerOffsetSync.intervalMs"},
+		{"negative topic interval",
+			func(cl *ClusterLink) { cl.TopicConfigSync = &TopicConfigSync{IntervalMs: -5} },
+			"topicConfigSync.intervalMs"},
+		{"bad patternType",
+			func(cl *ClusterLink) {
+				cl.ConsumerOffsetSync = &ConsumerOffsetSync{GroupFilters: []GroupFilter{{Name: "x", PatternType: "REGEX", FilterType: "INCLUDE"}}}
+			},
+			"patternType"},
+		{"bad filterType",
+			func(cl *ClusterLink) {
+				cl.ConsumerOffsetSync = &ConsumerOffsetSync{GroupFilters: []GroupFilter{{Name: "x", PatternType: "LITERAL", FilterType: "MAYBE"}}}
+			},
+			"filterType"},
+		{"blank filter name",
+			func(cl *ClusterLink) {
+				cl.ConsumerOffsetSync = &ConsumerOffsetSync{GroupFilters: []GroupFilter{{Name: " ", PatternType: "LITERAL", FilterType: "INCLUDE"}}}
+			},
+			"name"},
+		{"escape-hatch overlap (managed key)",
+			func(cl *ClusterLink) { cl.Configs = map[string]string{"cluster.link.prefix": "x"} },
+			"not configs"},
+		{"escape-hatch read-only link.prefix",
+			func(cl *ClusterLink) { cl.Configs = map[string]string{"link.prefix": "x"} },
+			"not configs"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := validCCWithDestinationLink(t)
+			tc.mutate(m.Spec.ClusterLink)
+			errs := m.Validate()
+			require.NotEmpty(t, errs)
+			require.Contains(t, joinErrs(errs), tc.wantSub)
+		})
+	}
+}
+
+func TestValidate_ClusterLinkConfigFields_Valid(t *testing.T) {
+	m := validCCWithDestinationLink(t)
+	no := false
+	m.Spec.ClusterLink.Prefix = "a."
+	m.Spec.ClusterLink.ConsumerOffsetSync = &ConsumerOffsetSync{
+		Enable: &no, IntervalMs: 1000,
+		GroupFilters: []GroupFilter{{Name: "*", PatternType: "LITERAL", FilterType: "INCLUDE"}},
+	}
+	m.Spec.ClusterLink.TopicConfigSync = &TopicConfigSync{IntervalMs: 5000}
+	require.Empty(t, m.Validate())
 }
 
 func TestValidate_ClusterLinkModes(t *testing.T) {
