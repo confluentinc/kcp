@@ -921,13 +921,13 @@ func TestCalculateMetricsAggregates(t *testing.T) {
 func TestFilterConnectMetrics(t *testing.T) {
 	rs := NewReportService()
 
-	connectMetrics := &types.ProcessedClusterMetrics{
+	connectMetrics := &types.ConnectClusterMetrics{
 		Metrics: []types.ProcessedMetric{
 			{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "connector-count", Value: ptr(2.0)},
 			{Start: "2025-01-01T00:01:00Z", End: "2025-01-01T00:02:00Z", Label: "connector-count", Value: ptr(2.0)},
 			{Start: "2025-01-02T00:00:00Z", End: "2025-01-02T00:01:00Z", Label: "connector-count", Value: ptr(3.0)},
 		},
-		Metadata: types.MetricMetadata{Period: 60},
+		Metadata: types.ConnectMetricMetadata{Period: 60, MetricsSource: types.MetricBackendJolokia},
 		QueryInfo: []types.MetricQueryInfo{
 			{MetricName: "connector-count", Statistic: "Point-in-time value (per worker)"},
 		},
@@ -980,9 +980,10 @@ func TestFilterConnectMetrics(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 3)
-		assert.Equal(t, "osk-kafka", result.ClusterArn)
-		assert.Equal(t, "test", result.Environment)
-		assert.Equal(t, "local", result.Location)
+		// The clean Connect shape carries the metadata through; broker-only
+		// ClusterArn/Environment/Location are intentionally absent from the type.
+		assert.Equal(t, int32(60), result.Metadata.Period, "period carried through")
+		assert.Equal(t, types.MetricBackendJolokia, result.Metadata.MetricsSource, "metrics_source carried through")
 		assert.Len(t, result.QueryInfo, 1)
 		assert.Equal(t, "connector-count", result.QueryInfo[0].MetricName)
 	})
@@ -1007,7 +1008,6 @@ func TestFilterConnectMetrics(t *testing.T) {
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Nil(t, result.Metrics)
-		assert.Equal(t, "osk-kafka-no-connect", result.ClusterArn)
 	})
 
 	t.Run("case-insensitive cluster ID match", func(t *testing.T) {

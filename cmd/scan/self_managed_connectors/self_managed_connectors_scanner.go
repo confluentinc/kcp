@@ -361,7 +361,7 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 // connectors object for the cluster this scan targets (MSK or OSK, routed by
 // source type). It requires the connectors object to already exist so the
 // metrics have something to hang off; otherwise it returns a clear error.
-func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *types.ProcessedClusterMetrics) error {
+func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *types.ConnectClusterMetrics) error {
 	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
@@ -380,7 +380,7 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *ty
 // metric/query definitions (ConnectMetricDefinitions / ConnectQueryDefinitions)
 // differ. Credentials come from the resolved cluster entry and are never logged
 // or persisted.
-func (s *SelfManagedConnectorsScanner) collectConnectMetrics(ctx context.Context) (*types.ProcessedClusterMetrics, error) {
+func (s *SelfManagedConnectorsScanner) collectConnectMetrics(ctx context.Context) (*types.ConnectClusterMetrics, error) {
 	if s.metricsClusterCreds == nil {
 		return nil, fmt.Errorf("no cluster credentials resolved for metrics collection")
 	}
@@ -395,7 +395,30 @@ func (s *SelfManagedConnectorsScanner) collectConnectMetrics(ctx context.Context
 	}
 }
 
-func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.Context, creds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+// toConnectClusterMetrics maps the shared collector output into the
+// Connect-specific envelope. It is the single boundary where the broker-shaped
+// ProcessedClusterMetrics is narrowed to Connect-meaningful fields: the broker
+// metadata and region/cluster_arn are dropped, and the producing backend
+// (jolokia|prometheus) is recorded as metrics_source. The shared JMX/Prometheus
+// services are left untouched so the broker cluster-scan path is unaffected.
+func toConnectClusterMetrics(pcm *types.ProcessedClusterMetrics, source types.MetricBackend) *types.ConnectClusterMetrics {
+	if pcm == nil {
+		return nil
+	}
+	return &types.ConnectClusterMetrics{
+		Metadata: types.ConnectMetricMetadata{
+			StartDate:     pcm.Metadata.StartDate,
+			EndDate:       pcm.Metadata.EndDate,
+			Period:        pcm.Metadata.Period,
+			MetricsSource: source,
+		},
+		Metrics:    pcm.Metrics,
+		Aggregates: pcm.Aggregates,
+		QueryInfo:  pcm.QueryInfo,
+	}
+}
+
+func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.Context, creds types.OSKClusterAuth) (*types.ConnectClusterMetrics, error) {
 	if !creds.HasJolokiaConfig() {
 		return nil, fmt.Errorf("no jolokia configuration in credentials for cluster %s", creds.ID)
 	}
@@ -415,10 +438,14 @@ func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.
 	}
 
 	jmxService := jmx.NewJMXService(creds.Jolokia.Endpoints, jmx.ConnectMetricDefinitions(), "worker", jolokiaOpts...)
-	return jmxService.CollectOverDuration(ctx, duration, interval)
+	pcm, err := jmxService.CollectOverDuration(ctx, duration, interval)
+	if err != nil {
+		return nil, err
+	}
+	return toConnectClusterMetrics(pcm, types.MetricBackendJolokia), nil
 }
 
-func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx context.Context, creds types.OSKClusterAuth) (*types.ProcessedClusterMetrics, error) {
+func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx context.Context, creds types.OSKClusterAuth) (*types.ConnectClusterMetrics, error) {
 	if !creds.HasPrometheusConfig() {
 		return nil, fmt.Errorf("no prometheus configuration in credentials for cluster %s", creds.ID)
 	}
@@ -442,5 +469,9 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 
 	promClient := client.NewPrometheusClient(creds.Prometheus.URL, promOpts...)
 	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.ConnectQueryDefinitions(), labels)
-	return promService.CollectMetrics(ctx, queryRange)
+	pcm, err := promService.CollectMetrics(ctx, queryRange)
+	if err != nil {
+		return nil, err
+	}
+	return toConnectClusterMetrics(pcm, types.MetricBackendPrometheus), nil
 }

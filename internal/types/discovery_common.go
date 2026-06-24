@@ -53,7 +53,7 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 
 func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []SelfManagedConnector) {
 	// Preserve existing metrics when updating connectors
-	var existingMetrics *ProcessedClusterMetrics
+	var existingMetrics *ConnectClusterMetrics
 	if c.SelfManagedConnectors != nil {
 		existingMetrics = c.SelfManagedConnectors.Metrics
 	}
@@ -168,7 +168,7 @@ func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnect
 // preferConnectorMetrics returns the metrics to keep when merging two
 // SelfManagedConnectors: the new run's metrics if present, otherwise the old
 // run's, otherwise nil.
-func preferConnectorMetrics(newConnectors, oldConnectors *SelfManagedConnectors) *ProcessedClusterMetrics {
+func preferConnectorMetrics(newConnectors, oldConnectors *SelfManagedConnectors) *ConnectClusterMetrics {
 	if newConnectors != nil && newConnectors.Metrics != nil {
 		return newConnectors.Metrics
 	}

@@ -334,6 +334,7 @@ export interface SelfManagedConnectors {
       start_date?: string
       end_date?: string
       period?: number
+      metrics_source?: string
     }
     results?: Array<{
       start: string
