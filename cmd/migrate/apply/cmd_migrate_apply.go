@@ -67,6 +67,11 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		mode = manifest.ClusterLinkModeDestination
 	}
 
+	linkConfigs, err := resolveLinkConfigs(cl)
+	if err != nil {
+		return fmt.Errorf("resolving cluster-link configs: %w", err)
+	}
+
 	// --- source cluster id reader (spec.source.credentials → D1) ---
 	// spec.source.credentials is used only to read the live source cluster id
 	// (and, in destination mode, is independent of the link→source connection
@@ -116,7 +121,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 			Mode:                   manifest.ClusterLinkModeDestination,
 			SourceBootstrapServers: linkCluster.BootstrapServers,
 			Auth:                   auth,
-			Configs:                cl.Configs,
+			Configs:                linkConfigs,
 		}, src, tgt)
 
 	case manifest.ClusterLinkModeSource:
@@ -149,7 +154,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 			Mode:                 manifest.ClusterLinkModeSource,
 			DestBootstrapServers: destCluster.BootstrapServers,
 			DestAuth:             destAuth,
-			Configs:              cl.Configs,
+			Configs:              linkConfigs,
 		}, src, tgt, srcLinkTgt)
 
 	default:
@@ -161,6 +166,12 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	// not consumed yet (a later phase may use it for a machine-readable summary).
 	_, err = eng.Run(cmd.Context(), []reconcile.Reconciler{rec}, dryRun)
 	return err
+}
+
+// resolveLinkConfigs builds the link-config map from the manifest's typed
+// clusterLink fields (with migration defaults), used as the reconciler's Configs.
+func resolveLinkConfigs(cl *manifest.ClusterLink) (map[string]string, error) {
+	return cl.ResolvedLinkConfigs()
 }
 
 // loadSingleOSKCluster validates+loads an apache-kafka credentials file that

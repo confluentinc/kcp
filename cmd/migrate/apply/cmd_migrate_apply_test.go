@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/require"
@@ -199,4 +200,12 @@ func configMap(body map[string]any) map[string]string {
 		out[m["name"].(string)] = m["value"].(string)
 	}
 	return out
+}
+
+func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
+	cl := &manifest.ClusterLink{Name: "l", Prefix: "p."}
+	got, err := resolveLinkConfigs(cl)
+	require.NoError(t, err)
+	require.Equal(t, "p.", got["cluster.link.prefix"])
+	require.Equal(t, "true", got["consumer.offset.sync.enable"])
 }
