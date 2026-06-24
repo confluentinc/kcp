@@ -16,7 +16,8 @@ import (
 var (
 	stateFile      string
 	connectRestURL string
-	clusterArn     string
+	clusterID      string
+	sourceType     string
 
 	useSaslScram       bool
 	useTls             bool
@@ -38,21 +39,58 @@ var (
 
 func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd := &cobra.Command{
-		Use:           "self-managed-connectors",
-		Short:         "Scan self-managed Kafka Connect cluster for connector information",
-		Long:          "Scan a self-managed Kafka Connect cluster using its REST API to discover connector configurations and status. Sensitive config values are redacted before being written to the state file.",
+		Use:   "self-managed-connectors",
+		Short: "Scan self-managed Kafka Connect cluster for connector information",
+		Long:  "Scan a self-managed Kafka Connect cluster using its REST API to discover connector configurations and status. Sensitive config values are redacted before being written to the state file.",
+		Example: `  # Scan connectors for an MSK cluster (auto-detected from ARN format)
+  kcp scan self-managed-connectors \
+    --state-file kcp-state.json \
+    --connect-rest-url http://connect:8083 \
+    --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123 \
+    --use-unauthenticated
+
+  # Scan connectors for an OSK cluster (auto-detected from non-ARN format)
+  kcp scan self-managed-connectors \
+    --state-file kcp-state.json \
+    --connect-rest-url https://connect.example.com:8083 \
+    --cluster-id production-kafka \
+    --use-sasl-scram \
+    --sasl-scram-username admin \
+    --sasl-scram-password secret
+
+  # Explicitly specify source type (overrides auto-detection)
+  kcp scan self-managed-connectors \
+    --state-file kcp-state.json \
+    --connect-rest-url http://connect:8083 \
+    --cluster-id my-cluster \
+    --source-type osk \
+    --use-unauthenticated
+
+  # Scan with Jolokia metrics collection
+  kcp scan self-managed-connectors \
+    --state-file kcp-state.json \
+    --connect-rest-url http://connect:8083 \
+    --cluster-id my-cluster \
+    --use-unauthenticated \
+    --metrics jolokia --metrics-duration 5m --metrics-interval 10s \
+    --credentials-file osk-credentials.yaml`,
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
-		Hidden:        true,
+		Hidden:        false,
 	}
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file to update with connector information.")
 	requiredFlags.StringVar(&connectRestURL, "connect-rest-url", "", "The Kafka Connect REST API URL (e.g., http://localhost:8083).")
-	requiredFlags.StringVar(&clusterArn, "cluster-arn", "", "The MSK cluster ARN in the state file to associate these connectors with.")
+	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and OSK cluster IDs.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(requiredFlags)
+
+	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
+	optionalFlags.SortFlags = false
+	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = OSK).")
+	selfManagedConnectorsCmd.Flags().AddFlagSet(optionalFlags)
 
 	authMethodFlags := pflag.NewFlagSet("auth-method", pflag.ExitOnError)
 	authMethodFlags.SortFlags = false
@@ -86,8 +124,12 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, authMethodFlags, saslScramFlags, tlsFlags, metricsFlags}
-		groupNames := []string{"Required Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials", "Metrics Collection (optional)"}
+		if c.Example != "" {
+			fmt.Printf("Examples:\n%s\n\n", c.Example)
+		}
+
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, saslScramFlags, tlsFlags, metricsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials", "Metrics Collection"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -103,10 +145,11 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 
 	_ = selfManagedConnectorsCmd.MarkFlagRequired("state-file")
 	_ = selfManagedConnectorsCmd.MarkFlagRequired("connect-rest-url")
-	_ = selfManagedConnectorsCmd.MarkFlagRequired("cluster-arn")
+	_ = selfManagedConnectorsCmd.MarkFlagRequired("cluster-id")
 
 	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("use-sasl-scram", "use-tls", "use-unauthenticated")
 	selfManagedConnectorsCmd.MarkFlagsOneRequired("use-sasl-scram", "use-tls", "use-unauthenticated")
+	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("metrics-duration", "metrics-range")
 
 	return selfManagedConnectorsCmd
 }
@@ -131,9 +174,6 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 	// (cmd/scan/clusters): mutual exclusion via Flags().Changed, fail fast
 	// before any collection. Error values carry no credential material.
 	if metricsSource != "" {
-		if credentialsFile == "" {
-			return fmt.Errorf("--credentials-file is required when --metrics is set")
-		}
 		switch metricsSource {
 		case "jolokia":
 			if metricsDuration == "" {
@@ -168,6 +208,9 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 			}
 		default:
 			return fmt.Errorf("invalid --metrics '%s': must be 'jolokia' or 'prometheus'", metricsSource)
+		}
+		if credentialsFile == "" {
+			return fmt.Errorf("--credentials-file is required when --metrics is set")
 		}
 	}
 
@@ -213,28 +256,70 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		authMethod = types.ConnectAuthMethodUnauthenticated
 	}
 
-	if _, err := state.GetClusterByArn(clusterArn); err != nil {
-		return nil, fmt.Errorf("cluster not found in state file: %v", err)
+	// Determine source type: use explicit flag if provided, otherwise auto-detect from cluster ID format
+	var detectedSourceType types.SourceType
+	var clusterArn string
+	var oskClusterID string
+
+	if sourceType != "" {
+		// Validate explicit source type
+		if sourceType != "msk" && sourceType != "osk" {
+			return nil, fmt.Errorf("invalid source-type: %s (must be 'msk' or 'osk')", sourceType)
+		}
+		detectedSourceType = types.SourceType(sourceType)
+	} else {
+		// Auto-detect from cluster ID format
+		if strings.HasPrefix(clusterID, "arn:") {
+			detectedSourceType = types.SourceTypeMSK
+		} else {
+			detectedSourceType = types.SourceTypeOSK
+		}
+	}
+
+	// Set cluster identifiers based on source type
+	if detectedSourceType == types.SourceTypeMSK {
+		clusterArn = clusterID
+	} else {
+		oskClusterID = clusterID
+	}
+
+	// Validate cluster exists in state based on detected source type
+	switch detectedSourceType {
+	case types.SourceTypeMSK:
+		_, err = state.GetClusterByArn(clusterArn)
+		if err != nil {
+			return nil, fmt.Errorf("cluster not found in state file: %v", err)
+		}
+	case types.SourceTypeOSK:
+		_, err = state.GetOSKClusterByID(oskClusterID)
+		if err != nil {
+			return nil, fmt.Errorf("cluster not found in state file: %v", err)
+		}
 	}
 
 	// Resolve metrics cluster credentials only when metrics collection is
 	// requested. Credentials are read from the file here and never persisted to
-	// state or logged. The error path carries the cluster ARN and file path
-	// only — no credential material (R11).
+	// state or logged. The lookup is routed by source type (MSK ARN or OSK id),
+	// and the error path carries the cluster identifier and file path only — no
+	// credential material (R11).
 	var metricsClusterCreds *types.OSKClusterAuth
 	if metricsSource != "" {
 		creds, errs := types.NewOSKCredentialsFromFile(credentialsFile)
 		if len(errs) > 0 {
 			return nil, fmt.Errorf("failed to load credentials file %s: %v", credentialsFile, errs)
 		}
+		lookupID := oskClusterID
+		if detectedSourceType == types.SourceTypeMSK {
+			lookupID = clusterArn
+		}
 		for i := range creds.Clusters {
-			if creds.Clusters[i].ID == clusterArn {
+			if creds.Clusters[i].ID == lookupID {
 				metricsClusterCreds = &creds.Clusters[i]
 				break
 			}
 		}
 		if metricsClusterCreds == nil {
-			return nil, fmt.Errorf("no matching cluster entry for cluster-arn %q in credentials file %s; metrics collection requires a matching cluster entry", clusterArn, credentialsFile)
+			return nil, fmt.Errorf("no matching cluster entry for %q in credentials file %s; metrics collection requires a matching cluster entry", lookupID, credentialsFile)
 		}
 	}
 
@@ -242,7 +327,9 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		StateFile:      stateFile,
 		State:          state,
 		ConnectRestURL: normalizedURL,
+		SourceType:     detectedSourceType,
 		ClusterArn:     clusterArn,
+		ClusterID:      oskClusterID,
 		AuthMethod:     authMethod,
 		SaslScramAuth: types.ConnectSaslScramAuth{
 			Username: saslScramUsername,

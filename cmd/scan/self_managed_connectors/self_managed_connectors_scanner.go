@@ -37,7 +37,9 @@ type SelfManagedConnectorsScannerOpts struct {
 	StateFile      string
 	State          *types.State
 	ConnectRestURL string
+	SourceType     types.SourceType
 	ClusterArn     string
+	ClusterID      string
 	AuthMethod     types.ConnectAuthMethod
 	SaslScramAuth  types.ConnectSaslScramAuth
 	TlsAuth        types.ConnectTlsAuth
@@ -52,7 +54,9 @@ type SelfManagedConnectorsScannerOpts struct {
 type SelfManagedConnectorsScanner struct {
 	StateFile  string
 	State      *types.State
+	SourceType types.SourceType
 	ClusterArn string
+	ClusterID  string
 	client     ConnectAPIClient
 
 	metricsSource       string
@@ -76,11 +80,12 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 	}
 
 	return &SelfManagedConnectorsScanner{
-		StateFile:  opts.StateFile,
-		State:      opts.State,
-		ClusterArn: opts.ClusterArn,
-		client:     connectClient,
-
+		StateFile:           opts.StateFile,
+		State:               opts.State,
+		SourceType:          opts.SourceType,
+		ClusterArn:          opts.ClusterArn,
+		ClusterID:           opts.ClusterID,
+		client:              connectClient,
 		metricsSource:       opts.MetricsSource,
 		metricsClusterCreds: opts.MetricsClusterCreds,
 		metricsDuration:     opts.MetricsDuration,
@@ -127,7 +132,8 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("connect API client not initialized")
 	}
 
-	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+	clusterName := utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
+	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", clusterName)
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
@@ -137,7 +143,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	fmt.Printf("  🔍 Found %d connectors\n", len(connectorNames))
 
 	if len(connectorNames) == 0 {
-		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", clusterName)
 		return nil
 	}
 
@@ -167,7 +173,6 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	// already-scanned connectors are always persisted (KB 003 — graceful
 	// discovery errors). Runs without --metrics skip this entirely.
 	if s.metricsSource != "" {
-		clusterName := utils.ExtractClusterNameFromArn(s.ClusterArn)
 		slog.Info("collecting Connect worker metrics", "source", s.metricsSource, "cluster", clusterName)
 		metrics, err := s.collectConnectMetrics(context.Background())
 		if err != nil {
@@ -185,14 +190,15 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
-	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", clusterName)
 	return nil
 }
 
 // getConnectorDetails fetches a connector's config and status. The config is
 // redacted (sensitive values replaced) before it is stored on the connector, so
-// raw secrets never enter the persisted state. Returns the connector, the number
-// of redacted fields, and any error.
+// raw secrets never enter the persisted state. The connector's worker_id (when
+// present) is captured as ConnectHost for per-host grouping in the UI. Returns
+// the connector, the number of redacted fields, and any error.
 func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.SelfManagedConnector, int, error) {
 	connector := types.SelfManagedConnector{
 		Name: name,
@@ -209,9 +215,12 @@ func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.S
 	if err != nil {
 		slog.Warn(fmt.Sprintf("⚠️ failed to get connector status for connector %s: %v", name, err))
 	} else {
-		if state, ok := status["connector"].(map[string]any); ok {
-			if stateStr, ok := state["state"].(string); ok {
+		if connectorStatus, ok := status["connector"].(map[string]any); ok {
+			if stateStr, ok := connectorStatus["state"].(string); ok {
 				connector.State = stateStr
+			}
+			if workerID, ok := connectorStatus["worker_id"].(string); ok {
+				connector.ConnectHost = workerID
 			}
 		}
 	}
@@ -314,34 +323,55 @@ func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
 	}
 }
 
+// resolveKafkaAdminInfo returns a mutable pointer to the KafkaAdminClientInformation
+// of the cluster this scan targets, routed by source type. The returned pointer
+// addresses the cluster's record inside the state, so mutations persist.
+func (s *SelfManagedConnectorsScanner) resolveKafkaAdminInfo() (*types.KafkaAdminClientInformation, error) {
+	switch s.SourceType {
+	case types.SourceTypeMSK:
+		cluster, err := s.State.GetClusterByArn(s.ClusterArn)
+		if err != nil {
+			return nil, err
+		}
+		return &cluster.KafkaAdminClientInformation, nil
+	case types.SourceTypeOSK:
+		cluster, err := s.State.GetOSKClusterByID(s.ClusterID)
+		if err != nil {
+			return nil, err
+		}
+		return &cluster.KafkaAdminClientInformation, nil
+	default:
+		return nil, fmt.Errorf("unsupported source type: %s", s.SourceType)
+	}
+}
+
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.SelfManagedConnector) error {
-	cluster, err := s.State.GetClusterByArn(s.ClusterArn)
+	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
 	}
 
-	cluster.KafkaAdminClientInformation.SetSelfManagedConnectors(connectors)
-	fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.ExtractClusterNameFromArn(s.ClusterArn))
+	info.SetSelfManagedConnectors(connectors)
+	fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
 
 	return nil
 }
 
 // updateStateWithConnectMetrics attaches collected Connect worker metrics to the
-// connectors object for the MSK cluster identified by ClusterArn. The restored
-// scanner is MSK-only (the OSK branch from 2aaddaaa is deferred — see plan
-// Scope Boundaries). It requires the connectors object to already exist so the
+// connectors object for the cluster this scan targets (MSK or OSK, routed by
+// source type). It requires the connectors object to already exist so the
 // metrics have something to hang off; otherwise it returns a clear error.
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *types.ProcessedClusterMetrics) error {
-	cluster, err := s.State.GetClusterByArn(s.ClusterArn)
+	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
 	}
 
-	if cluster.KafkaAdminClientInformation.SelfManagedConnectors == nil {
-		return fmt.Errorf("no self-managed connectors in state for cluster %s", utils.ExtractClusterNameFromArn(s.ClusterArn))
+	if info.SelfManagedConnectors == nil {
+		return fmt.Errorf("no self-managed connectors in state for cluster %s", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
 	}
 
-	cluster.KafkaAdminClientInformation.SelfManagedConnectors.Metrics = metrics
+	info.SelfManagedConnectors.Metrics = metrics
 	return nil
 }
 
