@@ -17,13 +17,13 @@ spec:
     source:
       bootstrapServers: ["broker1:9092"]
       credentials: ./source-creds.yaml
+    prefix: "src."
     configs:
       consumer.offset.sync.enable: "true"
   topics:
     mode: mirror
     include: ["*"]
     exclude: ["__consumer_offsets", "_schemas"]
-    prefix: "src."
   acls:
     include: ["*"]
   schemas:

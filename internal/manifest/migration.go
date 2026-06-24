@@ -137,7 +137,6 @@ type Topics struct {
 	Mode    string   `yaml:"mode" json:"mode"`
 	Include []string `yaml:"include" json:"include"`
 	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
-	Prefix  string   `yaml:"prefix,omitempty" json:"prefix,omitempty"`
 }
 
 // ACLs, Schemas, and Connectors are provisional ("stub") sections for this

@@ -185,6 +185,31 @@ func TestValidate_TopicsIncludeBlankEntry(t *testing.T) {
 	require.True(t, errorContains(m.Validate(), "spec.topics.include"))
 }
 
+func TestValidate_TopicsMirrorWithGlobs_Valid(t *testing.T) {
+	m := validCCWithDestinationLink(t)
+	m.Spec.Topics = &Topics{
+		Mode:    TopicModeMirror,
+		Include: []string{"orders.*", "events"},
+		Exclude: []string{"_*"},
+	}
+	require.Empty(t, m.Validate())
+}
+
+func TestValidate_TopicsMalformedGlob(t *testing.T) {
+	m := validCCWithDestinationLink(t)
+	m.Spec.Topics = &Topics{
+		Mode:    TopicModeMirror,
+		Include: []string{"["},
+	}
+	require.Contains(t, joinErrs(m.Validate()), "invalid pattern")
+}
+
+func TestValidate_TopicsNewModeNoClusterLink_Valid(t *testing.T) {
+	m := validCC()
+	m.Spec.Topics = &Topics{Mode: TopicModeNew, Include: []string{"*"}}
+	require.Empty(t, m.Validate())
+}
+
 func TestValidate_CCTargetRejectsKafkaBlock(t *testing.T) {
 	m := validCC()
 	m.Spec.Target.Kafka = &TargetKafka{RestEndpoint: "https://broker:8090"}

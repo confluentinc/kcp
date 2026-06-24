@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 	"net"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -76,6 +77,17 @@ func validateSelection(field string, include []string) []error {
 	return errs
 }
 
+// validateGlobs checks each pattern compiles as a path.Match glob.
+func validateGlobs(field string, patterns []string) []error {
+	var errs []error
+	for i, p := range patterns {
+		if _, err := path.Match(p, ""); err != nil {
+			errs = append(errs, fmt.Errorf("%s[%d]: invalid pattern %q: %v", field, i, p, err))
+		}
+	}
+	return errs
+}
+
 // Validate performs structural (no-I/O) validation and returns ALL problems
 // found, each tagged with its field path. An empty slice means valid.
 func (m *Migration) Validate() []error {
@@ -142,6 +154,8 @@ func (m *Migration) Validate() []error {
 			}
 		}
 		errs = append(errs, validateSelection("spec.topics.include", t.Include)...)
+		errs = append(errs, validateGlobs("spec.topics.include", t.Include)...)
+		errs = append(errs, validateGlobs("spec.topics.exclude", t.Exclude)...)
 	}
 
 	if cl := m.Spec.ClusterLink; cl != nil {

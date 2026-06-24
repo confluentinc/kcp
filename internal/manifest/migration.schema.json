@@ -315,9 +315,6 @@
               "items": {
                 "type": "string"
               }
-            },
-            "prefix": {
-              "type": "string"
             }
           },
           "required": [
