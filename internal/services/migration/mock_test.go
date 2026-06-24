@@ -79,6 +79,8 @@ type mockClusterLinkService struct {
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 	alterConfigsFn        func(ctx context.Context, config clusterlink.Config, alterations []clusterlink.ConfigAlteration) error
 	createMirrorTopicFn   func(ctx context.Context, config clusterlink.Config, sourceTopic, mirrorTopic string) error
+	listTopicsFn          func(ctx context.Context, config clusterlink.Config) ([]string, error)
+	createTopicFn         func(ctx context.Context, config clusterlink.Config, req clusterlink.CreateTopicRequest) error
 }
 
 func (m *mockClusterLinkService) GetClusterLink(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error) {
@@ -128,6 +130,20 @@ func (m *mockClusterLinkService) CreateMirrorTopic(ctx context.Context, config c
 		return m.createMirrorTopicFn(ctx, config, sourceTopic, mirrorTopic)
 	}
 	return fmt.Errorf("mockClusterLinkService.CreateMirrorTopic not configured")
+}
+
+func (m *mockClusterLinkService) ListTopics(ctx context.Context, config clusterlink.Config) ([]string, error) {
+	if m.listTopicsFn != nil {
+		return m.listTopicsFn(ctx, config)
+	}
+	return nil, fmt.Errorf("mockClusterLinkService.ListTopics not configured")
+}
+
+func (m *mockClusterLinkService) CreateTopic(ctx context.Context, config clusterlink.Config, req clusterlink.CreateTopicRequest) error {
+	if m.createTopicFn != nil {
+		return m.createTopicFn(ctx, config, req)
+	}
+	return fmt.Errorf("mockClusterLinkService.CreateTopic not configured")
 }
 
 // mockOffsetProvider implements offset.Provider using a function field for test control.

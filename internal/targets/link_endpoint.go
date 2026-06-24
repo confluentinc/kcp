@@ -85,3 +85,40 @@ func (e *LinkEndpoint) CreateClusterLink(ctx context.Context, name string, req c
 	}
 	return err
 }
+
+// ListTopics returns the names of all topics on the endpoint's cluster. It
+// discovers (and caches) the cluster id first.
+func (e *LinkEndpoint) ListTopics(ctx context.Context) ([]string, error) {
+	if _, err := e.ClusterID(ctx); err != nil {
+		return nil, err
+	}
+	return e.svc.ListTopics(ctx, e.config(""))
+}
+
+// CreateTopic creates a plain (non-mirror) topic on the endpoint's cluster. It
+// discovers (and caches) the cluster id first.
+func (e *LinkEndpoint) CreateTopic(ctx context.Context, req clusterlink.CreateTopicRequest) error {
+	if _, err := e.ClusterID(ctx); err != nil {
+		return err
+	}
+	return e.svc.CreateTopic(ctx, e.config(""), req)
+}
+
+// ListMirrorTopics returns all mirror topics on the named link. Config.Topics
+// is left empty by e.config(name), so the service applies no filtering and the
+// caller gets the full existing-mirror list.
+func (e *LinkEndpoint) ListMirrorTopics(ctx context.Context, name string) ([]clusterlink.MirrorTopic, error) {
+	if _, err := e.ClusterID(ctx); err != nil {
+		return nil, err
+	}
+	return e.svc.ListMirrorTopics(ctx, e.config(name))
+}
+
+// CreateMirrorTopic creates a mirror topic on the named link. It discovers (and
+// caches) the cluster id first.
+func (e *LinkEndpoint) CreateMirrorTopic(ctx context.Context, name, sourceTopic, mirrorTopic string) error {
+	if _, err := e.ClusterID(ctx); err != nil {
+		return err
+	}
+	return e.svc.CreateMirrorTopic(ctx, e.config(name), sourceTopic, mirrorTopic)
+}

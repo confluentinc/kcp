@@ -124,6 +124,14 @@ type Service interface {
 	// CreateMirrorTopic creates a mirror topic on the link via POST .../mirrors.
 	CreateMirrorTopic(ctx context.Context, config Config, sourceTopic, mirrorTopic string) error
 
+	// ListTopics returns the names of all topics on the cluster via
+	// GET /kafka/v3/clusters/{cluster_id}/topics.
+	ListTopics(ctx context.Context, config Config) ([]string, error)
+
+	// CreateTopic creates a plain (non-mirror) topic via
+	// POST /kafka/v3/clusters/{cluster_id}/topics.
+	CreateTopic(ctx context.Context, config Config, req CreateTopicRequest) error
+
 	// AlterConfigs applies the given alterations to the cluster link's configs.
 	//
 	// IMPORTANT: this method is NOT atomic across multiple alterations. The
@@ -331,6 +339,59 @@ func (s *ConfluentCloudService) CreateMirrorTopic(ctx context.Context, config Co
 			}
 		}
 		return fmt.Errorf("failed to create mirror topic %q on link %q: %w", sourceTopic, config.LinkName, err)
+	}
+	return nil
+}
+
+// CreateTopicRequest describes a plain (non-mirror) topic to create on a cluster.
+type CreateTopicRequest struct {
+	Name              string
+	Partitions        int
+	ReplicationFactor int
+	Configs           map[string]string
+}
+
+func (s *ConfluentCloudService) ListTopics(ctx context.Context, config Config) ([]string, error) {
+	var resp struct {
+		Data []struct {
+			TopicName string `json:"topic_name"`
+		} `json:"data"`
+	}
+	path := fmt.Sprintf("/kafka/v3/clusters/%s/topics", url.PathEscape(config.ClusterID))
+	if err := s.doRequest(ctx, config, path, &resp); err != nil {
+		return nil, fmt.Errorf("failed to list topics: %w", err)
+	}
+	names := make([]string, len(resp.Data))
+	for i, d := range resp.Data {
+		names[i] = d.TopicName
+	}
+	return names, nil
+}
+
+func (s *ConfluentCloudService) CreateTopic(ctx context.Context, config Config, req CreateTopicRequest) error {
+	type cfgEntry struct {
+		Name  string `json:"name"`
+		Value string `json:"value"`
+	}
+	keys := make([]string, 0, len(req.Configs))
+	for k := range req.Configs {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	cfgs := make([]cfgEntry, 0, len(req.Configs))
+	for _, k := range keys {
+		cfgs = append(cfgs, cfgEntry{Name: k, Value: req.Configs[k]})
+	}
+	body := struct {
+		TopicName         string     `json:"topic_name"`
+		PartitionsCount   int        `json:"partitions_count"`
+		ReplicationFactor int        `json:"replication_factor"`
+		Configs           []cfgEntry `json:"configs,omitempty"`
+	}{req.Name, req.Partitions, req.ReplicationFactor, cfgs}
+
+	path := fmt.Sprintf("/kafka/v3/clusters/%s/topics", url.PathEscape(config.ClusterID))
+	if err := s.doPostRequestExpectStatus(ctx, config, path, body); err != nil {
+		return fmt.Errorf("failed to create topic %q: %w", req.Name, err)
 	}
 	return nil
 }

@@ -4,12 +4,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/stretchr/testify/require"
 )
 
@@ -104,4 +106,99 @@ func TestLinkEndpoint_MTLS_SourceEndpoint(t *testing.T) {
 	id, err := ep.ClusterID(context.Background())
 	require.NoError(t, err, "mtls source endpoint client must present its client cert and be accepted")
 	require.Equal(t, "mtls-source-cluster", id)
+}
+
+// TestLinkEndpoint_ListTopics verifies ListTopics discovers the cluster id then
+// calls GET /kafka/v3/clusters/{id}/topics and returns the topic names.
+func TestLinkEndpoint_ListTopics(t *testing.T) {
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/kafka/v3/clusters":
+			_, _ = w.Write([]byte(`{"data":[{"cluster_id":"c-1"}]}`))
+		case "/kafka/v3/clusters/c-1/topics":
+			_, _ = w.Write([]byte(`{"data":[{"topic_name":"orders"},{"topic_name":"events"}]}`))
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	e := NewLinkEndpoint(srv.URL, &Credentials{}, srv.Client())
+	got, err := e.ListTopics(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, []string{"orders", "events"}, got)
+	require.Equal(t, []string{"/kafka/v3/clusters", "/kafka/v3/clusters/c-1/topics"}, paths)
+}
+
+// TestLinkEndpoint_CreateTopic verifies CreateTopic discovers the cluster id
+// then POSTs to /kafka/v3/clusters/{id}/topics.
+func TestLinkEndpoint_CreateTopic(t *testing.T) {
+	var createPath, createMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/kafka/v3/clusters" {
+			_, _ = w.Write([]byte(`{"data":[{"cluster_id":"c-1"}]}`))
+			return
+		}
+		createPath = r.URL.Path
+		createMethod = r.Method
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	e := NewLinkEndpoint(srv.URL, &Credentials{}, srv.Client())
+	err := e.CreateTopic(context.Background(), clusterlink.CreateTopicRequest{Name: "orders", Partitions: 6, ReplicationFactor: 3})
+	require.NoError(t, err)
+	require.Equal(t, "/kafka/v3/clusters/c-1/topics", createPath)
+	require.Equal(t, http.MethodPost, createMethod)
+}
+
+// TestLinkEndpoint_ListMirrorTopics verifies ListMirrorTopics discovers the
+// cluster id then calls GET .../links/{name}/mirrors and returns ALL mirrors
+// (no topic filtering, since e.config(name) leaves Config.Topics empty).
+func TestLinkEndpoint_ListMirrorTopics(t *testing.T) {
+	var mirrorsPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/kafka/v3/clusters" {
+			_, _ = w.Write([]byte(`{"data":[{"cluster_id":"c-1"}]}`))
+			return
+		}
+		mirrorsPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"data":[{"mirror_topic_name":"a","mirror_status":"ACTIVE"},{"mirror_topic_name":"b","mirror_status":"PAUSED"}]}`))
+	}))
+	defer srv.Close()
+
+	e := NewLinkEndpoint(srv.URL, &Credentials{}, srv.Client())
+	got, err := e.ListMirrorTopics(context.Background(), "my-link")
+	require.NoError(t, err)
+	require.Equal(t, "/kafka/v3/clusters/c-1/links/my-link/mirrors", mirrorsPath)
+	require.Len(t, got, 2, "must return all mirrors unfiltered")
+	require.Equal(t, "a", got[0].MirrorTopicName)
+	require.Equal(t, "b", got[1].MirrorTopicName)
+}
+
+// TestLinkEndpoint_CreateMirrorTopic verifies CreateMirrorTopic discovers the
+// cluster id then POSTs to .../links/{name}/mirrors.
+func TestLinkEndpoint_CreateMirrorTopic(t *testing.T) {
+	var mirrorsPath, method string
+	var body map[string]interface{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/kafka/v3/clusters" {
+			_, _ = w.Write([]byte(`{"data":[{"cluster_id":"c-1"}]}`))
+			return
+		}
+		mirrorsPath = r.URL.Path
+		method = r.Method
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	e := NewLinkEndpoint(srv.URL, &Credentials{}, srv.Client())
+	err := e.CreateMirrorTopic(context.Background(), "my-link", "orders", "orders")
+	require.NoError(t, err)
+	require.Equal(t, "/kafka/v3/clusters/c-1/links/my-link/mirrors", mirrorsPath)
+	require.Equal(t, http.MethodPost, method)
+	require.Equal(t, "orders", body["source_topic_name"])
 }

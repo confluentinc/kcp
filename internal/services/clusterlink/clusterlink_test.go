@@ -774,3 +774,112 @@ func TestListConfigs_Success(t *testing.T) {
 	assert.Equal(t, "false", configs["acl.sync.enable"])
 	assert.Equal(t, "true", configs["topic.config.sync"])
 }
+
+// ---------------------------------------------------------------------------
+// Plain (non-mirror) topic operations
+// ---------------------------------------------------------------------------
+
+func TestListTopics_Success(t *testing.T) {
+	clusterID := "lkc-topics"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/"+clusterID+"/topics", r.URL.Path, "request path")
+		assert.Equal(t, http.MethodGet, r.Method, "HTTP method")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"topic_name":"orders"},{"topic_name":"events"},{"topic_name":"_internal"}]}`))
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: clusterID}
+
+	names, err := svc.ListTopics(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Equal(t, []string{"orders", "events", "_internal"}, names)
+}
+
+func TestListTopics_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	_, err := svc.ListTopics(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list topics")
+}
+
+func TestCreateTopic_Success_PostsBodyWithSortedConfigs(t *testing.T) {
+	clusterID := "lkc-create"
+
+	var gotBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/"+clusterID+"/topics", r.URL.Path, "request path")
+		assert.Equal(t, http.MethodPost, r.Method, "HTTP method")
+		b, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(b, &gotBody))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: clusterID}
+
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{
+		Name:              "orders",
+		Partitions:        6,
+		ReplicationFactor: 3,
+		Configs:           map[string]string{"retention.ms": "604800000", "cleanup.policy": "compact"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "orders", gotBody["topic_name"])
+	assert.Equal(t, float64(6), gotBody["partitions_count"])
+	assert.Equal(t, float64(3), gotBody["replication_factor"])
+
+	configs, ok := gotBody["configs"].([]interface{})
+	require.True(t, ok, "configs array present")
+	require.Len(t, configs, 2)
+	// sorted by name: cleanup.policy before retention.ms
+	first := configs[0].(map[string]interface{})
+	second := configs[1].(map[string]interface{})
+	assert.Equal(t, "cleanup.policy", first["name"])
+	assert.Equal(t, "compact", first["value"])
+	assert.Equal(t, "retention.ms", second["name"])
+	assert.Equal(t, "604800000", second["value"])
+}
+
+func TestCreateTopic_NoConfigs_OmitsConfigsField(t *testing.T) {
+	var raw map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(b, &raw))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "t", Partitions: 1, ReplicationFactor: 1})
+	require.NoError(t, err)
+	_, hasConfigs := raw["configs"]
+	assert.False(t, hasConfigs, "configs field omitted when empty")
+}
+
+func TestCreateTopic_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "bad", Partitions: 1, ReplicationFactor: 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `failed to create topic "bad"`)
+}
