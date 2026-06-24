@@ -29,6 +29,11 @@ const (
 	// ClusterLinkModeSource creates the link on the source cluster (source-initiated),
 	// pushing to the destination. Only valid when the source can initiate (CP/CC).
 	ClusterLinkModeSource = "source"
+
+	PatternTypeLiteral  = "LITERAL"
+	PatternTypePrefixed = "PREFIXED"
+	FilterTypeInclude   = "INCLUDE"
+	FilterTypeExclude   = "EXCLUDE"
 )
 
 // Migration is the top-level migration manifest.
@@ -88,14 +93,39 @@ type ClusterLink struct {
 	SourceRest *RestRef `yaml:"sourceRest,omitempty" json:"sourceRest,omitempty"`
 	// DestinationCredentials is the path to an apache-kafka credentials file: the
 	// source-side link→destination credentials used in source mode.
-	DestinationCredentials string            `yaml:"destinationCredentials,omitempty" json:"destinationCredentials,omitempty"`
-	Configs                map[string]string `yaml:"configs,omitempty" json:"configs,omitempty"`
+	DestinationCredentials string `yaml:"destinationCredentials,omitempty" json:"destinationCredentials,omitempty"`
+	// Prefix maps to the link config cluster.link.prefix. When set, mirror topic
+	// names become prefix+sourceName (immutable once the link exists).
+	Prefix             string              `yaml:"prefix,omitempty" json:"prefix,omitempty"`
+	ConsumerOffsetSync *ConsumerOffsetSync `yaml:"consumerOffsetSync,omitempty" json:"consumerOffsetSync,omitempty"`
+	TopicConfigSync    *TopicConfigSync    `yaml:"topicConfigSync,omitempty" json:"topicConfigSync,omitempty"`
+	Configs            map[string]string   `yaml:"configs,omitempty" json:"configs,omitempty"`
 }
 
 // RestRef references a REST endpoint plus a credentials file for it.
 type RestRef struct {
 	Endpoint    string `yaml:"endpoint" json:"endpoint"`
 	Credentials string `yaml:"credentials" json:"credentials"`
+}
+
+// ConsumerOffsetSync configures consumer-offset migration on the link. Enable
+// defaults to true when nil (including when the whole block is omitted).
+type ConsumerOffsetSync struct {
+	Enable       *bool         `yaml:"enable,omitempty" json:"enable,omitempty"`
+	IntervalMs   int           `yaml:"intervalMs,omitempty" json:"intervalMs,omitempty"`
+	GroupFilters []GroupFilter `yaml:"groupFilters,omitempty" json:"groupFilters,omitempty"`
+}
+
+// GroupFilter is one consumer.offset.group.filters entry.
+type GroupFilter struct {
+	Name        string `yaml:"name" json:"name"`
+	PatternType string `yaml:"patternType" json:"patternType"`
+	FilterType  string `yaml:"filterType" json:"filterType"`
+}
+
+// TopicConfigSync configures topic.config.sync.ms on the link.
+type TopicConfigSync struct {
+	IntervalMs int `yaml:"intervalMs,omitempty" json:"intervalMs,omitempty"`
 }
 
 type Topics struct {

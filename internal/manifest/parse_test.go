@@ -44,3 +44,44 @@ func TestParse_UnknownFieldRejected(t *testing.T) {
 	_, err := Parse(readFixture(t, "unknown_field.yaml"))
 	require.Error(t, err)
 }
+
+func TestParse_ClusterLinkConfigFields(t *testing.T) {
+	src := `apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: m
+spec:
+  source:
+    type: apache-kafka
+    credentials: ./s.yaml
+  target:
+    type: confluent-cloud
+    cluster: lkc-1
+    credentials: ./t.yaml
+  clusterLink:
+    name: l
+    sourceCredentials: ./s.yaml
+    prefix: "clusterA."
+    consumerOffsetSync:
+      enable: false
+      intervalMs: 1000
+      groupFilters:
+        - name: "*"
+          patternType: LITERAL
+          filterType: INCLUDE
+    topicConfigSync:
+      intervalMs: 5000
+`
+	m, err := Parse([]byte(src))
+	require.NoError(t, err)
+	cl := m.Spec.ClusterLink
+	require.Equal(t, "clusterA.", cl.Prefix)
+	require.NotNil(t, cl.ConsumerOffsetSync)
+	require.NotNil(t, cl.ConsumerOffsetSync.Enable)
+	require.False(t, *cl.ConsumerOffsetSync.Enable)
+	require.Equal(t, 1000, cl.ConsumerOffsetSync.IntervalMs)
+	require.Len(t, cl.ConsumerOffsetSync.GroupFilters, 1)
+	require.Equal(t, "LITERAL", cl.ConsumerOffsetSync.GroupFilters[0].PatternType)
+	require.NotNil(t, cl.TopicConfigSync)
+	require.Equal(t, 5000, cl.TopicConfigSync.IntervalMs)
+}
