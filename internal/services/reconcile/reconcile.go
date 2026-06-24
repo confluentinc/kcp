@@ -54,6 +54,7 @@ type Outcome struct {
 	Created []Change
 	Present []Change
 	Drift   []Change
+	Failed  []Change // attempted Create that errored (continue-on-error reconcilers)
 }
 
 // Report aggregates outcomes across reconcilers for one engine run.

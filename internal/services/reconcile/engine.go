@@ -38,11 +38,11 @@ func (e *Engine) Run(ctx context.Context, rs []Reconciler, dryRun bool) (Report,
 		}
 
 		out, err := r.Apply(ctx, plan)
+		report.Outcomes[r.Name()] = out
+		e.renderOutcome(r.Name(), out)
 		if err != nil {
 			return report, fmt.Errorf("%s: apply failed: %w", r.Name(), err)
 		}
-		report.Outcomes[r.Name()] = out
-		e.renderOutcome(r.Name(), out)
 	}
 
 	return report, nil
@@ -70,6 +70,13 @@ func (e *Engine) renderPlan(name string, p Plan, dryRun bool) {
 }
 
 func (e *Engine) renderOutcome(name string, o Outcome) {
-	_, _ = fmt.Fprintf(e.out, "  %s: %d created, %d already present, %d drift\n",
-		name, len(o.Created), len(o.Present), len(o.Drift))
+	for _, c := range o.Failed {
+		line := fmt.Sprintf("  ✖ %s", c.Summary)
+		if c.Detail != "" {
+			line += " — " + c.Detail
+		}
+		_, _ = fmt.Fprintln(e.out, line)
+	}
+	_, _ = fmt.Fprintf(e.out, "  %s: %d created, %d already present, %d drift, %d failed\n",
+		name, len(o.Created), len(o.Present), len(o.Drift), len(o.Failed))
 }

@@ -98,6 +98,25 @@ func TestEngine_ApplyError_Propagates(t *testing.T) {
 	require.ErrorContains(t, err, "clusterLink")
 }
 
+func TestEngine_Apply_RendersOutcomeEvenOnError(t *testing.T) {
+	created := Change{Action: ActionCreate, Summary: "topic a"}
+	f := &fakeReconciler{
+		name:     "newTopics",
+		plan:     simplePlan(created, Change{Action: ActionCreate, Summary: "topic b"}),
+		applyOut: Outcome{Created: []Change{created}, Failed: []Change{{Action: ActionCreate, Summary: "topic b", Detail: "rejected"}}},
+		applyErr: errors.New("1 of 2 topics failed"),
+	}
+	var out bytes.Buffer
+	report, err := NewEngine(&out).Run(context.Background(), []Reconciler{f}, false)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "1 of 2 topics failed")
+	// Outcome is still recorded and rendered despite the error:
+	require.Len(t, report.Outcomes["newTopics"].Failed, 1)
+	require.Contains(t, out.String(), "1 failed")
+	require.Contains(t, out.String(), "topic b")
+}
+
 func TestAction_String(t *testing.T) {
 	require.Equal(t, "create", ActionCreate.String())
 	require.Equal(t, "present", ActionPresent.String())
