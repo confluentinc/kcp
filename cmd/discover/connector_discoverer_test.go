@@ -186,16 +186,22 @@ func TestDiscoverMatchingConnectors_NonMatchingExcluded(t *testing.T) {
 }
 
 func TestDiscoverMatchingConnectors_SkipsConnectorWithNilFields(t *testing.T) {
-	// A connector with missing (nil) required description fields must be skipped
-	// with a warning rather than panicking and aborting discovery (R3).
+	// A connector with missing (nil) required summary fields must be skipped with a
+	// warning rather than panicking and aborting discovery (R3). The nil-field guard
+	// runs on summary fields before any DescribeConnector call, so describe is never
+	// attempted for such a connector.
 	bad := kafkaconnecttypes.ConnectorSummary{
 		ConnectorArn:  aws.String("arn:aws:kafkaconnect:us-east-1:123:connector/bad"),
 		ConnectorName: aws.String("bad"),
 		// KafkaClusterClientAuthentication, KafkaCluster, Capacity, CreationTime all nil.
 	}
+	describeCalls := 0
 	connect := &stubMSKConnectService{
-		listConnectorsFn:    listOneConnector(bad),
-		describeConnectorFn: describeWithConfig(map[string]string{}),
+		listConnectorsFn: listOneConnector(bad),
+		describeConnectorFn: func(context.Context, *kafkaconnect.DescribeConnectorInput, ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+			describeCalls++
+			return &kafkaconnect.DescribeConnectorOutput{}, nil
+		},
 	}
 	msk, ec2svc, metrics := defaultStubs()
 	cd := newTestClusterDiscovererWithConnect(msk, ec2svc, metrics, connect)
@@ -203,6 +209,33 @@ func TestDiscoverMatchingConnectors_SkipsConnectorWithNilFields(t *testing.T) {
 	connectors, err := cd.discoverMatchingConnectors(context.Background(), awsClientInfoWithIAMBrokers())
 	require.NoError(t, err, "incomplete connector must be skipped, not abort discovery")
 	assert.Empty(t, connectors)
+	assert.Equal(t, 0, describeCalls, "DescribeConnector must not be called for a connector skipped by the summary guard")
+}
+
+func TestDiscoverMatchingConnectors_DoesNotDescribeNonMatching(t *testing.T) {
+	// DescribeConnector is the most throttling-prone MSK Connect call and must only
+	// fire for connectors that actually belong to this cluster. A non-matching
+	// connector is filtered on its ListConnectors summary alone, so describe is never
+	// attempted — guarding against a regression that slides the call back above the
+	// bootstrap-match filter and reintroduces C×K describe calls.
+	connector := iamConnectorSummary("other-cluster-sink")
+	connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers = aws.String("b-9.other.kafka.us-east-1.amazonaws.com:9098")
+
+	describeCalls := 0
+	connect := &stubMSKConnectService{
+		listConnectorsFn: listOneConnector(connector),
+		describeConnectorFn: func(context.Context, *kafkaconnect.DescribeConnectorInput, ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+			describeCalls++
+			return &kafkaconnect.DescribeConnectorOutput{ConnectorConfiguration: map[string]string{}}, nil
+		},
+	}
+	msk, ec2svc, metrics := defaultStubs()
+	cd := newTestClusterDiscovererWithConnect(msk, ec2svc, metrics, connect)
+
+	connectors, err := cd.discoverMatchingConnectors(context.Background(), awsClientInfoWithIAMBrokers())
+	require.NoError(t, err)
+	assert.Empty(t, connectors, "non-matching connector is excluded")
+	assert.Equal(t, 0, describeCalls, "DescribeConnector must not be called for a connector that fails the bootstrap-match filter")
 }
 
 func TestDiscoverMatchingConnectors_DoesNotLogRawSecret(t *testing.T) {
@@ -221,4 +254,35 @@ func TestDiscoverMatchingConnectors_DoesNotLogRawSecret(t *testing.T) {
 	_, err := cd.discoverMatchingConnectors(context.Background(), awsClientInfoWithIAMBrokers())
 	require.NoError(t, err)
 	assert.NotContains(t, logBuf.String(), "hunter2", "raw secret must never be logged")
+}
+
+// bootstrapMatches must compare host:port entries by exact equality, not substring
+// containment, so a cluster broker address can't spuriously match an unrelated
+// connector whose bootstrap host merely shares a DNS prefix/suffix.
+func TestBootstrapMatches_ExactHostPortOnly(t *testing.T) {
+	brokers := []string{
+		"b-1.test.kafka.us-east-1.amazonaws.com:9098",
+		"b-2.test.kafka.us-east-1.amazonaws.com:9098",
+	}
+
+	t.Run("substring of a connector host is not a match", func(t *testing.T) {
+		// The broker host:port is a substring of this connector's host but is not an
+		// exact entry — must not match.
+		connector := "b-1.test.kafka.us-east-1.amazonaws.com.attacker.example:9098"
+		assert.False(t, bootstrapMatches(connector, brokers))
+	})
+
+	t.Run("a different cluster does not match", func(t *testing.T) {
+		connector := "b-9.other.kafka.us-east-1.amazonaws.com:9098"
+		assert.False(t, bootstrapMatches(connector, brokers))
+	})
+
+	t.Run("exact host:port matches (including whitespace tolerance)", func(t *testing.T) {
+		connector := "b-1.test.kafka.us-east-1.amazonaws.com:9098, b-2.test.kafka.us-east-1.amazonaws.com:9098"
+		assert.True(t, bootstrapMatches(connector, brokers))
+	})
+
+	t.Run("empty connector bootstrap never matches", func(t *testing.T) {
+		assert.False(t, bootstrapMatches("", brokers))
+	})
 }

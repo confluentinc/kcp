@@ -200,20 +200,14 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 		}
 
 		for _, connector := range mskConnectResult.Connectors {
-			describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
-				ConnectorArn: connector.ConnectorArn,
-			})
-			if err != nil {
-				slog.Warn("failed to describe connector; skipping", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
-				continue
-			}
-
 			// Guard against partial AWS responses so a malformed connector is skipped
-			// rather than panicking and aborting discovery (R3).
+			// rather than panicking and aborting discovery (R3). These fields all come
+			// from the ListConnectors summary, so the check runs before any per-connector
+			// DescribeConnector call.
 			if connector.KafkaClusterClientAuthentication == nil ||
 				connector.KafkaCluster == nil || connector.KafkaCluster.ApacheKafkaCluster == nil ||
 				connector.Capacity == nil || connector.CreationTime == nil {
-				slog.Warn("skipping connector with incomplete description", "connectorArn", aws.ToString(connector.ConnectorArn))
+				slog.Warn("skipping connector with incomplete connector summary", "connectorArn", aws.ToString(connector.ConnectorArn))
 				continue
 			}
 
@@ -230,8 +224,21 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 			}
 
 			// A connector belongs to this cluster only if its bootstrap servers match the cluster's.
+			// The match decision uses only ListConnectors summary fields, so DescribeConnector is
+			// deferred until after a match — avoiding C×K DescribeConnector calls (one discover run
+			// per cluster) when only the matching connectors need their full config (R3, perf).
 			connectorBootstrap := aws.ToString(connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers)
 			if !bootstrapMatches(connectorBootstrap, brokerAddresses) {
+				continue
+			}
+
+			// Only matching connectors need a DescribeConnector call (for ConnectorConfiguration
+			// and Plugins, which the summary does not carry).
+			describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
+				ConnectorArn: connector.ConnectorArn,
+			})
+			if err != nil {
+				slog.Warn("failed to describe connector; skipping", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
 				continue
 			}
 
@@ -290,11 +297,20 @@ func connectorAuthType(connector kafkaconnecttypes.ConnectorSummary) (types.Auth
 	}
 }
 
-// bootstrapMatches reports whether any cluster broker address appears in the
-// connector's bootstrap-server string.
+// bootstrapMatches reports whether the connector and the cluster share at least one
+// bootstrap broker. Both sides are comma-separated host:port lists; we compare by exact
+// host:port equality (after splitting and trimming) rather than substring containment,
+// so a broker address can't spuriously match by being a substring of an unrelated
+// connector's bootstrap string (e.g. a host that merely shares a DNS prefix/suffix).
 func bootstrapMatches(connectorBootstrap string, brokerAddresses []string) bool {
+	connectorHosts := make(map[string]struct{})
+	for _, addr := range strings.Split(connectorBootstrap, ",") {
+		if trimmed := strings.TrimSpace(addr); trimmed != "" {
+			connectorHosts[trimmed] = struct{}{}
+		}
+	}
 	for _, brokerAddress := range brokerAddresses {
-		if strings.Contains(connectorBootstrap, brokerAddress) {
+		if _, ok := connectorHosts[strings.TrimSpace(brokerAddress)]; ok {
 			return true
 		}
 	}
