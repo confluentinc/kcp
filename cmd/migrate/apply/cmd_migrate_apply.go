@@ -7,6 +7,8 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
 	mclusterlink "github.com/confluentinc/kcp/internal/migrate/clusterlink"
+	mmirror "github.com/confluentinc/kcp/internal/migrate/mirrortopics"
+	mnew "github.com/confluentinc/kcp/internal/migrate/newtopics"
 	"github.com/confluentinc/kcp/internal/services/reconcile"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
@@ -56,20 +58,9 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		return fmt.Errorf("manifest is invalid: %d problem(s) found", len(errs))
 	}
 
-	// Phase 1 supports a cluster-link section only.
-	if m.Spec.ClusterLink == nil {
-		return fmt.Errorf("nothing to apply: spec.clusterLink is required in this phase")
-	}
-
-	cl := m.Spec.ClusterLink
-	mode := cl.Mode
-	if mode == "" {
-		mode = manifest.ClusterLinkModeDestination
-	}
-
-	linkConfigs, err := resolveLinkConfigs(cl)
-	if err != nil {
-		return fmt.Errorf("resolving cluster-link configs: %w", err)
+	// Phase 1 supports cluster-link and/or topics sections.
+	if m.Spec.ClusterLink == nil && m.Spec.Topics == nil {
+		return fmt.Errorf("nothing to apply: spec.clusterLink and/or spec.topics is required in this phase")
 	}
 
 	// --- source cluster id reader (spec.source → D1) ---
@@ -96,69 +87,129 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	}
 	tgt := targets.NewConfluentPlatformTarget(m.Spec.Target.Kafka.RestEndpoint, tgtCreds, tgtClient)
 
-	// --- reconciler ---
-	var rec *mclusterlink.Reconciler
-	switch mode {
-	case manifest.ClusterLinkModeDestination:
-		// Destination-initiated: the link→source connection auth comes from
-		// clusterLink.source (D2), NOT spec.source.
-		linkCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.source", cl.Source.BootstrapServers, cl.Source.Credentials)
-		if err != nil {
-			return err
-		}
-		auth, err := mclusterlink.LinkAuthFromSource(linkCluster)
-		if err != nil {
-			return fmt.Errorf("deriving cluster-link source auth: %w", err)
-		}
-		rec = mclusterlink.New(mclusterlink.Config{
-			LinkName:               cl.Name,
-			Mode:                   manifest.ClusterLinkModeDestination,
-			SourceBootstrapServers: cl.Source.BootstrapServers,
-			Auth:                   auth,
-			Configs:                linkConfigs,
-		}, src, tgt)
+	// --- reconcilers ---
+	// The engine runs reconcilers in order; the cluster link (when present) is the
+	// precondition for mirror topics, so it is appended first.
+	var recs []reconcile.Reconciler
 
-	case manifest.ClusterLinkModeSource:
-		// Source-initiated: a second link object lives on the source cluster's
-		// REST (D4). It carries the destination address + source→destination
-		// connection auth derived from clusterLink.destination (D5).
-		if cl.SourceRest == nil {
-			return fmt.Errorf("clusterLink.sourceRest is required for mode %q", manifest.ClusterLinkModeSource)
-		}
-		srcRestCreds, err := targets.LoadCredentials(cl.SourceRest.Credentials)
-		if err != nil {
-			return err
-		}
-		srcRestClient, err := srcRestCreds.HTTPClient()
-		if err != nil {
-			return err
-		}
-		srcLinkTgt := targets.NewLinkEndpoint(cl.SourceRest.Endpoint, srcRestCreds, srcRestClient)
+	// cl and mode are retained for the topic wiring below; both are zero when
+	// no cluster-link section is present (mode:new can run without a link).
+	var cl *manifest.ClusterLink
+	var mode string
+	// srcLinkTgt is the source-side OUTBOUND link endpoint (source-initiated mode
+	// only). It carries cluster.link.prefix, so it is the prefix target for mirror
+	// topics in source mode. nil in destination mode.
+	var srcLinkTgt *targets.LinkEndpoint
 
-		destCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.destination", cl.Destination.BootstrapServers, cl.Destination.Credentials)
-		if err != nil {
-			return err
+	if m.Spec.ClusterLink != nil {
+		cl = m.Spec.ClusterLink
+		mode = cl.Mode
+		if mode == "" {
+			mode = manifest.ClusterLinkModeDestination
 		}
-		destAuth, err := mclusterlink.LinkAuthFromSource(destCluster)
-		if err != nil {
-			return fmt.Errorf("deriving cluster-link destination auth: %w", err)
-		}
-		rec = mclusterlink.NewSourceInitiated(mclusterlink.Config{
-			LinkName:             cl.Name,
-			Mode:                 manifest.ClusterLinkModeSource,
-			DestBootstrapServers: cl.Destination.BootstrapServers,
-			DestAuth:             destAuth,
-			Configs:              linkConfigs,
-		}, src, tgt, srcLinkTgt)
 
-	default:
-		return fmt.Errorf("unsupported clusterLink.mode %q", mode)
+		linkConfigs, err := resolveLinkConfigs(cl)
+		if err != nil {
+			return fmt.Errorf("resolving cluster-link configs: %w", err)
+		}
+
+		var rec *mclusterlink.Reconciler
+		switch mode {
+		case manifest.ClusterLinkModeDestination:
+			// Destination-initiated: the link→source connection auth comes from
+			// clusterLink.source (D2), NOT spec.source.
+			linkCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.source", cl.Source.BootstrapServers, cl.Source.Credentials)
+			if err != nil {
+				return err
+			}
+			auth, err := mclusterlink.LinkAuthFromSource(linkCluster)
+			if err != nil {
+				return fmt.Errorf("deriving cluster-link source auth: %w", err)
+			}
+			rec = mclusterlink.New(mclusterlink.Config{
+				LinkName:               cl.Name,
+				Mode:                   manifest.ClusterLinkModeDestination,
+				SourceBootstrapServers: cl.Source.BootstrapServers,
+				Auth:                   auth,
+				Configs:                linkConfigs,
+			}, src, tgt)
+
+		case manifest.ClusterLinkModeSource:
+			// Source-initiated: a second link object lives on the source cluster's
+			// REST (D4). It carries the destination address + source→destination
+			// connection auth derived from clusterLink.destination (D5).
+			if cl.SourceRest == nil {
+				return fmt.Errorf("clusterLink.sourceRest is required for mode %q", manifest.ClusterLinkModeSource)
+			}
+			srcRestCreds, err := targets.LoadCredentials(cl.SourceRest.Credentials)
+			if err != nil {
+				return err
+			}
+			srcRestClient, err := srcRestCreds.HTTPClient()
+			if err != nil {
+				return err
+			}
+			srcLinkTgt = targets.NewLinkEndpoint(cl.SourceRest.Endpoint, srcRestCreds, srcRestClient)
+
+			destCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.destination", cl.Destination.BootstrapServers, cl.Destination.Credentials)
+			if err != nil {
+				return err
+			}
+			destAuth, err := mclusterlink.LinkAuthFromSource(destCluster)
+			if err != nil {
+				return fmt.Errorf("deriving cluster-link destination auth: %w", err)
+			}
+			rec = mclusterlink.NewSourceInitiated(mclusterlink.Config{
+				LinkName:             cl.Name,
+				Mode:                 manifest.ClusterLinkModeSource,
+				DestBootstrapServers: cl.Destination.BootstrapServers,
+				DestAuth:             destAuth,
+				Configs:              linkConfigs,
+			}, src, tgt, srcLinkTgt)
+
+		default:
+			return fmt.Errorf("unsupported clusterLink.mode %q", mode)
+		}
+		recs = append(recs, rec)
+	}
+
+	if t := m.Spec.Topics; t != nil {
+		switch t.Mode {
+		case manifest.TopicModeMirror:
+			// Validation guarantees a cluster link is present for mode:mirror;
+			// guard defensively in case this is reached without one.
+			if cl == nil {
+				return fmt.Errorf("spec.topics.mode %q requires spec.clusterLink", manifest.TopicModeMirror)
+			}
+			// The prefix (cluster.link.prefix) lives on the link object. In
+			// destination mode that is the destination target; in source mode it is
+			// the source-side OUTBOUND link.
+			prefixTgt := tgt
+			if mode == manifest.ClusterLinkModeSource {
+				prefixTgt = srcLinkTgt
+			}
+			recs = append(recs, mmirror.New(mmirror.Config{
+				LinkName: cl.Name,
+				Include:  t.Include,
+				Exclude:  t.Exclude,
+			}, src, tgt, prefixTgt))
+
+		case manifest.TopicModeNew:
+			recs = append(recs, mnew.New(mnew.Config{
+				Include:    t.Include,
+				Exclude:    t.Exclude,
+				ConfigSkip: mnew.DefaultSkipList(),
+			}, src, tgt))
+
+		default:
+			return fmt.Errorf("unsupported topics.mode %q", t.Mode)
+		}
 	}
 
 	eng := reconcile.NewEngine(cmd.OutOrStdout())
 	// Phase 1 relies on the engine to render outcomes; the structured Report is
 	// not consumed yet (a later phase may use it for a machine-readable summary).
-	_, err = eng.Run(cmd.Context(), []reconcile.Reconciler{rec}, dryRun)
+	_, err = eng.Run(cmd.Context(), recs, dryRun)
 	return err
 }
 

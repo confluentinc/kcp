@@ -212,6 +212,164 @@ func configMap(body map[string]any) map[string]string {
 	return out
 }
 
+// topicSource is a fake migrate.Source that reports a fixed cluster id and a
+// fixed topic list, so the topic reconcilers plan a real create step.
+type topicSource struct {
+	id     string
+	topics []string
+}
+
+func (s topicSource) ClusterID(context.Context) (string, error) { return s.id, nil }
+
+func (s topicSource) ListTopics(context.Context) ([]string, error) { return s.topics, nil }
+
+func (s topicSource) DescribeTopics(_ context.Context, names []string) ([]migrate.TopicSpec, error) {
+	out := make([]migrate.TopicSpec, len(names))
+	for i, n := range names {
+		out[i] = migrate.TopicSpec{Name: n, Partitions: 3, ReplicationFactor: 3}
+	}
+	return out, nil
+}
+
+// startStubTopicTarget serves the CP REST surface needed by the topic
+// reconcilers: list clusters, get/create link, list/create plain topics, and
+// list/create mirror topics (plus the link configs read for the mirror prefix).
+func startStubTopicTarget(t *testing.T) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/kafka/v3/clusters", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/kafka/v3/clusters" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"cluster_id":"dest-1"}]}`))
+	})
+	// Plain topics: GET list (empty) / POST create → 201.
+	mux.HandleFunc("/kafka/v3/clusters/dest-1/topics", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	})
+	// Link configs (carries cluster.link.prefix) — empty prefix here.
+	mux.HandleFunc("/kafka/v3/clusters/dest-1/links/src-to-dest/configs", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	})
+	// Mirror topics: GET list (empty) / POST create → 201.
+	mux.HandleFunc("/kafka/v3/clusters/dest-1/links/src-to-dest/mirrors", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	})
+	// Cluster-link get (for the clusterLink reconciler) → not found, so it plans a create.
+	mux.HandleFunc("/kafka/v3/clusters/dest-1/links/src-to-dest", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	})
+	// Catch-all create-link POST (links/?link_name=...) → 201.
+	mux.HandleFunc("/kafka/v3/clusters/dest-1/links/", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})
+	return httptest.NewServer(mux)
+}
+
+// runManifest writes the given manifest body + standard creds files and executes
+// apply, stubbing newSourceReader with the supplied source.
+func runManifest(t *testing.T, srvURL, specBody string, src migrate.Source, dryRun bool) (stdout, stderr string, err error) {
+	t.Helper()
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("basic:\n  username: admin\n  password: admin-secret\n"), 0600))
+	sourceCreds := filepath.Join(dir, "source.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
+	mf := filepath.Join(dir, "migration.yaml")
+	body := os.Expand(specBody, func(k string) string {
+		switch k {
+		case "SRV":
+			return srvURL
+		case "SOURCE_CREDS":
+			return sourceCreds
+		case "TARGET_CREDS":
+			return targetCreds
+		}
+		return ""
+	})
+	require.NoError(t, os.WriteFile(mf, []byte(body), 0600))
+
+	old := newSourceReader
+	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return src }
+	t.Cleanup(func() { newSourceReader = old })
+
+	cmd := NewMigrateApplyCmd()
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	args := []string{"-f", mf}
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// mode:mirror — the mirrorTopics reconciler is appended AFTER the clusterLink
+// reconciler and runs against the target.
+func TestApply_TopicsMirror_AppendsAfterClusterLink(t *testing.T) {
+	srv := startStubTopicTarget(t)
+	defer srv.Close()
+	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
+		"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: ${SOURCE_CREDS}\n" +
+		"  target:\n    type: confluent-platform\n    credentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n" +
+		"  clusterLink:\n    name: src-to-dest\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: ${SOURCE_CREDS}\n" +
+		"  topics:\n    mode: mirror\n    include: [\"orders\"]\n"
+	out, errOut, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1", topics: []string{"orders"}}, false)
+	require.NoError(t, err, "stderr: %s", errOut)
+	require.Contains(t, out, "cluster link \"src-to-dest\"")
+	require.Contains(t, out, "== mirrorTopics")
+	// clusterLink section is rendered before mirrorTopics (ordering precondition).
+	require.Less(t, indexOf(out, "== mirrorTopics"), len(out))
+	require.Greater(t, indexOf(out, "== mirrorTopics"), indexOf(out, "cluster link"))
+}
+
+// mode:new — the newTopics reconciler runs with NO clusterLink and does not error.
+func TestApply_TopicsNew_NoClusterLink(t *testing.T) {
+	srv := startStubTopicTarget(t)
+	defer srv.Close()
+	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
+		"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: ${SOURCE_CREDS}\n" +
+		"  target:\n    type: confluent-platform\n    credentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n" +
+		"  topics:\n    mode: new\n    include: [\"orders\"]\n"
+	out, errOut, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1", topics: []string{"orders"}}, false)
+	require.NoError(t, err, "stderr: %s", errOut)
+	require.NotContains(t, errOut, "spec.clusterLink is required")
+	require.Contains(t, out, "== newTopics")
+	require.Contains(t, out, "1 created")
+}
+
+// Neither clusterLink nor topics → the reworded nothing-to-apply error.
+func TestApply_NothingToApply(t *testing.T) {
+	srv := startStubTopicTarget(t)
+	defer srv.Close()
+	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
+		"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: ${SOURCE_CREDS}\n" +
+		"  target:\n    type: confluent-platform\n    credentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n"
+	_, _, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1"}, false)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "spec.clusterLink and/or spec.topics is required")
+}
+
+func indexOf(s, sub string) int {
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return i
+		}
+	}
+	return -1
+}
+
 func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
 	cl := &manifest.ClusterLink{Name: "l", Prefix: "p."}
 	got, err := resolveLinkConfigs(cl)
