@@ -50,7 +50,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	require.NoError(t, os.WriteFile(targetCreds, []byte("basic:\n  username: admin\n  password: admin-secret\n"), 0600))
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte(
-		"clusters:\n  - id: src\n    bootstrap_servers: [\"source:29092\"]\n    auth_method:\n      unauthenticated_plaintext:\n        use: true\n"), 0600))
+		"bootstrap_servers: [\"source:29092\"]\nauth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
 	manifest := filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(manifest, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n  source:\n    type: apache-kafka\n    credentials: "+sourceCreds+
@@ -149,10 +149,10 @@ func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
 	require.NoError(t, os.WriteFile(srcRestCreds, []byte("basic:\n  username: src\n  password: src-secret\n"), 0600))
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte(
-		"clusters:\n  - id: src\n    bootstrap_servers: [\"source:29092\"]\n    auth_method:\n      unauthenticated_plaintext:\n        use: true\n"), 0600))
+		"bootstrap_servers: [\"source:29092\"]\nauth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
 	destCreds := filepath.Join(dir, "dest.yaml")
 	require.NoError(t, os.WriteFile(destCreds, []byte(
-		"clusters:\n  - id: dest\n    bootstrap_servers: [\"dest:29092\"]\n    auth_method:\n      unauthenticated_plaintext:\n        use: true\n"), 0600))
+		"bootstrap_servers: [\"dest:29092\"]\nauth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
 
 	mf := filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(mf, []byte(

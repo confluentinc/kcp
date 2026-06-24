@@ -76,17 +76,14 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	// spec.source.credentials is used only to read the live source cluster id
 	// (and, in destination mode, is independent of the link→source connection
 	// auth, which comes from clusterLink.sourceCredentials).
-	srcCreds, errs := types.NewOSKCredentialsFromFile(m.Spec.Source.Credentials)
+	srcCluster, errs := types.LoadMigrateClusterCredentials(m.Spec.Source.Credentials)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
 		}
 		return fmt.Errorf("invalid source credentials: %d problem(s) found", len(errs))
 	}
-	if len(srcCreds.Clusters) != 1 {
-		return fmt.Errorf("source credentials must contain exactly one cluster, found %d", len(srcCreds.Clusters))
-	}
-	src := newSourceReader(srcCreds.Clusters[0])
+	src := newSourceReader(srcCluster)
 
 	// --- destination target (confluent-platform) ---
 	if m.Spec.Target.Type != manifest.TargetConfluentPlatform {
@@ -108,7 +105,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	case manifest.ClusterLinkModeDestination:
 		// Destination-initiated: the link→source connection auth comes from
 		// clusterLink.sourceCredentials (D2), NOT spec.source.credentials.
-		linkCluster, err := loadSingleOSKCluster(cmd, "clusterLink.sourceCredentials", cl.SourceCredentials)
+		linkCluster, err := loadMigrateCluster(cmd, "clusterLink.sourceCredentials", cl.SourceCredentials)
 		if err != nil {
 			return err
 		}
@@ -141,7 +138,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		}
 		srcLinkTgt := targets.NewLinkEndpoint(cl.SourceRest.Endpoint, srcRestCreds, srcRestClient)
 
-		destCluster, err := loadSingleOSKCluster(cmd, "clusterLink.destinationCredentials", cl.DestinationCredentials)
+		destCluster, err := loadMigrateCluster(cmd, "clusterLink.destinationCredentials", cl.DestinationCredentials)
 		if err != nil {
 			return err
 		}
@@ -174,22 +171,18 @@ func resolveLinkConfigs(cl *manifest.ClusterLink) (map[string]string, error) {
 	return cl.ResolvedLinkConfigs()
 }
 
-// loadSingleOSKCluster validates+loads an apache-kafka credentials file that
-// must contain exactly one cluster, surfacing per-field errors against the
-// given manifest field name.
-func loadSingleOSKCluster(cmd *cobra.Command, field, path string) (types.OSKClusterAuth, error) {
+// loadMigrateCluster loads + validates a flat migrate credentials file, surfacing
+// per-field errors against the given manifest field name.
+func loadMigrateCluster(cmd *cobra.Command, field, path string) (types.OSKClusterAuth, error) {
 	if path == "" {
 		return types.OSKClusterAuth{}, fmt.Errorf("%s is required", field)
 	}
-	creds, errs := types.NewOSKCredentialsFromFile(path)
+	cluster, errs := types.LoadMigrateClusterCredentials(path)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
 		}
 		return types.OSKClusterAuth{}, fmt.Errorf("invalid %s: %d problem(s) found", field, len(errs))
 	}
-	if len(creds.Clusters) != 1 {
-		return types.OSKClusterAuth{}, fmt.Errorf("%s must contain exactly one cluster, found %d", field, len(creds.Clusters))
-	}
-	return creds.Clusters[0], nil
+	return cluster, nil
 }
