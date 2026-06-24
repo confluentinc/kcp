@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate-clusterlink test-env-down-migrate-clusterlink test-migrate-clusterlink
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate-clusterlink test-env-down-migrate-clusterlink test-migrate-clusterlink test-migrate-clusterlink-report
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -140,6 +140,11 @@ test-env-down-migrate-clusterlink: ## Stop the cluster-link migrate test env
 test-migrate-clusterlink: build ## Run the cluster-link migrate apply E2E test (all source auth methods)
 	$(MAKE) test-env-up-migrate-clusterlink
 	cd integration-tests/migrate-clusterlink && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate-clusterlink ; exit $$status
+
+test-migrate-clusterlink-report: build ## Run the cluster-link auth matrix and write a markdown evidence report to integration-tests/migrate-clusterlink/cluster-link-auth-report.md (gitignored)
+	$(MAKE) test-env-up-migrate-clusterlink
+	cd integration-tests/migrate-clusterlink && KCP_MATRIX_REPORT=cluster-link-auth-report.md go test -tags integration -v ./... ; \
 	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate-clusterlink ; exit $$status
 
 # ==============================================================================

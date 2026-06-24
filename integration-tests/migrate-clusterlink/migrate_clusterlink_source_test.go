@@ -3,26 +3,21 @@
 package migrateclusterlink
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
 
-// applySourcePair applies a source-initiated manifest once and asserts both
-// sides were created. KCP creates the INBOUND link on the destination then the
-// OUTBOUND link on the source in a single apply; the OUTBOUND create races the
-// INBOUND link's asynchronous propagation to the destination, which KCP itself
-// retries (see reconciler.createClusterLink), so a single `apply` is reliable
-// and yields "2 created" — no test-level retry needed (that would mask the
-// product fix).
-func applySourcePair(t *testing.T, manifest string) {
-	t.Helper()
-	out, err := runKCP(t, manifest)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "2 created", out)
-}
+// A source-initiated apply creates both sides in one call: KCP creates the
+// INBOUND link on the destination then the OUTBOUND link on the source; the
+// OUTBOUND create races the INBOUND link's asynchronous propagation to the
+// destination, which KCP itself retries (see reconciler.createClusterLink), so a
+// single `apply` is reliable and yields "2 created" — no test-level retry needed
+// (that would mask the product fix).
 
 // sourceCell is one source-initiated permutation. Two links share one name: the
 // INBOUND link on the migration-dest (target REST, D3) and the OUTBOUND link on
@@ -150,20 +145,35 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 			destID := c.migrationDestREST.clusterID
 			srcID := c.migrationSourceREST.clusterID
 
+			// Report capture (no-op + zero extra work when reportEnabled is false).
+			// commit() runs via defer so a cell that fails mid-flight still emits
+			// what it captured, marked FAIL.
+			rep := newSourceReporter(c, dir, manifest, linkName, destID, srcID)
+			defer rep.commit(t)
+
 			// dry-run previews two creates and changes nothing.
 			out, err := runKCP(t, manifest, "--dry-run")
+			rep.dryRun(out)
 			require.NoError(t, err, out)
 			require.Contains(t, out, "Planned")
 			require.Empty(t, destPoller.linkState(destID, linkName), "dry-run must not create the INBOUND link")
 			require.Empty(t, srcPoller.linkState(srcID, linkName), "dry-run must not create the OUTBOUND link")
 
 			// apply creates BOTH links; both reach ACTIVE.
-			applySourcePair(t, manifest)
+			out, err = runKCP(t, manifest)
+			rep.apply(out)
+			require.NoError(t, err, out)
+			require.Contains(t, out, "2 created", out)
 			destPoller.requireLinkActive(t, destID, linkName)
 			srcPoller.requireLinkActive(t, srcID, linkName)
 
+			// Capture both live ACTIVE proofs (INBOUND on dest, OUTBOUND on
+			// source) before deletion.
+			rep.proof(destPoller, srcPoller)
+
 			// re-apply is an idempotent no-op for both sides.
 			out, err = runKCP(t, manifest)
+			rep.reapply(out)
 			require.NoError(t, err, out)
 			require.Contains(t, out, "2 already present", out)
 
@@ -172,4 +182,113 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 			destPoller.deleteLink(t, destID, linkName)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// source-cell report capture
+// ---------------------------------------------------------------------------
+
+// sourceProves maps a source cell to its one-sentence proof statement.
+func sourceProves(c sourceCell) string {
+	switch {
+	case c.name == "baseline":
+		return "Source-initiated migration creates both the INBOUND link (on the migration-dest, target REST) and the OUTBOUND link (on the migration-source REST); both reach ACTIVE."
+	case strings.HasPrefix(c.name, "D4="):
+		return fmt.Sprintf("KCP authenticates to the migration-source Kafka REST with %s auth (spec.clusterLink.sourceRest) and creates the OUTBOUND link there; both links reach ACTIVE.", c.migrationSourceREST.kind)
+	case strings.HasPrefix(c.name, "D3="):
+		return fmt.Sprintf("KCP authenticates to the migration-dest Kafka REST with %s auth (spec.target.credentials) and creates the INBOUND link there; both links reach ACTIVE.", c.migrationDestREST.kind)
+	case strings.HasPrefix(c.name, "D5="):
+		return fmt.Sprintf("KCP builds a %s source→destination connection (spec.clusterLink.destinationCredentials) that the OUTBOUND link uses to reach the migration-dest; both links reach ACTIVE.", c.d5.kind)
+	}
+	return "source-initiated cluster link pair reaches ACTIVE."
+}
+
+// sourceReporter accumulates one source cell's evidence. All methods are cheap
+// no-ops when reportEnabled is false.
+type sourceReporter struct {
+	in       sectionInput
+	link     string
+	destID   string
+	srcID    string
+	destREST restEndpoint
+	srcREST  restEndpoint
+}
+
+func newSourceReporter(c sourceCell, dir, manifest, linkName, destID, srcID string) *sourceReporter {
+	r := &sourceReporter{
+		link: linkName, destID: destID, srcID: srcID,
+		destREST: c.migrationDestREST, srcREST: c.migrationSourceREST,
+	}
+	if !reportEnabled {
+		return r
+	}
+	r.in = sectionInput{
+		seq:      nextReportSeq(),
+		mode:     "source",
+		cell:     c.name,
+		proves:   sourceProves(c),
+		manifest: readFileForReport(manifest),
+		creds: []fencedFile{
+			{"D1 source-read", "source-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "source-creds.yaml"))},
+			{"D4 migration-source REST", "source-rest-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "source-rest-creds.yaml"))},
+			{"D3 migration-dest REST", "target-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "target-creds.yaml"))},
+			{"D5 source→dest connection", "dest-conn-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "dest-conn-creds.yaml"))},
+		},
+		commands: []string{
+			"kcp migrate apply -f migration.yaml --dry-run",
+			"kcp migrate apply -f migration.yaml",
+			"GET " + linkURL(c.migrationDestREST.baseURL, destID, linkName) + "   # INBOUND on migration-dest",
+			"GET " + linkURL(c.migrationSourceREST.baseURL, srcID, linkName) + "   # OUTBOUND on migration-source",
+		},
+		pass: true,
+	}
+	return r
+}
+
+func (r *sourceReporter) dryRun(out string) {
+	if reportEnabled {
+		r.in.dryRun = out
+	}
+}
+
+func (r *sourceReporter) apply(out string) {
+	if reportEnabled {
+		r.in.apply = out
+	}
+}
+
+func (r *sourceReporter) proof(destPoller, srcPoller restClient) {
+	if reportEnabled {
+		r.in.proofs = []proofBlock{
+			{
+				label: "INBOUND link on migration-dest",
+				url:   linkURL(r.destREST.baseURL, r.destID, r.link),
+				json:  destPoller.linkJSON(r.destID, r.link),
+			},
+			{
+				label: "OUTBOUND link on migration-source",
+				url:   linkURL(r.srcREST.baseURL, r.srcID, r.link),
+				json:  srcPoller.linkJSON(r.srcID, r.link),
+			},
+		}
+	}
+}
+
+func (r *sourceReporter) reapply(out string) {
+	if reportEnabled {
+		r.in.reapply = out
+	}
+}
+
+func (r *sourceReporter) commit(t *testing.T) {
+	if !reportEnabled {
+		return
+	}
+	if t.Failed() {
+		r.in.pass = false
+		if r.in.failMsg == "" {
+			r.in.failMsg = "cell failed; see test output. Captured evidence up to the point of failure is shown below."
+		}
+	}
+	collector.add(buildSection(r.in))
 }

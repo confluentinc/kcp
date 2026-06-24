@@ -3,8 +3,10 @@
 package migrateclusterlink
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -112,24 +114,130 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 			poller.waitForClusterID(t)
 			destID := c.target.clusterID
 
+			// Report capture (no-op + zero extra work when reportEnabled is false).
+			// commit() runs via defer so a cell that fails mid-flight still emits
+			// what it captured, marked FAIL.
+			rep := newDestReporter(c, dir, manifest, linkName, destID)
+			defer rep.commit(t)
+
 			// dry-run previews a create and changes nothing.
 			out, err := runKCP(t, manifest, "--dry-run")
+			rep.dryRun(out)
 			require.NoError(t, err, out)
 			require.Contains(t, out, "Planned")
 			require.Empty(t, poller.linkState(destID, linkName), "dry-run must not create the link")
 
 			// apply creates the link, which reaches ACTIVE.
 			out, err = runKCP(t, manifest)
+			rep.apply(out)
 			require.NoError(t, err, out)
 			require.Contains(t, out, "1 created", out)
 			poller.requireLinkActive(t, destID, linkName)
 
+			// Capture the live ACTIVE proof before deletion.
+			rep.proof(poller)
+
 			// re-apply is an idempotent no-op.
 			out, err = runKCP(t, manifest)
+			rep.reapply(out)
 			require.NoError(t, err, out)
 			require.Contains(t, out, "1 already present", out)
 
 			poller.deleteLink(t, destID, linkName)
 		})
 	}
+}
+
+// ---------------------------------------------------------------------------
+// destination-cell report capture
+// ---------------------------------------------------------------------------
+
+// destProves maps a destination cell to its one-sentence proof statement.
+func destProves(c destCell) string {
+	switch {
+	case strings.HasPrefix(c.name, "D1="):
+		return fmt.Sprintf("KCP reads the source cluster id over a %s connection that a real broker accepts (spec.source.credentials); the destination-initiated link still reaches ACTIVE.", c.d1.kind)
+	case strings.HasPrefix(c.name, "D2="):
+		return fmt.Sprintf("KCP builds a %s link→source connection (spec.clusterLink.sourceCredentials) that a real broker accepts; the destination-initiated link reaches ACTIVE.", c.d2.kind)
+	case strings.HasPrefix(c.name, "D3="):
+		return fmt.Sprintf("KCP authenticates to the target Kafka REST with %s auth (spec.target.credentials) and creates the link there; the link reaches ACTIVE.", c.target.kind)
+	}
+	return "destination-initiated cluster link reaches ACTIVE."
+}
+
+// destReporter accumulates one destination cell's evidence. All methods are
+// cheap no-ops when reportEnabled is false.
+type destReporter struct {
+	in     sectionInput
+	dir    string
+	link   string
+	destID string
+	target restEndpoint
+}
+
+func newDestReporter(c destCell, dir, manifest, linkName, destID string) *destReporter {
+	r := &destReporter{dir: dir, link: linkName, destID: destID, target: c.target}
+	if !reportEnabled {
+		return r
+	}
+	r.in = sectionInput{
+		seq:      nextReportSeq(),
+		mode:     "destination",
+		cell:     c.name,
+		proves:   destProves(c),
+		manifest: readFileForReport(manifest),
+		creds: []fencedFile{
+			{"D1 source-read", "source-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "source-creds.yaml"))},
+			{"D2 link→source", "link-source-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "link-source-creds.yaml"))},
+			{"D3 target REST", "target-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "target-creds.yaml"))},
+		},
+		commands: []string{
+			"kcp migrate apply -f migration.yaml --dry-run",
+			"kcp migrate apply -f migration.yaml",
+			"GET " + linkURL(c.target.baseURL, destID, linkName),
+		},
+		pass: true,
+	}
+	return r
+}
+
+func (r *destReporter) dryRun(out string) {
+	if reportEnabled {
+		r.in.dryRun = out
+	}
+}
+
+func (r *destReporter) apply(out string) {
+	if reportEnabled {
+		r.in.apply = out
+	}
+}
+
+func (r *destReporter) proof(poller restClient) {
+	if reportEnabled {
+		r.in.proofs = []proofBlock{{
+			label: "link on destination",
+			url:   linkURL(r.target.baseURL, r.destID, r.link),
+			json:  poller.linkJSON(r.destID, r.link),
+		}}
+	}
+}
+
+func (r *destReporter) reapply(out string) {
+	if reportEnabled {
+		r.in.reapply = out
+	}
+}
+
+func (r *destReporter) commit(t *testing.T) {
+	if !reportEnabled {
+		return
+	}
+	if t.Failed() {
+		r.in.pass = false
+		if r.in.failMsg == "" {
+			r.in.failMsg = "cell failed; see test output. Captured evidence up to the point of failure is shown below."
+		}
+	}
+	collector.add(buildSection(r.in))
 }
