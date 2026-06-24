@@ -149,6 +149,102 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 	}
 }
 
+// TestMigrateApply_ClusterLink_ConfigAndDrift verifies that cluster-link config
+// fields (prefix, consumerOffsetSync) are applied at create time, and that a
+// subsequent re-apply with a changed value reports drift without altering the
+// live link config (report-only drift, never mutated).
+func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
+	dir := t.TempDir()
+	link := uniqueLinkName("cfg")
+
+	srcCreds := filepath.Join(dir, "source-creds.yaml")
+	writeKafkaCreds(t, srcCreds, sourceClusterID, kafkaAuth{authPlaintext, "localhost:19092"})
+	linkCreds := filepath.Join(dir, "link-source-creds.yaml")
+	writeKafkaCreds(t, linkCreds, sourceClusterID, kafkaAuth{authPlaintext, "source:29092"})
+	targetCreds := writeRestCreds(t, dir, "target-creds.yaml", restDest)
+
+	manifestFor := func(intervalMs string) string {
+		return "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n" +
+			"metadata:\n  name: mcl-" + link + "\n" +
+			"spec:\n  source:\n    type: apache-kafka\n    credentials: " + srcCreds + "\n" +
+			"  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n" +
+			"    kafka:\n      restEndpoint: " + restDest.baseURL + "\n" +
+			"  clusterLink:\n    name: " + link + "\n    mode: destination\n" +
+			"    sourceCredentials: " + linkCreds + "\n" +
+			"    prefix: \"mig.\"\n" +
+			"    consumerOffsetSync:\n      enable: true\n      intervalMs: " + intervalMs + "\n"
+	}
+	m1 := filepath.Join(dir, "m1.yaml")
+	require.NoError(t, os.WriteFile(m1, []byte(manifestFor("30000")), 0600))
+
+	poller := newRestClient(t, restDest)
+	poller.waitForClusterID(t)
+	defer poller.deleteLink(t, destClusterID, link)
+
+	configsURL := restDest.baseURL + "/kafka/v3/clusters/" + destClusterID + "/links/" + link + "/configs"
+	var in sectionInput
+	if reportEnabled {
+		in = sectionInput{
+			seq:      nextReportSeq(),
+			mode:     "destination",
+			name:     "config+drift",
+			checks:   "Sets cluster.link.prefix + consumer-offset-sync on the link at create time, then re-applies with a changed interval — drift is reported and the live link config is left unchanged (report-only, never altered).",
+			manifest: readFileForReport(m1),
+			creds: []fencedFile{
+				{"D1 source-read", "source-creds.yaml", "yaml", readFileForReport(srcCreds)},
+				{"D2 link→source", "link-source-creds.yaml", "yaml", readFileForReport(linkCreds)},
+				{"D3 target REST", "target-creds.yaml", "yaml", readFileForReport(targetCreds)},
+			},
+			commands: []string{
+				"kcp migrate apply -f m1.yaml",
+				"GET " + configsURL,
+				"kcp migrate apply -f m2.yaml   # m2 changes consumerOffsetSync.intervalMs 30000 -> 1000",
+				"GET " + configsURL + "   # unchanged after drift",
+			},
+			pass: true,
+		}
+		defer func() {
+			if t.Failed() {
+				in.pass = false
+			}
+			collector.add(buildSection(in))
+		}()
+	}
+
+	out, err := runKCP(t, m1)
+	if reportEnabled {
+		in.apply = out
+	}
+	require.NoError(t, err, out)
+	require.Contains(t, out, "1 created", out)
+	poller.requireLinkActive(t, destClusterID, link)
+
+	cfgs := getLinkConfigs(t, poller, destClusterID, link)
+	if reportEnabled {
+		in.results = append(in.results, resultBlock{label: "link configs after apply", url: configsURL, json: linkConfigsJSON(poller, destClusterID, link)})
+	}
+	require.Equal(t, "mig.", cfgs["cluster.link.prefix"])
+	require.Equal(t, "true", cfgs["consumer.offset.sync.enable"])
+	require.Equal(t, "30000", cfgs["consumer.offset.sync.ms"])
+	require.Contains(t, cfgs["consumer.offset.group.filters"], "\"filterType\":\"INCLUDE\"")
+
+	m2 := filepath.Join(dir, "m2.yaml")
+	require.NoError(t, os.WriteFile(m2, []byte(manifestFor("1000")), 0600))
+	out, err = runKCP(t, m2)
+	if reportEnabled {
+		in.reapply = out
+	}
+	require.NoError(t, err, out)
+	require.Contains(t, out, "1 drift", out)
+	require.Contains(t, out, "0 created", out)
+
+	cfgs = getLinkConfigs(t, poller, destClusterID, link)
+	if reportEnabled {
+		in.results = append(in.results, resultBlock{label: "link configs after drift re-apply (UNCHANGED)", url: configsURL, json: linkConfigsJSON(poller, destClusterID, link)})
+	}
+	require.Equal(t, "30000", cfgs["consumer.offset.sync.ms"], "drift must not alter the live config")
+}
+
 // ---------------------------------------------------------------------------
 // destination-test-case report capture
 // ---------------------------------------------------------------------------

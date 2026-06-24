@@ -25,6 +25,7 @@
 package migrateclusterlink
 
 import (
+	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -408,4 +409,45 @@ var linkSeqCh = func() chan int {
 // share a name (cp-server keys links by name within a cluster).
 func uniqueLinkName(prefix string) string {
 	return fmt.Sprintf("%s-%s-%d", prefix, runID, <-linkSeqCh)
+}
+
+// ---------------------------------------------------------------------------
+// cluster-link config helpers
+// ---------------------------------------------------------------------------
+
+// getLinkConfigs reads the link's live config map via GET .../links/{name}/configs.
+func getLinkConfigs(t *testing.T, c restClient, clusterID, name string) map[string]string {
+	t.Helper()
+	resp, err := c.do(http.MethodGet, "/kafka/v3/clusters/"+clusterID+"/links/"+name+"/configs")
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var body struct {
+		Data []struct{ Name, Value string } `json:"data"`
+	}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
+	out := map[string]string{}
+	for _, c := range body.Data {
+		out[c.Name] = c.Value
+	}
+	return out
+}
+
+// linkConfigsJSON returns the link's /configs response as pretty JSON for the
+// evidence report. Only called when reportEnabled.
+func linkConfigsJSON(c restClient, clusterID, name string) string {
+	resp, err := c.do(http.MethodGet, "/kafka/v3/clusters/"+clusterID+"/links/"+name+"/configs")
+	if err != nil {
+		return fmt.Sprintf("<configs GET failed: %v>", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var raw json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return fmt.Sprintf("<configs GET decode failed (status %d): %v>", resp.StatusCode, err)
+	}
+	var pretty bytes.Buffer
+	if err := json.Indent(&pretty, raw, "", "  "); err != nil {
+		return string(raw)
+	}
+	return pretty.String()
 }
