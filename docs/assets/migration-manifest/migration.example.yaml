@@ -19,6 +19,14 @@ spec:
     name: source-to-cc
     mode: destination                      # destination (default) | source
     sourceCredentials: ./source-creds.yaml # link→source credentials (destination mode)
+    # prefix: "clusterA."                  # optional; cluster.link.prefix — mirror names become prefix+source (immutable once created)
+    consumerOffsetSync:                    # migrate consumer offsets (enabled by default)
+      enable: true
+      # intervalMs: 30000                  # optional; omit for server default (30s)
+      # groupFilters:                      # optional; omit → all groups synced
+      #   - { name: "*", patternType: LITERAL, filterType: INCLUDE }
+    # topicConfigSync:
+    #   intervalMs: 30000                  # optional; omit for server default
     # Source-initiated alternative — for a private/firewalled Confluent source the
     # destination cannot reach inbound (requires spec.source.type: confluent-platform).
     # Replace the two lines above with:
