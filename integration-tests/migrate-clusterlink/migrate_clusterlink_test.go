@@ -99,26 +99,21 @@ type kafkaAuth struct {
 func (a kafkaAuth) authMethodYAML() string {
 	switch a.kind {
 	case authPlaintext:
-		return "auth_method: { unauthenticated_plaintext: { use: true } }\n"
+		return "unauthenticated_plaintext: {}\n"
 	case authScram256:
-		return "insecure_skip_tls_verify: true\n" +
-			"auth_method:\n" +
-			"  sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA256, ca_cert: ./certs/ca.crt }\n"
+		return "sasl_scram: { username: kcp, password: kcp-secret, mechanism: SHA256, ca_cert: ./certs/ca.crt }\n" +
+			"insecure_skip_tls_verify: true\n"
 	case authScram512:
-		return "insecure_skip_tls_verify: true\n" +
-			"auth_method:\n" +
-			"  sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA512, ca_cert: ./certs/ca.crt }\n"
+		return "sasl_scram: { username: kcp, password: kcp-secret, mechanism: SHA512, ca_cert: ./certs/ca.crt }\n" +
+			"insecure_skip_tls_verify: true\n"
 	case authPlain:
-		return "auth_method:\n" +
-			"  sasl_plain: { use: true, username: kcp, password: kcp-secret }\n"
+		return "sasl_plain: { username: kcp, password: kcp-secret }\n"
 	case authTLS:
-		return "insecure_skip_tls_verify: true\n" +
-			"auth_method:\n" +
-			"  unauthenticated_tls: { use: true, ca_cert: ./certs/ca.crt }\n"
+		return "unauthenticated_tls: { ca_cert: ./certs/ca.crt }\n" +
+			"insecure_skip_tls_verify: true\n"
 	case authMTLS:
-		return "insecure_skip_tls_verify: true\n" +
-			"auth_method:\n" +
-			"  tls: { use: true, ca_cert: ./certs/ca.crt, client_cert: ./certs/client.crt, client_key: ./certs/client.key }\n"
+		return "tls: { ca_cert: ./certs/ca.crt, client_cert: ./certs/client.crt, client_key: ./certs/client.key }\n" +
+			"insecure_skip_tls_verify: true\n"
 	}
 	panic("unknown kafka auth kind")
 }
