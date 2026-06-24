@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/redact"
@@ -105,6 +106,53 @@ func TestMskConnectorMigrator_Run_GeneratedTerraformIsLeakFree(t *testing.T) {
 	// (fail-closed) rather than as a working credential.
 	assert.Contains(t, string(tf), fmt.Sprintf("%q = %q", "database.password", redact.Placeholder),
 		"sensitive field must render as the redaction placeholder in the generated Terraform")
+}
+
+// Path traversal: a connector name carrying "../" (attacker-controllable via a
+// hostile state file even though AWS constrains MSK Connect names server-side) must
+// not let the generated .tf escape OutputDir. Mirrors the self-managed migrator test
+// so the security-critical write-containment is asserted on both identical paths.
+func TestMskConnectorMigrator_Run_HostileNameStaysInOutputDir(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	root := t.TempDir()
+	outDir := filepath.Join(root, "out")
+
+	migrator := NewMskConnectorMigrator(MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "../escaped",
+				ConnectorConfiguration: map[string]string{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	require.NoError(t, migrator.Run())
+
+	// The traversal target the unsanitized name would have produced must not exist.
+	_, err := os.Stat(filepath.Join(root, "escaped-connector.tf"))
+	assert.True(t, os.IsNotExist(err), "connector must not be written outside OutputDir")
+
+	// Every file the run produced must live inside OutputDir.
+	entries, err := os.ReadDir(outDir)
+	require.NoError(t, err)
+	var connectorFiles int
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), string(filepath.Separator))
+		if strings.HasSuffix(e.Name(), "-connector.tf") {
+			connectorFiles++
+		}
+	}
+	assert.Equal(t, 1, connectorFiles, "exactly one connector .tf must be written inside OutputDir")
 }
 
 func captureStdout(t *testing.T, fn func()) string {

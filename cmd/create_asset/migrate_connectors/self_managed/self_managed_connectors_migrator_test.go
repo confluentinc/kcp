@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/redact"
@@ -125,6 +126,53 @@ func TestSelfManagedConnectorMigrator_Run_GeneratedTerraformIsLeakFree(t *testin
 	// (fail-closed) rather than as a working credential.
 	assert.Contains(t, string(tf), fmt.Sprintf("%q = %q", "database.password", redact.Placeholder),
 		"sensitive field must render as the redaction placeholder in the generated Terraform")
+}
+
+// Path traversal: a connector name carrying "../" (legal in Kafka Connect, and
+// attacker-controllable via a hostile state file / compromised Connect endpoint)
+// must not let the generated .tf escape OutputDir. We assert nothing lands in the
+// parent directory and the file is written, name-sanitized, inside OutputDir.
+func TestSelfManagedConnectorMigrator_Run_HostileNameStaysInOutputDir(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	root := t.TempDir()
+	outDir := filepath.Join(root, "out")
+
+	migrator := NewSelfManagedConnectorMigrator(MigrateSelfManagedConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.SelfManagedConnector{
+			{
+				Name: "../escaped",
+				Config: map[string]any{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	require.NoError(t, migrator.Run())
+
+	// The traversal target the unsanitized name would have produced must not exist.
+	_, err := os.Stat(filepath.Join(root, "escaped-connector.tf"))
+	assert.True(t, os.IsNotExist(err), "connector must not be written outside OutputDir")
+
+	// Every file the run produced must live inside OutputDir.
+	entries, err := os.ReadDir(outDir)
+	require.NoError(t, err)
+	var connectorFiles int
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), string(filepath.Separator))
+		if strings.HasSuffix(e.Name(), "-connector.tf") {
+			connectorFiles++
+		}
+	}
+	assert.Equal(t, 1, connectorFiles, "exactly one connector .tf must be written inside OutputDir")
 }
 
 func TestSelfManagedConnectorMigrator_Run_WarnsWhenConfigRedacted(t *testing.T) {
@@ -394,6 +442,66 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_UnsupportedConnec
 
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to determine plugin name")
+}
+
+// Regression: connector.Config is map[string]any, so connector.class can arrive as
+// a non-string (a JSON number/bool/object from a malformed Connect response or a
+// tampered state file). The translate path must return an error rather than panic on
+// a bare type assertion, which would crash the whole migrate-connectors run.
+func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_NonStringConnectorClass(t *testing.T) {
+	migrator := &SelfManagedConnectorMigrator{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+	}
+
+	connector := types.SelfManagedConnector{
+		Name: "test-connector",
+		Config: map[string]any{
+			"connector.class": 42, // not a string
+			"topics":          "test-topic",
+		},
+	}
+
+	assert.NotPanics(t, func() {
+		_, _, err := migrator.translateConnectorConfig(connector)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "'connector.class' is not a string")
+	})
+}
+
+// Run() must survive a connector whose connector.class is non-string: the per-connector
+// translate error is logged and skipped, the run completes without panicking, and no
+// .tf is written for the bad connector.
+func TestSelfManagedConnectorMigrator_Run_NonStringConnectorClassIsSkipped(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewSelfManagedConnectorMigrator(MigrateSelfManagedConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.SelfManagedConnector{
+			{
+				Name: "bad-class",
+				Config: map[string]any{
+					"connector.class": map[string]any{"nested": "object"}, // not a string
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	assert.NotPanics(t, func() {
+		require.NoError(t, migrator.Run())
+	})
+
+	_, err := os.Stat(filepath.Join(outDir, "bad-class-connector.tf"))
+	assert.True(t, os.IsNotExist(err), "no .tf should be written for a connector with a non-string connector.class")
 }
 
 func TestSelfManagedConnectorMigrator_Run_WritesProvidersTfAndVariablesTf(t *testing.T) {

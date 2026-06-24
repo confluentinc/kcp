@@ -86,6 +86,7 @@ export const OSKClusterReport = () => {
                 cluster.kafka_admin_client_information?.self_managed_connectors?.metrics
               }
               clusterId={selectedOSKClusterId ?? undefined}
+              sourceType="osk"
             />
           )}
 

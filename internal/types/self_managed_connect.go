@@ -8,6 +8,6 @@ type SelfManagedConnector struct {
 }
 
 type SelfManagedConnectors struct {
-	Connectors []SelfManagedConnector   `json:"connectors"`
-	Metrics    *ProcessedClusterMetrics `json:"metrics,omitempty"`
+	Connectors []SelfManagedConnector `json:"connectors"`
+	Metrics    *ConnectClusterMetrics `json:"metrics,omitempty"`
 }
