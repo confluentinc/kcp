@@ -42,9 +42,15 @@ spec:
     #     credentials: ./dest-creds.yaml
 
   topics:
-    mode: mirror
-    include: ["*"]
-    exclude: ["__consumer_offsets", "_schemas"]
+    mode: mirror                           # mirror | new
+    # mirror: create read-only mirror topics on the cluster link (requires spec.clusterLink).
+    #         Mirror names are <clusterLink.prefix>+<sourceName> (no prefix → same name).
+    # new:    create plain topics directly on the target, reproducing the source topic's
+    #         partition count, replication factor, and explicitly-set configs. Needs NO link.
+    #         For mode: new, drop the clusterLink block and use, e.g.:
+    #           topics: { mode: new, include: ["orders.*"], exclude: ["*.tmp"] }
+    include: ["*"]                          # globs (path.Match) matched against the live source topic list
+    exclude: ["*.internal"]                 # optional globs; internal topics (names starting with "_") are always auto-excluded
 
   acls:
     include: ["*"]
