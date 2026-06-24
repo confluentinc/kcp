@@ -368,6 +368,22 @@ func (s *ConfluentCloudService) ListTopics(ctx context.Context, config Config) (
 	return names, nil
 }
 
+// GetTopicPartitionCount returns the partitions_count of a single topic via
+// GET /kafka/v3/clusters/{cluster_id}/topics/{topic_name}. Used by the
+// newTopics reconciler to detect partition-count drift on existing target
+// topics.
+func (s *ConfluentCloudService) GetTopicPartitionCount(ctx context.Context, config Config, topic string) (int, error) {
+	var resp struct {
+		PartitionsCount int `json:"partitions_count"`
+	}
+	path := fmt.Sprintf("/kafka/v3/clusters/%s/topics/%s",
+		url.PathEscape(config.ClusterID), url.PathEscape(topic))
+	if err := s.doRequest(ctx, config, path, &resp); err != nil {
+		return 0, fmt.Errorf("failed to get partition count for topic %q: %w", topic, err)
+	}
+	return resp.PartitionsCount, nil
+}
+
 func (s *ConfluentCloudService) CreateTopic(ctx context.Context, config Config, req CreateTopicRequest) error {
 	type cfgEntry struct {
 		Name  string `json:"name"`

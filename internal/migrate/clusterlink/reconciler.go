@@ -215,7 +215,13 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 
 	steps := make([]step, 0, 2)
 
-	// Destination side first.
+	// Destination side first. The INBOUND link must also carry the link configs —
+	// in particular cluster.link.prefix: mirror topics are created on the
+	// migration-dest (this INBOUND link), and cp-server enforces mirror renaming
+	// on the link that hosts the mirror. Without the prefix here, a prefixed
+	// mirror-create is rejected (error 40035 "Topic renaming for mirroring not yet
+	// supported"). The OUTBOUND link also carries the configs (below) so the
+	// prefix can be read from the source side per the mirrorTopics wiring.
 	if destActual == nil {
 		steps = append(steps, step{
 			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: destSummary,
@@ -224,6 +230,7 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 				LinkMode:        "DESTINATION",
 				ConnectionMode:  "INBOUND",
 				SourceClusterID: sourceID,
+				Configs:         r.cfg.Configs,
 			},
 			onSource: false,
 		})

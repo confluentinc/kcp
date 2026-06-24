@@ -104,6 +104,17 @@ func (e *LinkEndpoint) CreateTopic(ctx context.Context, req clusterlink.CreateTo
 	return e.svc.CreateTopic(ctx, e.config(""), req)
 }
 
+// PartitionCount returns the live partition count of a topic on the endpoint's
+// cluster. It satisfies the newtopics.partitionCounter optional interface, so a
+// LinkEndpoint target reports partition-count drift for existing topics. It
+// discovers (and caches) the cluster id first.
+func (e *LinkEndpoint) PartitionCount(ctx context.Context, topic string) (int, error) {
+	if _, err := e.ClusterID(ctx); err != nil {
+		return 0, err
+	}
+	return e.svc.GetTopicPartitionCount(ctx, e.config(""), topic)
+}
+
 // ListMirrorTopics returns all mirror topics on the named link. Config.Topics
 // is left empty by e.config(name), so the service applies no filtering and the
 // caller gets the full existing-mirror list.

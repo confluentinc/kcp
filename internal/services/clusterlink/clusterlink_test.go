@@ -883,3 +883,54 @@ func TestCreateTopic_HTTPError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `failed to create topic "bad"`)
 }
+
+func TestGetTopicPartitionCount_Success(t *testing.T) {
+	clusterID := "lkc-pc"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/"+clusterID+"/topics/orders", r.URL.Path, "request path")
+		assert.Equal(t, http.MethodGet, r.Method, "HTTP method")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"topic_name":       "orders",
+			"partitions_count": 6,
+		})
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: clusterID}
+
+	n, err := svc.GetTopicPartitionCount(context.Background(), cfg, "orders")
+	require.NoError(t, err)
+	assert.Equal(t, 6, n)
+}
+
+func TestGetTopicPartitionCount_PathIsEscaped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/lkc%20x/topics/odd%2Fname", r.URL.EscapedPath(), "escaped request path")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"partitions_count": 3})
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc x"}
+
+	n, err := svc.GetTopicPartitionCount(context.Background(), cfg, "odd/name")
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+}
+
+func TestGetTopicPartitionCount_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	_, err := svc.GetTopicPartitionCount(context.Background(), cfg, "missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `failed to get partition count for topic "missing"`)
+}
