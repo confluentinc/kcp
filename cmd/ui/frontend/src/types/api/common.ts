@@ -17,6 +17,7 @@ export interface ApiMetadata {
   enhanced_monitoring?: string
   period?: number // Period in seconds
   broker_type?: 'express' | 'standard'
+  metrics_source?: string // self-managed Connect only: 'jolokia' | 'prometheus'
 }
 
 /**

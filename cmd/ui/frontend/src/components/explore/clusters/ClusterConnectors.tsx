@@ -61,6 +61,10 @@ interface ClusterConnectorsProps {
     }
   }
   clusterId?: string
+  // Required: a Connect cluster is distribution-agnostic, so every caller must state
+  // which source set the connect-metrics endpoint should search. Leaving it optional
+  // risks an MSK caller silently falling back to the OSK source and 404-ing.
+  sourceType: 'msk' | 'osk'
 }
 
 export const ClusterConnectors = ({
@@ -68,6 +72,7 @@ export const ClusterConnectors = ({
   selfManagedConnectors = [],
   connectMetrics,
   clusterId,
+  sourceType,
 }: ClusterConnectorsProps) => {
   const [activeTab, setActiveTab] = useState<ConnectorTab>(CONNECTOR_TABS.MSK)
   const [copiedConnector, setCopiedConnector] = useState<string | null>(null)
@@ -290,6 +295,7 @@ export const ClusterConnectors = ({
         {connectMetrics?.metadata && clusterId && (
           <ConnectMetrics
             clusterId={clusterId}
+            sourceType={sourceType}
             connectMetricsMetadata={connectMetrics.metadata}
           />
         )}

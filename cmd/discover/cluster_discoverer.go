@@ -297,11 +297,20 @@ func connectorAuthType(connector kafkaconnecttypes.ConnectorSummary) (types.Auth
 	}
 }
 
-// bootstrapMatches reports whether any cluster broker address appears in the
-// connector's bootstrap-server string.
+// bootstrapMatches reports whether the connector and the cluster share at least one
+// bootstrap broker. Both sides are comma-separated host:port lists; we compare by exact
+// host:port equality (after splitting and trimming) rather than substring containment,
+// so a broker address can't spuriously match by being a substring of an unrelated
+// connector's bootstrap string (e.g. a host that merely shares a DNS prefix/suffix).
 func bootstrapMatches(connectorBootstrap string, brokerAddresses []string) bool {
+	connectorHosts := make(map[string]struct{})
+	for _, addr := range strings.Split(connectorBootstrap, ",") {
+		if trimmed := strings.TrimSpace(addr); trimmed != "" {
+			connectorHosts[trimmed] = struct{}{}
+		}
+	}
 	for _, brokerAddress := range brokerAddresses {
-		if strings.Contains(connectorBootstrap, brokerAddress) {
+		if _, ok := connectorHosts[strings.TrimSpace(brokerAddress)]; ok {
 			return true
 		}
 	}
