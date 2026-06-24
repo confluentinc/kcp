@@ -121,6 +121,9 @@ type Service interface {
 	ValidateTopics(topics []string, clusterLinkTopics []string) error
 	PromoteMirrorTopics(ctx context.Context, config Config, topicNames []string) (*PromoteMirrorTopicsResponse, error)
 
+	// CreateMirrorTopic creates a mirror topic on the link via POST .../mirrors.
+	CreateMirrorTopic(ctx context.Context, config Config, sourceTopic, mirrorTopic string) error
+
 	// AlterConfigs applies the given alterations to the cluster link's configs.
 	//
 	// IMPORTANT: this method is NOT atomic across multiple alterations. The
@@ -308,6 +311,28 @@ func (s *ConfluentCloudService) PromoteMirrorTopics(ctx context.Context, config 
 	}
 
 	return &response, nil
+}
+
+// CreateMirrorTopic creates a mirror topic on the link. mirrorTopic must equal
+// prefix+sourceTopic when the link has a cluster.link.prefix (the API enforces
+// begins-with). Pass mirrorTopic == sourceTopic when there is no prefix.
+func (s *ConfluentCloudService) CreateMirrorTopic(ctx context.Context, config Config, sourceTopic, mirrorTopic string) error {
+	path := linkPath(config) + "/mirrors"
+	body := struct {
+		SourceTopicName string `json:"source_topic_name"`
+		MirrorTopicName string `json:"mirror_topic_name,omitempty"`
+	}{SourceTopicName: sourceTopic, MirrorTopicName: mirrorTopic}
+	if err := s.doPostRequestExpectStatus(ctx, config, path, body); err != nil {
+		var statusErr *httpStatusError
+		if errors.As(err, &statusErr) {
+			switch statusErr.StatusCode {
+			case http.StatusUnauthorized, http.StatusForbidden:
+				return fmt.Errorf("authentication failed (status %d) creating mirror topic %q on link %q", statusErr.StatusCode, sourceTopic, config.LinkName)
+			}
+		}
+		return fmt.Errorf("failed to create mirror topic %q on link %q: %w", sourceTopic, config.LinkName, err)
+	}
+	return nil
 }
 
 // doRequest performs an authenticated HTTP GET request to Confluent Cloud API.

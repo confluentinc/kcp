@@ -266,6 +266,78 @@ func TestCreateClusterLink_KeystorePairRequired(t *testing.T) {
 	require.ErrorContains(t, err, "ClientCertPEM and ClientKeyPEM must both be set")
 }
 
+func TestCreateMirrorTopic_RequestShape(t *testing.T) {
+	clusterID := "cid"
+	linkName := "lk"
+
+	var gotPath, gotMethod string
+	var gotBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		b, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(b, &gotBody)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: clusterID, LinkName: linkName, APIKey: "a", APISecret: "b"}
+
+	err := svc.CreateMirrorTopic(context.Background(), cfg, "orders", "dc-orders")
+	require.NoError(t, err)
+
+	require.Equal(t, http.MethodPost, gotMethod)
+	require.Equal(t, "/kafka/v3/clusters/cid/links/lk/mirrors", gotPath)
+	require.Equal(t, "orders", gotBody["source_topic_name"])
+	require.Equal(t, "dc-orders", gotBody["mirror_topic_name"])
+}
+
+func TestCreateMirrorTopic_NoContentIsSuccess(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "cid", LinkName: "lk", APIKey: "a", APISecret: "b"}
+
+	err := svc.CreateMirrorTopic(context.Background(), cfg, "orders", "dc-orders")
+	require.NoError(t, err)
+}
+
+func TestCreateMirrorTopic_Unauthorized(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+		}))
+
+		svc := NewConfluentCloudService(srv.Client())
+		cfg := Config{RestEndpoint: srv.URL, ClusterID: "cid", LinkName: "lk", APIKey: "a", APISecret: "b"}
+
+		err := svc.CreateMirrorTopic(context.Background(), cfg, "orders", "dc-orders")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "authentication failed")
+		srv.Close()
+	}
+}
+
+func TestCreateMirrorTopic_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"error_code":404,"message":"link not found"}`))
+	}))
+	defer srv.Close()
+
+	svc := NewConfluentCloudService(srv.Client())
+	cfg := Config{RestEndpoint: srv.URL, ClusterID: "cid", LinkName: "lk", APIKey: "a", APISecret: "b"}
+
+	err := svc.CreateMirrorTopic(context.Background(), cfg, "orders", "dc-orders")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "404")
+}
+
 // configMapFromBody flattens the request body's "configs":[{name,value}] array.
 func configMapFromBody(t *testing.T, body map[string]any) map[string]string {
 	t.Helper()
