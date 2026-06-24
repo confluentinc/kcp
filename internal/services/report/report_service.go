@@ -1,6 +1,7 @@
 package report
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -11,6 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/types"
 )
+
+// ErrNoConnectMetricsCollected reports that a cluster exists but has never had any
+// self-managed Connect metrics collected. It is deliberately distinct from an empty
+// date-filtered result (a cluster that HAS metrics, none of which fall in the queried
+// window): the former warrants a "run a scan" hint, the latter is a valid empty 200.
+// The API layer maps this sentinel to the scan-guidance response via errors.Is.
+var ErrNoConnectMetricsCollected = errors.New("no Connect metrics collected for cluster")
 
 const (
 	// metricTimestampFormat is the timestamp format used for metric data
@@ -330,47 +338,87 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState ProcessedState, 
 	}, nil
 }
 
-// FilterConnectMetrics filters Connect metrics for an OSK cluster by cluster ID and date range
-func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	var targetCluster *ProcessedOSKCluster
+// FilterConnectMetrics filters self-managed Connect metrics for a cluster by cluster ID and
+// date range. Connect is Kafka-distribution agnostic, so the same metrics live on the shared
+// KafkaAdminClientInformation for both MSK and OSK clusters; sourceType selects which source set
+// to search (and which identifier to match: MSK by ARN, OSK by cluster ID). Each branch searches
+// only its own source set, so a cluster identifier never resolves across source types.
+func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+	var adminInfo *types.KafkaAdminClientInformation
 
-	for _, source := range processedState.Sources {
-		if source.Type == types.SourceTypeOSK && source.OSKData != nil {
-			for _, cluster := range source.OSKData.Clusters {
-				if strings.EqualFold(cluster.ID, clusterID) {
-					targetCluster = &cluster
-					break
-				}
-			}
-		}
-		if targetCluster != nil {
-			break
-		}
+	// Dispatch to the matching source set only — this is what structurally prevents
+	// a cluster identifier resolving across source types. Mirrors the dispatcher
+	// shape of FilterClusterMetrics.
+	switch sourceType {
+	case "osk":
+		adminInfo = findOSKConnectAdminInfo(processedState, clusterID)
+	case "msk":
+		adminInfo = findMSKConnectAdminInfo(processedState, clusterID)
+	default:
+		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk' or 'osk')", sourceType)
 	}
 
-	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found in OSK sources", clusterID)
+	if adminInfo == nil {
+		return nil, fmt.Errorf("cluster '%s' not found in %s sources", clusterID, sourceType)
 	}
 
-	smc := targetCluster.KafkaAdminClientInformation.SelfManagedConnectors
+	smc := adminInfo.SelfManagedConnectors
 	if smc == nil || smc.Metrics == nil {
-		return &types.ProcessedClusterMetrics{
-			ClusterArn: clusterID,
-		}, nil
+		// The cluster exists but no Connect metrics were ever collected. Signal this
+		// distinctly from the empty date-filtered result returned below, so the API
+		// layer shows the "run a scan" hint only when there is genuinely nothing to
+		// collect — not when the user simply picked a window with no data points.
+		return nil, ErrNoConnectMetricsCollected
 	}
 
 	filteredMetrics := rs.filterMetricsByDateRange(smc.Metrics.Metrics, startTime, endTime)
 	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
-	return &types.ProcessedClusterMetrics{
-		ClusterArn:  clusterID,
-		Metadata:    smc.Metrics.Metadata,
-		Metrics:     filteredMetrics,
-		Aggregates:  aggregates,
-		QueryInfo:   smc.Metrics.QueryInfo,
-		Environment: targetCluster.Metadata.Environment,
-		Location:    targetCluster.Metadata.Location,
+	// Connect metrics carry their own metadata (start/end/period/metrics_source);
+	// region/cluster_arn and the broker-only fields have no meaning here and are
+	// intentionally not part of the Connect shape.
+	return &types.ConnectClusterMetrics{
+		Metadata:   smc.Metrics.Metadata,
+		Metrics:    filteredMetrics,
+		Aggregates: aggregates,
+		QueryInfo:  smc.Metrics.QueryInfo,
 	}, nil
+}
+
+// findOSKConnectAdminInfo returns the admin-client info for the OSK cluster matching
+// clusterID (by cluster ID), or nil if no OSK cluster matches.
+func findOSKConnectAdminInfo(processedState ProcessedState, clusterID string) *types.KafkaAdminClientInformation {
+	for _, source := range processedState.Sources {
+		if source.Type != types.SourceTypeOSK || source.OSKData == nil {
+			continue
+		}
+		for _, cluster := range source.OSKData.Clusters {
+			if strings.EqualFold(cluster.ID, clusterID) {
+				info := cluster.KafkaAdminClientInformation
+				return &info
+			}
+		}
+	}
+	return nil
+}
+
+// findMSKConnectAdminInfo returns the admin-client info for the MSK cluster matching
+// clusterID (by ARN), or nil if no MSK cluster matches.
+func findMSKConnectAdminInfo(processedState ProcessedState, clusterID string) *types.KafkaAdminClientInformation {
+	for _, source := range processedState.Sources {
+		if source.Type != types.SourceTypeMSK || source.MSKData == nil {
+			continue
+		}
+		for _, region := range source.MSKData.Regions {
+			for _, cluster := range region.Clusters {
+				if strings.EqualFold(cluster.Arn, clusterID) {
+					info := cluster.KafkaAdminClientInformation
+					return &info
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // filterMetrics filters the processed state by region, cluster, and date range

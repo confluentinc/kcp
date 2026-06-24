@@ -218,7 +218,7 @@ func TestScanner_UpdateStateWithConnectMetrics_MSK_Success(t *testing.T) {
 	cl.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "c1"}})
 
 	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeMSK, ClusterArn: testArn}
-	metrics := &types.ProcessedClusterMetrics{}
+	metrics := &types.ConnectClusterMetrics{}
 	require.NoError(t, s.updateStateWithConnectMetrics(metrics))
 
 	cl2, _ := st.GetClusterByArn(testArn)
@@ -227,13 +227,13 @@ func TestScanner_UpdateStateWithConnectMetrics_MSK_Success(t *testing.T) {
 
 func TestScanner_UpdateStateWithConnectMetrics_MSK_NoConnectors(t *testing.T) {
 	s := &SelfManagedConnectorsScanner{State: stateWithCluster(), SourceType: types.SourceTypeMSK, ClusterArn: testArn}
-	err := s.updateStateWithConnectMetrics(&types.ProcessedClusterMetrics{})
+	err := s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{})
 	require.Error(t, err, "metrics with no prior connectors in state is an error")
 }
 
 func TestScanner_UpdateStateWithConnectMetrics_MSK_ClusterNotFound(t *testing.T) {
 	s := &SelfManagedConnectorsScanner{State: stateWithCluster(), SourceType: types.SourceTypeMSK, ClusterArn: "arn:aws:kafka:us-east-1:999:cluster/missing/x"}
-	err := s.updateStateWithConnectMetrics(&types.ProcessedClusterMetrics{})
+	err := s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{})
 	require.Error(t, err)
 }
 
@@ -244,7 +244,7 @@ func TestScanner_UpdateStateWithConnectMetrics_OSK_Success(t *testing.T) {
 	cl.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "c1"}})
 
 	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeOSK, ClusterID: testOSKID}
-	metrics := &types.ProcessedClusterMetrics{}
+	metrics := &types.ConnectClusterMetrics{}
 	require.NoError(t, s.updateStateWithConnectMetrics(metrics))
 
 	cl2, _ := st.GetOSKClusterByID(testOSKID)
@@ -336,12 +336,12 @@ func TestScanner_Run_MetricsFailureDoesNotAbortScan(t *testing.T) {
 
 func TestScanner_UpdateStateWithConnectMetrics_OSK_NoConnectors(t *testing.T) {
 	s := &SelfManagedConnectorsScanner{State: stateWithOSKCluster(), SourceType: types.SourceTypeOSK, ClusterID: testOSKID}
-	require.Error(t, s.updateStateWithConnectMetrics(&types.ProcessedClusterMetrics{}))
+	require.Error(t, s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{}))
 }
 
 func TestScanner_UpdateStateWithConnectMetrics_OSK_ClusterNotFound(t *testing.T) {
 	s := &SelfManagedConnectorsScanner{State: stateWithOSKCluster(), SourceType: types.SourceTypeOSK, ClusterID: "no-such-cluster"}
-	require.Error(t, s.updateStateWithConnectMetrics(&types.ProcessedClusterMetrics{}))
+	require.Error(t, s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{}))
 }
 
 func TestScanner_CollectConnectJolokiaMetrics_NoJolokiaConfig(t *testing.T) {
@@ -445,7 +445,7 @@ func TestUpdateStateWithConnectMetrics_NoConnectors_Errors(t *testing.T) {
 	// The cluster has no SelfManagedConnectors object yet — attaching metrics
 	// must fail clearly rather than panic on a nil dereference.
 	scanner := &SelfManagedConnectorsScanner{State: stateWithCluster(), SourceType: types.SourceTypeMSK, ClusterArn: testArn}
-	err := scanner.updateStateWithConnectMetrics(&types.ProcessedClusterMetrics{})
+	err := scanner.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{})
 	require.Error(t, err)
 }
 
@@ -456,7 +456,7 @@ func TestUpdateStateWithConnectMetrics_AttachesMetrics(t *testing.T) {
 	cluster.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "pg-sink"}})
 
 	scanner := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeMSK, ClusterArn: testArn}
-	m := &types.ProcessedClusterMetrics{}
+	m := &types.ConnectClusterMetrics{}
 	require.NoError(t, scanner.updateStateWithConnectMetrics(m))
 
 	got, err := st.GetClusterByArn(testArn)
@@ -623,6 +623,8 @@ func TestRun_JolokiaMetricsAttached(t *testing.T) {
 	require.Len(t, conns.Connectors, 1)
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
+	// End-to-end: the boundary mapper records the producing backend (U3/R2).
+	require.Equal(t, types.MetricBackendJolokia, conns.Metrics.Metadata.MetricsSource, "jolokia run records metrics_source")
 }
 
 func TestRun_PrometheusMetricsAttached(t *testing.T) {
@@ -646,6 +648,8 @@ func TestRun_PrometheusMetricsAttached(t *testing.T) {
 	require.NotNil(t, conns)
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
+	// End-to-end: the boundary mapper records the producing backend (U3/R2).
+	require.Equal(t, types.MetricBackendPrometheus, conns.Metrics.Metadata.MetricsSource, "prometheus run records metrics_source")
 }
 
 // R1: with no --metrics the scan behaves exactly as before — connectors
