@@ -19,9 +19,9 @@
 //   - D5: spec.clusterLink.destinationCredentials — the source→destination
 //     connection in SOURCE mode (apache-kafka creds).
 //
-// Each cell: dry-run (asserts "Planned", nothing created) → apply (asserts the
-// created count + link(s) ACTIVE) → re-apply (asserts "already present") → the
-// link(s) are deleted to keep the concurrent link count low.
+// Each test case: dry-run (asserts "Planned", nothing created) → apply (asserts
+// the created count + link(s) ACTIVE) → re-apply (asserts "already present") →
+// the link(s) are deleted to keep the concurrent link count low.
 package migrateclusterlink
 
 import (
@@ -386,13 +386,13 @@ func fetchMDSToken(t *testing.T, baseURL string) string {
 // manifest generation
 // ---------------------------------------------------------------------------
 
-// runID is a per-process suffix so link names are unique not just across cells
-// in one run but across runs — a previous run that failed before cleanup leaves
-// stale links on the brokers, and a fresh run must not collide with them.
+// runID is a per-process suffix so link names are unique not just across test
+// cases in one run but across runs — a previous run that failed before cleanup
+// leaves stale links on the brokers, and a fresh run must not collide with them.
 var runID = fmt.Sprintf("%d", time.Now().UnixNano()%1_000_000)
 
-// linkSeqCh hands out monotonic sequence numbers; cells run in parallel so the
-// counter must be concurrency-safe.
+// linkSeqCh hands out monotonic sequence numbers (concurrency-safe, so it is
+// correct whether test cases run serially or in parallel).
 var linkSeqCh = func() chan int {
 	ch := make(chan int)
 	go func() {
@@ -403,9 +403,9 @@ var linkSeqCh = func() chan int {
 	return ch
 }()
 
-// uniqueLinkName makes link names unique per cell (and per run) so concurrent
-// cells never collide on a shared name (cp-server keys links by name within a
-// cluster).
+// uniqueLinkName makes link names unique per test case (and per run) so a re-run
+// never collides with links left by a prior run, and concurrent test cases never
+// share a name (cp-server keys links by name within a cluster).
 func uniqueLinkName(prefix string) string {
 	return fmt.Sprintf("%s-%s-%d", prefix, runID, <-linkSeqCh)
 }
