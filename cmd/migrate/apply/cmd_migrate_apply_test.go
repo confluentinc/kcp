@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/manifest"
@@ -330,8 +331,7 @@ func TestApply_TopicsMirror_AppendsAfterClusterLink(t *testing.T) {
 	require.Contains(t, out, "cluster link \"src-to-dest\"")
 	require.Contains(t, out, "== mirrorTopics")
 	// clusterLink section is rendered before mirrorTopics (ordering precondition).
-	require.Less(t, indexOf(out, "== mirrorTopics"), len(out))
-	require.Greater(t, indexOf(out, "== mirrorTopics"), indexOf(out, "cluster link"))
+	require.Greater(t, strings.Index(out, "== mirrorTopics"), strings.Index(out, "cluster link"))
 }
 
 // mode:new — the newTopics reconciler runs with NO clusterLink and does not error.
@@ -359,15 +359,6 @@ func TestApply_NothingToApply(t *testing.T) {
 	_, _, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1"}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "spec.clusterLink and/or spec.topics is required")
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }
 
 func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
