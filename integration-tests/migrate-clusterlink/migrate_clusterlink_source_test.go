@@ -44,7 +44,7 @@ func writeSourceManifest(t *testing.T, dir string, c sourceCase) (manifestPath, 
 
 	// D1: migration-source cluster-id read.
 	srcCreds := filepath.Join(dir, "source-creds.yaml")
-	writeKafkaCreds(t, srcCreds, "migration-source", c.d1)
+	writeKafkaCreds(t, srcCreds, c.d1)
 
 	// D4: migration-source REST creds (where the OUTBOUND link is created).
 	srcRestCreds := writeRestCreds(t, dir, "source-rest-creds.yaml", c.migrationSourceREST)
@@ -54,7 +54,7 @@ func writeSourceManifest(t *testing.T, dir string, c sourceCase) (manifestPath, 
 
 	// D5: source→destination connection creds.
 	destConnCreds := filepath.Join(dir, "dest-conn-creds.yaml")
-	writeKafkaCreds(t, destConnCreds, "migration-dest", c.d5)
+	writeKafkaCreds(t, destConnCreds, c.d5)
 
 	manifest := "apiVersion: kcp.confluent.io/v1alpha1\n" +
 		"kind: Migration\n" +

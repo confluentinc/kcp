@@ -31,10 +31,10 @@ func writeDestManifest(t *testing.T, dir string, c destCase) (manifestPath, link
 	linkName = uniqueLinkName("dest")
 
 	srcCreds := filepath.Join(dir, "source-creds.yaml")
-	writeKafkaCreds(t, srcCreds, "source", c.d1)
+	writeKafkaCreds(t, srcCreds, c.d1)
 
 	linkSrcCreds := filepath.Join(dir, "link-source-creds.yaml")
-	writeKafkaCreds(t, linkSrcCreds, "source", c.d2)
+	writeKafkaCreds(t, linkSrcCreds, c.d2)
 
 	targetCreds := writeRestCreds(t, dir, "target-creds.yaml", c.target)
 
@@ -158,9 +158,9 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 	link := uniqueLinkName("cfg")
 
 	srcCreds := filepath.Join(dir, "source-creds.yaml")
-	writeKafkaCreds(t, srcCreds, sourceClusterID, kafkaAuth{authPlaintext, "localhost:19092"})
+	writeKafkaCreds(t, srcCreds, kafkaAuth{authPlaintext, "localhost:19092"})
 	linkCreds := filepath.Join(dir, "link-source-creds.yaml")
-	writeKafkaCreds(t, linkCreds, sourceClusterID, kafkaAuth{authPlaintext, "source:29092"})
+	writeKafkaCreds(t, linkCreds, kafkaAuth{authPlaintext, "source:29092"})
 	targetCreds := writeRestCreds(t, dir, "target-creds.yaml", restDest)
 
 	manifestFor := func(intervalMs string) string {

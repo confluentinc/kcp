@@ -94,41 +94,39 @@ type kafkaAuth struct {
 }
 
 // authMethodYAML renders the `auth_method:` block (and any sibling top-level
-// keys like insecure_skip_tls_verify) for this auth kind.
+// keys like insecure_skip_tls_verify) for this auth kind, at 0-base indent
+// (suitable for the flat single-cluster credential format).
 func (a kafkaAuth) authMethodYAML() string {
 	switch a.kind {
 	case authPlaintext:
-		return "    auth_method: { unauthenticated_plaintext: { use: true } }\n"
+		return "auth_method: { unauthenticated_plaintext: { use: true } }\n"
 	case authScram256:
-		return "    insecure_skip_tls_verify: true\n" +
-			"    auth_method:\n" +
-			"      sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA256, ca_cert: ./certs/ca.crt }\n"
+		return "insecure_skip_tls_verify: true\n" +
+			"auth_method:\n" +
+			"  sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA256, ca_cert: ./certs/ca.crt }\n"
 	case authScram512:
-		return "    insecure_skip_tls_verify: true\n" +
-			"    auth_method:\n" +
-			"      sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA512, ca_cert: ./certs/ca.crt }\n"
+		return "insecure_skip_tls_verify: true\n" +
+			"auth_method:\n" +
+			"  sasl_scram: { use: true, username: kcp, password: kcp-secret, mechanism: SHA512, ca_cert: ./certs/ca.crt }\n"
 	case authPlain:
-		return "    auth_method:\n" +
-			"      sasl_plain: { use: true, username: kcp, password: kcp-secret }\n"
+		return "auth_method:\n" +
+			"  sasl_plain: { use: true, username: kcp, password: kcp-secret }\n"
 	case authTLS:
-		return "    insecure_skip_tls_verify: true\n" +
-			"    auth_method:\n" +
-			"      unauthenticated_tls: { use: true, ca_cert: ./certs/ca.crt }\n"
+		return "insecure_skip_tls_verify: true\n" +
+			"auth_method:\n" +
+			"  unauthenticated_tls: { use: true, ca_cert: ./certs/ca.crt }\n"
 	case authMTLS:
-		return "    insecure_skip_tls_verify: true\n" +
-			"    auth_method:\n" +
-			"      tls: { use: true, ca_cert: ./certs/ca.crt, client_cert: ./certs/client.crt, client_key: ./certs/client.key }\n"
+		return "insecure_skip_tls_verify: true\n" +
+			"auth_method:\n" +
+			"  tls: { use: true, ca_cert: ./certs/ca.crt, client_cert: ./certs/client.crt, client_key: ./certs/client.key }\n"
 	}
 	panic("unknown kafka auth kind")
 }
 
-// writeKafkaCreds writes an apache-kafka credentials file with a single cluster.
-func writeKafkaCreds(t *testing.T, path, clusterID string, a kafkaAuth) {
+// writeKafkaCreds writes a flat single-cluster migrate credentials file.
+func writeKafkaCreds(t *testing.T, path string, a kafkaAuth) {
 	t.Helper()
-	body := "clusters:\n" +
-		"  - id: " + clusterID + "\n" +
-		"    bootstrap_servers: [\"" + a.bootstrap + "\"]\n" +
-		a.authMethodYAML()
+	body := "bootstrap_servers: [\"" + a.bootstrap + "\"]\n" + a.authMethodYAML()
 	require.NoError(t, os.WriteFile(path, []byte(body), 0600))
 }
 
