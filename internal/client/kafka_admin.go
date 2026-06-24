@@ -236,6 +236,7 @@ type ClusterKafkaMetadata struct {
 // KafkaAdmin interface defines the Kafka admin operations we need
 type KafkaAdmin interface {
 	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
@@ -269,6 +270,25 @@ instead of just overridden configs. This was done to reduce the number of reques
 https://github.com/IBM/sarama/blob/main/admin.go#L349
 */
 func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+	// Include ALL configs without filtering (no default/sensitive filtering)
+	return k.listTopicsWithConfigs(func(*sarama.ConfigEntry) bool { return true })
+}
+
+// ListTopicsWithNonDefaultConfigs is like ListTopicsWithConfigs but ConfigEntries
+// contains only configs explicitly set at the topic level (DYNAMIC_TOPIC_CONFIG,
+// sarama.SourceTopic), not server/broker/static defaults — the set faithful for
+// recreating a topic.
+func (k *KafkaAdminClient) ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error) {
+	// keep only configs explicitly set at the topic level
+	return k.listTopicsWithConfigs(func(entry *sarama.ConfigEntry) bool {
+		return entry.Source == sarama.SourceTopic
+	})
+}
+
+// listTopicsWithConfigs is the shared controller + metadata + DescribeConfigs flow
+// used by ListTopicsWithConfigs and ListTopicsWithNonDefaultConfigs. The keep
+// predicate decides which config entries are retained on each topic.
+func (k *KafkaAdminClient) listTopicsWithConfigs(keep func(*sarama.ConfigEntry) bool) (map[string]sarama.TopicDetail, error) {
 	// Get controller to use as a connection broker to avoid opening a new broker connection
 	controller, err := k.admin.Controller()
 	if err != nil {
@@ -333,8 +353,11 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 		topicDetails.ConfigEntries = make(map[string]*string)
 
 		for _, entry := range resource.Configs {
-			// Include ALL configs without filtering (no default/sensitive filtering)
-			topicDetails.ConfigEntries[entry.Name] = &entry.Value
+			if !keep(entry) {
+				continue
+			}
+			v := entry.Value
+			topicDetails.ConfigEntries[entry.Name] = &v
 		}
 
 		topicsDetailsMap[resource.Name] = topicDetails

@@ -21,6 +21,12 @@ type staticSource string
 
 func (s staticSource) ClusterID(context.Context) (string, error) { return string(s), nil }
 
+func (s staticSource) ListTopics(context.Context) ([]string, error) { return nil, nil }
+
+func (s staticSource) DescribeTopics(context.Context, []string) ([]migrate.TopicSpec, error) {
+	return nil, nil
+}
+
 // startStubTarget serves the minimal CP REST surface: list clusters + get/create link.
 func startStubTarget(t *testing.T, linkExists bool) *httptest.Server {
 	t.Helper()
