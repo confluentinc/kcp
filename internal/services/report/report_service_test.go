@@ -1050,11 +1050,24 @@ func TestFilterConnectMetrics(t *testing.T) {
 		assert.Contains(t, err.Error(), "not found")
 	})
 
-	t.Run("cluster without self-managed connectors returns empty metrics", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", "osk", nil, nil)
+	t.Run("cluster without self-managed connectors signals never-collected", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", "osk", nil, nil)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
+	})
+
+	t.Run("collected metrics outside the date range return empty without error", func(t *testing.T) {
+		// Distinct from "never collected": the cluster HAS Connect metrics, the
+		// selected window just excludes them all. This must NOT surface as the
+		// never-collected sentinel — it is a valid empty result the API serves as a
+		// 200, so the user sees an empty chart rather than a "run a scan" message.
+		start := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Nil(t, result.Metrics)
+		assert.Empty(t, result.Metrics)
+		assert.NotErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
 
 	t.Run("case-insensitive cluster ID match", func(t *testing.T) {
@@ -1093,7 +1106,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 		assert.Contains(t, err.Error(), "not found")
 	})
 
-	t.Run("MSK cluster without self-managed connectors returns empty metrics", func(t *testing.T) {
+	t.Run("MSK cluster without self-managed connectors signals never-collected", func(t *testing.T) {
 		const arn = "arn:aws:kafka:us-east-1:123456789012:cluster/msk-bare/ghi-789"
 		stateMSKNoConnect := ProcessedState{
 			Sources: []ProcessedSource{
@@ -1110,10 +1123,9 @@ func TestFilterConnectMetrics(t *testing.T) {
 				},
 			},
 		}
-		result, err := rs.FilterConnectMetrics(stateMSKNoConnect, arn, "msk", nil, nil)
-		require.NoError(t, err)
-		require.NotNil(t, result)
-		assert.Nil(t, result.Metrics)
+		_, err := rs.FilterConnectMetrics(stateMSKNoConnect, arn, "msk", nil, nil)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
 
 	t.Run("filters by date range on the MSK path", func(t *testing.T) {

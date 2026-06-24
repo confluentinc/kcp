@@ -255,3 +255,34 @@ func TestDiscoverMatchingConnectors_DoesNotLogRawSecret(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, logBuf.String(), "hunter2", "raw secret must never be logged")
 }
+
+// bootstrapMatches must compare host:port entries by exact equality, not substring
+// containment, so a cluster broker address can't spuriously match an unrelated
+// connector whose bootstrap host merely shares a DNS prefix/suffix.
+func TestBootstrapMatches_ExactHostPortOnly(t *testing.T) {
+	brokers := []string{
+		"b-1.test.kafka.us-east-1.amazonaws.com:9098",
+		"b-2.test.kafka.us-east-1.amazonaws.com:9098",
+	}
+
+	t.Run("substring of a connector host is not a match", func(t *testing.T) {
+		// The broker host:port is a substring of this connector's host but is not an
+		// exact entry — must not match.
+		connector := "b-1.test.kafka.us-east-1.amazonaws.com.attacker.example:9098"
+		assert.False(t, bootstrapMatches(connector, brokers))
+	})
+
+	t.Run("a different cluster does not match", func(t *testing.T) {
+		connector := "b-9.other.kafka.us-east-1.amazonaws.com:9098"
+		assert.False(t, bootstrapMatches(connector, brokers))
+	})
+
+	t.Run("exact host:port matches (including whitespace tolerance)", func(t *testing.T) {
+		connector := "b-1.test.kafka.us-east-1.amazonaws.com:9098, b-2.test.kafka.us-east-1.amazonaws.com:9098"
+		assert.True(t, bootstrapMatches(connector, brokers))
+	})
+
+	t.Run("empty connector bootstrap never matches", func(t *testing.T) {
+		assert.False(t, bootstrapMatches("", brokers))
+	})
+}

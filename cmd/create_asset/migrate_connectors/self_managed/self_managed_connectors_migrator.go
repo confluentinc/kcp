@@ -208,7 +208,17 @@ func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types
 		return nil, nil, fmt.Errorf("'connector.class' not found in config")
 	}
 
-	pluginName, err := connector_utils.InferPluginName(connectorClass.(string))
+	// connector.Config is map[string]any (JSON-decoded from the Connect REST API
+	// or rehydrated from the state file), so connector.class can deserialize to a
+	// non-string (number/bool/object/null) on a malformed or tampered source. A
+	// bare type assertion would panic and crash the whole migrate-connectors run;
+	// the comma-ok form turns it into a per-connector error the Run loop skips.
+	connectorClassStr, ok := connectorClass.(string)
+	if !ok {
+		return nil, nil, fmt.Errorf("'connector.class' is not a string")
+	}
+
+	pluginName, err := connector_utils.InferPluginName(connectorClassStr)
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to determine plugin name: %w", err)
 	}

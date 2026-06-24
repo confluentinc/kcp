@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -255,10 +256,26 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	}
 
 	if filteredMetrics.Metrics == nil {
-		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "No metrics available for this cluster",
-			"message": "Run 'kcp scan clusters --source-type apache-kafka --metrics jolokia' or '--metrics prometheus' to collect metrics",
-		})
+		// An empty filtered result is ambiguous: the cluster either never had metrics
+		// collected, or it has metrics but none fall in the selected date range. Only
+		// the former warrants the "run a scan" hint. When a date filter was applied,
+		// re-probe without it (reusing the same lookup) to tell them apart; an
+		// out-of-range window then falls through to a normal empty 200 so the UI shows
+		// an empty chart rather than a misleading error. FilterClusterMetrics is shared
+		// with the `kcp report metrics` CLI, so the distinction is made here in the
+		// handler rather than by changing the filter's contract.
+		neverCollected := true
+		if startTime != nil || endTime != nil {
+			if unfiltered, uErr := ui.reportService.FilterClusterMetrics(processedState, clusterId, "osk", nil, nil); uErr == nil && unfiltered.Metrics != nil {
+				neverCollected = false
+			}
+		}
+		if neverCollected {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "No metrics available for this cluster",
+				"message": "Run 'kcp scan clusters --source-type apache-kafka --metrics jolokia' or '--metrics prometheus' to collect metrics",
+			})
+		}
 	}
 
 	return c.JSON(http.StatusOK, filteredMetrics)
@@ -305,16 +322,19 @@ func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 
 	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, startTime, endTime)
 	if err != nil {
+		// "Never collected" is the only case that warrants the scan-guidance hint.
+		// A cluster that HAS metrics but whose selected date range excludes them all
+		// is not an error — it falls through to a normal (empty) 200 below, so the
+		// user sees an empty chart rather than a misleading "run a scan" message.
+		if errors.Is(err, report.ErrNoConnectMetricsCollected) {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "No Connect metrics available for this cluster",
+				"message": "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics",
+			})
+		}
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "Cluster not found or no Connect metrics available",
 			"message": err.Error(),
-		})
-	}
-
-	if filteredMetrics.Metrics == nil {
-		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "No Connect metrics available for this cluster",
-			"message": "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics",
 		})
 	}
 

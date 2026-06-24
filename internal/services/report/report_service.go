@@ -1,6 +1,7 @@
 package report
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -11,6 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/types"
 )
+
+// ErrNoConnectMetricsCollected reports that a cluster exists but has never had any
+// self-managed Connect metrics collected. It is deliberately distinct from an empty
+// date-filtered result (a cluster that HAS metrics, none of which fall in the queried
+// window): the former warrants a "run a scan" hint, the latter is a valid empty 200.
+// The API layer maps this sentinel to the scan-guidance response via errors.Is.
+var ErrNoConnectMetricsCollected = errors.New("no Connect metrics collected for cluster")
 
 const (
 	// metricTimestampFormat is the timestamp format used for metric data
@@ -356,9 +364,11 @@ func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clu
 
 	smc := adminInfo.SelfManagedConnectors
 	if smc == nil || smc.Metrics == nil {
-		// No Connect metrics collected for this cluster — the handler detects
-		// the nil Metrics slice and returns a "no metrics" response.
-		return &types.ConnectClusterMetrics{}, nil
+		// The cluster exists but no Connect metrics were ever collected. Signal this
+		// distinctly from the empty date-filtered result returned below, so the API
+		// layer shows the "run a scan" hint only when there is genuinely nothing to
+		// collect — not when the user simply picked a window with no data points.
+		return nil, ErrNoConnectMetricsCollected
 	}
 
 	filteredMetrics := rs.filterMetricsByDateRange(smc.Metrics.Metrics, startTime, endTime)
