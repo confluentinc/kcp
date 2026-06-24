@@ -282,10 +282,10 @@ func stateFileKCPVersion(raw map[string]json.RawMessage) string {
 
 // isPostLegacyVersion reports whether the state-file version string
 // represents kcp 0.7 or later (the cutoff where legacy `regions` /
-// flat `schema_registries` shapes ceased to be produced). The
-// localdev sentinel "0.0.0-localdev" is treated as pre-0.7 by virtue
-// of its leading zeros — fine, since dev builds shouldn't be loading
-// production state files.
+// flat `schema_registries` shapes ceased to be produced).
+// The pre-release suffix (e.g. "-localdev") is stripped before
+// comparison, so "v0.8.5-localdev" is treated as 0.8 (post-legacy)
+// while "0.0.0-localdev" (go test default) is treated as 0.0 (pre-legacy).
 func isPostLegacyVersion(v string) bool {
 	v = strings.TrimSpace(v)
 	if v == "" {

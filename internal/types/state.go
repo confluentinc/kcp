@@ -96,6 +96,9 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		}
 		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
 			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
+				if strings.HasSuffix(raw.KcpBuildInfo.Version, "-localdev") {
+					return nil, fmt.Errorf("%v (file was created with a local dev build %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka)", err, raw.KcpBuildInfo.Version, build_info.Version)
+				}
 				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
 			}
 			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)

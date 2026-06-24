@@ -275,7 +275,8 @@ fi
 # The kcp binary runs inside the cluster so it can reach services by K8s DNS
 # and TLS SANs match without port-forwarding or /etc/hosts workarounds.
 echo "Building kcp binary for Linux..."
-CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/confluentinc/kcp/internal/build_info.Version=0.0.0-localdev -X github.com/confluentinc/kcp/internal/build_info.Commit=unknown -X github.com/confluentinc/kcp/internal/build_info.Date=unknown" -o "${SCRIPT_DIR}/.kcp-linux" "${REPO_ROOT}"
+KCP_GIT_TAG=$(git -C "${REPO_ROOT}" describe --tags --abbrev=0 2>/dev/null || echo "0.0.0")
+CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/confluentinc/kcp/internal/build_info.Version=${KCP_GIT_TAG}-localdev -X github.com/confluentinc/kcp/internal/build_info.Commit=unknown -X github.com/confluentinc/kcp/internal/build_info.Date=unknown" -o "${SCRIPT_DIR}/.kcp-linux" "${REPO_ROOT}"
 
 echo "Building e2e producer/consumer/setconfig binaries for Linux..."
 CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.producer-linux" "${REPO_ROOT}/integration-tests/migration/testdata/producer"
