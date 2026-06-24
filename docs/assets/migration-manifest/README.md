@@ -12,20 +12,19 @@ The manifest describes the topology — including all **connection addresses** (
 
 Every connection in the manifest is a uniform `{address, credentials}` pair: Kafka slots (`spec.source`, `spec.clusterLink.source`, `spec.clusterLink.destination`) carry `bootstrapServers` + `credentials`; REST slots (`spec.target.kafka.restEndpoint` + `spec.target.credentials`, `spec.clusterLink.sourceRest`) carry `endpoint` + `credentials`.
 
-**Kafka credentials** (the file each Kafka slot's `credentials:` points at) are auth-only:
+**Kafka credentials** (the file each Kafka slot's `credentials:` points at) are auth-only. Specify exactly one auth method as a top-level block — the block's presence selects it (no `auth_method:` wrapper, no `use:` flag):
 
 ```yaml
-auth_method:
-  # exactly one of:
-  sasl_scram: { use: true, username: admin, password: secret, mechanism: SHA256, ca_cert: ./ca.pem }
-  # sasl_plain: { use: true, username: admin, password: secret }
-  # tls: { use: true, ca_cert: ./ca.pem, client_cert: ./client.pem, client_key: ./client.key }
-  # unauthenticated_tls: { use: true, ca_cert: ./ca.pem }
-  # unauthenticated_plaintext: { use: true }
+sasl_scram: { username: admin, password: secret, mechanism: SHA256, ca_cert: ./ca.pem }
+# or exactly one of:
+# sasl_plain: { username: admin, password: secret }
+# tls: { ca_cert: ./ca.pem, client_cert: ./client.pem, client_key: ./client.key }
+# unauthenticated_tls: { ca_cert: ./ca.pem }
+# unauthenticated_plaintext: {}
 insecure_skip_tls_verify: false   # optional; test environments only
 ```
 
-This is distinct from the `kcp scan` `apache-kafka-credentials.yaml` (which lists multiple `clusters:`, each with its own `bootstrap_servers` and scan-only metrics blocks). Passing the scan format — or a stray `bootstrap_servers:` — to a migrate creds file is rejected with a hint.
+This is distinct from the `kcp scan` `apache-kafka-credentials.yaml` (which lists multiple `clusters:`, each with its own `bootstrap_servers`, an `auth_method:` wrapper with `use:` flags, and scan-only metrics blocks). Passing the scan format — an `auth_method:` wrapper, a `clusters:` list, or a stray `bootstrap_servers:` — to a migrate creds file is rejected with a hint.
 
 **REST credentials** (`spec.target.credentials`, `spec.clusterLink.sourceRest.credentials`) authenticate to the Kafka REST / Admin API and use one of a `basic`, `api_key`, `bearer`, or `mtls` block.
 
