@@ -70,6 +70,12 @@ func (e *LinkEndpoint) GetClusterLink(ctx context.Context, name string) (*cluste
 	return link, nil
 }
 
+// GetClusterLinkConfigs returns the named link's live config key/value map
+// (GET .../links/{name}/configs), used by the reconciler for drift detection.
+func (e *LinkEndpoint) GetClusterLinkConfigs(ctx context.Context, name string) (map[string]string, error) {
+	return e.svc.ListConfigs(ctx, e.config(name))
+}
+
 // CreateClusterLink creates the named cluster link on the endpoint. A
 // pre-existing link (ErrLinkExists) is silently treated as success.
 func (e *LinkEndpoint) CreateClusterLink(ctx context.Context, name string, req clusterlink.CreateClusterLinkRequest) error {

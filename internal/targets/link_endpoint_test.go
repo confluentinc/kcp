@@ -43,6 +43,26 @@ func TestLinkEndpoint_TwoEndpoints_NoCrosstalk(t *testing.T) {
 	require.NotEqual(t, dstID, srcID)
 }
 
+// TestLinkEndpoint_GetClusterLinkConfigs confirms that GetClusterLinkConfigs
+// delegates to svc.ListConfigs and maps the JSON data array into a plain
+// key/value map.
+func TestLinkEndpoint_GetClusterLinkConfigs(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"name":"cluster.link.prefix","value":"mig."},{"name":"consumer.offset.sync.enable","value":"true"}]}`))
+	}))
+	defer srv.Close()
+
+	// &Credentials{} falls through to the default branch in authenticator(),
+	// returning BasicAuth with empty username/password — fine for a no-auth server.
+	e := NewLinkEndpoint(srv.URL, &Credentials{}, http.DefaultClient)
+	e.clusterID = "c-1" // bypass ClusterID discovery; field is accessible within package
+	got, err := e.GetClusterLinkConfigs(context.Background(), "l")
+	require.NoError(t, err)
+	require.Equal(t, "mig.", got["cluster.link.prefix"])
+	require.Equal(t, "true", got["consumer.offset.sync.enable"])
+}
+
 // TestLinkEndpoint_MTLS_SourceEndpoint proves the same constructor builds a
 // client that carries a client certificate for an mTLS source endpoint: the
 // built client is accepted by a server that requires and verifies a client
