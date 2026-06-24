@@ -20,12 +20,12 @@ import (
 //
 // When KCP_MATRIX_REPORT names a file path, the auth matrix collects a verbose
 // markdown evidence report (manifest + creds + commands + apply output + a live
-// REST GET of the resulting link state) and writes it after all cells run.
+// REST GET of the resulting link state) and writes it after all test cases run.
 //
 // When the env var is unset (CI default) reportEnabled is false and the matrix
 // does ZERO extra work: no captured strings, no extra REST calls. Every capture
-// site below is guarded by reportEnabled, and the cells only build report data
-// when it is true.
+// site below is guarded by reportEnabled, and the test cases only build report
+// data when it is true.
 // ---------------------------------------------------------------------------
 
 // reportPath is the destination file ("" disables the report entirely).
@@ -35,18 +35,19 @@ var reportPath = os.Getenv("KCP_MATRIX_REPORT")
 // extra work is performed.
 var reportEnabled = reportPath != ""
 
-// reportCollector accumulates per-cell sections + summary rows across the two
-// matrices. Cells may run in their own subtests, so appends are mutex-guarded.
+// reportCollector accumulates per-test-case sections + summary rows across the
+// two matrices. Test cases may run in their own subtests, so appends are
+// mutex-guarded.
 type reportCollector struct {
 	mu       sync.Mutex
 	sections []reportSection
 }
 
-// reportSection is one fully-built cell section plus its summary-row fields.
+// reportSection is one fully-built test-case section plus its summary-row fields.
 type reportSection struct {
 	seq    int    // global ordering key (stable, navigable output)
 	mode   string // "destination" / "source"
-	cell   string // cell name, e.g. "D2=scram256"
+	name   string // test case name, e.g. "D2=scram256"
 	checks string // one-sentence "what it checks"
 	result string // "✅ PASS" / "❌ FAIL"
 	body   string // the full markdown section body
@@ -92,23 +93,23 @@ func (rc *reportCollector) render() string {
 	b.WriteString("# Cluster-link auth verification report\n\n")
 	fmt.Fprintf(&b, "Generated %s by the live `kcp migrate` cluster-link auth matrix "+
 		"(`make test-migrate-clusterlink-report`), run against the cp-server brokers in "+
-		"`integration-tests/migrate-clusterlink/docker-compose.yml`. Every row below is a real "+
-		"`kcp migrate apply` against a real broker. The **Result** column and each cell's "+
-		"**Result** section show the observed outcome of that run, including a live Kafka REST "+
-		"`GET …/links/<name>` capturing the link state.\n\n",
+		"`integration-tests/migrate-clusterlink/docker-compose.yml`. Every test case below is a "+
+		"real `kcp migrate apply` against a real broker. The **Result** column and each test "+
+		"case's **Result** section show the observed outcome of that run, including a live Kafka "+
+		"REST `GET …/links/<name>` capturing the link state.\n\n",
 		time.Now().Format(time.RFC1123))
 
 	// Summary table.
 	b.WriteString("## Summary\n\n")
-	b.WriteString("| # | Mode | Cell | What it checks | Result |\n")
+	b.WriteString("| # | Mode | Test case | What it checks | Result |\n")
 	b.WriteString("|---|---|---|---|---|\n")
 	for i, s := range secs {
 		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n",
-			i+1, s.mode, mdCell(s.cell), mdCell(s.checks), s.result)
+			i+1, s.mode, mdCell(s.name), mdCell(s.checks), s.result)
 	}
 	b.WriteString("\n")
 
-	// Per-cell sections.
+	// Per-test-case sections.
 	for _, s := range secs {
 		b.WriteString(s.body)
 		b.WriteString("\n")
@@ -131,11 +132,11 @@ type fencedFile struct {
 	body string // file content
 }
 
-// sectionInput carries everything a cell captured for its section.
+// sectionInput carries everything a test case captured for its section.
 type sectionInput struct {
 	seq      int
 	mode     string // "destination" / "source"
-	cell     string // "D2=scram256"
+	name     string // "D2=scram256"
 	checks   string // one-sentence "what it checks" statement
 	manifest string // generated migration.yaml content
 	creds    []fencedFile
@@ -163,7 +164,7 @@ func buildSection(in sectionInput) reportSection {
 	}
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "## %s · %s\n\n", in.mode, in.cell)
+	fmt.Fprintf(&b, "## %s · %s\n\n", in.mode, in.name)
 	fmt.Fprintf(&b, "**What this checks** — %s\n\n", in.checks)
 
 	if !in.pass && in.failMsg != "" {
@@ -209,7 +210,7 @@ func buildSection(in sectionInput) reportSection {
 	return reportSection{
 		seq:    in.seq,
 		mode:   in.mode,
-		cell:   in.cell,
+		name:   in.name,
 		checks: in.checks,
 		result: result,
 		body:   b.String(),
@@ -273,7 +274,7 @@ func TestMain(m *testing.M) {
 		if err := os.WriteFile(reportPath, []byte(collector.render()), 0600); err != nil {
 			fmt.Fprintf(os.Stderr, "KCP_MATRIX_REPORT: failed to write %s: %v\n", reportPath, err)
 		} else {
-			fmt.Fprintf(os.Stderr, "KCP_MATRIX_REPORT: wrote evidence report to %s (%d cells)\n",
+			fmt.Fprintf(os.Stderr, "KCP_MATRIX_REPORT: wrote evidence report to %s (%d test cases)\n",
 				reportPath, len(collector.sections))
 		}
 	}

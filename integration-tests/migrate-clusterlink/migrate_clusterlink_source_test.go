@@ -19,12 +19,12 @@ import (
 // single `apply` is reliable and yields "2 created" — no test-level retry needed
 // (that would mask the product fix).
 
-// sourceCell is one source-initiated permutation. Two links share one name: the
+// sourceCase is one source-initiated permutation. Two links share one name: the
 // INBOUND link on the migration-dest (target REST, D3) and the OUTBOUND link on
 // the migration-source REST (D4); the OUTBOUND link dials the migration-dest
 // using destinationCredentials (D5). spec.source.credentials (D1) reads the
 // migration-source cluster id over a plaintext HOST listener.
-type sourceCell struct {
+type sourceCase struct {
 	name string
 	// D1: read the migration-source cluster id (plaintext HOST listener).
 	d1 kafkaAuth
@@ -36,9 +36,9 @@ type sourceCell struct {
 	d5 kafkaAuth
 }
 
-// writeSourceManifest writes the manifest + cred files for a source cell and
-// returns the manifest path and link name.
-func writeSourceManifest(t *testing.T, dir string, c sourceCell) (manifestPath, linkName string) {
+// writeSourceManifest writes the manifest + cred files for a source test case
+// and returns the manifest path and link name.
+func writeSourceManifest(t *testing.T, dir string, c sourceCase) (manifestPath, linkName string) {
 	t.Helper()
 	linkName = uniqueLinkName("source")
 
@@ -84,7 +84,7 @@ func writeSourceManifest(t *testing.T, dir string, c sourceCell) (manifestPath, 
 
 // TestMigrateApply_ClusterLink_Source sweeps the source-initiated auth surfaces
 // (D3 migration-dest REST, D4 migration-source REST, D5 source→dest connection),
-// one surface at a time. Each cell creates TWO links (INBOUND on the
+// one surface at a time. Each test case creates TWO links (INBOUND on the
 // migration-dest, OUTBOUND on the migration-source), both reaching ACTIVE.
 func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 	// D1 reads the migration-source over a plaintext HOST listener. Per
@@ -95,7 +95,7 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 	//   source      → localhost:19092
 	d1DestBasic := kafkaAuth{authPlaintext, "localhost:29192"}
 
-	cells := []sourceCell{
+	cases := []sourceCase{
 		// --- baseline: migration-source=dest-basic, migration-dest=source. ---
 		{"baseline", d1DestBasic, restDestBasic, restSource, kafkaAuth{authPlaintext, "source:29092"}},
 
@@ -122,15 +122,15 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 		{"D5=mtls", d1DestBasic, restDestBasic, restSource, kafkaAuth{authMTLS, "source:29095"}},
 	}
 
-	// Source cells are NOT run in parallel. Each creates a pair of links
+	// Source test cases are NOT run in parallel. Each creates a pair of links
 	// (INBOUND then OUTBOUND); the OUTBOUND create validates against the
 	// destination by connecting and confirming the INBOUND link is present.
 	// cp-server propagates the freshly-created INBOUND link asynchronously, so
-	// concurrent cells hammering the shared brokers can make a cell's own
-	// INBOUND link not-yet-visible when its OUTBOUND link validates ("the
+	// concurrent test cases hammering the shared brokers can make a test case's
+	// own INBOUND link not-yet-visible when its OUTBOUND link validates ("the
 	// destination cluster does not have a link named X"). Running serially
-	// removes that cross-cell pressure.
-	for _, c := range cells {
+	// removes that cross-test-case pressure.
+	for _, c := range cases {
 		c := c
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -146,8 +146,8 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 			srcID := c.migrationSourceREST.clusterID
 
 			// Report capture (no-op + zero extra work when reportEnabled is false).
-			// commit() runs via defer so a cell that fails mid-flight still emits
-			// what it captured, marked FAIL.
+			// commit() runs via defer so a test case that fails mid-flight still
+			// emits what it captured, marked FAIL.
 			rep := newSourceReporter(c, dir, manifest, linkName, destID, srcID)
 			defer rep.commit(t, destPoller, srcPoller)
 
@@ -185,11 +185,11 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// source-cell report capture
+// source-test-case report capture
 // ---------------------------------------------------------------------------
 
-// sourceChecks maps a source cell to its one-sentence "what it checks" statement.
-func sourceChecks(c sourceCell) string {
+// sourceChecks maps a source test case to its one-sentence "what it checks" statement.
+func sourceChecks(c sourceCase) string {
 	switch {
 	case c.name == "baseline":
 		return "Source-initiated migration creates both the INBOUND link (on the migration-dest, target REST) and the OUTBOUND link (on the migration-source REST); both reach ACTIVE."
@@ -203,8 +203,8 @@ func sourceChecks(c sourceCell) string {
 	return "source-initiated cluster link pair reaches ACTIVE."
 }
 
-// sourceReporter accumulates one source cell's evidence. All methods are cheap
-// no-ops when reportEnabled is false.
+// sourceReporter accumulates one source test case's evidence. All methods are
+// cheap no-ops when reportEnabled is false.
 type sourceReporter struct {
 	in       sectionInput
 	link     string
@@ -214,7 +214,7 @@ type sourceReporter struct {
 	srcREST  restEndpoint
 }
 
-func newSourceReporter(c sourceCell, dir, manifest, linkName, destID, srcID string) *sourceReporter {
+func newSourceReporter(c sourceCase, dir, manifest, linkName, destID, srcID string) *sourceReporter {
 	r := &sourceReporter{
 		link: linkName, destID: destID, srcID: srcID,
 		destREST: c.migrationDestREST, srcREST: c.migrationSourceREST,
@@ -225,7 +225,7 @@ func newSourceReporter(c sourceCell, dir, manifest, linkName, destID, srcID stri
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
 		mode:     "source",
-		cell:     c.name,
+		name:     c.name,
 		checks:   sourceChecks(c),
 		manifest: readFileForReport(manifest),
 		creds: []fencedFile{
@@ -281,9 +281,9 @@ func (r *sourceReporter) reapply(out string) {
 }
 
 // commit finalises the section. The pollers are used for a best-effort live GET
-// of each link when the cell failed (neither link reached ACTIVE, so result()
-// was never called) so the failure section still shows the observed link states
-// and why.
+// of each link when the test case failed (neither link reached ACTIVE, so
+// result() was never called) so the failure section still shows the observed
+// link states and why.
 func (r *sourceReporter) commit(t *testing.T, destPoller, srcPoller restClient) {
 	if !reportEnabled {
 		return
@@ -295,8 +295,8 @@ func (r *sourceReporter) commit(t *testing.T, destPoller, srcPoller restClient) 
 	collector.add(buildSection(r.in))
 }
 
-// captureFailureState does a best-effort live GET of both links so a failed cell
-// shows the observed state + link_error of each. Never panics or fails the commit.
+// captureFailureState does a best-effort live GET of both links so a failed test
+// case shows the observed state + link_error of each. Never panics or fails the commit.
 func (r *sourceReporter) captureFailureState(destPoller, srcPoller restClient) {
 	inbound := failureResultBlock("INBOUND link on migration-dest", destPoller, r.destREST.baseURL, r.destID, r.link)
 	outbound := failureResultBlock("OUTBOUND link on migration-source", srcPoller, r.srcREST.baseURL, r.srcID, r.link)

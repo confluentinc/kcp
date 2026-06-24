@@ -12,9 +12,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// destCell is one destination-mode permutation. Exactly one of the D1/D2/D3
+// destCase is one destination-mode permutation. Exactly one of the D1/D2/D3
 // surfaces varies per sweep; the rest are fixed to plaintext / no-auth.
-type destCell struct {
+type destCase struct {
 	name string
 	// D1: KCP's read of the source cluster id (host listener).
 	d1 kafkaAuth
@@ -24,9 +24,9 @@ type destCell struct {
 	target restEndpoint
 }
 
-// writeDestManifest writes the manifest + cred files for a destination cell
-// into dir and returns the manifest path and the link name.
-func writeDestManifest(t *testing.T, dir string, c destCell) (manifestPath, linkName string) {
+// writeDestManifest writes the manifest + cred files for a destination test
+// case into dir and returns the manifest path and the link name.
+func writeDestManifest(t *testing.T, dir string, c destCase) (manifestPath, linkName string) {
 	t.Helper()
 	linkName = uniqueLinkName("dest")
 
@@ -63,7 +63,7 @@ func writeDestManifest(t *testing.T, dir string, c destCell) (manifestPath, link
 
 // TestMigrateApply_ClusterLink_Destination sweeps the destination-mode auth
 // surfaces (D1 source-read, D2 link→source, D3 target REST), one surface at a
-// time. Each cell creates ONE link on the chosen dest dialing the source.
+// time. Each test case creates ONE link on the chosen dest dialing the source.
 func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 	// Fixed defaults for the surfaces a given sweep does NOT vary.
 	const (
@@ -73,7 +73,7 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 	d1Plaintext := kafkaAuth{authPlaintext, srcHostPlaintext}
 	d2Plaintext := kafkaAuth{authPlaintext, srcDockerPlain}
 
-	cells := []destCell{
+	cases := []destCase{
 		// --- D1 sweep: vary source-read auth; D2=plaintext, D3=dest(none). ---
 		{"D1=plaintext", kafkaAuth{authPlaintext, "localhost:19092"}, d2Plaintext, restDest},
 		{"D1=scram256", kafkaAuth{authScram256, "localhost:19093"}, d2Plaintext, restDest},
@@ -97,15 +97,16 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 		{"D3=bearer", d1Plaintext, d2Plaintext, restDestBearer},
 	}
 
-	// Source HOST REST ready => source broker up (all D1/D2 cells dial it).
+	// Source HOST REST ready => source broker up (all D1/D2 test cases dial it).
 	newRestClient(t, restSource).waitForClusterID(t)
 
-	// Cells run serially (not t.Parallel): a parallel destination sweep overlaps
-	// with the serial source sweep (Go starts the next top-level test while
-	// parked parallel subtests wait), and that concurrent load on the shared
-	// source broker re-triggers the source-mode INBOUND-link propagation race.
-	// The full matrix is fast enough to run sequentially and deterministically.
-	for _, c := range cells {
+	// Test cases run serially (not t.Parallel): a parallel destination sweep
+	// overlaps with the serial source sweep (Go starts the next top-level test
+	// while parked parallel subtests wait), and that concurrent load on the
+	// shared source broker re-triggers the source-mode INBOUND-link propagation
+	// race. The full matrix is fast enough to run sequentially and
+	// deterministically.
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			manifest, linkName := writeDestManifest(t, dir, c)
@@ -115,8 +116,8 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 			destID := c.target.clusterID
 
 			// Report capture (no-op + zero extra work when reportEnabled is false).
-			// commit() runs via defer so a cell that fails mid-flight still emits
-			// what it captured, marked FAIL.
+			// commit() runs via defer so a test case that fails mid-flight still
+			// emits what it captured, marked FAIL.
 			rep := newDestReporter(c, dir, manifest, linkName, destID)
 			defer rep.commit(t, poller)
 
@@ -149,11 +150,11 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// destination-cell report capture
+// destination-test-case report capture
 // ---------------------------------------------------------------------------
 
-// destChecks maps a destination cell to its one-sentence "what it checks" statement.
-func destChecks(c destCell) string {
+// destChecks maps a destination test case to its one-sentence "what it checks" statement.
+func destChecks(c destCase) string {
 	switch {
 	case strings.HasPrefix(c.name, "D1="):
 		return fmt.Sprintf("KCP reads the source cluster id over a %s connection that a real broker accepts (spec.source.credentials); the destination-initiated link still reaches ACTIVE.", c.d1.kind)
@@ -165,7 +166,7 @@ func destChecks(c destCell) string {
 	return "destination-initiated cluster link reaches ACTIVE."
 }
 
-// destReporter accumulates one destination cell's evidence. All methods are
+// destReporter accumulates one destination test case's evidence. All methods are
 // cheap no-ops when reportEnabled is false.
 type destReporter struct {
 	in     sectionInput
@@ -175,7 +176,7 @@ type destReporter struct {
 	target restEndpoint
 }
 
-func newDestReporter(c destCell, dir, manifest, linkName, destID string) *destReporter {
+func newDestReporter(c destCase, dir, manifest, linkName, destID string) *destReporter {
 	r := &destReporter{dir: dir, link: linkName, destID: destID, target: c.target}
 	if !reportEnabled {
 		return r
@@ -183,7 +184,7 @@ func newDestReporter(c destCell, dir, manifest, linkName, destID string) *destRe
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
 		mode:     "destination",
-		cell:     c.name,
+		name:     c.name,
 		checks:   destChecks(c),
 		manifest: readFileForReport(manifest),
 		creds: []fencedFile{
@@ -230,8 +231,9 @@ func (r *destReporter) reapply(out string) {
 }
 
 // commit finalises the section. poller is used for a best-effort live link GET
-// when the cell failed (the link never reached ACTIVE, so result() was never
-// called) so the failure section still shows the observed link state and why.
+// when the test case failed (the link never reached ACTIVE, so result() was
+// never called) so the failure section still shows the observed link state and
+// why.
 func (r *destReporter) commit(t *testing.T, poller restClient) {
 	if !reportEnabled {
 		return
@@ -243,8 +245,8 @@ func (r *destReporter) commit(t *testing.T, poller restClient) {
 	collector.add(buildSection(r.in))
 }
 
-// captureFailureState does a best-effort live GET of the link so a failed cell
-// shows the observed state + link_error. Never panics or fails the commit.
+// captureFailureState does a best-effort live GET of the link so a failed test
+// case shows the observed state + link_error. Never panics or fails the commit.
 func (r *destReporter) captureFailureState(poller restClient) {
 	state, linkErr := poller.link(r.destID, r.link)
 	if state == "" {
