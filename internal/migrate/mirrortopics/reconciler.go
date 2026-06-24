@@ -136,6 +136,9 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 		case reconcile.ActionPresent:
 			out.Present = append(out.Present, s.change)
 		default:
+			// No Drift today: drift detection is deferred because MirrorTopic
+			// exposes no source-topic-name field to compare against. This branch
+			// is defensive (switch exhaustiveness) and currently unreachable.
 			out.Drift = append(out.Drift, s.change)
 		}
 	}

@@ -110,6 +110,25 @@ func TestPlan_NoPrefix(t *testing.T) {
 	}
 }
 
+func TestPlan_EmptyDesiredSet(t *testing.T) {
+	// No topic matches the include glob (and internal topics are filtered) →
+	// the plan has no changes and is Empty, so the engine skips Apply.
+	src := &fakeSource{topics: []string{"orders", "_schemas"}}
+	tgt := &fakeLinkTarget{clusterID: "dest-1", configs: map[string]string{linkConfigPrefix: "dc-"}}
+	r := New(Config{LinkName: "lk", Include: []string{"nomatch-*"}}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(p.Changes()) != 0 {
+		t.Errorf("want 0 changes, got %d", len(p.Changes()))
+	}
+	if !p.Empty() {
+		t.Errorf("plan with no creates should be Empty")
+	}
+}
+
 func TestApply_ContinueOnError(t *testing.T) {
 	src := &fakeSource{topics: []string{"a", "b"}}
 	tgt := &fakeLinkTarget{
