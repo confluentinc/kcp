@@ -8,12 +8,13 @@ kcp migrate validate -f migration.yaml
 
 ## Credential files
 
-The manifest never contains secrets — it references external credential files by path.
+The manifest describes the topology — including all **connection addresses** (`bootstrapServers`, REST `endpoint`s) — and references external credential files by path. **Credential files hold only secrets (auth); addresses live in the manifest, not the creds files.**
 
-**Kafka credentials** (`spec.source.credentials`, `spec.clusterLink.sourceCredentials`, `spec.clusterLink.destinationCredentials`) use a flat, single-cluster format — a migration only ever connects to one source and one destination cluster:
+Every connection in the manifest is a uniform `{address, credentials}` pair: Kafka slots (`spec.source`, `spec.clusterLink.source`, `spec.clusterLink.destination`) carry `bootstrapServers` + `credentials`; REST slots (`spec.target.kafka.restEndpoint` + `spec.target.credentials`, `spec.clusterLink.sourceRest`) carry `endpoint` + `credentials`.
+
+**Kafka credentials** (the file each Kafka slot's `credentials:` points at) are auth-only:
 
 ```yaml
-bootstrap_servers: ["broker1:9092", "broker2:9092"]
 auth_method:
   # exactly one of:
   sasl_scram: { use: true, username: admin, password: secret, mechanism: SHA256, ca_cert: ./ca.pem }
@@ -24,7 +25,7 @@ auth_method:
 insecure_skip_tls_verify: false   # optional; test environments only
 ```
 
-This is distinct from the `kcp scan` `apache-kafka-credentials.yaml` (which lists multiple `clusters:` with scan-only metrics blocks). Passing the scan format here is rejected with a hint.
+This is distinct from the `kcp scan` `apache-kafka-credentials.yaml` (which lists multiple `clusters:`, each with its own `bootstrap_servers` and scan-only metrics blocks). Passing the scan format — or a stray `bootstrap_servers:` — to a migrate creds file is rejected with a hint.
 
 **REST credentials** (`spec.target.credentials`, `spec.clusterLink.sourceRest.credentials`) authenticate to the Kafka REST / Admin API and use one of a `basic`, `api_key`, `bearer`, or `mtls` block.
 
