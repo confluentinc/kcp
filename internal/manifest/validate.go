@@ -2,6 +2,8 @@ package manifest
 
 import (
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 )
 
@@ -11,6 +13,41 @@ const linkConfigPrefixReadOnly = "link.prefix"
 
 // blank reports whether s is empty or only whitespace.
 func blank(s string) bool { return strings.TrimSpace(s) == "" }
+
+// validBootstrapServer reports whether s is a host:port (host + numeric 1-65535 port).
+func validBootstrapServer(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || host == "" || port == "" {
+		return false
+	}
+	n, err := strconv.Atoi(port)
+	return err == nil && n > 0 && n <= 65535
+}
+
+func validateBootstrapServers(field string, servers []string) []error {
+	if len(servers) == 0 {
+		return []error{fmt.Errorf("%s: must not be empty", field)}
+	}
+	var errs []error
+	for i, s := range servers {
+		if !validBootstrapServer(s) {
+			errs = append(errs, fmt.Errorf("%s[%d]: invalid bootstrap server %q (expected host:port)", field, i, s))
+		}
+	}
+	return errs
+}
+
+// validateKafkaConn validates a {bootstrapServers, credentials} slot.
+func validateKafkaConn(field string, c *KafkaConn) []error {
+	if c == nil {
+		return []error{fmt.Errorf("%s: required", field)}
+	}
+	errs := validateBootstrapServers(field+".bootstrapServers", c.BootstrapServers)
+	if blank(c.Credentials) {
+		errs = append(errs, fmt.Errorf("%s.credentials: must not be empty", field))
+	}
+	return errs
+}
 
 // validateEnum returns an error if value is empty or not one of allowed.
 func validateEnum(field, value string, allowed ...string) error {
@@ -60,6 +97,7 @@ func (m *Migration) Validate() []error {
 	if err := validateEnum("spec.source.type", m.Spec.Source.Type, SourceApacheKafka, SourceConfluentPlatform); err != nil {
 		errs = append(errs, err)
 	}
+	errs = append(errs, validateBootstrapServers("spec.source.bootstrapServers", m.Spec.Source.BootstrapServers)...)
 	if blank(m.Spec.Source.Credentials) {
 		add("spec.source.credentials: must not be empty")
 	}
@@ -116,14 +154,12 @@ func (m *Migration) Validate() []error {
 		}
 		switch mode {
 		case ClusterLinkModeDestination:
-			if blank(cl.SourceCredentials) {
-				add("spec.clusterLink.sourceCredentials: required for mode %q", ClusterLinkModeDestination)
-			}
+			errs = append(errs, validateKafkaConn("spec.clusterLink.source", cl.Source)...)
 			if cl.SourceRest != nil {
 				add("spec.clusterLink.sourceRest: not valid for mode %q", ClusterLinkModeDestination)
 			}
-			if !blank(cl.DestinationCredentials) {
-				add("spec.clusterLink.destinationCredentials: not valid for mode %q", ClusterLinkModeDestination)
+			if cl.Destination != nil {
+				add("spec.clusterLink.destination: not valid for mode %q", ClusterLinkModeDestination)
 			}
 		case ClusterLinkModeSource:
 			if cl.SourceRest == nil {
@@ -136,11 +172,9 @@ func (m *Migration) Validate() []error {
 					add("spec.clusterLink.sourceRest.credentials: must not be empty")
 				}
 			}
-			if blank(cl.DestinationCredentials) {
-				add("spec.clusterLink.destinationCredentials: required for mode %q", ClusterLinkModeSource)
-			}
-			if !blank(cl.SourceCredentials) {
-				add("spec.clusterLink.sourceCredentials: not valid for mode %q", ClusterLinkModeSource)
+			errs = append(errs, validateKafkaConn("spec.clusterLink.destination", cl.Destination)...)
+			if cl.Source != nil {
+				add("spec.clusterLink.source: not valid for mode %q", ClusterLinkModeSource)
 			}
 			if m.Spec.Source.Type == SourceApacheKafka {
 				add("spec.clusterLink.mode: %q is not supported when spec.source.type is %q (only confluent-platform/confluent-cloud can initiate a link)", ClusterLinkModeSource, SourceApacheKafka)

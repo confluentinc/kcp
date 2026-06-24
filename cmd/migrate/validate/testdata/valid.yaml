@@ -5,6 +5,7 @@ metadata:
 spec:
   source:
     type: apache-kafka
+    bootstrapServers: ["broker1:9092"]
     credentials: ./source-creds.yaml
   target:
     type: confluent-cloud
@@ -12,7 +13,9 @@ spec:
     credentials: ./target-creds.yaml
   clusterLink:
     name: source-to-cc
-    sourceCredentials: ./link-source-creds.yaml
+    source:
+      bootstrapServers: ["broker1:9092"]
+      credentials: ./link-source-creds.yaml
   topics:
     mode: mirror
     include: ["*"]

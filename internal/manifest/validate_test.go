@@ -12,7 +12,10 @@ import (
 func validCCWithDestinationLink(t *testing.T) *Migration {
 	t.Helper()
 	m := validCC()
-	m.Spec.ClusterLink = &ClusterLink{Name: "l", SourceCredentials: "./s.yaml"}
+	m.Spec.ClusterLink = &ClusterLink{
+		Name:   "l",
+		Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./s.yaml"},
+	}
 	return m
 }
 
@@ -32,7 +35,7 @@ func validCC() *Migration {
 		Kind:       KindMigration,
 		Metadata:   Metadata{Name: "m"},
 		Spec: Spec{
-			Source: Source{Type: SourceApacheKafka, Credentials: "./s.yaml"},
+			Source: Source{Type: SourceApacheKafka, BootstrapServers: []string{"b:9092"}, Credentials: "./s.yaml"},
 			Target: Target{Type: TargetConfluentCloud, Cluster: "lkc-1", Credentials: "./t.yaml"},
 		},
 	}
@@ -76,6 +79,19 @@ func TestValidate_SourceCredentials(t *testing.T) {
 	m := validCC()
 	m.Spec.Source.Credentials = ""
 	require.True(t, errorContains(m.Validate(), "spec.source.credentials"))
+}
+
+func TestValidate_SourceBootstrapServers_Missing(t *testing.T) {
+	m := validCC()
+	m.Spec.Source.BootstrapServers = nil
+	require.True(t, errorContains(m.Validate(), "spec.source.bootstrapServers"))
+}
+
+func TestValidate_SourceBootstrapServers_InvalidFormat(t *testing.T) {
+	m := validCC()
+	m.Spec.Source.BootstrapServers = []string{"not-a-valid-host-port"}
+	errs := m.Validate()
+	require.True(t, errorContains(errs, "spec.source.bootstrapServers"))
 }
 
 func TestValidate_TargetCCRequiresCluster(t *testing.T) {
@@ -253,9 +269,9 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			name: "valid destination mode",
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:              "cl",
-					Mode:              "destination",
-					SourceCredentials: "./src.yaml",
+					Name:   "cl",
+					Mode:   "destination",
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
 				}
 			},
 		},
@@ -263,51 +279,73 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			name: "default empty mode treated as destination",
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:              "cl",
-					SourceCredentials: "./src.yaml",
+					Name:   "cl",
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
 				}
 			},
 		},
 		{
-			name: "destination missing sourceCredentials",
+			name: "destination missing source",
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{Name: "cl", Mode: "destination"}
 			},
-			wantErr: "spec.clusterLink.sourceCredentials",
+			wantErr: "spec.clusterLink.source",
+		},
+		{
+			name: "destination source missing bootstrapServers",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:   "cl",
+					Mode:   "destination",
+					Source: &KafkaConn{Credentials: "./src.yaml"},
+				}
+			},
+			wantErr: "spec.clusterLink.source.bootstrapServers",
+		},
+		{
+			name: "destination source bootstrapServers invalid format",
+			mutate: func(m *Migration) {
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:   "cl",
+					Mode:   "destination",
+					Source: &KafkaConn{BootstrapServers: []string{"not-valid"}, Credentials: "./src.yaml"},
+				}
+			},
+			wantErr: "spec.clusterLink.source.bootstrapServers",
 		},
 		{
 			name: "destination with sourceRest set rejected",
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:              "cl",
-					Mode:              "destination",
-					SourceCredentials: "./src.yaml",
-					SourceRest:        &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					Name:       "cl",
+					Mode:       "destination",
+					Source:     &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
+					SourceRest: &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest",
 		},
 		{
-			name: "destination with destinationCredentials set rejected",
+			name: "destination with destination set rejected",
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:                   "cl",
-					Mode:                   "destination",
-					SourceCredentials:      "./src.yaml",
-					DestinationCredentials: "./dst.yaml",
+					Name:        "cl",
+					Mode:        "destination",
+					Source:      &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
 				}
 			},
-			wantErr: "spec.clusterLink.destinationCredentials",
+			wantErr: "spec.clusterLink.destination",
 		},
 		{
 			name: "valid source mode (confluent-platform source)",
 			mutate: func(m *Migration) {
 				m.Spec.Source.Type = SourceConfluentPlatform
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:                   "cl",
-					Mode:                   "source",
-					SourceRest:             &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
-					DestinationCredentials: "./dst.yaml",
+					Name:        "cl",
+					Mode:        "source",
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
 				}
 			},
 		},
@@ -316,9 +354,9 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			mutate: func(m *Migration) {
 				m.Spec.Source.Type = SourceConfluentPlatform
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:                   "cl",
-					Mode:                   "source",
-					DestinationCredentials: "./dst.yaml",
+					Name:        "cl",
+					Mode:        "source",
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest",
@@ -328,10 +366,10 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			mutate: func(m *Migration) {
 				m.Spec.Source.Type = TargetConfluentPlatform
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:                   "cl",
-					Mode:                   "source",
-					SourceRest:             &RestRef{Credentials: "./rest.yaml"},
-					DestinationCredentials: "./dst.yaml",
+					Name:        "cl",
+					Mode:        "source",
+					SourceRest:  &RestRef{Credentials: "./rest.yaml"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest.endpoint",
@@ -341,16 +379,16 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			mutate: func(m *Migration) {
 				m.Spec.Source.Type = TargetConfluentPlatform
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:                   "cl",
-					Mode:                   "source",
-					SourceRest:             &RestRef{Endpoint: "https://src:8090"},
-					DestinationCredentials: "./dst.yaml",
+					Name:        "cl",
+					Mode:        "source",
+					SourceRest:  &RestRef{Endpoint: "https://src:8090"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest.credentials",
 		},
 		{
-			name: "source missing destinationCredentials",
+			name: "source missing destination",
 			mutate: func(m *Migration) {
 				m.Spec.Source.Type = TargetConfluentPlatform
 				m.Spec.ClusterLink = &ClusterLink{
@@ -359,31 +397,44 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 					SourceRest: &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
 				}
 			},
-			wantErr: "spec.clusterLink.destinationCredentials",
+			wantErr: "spec.clusterLink.destination",
 		},
 		{
-			name: "source with sourceCredentials set rejected",
+			name: "source destination missing bootstrapServers",
 			mutate: func(m *Migration) {
 				m.Spec.Source.Type = TargetConfluentPlatform
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:                   "cl",
-					Mode:                   "source",
-					SourceCredentials:      "./src.yaml",
-					SourceRest:             &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
-					DestinationCredentials: "./dst.yaml",
+					Name:        "cl",
+					Mode:        "source",
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					Destination: &KafkaConn{Credentials: "./dst.yaml"},
 				}
 			},
-			wantErr: "spec.clusterLink.sourceCredentials",
+			wantErr: "spec.clusterLink.destination.bootstrapServers",
+		},
+		{
+			name: "source with source set rejected",
+			mutate: func(m *Migration) {
+				m.Spec.Source.Type = TargetConfluentPlatform
+				m.Spec.ClusterLink = &ClusterLink{
+					Name:        "cl",
+					Mode:        "source",
+					Source:      &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+				}
+			},
+			wantErr: "spec.clusterLink.source",
 		},
 		{
 			name: "source mode rejected for apache-kafka source",
 			mutate: func(m *Migration) {
 				m.Spec.Source.Type = SourceApacheKafka
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:                   "cl",
-					Mode:                   "source",
-					SourceRest:             &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
-					DestinationCredentials: "./dst.yaml",
+					Name:        "cl",
+					Mode:        "source",
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
 				}
 			},
 			wantErr: "spec.clusterLink.mode",
@@ -392,9 +443,9 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			name: "bidirectional mode rejected with clear message",
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:              "cl",
-					Mode:              "bidirectional",
-					SourceCredentials: "./src.yaml",
+					Name:   "cl",
+					Mode:   "bidirectional",
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
 				}
 			},
 			wantErr: "not supported",
@@ -403,9 +454,9 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			name: "unknown mode rejected",
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{
-					Name:              "cl",
-					Mode:              "sideways",
-					SourceCredentials: "./src.yaml",
+					Name:   "cl",
+					Mode:   "sideways",
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
 				}
 			},
 			wantErr: "spec.clusterLink.mode",

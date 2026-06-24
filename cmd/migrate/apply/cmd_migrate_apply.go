@@ -72,16 +72,13 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		return fmt.Errorf("resolving cluster-link configs: %w", err)
 	}
 
-	// --- source cluster id reader (spec.source.credentials → D1) ---
+	// --- source cluster id reader (spec.source → D1) ---
 	// spec.source.credentials is used only to read the live source cluster id
 	// (and, in destination mode, is independent of the link→source connection
-	// auth, which comes from clusterLink.sourceCredentials).
-	srcCluster, errs := types.LoadMigrateClusterCredentials(m.Spec.Source.Credentials)
-	if len(errs) > 0 {
-		for _, e := range errs {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
-		}
-		return fmt.Errorf("invalid source credentials: %d problem(s) found", len(errs))
+	// auth, which comes from clusterLink.source).
+	srcCluster, err := loadMigrateCluster(cmd, "spec.source", m.Spec.Source.BootstrapServers, m.Spec.Source.Credentials)
+	if err != nil {
+		return err
 	}
 	src := newSourceReader(srcCluster)
 
@@ -104,8 +101,8 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	switch mode {
 	case manifest.ClusterLinkModeDestination:
 		// Destination-initiated: the link→source connection auth comes from
-		// clusterLink.sourceCredentials (D2), NOT spec.source.credentials.
-		linkCluster, err := loadMigrateCluster(cmd, "clusterLink.sourceCredentials", cl.SourceCredentials)
+		// clusterLink.source (D2), NOT spec.source.
+		linkCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.source", cl.Source.BootstrapServers, cl.Source.Credentials)
 		if err != nil {
 			return err
 		}
@@ -116,7 +113,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		rec = mclusterlink.New(mclusterlink.Config{
 			LinkName:               cl.Name,
 			Mode:                   manifest.ClusterLinkModeDestination,
-			SourceBootstrapServers: linkCluster.BootstrapServers,
+			SourceBootstrapServers: cl.Source.BootstrapServers,
 			Auth:                   auth,
 			Configs:                linkConfigs,
 		}, src, tgt)
@@ -124,7 +121,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	case manifest.ClusterLinkModeSource:
 		// Source-initiated: a second link object lives on the source cluster's
 		// REST (D4). It carries the destination address + source→destination
-		// connection auth derived from clusterLink.destinationCredentials (D5).
+		// connection auth derived from clusterLink.destination (D5).
 		if cl.SourceRest == nil {
 			return fmt.Errorf("clusterLink.sourceRest is required for mode %q", manifest.ClusterLinkModeSource)
 		}
@@ -138,7 +135,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		}
 		srcLinkTgt := targets.NewLinkEndpoint(cl.SourceRest.Endpoint, srcRestCreds, srcRestClient)
 
-		destCluster, err := loadMigrateCluster(cmd, "clusterLink.destinationCredentials", cl.DestinationCredentials)
+		destCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.destination", cl.Destination.BootstrapServers, cl.Destination.Credentials)
 		if err != nil {
 			return err
 		}
@@ -149,7 +146,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		rec = mclusterlink.NewSourceInitiated(mclusterlink.Config{
 			LinkName:             cl.Name,
 			Mode:                 manifest.ClusterLinkModeSource,
-			DestBootstrapServers: destCluster.BootstrapServers,
+			DestBootstrapServers: cl.Destination.BootstrapServers,
 			DestAuth:             destAuth,
 			Configs:              linkConfigs,
 		}, src, tgt, srcLinkTgt)
@@ -171,18 +168,18 @@ func resolveLinkConfigs(cl *manifest.ClusterLink) (map[string]string, error) {
 	return cl.ResolvedLinkConfigs()
 }
 
-// loadMigrateCluster loads + validates a flat migrate credentials file, surfacing
-// per-field errors against the given manifest field name.
-func loadMigrateCluster(cmd *cobra.Command, field, path string) (types.OSKClusterAuth, error) {
+// loadMigrateCluster loads + validates a flat migrate credentials file and composes
+// the result with the given bootstrap servers from the manifest into an OSKClusterAuth.
+func loadMigrateCluster(cmd *cobra.Command, field string, bootstrapServers []string, path string) (types.OSKClusterAuth, error) {
 	if path == "" {
-		return types.OSKClusterAuth{}, fmt.Errorf("%s is required", field)
+		return types.OSKClusterAuth{}, fmt.Errorf("%s.credentials is required", field)
 	}
-	cluster, errs := types.LoadMigrateClusterCredentials(path)
+	creds, errs := types.LoadMigrateClusterCredentials(path)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
 		}
-		return types.OSKClusterAuth{}, fmt.Errorf("invalid %s: %d problem(s) found", field, len(errs))
+		return types.OSKClusterAuth{}, fmt.Errorf("invalid %s.credentials: %d problem(s) found", field, len(errs))
 	}
-	return cluster, nil
+	return types.MigrateConn(bootstrapServers, creds), nil
 }

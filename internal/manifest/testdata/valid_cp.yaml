@@ -5,19 +5,21 @@ metadata:
 spec:
   source:
     type: apache-kafka
+    bootstrapServers: ["broker1:9092"]
     credentials: ./source-creds.yaml
   target:
     type: confluent-platform
     credentials: ./target-creds.yaml
     kafka:
       restEndpoint: https://broker1:8090
-      bootstrapServers: ["broker1:9092"]
     schemaRegistry:
       url: https://sr.internal:8081
   clusterLink:
     name: source-to-cp
     mode: destination
-    sourceCredentials: ./source-creds.yaml
+    source:
+      bootstrapServers: ["broker1:9092"]
+      credentials: ./source-creds.yaml
   topics:
     mode: mirror
     include: ["orders.*"]

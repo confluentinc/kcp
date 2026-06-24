@@ -48,14 +48,16 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	dir := t.TempDir()
 	targetCreds := filepath.Join(dir, "target.yaml")
 	require.NoError(t, os.WriteFile(targetCreds, []byte("basic:\n  username: admin\n  password: admin-secret\n"), 0600))
+	// Auth-only creds file: no bootstrap_servers (address is in the manifest).
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte(
-		"bootstrap_servers: [\"source:29092\"]\nauth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
-	manifest := filepath.Join(dir, "migration.yaml")
-	require.NoError(t, os.WriteFile(manifest, []byte(
-		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n  source:\n    type: apache-kafka\n    credentials: "+sourceCreds+
-			"\n  target:\n    type: confluent-platform\n    credentials: "+targetCreds+
-			"\n    kafka:\n      restEndpoint: "+srvURL+"\n      bootstrapServers: [\"dest:29092\"]\n  clusterLink:\n    name: src-to-dest\n    sourceCredentials: "+sourceCreds+"\n"), 0600))
+		"auth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
+	mf := filepath.Join(dir, "migration.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-platform\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+srvURL+"\n"+
+			"  clusterLink:\n    name: src-to-dest\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"), 0600))
 
 	old := newSourceReader
 	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return staticSource("src-1") }
@@ -64,7 +66,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	var outBuf, errBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
-	args := []string{"-f", manifest}
+	args := []string{"-f", mf}
 	if dryRun {
 		args = append(args, "--dry-run")
 	}
@@ -147,20 +149,22 @@ func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
 	require.NoError(t, os.WriteFile(targetCreds, []byte("basic:\n  username: admin\n  password: admin-secret\n"), 0600))
 	srcRestCreds := filepath.Join(dir, "srcrest.yaml")
 	require.NoError(t, os.WriteFile(srcRestCreds, []byte("basic:\n  username: src\n  password: src-secret\n"), 0600))
+	// Auth-only creds files: no bootstrap_servers (addresses are in the manifest).
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte(
-		"bootstrap_servers: [\"source:29092\"]\nauth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
+		"auth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
 	destCreds := filepath.Join(dir, "dest.yaml")
 	require.NoError(t, os.WriteFile(destCreds, []byte(
-		"bootstrap_servers: [\"dest:29092\"]\nauth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
+		"auth_method:\n  unauthenticated_plaintext:\n    use: true\n"), 0600))
 
 	mf := filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(mf, []byte(
-		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n  source:\n    type: confluent-platform\n    credentials: "+sourceCreds+
-			"\n  target:\n    type: confluent-platform\n    credentials: "+targetCreds+
-			"\n    kafka:\n      restEndpoint: "+destSrv.URL+"\n      bootstrapServers: [\"dest:29092\"]\n"+
-			"  clusterLink:\n    name: src-to-dest\n    mode: source\n    destinationCredentials: "+destCreds+
-			"\n    sourceRest:\n      endpoint: "+srcSrv.URL+"\n      credentials: "+srcRestCreds+"\n"), 0600))
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: confluent-platform\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-platform\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+destSrv.URL+"\n"+
+			"  clusterLink:\n    name: src-to-dest\n    mode: source\n"+
+			"    destination:\n      bootstrapServers: [\"dest:29092\"]\n      credentials: "+destCreds+"\n"+
+			"    sourceRest:\n      endpoint: "+srcSrv.URL+"\n      credentials: "+srcRestCreds+"\n"), 0600))
 
 	old := newSourceReader
 	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return staticSource("src-1") }

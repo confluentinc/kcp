@@ -59,8 +59,9 @@ type Spec struct {
 }
 
 type Source struct {
-	Type        string `yaml:"type" json:"type"`
-	Credentials string `yaml:"credentials" json:"credentials"`
+	Type             string   `yaml:"type" json:"type"`
+	BootstrapServers []string `yaml:"bootstrapServers" json:"bootstrapServers"`
+	Credentials      string   `yaml:"credentials" json:"credentials"`
 }
 
 type Target struct {
@@ -73,12 +74,18 @@ type Target struct {
 }
 
 type TargetKafka struct {
-	RestEndpoint     string   `yaml:"restEndpoint" json:"restEndpoint"`
-	BootstrapServers []string `yaml:"bootstrapServers,omitempty" json:"bootstrapServers,omitempty"`
+	RestEndpoint string `yaml:"restEndpoint" json:"restEndpoint"`
 }
 
 type Endpoint struct {
 	URL string `yaml:"url" json:"url"`
+}
+
+// KafkaConn is a Kafka connection: a bootstrap address plus the auth-only
+// credentials file used to reach it. Parallels RestRef for REST endpoints.
+type KafkaConn struct {
+	BootstrapServers []string `yaml:"bootstrapServers" json:"bootstrapServers"`
+	Credentials      string   `yaml:"credentials" json:"credentials"`
 }
 
 type ClusterLink struct {
@@ -86,14 +93,12 @@ type ClusterLink struct {
 	// Mode is the cluster-link mode: "destination" (default) or "source".
 	// Empty is treated as "destination".
 	Mode string `yaml:"mode" json:"mode"`
-	// SourceCredentials is the path to an apache-kafka credentials file: the
-	// link→source credentials used in destination mode.
-	SourceCredentials string `yaml:"sourceCredentials" json:"sourceCredentials"`
+	// Source is the link→source connection in destination mode (D2).
+	Source *KafkaConn `yaml:"source,omitempty" json:"source,omitempty"`
 	// SourceRest is the KCP→source REST endpoint for source-initiated mode.
 	SourceRest *RestRef `yaml:"sourceRest,omitempty" json:"sourceRest,omitempty"`
-	// DestinationCredentials is the path to an apache-kafka credentials file: the
-	// source-side link→destination credentials used in source mode.
-	DestinationCredentials string `yaml:"destinationCredentials,omitempty" json:"destinationCredentials,omitempty"`
+	// Destination is the source-side link→destination connection in source mode (D5).
+	Destination *KafkaConn `yaml:"destination,omitempty" json:"destination,omitempty"`
 	// Prefix maps to the link config cluster.link.prefix. When set, mirror topic
 	// names become prefix+sourceName (immutable once the link exists).
 	Prefix             string              `yaml:"prefix,omitempty" json:"prefix,omitempty"`

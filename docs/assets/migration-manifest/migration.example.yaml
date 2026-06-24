@@ -8,7 +8,8 @@ metadata:
 spec:
   source:
     type: apache-kafka
-    credentials: ./source-creds.yaml      # external file; no secrets in this manifest
+    bootstrapServers: ["broker1:9092", "broker2:9092"]   # source Kafka address (not a secret)
+    credentials: ./source-creds.yaml                     # auth-only; no secrets in this manifest
 
   target:
     type: confluent-cloud                  # or: confluent-platform
@@ -18,7 +19,9 @@ spec:
   clusterLink:
     name: source-to-cc
     mode: destination                      # destination (default) | source
-    sourceCredentials: ./source-creds.yaml # link→source credentials (destination mode)
+    source:                                # link→source Kafka connection (destination mode)
+      bootstrapServers: ["broker1:9092"]   # link dials this address
+      credentials: ./source-creds.yaml    # auth-only credentials for the link
     # prefix: "clusterA."                  # optional; cluster.link.prefix — mirror names become prefix+source (immutable once created)
     consumerOffsetSync:                    # migrate consumer offsets (enabled by default)
       enable: true
@@ -29,12 +32,14 @@ spec:
     #   intervalMs: 30000                  # optional; omit for server default
     # Source-initiated alternative — for a private/firewalled Confluent source the
     # destination cannot reach inbound (requires spec.source.type: confluent-platform).
-    # Replace the two lines above with:
+    # Replace the clusterLink block above with:
     #   mode: source
     #   sourceRest:                              # KCP → source REST (creates the source-side link)
     #     endpoint: https://source:8090
     #     credentials: ./source-rest-creds.yaml
-    #   destinationCredentials: ./dest-creds.yaml # source-side link → destination
+    #   destination:                             # source-side link → destination Kafka
+    #     bootstrapServers: ["dest:9092"]
+    #     credentials: ./dest-creds.yaml
 
   topics:
     mode: mirror

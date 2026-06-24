@@ -53,6 +53,7 @@ metadata:
 spec:
   source:
     type: apache-kafka
+    bootstrapServers: ["b:9092"]
     credentials: ./s.yaml
   target:
     type: confluent-cloud
@@ -60,7 +61,9 @@ spec:
     credentials: ./t.yaml
   clusterLink:
     name: l
-    sourceCredentials: ./s.yaml
+    source:
+      bootstrapServers: ["b:9092"]
+      credentials: ./s.yaml
     prefix: "clusterA."
     consumerOffsetSync:
       enable: false
@@ -74,7 +77,11 @@ spec:
 `
 	m, err := Parse([]byte(src))
 	require.NoError(t, err)
+	require.Equal(t, []string{"b:9092"}, m.Spec.Source.BootstrapServers)
 	cl := m.Spec.ClusterLink
+	require.NotNil(t, cl.Source)
+	require.Equal(t, []string{"b:9092"}, cl.Source.BootstrapServers)
+	require.Equal(t, "./s.yaml", cl.Source.Credentials)
 	require.Equal(t, "clusterA.", cl.Prefix)
 	require.NotNil(t, cl.ConsumerOffsetSync)
 	require.NotNil(t, cl.ConsumerOffsetSync.Enable)

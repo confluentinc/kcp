@@ -66,7 +66,7 @@ func TestGenerate_AllRequiredSets(t *testing.T) {
 	require.ElementsMatch(t, []any{"apiVersion", "kind", "metadata", "spec"}, requiredOf(doc))
 	require.ElementsMatch(t, []any{"name"}, requiredOf(p["metadata"].(map[string]any)))
 	require.ElementsMatch(t, []any{"source", "target"}, requiredOf(p["spec"].(map[string]any)))
-	require.ElementsMatch(t, []any{"type", "credentials"}, requiredOf(spec["source"].(map[string]any)))
+	require.ElementsMatch(t, []any{"type", "bootstrapServers", "credentials"}, requiredOf(spec["source"].(map[string]any)))
 	require.ElementsMatch(t, []any{"type", "credentials"}, requiredOf(spec["target"].(map[string]any)))
 	require.ElementsMatch(t, []any{"restEndpoint"}, requiredOf(target["kafka"].(map[string]any)))
 	require.ElementsMatch(t, []any{"mode", "include"}, requiredOf(spec["topics"].(map[string]any)))

@@ -32,12 +32,22 @@
                 "confluent-platform"
               ]
             },
+            "bootstrapServers": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
             "credentials": {
               "type": "string"
             }
           },
           "required": [
             "type",
+            "bootstrapServers",
             "credentials"
           ],
           "additionalProperties": false
@@ -66,15 +76,6 @@
               "properties": {
                 "restEndpoint": {
                   "type": "string"
-                },
-                "bootstrapServers": {
-                  "type": [
-                    "null",
-                    "array"
-                  ],
-                  "items": {
-                    "type": "string"
-                  }
                 }
               },
               "required": [
@@ -135,8 +136,30 @@
                 "source"
               ]
             },
-            "sourceCredentials": {
-              "type": "string"
+            "source": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "bootstrapServers": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "credentials": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "bootstrapServers",
+                "credentials"
+              ],
+              "additionalProperties": false
             },
             "sourceRest": {
               "type": [
@@ -157,8 +180,30 @@
               ],
               "additionalProperties": false
             },
-            "destinationCredentials": {
-              "type": "string"
+            "destination": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "bootstrapServers": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "credentials": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "bootstrapServers",
+                "credentials"
+              ],
+              "additionalProperties": false
             },
             "prefix": {
               "type": "string"
@@ -236,8 +281,7 @@
           },
           "required": [
             "name",
-            "mode",
-            "sourceCredentials"
+            "mode"
           ],
           "additionalProperties": false
         },
