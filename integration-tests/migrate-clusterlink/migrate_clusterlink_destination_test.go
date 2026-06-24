@@ -45,6 +45,7 @@ func writeDestManifest(t *testing.T, dir string, c destCase) (manifestPath, link
 		"spec:\n" +
 		"  source:\n" +
 		"    type: apache-kafka\n" +
+		"    bootstrapServers: [\"" + c.d1.bootstrap + "\"]\n" +
 		"    credentials: " + srcCreds + "\n" +
 		"  target:\n" +
 		"    type: confluent-platform\n" +
@@ -54,7 +55,9 @@ func writeDestManifest(t *testing.T, dir string, c destCase) (manifestPath, link
 		"  clusterLink:\n" +
 		"    name: " + linkName + "\n" +
 		"    mode: destination\n" +
-		"    sourceCredentials: " + linkSrcCreds + "\n"
+		"    source:\n" +
+		"      bootstrapServers: [\"" + c.d2.bootstrap + "\"]\n" +
+		"      credentials: " + linkSrcCreds + "\n"
 
 	manifestPath = filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(manifest), 0600))
@@ -166,11 +169,11 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 	manifestFor := func(intervalMs string) string {
 		return "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n" +
 			"metadata:\n  name: mcl-" + link + "\n" +
-			"spec:\n  source:\n    type: apache-kafka\n    credentials: " + srcCreds + "\n" +
+			"spec:\n  source:\n    type: apache-kafka\n    bootstrapServers: [\"localhost:19092\"]\n    credentials: " + srcCreds + "\n" +
 			"  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n" +
 			"    kafka:\n      restEndpoint: " + restDest.baseURL + "\n" +
 			"  clusterLink:\n    name: " + link + "\n    mode: destination\n" +
-			"    sourceCredentials: " + linkCreds + "\n" +
+			"    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: " + linkCreds + "\n" +
 			"    prefix: \"mig.\"\n" +
 			"    consumerOffsetSync:\n      enable: true\n      intervalMs: " + intervalMs + "\n"
 	}

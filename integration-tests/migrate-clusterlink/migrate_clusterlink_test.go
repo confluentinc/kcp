@@ -126,8 +126,7 @@ func (a kafkaAuth) authMethodYAML() string {
 // writeKafkaCreds writes a flat single-cluster migrate credentials file.
 func writeKafkaCreds(t *testing.T, path string, a kafkaAuth) {
 	t.Helper()
-	body := "bootstrap_servers: [\"" + a.bootstrap + "\"]\n" + a.authMethodYAML()
-	require.NoError(t, os.WriteFile(path, []byte(body), 0600))
+	require.NoError(t, os.WriteFile(path, []byte(a.authMethodYAML()), 0600))
 }
 
 // ---------------------------------------------------------------------------

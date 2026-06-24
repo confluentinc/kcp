@@ -63,6 +63,7 @@ func writeSourceManifest(t *testing.T, dir string, c sourceCase) (manifestPath, 
 		"spec:\n" +
 		"  source:\n" +
 		"    type: confluent-platform\n" +
+		"    bootstrapServers: [\"" + c.d1.bootstrap + "\"]\n" +
 		"    credentials: " + srcCreds + "\n" +
 		"  target:\n" +
 		"    type: confluent-platform\n" +
@@ -75,7 +76,9 @@ func writeSourceManifest(t *testing.T, dir string, c sourceCase) (manifestPath, 
 		"    sourceRest:\n" +
 		"      endpoint: " + c.migrationSourceREST.baseURL + "\n" +
 		"      credentials: " + srcRestCreds + "\n" +
-		"    destinationCredentials: " + destConnCreds + "\n"
+		"    destination:\n" +
+		"      bootstrapServers: [\"" + c.d5.bootstrap + "\"]\n" +
+		"      credentials: " + destConnCreds + "\n"
 
 	manifestPath = filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(manifest), 0600))
