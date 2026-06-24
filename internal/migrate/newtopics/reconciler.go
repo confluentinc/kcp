@@ -6,6 +6,7 @@ package newtopics
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/confluentinc/kcp/internal/migrate"
@@ -130,7 +131,15 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		summary := fmt.Sprintf("topic %q", name)
 		if _, ok := existing[name]; ok {
 			if hasPC {
-				if actual, err := pc.PartitionCount(ctx, name); err == nil && actual != spec.Partitions {
+				actual, err := pc.PartitionCount(ctx, name)
+				switch {
+				case err != nil:
+					// Non-fatal: a failed count read must not abort the plan. Report
+					// the topic as present, but surface the failure so a swallowed
+					// drift signal isn't silent.
+					slog.Warn("could not read target partition count; treating topic as present without drift check",
+						"topic", name, "error", err)
+				case actual != spec.Partitions:
 					steps = append(steps, topicStep{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
 						Detail: fmt.Sprintf("target has %d partitions, manifest expects %d", actual, spec.Partitions)}})
 					continue

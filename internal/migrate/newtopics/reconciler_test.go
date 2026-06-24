@@ -221,6 +221,32 @@ func TestPlan_NoPartitionCounter(t *testing.T) {
 	}
 }
 
+// TestPlan_PartitionCountError: when the partitionCounter read fails for an
+// existing topic, the failure is non-fatal and the topic is reported Present
+// (no drift fabricated from an unknown count).
+func TestPlan_PartitionCountError(t *testing.T) {
+	src := &fakeSource{
+		topics: []string{"legacy"},
+		specs: []migrate.TopicSpec{
+			{Name: "legacy", Partitions: 12, ReplicationFactor: 3},
+		},
+	}
+	tgt := &fakePCTarget{
+		fakeTarget: fakeTarget{clusterID: "cc-1", topics: []string{"legacy"}},
+		pcErr:      map[string]error{"legacy": errStub("count read failed")},
+	}
+	r := New(Config{Include: []string{"*"}}, src, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	got := summaryActions(p.Changes())
+	if act, ok := got[`topic "legacy"`]; !ok || act != reconcile.ActionPresent {
+		t.Errorf("legacy: want Present (partition count read errored → non-fatal), got %v (present=%v)", act, ok)
+	}
+}
+
 // TestPlan_EmptyDesiredSet: no topic matches the include glob → plan Empty.
 func TestPlan_EmptyDesiredSet(t *testing.T) {
 	src := &fakeSource{topics: []string{"orders", "_schemas"}}
