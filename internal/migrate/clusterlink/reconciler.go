@@ -20,6 +20,7 @@ package clusterlink
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -42,6 +43,7 @@ type target interface {
 	ClusterID(ctx context.Context) (string, error)
 	GetClusterLink(ctx context.Context, name string) (*svclink.ClusterLink, error)
 	CreateClusterLink(ctx context.Context, name string, req svclink.CreateClusterLinkRequest) error
+	GetClusterLinkConfigs(ctx context.Context, name string) (map[string]string, error)
 }
 
 // Config is the desired link, derived from the manifest + credentials.
@@ -185,6 +187,9 @@ func (r *Reconciler) planDestination(ctx context.Context, sourceID string) (reco
 		// Present: the link matches the desired source, OR the target did not
 		// report a source id (older CP) so we cannot prove drift — treat as
 		// present rather than fabricate drift (both are non-mutating anyway).
+		if detail := r.configDrift(ctx, r.tgt, r.cfg.LinkName); detail != "" {
+			return plan{steps: []step{{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary, Detail: detail}}}}, nil
+		}
 		return plan{steps: []step{{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}}}}, nil
 	}
 
@@ -248,7 +253,11 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 			onSource: true,
 		})
 	} else {
-		steps = append(steps, step{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: srcSummary}})
+		change := reconcile.Change{Action: reconcile.ActionPresent, Summary: srcSummary}
+		if detail := r.configDrift(ctx, r.srcLinkTgt, r.cfg.LinkName); detail != "" {
+			change = reconcile.Change{Action: reconcile.ActionDrift, Summary: srcSummary, Detail: detail}
+		}
+		steps = append(steps, step{change: change})
 	}
 
 	return plan{steps: steps}, nil
@@ -270,6 +279,33 @@ func (r *Reconciler) destinationLinkRequest(sourceID string) (*svclink.CreateClu
 		SourceTLS:              tls,
 		Configs:                r.cfg.Configs,
 	}, nil
+}
+
+// configDrift returns a non-empty detail string when any desired config key
+// differs from the link's live value. Only desired keys are compared (the link
+// returns every default; unmanaged keys are ignored). A read error is treated as
+// "no drift": a transient read must not fabricate drift, and source-identity
+// drift (checked separately) is the authoritative signal.
+func (r *Reconciler) configDrift(ctx context.Context, tgt target, name string) string {
+	if len(r.cfg.Configs) == 0 {
+		return ""
+	}
+	live, err := tgt.GetClusterLinkConfigs(ctx, name)
+	if err != nil {
+		return ""
+	}
+	keys := make([]string, 0, len(r.cfg.Configs))
+	for k := range r.cfg.Configs {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var diffs []string
+	for _, k := range keys {
+		if live[k] != r.cfg.Configs[k] {
+			diffs = append(diffs, fmt.Sprintf("%s: link has %q, manifest expects %q", k, live[k], r.cfg.Configs[k]))
+		}
+	}
+	return strings.Join(diffs, "; ")
 }
 
 func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Outcome, error) {

@@ -21,6 +21,7 @@ type fakeTarget struct {
 	existing    *svclink.ClusterLink
 	createdReq  *svclink.CreateClusterLinkRequest
 	createdName string
+	liveConfigs map[string]string
 }
 
 func (f *fakeTarget) ClusterID(context.Context) (string, error) { return f.clusterID, nil }
@@ -31,6 +32,9 @@ func (f *fakeTarget) CreateClusterLink(_ context.Context, name string, req svcli
 	f.createdName = name
 	f.createdReq = &req
 	return nil
+}
+func (f *fakeTarget) GetClusterLinkConfigs(context.Context, string) (map[string]string, error) {
+	return f.liveConfigs, nil
 }
 
 func newReconciler(src fakeSource, tgt *fakeTarget) *Reconciler {
@@ -148,12 +152,13 @@ func TestApply_DriftDoesNotCreate(t *testing.T) {
 // recordingTarget records every create (and its order across both clients via
 // the shared *createLog), so source-mode tests can assert ordering + routing.
 type recordingTarget struct {
-	clusterID string
-	existing  *svclink.ClusterLink
-	side      string // "dest" or "src" — tag for the shared log
-	log       *createLog
-	failN     int   // fail the first failN create calls...
-	failErr   error // ...with this error (simulates a transient)
+	clusterID   string
+	existing    *svclink.ClusterLink
+	side        string // "dest" or "src" — tag for the shared log
+	log         *createLog
+	failN       int   // fail the first failN create calls...
+	failErr     error // ...with this error (simulates a transient)
+	liveConfigs map[string]string
 }
 
 type createEntry struct {
@@ -175,6 +180,9 @@ func (t *recordingTarget) CreateClusterLink(_ context.Context, name string, req 
 	}
 	t.log.entries = append(t.log.entries, createEntry{side: t.side, name: name, req: req})
 	return nil
+}
+func (t *recordingTarget) GetClusterLinkConfigs(context.Context, string) (map[string]string, error) {
+	return t.liveConfigs, nil
 }
 
 func newSourceInitiated(src fakeSource, dest, srcLink *recordingTarget) *Reconciler {
@@ -298,7 +306,8 @@ func TestSourceInitiated_BothPresent_AllPresent(t *testing.T) {
 	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log,
 		existing: &svclink.ClusterLink{LinkName: "src-to-dest"}}
 	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log,
-		existing: &svclink.ClusterLink{LinkName: "src-to-dest"}}
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest"},
+		liveConfigs: map[string]string{"consumer.offset.sync.enable": "true"}}
 	r := newSourceInitiated(fakeSource{id: "src-1"}, dest, srcLink)
 
 	plan, err := r.Plan(context.Background())
@@ -336,7 +345,8 @@ func TestSourceInitiated_OnlySourcePresent_CreatesDestOnly(t *testing.T) {
 	log := &createLog{}
 	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log} // absent
 	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log,
-		existing: &svclink.ClusterLink{LinkName: "src-to-dest"}}
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest"},
+		liveConfigs: map[string]string{"consumer.offset.sync.enable": "true"}}
 	r := newSourceInitiated(fakeSource{id: "src-1"}, dest, srcLink)
 
 	plan, err := r.Plan(context.Background())
@@ -356,4 +366,54 @@ func TestSourceInitiated_CheckPreconditions_RequiresSourceTarget(t *testing.T) {
 	err := r.CheckPreconditions(context.Background())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "source REST")
+}
+
+// --- config drift tests ---
+
+func TestPlan_ConfigDrift_IsDrift(t *testing.T) {
+	tgt := &fakeTarget{clusterID: "dest-1",
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest", SourceClusterID: "src-1"},
+		liveConfigs: map[string]string{"consumer.offset.sync.ms": "30000"}}
+	r := New(Config{
+		LinkName:               "src-to-dest",
+		SourceBootstrapServers: []string{"s:9092"},
+		Auth:                   LinkAuth{SecurityProtocol: "PLAINTEXT"},
+		Configs:                map[string]string{"consumer.offset.sync.ms": "1000"},
+	}, fakeSource{id: "src-1"}, tgt)
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, reconcile.ActionDrift, plan.Changes()[0].Action)
+	require.Contains(t, plan.Changes()[0].Detail, "consumer.offset.sync.ms")
+	require.True(t, plan.Empty(), "config drift must not create")
+}
+
+func TestPlan_ConfigMatches_IsPresent(t *testing.T) {
+	tgt := &fakeTarget{clusterID: "dest-1",
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest", SourceClusterID: "src-1"},
+		liveConfigs: map[string]string{"consumer.offset.sync.ms": "1000", "other": "x"}}
+	r := New(Config{
+		LinkName:               "src-to-dest",
+		SourceBootstrapServers: []string{"s:9092"},
+		Auth:                   LinkAuth{SecurityProtocol: "PLAINTEXT"},
+		Configs:                map[string]string{"consumer.offset.sync.ms": "1000"},
+	}, fakeSource{id: "src-1"}, tgt)
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, reconcile.ActionPresent, plan.Changes()[0].Action)
+}
+
+func TestApply_ConfigDrift_DoesNotAlter(t *testing.T) {
+	tgt := &fakeTarget{clusterID: "dest-1",
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest", SourceClusterID: "src-1"},
+		liveConfigs: map[string]string{"cluster.link.prefix": "old."}}
+	r := New(Config{
+		LinkName: "src-to-dest", SourceBootstrapServers: []string{"s:9092"},
+		Auth:    LinkAuth{SecurityProtocol: "PLAINTEXT"},
+		Configs: map[string]string{"cluster.link.prefix": "new."},
+	}, fakeSource{id: "src-1"}, tgt)
+	plan, _ := r.Plan(context.Background())
+	out, err := r.Apply(context.Background(), plan)
+	require.NoError(t, err)
+	require.Len(t, out.Drift, 1)
+	require.Nil(t, tgt.createdReq, "config drift must never create/alter")
 }
