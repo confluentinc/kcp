@@ -18,7 +18,7 @@ Every connection in the manifest is a uniform `{address, credentials}` pair: Kaf
 sasl_scram: { username: admin, password: secret, mechanism: SHA256, ca_cert: ./ca.pem }
 # or exactly one of:
 # sasl_plain: { username: admin, password: secret }
-# tls: { ca_cert: ./ca.pem, client_cert: ./client.pem, client_key: ./client.key }
+# mtls: { ca_cert: ./ca.pem, client_cert: ./client.pem, client_key: ./client.key }
 # unauthenticated_tls: { ca_cert: ./ca.pem }
 # unauthenticated_plaintext: {}
 insecure_skip_tls_verify: false   # optional; test environments only

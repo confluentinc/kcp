@@ -61,7 +61,7 @@ func TestLoadMigrateClusterCredentials_Plaintext(t *testing.T) {
 }
 
 // TestLoadMigrateClusterCredentials_TLS verifies mTLS top-level block with real temp cert files.
-func TestLoadMigrateClusterCredentials_TLS(t *testing.T) {
+func TestLoadMigrateClusterCredentials_MTLS(t *testing.T) {
 	dir := t.TempDir()
 	ca := filepath.Join(dir, "ca.pem")
 	cert := filepath.Join(dir, "client.crt")
@@ -72,14 +72,14 @@ func TestLoadMigrateClusterCredentials_TLS(t *testing.T) {
 
 	p := filepath.Join(dir, "creds.yaml")
 	require.NoError(t, os.WriteFile(p, []byte(
-		"tls:\n"+
+		"mtls:\n"+
 			"  ca_cert: "+ca+"\n"+
 			"  client_cert: "+cert+"\n"+
 			"  client_key: "+key+"\n"), 0600))
 
 	creds, errs := LoadMigrateClusterCredentials(p)
 	require.Empty(t, errs)
-	require.NotNil(t, creds.TLS)
+	require.NotNil(t, creds.MTLS)
 
 	conn := MigrateConn([]string{"b:9092"}, creds)
 	require.NotNil(t, conn.AuthMethod.TLS)

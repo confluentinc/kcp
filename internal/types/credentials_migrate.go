@@ -25,7 +25,7 @@ import (
 type MigrateClusterCredentials struct {
 	SASLScram                *MigrateSASLScram                `yaml:"sasl_scram,omitempty"`
 	SASLPlain                *MigrateSASLPlain                `yaml:"sasl_plain,omitempty"`
-	TLS                      *MigrateTLS                      `yaml:"tls,omitempty"`
+	MTLS                     *MigrateMTLS                     `yaml:"mtls,omitempty"`
 	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty"`
 	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty"`
@@ -46,8 +46,10 @@ type MigrateSASLPlain struct {
 	CACert   string `yaml:"ca_cert,omitempty"`
 }
 
-// MigrateTLS is the mTLS auth block for migrate credentials (no use: flag).
-type MigrateTLS struct {
+// MigrateMTLS is the mutual-TLS auth block for migrate credentials (client cert +
+// key; no use: flag). The client authenticates with a certificate — distinct from
+// unauthenticated_tls (one-way TLS: server cert only, client not authenticated).
+type MigrateMTLS struct {
 	CACert     string `yaml:"ca_cert,omitempty"`
 	ClientCert string `yaml:"client_cert"`
 	ClientKey  string `yaml:"client_key"`
@@ -72,7 +74,7 @@ func (c MigrateClusterCredentials) methodCount() int {
 	if c.SASLPlain != nil {
 		n++
 	}
-	if c.TLS != nil {
+	if c.MTLS != nil {
 		n++
 	}
 	if c.UnauthenticatedTLS != nil {
@@ -105,12 +107,12 @@ func (c MigrateClusterCredentials) authMethodConfig() AuthMethodConfig {
 			Password: c.SASLPlain.Password,
 			CACert:   c.SASLPlain.CACert,
 		}
-	case c.TLS != nil:
+	case c.MTLS != nil:
 		amc.TLS = &TLSConfig{
 			Use:        true,
-			CACert:     c.TLS.CACert,
-			ClientCert: c.TLS.ClientCert,
-			ClientKey:  c.TLS.ClientKey,
+			CACert:     c.MTLS.CACert,
+			ClientCert: c.MTLS.ClientCert,
+			ClientKey:  c.MTLS.ClientKey,
 		}
 	case c.UnauthenticatedTLS != nil:
 		amc.UnauthenticatedTLS = &UnauthenticatedTLSConfig{
@@ -157,7 +159,7 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 	switch mc.methodCount() {
 	case 0:
 		errs = append(errs, fmt.Errorf(
-			"no authentication method specified (set exactly one of sasl_scram, sasl_plain, tls, unauthenticated_tls, unauthenticated_plaintext)"))
+			"no authentication method specified (set exactly one of sasl_scram, sasl_plain, mtls, unauthenticated_tls, unauthenticated_plaintext)"))
 	default:
 		if mc.methodCount() > 1 {
 			errs = append(errs, fmt.Errorf("multiple authentication methods specified (only one allowed)"))

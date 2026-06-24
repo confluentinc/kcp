@@ -112,7 +112,7 @@ func (a kafkaAuth) authMethodYAML() string {
 		return "unauthenticated_tls: { ca_cert: ./certs/ca.crt }\n" +
 			"insecure_skip_tls_verify: true\n"
 	case authMTLS:
-		return "tls: { ca_cert: ./certs/ca.crt, client_cert: ./certs/client.crt, client_key: ./certs/client.key }\n" +
+		return "mtls: { ca_cert: ./certs/ca.crt, client_cert: ./certs/client.crt, client_key: ./certs/client.key }\n" +
 			"insecure_skip_tls_verify: true\n"
 	}
 	panic("unknown kafka auth kind")
