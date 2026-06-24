@@ -160,6 +160,73 @@
             "destinationCredentials": {
               "type": "string"
             },
+            "prefix": {
+              "type": "string"
+            },
+            "consumerOffsetSync": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "enable": {
+                  "type": [
+                    "null",
+                    "boolean"
+                  ]
+                },
+                "intervalMs": {
+                  "type": "integer"
+                },
+                "groupFilters": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "patternType": {
+                        "type": "string",
+                        "enum": [
+                          "LITERAL",
+                          "PREFIXED"
+                        ]
+                      },
+                      "filterType": {
+                        "type": "string",
+                        "enum": [
+                          "INCLUDE",
+                          "EXCLUDE"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "patternType",
+                      "filterType"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "topicConfigSync": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "intervalMs": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            },
             "configs": {
               "type": "object",
               "additionalProperties": {

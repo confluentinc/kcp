@@ -30,6 +30,13 @@ func Generate() ([]byte, error) {
 	topics.Properties["mode"].Enum = []any{manifest.TopicModeMirror, manifest.TopicModeNew}
 	clusterLink.Properties["mode"].Enum = []any{manifest.ClusterLinkModeDestination, manifest.ClusterLinkModeSource}
 
+	if cos, ok := clusterLink.Properties["consumerOffsetSync"]; ok && cos.Properties != nil {
+		if gf, ok := cos.Properties["groupFilters"]; ok && gf.Items != nil && gf.Items.Properties != nil {
+			gf.Items.Properties["patternType"].Enum = []any{manifest.PatternTypeLiteral, manifest.PatternTypePrefixed}
+			gf.Items.Properties["filterType"].Enum = []any{manifest.FilterTypeInclude, manifest.FilterTypeExclude}
+		}
+	}
+
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return nil, err
