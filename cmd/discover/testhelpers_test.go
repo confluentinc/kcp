@@ -10,6 +10,7 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -126,6 +127,28 @@ func (s *stubEC2Service) DescribeSubnets(ctx context.Context, subnetIds []string
 		return s.describeSubnetsFn(ctx, subnetIds)
 	}
 	return &ec2.DescribeSubnetsOutput{Subnets: []ec2types.Subnet{}}, nil
+}
+
+// ── stubMSKConnectService ──────────────────────────────────────────────────────
+// Implements ClusterDiscovererMSKConnectService (2 methods).
+
+type stubMSKConnectService struct {
+	listConnectorsFn    func(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error)
+	describeConnectorFn func(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error)
+}
+
+func (s *stubMSKConnectService) ListConnectors(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
+	if s.listConnectorsFn != nil {
+		return s.listConnectorsFn(ctx, params, optFns...)
+	}
+	return &kafkaconnect.ListConnectorsOutput{}, nil
+}
+
+func (s *stubMSKConnectService) DescribeConnector(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
+	if s.describeConnectorFn != nil {
+		return s.describeConnectorFn(ctx, params, optFns...)
+	}
+	return &kafkaconnect.DescribeConnectorOutput{}, nil
 }
 
 // ── stubRegionMSKService ───────────────────────────────────────────────────────
