@@ -148,7 +148,7 @@ func TestParseOpts_NoMetrics_NilCreds(t *testing.T) {
 	resetCmdVars()
 	stateFile = writeStateFileWithCluster(t)
 	connectRestURL = "http://localhost:8083"
-	clusterArn = testArn
+	clusterID = testArn
 	useUnauthenticated = true
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
@@ -161,7 +161,7 @@ func TestParseOpts_Jolokia_ResolvesClusterCreds(t *testing.T) {
 	resetCmdVars()
 	stateFile = writeStateFileWithCluster(t)
 	connectRestURL = "http://localhost:8083"
-	clusterArn = testArn
+	clusterID = testArn
 	useUnauthenticated = true
 	metricsSource = "jolokia"
 	metricsDuration = "5m"
@@ -181,7 +181,7 @@ func TestParseOpts_Prometheus_ResolvesClusterCreds(t *testing.T) {
 	resetCmdVars()
 	stateFile = writeStateFileWithCluster(t)
 	connectRestURL = "http://localhost:8083"
-	clusterArn = testArn
+	clusterID = testArn
 	useUnauthenticated = true
 	metricsSource = "prometheus"
 	metricsRange = "7d"
@@ -201,7 +201,7 @@ func TestParseOpts_NoMatchingCluster_ErrorsWithoutSecret(t *testing.T) {
 	resetCmdVars()
 	stateFile = writeStateFileWithCluster(t)
 	connectRestURL = "http://localhost:8083"
-	clusterArn = testArn
+	clusterID = testArn
 	useUnauthenticated = true
 	metricsSource = "jolokia"
 	metricsDuration = "5m"
