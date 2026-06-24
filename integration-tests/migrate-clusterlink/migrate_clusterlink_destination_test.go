@@ -118,7 +118,7 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 			// commit() runs via defer so a cell that fails mid-flight still emits
 			// what it captured, marked FAIL.
 			rep := newDestReporter(c, dir, manifest, linkName, destID)
-			defer rep.commit(t)
+			defer rep.commit(t, poller)
 
 			// dry-run previews a create and changes nothing.
 			out, err := runKCP(t, manifest, "--dry-run")
@@ -134,8 +134,8 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 			require.Contains(t, out, "1 created", out)
 			poller.requireLinkActive(t, destID, linkName)
 
-			// Capture the live ACTIVE proof before deletion.
-			rep.proof(poller)
+			// Capture the live link state before deletion.
+			rep.result(poller)
 
 			// re-apply is an idempotent no-op.
 			out, err = runKCP(t, manifest)
@@ -152,8 +152,8 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 // destination-cell report capture
 // ---------------------------------------------------------------------------
 
-// destProves maps a destination cell to its one-sentence proof statement.
-func destProves(c destCell) string {
+// destChecks maps a destination cell to its one-sentence "what it checks" statement.
+func destChecks(c destCell) string {
 	switch {
 	case strings.HasPrefix(c.name, "D1="):
 		return fmt.Sprintf("KCP reads the source cluster id over a %s connection that a real broker accepts (spec.source.credentials); the destination-initiated link still reaches ACTIVE.", c.d1.kind)
@@ -184,7 +184,7 @@ func newDestReporter(c destCell, dir, manifest, linkName, destID string) *destRe
 		seq:      nextReportSeq(),
 		mode:     "destination",
 		cell:     c.name,
-		proves:   destProves(c),
+		checks:   destChecks(c),
 		manifest: readFileForReport(manifest),
 		creds: []fencedFile{
 			{"D1 source-read", "source-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "source-creds.yaml"))},
@@ -213,9 +213,9 @@ func (r *destReporter) apply(out string) {
 	}
 }
 
-func (r *destReporter) proof(poller restClient) {
+func (r *destReporter) result(poller restClient) {
 	if reportEnabled {
-		r.in.proofs = []proofBlock{{
+		r.in.results = []resultBlock{{
 			label: "link on destination",
 			url:   linkURL(r.target.baseURL, r.destID, r.link),
 			json:  poller.linkJSON(r.destID, r.link),
@@ -229,15 +229,37 @@ func (r *destReporter) reapply(out string) {
 	}
 }
 
-func (r *destReporter) commit(t *testing.T) {
+// commit finalises the section. poller is used for a best-effort live link GET
+// when the cell failed (the link never reached ACTIVE, so result() was never
+// called) so the failure section still shows the observed link state and why.
+func (r *destReporter) commit(t *testing.T, poller restClient) {
 	if !reportEnabled {
 		return
 	}
 	if t.Failed() {
 		r.in.pass = false
-		if r.in.failMsg == "" {
-			r.in.failMsg = "cell failed; see test output. Captured evidence up to the point of failure is shown below."
-		}
+		r.captureFailureState(poller)
 	}
 	collector.add(buildSection(r.in))
+}
+
+// captureFailureState does a best-effort live GET of the link so a failed cell
+// shows the observed state + link_error. Never panics or fails the commit.
+func (r *destReporter) captureFailureState(poller restClient) {
+	state, linkErr := poller.link(r.destID, r.link)
+	if state == "" {
+		r.in.failMsg = fmt.Sprintf("at failure: link %q on %s was not present", r.link, r.destID)
+		r.in.results = []resultBlock{{
+			label: "link on destination (not found)",
+			url:   linkURL(r.target.baseURL, r.destID, r.link),
+			json:  fmt.Sprintf("<link %q not present on %s>", r.link, r.destID),
+		}}
+		return
+	}
+	r.in.failMsg = fmt.Sprintf("at failure: link %q on %s was in state %q (link_error: %q)", r.link, r.destID, state, linkErr)
+	r.in.results = []resultBlock{{
+		label: "link on destination",
+		url:   linkURL(r.target.baseURL, r.destID, r.link),
+		json:  poller.linkJSON(r.destID, r.link),
+	}}
 }

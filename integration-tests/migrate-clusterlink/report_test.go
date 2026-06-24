@@ -20,7 +20,7 @@ import (
 //
 // When KCP_MATRIX_REPORT names a file path, the auth matrix collects a verbose
 // markdown evidence report (manifest + creds + commands + apply output + a live
-// REST proof that the link reached ACTIVE) and writes it after all cells run.
+// REST GET of the resulting link state) and writes it after all cells run.
 //
 // When the env var is unset (CI default) reportEnabled is false and the matrix
 // does ZERO extra work: no captured strings, no extra REST calls. Every capture
@@ -47,7 +47,7 @@ type reportSection struct {
 	seq    int    // global ordering key (stable, navigable output)
 	mode   string // "destination" / "source"
 	cell   string // cell name, e.g. "D2=scram256"
-	proves string // one-sentence "what it proves"
+	checks string // one-sentence "what it checks"
 	result string // "✅ PASS" / "❌ FAIL"
 	body   string // the full markdown section body
 }
@@ -93,17 +93,18 @@ func (rc *reportCollector) render() string {
 	fmt.Fprintf(&b, "Generated %s by the live `kcp migrate` cluster-link auth matrix "+
 		"(`make test-migrate-clusterlink-report`), run against the cp-server brokers in "+
 		"`integration-tests/migrate-clusterlink/docker-compose.yml`. Every row below is a real "+
-		"`kcp migrate apply` against a real broker, with the resulting link confirmed ACTIVE via a "+
-		"live Kafka REST `GET …/links/<name>` captured before the link was deleted.\n\n",
+		"`kcp migrate apply` against a real broker. The **Result** column and each cell's "+
+		"**Result** section show the observed outcome of that run, including a live Kafka REST "+
+		"`GET …/links/<name>` capturing the link state.\n\n",
 		time.Now().Format(time.RFC1123))
 
 	// Summary table.
 	b.WriteString("## Summary\n\n")
-	b.WriteString("| # | Mode | Cell | What it proves | Result |\n")
+	b.WriteString("| # | Mode | Cell | What it checks | Result |\n")
 	b.WriteString("|---|---|---|---|---|\n")
 	for i, s := range secs {
 		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n",
-			i+1, s.mode, mdCell(s.cell), mdCell(s.proves), s.result)
+			i+1, s.mode, mdCell(s.cell), mdCell(s.checks), s.result)
 	}
 	b.WriteString("\n")
 
@@ -135,20 +136,20 @@ type sectionInput struct {
 	seq      int
 	mode     string // "destination" / "source"
 	cell     string // "D2=scram256"
-	proves   string // one-sentence proof statement
+	checks   string // one-sentence "what it checks" statement
 	manifest string // generated migration.yaml content
 	creds    []fencedFile
 	commands []string // literal commands run
 	dryRun   string   // captured dry-run stdout
 	apply    string   // captured apply stdout
-	proofs   []proofBlock
+	results  []resultBlock
 	reapply  string // captured idempotent re-apply stdout
 	pass     bool
 	failMsg  string // failure detail when !pass
 }
 
-// proofBlock is one live REST link GET used as evidence the link is ACTIVE.
-type proofBlock struct {
+// resultBlock is one live REST link GET capturing the observed link state.
+type resultBlock struct {
 	label string // e.g. "INBOUND link on migration-dest"
 	url   string // the GET URL
 	json  string // pretty-printed response body
@@ -163,7 +164,7 @@ func buildSection(in sectionInput) reportSection {
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "## %s · %s\n\n", in.mode, in.cell)
-	fmt.Fprintf(&b, "**What this proves** — %s\n\n", in.proves)
+	fmt.Fprintf(&b, "**What this checks** — %s\n\n", in.checks)
 
 	if !in.pass && in.failMsg != "" {
 		fmt.Fprintf(&b, "**Failure** — %s\n\n", in.failMsg)
@@ -190,9 +191,9 @@ func buildSection(in sectionInput) reportSection {
 		fence(&b, "", in.apply)
 	}
 
-	if len(in.proofs) > 0 {
-		b.WriteString("**Proof — link ACTIVE** (live REST GET, captured after ACTIVE and before deletion)\n\n")
-		for _, p := range in.proofs {
+	if len(in.results) > 0 {
+		b.WriteString("**Result — link state** (live REST `GET`, captured before deletion)\n\n")
+		for _, p := range in.results {
 			fmt.Fprintf(&b, "_%s — `GET %s`_\n\n", p.label, p.url)
 			fence(&b, "json", p.json)
 		}
@@ -209,7 +210,7 @@ func buildSection(in sectionInput) reportSection {
 		seq:    in.seq,
 		mode:   in.mode,
 		cell:   in.cell,
-		proves: in.proves,
+		checks: in.checks,
 		result: result,
 		body:   b.String(),
 	}
@@ -235,7 +236,7 @@ func readFileForReport(path string) string {
 }
 
 // ---------------------------------------------------------------------------
-// live REST proof — only ever called when reportEnabled.
+// live REST link state — only ever called when reportEnabled.
 // ---------------------------------------------------------------------------
 
 // linkURL is the canonical link GET path for a cluster/name.

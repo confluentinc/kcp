@@ -149,7 +149,7 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 			// commit() runs via defer so a cell that fails mid-flight still emits
 			// what it captured, marked FAIL.
 			rep := newSourceReporter(c, dir, manifest, linkName, destID, srcID)
-			defer rep.commit(t)
+			defer rep.commit(t, destPoller, srcPoller)
 
 			// dry-run previews two creates and changes nothing.
 			out, err := runKCP(t, manifest, "--dry-run")
@@ -167,9 +167,9 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 			destPoller.requireLinkActive(t, destID, linkName)
 			srcPoller.requireLinkActive(t, srcID, linkName)
 
-			// Capture both live ACTIVE proofs (INBOUND on dest, OUTBOUND on
+			// Capture both live link states (INBOUND on dest, OUTBOUND on
 			// source) before deletion.
-			rep.proof(destPoller, srcPoller)
+			rep.result(destPoller, srcPoller)
 
 			// re-apply is an idempotent no-op for both sides.
 			out, err = runKCP(t, manifest)
@@ -188,8 +188,8 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 // source-cell report capture
 // ---------------------------------------------------------------------------
 
-// sourceProves maps a source cell to its one-sentence proof statement.
-func sourceProves(c sourceCell) string {
+// sourceChecks maps a source cell to its one-sentence "what it checks" statement.
+func sourceChecks(c sourceCell) string {
 	switch {
 	case c.name == "baseline":
 		return "Source-initiated migration creates both the INBOUND link (on the migration-dest, target REST) and the OUTBOUND link (on the migration-source REST); both reach ACTIVE."
@@ -226,7 +226,7 @@ func newSourceReporter(c sourceCell, dir, manifest, linkName, destID, srcID stri
 		seq:      nextReportSeq(),
 		mode:     "source",
 		cell:     c.name,
-		proves:   sourceProves(c),
+		checks:   sourceChecks(c),
 		manifest: readFileForReport(manifest),
 		creds: []fencedFile{
 			{"D1 source-read", "source-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "source-creds.yaml"))},
@@ -257,9 +257,9 @@ func (r *sourceReporter) apply(out string) {
 	}
 }
 
-func (r *sourceReporter) proof(destPoller, srcPoller restClient) {
+func (r *sourceReporter) result(destPoller, srcPoller restClient) {
 	if reportEnabled {
-		r.in.proofs = []proofBlock{
+		r.in.results = []resultBlock{
 			{
 				label: "INBOUND link on migration-dest",
 				url:   linkURL(r.destREST.baseURL, r.destID, r.link),
@@ -280,15 +280,48 @@ func (r *sourceReporter) reapply(out string) {
 	}
 }
 
-func (r *sourceReporter) commit(t *testing.T) {
+// commit finalises the section. The pollers are used for a best-effort live GET
+// of each link when the cell failed (neither link reached ACTIVE, so result()
+// was never called) so the failure section still shows the observed link states
+// and why.
+func (r *sourceReporter) commit(t *testing.T, destPoller, srcPoller restClient) {
 	if !reportEnabled {
 		return
 	}
 	if t.Failed() {
 		r.in.pass = false
-		if r.in.failMsg == "" {
-			r.in.failMsg = "cell failed; see test output. Captured evidence up to the point of failure is shown below."
-		}
+		r.captureFailureState(destPoller, srcPoller)
 	}
 	collector.add(buildSection(r.in))
+}
+
+// captureFailureState does a best-effort live GET of both links so a failed cell
+// shows the observed state + link_error of each. Never panics or fails the commit.
+func (r *sourceReporter) captureFailureState(destPoller, srcPoller restClient) {
+	inbound := failureResultBlock("INBOUND link on migration-dest", destPoller, r.destREST.baseURL, r.destID, r.link)
+	outbound := failureResultBlock("OUTBOUND link on migration-source", srcPoller, r.srcREST.baseURL, r.srcID, r.link)
+	r.in.results = []resultBlock{inbound.block, outbound.block}
+	r.in.failMsg = inbound.msg + "; " + outbound.msg
+}
+
+// failureResultBlock GETs one link and returns a result block plus a one-line
+// description of its observed state for the failure message.
+type failureResult struct {
+	block resultBlock
+	msg   string
+}
+
+func failureResultBlock(label string, poller restClient, baseURL, clusterID, name string) failureResult {
+	url := linkURL(baseURL, clusterID, name)
+	state, linkErr := poller.link(clusterID, name)
+	if state == "" {
+		return failureResult{
+			block: resultBlock{label: label + " (not found)", url: url, json: fmt.Sprintf("<link %q not present on %s>", name, clusterID)},
+			msg:   fmt.Sprintf("at failure: link %q on %s was not present", name, clusterID),
+		}
+	}
+	return failureResult{
+		block: resultBlock{label: label, url: url, json: poller.linkJSON(clusterID, name)},
+		msg:   fmt.Sprintf("at failure: link %q on %s was in state %q (link_error: %q)", name, clusterID, state, linkErr),
+	}
 }
