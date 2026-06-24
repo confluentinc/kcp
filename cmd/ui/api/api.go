@@ -25,7 +25,7 @@ type ReportService interface {
 	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
 	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -118,7 +118,10 @@ func (ui *UI) Run() error {
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
-	e.GET("/metrics/osk/:clusterId/connect", ui.handleGetOSKConnectMetrics)
+	// Connect is Kafka-distribution agnostic — one route serves both MSK and OSK.
+	// The literal "connect" first segment avoids shadowing by the static "osk" node
+	// and the "/metrics/:region/:cluster" param route.
+	e.GET("/metrics/connect/:sourceType", ui.handleGetConnectMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -261,9 +264,11 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	return c.JSON(http.StatusOK, filteredMetrics)
 }
 
-func (ui *UI) handleGetOSKConnectMetrics(c echo.Context) error {
-	clusterId := c.Param("clusterId")
-
+// handleGetConnectMetrics serves self-managed Connect metrics for either an MSK or OSK
+// cluster. sourceType is an explicit path param ({msk, osk}); clusterId is a query param
+// (OSK cluster id, or an MSK ARN URL-encoded by the client). The filter searches only the
+// named source set, so a cluster id never resolves across source types.
+func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 	state, err := ui.getStateBySession(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -272,9 +277,19 @@ func (ui *UI) handleGetOSKConnectMetrics(c echo.Context) error {
 		})
 	}
 
-	if state.OSKSources == nil {
-		return c.JSON(http.StatusNotFound, map[string]any{
-			"error": "No OSK sources in state",
+	sourceType := c.Param("sourceType")
+	if sourceType != "msk" && sourceType != "osk" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid source type",
+			"message": fmt.Sprintf("source type %q is not supported (must be 'msk' or 'osk')", sourceType),
+		})
+	}
+
+	clusterId := c.QueryParam("clusterId")
+	if clusterId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Missing cluster identifier",
+			"message": "clusterId query parameter is required",
 		})
 	}
 
@@ -288,7 +303,7 @@ func (ui *UI) handleGetOSKConnectMetrics(c echo.Context) error {
 
 	processedState := ui.reportService.ProcessState(*state)
 
-	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, startTime, endTime)
+	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, startTime, endTime)
 	if err != nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
 			"error":   "Cluster not found or no Connect metrics available",

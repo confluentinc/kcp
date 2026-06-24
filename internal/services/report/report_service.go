@@ -330,29 +330,31 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState ProcessedState, 
 	}, nil
 }
 
-// FilterConnectMetrics filters Connect metrics for an OSK cluster by cluster ID and date range
-func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
-	var targetCluster *ProcessedOSKCluster
+// FilterConnectMetrics filters self-managed Connect metrics for a cluster by cluster ID and
+// date range. Connect is Kafka-distribution agnostic, so the same metrics live on the shared
+// KafkaAdminClientInformation for both MSK and OSK clusters; sourceType selects which source set
+// to search (and which identifier to match: MSK by ARN, OSK by cluster ID). Each branch searches
+// only its own source set, so a cluster identifier never resolves across source types.
+func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+	var adminInfo *types.KafkaAdminClientInformation
 
-	for _, source := range processedState.Sources {
-		if source.Type == types.SourceTypeOSK && source.OSKData != nil {
-			for _, cluster := range source.OSKData.Clusters {
-				if strings.EqualFold(cluster.ID, clusterID) {
-					targetCluster = &cluster
-					break
-				}
-			}
-		}
-		if targetCluster != nil {
-			break
-		}
+	// Dispatch to the matching source set only — this is what structurally prevents
+	// a cluster identifier resolving across source types. Mirrors the dispatcher
+	// shape of FilterClusterMetrics.
+	switch sourceType {
+	case "osk":
+		adminInfo = findOSKConnectAdminInfo(processedState, clusterID)
+	case "msk":
+		adminInfo = findMSKConnectAdminInfo(processedState, clusterID)
+	default:
+		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk' or 'osk')", sourceType)
 	}
 
-	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found in OSK sources", clusterID)
+	if adminInfo == nil {
+		return nil, fmt.Errorf("cluster '%s' not found in %s sources", clusterID, sourceType)
 	}
 
-	smc := targetCluster.KafkaAdminClientInformation.SelfManagedConnectors
+	smc := adminInfo.SelfManagedConnectors
 	if smc == nil || smc.Metrics == nil {
 		// No Connect metrics collected for this cluster — the handler detects
 		// the nil Metrics slice and returns a "no metrics" response.
@@ -371,6 +373,42 @@ func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clu
 		Aggregates: aggregates,
 		QueryInfo:  smc.Metrics.QueryInfo,
 	}, nil
+}
+
+// findOSKConnectAdminInfo returns the admin-client info for the OSK cluster matching
+// clusterID (by cluster ID), or nil if no OSK cluster matches.
+func findOSKConnectAdminInfo(processedState ProcessedState, clusterID string) *types.KafkaAdminClientInformation {
+	for _, source := range processedState.Sources {
+		if source.Type != types.SourceTypeOSK || source.OSKData == nil {
+			continue
+		}
+		for _, cluster := range source.OSKData.Clusters {
+			if strings.EqualFold(cluster.ID, clusterID) {
+				info := cluster.KafkaAdminClientInformation
+				return &info
+			}
+		}
+	}
+	return nil
+}
+
+// findMSKConnectAdminInfo returns the admin-client info for the MSK cluster matching
+// clusterID (by ARN), or nil if no MSK cluster matches.
+func findMSKConnectAdminInfo(processedState ProcessedState, clusterID string) *types.KafkaAdminClientInformation {
+	for _, source := range processedState.Sources {
+		if source.Type != types.SourceTypeMSK || source.MSKData == nil {
+			continue
+		}
+		for _, region := range source.MSKData.Regions {
+			for _, cluster := range region.Clusters {
+				if strings.EqualFold(cluster.Arn, clusterID) {
+					info := cluster.KafkaAdminClientInformation
+					return &info
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // filterMetrics filters the processed state by region, cluster, and date range

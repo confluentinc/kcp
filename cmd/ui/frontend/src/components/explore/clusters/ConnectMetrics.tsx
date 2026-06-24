@@ -17,6 +17,7 @@ import type { ApiMetadata } from '@/types/api/common'
 
 interface ConnectMetricsProps {
   clusterId: string
+  sourceType: 'msk' | 'osk'
   connectMetricsMetadata?: {
     start_date?: string
     end_date?: string
@@ -27,6 +28,7 @@ interface ConnectMetricsProps {
 
 export const ConnectMetrics = ({
   clusterId,
+  sourceType,
   connectMetricsMetadata,
 }: ConnectMetricsProps) => {
   const [startDate, setStartDate] = useState<Date | undefined>(undefined)
@@ -35,6 +37,7 @@ export const ConnectMetrics = ({
 
   const { metricsResponse, isLoading, error } = useConnectMetricsFetch({
     clusterId,
+    sourceType,
     startDate,
     endDate,
   })

@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,8 +16,16 @@ import (
 	"github.com/labstack/echo/v4"
 )
 
-// mockReportService satisfies the ReportService interface for testing
-type mockReportService struct{}
+// mockReportService satisfies the ReportService interface for testing.
+// The connect* fields configure FilterConnectMetrics and capture the args it was
+// called with, so handler tests can assert source-type/cluster-id passthrough.
+type mockReportService struct {
+	connectMetrics        *types.ConnectClusterMetrics
+	connectErr            error
+	connectCalled         bool
+	lastConnectClusterID  string
+	lastConnectSourceType string
+}
 
 func (m *mockReportService) ProcessState(state types.State) report.ProcessedState {
 	return report.ProcessedState{}
@@ -34,8 +43,11 @@ func (m *mockReportService) FilterClusterMetrics(processedState report.Processed
 	return nil, nil
 }
 
-func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
-	return nil, nil
+func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+	m.connectCalled = true
+	m.lastConnectClusterID = clusterID
+	m.lastConnectSourceType = sourceType
+	return m.connectMetrics, m.connectErr
 }
 
 func newTestUI() *UI {
@@ -298,5 +310,151 @@ func TestGetState_NoStateLoaded_ReturnsNotFound(t *testing.T) {
 	}
 	if rec.Code != http.StatusNotFound {
 		t.Errorf("expected status 404, got %d", rec.Code)
+	}
+}
+
+// connectMetricsTestUI builds a UI with the given mock and a seeded session "s1"
+// so getStateBySession resolves and the connect handler can run.
+func connectMetricsTestUI(mock *mockReportService) *UI {
+	ui := &UI{
+		reportService: mock,
+		states:        make(map[string]*types.State),
+	}
+	ui.states["s1"] = &types.State{}
+	return ui
+}
+
+// callConnectHandler invokes handleGetConnectMetrics with the given path param and
+// query string, returning the recorder for assertions.
+func callConnectHandler(ui *UI, sourceType, query string) *httptest.ResponseRecorder {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/metrics/connect/"+sourceType+query, nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+	c.SetParamNames("sourceType")
+	c.SetParamValues(sourceType)
+	_ = ui.handleGetConnectMetrics(c)
+	return rec
+}
+
+func TestHandleGetConnectMetrics_OSK_ReturnsMetrics(t *testing.T) {
+	mock := &mockReportService{
+		connectMetrics: &types.ConnectClusterMetrics{
+			Metrics: []types.ProcessedMetric{{Label: "connector-count"}},
+		},
+	}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka&sessionId=s1")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.lastConnectSourceType != "osk" {
+		t.Errorf("expected sourceType 'osk' passed to filter, got %q", mock.lastConnectSourceType)
+	}
+	if mock.lastConnectClusterID != "osk-kafka" {
+		t.Errorf("expected clusterID 'osk-kafka' passed to filter, got %q", mock.lastConnectClusterID)
+	}
+}
+
+func TestHandleGetConnectMetrics_MSK_ReturnsMetrics(t *testing.T) {
+	mock := &mockReportService{
+		connectMetrics: &types.ConnectClusterMetrics{
+			Metrics: []types.ProcessedMetric{{Label: "connector-count"}},
+		},
+	}
+	ui := connectMetricsTestUI(mock)
+
+	// MSK ARNs contain ':' and '/', so the client URL-encodes them in the query value.
+	arn := "arn%3Aaws%3Akafka%3Aus-east-1%3A123456789012%3Acluster%2Fmsk-kafka%2Fdef-456"
+	rec := callConnectHandler(ui, "msk", "?clusterId="+arn+"&sessionId=s1")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.lastConnectSourceType != "msk" {
+		t.Errorf("expected sourceType 'msk' passed to filter, got %q", mock.lastConnectSourceType)
+	}
+	if mock.lastConnectClusterID != "arn:aws:kafka:us-east-1:123456789012:cluster/msk-kafka/def-456" {
+		t.Errorf("expected decoded ARN passed to filter, got %q", mock.lastConnectClusterID)
+	}
+}
+
+// Abuse case: an unknown source type is rejected with 4xx and never reaches the filter.
+func TestHandleGetConnectMetrics_UnknownSourceType_Returns400(t *testing.T) {
+	mock := &mockReportService{}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "foo", "?clusterId=whatever&sessionId=s1")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for unknown source type, got %d", rec.Code)
+	}
+	if mock.connectCalled {
+		t.Error("filter must not be called for an unknown source type")
+	}
+}
+
+func TestHandleGetConnectMetrics_MissingClusterId_Returns400(t *testing.T) {
+	mock := &mockReportService{}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?sessionId=s1")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing clusterId, got %d", rec.Code)
+	}
+	if mock.connectCalled {
+		t.Error("filter must not be called when clusterId is missing")
+	}
+}
+
+// Abuse case: a malformed date range is rejected with 400 (preserved parseDateRange behavior).
+func TestHandleGetConnectMetrics_MalformedDate_Returns400(t *testing.T) {
+	mock := &mockReportService{}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka&sessionId=s1&startDate=not-a-date")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for malformed date, got %d", rec.Code)
+	}
+}
+
+func TestHandleGetConnectMetrics_MissingSessionId_Returns400(t *testing.T) {
+	mock := &mockReportService{}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing sessionId, got %d", rec.Code)
+	}
+}
+
+func TestHandleGetConnectMetrics_NoMetrics_Returns404WithGuidance(t *testing.T) {
+	// Filter found the cluster but it carries no Connect metrics (empty struct, nil Metrics).
+	mock := &mockReportService{connectMetrics: &types.ConnectClusterMetrics{}}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "msk", "?clusterId=some-arn&sessionId=s1")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for cluster with no Connect metrics, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "scan self-managed-connectors") {
+		t.Errorf("expected scan-guidance message, got: %s", rec.Body.String())
+	}
+}
+
+func TestHandleGetConnectMetrics_FilterError_Returns404(t *testing.T) {
+	mock := &mockReportService{connectErr: fmt.Errorf("cluster 'x' not found in msk sources")}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "msk", "?clusterId=x&sessionId=s1")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 when filter returns not-found error, got %d", rec.Code)
 	}
 }
