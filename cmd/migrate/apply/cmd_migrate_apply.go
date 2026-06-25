@@ -197,9 +197,8 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 
 		case manifest.TopicModeNew:
 			recs = append(recs, mnew.New(mnew.Config{
-				Include:    t.Include,
-				Exclude:    t.Exclude,
-				ConfigSkip: mnew.DefaultSkipList(),
+				Include: t.Include,
+				Exclude: t.Exclude,
 			}, src, tgt))
 
 		default:

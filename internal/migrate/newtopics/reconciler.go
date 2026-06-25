@@ -1,6 +1,8 @@
 // Package newtopics reconciles spec.topics (mode: new): it creates a plain topic
 // on the target for each selected source topic, reproducing partition count, RF,
-// and explicitly-set configs (minus a managed/read-only skip-list). Additive.
+// and all explicitly-set (non-default) configs. If the target rejects a config it
+// can't accept, that topic's create fails and is reported per-topic
+// (continue-on-error) rather than guessed away up front. Additive.
 package newtopics
 
 import (
@@ -34,25 +36,8 @@ type partitionCounter interface {
 }
 
 type Config struct {
-	Include    []string
-	Exclude    []string
-	ConfigSkip map[string]struct{} // managed/read-only keys not to forward
-}
-
-// DefaultSkipList seeds clearly managed/broker keys; grows from integration findings.
-func DefaultSkipList() map[string]struct{} {
-	keys := []string{
-		"confluent.tier.enable",
-		"confluent.tier.local.hotset.ms",
-		"confluent.tier.local.hotset.bytes",
-		"leader.replication.throttled.replicas",
-		"follower.replication.throttled.replicas",
-	}
-	m := make(map[string]struct{}, len(keys))
-	for _, k := range keys {
-		m[k] = struct{}{}
-	}
-	return m
+	Include []string
+	Exclude []string
 }
 
 type Reconciler struct {
@@ -148,11 +133,11 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 			steps = append(steps, topicStep{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}})
 			continue
 		}
-		configs := map[string]string{}
+		// Forward all explicitly-set source configs (DescribeTopics already returns
+		// only non-default topic configs). If the target rejects one it can't
+		// accept, that create fails and is reported per-topic (continue-on-error).
+		configs := make(map[string]string, len(spec.Configs))
 		for k, v := range spec.Configs {
-			if _, skip := r.cfg.ConfigSkip[k]; skip {
-				continue
-			}
 			configs[k] = v
 		}
 		steps = append(steps, topicStep{

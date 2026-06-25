@@ -37,7 +37,7 @@ This is distinct from the `kcp scan` `apache-kafka-credentials.yaml` (which list
 **Two modes:**
 
 - **`mode: mirror`** — creates read-only mirror topics on the cluster link, one per selected source topic, fed through the link. **Requires `spec.clusterLink`** (validation fails otherwise). Mirror topic names are `<prefix>+<sourceName>`, where the prefix comes from `spec.clusterLink.prefix` (`cluster.link.prefix`); with no prefix the mirror keeps the source name. Works in both destination-initiated and source-initiated link topologies.
-- **`mode: new`** — creates plain (non-mirror) topics directly on the target, reproducing each source topic's **partition count, replication factor, and explicitly-set (non-default) configs**. A small managed/read-only skip-list (broker-managed keys such as `confluent.tier.*` and replication-throttle keys) is not forwarded. Needs **no** cluster link.
+- **`mode: new`** — creates plain (non-mirror) topics directly on the target, reproducing each source topic's **partition count, replication factor, and all explicitly-set (non-default) configs**. Every explicitly-set config is forwarded as-is; if the target can't accept one, that topic's create is reported as a **failure** (not silently dropped). Needs **no** cluster link.
 
 **Drift (report-only).** Apply is **additive: it only creates absent topics — it never alters or deletes existing topics.** In `mode: mirror`, an existing mirror topic is reported `Present` (mirror health is out of scope). In `mode: new`, an existing target topic whose partition count differs from the source is reported as `Drift` and left untouched.
 

@@ -100,7 +100,7 @@ func TestPlan_CreatePresentDrift(t *testing.T) {
 		},
 		partitions: map[string]int{"events": 3, "legacy": 6},
 	}
-	r := New(Config{Include: []string{"*"}, ConfigSkip: DefaultSkipList()}, src, tgt)
+	r := New(Config{Include: []string{"*"}}, src, tgt)
 
 	p, err := r.Plan(context.Background())
 	if err != nil {
@@ -124,9 +124,11 @@ func TestPlan_CreatePresentDrift(t *testing.T) {
 	}
 }
 
-// TestPlanApply_ConfigSkipList asserts the Create req for orders carries
-// retention.ms but NOT the skip-listed confluent.tier.enable.
-func TestPlanApply_ConfigSkipList(t *testing.T) {
+// TestPlanApply_ForwardsAllExplicitConfigs asserts the Create req for orders
+// carries ALL explicitly-set source configs with no filtering: there is no
+// skip-list, so both retention.ms and confluent.tier.enable are forwarded. If
+// the target can't accept one, that surfaces as a per-topic create failure.
+func TestPlanApply_ForwardsAllExplicitConfigs(t *testing.T) {
 	src := &fakeSource{
 		topics: []string{"orders"},
 		specs: []migrate.TopicSpec{
@@ -134,7 +136,7 @@ func TestPlanApply_ConfigSkipList(t *testing.T) {
 		},
 	}
 	tgt := &fakeTarget{clusterID: "cc-1"}
-	r := New(Config{Include: []string{"*"}, ConfigSkip: DefaultSkipList()}, src, tgt)
+	r := New(Config{Include: []string{"*"}}, src, tgt)
 
 	p, err := r.Plan(context.Background())
 	if err != nil {
@@ -150,11 +152,14 @@ func TestPlanApply_ConfigSkipList(t *testing.T) {
 	if req.Name != "orders" || req.Partitions != 6 || req.ReplicationFactor != 3 {
 		t.Errorf("unexpected create req shape: %+v", req)
 	}
-	if _, ok := req.Configs["retention.ms"]; !ok {
-		t.Errorf("retention.ms should be forwarded, configs=%v", req.Configs)
+	if got := req.Configs["retention.ms"]; got != "1000" {
+		t.Errorf("retention.ms should be forwarded as %q, configs=%v", "1000", req.Configs)
 	}
-	if _, ok := req.Configs["confluent.tier.enable"]; ok {
-		t.Errorf("confluent.tier.enable should be skip-listed, configs=%v", req.Configs)
+	if got := req.Configs["confluent.tier.enable"]; got != "true" {
+		t.Errorf("confluent.tier.enable should be forwarded (no skip-list) as %q, configs=%v", "true", req.Configs)
+	}
+	if len(req.Configs) != 2 {
+		t.Errorf("want exactly 2 forwarded configs, got %d: %v", len(req.Configs), req.Configs)
 	}
 }
 

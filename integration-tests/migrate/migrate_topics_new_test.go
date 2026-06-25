@@ -495,7 +495,7 @@ func TestMigrateApply_TopicsNew_ConfigPassThrough(t *testing.T) {
 
 	m := writeNewManifest(t, dir, newManifestOpts{name: "cfg-" + runID, include: []string{srcTopic}})
 
-	rep := newNewReporter("ConfigPassThrough", "a source topic with a non-default retention.ms=604800000 is reproduced on the target: the new-mode reconciler forwards explicitly-set source configs (minus the skip-list) on create, so the target topic carries retention.ms=604800000.", m, []string{srcTopic}, []string{srcTopic})
+	rep := newNewReporter("ConfigPassThrough", "a source topic with a non-default retention.ms=604800000 is reproduced on the target: the new-mode reconciler forwards all explicitly-set source configs on create, so the target topic carries retention.ms=604800000.", m, []string{srcTopic}, []string{srcTopic})
 	rep.expected("target topic carries retention.ms=604800000 (non-default config reproduced from source)")
 	defer rep.commit(t, tgtPoller)
 
@@ -512,16 +512,6 @@ func TestMigrateApply_TopicsNew_ConfigPassThrough(t *testing.T) {
 		"source.retention.ms": srcVal,
 		"target.retention.ms": tgtVal,
 	})
-
-	// Skip-list note (case 10): the new-mode reconciler filters managed/read-only
-	// keys in DefaultSkipList() (confluent.tier.enable, *.replication.throttled.*,
-	// etc.) before create. The single-node cp-server broker in this environment
-	// rejects setting those managed keys on a plain topic (tiered storage and
-	// replication throttling are not configurable per-topic here), so a live
-	// skip-list assertion cannot be set up cleanly. The filtering is covered by the
-	// unit test newtopics/reconciler_test.go TestPlanApply_ConfigSkipList; we
-	// DEFER the live skip-list assertion rather than force an invalid setup.
-	rep.note("config skip-list (deferred to unit)", "DefaultSkipList() keys (e.g. confluent.tier.enable) are not settable per-topic on the single-node broker; filtering is unit-covered by TestPlanApply_ConfigSkipList")
 }
 
 // ---------------------------------------------------------------------------
