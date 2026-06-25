@@ -335,7 +335,7 @@ func TestPreRunReportMetrics_ValidSourceTypes(t *testing.T) {
 		clusterIds []string
 	}{
 		{"msk", "msk", []string{}},
-		{"osk", "osk", []string{}},
+		{"apache-kafka", "apache-kafka", []string{}},
 		{"with cluster id", "", []string{"cluster-1"}},
 		{"neither flag", "", []string{}},
 	}

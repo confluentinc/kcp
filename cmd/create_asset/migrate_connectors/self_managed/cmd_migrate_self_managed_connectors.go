@@ -26,7 +26,7 @@ func NewMigrateSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd := &cobra.Command{
 		Use:   "self-managed",
 		Short: "Migrate self-managed connectors to Confluent Cloud",
-		Long:  "Generate Terraform configuration that recreates self-managed Kafka Connect connectors (discovered by `kcp scan clusters`) as Confluent Cloud fully-managed connectors.",
+		Long:  "Generate Terraform configuration that recreates self-managed Kafka Connect connectors recorded in the state file as Confluent Cloud fully-managed connectors.",
 		Example: `  kcp create-asset migrate-connectors self-managed \
       --state-file kcp-state.json \
       --source-type msk \
@@ -54,8 +54,8 @@ func NewMigrateSelfManagedConnectorsCmd() *cobra.Command {
 
 	sourceFlags := pflag.NewFlagSet("source", pflag.ExitOnError)
 	sourceFlags.SortFlags = false
-	sourceFlags.StringVar(&sourceType, "source-type", "msk", "The source type (msk or osk).")
-	sourceFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for OSK).")
+	sourceFlags.StringVar(&sourceType, "source-type", "msk", "The source type (msk or apache-kafka).")
+	sourceFlags.StringVar(&clusterId, "cluster-id", "", "The cluster identifier (ARN for MSK, cluster ID from credentials file for Apache Kafka).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(sourceFlags)
 	groups[sourceFlags] = "Source Flags"
 
@@ -116,6 +116,13 @@ func runMigrateSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 }
 
 func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, error) {
+	// "apache-kafka" is the user-facing value; normalize to the internal "osk" token.
+	normalizedSourceType, err := types.ParseSourceTypeFlag(sourceType)
+	if err != nil {
+		return nil, err
+	}
+	sourceType = string(normalizedSourceType)
+
 	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read statefile %s: %w", stateFile, err)
@@ -143,7 +150,7 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 	case "osk":
 		cluster, err := state.GetOSKClusterByID(clusterId)
 		if err != nil {
-			return nil, fmt.Errorf("failed to get OSK cluster: %w", err)
+			return nil, fmt.Errorf("failed to get Apache Kafka cluster: %w", err)
 		}
 		if cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil {
 			connectors = cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors
@@ -152,7 +159,7 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 			outputDir = fmt.Sprintf("%s-connectors", cluster.ID)
 		}
 	default:
-		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'osk')", sourceType)
+		return nil, fmt.Errorf("invalid --source-type: %s (must be 'msk' or 'apache-kafka')", sourceType)
 	}
 
 	opts := MigrateSelfManagedConnectorOpts{

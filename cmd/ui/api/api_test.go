@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/labstack/echo/v4"
 )
@@ -17,19 +18,23 @@ import (
 // mockReportService satisfies the ReportService interface for testing
 type mockReportService struct{}
 
-func (m *mockReportService) ProcessState(state types.State) types.ProcessedState {
-	return types.ProcessedState{}
+func (m *mockReportService) ProcessState(state types.State) report.ProcessedState {
+	return report.ProcessedState{}
 }
 
-func (m *mockReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
+func (m *mockReportService) FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error) {
 	return nil, nil
 }
 
-func (m *mockReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (m *mockReportService) FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	return nil, nil
 }
 
-func (m *mockReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (m *mockReportService) FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	return nil, nil
+}
+
+func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	return nil, nil
 }
 
@@ -163,6 +168,15 @@ func TestHandleUploadState_MissingSessionId(t *testing.T) {
 	}
 }
 
+func stateWithSources(version string) *types.State {
+	return &types.State{
+		KcpBuildInfo: types.KcpBuildInfo{Version: version},
+		OSKSources: &types.OSKSourcesState{
+			Clusters: []types.OSKDiscoveredCluster{{ID: "test-cluster"}},
+		},
+	}
+}
+
 func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {
@@ -170,7 +184,7 @@ func TestNewUI_PreloadStateFile_VersionMatch(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: build_info.Version}}
+	state := stateWithSources(build_info.Version)
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
 		t.Fatalf("failed to write state file: %v", err)
 	}
@@ -196,7 +210,7 @@ func TestNewUI_PreloadStateFile_VersionMismatch_Succeeds(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
+	state := stateWithSources("0.5.0")
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
 		t.Fatalf("failed to write state file: %v", err)
 	}
@@ -223,6 +237,24 @@ func TestNewUI_PreloadStateFile_FileNotFound(t *testing.T) {
 	}
 }
 
+func TestNewUI_PreloadStateFile_NoSourcesNoSchema_ReturnsError(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
+	if err != nil {
+		t.Fatalf("failed to create temp file: %v", err)
+	}
+	defer func() { _ = os.Remove(tmpFile.Name()) }()
+
+	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: build_info.Version}}
+	if err := state.WriteToFile(tmpFile.Name()); err != nil {
+		t.Fatalf("failed to write state file: %v", err)
+	}
+
+	_, err = NewUI(&mockReportService{}, nil, nil, nil, UICmdOpts{StateFile: tmpFile.Name()})
+	if err == nil {
+		t.Error("expected error for state file with no sources and no schema registries, got nil")
+	}
+}
+
 func TestGetState_PreloadVersionMismatch_ReturnsState(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "kcp-state-*.json")
 	if err != nil {
@@ -230,7 +262,7 @@ func TestGetState_PreloadVersionMismatch_ReturnsState(t *testing.T) {
 	}
 	defer func() { _ = os.Remove(tmpFile.Name()) }()
 
-	state := &types.State{KcpBuildInfo: types.KcpBuildInfo{Version: "0.5.0"}}
+	state := stateWithSources("0.5.0")
 	if err := state.WriteToFile(tmpFile.Name()); err != nil {
 		t.Fatalf("failed to write state file: %v", err)
 	}

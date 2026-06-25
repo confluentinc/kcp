@@ -22,19 +22,36 @@ export interface MetricAggregates {
 }
 
 /**
- * Query info for an individual CloudWatch metric
+ * Query info for an individual metric (CloudWatch, Jolokia, or Prometheus)
  */
 export interface MetricQueryInfo {
   metric_name: string
-  namespace: string
-  dimensions: string
-  statistic: string
-  period: number
-  search_expression: string
-  math_expression: string
-  aws_cli_command: string
-  console_source_json: string
+  source_type?: 'cloudwatch' | 'jolokia' | 'prometheus'
+
+  // CloudWatch fields
+  namespace?: string
+  dimensions?: string
+  statistic?: string
+  period?: number
+  search_expression?: string
+  math_expression?: string
+  aws_cli_command?: string
+  console_source_json?: string
+
+  // Jolokia fields
+  mbean_path?: string
+  jolokia_url?: string
+
+  // Prometheus fields
+  promql_query?: string
+  prometheus_url?: string
+  prometheus_metric_name?: string
+
+  // Shared fields
+  curl_command?: string
+  query_duration?: string
   aggregation_note: string
+  label_filter?: Record<string, string>
 }
 
 /**

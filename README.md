@@ -135,7 +135,7 @@ Test fixtures are in `cmd/ui/frontend/tests/e2e/fixtures/`. The Playwright confi
 
 Integration tests live in `integration-tests/` and run against real infrastructure via Docker.
 
-#### OSK Scan Tests
+#### Apache Kafka Scan Tests
 
 Tests the `kcp scan clusters` command against a Docker Compose environment with a multi-listener KRaft Kafka broker. Covers all supported authentication methods, Jolokia metrics collection (unauthenticated, auth, TLS), and Prometheus metrics collection (unauthenticated, auth, TLS).
 

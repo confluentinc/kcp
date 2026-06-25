@@ -6,7 +6,7 @@ import { Explore } from '@/components/explore/Explore'
 import { AppHeader } from '@/components/common/AppHeader'
 import { useAppStore, useSessionId } from '@/stores/store'
 import { apiClient } from '@/services/apiClient'
-import type { StateUploadRequest } from '@/types/api'
+import type { StateUploadRequest, SchemaRegistriesState } from '@/types/api'
 import {
   PageErrorBoundary,
   ExploreErrorBoundary,
@@ -15,6 +15,10 @@ import {
 } from '@/components/common/ErrorBoundary'
 import { TOP_LEVEL_TABS } from '@/constants'
 import type { TopLevelTab } from '@/types'
+
+function hasSchemaRegistries(sr?: SchemaRegistriesState): boolean {
+  return !!(sr?.confluent_schema_registry?.length || sr?.aws_glue?.length)
+}
 
 export const Home = () => {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -55,8 +59,11 @@ export const Home = () => {
               selectOSKCluster(firstCluster.id)
             }
           }
+        } else if (response && hasSchemaRegistries(response.schema_registries)) {
+          setKcpState(response)
+          setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate.')
         } else if (response) {
-          setError('State file contains no sources. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate it, then reload.')
+          setError('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it, then reload.')
         }
       } catch {
         // No pre-loaded state, user will upload manually
@@ -93,7 +100,7 @@ export const Home = () => {
           const result = await apiClient.state.uploadState(parsed, sessionId)
 
           // Set the entire processed state in one action
-          if (result && result.sources) {
+          if (result && result.sources && result.sources.length > 0) {
             setKcpState(result)
             setIsProcessing(false)
 
@@ -109,8 +116,13 @@ export const Home = () => {
                 selectOSKCluster(firstCluster.id)
               }
             }
+          } else if (result && hasSchemaRegistries(result.schema_registries)) {
+            setKcpState(result)
+            setIsProcessing(false)
+            setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate.')
           } else {
-            throw new Error('Invalid response format from server')
+            setKcpState(null)
+            throw new Error('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it.')
           }
         } else {
           throw new Error('Invalid file format. Expected a KCP state file.')

@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/create_asset"
 	"github.com/confluentinc/kcp/cmd/discover"
 	"github.com/confluentinc/kcp/cmd/docs"
+	"github.com/confluentinc/kcp/cmd/healthcheck"
 	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
 	"github.com/confluentinc/kcp/cmd/scan"
@@ -27,9 +28,10 @@ import (
 var verbose bool
 
 var RootCmd = &cobra.Command{
-	Use:   "kcp",
-	Short: "A CLI tool for kafka cluster planning and migration",
-	Long:  "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + build_info.DocsURL(),
+	Use:           "kcp",
+	Short:         "A CLI tool for kafka cluster planning and migration",
+	Long:          "A comprehensive CLI tool for planning and executing kafka cluster migrations to confluent cloud. Docs: " + build_info.DocsURL(),
+	SilenceErrors: true,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		// --- Logging setup (must be here so --verbose flag is parsed) ---
 		lumberjackLogger := &lumberjack.Logger{
@@ -94,6 +96,7 @@ func init() {
 		report.NewReportCmd(),
 		ui.NewUICmd(),
 		discover.NewDiscoverCmd(),
+		healthcheck.NewHealthcheckCmd(),
 		migration.NewMigrationCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),

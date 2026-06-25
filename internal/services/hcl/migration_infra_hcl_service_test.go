@@ -1,9 +1,11 @@
+//go:build terraform_validation
+
 package hcl
 
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/stretchr/testify/require"
 )
 
@@ -11,7 +13,7 @@ func TestMigrationInfra_Public(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:      true,
 		SourceClusterId:         "msk-cluster-123",
 		SourceRegion:            "us-east-1",
@@ -31,7 +33,7 @@ func TestMigrationInfra_PrivateJumpCluster(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:             false,
 		UseJumpClusters:                true,
 		VpcId:                          "vpc-0123456789abcdef0",
@@ -61,17 +63,17 @@ func TestMigrationInfra_ExternalOutbound(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:         false,
 		UseJumpClusters:            false,
 		VpcId:                      "vpc-0123456789abcdef0",
 		ExtOutboundSecurityGroupId: "sg-0123456789abcdef0",
 		ExtOutboundSubnetId:        "subnet-0123456789abcdef0",
-		ExtOutboundBrokers: []types.ExtOutboundClusterKafkaBroker{
+		ExtOutboundBrokers: []hclrequests.ExtOutboundClusterKafkaBroker{
 			{
 				ID:       "b-1",
 				SubnetID: "subnet-1",
-				Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
+				Endpoints: []hclrequests.ExtOutboundClusterKafkaEndpoint{
 					{Host: "b-1.example.com", Port: 9092, IP: "10.0.1.1"},
 				},
 			},
@@ -94,17 +96,17 @@ func TestMigrationInfra_ExternalOutboundPlaintext(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:         false,
 		UseJumpClusters:            false,
 		VpcId:                      "vpc-0123456789abcdef0",
 		ExtOutboundSecurityGroupId: "sg-0123456789abcdef0",
 		ExtOutboundSubnetId:        "subnet-0123456789abcdef0",
-		ExtOutboundBrokers: []types.ExtOutboundClusterKafkaBroker{
+		ExtOutboundBrokers: []hclrequests.ExtOutboundClusterKafkaBroker{
 			{
 				ID:       "b-1",
 				SubnetID: "subnet-1",
-				Endpoints: []types.ExtOutboundClusterKafkaEndpoint{
+				Endpoints: []hclrequests.ExtOutboundClusterKafkaEndpoint{
 					{Host: "b-1.example.com", Port: 9092, IP: "10.0.1.1"},
 				},
 			},
@@ -130,7 +132,7 @@ func TestMigrationInfra_JumpCluster_EmptySubnetArray(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:             false,
 		UseJumpClusters:                true,
 		VpcId:                          "vpc-0123456789abcdef0",
@@ -163,7 +165,7 @@ func TestMigrationInfra_JumpCluster_ZeroStorage(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:             false,
 		UseJumpClusters:                true,
 		VpcId:                          "vpc-0123456789abcdef0",
@@ -193,7 +195,7 @@ func TestMigrationInfra_ExternalOutbound_NilBrokers(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:         false,
 		UseJumpClusters:            false,
 		VpcId:                      "vpc-0123456789abcdef0",
@@ -222,7 +224,7 @@ func TestMigrationInfra_JumpCluster_SingleSubnet(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:             false,
 		UseJumpClusters:                true,
 		VpcId:                          "vpc-0123456789abcdef0",
@@ -252,7 +254,7 @@ func TestMigrationInfra_JumpCluster_TwoSubnets(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:             false,
 		UseJumpClusters:                true,
 		VpcId:                          "vpc-0123456789abcdef0",
@@ -282,7 +284,7 @@ func TestMigrationInfra_JumpCluster_FiveSubnets(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationInfraHCLService{SSHKeySuffix: "test1", DeploymentID: "testdeploy"}
-	request := types.MigrationWizardRequest{
+	request := hclrequests.MigrationWizardRequest{
 		HasPublicEndpoints:         false,
 		UseJumpClusters:            true,
 		VpcId:                      "vpc-0123456789abcdef0",

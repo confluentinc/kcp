@@ -6,13 +6,14 @@ import (
 
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type ReportService interface {
-	ProcessState(state types.State) types.ProcessedState
-	FilterClusterMetrics(processedState types.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	ProcessState(state types.State) report.ProcessedState
+	FilterClusterMetrics(processedState report.ProcessedState, clusterArn string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type MetricReporterOpts struct {
@@ -128,9 +129,9 @@ func (r *MetricReporter) determineReportTitle(clusters []types.ProcessedClusterM
 	if hasMSK && hasOSK {
 		return "Kafka Metrics Report"
 	}
-	// Only OSK clusters
+	// Only Apache Kafka clusters
 	if hasOSK {
-		return "OSK Metrics Report"
+		return "Apache Kafka Metrics Report"
 	}
 	// Only MSK clusters (default)
 	return "AWS MSK Metrics Report"
@@ -215,10 +216,8 @@ func (r *MetricReporter) addClusterSection(md *markdown.Markdown, clusterMetrics
 	// Add individual metric values
 	r.addIndividualMetricsSection(md, clusterMetrics.Metrics)
 
-	// Add query details (MSK only)
-	if isMSK {
-		r.addQueryDetailsSection(md, clusterMetrics.QueryInfo)
-	}
+	// Add query details for all source types
+	r.addQueryDetailsSection(md, clusterMetrics.QueryInfo)
 }
 
 func (r *MetricReporter) addIndividualMetricsSection(md *markdown.Markdown, metrics []types.ProcessedMetric) {
@@ -281,23 +280,61 @@ func (r *MetricReporter) addQueryDetailsSection(md *markdown.Markdown, queryInfo
 
 	for _, info := range queryInfos {
 		md.AddHeading(info.MetricName, 5)
-		md.AddParagraph(fmt.Sprintf("**Namespace:** %s", info.Namespace))
-		md.AddParagraph(fmt.Sprintf("**Dimensions:** %s", info.Dimensions))
-		md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
-		md.AddParagraph(fmt.Sprintf("**Period:** %d seconds", info.Period))
 
-		if info.SearchExpression != "" {
-			md.AddParagraph("**SEARCH Expression:**")
-			md.AddCodeBlock(info.SearchExpression, "")
-		}
+		switch info.SourceType {
+		case types.MetricBackendJolokia:
+			md.AddParagraph("**Source:** Jolokia (JMX)")
+			md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
+			md.AddParagraph(fmt.Sprintf("**Poll Interval:** %d seconds", info.Period))
+			if info.QueryDuration != "" {
+				md.AddParagraph(fmt.Sprintf("**Query Duration:** %s", info.QueryDuration))
+			}
+			md.AddParagraph(fmt.Sprintf("**Jolokia Endpoint:** %s", info.JolokiaURL))
+			if info.MBeanPath != "" {
+				md.AddParagraph("**MBean Path:**")
+				md.AddCodeBlock(info.MBeanPath, "")
+			}
+			if info.CurlCommand != "" {
+				md.AddParagraph("**Curl Command:**")
+				md.AddCodeBlock(info.CurlCommand, "bash")
+			}
 
-		if info.MathExpression != "" {
-			md.AddParagraph(fmt.Sprintf("**Aggregation:** `%s`", info.MathExpression))
-		}
+		case types.MetricBackendPrometheus:
+			md.AddParagraph("**Source:** Prometheus")
+			md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
+			md.AddParagraph(fmt.Sprintf("**Query Step:** %d seconds", info.Period))
+			if info.QueryDuration != "" {
+				md.AddParagraph(fmt.Sprintf("**Query Duration:** %s", info.QueryDuration))
+			}
+			md.AddParagraph(fmt.Sprintf("**Prometheus URL:** %s", info.PrometheusURL))
+			if info.PrometheusMetricName != "" {
+				md.AddParagraph(fmt.Sprintf("**Prometheus Metric:** `%s`", info.PrometheusMetricName))
+			}
+			if info.PromQLQuery != "" {
+				md.AddParagraph("**PromQL Query:**")
+				md.AddCodeBlock(info.PromQLQuery, "promql")
+			}
+			if info.CurlCommand != "" {
+				md.AddParagraph("**Curl Command:**")
+				md.AddCodeBlock(info.CurlCommand, "bash")
+			}
 
-		if info.AWSCLICommand != "" {
-			md.AddParagraph("**AWS CLI Command:**")
-			md.AddCodeBlock(info.AWSCLICommand, "bash")
+		default: // MetricBackendCloudWatch or empty (backward compat)
+			md.AddParagraph(fmt.Sprintf("**Namespace:** %s", info.Namespace))
+			md.AddParagraph(fmt.Sprintf("**Dimensions:** %s", info.Dimensions))
+			md.AddParagraph(fmt.Sprintf("**Statistic:** %s", info.Statistic))
+			md.AddParagraph(fmt.Sprintf("**Period:** %d seconds", info.Period))
+			if info.SearchExpression != "" {
+				md.AddParagraph("**SEARCH Expression:**")
+				md.AddCodeBlock(info.SearchExpression, "")
+			}
+			if info.MathExpression != "" {
+				md.AddParagraph(fmt.Sprintf("**Aggregation:** `%s`", info.MathExpression))
+			}
+			if info.AWSCLICommand != "" {
+				md.AddParagraph("**AWS CLI Command:**")
+				md.AddCodeBlock(info.AWSCLICommand, "bash")
+			}
 		}
 
 		md.AddParagraph(fmt.Sprintf("*%s*", info.AggregationNote))

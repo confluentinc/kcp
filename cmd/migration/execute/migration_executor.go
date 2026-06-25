@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -18,8 +19,8 @@ import (
 
 type MigrationExecutorOpts struct {
 	MigrationStateFile    string
-	MigrationState        types.MigrationState
-	MigrationConfig       types.MigrationConfig
+	MigrationState        migration.MigrationState
+	MigrationConfig       migration.MigrationConfig
 	LagThreshold          int64
 	ClusterApiKey         string
 	ClusterApiSecret      string
@@ -29,12 +30,17 @@ type MigrationExecutorOpts struct {
 	AuthType              types.AuthType
 	SaslScramUsername     string
 	SaslScramPassword     string
+	SaslScramMechanism    string
 	SaslPlainUsername     string
 	SaslPlainPassword     string
 	TlsCaCert             string
 	TlsClientCert         string
 	TlsClientKey          string
 	InsecureSkipTLSVerify bool
+	// RolloutTimeout bounds the gateway-readiness wait during fence and
+	// switch. A value of 0 means no deadline — the wait runs until the
+	// operator reports ready or the user cancels.
+	RolloutTimeout time.Duration
 }
 
 type MigrationExecutor struct {
@@ -77,6 +83,19 @@ func (m *MigrationExecutor) Run() error {
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
 	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
+	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
+
+	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
+	persist := func() error {
+		m.opts.MigrationState.UpsertMigration(config)
+		return m.opts.MigrationState.WriteToFile(m.opts.MigrationStateFile)
+	}
+
+	// Pre-execute bookend: disable consumer.offset.sync.enable if the
+	// operator opted in at init time. Idempotent and safe on resume.
+	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
+		return err
+	}
 
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
@@ -86,8 +105,13 @@ func (m *MigrationExecutor) Run() error {
 	)
 
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
+		migration.WarnIfPausedOnExecuteFailure(&config, err)
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
+
+	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
+	// so a restore error does not roll back a successful switchover.
+	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
 
 	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
 	return nil
@@ -104,9 +128,10 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 	switch authType {
 	case types.AuthTypeSASLSCRAM:
 		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
-			Use:      true,
-			Username: m.opts.SaslScramUsername,
-			Password: m.opts.SaslScramPassword,
+			Use:       true,
+			Username:  m.opts.SaslScramUsername,
+			Password:  m.opts.SaslScramPassword,
+			Mechanism: m.opts.SaslScramMechanism,
 		}
 	case types.AuthTypeTLS:
 		clusterAuth.AuthMethod.TLS = &types.TLSConfig{

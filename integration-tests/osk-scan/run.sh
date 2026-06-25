@@ -15,7 +15,7 @@ echo "  OSK Scan Tests (OSK scan broker)"
 echo "=========================================="
 
 # ── Kafka auth methods ─────────────────────────────────────────────────────────
-for method in plaintext sasl tls sasl-ssl sasl-plain; do
+for method in plaintext sasl sasl-sha512 sasl-sha512-only tls sasl-ssl sasl-plain; do
     echo ""
     echo "========================================"
     echo "  TEST: $method"
@@ -24,8 +24,8 @@ for method in plaintext sasl tls sasl-ssl sasl-plain; do
     CREDS="integration-tests/osk-scan/credentials/kafka-${method}.yaml"
     STATE="test-state-osk-${method}.json"
 
-    echo "Running: ./kcp scan clusters --source-type osk --credentials-file $CREDS --state-file $STATE"
-    ./kcp scan clusters --source-type osk \
+    echo "Running: ./kcp scan clusters --source-type apache-kafka --credentials-file $CREDS --state-file $STATE"
+    ./kcp scan clusters --source-type apache-kafka \
         --credentials-file "$CREDS" \
         --state-file "$STATE"
 
@@ -43,8 +43,8 @@ echo "========================================"
 CREDS="integration-tests/osk-scan/credentials/jmx-noauth.yaml"
 STATE="test-state-osk-jmx-noauth.json"
 
-echo "Running: ./kcp scan clusters --source-type osk --credentials-file $CREDS --state-file $STATE --metrics jolokia --metrics-duration 10s --metrics-interval 1s"
-./kcp scan clusters --source-type osk \
+echo "Running: ./kcp scan clusters --source-type apache-kafka --credentials-file $CREDS --state-file $STATE --metrics jolokia --metrics-duration 10s --metrics-interval 1s"
+./kcp scan clusters --source-type apache-kafka \
     --credentials-file "$CREDS" \
     --state-file "$STATE" \
     --metrics jolokia \
@@ -64,8 +64,8 @@ echo "========================================"
 CREDS="integration-tests/osk-scan/credentials/prometheus-noauth.yaml"
 STATE="test-state-osk-prometheus-noauth.json"
 
-echo "Running: ./kcp scan clusters --source-type osk --credentials-file $CREDS --state-file $STATE --metrics prometheus --metrics-range 30d"
-./kcp scan clusters --source-type osk \
+echo "Running: ./kcp scan clusters --source-type apache-kafka --credentials-file $CREDS --state-file $STATE --metrics prometheus --metrics-range 30d"
+./kcp scan clusters --source-type apache-kafka \
     --credentials-file "$CREDS" \
     --state-file "$STATE" \
     --metrics prometheus \
@@ -84,8 +84,8 @@ echo "========================================"
 CREDS="integration-tests/osk-scan/credentials/jmx-auth.yaml"
 STATE="test-state-osk-jmx-auth.json"
 
-echo "Running: ./kcp scan clusters --source-type osk --credentials-file $CREDS --state-file $STATE --metrics jolokia --metrics-duration 10s --metrics-interval 1s"
-./kcp scan clusters --source-type osk \
+echo "Running: ./kcp scan clusters --source-type apache-kafka --credentials-file $CREDS --state-file $STATE --metrics jolokia --metrics-duration 10s --metrics-interval 1s"
+./kcp scan clusters --source-type apache-kafka \
     --credentials-file "$CREDS" \
     --state-file "$STATE" \
     --metrics jolokia \
@@ -105,8 +105,8 @@ echo "========================================"
 CREDS="integration-tests/osk-scan/credentials/jmx-tls.yaml"
 STATE="test-state-osk-jmx-tls.json"
 
-echo "Running: ./kcp scan clusters --source-type osk --credentials-file $CREDS --state-file $STATE --metrics jolokia --metrics-duration 10s --metrics-interval 1s"
-./kcp scan clusters --source-type osk \
+echo "Running: ./kcp scan clusters --source-type apache-kafka --credentials-file $CREDS --state-file $STATE --metrics jolokia --metrics-duration 10s --metrics-interval 1s"
+./kcp scan clusters --source-type apache-kafka \
     --credentials-file "$CREDS" \
     --state-file "$STATE" \
     --metrics jolokia \
@@ -126,8 +126,8 @@ echo "========================================"
 CREDS="integration-tests/osk-scan/credentials/prometheus-auth.yaml"
 STATE="test-state-osk-prometheus-auth.json"
 
-echo "Running: ./kcp scan clusters --source-type osk --credentials-file $CREDS --state-file $STATE --metrics prometheus --metrics-range 30d"
-./kcp scan clusters --source-type osk \
+echo "Running: ./kcp scan clusters --source-type apache-kafka --credentials-file $CREDS --state-file $STATE --metrics prometheus --metrics-range 30d"
+./kcp scan clusters --source-type apache-kafka \
     --credentials-file "$CREDS" \
     --state-file "$STATE" \
     --metrics prometheus \
@@ -146,8 +146,8 @@ echo "========================================"
 CREDS="integration-tests/osk-scan/credentials/prometheus-tls.yaml"
 STATE="test-state-osk-prometheus-tls.json"
 
-echo "Running: ./kcp scan clusters --source-type osk --credentials-file $CREDS --state-file $STATE --metrics prometheus --metrics-range 30d"
-./kcp scan clusters --source-type osk \
+echo "Running: ./kcp scan clusters --source-type apache-kafka --credentials-file $CREDS --state-file $STATE --metrics prometheus --metrics-range 30d"
+./kcp scan clusters --source-type apache-kafka \
     --credentials-file "$CREDS" \
     --state-file "$STATE" \
     --metrics prometheus \

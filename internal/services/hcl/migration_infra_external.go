@@ -3,8 +3,8 @@ package hcl
 import (
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
@@ -14,7 +14,7 @@ import (
 // Root-Level Generation - Private Migration - External Outbound Cluster Link
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundClusterLinkingInfrastructure(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateRootMainTfForExternalOutboundClusterLinkingInfrastructure(request hclrequests.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -80,7 +80,7 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForExternalOutboundCl
 // External Outbound Cluster Linking Module Generation (Private)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf(request hclrequests.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -128,18 +128,18 @@ func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkMainTf(re
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkVariablesTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateExternalOutboundClusterLinkVariablesTf(request hclrequests.MigrationWizardRequest) string {
 	return GenerateVariablesTf(modules.GetExternalOutboundClusterLinkingModuleVariableDefinitions(request))
 }
 
-func (mi *MigrationInfraHCLService) externalOutboundClusterLinkTemplateFileName(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) externalOutboundClusterLinkTemplateFileName(request hclrequests.MigrationWizardRequest) string {
 	if request.JumpClusterAuthType == "plaintext" {
 		return "create-external-outbound-cluster-link-plaintext.tpl"
 	}
 	return "create-external-outbound-cluster-link.tpl"
 }
 
-func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateCreateExternalOutboundClusterLinkTpl(request hclrequests.MigrationWizardRequest) string {
 	if request.JumpClusterAuthType == "plaintext" {
 		return aws.GenerateCreateExternalOutboundClusterLinkPlaintextTpl()
 	}

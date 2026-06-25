@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -74,7 +75,7 @@ func TestPrometheusService_CollectMetrics(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(), nil)
 
 	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
 	require.NoError(t, err)
@@ -113,7 +114,7 @@ func TestPrometheusService_CollectMetrics_MissingMetric(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(), nil)
 
 	result, err := svc.CollectMetrics(context.Background(), 7*24*time.Hour)
 	require.NoError(t, err)
@@ -126,6 +127,100 @@ func TestPrometheusService_CollectMetrics_MissingMetric(t *testing.T) {
 
 	// 7-day range → 5m step
 	assert.Equal(t, int32(300), result.Metadata.Period)
+}
+
+func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
+	mockData := map[string][]float64{
+		"bytesinpersec_total":    {1024.0},
+		"bytesoutpersec_total":   {512.0},
+		"messagesinpersec_total": {100.0},
+		"partitioncount":         {50.0},
+		"connection_count":       {10.0},
+		"log_size":               {5.5},
+	}
+
+	server := newMockPrometheusServer(t, mockData)
+	defer server.Close()
+
+	promClient := client.NewPrometheusClient(server.URL)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(), nil)
+
+	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotEmpty(t, result.QueryInfo)
+
+	// Should have one entry per query definition (7)
+	assert.Len(t, result.QueryInfo, len(BrokerQueryDefinitions()))
+
+	for _, qi := range result.QueryInfo {
+		assert.Equal(t, types.MetricBackendPrometheus, qi.SourceType)
+		assert.NotEmpty(t, qi.MetricName)
+		assert.NotEmpty(t, qi.PromQLQuery)
+		assert.NotEmpty(t, qi.PrometheusURL)
+		assert.Contains(t, qi.PrometheusURL, server.URL)
+		assert.NotEmpty(t, qi.PrometheusMetricName)
+		assert.Contains(t, qi.CurlCommand, "curl")
+		assert.Contains(t, qi.CurlCommand, server.URL)
+		assert.NotEmpty(t, qi.AggregationNote)
+		assert.NotEmpty(t, qi.Statistic)
+		assert.Equal(t, int32(60), qi.Period)
+		assert.Equal(t, "1d", qi.QueryDuration)
+	}
+
+	// Verify rate-based metrics have the rate window substituted
+	for _, qi := range result.QueryInfo {
+		assert.NotContains(t, qi.PromQLQuery, "%s", "rate window should be substituted")
+	}
+
+	// Verify specific metric names
+	names := make(map[string]bool)
+	for _, qi := range result.QueryInfo {
+		names[qi.MetricName] = true
+	}
+	assert.True(t, names["BytesInPerSec"])
+	assert.True(t, names["PartitionCount"])
+	assert.True(t, names["TotalLocalStorageUsage"])
+}
+
+func TestBuildPrometheusQueryInfo(t *testing.T) {
+	end := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
+	start := end.Add(-24 * time.Hour)
+	infos := buildPrometheusQueryInfo("http://prom:9090", "5m", 60*time.Second, 24*time.Hour, start, end, BrokerQueryDefinitions(), nil)
+
+	assert.Len(t, infos, len(BrokerQueryDefinitions()))
+
+	// Rate-based metrics should have rate() in the aggregation note
+	for _, info := range infos[:3] {
+		assert.Contains(t, info.PromQLQuery, "rate(")
+		assert.Contains(t, info.PromQLQuery, "[5m]")
+		assert.Contains(t, info.AggregationNote, "rate()")
+	}
+
+	// Gauge metrics should mention "gauge"
+	partInfo := infos[3] // PartitionCount
+	assert.Equal(t, "PartitionCount", partInfo.MetricName)
+	assert.Contains(t, partInfo.AggregationNote, "gauge")
+
+	// Storage metric should mention GiB conversion
+	storageInfo := infos[6] // TotalLocalStorageUsage
+	assert.Equal(t, "TotalLocalStorageUsage", storageInfo.MetricName)
+	assert.Contains(t, storageInfo.AggregationNote, "GiB")
+
+	// All should have Statistic, Period, and QueryDuration
+	for _, info := range infos {
+		assert.NotEmpty(t, info.Statistic)
+		assert.Equal(t, int32(60), info.Period)
+		assert.Equal(t, "1d", info.QueryDuration)
+	}
+
+	// All should have curl commands with actual timestamps
+	for _, info := range infos {
+		assert.Contains(t, info.CurlCommand, "http://prom:9090/api/v1/query_range")
+		assert.Contains(t, info.CurlCommand, "start=2026-05-10T12:00:00Z")
+		assert.Contains(t, info.CurlCommand, "end=2026-05-11T12:00:00Z")
+		assert.Contains(t, info.CurlCommand, "step=60s")
+	}
 }
 
 func TestPrometheusService_StepSelection(t *testing.T) {
@@ -144,6 +239,82 @@ func TestPrometheusService_StepSelection(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			step := SelectStep(tt.duration)
 			assert.Equal(t, tt.expected, step)
+		})
+	}
+}
+
+func TestApplyLabelFilter(t *testing.T) {
+	labels := map[string]string{"job": "confluent/connect-jmx-exporter"}
+
+	tests := []struct {
+		name       string
+		query      string
+		metricName string
+		labels     map[string]string
+		expected   string
+	}{
+		{
+			"no labels returns query unchanged",
+			"sum(kafka_connect_worker_connector_count)",
+			"kafka_connect_worker_connector_count",
+			nil,
+			"sum(kafka_connect_worker_connector_count)",
+		},
+		{
+			"simple metric gets label selector",
+			"kafka_connect_worker_task_count",
+			"kafka_connect_worker_task_count",
+			labels,
+			`kafka_connect_worker_task_count{job="confluent/connect-jmx-exporter"}`,
+		},
+		{
+			"sum-wrapped metric gets label selector",
+			"sum(kafka_connect_worker_connector_count)",
+			"kafka_connect_worker_connector_count",
+			labels,
+			`sum(kafka_connect_worker_connector_count{job="confluent/connect-jmx-exporter"})`,
+		},
+		{
+			"rate-wrapped metric gets label selector",
+			"sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[5m]))",
+			"kafka_server_brokertopicmetrics_bytesinpersec_total",
+			labels,
+			`sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total{job="confluent/connect-jmx-exporter"}[5m]))`,
+		},
+		{
+			"metric with existing selector gets labels appended",
+			`kafka_controller_kafkacontroller_value{name="GlobalPartitionCount"}`,
+			`kafka_controller_kafkacontroller_value{name="GlobalPartitionCount"}`,
+			labels,
+			`kafka_controller_kafkacontroller_value{job="confluent/connect-jmx-exporter",name="GlobalPartitionCount"}`,
+		},
+		{
+			"empty metric name returns query unchanged",
+			"sum(kafka_connect_worker_connector_count)",
+			"",
+			labels,
+			"sum(kafka_connect_worker_connector_count)",
+		},
+		{
+			"multiple labels are sorted deterministically",
+			"sum(kafka_connect_worker_connector_count)",
+			"kafka_connect_worker_connector_count",
+			map[string]string{"namespace": "confluent", "job": "connect-exporter"},
+			`sum(kafka_connect_worker_connector_count{job="connect-exporter",namespace="confluent"})`,
+		},
+		{
+			"label values with special characters are escaped",
+			"sum(kafka_connect_worker_connector_count)",
+			"kafka_connect_worker_connector_count",
+			map[string]string{"job": `value"with\quotes`},
+			`sum(kafka_connect_worker_connector_count{job="value\"with\\quotes"})`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := applyLabelFilter(tt.query, tt.metricName, tt.labels)
+			assert.Equal(t, tt.expected, result)
 		})
 	}
 }

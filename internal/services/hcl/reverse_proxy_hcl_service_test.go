@@ -1,16 +1,18 @@
+//go:build terraform_validation
+
 package hcl
 
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 )
 
 func TestReverseProxy(t *testing.T) {
 	t.Parallel()
 
 	service := &ReverseProxyHCLService{DeploymentID: "testdeploy"}
-	request := types.ReverseProxyRequest{
+	request := hclrequests.ReverseProxyRequest{
 		Region:                                 "us-east-1",
 		VPCId:                                  "vpc-0123456789abcdef0",
 		PublicSubnetCidr:                       "10.0.30.0/24",

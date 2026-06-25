@@ -1,9 +1,11 @@
+//go:build terraform_validation
+
 package hcl
 
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/stretchr/testify/require"
 )
 
@@ -11,7 +13,7 @@ func TestTargetInfra_Dedicated(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "production",
@@ -33,7 +35,7 @@ func TestTargetInfra_Enterprise(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-west-2",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "staging",
@@ -54,7 +56,7 @@ func TestTargetInfra_DedicatedPrivateLink(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "production",
@@ -78,7 +80,7 @@ func TestTargetInfra_EnterpriseTrailingHyphen(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "refac-env",
@@ -99,7 +101,7 @@ func TestTargetInfra_EnterprisePrivateLink_ExistingRoute53Zone(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:              "eu-west-1",
 		NeedsEnvironment:       true,
 		EnvironmentName:        "eu-prod",
@@ -123,7 +125,7 @@ func TestTargetInfra_DedicatedPrivateLink_ExistingRoute53Zone(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:              "us-east-1",
 		NeedsEnvironment:       true,
 		EnvironmentName:        "production",
@@ -148,7 +150,7 @@ func TestTargetInfra_EnterprisePrivateLink(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "eu-west-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "eu-prod",
@@ -172,7 +174,7 @@ func TestTargetInfra_PrivateLink_EmptySubnetCidrArray(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "test-env",
@@ -204,7 +206,7 @@ func TestTargetInfra_VeryLongResourceNames(t *testing.T) {
 	// 63 characters (max for some AWS resources)
 	longName := "this-is-a-very-long-environment-name-for-testing-limits-max"
 
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     longName,
@@ -225,7 +227,7 @@ func TestTargetInfra_SpecialCharactersInNames(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "env-with-dashes-and_underscores",
@@ -245,7 +247,7 @@ func TestTargetInfra_NumericOnlyNames(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "12345",
@@ -267,7 +269,7 @@ func TestTargetInfra_MultiZone_MinimumCKUs(t *testing.T) {
 	t.Parallel()
 
 	service := &TargetInfraHCLService{ResourceNames: NewTerraformResourceNames(), DeploymentID: "testdeploy"}
-	request := types.TargetClusterWizardRequest{
+	request := hclrequests.TargetClusterWizardRequest{
 		AwsRegion:           "us-east-1",
 		NeedsEnvironment:    true,
 		EnvironmentName:     "multi-zone-test",
