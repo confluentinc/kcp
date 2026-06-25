@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Project conventions for Claude Code in this repo. Detailed workflows live in `.claude/skills/` and activate on signal — keep this file thin.
+Project conventions for Claude Code in this repo — keep this file thin.
 
 ## Plans
 
@@ -18,11 +18,6 @@ Before committing or pushing any changes, always:
 ## Project Overview
 
 KCP (Kafka Copy Paste) is a CLI for planning and executing Kafka migrations from **AWS MSK and Apache Kafka** to Confluent Cloud. It discovers resources, generates reports, creates migration assets (Terraform), and orchestrates the client migration switchover workflow.
-
-## Skills
-
-- **testing** — Use when writing/running Go tests, adding Playwright e2e tests, or asked about TDD rules. See `.claude/skills/testing/SKILL.md`.
-- **pr-review** — Use when reviewing PRs (self-review or formal). See `.claude/skills/pr-review/SKILL.md`.
 
 ## Source Types
 
@@ -46,8 +41,6 @@ make clean              # remove build artifacts
 ```
 
 **Critical**: the frontend MUST be built before Go tests — they embed `cmd/ui/frontend/dist/` via `go:embed`. Tests fail with `pattern all:dist: no matching files found` otherwise.
-
-For testing conventions and TDD scope, see the `testing` skill.
 
 ## Architecture
 
