@@ -8,8 +8,8 @@ Scan existing Kafka deployments, generate migration plans and cost reports, crea
 
 ## Installation
 
-> [!IMPORTANT]
-> Install a **released binary** as described below. Do not build from `main` for normal use — `main` is an in-development branch and is not a defined release.
+> [!CAUTION]
+> Do not build from `main` for normal use — `main` is an in-development branch and is not a defined release. **Always install a released binary** for normal use, using the methods below. Builds from `main` are untested and may contain breaking changes.
 
 kcp ships pre-built binaries with every [GitHub release](https://github.com/confluentinc/kcp/releases/latest): macOS and Linux (amd64/arm64), and Windows (amd64).
 

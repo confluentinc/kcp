@@ -3,10 +3,8 @@
 Thanks for your interest in contributing to kcp! This guide covers building from
 source, running the tests, and how versioning works.
 
-> [!NOTE]
-> If you just want to **use** kcp, you do not need to build from source — install a
-> released binary instead. See the [Installation](README.md#installation) section of
-> the README. Building from `main` produces an unreleased, in-development binary.
+> [!CAUTION]
+> Do not build from `main` for normal use — `main` is an in-development branch and is not a defined release. **Always install a released binary** for normal use, using the methods in the [Installation](README.md#installation) section of the README. Builds from `main` are untested and may contain breaking changes.
 
 ## Prerequisites
 
