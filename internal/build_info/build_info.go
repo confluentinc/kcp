@@ -27,7 +27,7 @@ func IsDev() bool {
 // isDev is the testable core used by both IsDev and DocsURL.
 func isDev(v string) bool {
 	v = strings.TrimPrefix(v, "v")
-	return v == "" || v == "dev" || v == DefaultDevVersion
+	return v == "" || v == "dev" || strings.HasSuffix(v, "-localdev")
 }
 
 // DocsURL returns the versioned documentation URL matching the running binary.
