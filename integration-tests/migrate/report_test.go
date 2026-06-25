@@ -195,7 +195,14 @@ func buildSection(in sectionInput) reportSection {
 	if len(in.results) > 0 {
 		b.WriteString("**Result — link state** (live REST `GET`, captured before deletion)\n\n")
 		for _, p := range in.results {
-			fmt.Fprintf(&b, "_%s — `GET %s`_\n\n", p.label, p.url)
+			// A result block may have no single URL (e.g. a "source topics"
+			// listing assembled from local fixture data); render just the label
+			// in that case rather than a dangling `GET `.
+			if p.url == "" {
+				fmt.Fprintf(&b, "_%s_\n\n", p.label)
+			} else {
+				fmt.Fprintf(&b, "_%s — `GET %s`_\n\n", p.label, p.url)
+			}
 			fence(&b, "json", p.json)
 		}
 	}
@@ -263,6 +270,67 @@ func (c restClient) linkJSON(clusterID, name string) string {
 	}
 	return pretty.String()
 }
+
+// ---------------------------------------------------------------------------
+// topic report blocks — only ever built when reportEnabled (the topic tests
+// gate their section assembly on it, exactly like the auth matrix).
+// ---------------------------------------------------------------------------
+
+// prettyJSON marshals v to indented JSON for an evidence block, returning a
+// placeholder on error rather than failing (the report is best-effort).
+func prettyJSON(v any) string {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("<json marshal failed: %v>", err)
+	}
+	return string(b)
+}
+
+// topicListResult renders a resultBlock listing items (e.g. topic names, or
+// name+partition structs) as pretty JSON under the given label. url may be ""
+// for a block with no single REST URL (e.g. seeded source topics).
+func topicListResult(label, url string, items any) resultBlock {
+	return resultBlock{label: label, url: url, json: prettyJSON(items)}
+}
+
+// mirrorsResult builds a resultBlock from a live GET of the named link's mirrors
+// on the target, labelled "mirror topics on target". Best-effort.
+func mirrorsResult(c restClient, clusterID, link string) resultBlock {
+	url := "/kafka/v3/clusters/" + clusterID + "/links/" + link + "/mirrors"
+	return resultBlock{
+		label: "mirror topics on target",
+		url:   c.base + url,
+		json:  prettyJSON(c.listMirrorTopics(clusterID, link)),
+	}
+}
+
+// targetTopicsResult builds a resultBlock from a live read of each named topic on
+// the target (name + partition count), labelled "topics on target". A missing
+// topic is recorded with partitions -1. Best-effort.
+func targetTopicsResult(c restClient, clusterID string, names []string) resultBlock {
+	type topicInfo struct {
+		Name       string `json:"name"`
+		Partitions int    `json:"partitions"`
+	}
+	items := make([]topicInfo, 0, len(names))
+	for _, n := range names {
+		items = append(items, topicInfo{Name: n, Partitions: c.topicPartitions(clusterID, n)})
+	}
+	return resultBlock{
+		label: "topics on target",
+		url:   c.base + "/kafka/v3/clusters/" + clusterID + "/topics/{name}",
+		json:  prettyJSON(items),
+	}
+}
+
+// The topic report helpers are first called by the topic tests (T4-T6) when
+// assembling their sections. Until then, anchor compile-time references so the
+// `unused` linter does not flag them.
+var (
+	_ = topicListResult
+	_ = mirrorsResult
+	_ = targetTopicsResult
+)
 
 // ---------------------------------------------------------------------------
 // TestMain — writes the report after the matrix runs (when enabled).
