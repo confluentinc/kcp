@@ -6,7 +6,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,17 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// This file adds live coverage for the spec.topics feature on top of the
-// cluster-link auth matrix harness:
-//
-//   - TestMigrateApply_Topics_MirrorDestination — mode:mirror in destination
-//     topology (mirrors created on the target dest, prefix applied, idempotent).
-//   - TestMigrateApply_Topics_MirrorSourceInitiated — mode:mirror in source
-//     (push) topology (prefix read off the source-side OUTBOUND link, mirrors
-//     created on the migration-dest), idempotent.
-//   - TestMigrateApply_Topics_New — mode:new (no cluster link): plain topics
-//     reproduced on the target with partition count + RF, idempotent, and a
-//     report-only partition-count drift case.
+// This file holds the topic REST helpers shared by the spec.topics integration
+// suites (mirror + new mode). The mode:mirror matrices live in
+// migrate_topics_mirror_{destination,source}_test.go; the mode:new matrix lives
+// in migrate_topics_new_test.go.
 
 // ---------------------------------------------------------------------------
 // topic helpers on restClient
@@ -123,6 +118,52 @@ func (c restClient) topicPartitions(clusterID, name string) int {
 		return -1
 	}
 	return body.PartitionsCount
+}
+
+// setTopicConfig sets a single topic config key via the cp-server REST v3
+// alter-configs endpoint (PUT .../topics/{topic}/configs/{key} with {"value":…}).
+// Used to give a source topic a non-default config so the new-mode reconciler has
+// something to reproduce. Fatal on a non-2xx response.
+func (c restClient) setTopicConfig(t *testing.T, clusterID, topic, key, value string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"value": value})
+	require.NoError(t, err)
+	path := "/kafka/v3/clusters/" + clusterID + "/topics/" + url.PathEscape(topic) + "/configs/" + url.PathEscape(key)
+	req, err := http.NewRequest(http.MethodPut, c.base+path, bytes.NewReader(body))
+	require.NoError(t, err)
+	if c.header != "" {
+		req.Header.Set("Authorization", c.header)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("set config %s=%s on topic %q (%s): status %d: %s", key, value, topic, clusterID, resp.StatusCode, string(b))
+	}
+}
+
+// topicConfig reads a single topic config value via GET
+// .../topics/{topic}/configs/{key}, returning ("", false) if absent/unreadable.
+func (c restClient) topicConfig(clusterID, topic, key string) (string, bool) {
+	path := "/kafka/v3/clusters/" + clusterID + "/topics/" + url.PathEscape(topic) + "/configs/" + url.PathEscape(key)
+	resp, err := c.do(http.MethodGet, path)
+	if err != nil {
+		return "", false
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", false
+	}
+	var body struct {
+		Value     *string `json:"value"`
+		IsDefault bool    `json:"is_default"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil || body.Value == nil {
+		return "", false
+	}
+	return *body.Value, true
 }
 
 // listMirrorTopics returns the mirror_topic_name list for the named link.
@@ -353,67 +394,4 @@ func TestMigrateApply_Topics_MirrorSourceInitiated(t *testing.T) {
 	require.Contains(t, out, "mirrorTopics: 0 created, 2 already present", out)
 }
 
-// ---------------------------------------------------------------------------
-// Test 3 — new topics (no cluster link)
-// ---------------------------------------------------------------------------
-
-// TestMigrateApply_Topics_New drives mode:new with no cluster link: KCP reads the
-// source topics and creates plain topics on the target reproducing partition
-// count + RF. It asserts the topic is created with the source's partition count,
-// that re-apply is idempotent, and that a pre-existing target topic with a
-// different partition count is reported as drift (report-only, not altered).
-func TestMigrateApply_Topics_New(t *testing.T) {
-	dir := t.TempDir()
-
-	// spec.source bootstrap localhost:19092 is the source broker (restSource).
-	srcPoller := newRestClient(t, restSource)
-	srcPoller.waitForClusterID(t)
-	// Target is restDest (destClusterID).
-	tgtPoller := newRestClient(t, restDest)
-	tgtPoller.waitForClusterID(t)
-
-	// Topic created cleanly on the target (source has 3 partitions).
-	createTopic := uniqueTopicName("new")
-	srcPoller.createTopic(t, sourceClusterID, createTopic, 3)
-	defer srcPoller.deleteTopic(t, sourceClusterID, createTopic)
-	defer tgtPoller.deleteTopic(t, destClusterID, createTopic)
-
-	// Drift topic: source has 6 partitions, target pre-created with 2 — drift.
-	driftTopic := uniqueTopicName("new")
-	srcPoller.createTopic(t, sourceClusterID, driftTopic, 6)
-	tgtPoller.createTopic(t, destClusterID, driftTopic, 2)
-	defer srcPoller.deleteTopic(t, sourceClusterID, driftTopic)
-	defer tgtPoller.deleteTopic(t, destClusterID, driftTopic)
-
-	srcCreds := filepath.Join(dir, "source-creds.yaml")
-	writeKafkaCreds(t, srcCreds, kafkaAuth{authPlaintext, "localhost:19092"})
-	targetCreds := writeRestCreds(t, dir, "target-creds.yaml", restDest)
-
-	manifest := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n" +
-		"metadata:\n  name: mcl-new-" + runID + "\n" +
-		"spec:\n  source:\n    type: apache-kafka\n    bootstrapServers: [\"localhost:19092\"]\n    credentials: " + srcCreds + "\n" +
-		"  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n" +
-		"    kafka:\n      restEndpoint: " + restDest.baseURL + "\n" +
-		"  topics:\n    mode: new\n    include: [\"" + createTopic + "\", \"" + driftTopic + "\"]\n"
-	m := filepath.Join(dir, "migration.yaml")
-	require.NoError(t, os.WriteFile(m, []byte(manifest), 0600))
-
-	// apply: createTopic is created (1), driftTopic is reported drift (1), none
-	// already present on first apply.
-	out, err := runKCP(t, m)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "== newTopics", out)
-	require.Contains(t, out, "newTopics: 1 created, 0 already present, 1 drift", out)
-
-	// Created topic reproduces the source partition count on the target.
-	require.True(t, tgtPoller.topicExists(destClusterID, createTopic), "created topic must exist on target")
-	require.Equal(t, 3, tgtPoller.topicPartitions(destClusterID, createTopic), "created topic partition count reproduced from source")
-	// Drift topic was left UNALTERED (report-only): still 2 partitions on target.
-	require.Equal(t, 2, tgtPoller.topicPartitions(destClusterID, driftTopic), "drift topic must not be altered")
-
-	// re-apply: createTopic now already present; driftTopic still drift.
-	out, err = runKCP(t, m)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 0 created, 1 already present, 1 drift", out)
-	require.Equal(t, 2, tgtPoller.topicPartitions(destClusterID, driftTopic), "drift topic still unaltered after re-apply")
-}
+// mode:new (no cluster link) coverage lives in migrate_topics_new_test.go.

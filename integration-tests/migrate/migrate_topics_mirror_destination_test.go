@@ -444,9 +444,19 @@ func TestMigrateApply_TopicsMirror_NoPrefix(t *testing.T) {
 
 	poller := newRestClient(t, restDest)
 	poller.waitForClusterID(t)
-	defer poller.deleteLink(t, destClusterID, link)
-
 	srcTopics := []string{"orders-1", "orders-2", "orders-3", "orders-4"}
+	// This case is unique in landing UNPREFIXED mirror names (orders-1..4) on the
+	// shared dest broker — the same fixed catalog names the mode:new matrix
+	// reproduces as plain topics. Deleting the link alone leaves those mirror
+	// topics behind (a link with live mirrors cannot be deleted — 403), which would
+	// make a later new-mode "4 created" assertion see them as already present.
+	// Delete the mirror topics first (defers run LIFO, so these run BEFORE the link
+	// delete) so the dest is clean for subsequent cases.
+	defer poller.deleteLink(t, destClusterID, link)
+	for _, n := range srcTopics {
+		defer poller.deleteTopic(t, destClusterID, n)
+	}
+
 	rep := newMirrorReporter(link, "clusterLink with NO prefix: mirror names equal the source names (orders-1..4, unprefixed); created cleanly and idempotent (the 40035 'topic already exists' risk path).", m, link, srcTopics)
 	rep.expected("no prefix → mirror names == source names: orders-1, orders-2, orders-3, orders-4")
 	defer rep.commit(t, poller)
