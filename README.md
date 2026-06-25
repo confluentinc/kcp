@@ -1,56 +1,10 @@
 # KCP CLI
 
-[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=license) [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=security)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=security)
+**A command-line tool for planning and executing Kafka migrations to Confluent Cloud.**
 
-This repository is part of the Confluent organization on GitHub.
-It is public and open to contributions from the community.
+Scan existing Kafka deployments, generate migration plans and cost reports, create infrastructure-as-code assets, and execute end-to-end migrations with real-time monitoring.
 
-Please see the LICENSE file for contribution terms.
-Please see the CHANGELOG.md for details of recent updates.
-
----
-
-<div align="center">
-
-**A comprehensive command-line tool for planning and executing Kafka migrations to Confluent Cloud.**
-
-</div>
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Documentation](#documentation)
-- [Installation](#installation)
-- [Upgrading](#upgrading)
-- [Contributing](#contributing)
-- [Resources and Support](#resources-and-support)
-
-## Overview
-
-**Mission**: Simplify and streamline your Kafka migration journey to Confluent Cloud!
-
-kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to:
-
-- **Scan** scan and identify resources in existing Kafka deployments.
-- **Create** reports for migration planning and cost analysis.
-- **Generate** migration assets and infrastructure configurations.
-- **Migrate** execute end-to-end migrations with real-time offset monitoring and resumable workflows.
-
-### Key Features
-
-| Feature                     | Description                                                                              |
-| --------------------------- | ---------------------------------------------------------------------------------------- |
-| **Multiple Auth Methods**   | Support for SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                              |
-| **Comprehensive Reporting** | Detailed migration planning and cost analysis.                                           |
-| **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud.  |
-| **Migration Execution**     | FSM-driven migration workflow with lag monitoring, gateway fencing, and topic promotion. |
-| **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.              |
-
-## Documentation
-
-Full documentation is published at **[confluentinc.github.io/kcp](https://confluentinc.github.io/kcp/)**, with a version selector for each release. The docs for the latest release are also linked from the [latest release page](https://github.com/confluentinc/kcp/releases/latest).
+> **[Full documentation](https://confluentinc.github.io/kcp/)** · **[Latest release](https://github.com/confluentinc/kcp/releases/latest)** · **[Changelog](CHANGELOG.md)**
 
 ## Installation
 
@@ -113,9 +67,19 @@ kcp update --check-only # report the latest version without installing
 sudo kcp update         # for system-wide installs (e.g. /usr/local/bin)
 ```
 
+## Overview
+
+| Feature                     | Description                                                                              |
+| --------------------------- | ---------------------------------------------------------------------------------------- |
+| **Multiple Auth Methods**   | SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                                         |
+| **Comprehensive Reporting** | Migration planning and cost analysis reports.                                            |
+| **Infrastructure as Code**  | Generate Terraform and Ansible configurations for Confluent Cloud.                       |
+| **Migration Execution**     | FSM-driven workflow with lag monitoring, gateway fencing, and topic promotion.            |
+| **Private VPC Deployments** | Migrate from private networks and isolated environments.                                 |
+
 ## Contributing
 
-This repository is public and open to community contributions. To build from source, run the tests, or cut a release, see **[CONTRIBUTING.md](CONTRIBUTING.md)**. Please also see the [LICENSE](LICENSE) for contribution terms.
+This repository is public and open to community contributions. To build from source, run the tests, or submit a pull request, see **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## Resources and Support
 
@@ -123,3 +87,6 @@ This repository is public and open to community contributions. To build from sou
 - [Migration Hub on Confluent Cloud](https://confluent.cloud/migration-hub)
 - [Talk to a migration expert from Confluent](https://meetings.salesloft.com/confluentinc/confluent-migration-assistance)
 
+---
+
+[![FOSSA License](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=license) [![FOSSA Security](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=security)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=security)
