@@ -19,9 +19,8 @@ import (
 // reproducing the source partition count, replication factor and non-default
 // configs. Cases cover glob families, the ? wildcard, multi-include, exclude,
 // internal-topic exclusion, empty match, special-char names, partition
-// inheritance, non-default config pass-through, a config skip-list note,
-// partition-count drift (report-only), dry-run, and a failure/continue-on-error
-// note.
+// inheritance, non-default config pass-through, partition-count drift
+// (report-only), dry-run, and a failure/continue-on-error note.
 //
 // Tests run SERIALLY (no t.Parallel). The new-mode TARGET is the dest broker
 // (restDest / destClusterID) — the SAME broker the mirror matrix mirrors onto.
@@ -127,7 +126,7 @@ func (r *newReporter) expected(note string) {
 }
 
 // note appends an arbitrary structured note (used to record config pass-through
-// or skip-list evidence).
+// evidence).
 func (r *newReporter) note(label string, v any) {
 	if reportEnabled {
 		r.in.results = append(r.in.results, topicListResult(label, "", v))
@@ -466,7 +465,7 @@ func TestMigrateApply_TopicsNew_SpecialCharNames(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 8 — non-default config pass-through (+ skip-list note)
+// Case 8 — non-default config pass-through
 // ---------------------------------------------------------------------------
 
 func TestMigrateApply_TopicsNew_ConfigPassThrough(t *testing.T) {
