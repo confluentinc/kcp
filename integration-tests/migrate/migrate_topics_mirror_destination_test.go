@@ -609,33 +609,30 @@ func TestMigrateApply_TopicsMirror_DryRun(t *testing.T) {
 	poller.waitForClusterID(t)
 	defer poller.deleteLink(t, destClusterID, link)
 
-	// PRODUCT LIMITATION (reported): the mirrorTopics reconciler reads the cluster
-	// link's prefix from the LIVE link during Plan, so a first-time `apply
-	// --dry-run` against a manifest that creates BOTH the link and the mirrors
-	// fails at planning ("reading link prefix: ... Cluster link does not exist")
-	// because the link is not created in dry-run. To exercise dry-run of the
-	// mirrorTopics step against a real (existing) link, we first apply the link
-	// alone (include matches nothing → link created, 0 mirrors), then dry-run a
-	// widened selection: it must PLAN the four orders mirrors and create NONE.
-	mNone := writeMirrorManifest(t, dir, mirrorManifestOpts{link: link, prefix: prefix, include: []string{"nope-*"}})
-	out, err := runKCP(t, mNone)
-	require.NoError(t, err, out)
-	poller.requireLinkActive(t, destClusterID, link)
-	require.Empty(t, poller.listMirrorTopics(destClusterID, link), "link created with no mirrors")
-
+	// FROM-SCRATCH dry-run: a manifest that creates BOTH the cluster link and the
+	// mirrors. The link does not exist yet, so the mirrorTopics reconciler cannot
+	// read cluster.link.prefix off a live link during Plan — it falls back to the
+	// manifest's clusterLink.prefix (exactly the value the link will be created
+	// with). Dry-run must therefore PLAN the four PREFIXED mirrors (proving the
+	// fallback drove planning) while creating NOTHING — neither the link nor any
+	// mirror.
 	m := writeMirrorManifest(t, dir, mirrorManifestOpts{link: link, prefix: prefix, include: []string{"orders-*"}})
 	srcTopics := []string{"orders-1", "orders-2", "orders-3", "orders-4"}
-	rep := newMirrorReporter(link, "against an existing link, --dry-run with include:[orders-*] PLANS the four mirrors (output shows 'Planned' + the mirror topic plan lines) but creates nothing — the link's mirror list stays empty afterward.", m, link, srcTopics)
-	rep.expected("dry-run: plans 4 mirrors, creates 0; /mirrors empty afterward")
+	rep := newMirrorReporter(link, "from-scratch --dry-run with include:[orders-*] on a NOT-YET-CREATED link PLANS the four prefixed mirrors (output shows 'Planned' + the prefixed mirror-topic plan lines, e.g. "+prefix+"orders-1) via the manifest-prefix fallback — but creates nothing: neither the link nor any mirror.", m, link, srcTopics)
+	rep.expected("dry-run: plans 4 prefixed mirrors, creates 0; link absent and /mirrors empty afterward")
 	defer rep.commit(t, poller)
 
-	out, err = runKCP(t, m, "--dry-run")
+	out, err := runKCP(t, m, "--dry-run")
 	rep.dryRun(out)
 	require.NoError(t, err, out)
 	require.Contains(t, out, "Planned", out)
-	require.Contains(t, out, "mirror topic", out)
+	// The planned mirror names are PREFIXED — proof the manifest-prefix fallback
+	// drove planning rather than a (non-existent) live link read.
+	require.Contains(t, out, prefix+"orders-1", out)
 
-	// Dry-run created nothing: the link's mirror list is still empty.
+	// Dry-run created nothing: the link itself was never created, so the dest has
+	// no link state and no mirrors.
+	require.Empty(t, poller.linkState(destClusterID, link), "dry-run must not create the cluster link")
 	require.Empty(t, poller.listMirrorTopics(destClusterID, link), "dry-run must not create any mirror")
 }
 

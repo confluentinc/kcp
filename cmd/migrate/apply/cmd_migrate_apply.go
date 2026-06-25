@@ -192,6 +192,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 				LinkName: cl.Name,
 				Include:  t.Include,
 				Exclude:  t.Exclude,
+				Prefix:   cl.Prefix,
 			}, src, tgt, prefixTgt))
 
 		case manifest.TopicModeNew:

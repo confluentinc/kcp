@@ -4,7 +4,6 @@ import (
 	"context"
 	"strings"
 	"testing"
-	"time"
 
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/reconcile"
@@ -235,79 +234,64 @@ type errStub string
 
 func (e errStub) Error() string { return string(e) }
 
-// retryLinkTarget fails GetClusterLinkConfigs with the given error for the first
-// failN calls, then returns configs. It satisfies linkTarget for the prefix-read
-// retry tests; ListTopics et al. are not exercised here.
-type retryLinkTarget struct {
-	fakeLinkTarget
-	failN   int
-	failErr error
-	calls   int
-}
-
-func (f *retryLinkTarget) GetClusterLinkConfigs(ctx context.Context, name string) (map[string]string, error) {
-	f.calls++
-	if f.calls <= f.failN {
-		return nil, f.failErr
-	}
-	return f.configs, nil
-}
-
-// TestPlan_PrefixReadRetriesOnNotExist proves the source-initiated prefix read
-// tolerates the transient "link does not exist" 404 that occurs immediately after
-// the OUTBOUND link is created: the read is retried until the link config becomes
-// readable, so a single apply succeeds without a manual re-run.
-func TestPlan_PrefixReadRetriesOnNotExist(t *testing.T) {
-	prefixReadRetryBackoff = time.Millisecond
-	prefixReadRetryTimeout = 2 * time.Second
-	defer func() {
-		prefixReadRetryBackoff = 500 * time.Millisecond
-		prefixReadRetryTimeout = 30 * time.Second
-	}()
-
+// TestPlan_LivePrefixWinsOverManifest proves that when the live link is readable
+// its cluster.link.prefix is authoritative and overrides the manifest prefix
+// (Config.Prefix) — correct in the drift edge-case where an immutable pre-existing
+// link differs from an edited manifest.
+func TestPlan_LivePrefixWinsOverManifest(t *testing.T) {
 	src := &fakeSource{topics: []string{"orders"}}
-	tgt := &retryLinkTarget{
-		fakeLinkTarget: fakeLinkTarget{clusterID: "src-1", configs: map[string]string{linkConfigPrefix: "sp-"}},
-		failN:          3,
-		failErr:        errStub("unexpected status code 404: {\"error_code\":404,\"message\":\"The cluster link doesn't exist: Cluster link 'lk' does not exist.\"}"),
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		configs:   map[string]string{linkConfigPrefix: "live."},
 	}
-	r := New(Config{LinkName: "lk", Include: []string{"*"}}, src, tgt, tgt)
+	r := New(Config{LinkName: "lk", Include: []string{"*"}, Prefix: "manifest."}, src, tgt, tgt)
 
 	p, err := r.Plan(context.Background())
 	if err != nil {
 		t.Fatalf("Plan: %v", err)
 	}
-	if tgt.calls != 4 {
-		t.Errorf("want 4 prefix-read attempts (3 transient + 1 success), got %d", tgt.calls)
-	}
 	got := summaryActions(p.Changes())
-	if act, ok := got[`mirror topic "sp-orders"`]; !ok || act != reconcile.ActionCreate {
-		t.Errorf("sp-orders: want Create with retried prefix, got %v (present=%v)", act, ok)
+	if act, ok := got[`mirror topic "live.orders"`]; !ok || act != reconcile.ActionCreate {
+		t.Errorf("want Create for live.orders (live prefix wins), got %v (present=%v); all=%v", act, ok, got)
+	}
+	if _, ok := got[`mirror topic "manifest.orders"`]; ok {
+		t.Errorf("manifest prefix must not be used when live link is readable")
 	}
 }
 
-// TestPlan_PrefixReadFailsFastOnOtherError proves a non-transient prefix-read
-// error (not "does not exist") is returned immediately without retrying.
-func TestPlan_PrefixReadFailsFastOnOtherError(t *testing.T) {
-	prefixReadRetryBackoff = time.Millisecond
-	prefixReadRetryTimeout = 2 * time.Second
-	defer func() {
-		prefixReadRetryBackoff = 500 * time.Millisecond
-		prefixReadRetryTimeout = 30 * time.Second
-	}()
-
+// TestPlan_FallsBackToManifestPrefixWhenLinkAbsent proves that when the live link
+// does not exist yet (dry-run before the clusterLink reconciler creates it, or the
+// brief post-create propagation window) the planner falls back to the manifest
+// prefix — exactly what the link is/will-be created with — with no error.
+func TestPlan_FallsBackToManifestPrefixWhenLinkAbsent(t *testing.T) {
 	src := &fakeSource{topics: []string{"orders"}}
-	tgt := &retryLinkTarget{
-		fakeLinkTarget: fakeLinkTarget{clusterID: "src-1", configs: map[string]string{linkConfigPrefix: "sp-"}},
-		failN:          99,
-		failErr:        errStub("unexpected status code 401: unauthorized"),
+	tgt := &fakeLinkTarget{
+		clusterID:  "dest-1",
+		configsErr: errStub("unexpected status code 404: {\"error_code\":404,\"message\":\"The cluster link doesn't exist: Cluster link 'lk' does not exist.\"}"),
 	}
-	r := New(Config{LinkName: "lk", Include: []string{"*"}}, src, tgt, tgt)
+	r := New(Config{LinkName: "lk", Include: []string{"*"}, Prefix: "mt."}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: want no error (fallback to manifest prefix), got %v", err)
+	}
+	got := summaryActions(p.Changes())
+	if act, ok := got[`mirror topic "mt.orders"`]; !ok || act != reconcile.ActionCreate {
+		t.Errorf("want Create for mt.orders (manifest-prefix fallback), got %v (present=%v); all=%v", act, ok, got)
+	}
+}
+
+// TestPlan_FailsFastOnOtherPrefixReadError proves a non-"does not exist"
+// prefix-read error (e.g. 401) is returned immediately, with no fallback.
+func TestPlan_FailsFastOnOtherPrefixReadError(t *testing.T) {
+	src := &fakeSource{topics: []string{"orders"}}
+	tgt := &fakeLinkTarget{
+		clusterID:  "dest-1",
+		configsErr: errStub("unexpected status code 401: unauthorized"),
+	}
+	r := New(Config{LinkName: "lk", Include: []string{"*"}, Prefix: "mt."}, src, tgt, tgt)
 
 	if _, err := r.Plan(context.Background()); err == nil {
-		t.Fatalf("Plan: want error, got nil")
-	}
-	if tgt.calls != 1 {
-		t.Errorf("want exactly 1 attempt (fail-fast on non-transient error), got %d", tgt.calls)
+		t.Fatalf("Plan: want error (no fallback on non-\"does not exist\" error), got nil")
 	}
 }
