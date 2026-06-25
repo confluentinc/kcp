@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Button } from '@/components/common/ui/button'
 import { formatDate } from '@/lib/formatters'
-import { CONNECTOR_TABS } from '@/constants'
+import { hasRedactedConfig } from '@/lib/redaction'
+import { CONNECTOR_TABS, REDACTED_PLACEHOLDER } from '@/constants'
 import { ConnectMetrics } from './ConnectMetrics'
 import type { ConnectorTab } from '@/types'
 
@@ -60,6 +61,10 @@ interface ClusterConnectorsProps {
     }
   }
   clusterId?: string
+  // Required: a Connect cluster is distribution-agnostic, so every caller must state
+  // which source set the connect-metrics endpoint should search. Leaving it optional
+  // risks an MSK caller silently falling back to the OSK source and 404-ing.
+  sourceType: 'msk' | 'osk'
 }
 
 export const ClusterConnectors = ({
@@ -67,6 +72,7 @@ export const ClusterConnectors = ({
   selfManagedConnectors = [],
   connectMetrics,
   clusterId,
+  sourceType,
 }: ClusterConnectorsProps) => {
   const [activeTab, setActiveTab] = useState<ConnectorTab>(CONNECTOR_TABS.MSK)
   const [copiedConnector, setCopiedConnector] = useState<string | null>(null)
@@ -289,6 +295,7 @@ export const ClusterConnectors = ({
         {connectMetrics?.metadata && clusterId && (
           <ConnectMetrics
             clusterId={clusterId}
+            sourceType={sourceType}
             connectMetricsMetadata={connectMetrics.metadata}
           />
         )}
@@ -317,6 +324,14 @@ export const ClusterConnectors = ({
   const hasMSKConnectors = connectors && connectors.length > 0
   const hasSelfManagedConnectors = selfManagedConnectors && selfManagedConnectors.length > 0
 
+  // Whether any displayed connector (either tab) still carries the redaction
+  // placeholder and therefore needs manual secret replacement before applying.
+  // Guard against null props (a state file may carry `connectors: null`); the
+  // `= []` default only covers undefined.
+  const hasRedactedConnectorConfig =
+    (connectors ?? []).some((c) => hasRedactedConfig(c.connector_configuration)) ||
+    (selfManagedConnectors ?? []).some((c) => hasRedactedConfig(c.config))
+
   if (!hasMSKConnectors && !hasSelfManagedConnectors) {
     return (
       <div className="text-center py-12">
@@ -335,6 +350,19 @@ export const ClusterConnectors = ({
           Kafka Connect Connectors
         </h3>
       </div>
+
+      {/* Redaction warning — shown when any connector config still carries the
+          placeholder. Presentational only; never dumps the redacted values. */}
+      {hasRedactedConnectorConfig && (
+        <div
+          data-testid="redacted-config-warning"
+          className="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-border rounded-lg text-sm text-amber-800 dark:text-amber-200"
+        >
+          ⚠️ Some connector configs contain redacted sensitive fields (
+          <span className="font-mono">{REDACTED_PLACEHOLDER}</span>). Replace these
+          with real values before applying generated migration assets.
+        </div>
+      )}
 
       {/* Tab Navigation */}
       <div className="border-b border-border">

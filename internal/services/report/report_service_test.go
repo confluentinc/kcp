@@ -921,18 +921,33 @@ func TestCalculateMetricsAggregates(t *testing.T) {
 func TestFilterConnectMetrics(t *testing.T) {
 	rs := NewReportService()
 
-	connectMetrics := &types.ProcessedClusterMetrics{
+	oskConnectMetrics := &types.ConnectClusterMetrics{
 		Metrics: []types.ProcessedMetric{
 			{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "connector-count", Value: ptr(2.0)},
 			{Start: "2025-01-01T00:01:00Z", End: "2025-01-01T00:02:00Z", Label: "connector-count", Value: ptr(2.0)},
 			{Start: "2025-01-02T00:00:00Z", End: "2025-01-02T00:01:00Z", Label: "connector-count", Value: ptr(3.0)},
 		},
-		Metadata: types.MetricMetadata{Period: 60},
+		Metadata: types.ConnectMetricMetadata{Period: 60, MetricsSource: types.MetricBackendJolokia},
 		QueryInfo: []types.MetricQueryInfo{
 			{MetricName: "connector-count", Statistic: "Point-in-time value (per worker)"},
 		},
 	}
 
+	mskConnectMetrics := &types.ConnectClusterMetrics{
+		Metrics: []types.ProcessedMetric{
+			{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "connector-count", Value: ptr(5.0)},
+			{Start: "2025-01-02T00:00:00Z", End: "2025-01-02T00:01:00Z", Label: "connector-count", Value: ptr(7.0)},
+		},
+		Metadata: types.ConnectMetricMetadata{Period: 60, MetricsSource: types.MetricBackendPrometheus},
+		QueryInfo: []types.MetricQueryInfo{
+			{MetricName: "connector-count", Statistic: "Point-in-time value (per worker)"},
+		},
+	}
+
+	const mskArn = "arn:aws:kafka:us-east-1:123456789012:cluster/msk-kafka/def-456"
+
+	// State carries BOTH an OSK and an MSK cluster, each with Connect metrics, so the
+	// source-type branches and cross-source isolation can be exercised against one fixture.
 	stateWithConnect := ProcessedState{
 		Sources: []ProcessedSource{
 			{
@@ -946,12 +961,36 @@ func TestFilterConnectMetrics(t *testing.T) {
 									Connectors: []types.SelfManagedConnector{
 										{Name: "test-connector"},
 									},
-									Metrics: connectMetrics,
+									Metrics: oskConnectMetrics,
 								},
 							},
 							Metadata: types.OSKClusterMetadata{
 								Environment: "test",
 								Location:    "local",
+							},
+						},
+					},
+				},
+			},
+			{
+				Type: types.SourceTypeMSK,
+				MSKData: &ProcessedMSKSource{
+					Regions: []ProcessedRegion{
+						{
+							Name: "us-east-1",
+							Clusters: []ProcessedCluster{
+								{
+									Name: "msk-kafka",
+									Arn:  mskArn,
+									KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+										SelfManagedConnectors: &types.SelfManagedConnectors{
+											Connectors: []types.SelfManagedConnector{
+												{Name: "msk-connector"},
+											},
+											Metrics: mskConnectMetrics,
+										},
+									},
+								},
 							},
 						},
 					},
@@ -975,45 +1014,126 @@ func TestFilterConnectMetrics(t *testing.T) {
 		},
 	}
 
-	t.Run("returns Connect metrics for existing cluster", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", nil, nil)
+	t.Run("returns Connect metrics for existing OSK cluster", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 3)
-		assert.Equal(t, "osk-kafka", result.ClusterArn)
-		assert.Equal(t, "test", result.Environment)
-		assert.Equal(t, "local", result.Location)
+		// The clean Connect shape carries the metadata through; broker-only
+		// ClusterArn/Environment/Location are intentionally absent from the type.
+		assert.Equal(t, int32(60), result.Metadata.Period, "period carried through")
+		assert.Equal(t, types.MetricBackendJolokia, result.Metadata.MetricsSource, "metrics_source carried through")
 		assert.Len(t, result.QueryInfo, 1)
 		assert.Equal(t, "connector-count", result.QueryInfo[0].MetricName)
+	})
+
+	t.Run("returns Connect metrics for existing MSK cluster", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 2)
+		assert.Equal(t, types.MetricBackendPrometheus, result.Metadata.MetricsSource, "MSK metrics_source carried through")
 	})
 
 	t.Run("filters by date range", func(t *testing.T) {
 		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", &start, &end)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 2) // only Jan 1 metrics
 	})
 
 	t.Run("cluster not found returns error", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", "osk", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
-	t.Run("cluster without self-managed connectors returns empty metrics", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", nil, nil)
+	t.Run("cluster without self-managed connectors signals never-collected", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", "osk", nil, nil)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
+	})
+
+	t.Run("collected metrics outside the date range return empty without error", func(t *testing.T) {
+		// Distinct from "never collected": the cluster HAS Connect metrics, the
+		// selected window just excludes them all. This must NOT surface as the
+		// never-collected sentinel — it is a valid empty result the API serves as a
+		// 200, so the user sees an empty chart rather than a "run a scan" message.
+		start := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
-		assert.Nil(t, result.Metrics)
-		assert.Equal(t, "osk-kafka-no-connect", result.ClusterArn)
+		assert.Empty(t, result.Metrics)
+		assert.NotErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
 
 	t.Run("case-insensitive cluster ID match", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", nil, nil)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", "osk", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 3)
+	})
+
+	// Abuse case: cross-source-type bleed. A cluster identifier that exists under one
+	// source type must never resolve when queried under the other source type.
+	t.Run("OSK cluster id requested as msk does not bleed", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "msk", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("MSK cluster arn requested as osk does not bleed", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "osk", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	// Abuse case: an unknown source type is rejected, not silently defaulted to a source.
+	t.Run("unknown source type returns error", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "bogus", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "source type")
+	})
+
+	// MSK-branch coverage symmetric to the OSK cases above: not-found, no-connectors,
+	// and date filtering must each be exercised through the MSK lookup path.
+	t.Run("MSK cluster not found returns error", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "arn:aws:kafka:us-east-1:000000000000:cluster/nope/zzz", "msk", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("MSK cluster without self-managed connectors signals never-collected", func(t *testing.T) {
+		const arn = "arn:aws:kafka:us-east-1:123456789012:cluster/msk-bare/ghi-789"
+		stateMSKNoConnect := ProcessedState{
+			Sources: []ProcessedSource{
+				{
+					Type: types.SourceTypeMSK,
+					MSKData: &ProcessedMSKSource{
+						Regions: []ProcessedRegion{
+							{
+								Name:     "us-east-1",
+								Clusters: []ProcessedCluster{{Name: "msk-bare", Arn: arn}},
+							},
+						},
+					},
+				},
+			},
+		}
+		_, err := rs.FilterConnectMetrics(stateMSKNoConnect, arn, "msk", nil, nil)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
+	})
+
+	t.Run("filters by date range on the MSK path", func(t *testing.T) {
+		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", &start, &end)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 1) // only the Jan 1 MSK metric
 	})
 }
