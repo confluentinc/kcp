@@ -1,4 +1,6 @@
-package types
+package hclrequests
+
+import "github.com/confluentinc/kcp/internal/types"
 
 type TargetClusterWizardRequest struct {
 	AwsRegion              string   `json:"aws_region"`
@@ -74,7 +76,7 @@ type MigrateAclsRequest struct {
 	ClusterId  string `json:"cluster_id"`
 
 	// This is not sent by the UI payload but instead built by the API service before being passed on to the HCL service.
-	AclsByPrincipal map[string][]Acls `json:"-"`
+	AclsByPrincipal map[string][]types.Acls `json:"-"`
 }
 
 // MigrateTopicsMode values for MirrorTopicsRequest.Mode.
@@ -93,10 +95,10 @@ type MirrorTopicsRequest struct {
 	SelectedTopics []string `json:"selected_topics"`
 	// Topics carries the full topic details (partitions, configs) needed by new mode.
 	// Not part of the JSON wire format — the CLI populates this from state directly.
-	Topics                    []TopicDetails `json:"-"`
-	ClusterLinkName           string         `json:"cluster_link_name"`
-	TargetClusterId           string         `json:"target_cluster_id"`
-	TargetClusterRestEndpoint string         `json:"target_cluster_rest_endpoint"`
+	Topics                    []types.TopicDetails `json:"-"`
+	ClusterLinkName           string               `json:"cluster_link_name"`
+	TargetClusterId           string               `json:"target_cluster_id"`
+	TargetClusterRestEndpoint string               `json:"target_cluster_rest_endpoint"`
 	// Mode selects the generator: "mirror" emits confluent_kafka_mirror_topic
 	// resources; "new" emits confluent_kafka_topic resources with no data forward.
 	Mode            string   `json:"mode"`
@@ -143,8 +145,8 @@ type MigrateGlueSchemasRequest struct {
 }
 
 type GlueSchemaRegistryMigrationConfig struct {
-	Migrate      bool         `json:"migrate"`
-	RegistryName string       `json:"registry_name"`
-	Region       string       `json:"region"`
-	Schemas      []GlueSchema `json:"schemas"`
+	Migrate      bool               `json:"migrate"`
+	RegistryName string             `json:"registry_name"`
+	Region       string             `json:"region"`
+	Schemas      []types.GlueSchema `json:"schemas"`
 }

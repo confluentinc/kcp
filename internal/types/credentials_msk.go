@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/goccy/go-yaml"
 )
@@ -27,21 +26,22 @@ func NewCredentialsFrom(fromCredentials *Credentials) *Credentials {
 }
 
 func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) {
-	data, err := os.ReadFile(credentialsYamlPath)
-	if err != nil {
-		return nil, []error{fmt.Errorf("failed to read creds.yaml file: %w", err)}
-	}
+	return loadCredentialsFile[Credentials](credentialsYamlPath)
+}
 
-	var credsFile Credentials
-	if err := yaml.Unmarshal(data, &credsFile); err != nil {
-		return nil, []error{fmt.Errorf("failed to unmarshal YAML: %w", err)}
+// UpsertTargetedClusters creates or replaces only the clusters present in newRegion.Clusters,
+// preserving the auth config of every other cluster in the region. If the region does not
+// exist it is added as-is. Mirrors State.UpsertTargetedClusters for the credentials file.
+func (c *Credentials) UpsertTargetedClusters(newRegion RegionAuth) {
+	for i := range c.Regions {
+		if c.Regions[i].Name == newRegion.Name {
+			for _, targeted := range newRegion.Clusters {
+				c.Regions[i].UpsertCluster(targeted)
+			}
+			return
+		}
 	}
-
-	if valid, errs := credsFile.Validate(); !valid {
-		return nil, errs
-	}
-
-	return &credsFile, nil
+	c.Regions = append(c.Regions, newRegion)
 }
 
 // UpsertRegion inserts a new region or updates an existing one by name
@@ -60,14 +60,7 @@ func (c *Credentials) UpsertRegion(newRegion RegionAuth) {
 }
 
 func (c *Credentials) WriteToFile(filePath string) error {
-	yamlData, err := c.ToYaml()
-	if err != nil {
-		return fmt.Errorf("failed to marshal YAML: %w", err)
-	}
-	if err := os.WriteFile(filePath, yamlData, 0600); err != nil {
-		return fmt.Errorf("failed to write YAML file: %w", err)
-	}
-	return nil
+	return writeYAMLFile(filePath, c)
 }
 
 func (c *Credentials) ToYaml() ([]byte, error) {
@@ -127,6 +120,19 @@ func (ra *RegionAuth) MergeClusterConfigs(existingRegion RegionAuth) {
 	}
 }
 
+// UpsertCluster creates or replaces a single cluster auth by ARN, preserving the auth
+// configs of every other cluster and merging auth-method config onto the replaced entry.
+func (ra *RegionAuth) UpsertCluster(newCluster ClusterAuth) {
+	for i := range ra.Clusters {
+		if ra.Clusters[i].Arn == newCluster.Arn {
+			newCluster.AuthMethod.MergeWith(ra.Clusters[i].AuthMethod)
+			ra.Clusters[i] = newCluster
+			return
+		}
+	}
+	ra.Clusters = append(ra.Clusters, newCluster)
+}
+
 type ClusterAuth struct {
 	Name       string           `yaml:"name"`
 	Arn        string           `yaml:"arn"`
@@ -134,38 +140,12 @@ type ClusterAuth struct {
 }
 
 func (ce ClusterAuth) GetSelectedAuthType() (AuthType, error) {
-	enabledMethods := ce.GetAuthMethods()
-	if len(enabledMethods) == 0 {
-		return "", fmt.Errorf("no authentication method enabled for cluster")
-	}
-	return enabledMethods[0], nil
-
+	return ce.AuthMethod.SelectedAuthType(true)
 }
 
 // Gets a list of the authentication method(s) selected in the `creds.yaml` file generated during discovery.
 func (ce ClusterAuth) GetAuthMethods() []AuthType {
-	enabledMethods := []AuthType{}
-
-	if ce.AuthMethod.UnauthenticatedPlaintext != nil && ce.AuthMethod.UnauthenticatedPlaintext.Use {
-		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedPlaintext)
-	}
-	if ce.AuthMethod.UnauthenticatedTLS != nil && ce.AuthMethod.UnauthenticatedTLS.Use {
-		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedTLS)
-	}
-	if ce.AuthMethod.IAM != nil && ce.AuthMethod.IAM.Use {
-		enabledMethods = append(enabledMethods, AuthTypeIAM)
-	}
-	if ce.AuthMethod.SASLScram != nil && ce.AuthMethod.SASLScram.Use {
-		enabledMethods = append(enabledMethods, AuthTypeSASLSCRAM)
-	}
-	if ce.AuthMethod.SASLPlain != nil && ce.AuthMethod.SASLPlain.Use {
-		enabledMethods = append(enabledMethods, AuthTypeSASLPlain)
-	}
-	if ce.AuthMethod.TLS != nil && ce.AuthMethod.TLS.Use {
-		enabledMethods = append(enabledMethods, AuthTypeTLS)
-	}
-
-	return enabledMethods
+	return ce.AuthMethod.EnabledAuthMethods(true)
 }
 
 type AuthMethodConfig struct {
@@ -175,6 +155,40 @@ type AuthMethodConfig struct {
 	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
 	UnauthenticatedTLS       *UnauthenticatedTLSConfig       `yaml:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *UnauthenticatedPlaintextConfig `yaml:"unauthenticated_plaintext,omitempty"`
+}
+
+// EnabledAuthMethods returns the enabled methods in canonical order.
+// includeIAM is false for sources that don't support IAM (Apache Kafka / OSK).
+func (amc AuthMethodConfig) EnabledAuthMethods(includeIAM bool) []AuthType {
+	methods := []AuthType{}
+	if amc.UnauthenticatedPlaintext != nil && amc.UnauthenticatedPlaintext.Use {
+		methods = append(methods, AuthTypeUnauthenticatedPlaintext)
+	}
+	if amc.UnauthenticatedTLS != nil && amc.UnauthenticatedTLS.Use {
+		methods = append(methods, AuthTypeUnauthenticatedTLS)
+	}
+	if includeIAM && amc.IAM != nil && amc.IAM.Use {
+		methods = append(methods, AuthTypeIAM)
+	}
+	if amc.SASLScram != nil && amc.SASLScram.Use {
+		methods = append(methods, AuthTypeSASLSCRAM)
+	}
+	if amc.SASLPlain != nil && amc.SASLPlain.Use {
+		methods = append(methods, AuthTypeSASLPlain)
+	}
+	if amc.TLS != nil && amc.TLS.Use {
+		methods = append(methods, AuthTypeTLS)
+	}
+	return methods
+}
+
+// SelectedAuthType returns the single enabled method, or an error if none.
+func (amc AuthMethodConfig) SelectedAuthType(includeIAM bool) (AuthType, error) {
+	enabled := amc.EnabledAuthMethods(includeIAM)
+	if len(enabled) == 0 {
+		return "", fmt.Errorf("no authentication method enabled for cluster")
+	}
+	return enabled[0], nil
 }
 
 // MergeWith preserves existing auth configurations only for auth methods that still exist in the new config

@@ -25,25 +25,41 @@ type DiscoveredRegion struct {
 	ClusterArns []string `json:"-"`
 }
 
+// mergeClusterPreservingAdminInfo returns newCluster with its KafkaAdminClientInformation
+// merged from existing (new discoveries take precedence; old scan-acquired values such as
+// ACLs / self-managed connectors are preserved when the new value is empty/nil).
+func mergeClusterPreservingAdminInfo(existing, newCluster DiscoveredCluster) DiscoveredCluster {
+	newCluster.KafkaAdminClientInformation.MergeFrom(existing.KafkaAdminClientInformation)
+	return newCluster
+}
+
 // RefreshClusters replaces the cluster list but merges KafkaAdminClientInformation from existing clusters
 // New discoveries take precedence over old values (only uses old values when new values are empty/nil)
 func (dr *DiscoveredRegion) RefreshClusters(newClusters []DiscoveredCluster) {
-	// build map of ARN -> KafkaAdminClientInformation from existing clusters
-	adminInfoByArn := make(map[string]KafkaAdminClientInformation)
+	existingByArn := make(map[string]DiscoveredCluster)
 	for _, existingCluster := range dr.Clusters {
-		adminInfoByArn[existingCluster.Arn] = existingCluster.KafkaAdminClientInformation
+		existingByArn[existingCluster.Arn] = existingCluster
 	}
 
-	// replace cluster list with new discoveries
 	dr.Clusters = newClusters
 
-	// merge admin info: new discoveries take precedence, only use old values when new is empty/nil
 	for i := range dr.Clusters {
-		if oldAdminInfo, exists := adminInfoByArn[dr.Clusters[i].Arn]; exists {
-			newAdminInfo := &dr.Clusters[i].KafkaAdminClientInformation
-			newAdminInfo.MergeFrom(oldAdminInfo)
+		if existing, exists := existingByArn[dr.Clusters[i].Arn]; exists {
+			dr.Clusters[i] = mergeClusterPreservingAdminInfo(existing, dr.Clusters[i])
 		}
 	}
+}
+
+// UpsertCluster creates or replaces a single cluster by ARN, preserving every other
+// cluster in the region and merging the targeted cluster's scan-acquired admin info.
+func (dr *DiscoveredRegion) UpsertCluster(newCluster DiscoveredCluster) {
+	for i := range dr.Clusters {
+		if dr.Clusters[i].Arn == newCluster.Arn {
+			dr.Clusters[i] = mergeClusterPreservingAdminInfo(dr.Clusters[i], newCluster)
+			return
+		}
+	}
+	dr.Clusters = append(dr.Clusters, newCluster)
 }
 
 type DiscoveredCluster struct {

@@ -3,7 +3,7 @@ package plan
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // hardLimit is one row of the Enterprise → Dedicated escalation catalog.
@@ -15,7 +15,7 @@ type hardLimit struct {
 	id               string
 	description      string
 	customerDeclared bool
-	check            func(cfg *PlanConfig, inputs types.PlanInputsResolved, cluster types.ProcessedCluster, sizing types.ClusterSizing) ruleResult
+	check            func(cfg *PlanConfig, inputs PlanInputsResolved, cluster report.ProcessedCluster, sizing ClusterSizing) ruleResult
 }
 
 // ruleResult is one rule's evaluation outcome. Either:
@@ -23,21 +23,21 @@ type hardLimit struct {
 //   - Outcome=not_fired + Evidence (e.g. "47 ACLs <= 4000 cap")
 //   - Outcome=skipped + SkipReason (e.g. "Acls == nil; ambiguous")
 type ruleResult struct {
-	Outcome    types.RuleOutcome
+	Outcome    RuleOutcome
 	Evidence   string
 	SkipReason string
 }
 
 func fired(evidence string) ruleResult {
-	return ruleResult{Outcome: types.RuleFired, Evidence: evidence}
+	return ruleResult{Outcome: RuleFired, Evidence: evidence}
 }
 
 func notFired(evidence string) ruleResult {
-	return ruleResult{Outcome: types.RuleNotFired, Evidence: evidence}
+	return ruleResult{Outcome: RuleNotFired, Evidence: evidence}
 }
 
 func skipped(reason string) ruleResult {
-	return ruleResult{Outcome: types.RuleSkipped, SkipReason: reason}
+	return ruleResult{Outcome: RuleSkipped, SkipReason: reason}
 }
 
 // Rule IDs — referenced by both the catalog and the topology logic.
@@ -60,7 +60,7 @@ var hardLimitCatalog = []hardLimit{
 	{
 		id:          ruleECKUExceedsPNICap,
 		description: "Sized eCKU exceeds Enterprise PNI cap",
-		check: func(cfg *PlanConfig, _ types.PlanInputsResolved, _ types.ProcessedCluster, sizing types.ClusterSizing) ruleResult {
+		check: func(cfg *PlanConfig, _ PlanInputsResolved, _ report.ProcessedCluster, sizing ClusterSizing) ruleResult {
 			pniCap := cfg.EnterpriseCaps.PNIMaxECKU
 			if sizing.FinalECKU > pniCap {
 				return fired(fmt.Sprintf("sized %d eCKU > PNI cap %d eCKU", sizing.FinalECKU, pniCap))
@@ -71,7 +71,7 @@ var hardLimitCatalog = []hardLimit{
 	{
 		id:          ruleACLCountExceedsCap,
 		description: "ACL count exceeds Enterprise cap",
-		check: func(cfg *PlanConfig, _ types.PlanInputsResolved, cluster types.ProcessedCluster, _ types.ClusterSizing) ruleResult {
+		check: func(cfg *PlanConfig, _ PlanInputsResolved, cluster report.ProcessedCluster, _ ClusterSizing) ruleResult {
 			aclCap := cfg.EnterpriseCaps.ACLCountCap
 			if aclCap <= 0 {
 				return skipped("acl_count_cap not configured")
@@ -93,7 +93,7 @@ var hardLimitCatalog = []hardLimit{
 		id:               ruleBrokerSideSchemaValidation,
 		description:      "Broker-side schema ID validation required",
 		customerDeclared: true,
-		check: func(_ *PlanConfig, inputs types.PlanInputsResolved, _ types.ProcessedCluster, _ types.ClusterSizing) ruleResult {
+		check: func(_ *PlanConfig, inputs PlanInputsResolved, _ report.ProcessedCluster, _ ClusterSizing) ruleResult {
 			if inputs.EnforceSchemasAtTheBroker {
 				return fired("`enforce_schemas_at_the_broker: true`")
 			}
@@ -104,7 +104,7 @@ var hardLimitCatalog = []hardLimit{
 		id:               ruleRESTProduceHighThroughput,
 		description:      "High-throughput Kafka REST Produce v3 required",
 		customerDeclared: true,
-		check: func(_ *PlanConfig, inputs types.PlanInputsResolved, _ types.ProcessedCluster, _ types.ClusterSizing) ruleResult {
+		check: func(_ *PlanConfig, inputs PlanInputsResolved, _ report.ProcessedCluster, _ ClusterSizing) ruleResult {
 			if inputs.RequiresHighThroughputRESTProduceAPI {
 				return fired("`requires_high_throughput_rest_produce_api: true`")
 			}
@@ -115,7 +115,7 @@ var hardLimitCatalog = []hardLimit{
 		id:               ruleSLA9995SingleZone,
 		description:      "99.95% single-zone SLA required",
 		customerDeclared: true,
-		check: func(_ *PlanConfig, inputs types.PlanInputsResolved, _ types.ProcessedCluster, _ types.ClusterSizing) ruleResult {
+		check: func(_ *PlanConfig, inputs PlanInputsResolved, _ report.ProcessedCluster, _ ClusterSizing) ruleResult {
 			if inputs.Requires9995SLAWithinSingleZone {
 				return fired("`requires_99_95_sla_within_a_single_zone: true`")
 			}
@@ -125,7 +125,7 @@ var hardLimitCatalog = []hardLimit{
 	{
 		id:          ruleMTLSOnNonAWSTarget,
 		description: "Source uses mTLS, target is non-AWS",
-		check: func(_ *PlanConfig, inputs types.PlanInputsResolved, cluster types.ProcessedCluster, _ types.ClusterSizing) ruleResult {
+		check: func(_ *PlanConfig, inputs PlanInputsResolved, cluster report.ProcessedCluster, _ ClusterSizing) ruleResult {
 			usesMTLS := sourceUsesMTLS(cluster)
 			target := targetCloud(inputs)
 			// Punctuation kept identical across branches so the rendered
@@ -149,7 +149,7 @@ var hardLimitCatalog = []hardLimit{
 // Serverless clusters always return false — AWS MSK Serverless supports
 // only IAM SASL (no mTLS); its ClientAuthentication block lives on the
 // `Serverless` struct (not `Provisioned`) and has no TLS field.
-func sourceUsesMTLS(c types.ProcessedCluster) bool {
+func sourceUsesMTLS(c report.ProcessedCluster) bool {
 	if isServerless(c) {
 		return false
 	}
@@ -169,23 +169,23 @@ func sourceUsesMTLS(c types.ProcessedCluster) bool {
 // that Standard doesn't offer. Enterprise is the default; hard-limit
 // rules escalate to Dedicated when a cap is exceeded or a workload
 // constraint can't be served on Enterprise.
-func decideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterTypeDecision {
-	var firedTriggers []types.HardLimitTrigger
-	evaluated := make([]types.RuleEvaluation, 0, len(hardLimitCatalog))
+func decideClusterType(c report.ProcessedCluster, sizing ClusterSizing, cfg *PlanConfig, inputs PlanInputsResolved) ClusterTypeDecision {
+	var firedTriggers []HardLimitTrigger
+	evaluated := make([]RuleEvaluation, 0, len(hardLimitCatalog))
 	for _, hl := range hardLimitCatalog {
 		if hl.check == nil {
 			continue
 		}
 		res := hl.check(cfg, inputs, c, sizing)
-		evaluated = append(evaluated, types.RuleEvaluation{
+		evaluated = append(evaluated, RuleEvaluation{
 			RowID:       hl.id,
 			Description: hl.description,
 			Outcome:     res.Outcome,
 			Evidence:    res.Evidence,
 			SkipReason:  res.SkipReason,
 		})
-		if res.Outcome == types.RuleFired {
-			firedTriggers = append(firedTriggers, types.HardLimitTrigger{
+		if res.Outcome == RuleFired {
+			firedTriggers = append(firedTriggers, HardLimitTrigger{
 				RowID:            hl.id,
 				Description:      hl.description,
 				Evidence:         res.Evidence,
@@ -194,17 +194,17 @@ func decideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg
 		}
 	}
 
-	verdict := types.ClusterTypeEnterprise
-	topology := types.TopologyNotApplicable
+	verdict := ClusterTypeEnterprise
+	topology := TopologyNotApplicable
 	var finalCKU *int
 	if len(firedTriggers) > 0 {
-		verdict = types.ClusterTypeDedicated
+		verdict = ClusterTypeDedicated
 		// Single-Zone wins when the 99.95% SLA rule fires; otherwise
 		// Multi-Zone is the Dedicated default.
-		topology = types.TopologyMultiZone
+		topology = TopologyMultiZone
 		for _, t := range firedTriggers {
 			if t.RowID == ruleSLA9995SingleZone {
-				topology = types.TopologySingleZone
+				topology = TopologySingleZone
 				break
 			}
 		}
@@ -212,7 +212,7 @@ func decideClusterType(c types.ProcessedCluster, sizing types.ClusterSizing, cfg
 		cku := sizing.FinalECKU
 		finalCKU = &cku
 	}
-	return types.ClusterTypeDecision{
+	return ClusterTypeDecision{
 		ClusterID:      c.Name,
 		EvaluatedRules: evaluated,
 		Verdict:        verdict,

@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // Plan-input enum tokens for schema migration. Stable customer-facing
@@ -50,14 +50,14 @@ func knownSchemaCPEdition(value string) bool {
 // The result's `Paths` slice carries every verdict that applies —
 // usually one entry, two for the dual-source case so JSON consumers
 // branching on a single slot don't miss the second arm.
-func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.PlanInputsResolved) *types.SchemaDecision {
+func decideSchema(state report.ProcessedState, cfg *PlanConfig, inputs PlanInputsResolved) *SchemaDecision {
 	source, confluentURLs, glueNames := detectSchemaSource(state)
 	strategy := inputs.SchemaStrategy
 	if strategy == "" {
 		strategy = SchemaStrategyUnknown
 	}
 
-	dec := &types.SchemaDecision{
+	dec := &SchemaDecision{
 		Source:          source,
 		ConfluentSRURLs: confluentURLs,
 		GlueRegistries:  glueNames,
@@ -67,7 +67,7 @@ func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.Plan
 	// (typo wins — emitting a verdict against an unrecognised strategy
 	// would silently override the customer's intent).
 	if !knownSchemaStrategy(strategy) || strategy == SchemaStrategyUnknown {
-		dec.Paths = []types.SchemaPath{types.SchemaPathUnknown}
+		dec.Paths = []SchemaPath{SchemaPathUnknown}
 		return dec
 	}
 
@@ -79,23 +79,23 @@ func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.Plan
 	//       skip schemas entirely). The 🟡 schema_state_strategy_mismatch
 	//       OQ carries the message.
 	if strategy == SchemaStrategyNoSchemas {
-		if source == types.SchemaSourceNone {
-			dec.Paths = []types.SchemaPath{types.SchemaPathSchemaless}
+		if source == SchemaSourceNone {
+			dec.Paths = []SchemaPath{SchemaPathSchemaless}
 		} else {
-			dec.Paths = []types.SchemaPath{types.SchemaPathUnknown}
+			dec.Paths = []SchemaPath{SchemaPathUnknown}
 		}
 		return dec
 	}
 
 	switch source {
-	case types.SchemaSourceGlue:
-		dec.Paths = []types.SchemaPath{types.SchemaPathMigrateGlue}
+	case SchemaSourceGlue:
+		dec.Paths = []SchemaPath{SchemaPathMigrateGlue}
 		return dec
-	case types.SchemaSourceConfluent:
+	case SchemaSourceConfluent:
 		fillConfluentEligibility(dec, cfg, inputs)
-		dec.Paths = []types.SchemaPath{confluentEligibilityPath(dec)}
+		dec.Paths = []SchemaPath{confluentEligibilityPath(dec)}
 		return dec
-	case types.SchemaSourceConfluentAndGlue:
+	case SchemaSourceConfluentAndGlue:
 		// Two arms apply concurrently. Glue first (it's the
 		// automatable path) so the renderer leads with the actionable
 		// command; Confluent verdict second so the customer sees both
@@ -109,8 +109,8 @@ func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.Plan
 		// from "verdict undecidable" by looking at the slice. The
 		// `schema_linking_eligibility_unknown` OQ carries the gap.
 		fillConfluentEligibility(dec, cfg, inputs)
-		dec.Paths = []types.SchemaPath{types.SchemaPathMigrateGlue}
-		if confluent := confluentEligibilityPath(dec); confluent != types.SchemaPathUnknown {
+		dec.Paths = []SchemaPath{SchemaPathMigrateGlue}
+		if confluent := confluentEligibilityPath(dec); confluent != SchemaPathUnknown {
 			dec.Paths = append(dec.Paths, confluent)
 		}
 		return dec
@@ -121,7 +121,7 @@ func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.Plan
 	// `migrate_existing_schema_registry`). The customer has declared
 	// intent but no source SR was scanned — the path is unknown until
 	// they either rerun the scan or confirm "no existing SR".
-	dec.Paths = []types.SchemaPath{types.SchemaPathUnknown}
+	dec.Paths = []SchemaPath{SchemaPathUnknown}
 	return dec
 }
 
@@ -129,14 +129,14 @@ func decideSchema(state types.ProcessedState, cfg *PlanConfig, inputs types.Plan
 // onto the corresponding SchemaPath. Extracted from decideSchema so
 // both the pure-Confluent and the dual ConfluentAndGlue branches share
 // one rule.
-func confluentEligibilityPath(dec *types.SchemaDecision) types.SchemaPath {
+func confluentEligibilityPath(dec *SchemaDecision) SchemaPath {
 	switch schemaLinkingEligibilityVerdict(dec) {
 	case eligibilityVerdictEligible:
-		return types.SchemaPathSchemaLinking
+		return SchemaPathSchemaLinking
 	case eligibilityVerdictIneligible:
-		return types.SchemaPathDeferToAccount
+		return SchemaPathDeferToAccount
 	default:
-		return types.SchemaPathUnknown
+		return SchemaPathUnknown
 	}
 }
 
@@ -144,9 +144,9 @@ func confluentEligibilityPath(dec *types.SchemaDecision) types.SchemaPath {
 // SchemaPathUnknown if Paths is empty. Package-private — only test
 // assertions care about the leading verdict; production code uses
 // hasPath or reads `dec.Paths` directly.
-func primaryPath(dec *types.SchemaDecision) types.SchemaPath {
+func primaryPath(dec *SchemaDecision) SchemaPath {
 	if dec == nil || len(dec.Paths) == 0 {
-		return types.SchemaPathUnknown
+		return SchemaPathUnknown
 	}
 	return dec.Paths[0]
 }
@@ -155,14 +155,14 @@ func primaryPath(dec *types.SchemaDecision) types.SchemaPath {
 // a Confluent Schema Registry (solo or alongside Glue). Used by the
 // eligibility-OQ detectors and the renderer's preamble gate so the
 // predicate doesn't drift across callsites.
-func sourceTouchesConfluent(s types.SchemaSource) bool {
-	return s == types.SchemaSourceConfluent || s == types.SchemaSourceConfluentAndGlue
+func sourceTouchesConfluent(s SchemaSource) bool {
+	return s == SchemaSourceConfluent || s == SchemaSourceConfluentAndGlue
 }
 
 // hasPath reports whether a SchemaDecision's Paths slice contains `p`.
 // Used by Build to decide whether to suppress the §Schema section
 // (schemaless) and by the renderer for path-specific rendering.
-func hasPath(dec *types.SchemaDecision, p types.SchemaPath) bool {
+func hasPath(dec *SchemaDecision, p SchemaPath) bool {
 	if dec == nil {
 		return false
 	}
@@ -178,10 +178,10 @@ func hasPath(dec *types.SchemaDecision, p types.SchemaPath) bool {
 // (state.SchemaRegistries.ConfluentSchemaRegistry +
 // state.SchemaRegistries.AWSGlue) into a single enum + the lookups the
 // renderer needs (URLs + registry names).
-func detectSchemaSource(state types.ProcessedState) (types.SchemaSource, []string, []string) {
+func detectSchemaSource(state report.ProcessedState) (SchemaSource, []string, []string) {
 	srs := state.SchemaRegistries
 	if srs == nil {
-		return types.SchemaSourceNone, nil, nil
+		return SchemaSourceNone, nil, nil
 	}
 	confluentURLs := make([]string, 0, len(srs.ConfluentSchemaRegistry))
 	for _, sr := range srs.ConfluentSchemaRegistry {
@@ -193,13 +193,13 @@ func detectSchemaSource(state types.ProcessedState) (types.SchemaSource, []strin
 	}
 	switch {
 	case len(confluentURLs) > 0 && len(glueNames) > 0:
-		return types.SchemaSourceConfluentAndGlue, confluentURLs, glueNames
+		return SchemaSourceConfluentAndGlue, confluentURLs, glueNames
 	case len(confluentURLs) > 0:
-		return types.SchemaSourceConfluent, confluentURLs, nil
+		return SchemaSourceConfluent, confluentURLs, nil
 	case len(glueNames) > 0:
-		return types.SchemaSourceGlue, nil, glueNames
+		return SchemaSourceGlue, nil, glueNames
 	default:
-		return types.SchemaSourceNone, nil, nil
+		return SchemaSourceNone, nil, nil
 	}
 }
 
@@ -207,7 +207,7 @@ func detectSchemaSource(state types.ProcessedState) (types.SchemaSource, []strin
 // on `dec` from the customer-declared CP version + edition +
 // reachability inputs. Tri-state (nil = unknown) so the verdict can
 // distinguish "verified false" from "not declared yet" downstream.
-func fillConfluentEligibility(dec *types.SchemaDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) {
+func fillConfluentEligibility(dec *SchemaDecision, cfg *PlanConfig, inputs PlanInputsResolved) {
 	if inputs.ConfluentSRCPVersion != "" {
 		v := versionAtLeast(inputs.ConfluentSRCPVersion, cfg.SchemaLinking.MinCPVersion)
 		dec.MeetsCPVersionFloor = &v
@@ -233,7 +233,7 @@ const (
 // schemaLinkingEligibilityVerdict folds the three tri-state flags into
 // one verdict: any "verified false" → ineligible, any nil → unknown,
 // all "verified true" → eligible.
-func schemaLinkingEligibilityVerdict(dec *types.SchemaDecision) eligibilityVerdict {
+func schemaLinkingEligibilityVerdict(dec *SchemaDecision) eligibilityVerdict {
 	flags := []*bool{dec.MeetsCPVersionFloor, dec.MeetsCPEditionRequirement, dec.SourceSROutboundReachable}
 	anyUnknown := false
 	for _, f := range flags {
@@ -258,11 +258,11 @@ func schemaLinkingEligibilityVerdict(dec *types.SchemaDecision) eligibilityVerdi
 // body can quote the configured CP-version floor + edition the same
 // way the rendered eligibility table does — keeps the two surfaces
 // in lockstep if an admin tunes `plan-config.yaml`.
-func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) []types.OpenQuestion {
+func detectSchemaOpenQuestions(dec *SchemaDecision, cfg *PlanConfig, inputs PlanInputsResolved) []OpenQuestion {
 	if dec == nil {
 		return nil
 	}
-	var oqs []types.OpenQuestion
+	var oqs []OpenQuestion
 
 	strategy := inputs.SchemaStrategy
 	if strategy == "" {
@@ -272,7 +272,7 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	// Strategy typo (recognised values + the explicit `unknown` token
 	// keep this silent; anything else fires).
 	if !knownSchemaStrategy(strategy) {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "schema_strategy_invalid",
 			Title:      "`schema_strategy` is not a recognised value — set to one of the four enum tokens",
 			Body:       "Recognised values: `unknown` | `no_schemas` | `adopt_schemas_during_migration` | `migrate_existing_schema_registry`. The current value falls outside the enum, so the Plan treats it as `unknown` and emits this OQ.",
@@ -286,8 +286,8 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	// migration command decides itself, no strategy declaration
 	// needed. The dual `ConfluentAndGlue` case still fires the OQ
 	// because the Confluent arm requires the strategy.
-	if strategy == SchemaStrategyUnknown && dec.Source != types.SchemaSourceGlue {
-		oqs = append(oqs, types.OpenQuestion{
+	if strategy == SchemaStrategyUnknown && dec.Source != SchemaSourceGlue {
+		oqs = append(oqs, OpenQuestion{
 			ID:         "schema_strategy_unknown",
 			Title:      "Schema migration strategy not declared — set `schema_strategy` in `plan-inputs.yaml`",
 			Body:       "First-run Plans default `schema_strategy: unknown` so we don't silently emit a schemaless verdict (which would suppress the Red Flag for shops that genuinely have a Schema Registry). Pick the strategy that matches your migration: `no_schemas` (workloads carry no schemas), `adopt_schemas_during_migration` (you want CC Schema Registry but don't have one on-prem), or `migrate_existing_schema_registry` (you have an SR and want it mirrored).",
@@ -308,9 +308,9 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	// The `return oqs` here intentionally drops the eligibility OQs
 	// only; OQs that are independent of the no_schemas contradiction
 	// belong above the mismatch gate so they still fire.
-	mismatch := strategy == SchemaStrategyNoSchemas && dec.Source != types.SchemaSourceNone
+	mismatch := strategy == SchemaStrategyNoSchemas && dec.Source != SchemaSourceNone
 	if mismatch {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "schema_state_strategy_mismatch",
 			Title:      "`schema_strategy: no_schemas` but the scan found a Schema Registry on the source",
 			Body:       "If you intend to retire the source SR during the migration, this is fine — leave the setting and acknowledge this OQ. If the SR was scanned in error (e.g. it belongs to a different team), narrow the scan scope. Otherwise switch `schema_strategy` to `migrate_existing_schema_registry` so the Plan applies the SR-detected path.",
@@ -326,7 +326,7 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	// customer fills these in.
 	if sourceTouchesConfluent(dec.Source) &&
 		schemaLinkingEligibilityVerdict(dec) == eligibilityVerdictUnknown {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "schema_linking_eligibility_unknown",
 			Title:      "Declare source SR CP version, edition, and outbound reachability in `plan-inputs.yaml`",
 			Body:       fmt.Sprintf("Schema Linking requires the source SR to (1) be on CP %s or later, (2) run the `%s` edition (other editions do not ship Schema Linking), and (3) be able to make outbound TCP connections to your CC Schema Registry endpoint. Until all three are declared, the Plan can't pick between the Schema Linking path and the account-team-handoff path.", cfg.SchemaLinking.MinCPVersion, cfg.SchemaLinking.RequiresCPEdition),
@@ -341,7 +341,7 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 	// accept the manual path.
 	if sourceTouchesConfluent(dec.Source) &&
 		schemaLinkingEligibilityVerdict(dec) == eligibilityVerdictIneligible {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "schema_linking_ineligible",
 			Title:      "Schema Linking blocked — fix the failing constraint or defer to your Confluent account team",
 			Body:       ineligibilityBody(dec, cfg, inputs),
@@ -359,7 +359,7 @@ func detectSchemaOpenQuestions(dec *types.SchemaDecision, cfg *PlanConfig, input
 // so the OQ stays in lockstep with the eligibility table whenever an
 // admin tunes plan-config.yaml. Joins failure reasons with "; " so
 // the list reads as one sentence.
-func ineligibilityBody(dec *types.SchemaDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) string {
+func ineligibilityBody(dec *SchemaDecision, cfg *PlanConfig, inputs PlanInputsResolved) string {
 	var reasons []string
 	if dec.MeetsCPVersionFloor != nil && !*dec.MeetsCPVersionFloor {
 		reasons = append(reasons, fmt.Sprintf("CP version declared as `%s` is below the `%s` floor", inputs.ConfluentSRCPVersion, cfg.SchemaLinking.MinCPVersion))

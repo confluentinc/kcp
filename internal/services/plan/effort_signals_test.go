@@ -3,6 +3,7 @@ package plan
 import (
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -10,7 +11,7 @@ import (
 
 // findSignal returns the signal matching `id` so tests don't depend on
 // slice ordering.
-func findSignal(t *testing.T, section *types.EffortSignalsSection, id string) types.EffortSignal {
+func findSignal(t *testing.T, section *EffortSignalsSection, id string) EffortSignal {
 	t.Helper()
 	require.NotNil(t, section)
 	for _, s := range section.Signals {
@@ -19,7 +20,7 @@ func findSignal(t *testing.T, section *types.EffortSignalsSection, id string) ty
 		}
 	}
 	t.Fatalf("effort signal %q not present in section (got %d signals)", id, len(section.Signals))
-	return types.EffortSignal{}
+	return EffortSignal{}
 }
 
 // Signal 1: IAM → SCRAM client count. Counts discovered_clients whose
@@ -116,5 +117,5 @@ func TestEffortSignal_GlueAbsent_ZeroWithNote(t *testing.T) {
 // detectEffortSignals returns nil on an empty fleet so the renderer
 // omits §Effort Signals.
 func TestDetectEffortSignals_EmptyFleetReturnsNil(t *testing.T) {
-	assert.Nil(t, detectEffortSignals(types.ProcessedState{}))
+	assert.Nil(t, detectEffortSignals(report.ProcessedState{}))
 }

@@ -12,16 +12,20 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
 )
 
 type ReportService interface {
-	ProcessState(state types.State) types.ProcessedState
-	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
-	FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	ProcessState(state types.State) report.ProcessedState
+	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
+	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -114,6 +118,7 @@ func (ui *UI) Run() error {
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
+	e.GET("/metrics/osk/:clusterId/connect", ui.handleGetOSKConnectMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -256,6 +261,51 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	return c.JSON(http.StatusOK, filteredMetrics)
 }
 
+func (ui *UI) handleGetOSKConnectMetrics(c echo.Context) error {
+	clusterId := c.Param("clusterId")
+
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": err.Error(),
+		})
+	}
+
+	if state.OSKSources == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error": "No OSK sources in state",
+		})
+	}
+
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
+	}
+
+	processedState := ui.reportService.ProcessState(*state)
+
+	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, startTime, endTime)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "Cluster not found or no Connect metrics available",
+			"message": err.Error(),
+		})
+	}
+
+	if filteredMetrics.Metrics == nil {
+		return c.JSON(http.StatusNotFound, map[string]any{
+			"error":   "No Connect metrics available for this cluster",
+			"message": "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics",
+		})
+	}
+
+	return c.JSON(http.StatusOK, filteredMetrics)
+}
+
 func (ui *UI) handleGetCosts(c echo.Context) error {
 	region := c.Param("region")
 
@@ -324,7 +374,7 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrationAssets(c echo.Context) error {
-	var req types.MigrationWizardRequest
+	var req hclrequests.MigrationWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -370,7 +420,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	return c.JSON(http.StatusCreated, terraformModules)
 }
 
-func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
+func validateClusterLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	if req.TargetClusterId == "" {
@@ -393,7 +443,7 @@ func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	return nil
 }
 
-func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
+func validatePrivateLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	// Check required fields
@@ -439,7 +489,7 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	return nil
 }
 
-func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
+func validatePrivateClusterLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	if req.VpcId == "" {
@@ -484,7 +534,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 	// Default PreventDestroy to true before binding. If the JSON request includes
 	// "prevent_destroy": false, the binding will override this. If the field is
 	// omitted from the request, this default of true is preserved.
-	req := types.TargetClusterWizardRequest{
+	req := hclrequests.TargetClusterWizardRequest{
 		PreventDestroy: true,
 	}
 	if err := c.Bind(&req); err != nil {
@@ -543,7 +593,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
-	var req types.MigrateAclsRequest
+	var req hclrequests.MigrateAclsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -614,7 +664,7 @@ func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
-	var req types.MirrorTopicsRequest
+	var req hclrequests.MirrorTopicsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -625,7 +675,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 	// Default mode is mirror for back-compat with pre-mode-flag clients;
 	// the new wizard always sends Mode explicitly.
 	if req.Mode == "" {
-		req.Mode = types.MigrateTopicsModeMirror
+		req.Mode = hclrequests.MigrateTopicsModeMirror
 	}
 
 	// --mode new emits confluent_kafka_topic resources with partitions and
@@ -633,7 +683,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 	// payload. Hydrate from state using the (source_type, cluster_id) the
 	// wizard sends as hidden fields and the selected_topics name list as the
 	// filter. Mirror mode doesn't need this (cluster link drives configs).
-	if req.Mode == types.MigrateTopicsModeNew {
+	if req.Mode == hclrequests.MigrateTopicsModeNew {
 		if err := ui.hydrateTopicsFromState(c, &req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Failed to hydrate topic details for new mode",
@@ -663,7 +713,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 // populates req.Topics with full TopicDetails (partitions, configurations) for
 // each name in req.SelectedTopics. New-mode HCL generation needs partition
 // counts and config maps that the wizard's name-only selection can't carry.
-func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequest) error {
+func (ui *UI) hydrateTopicsFromState(c echo.Context, req *hclrequests.MirrorTopicsRequest) error {
 	if req.ClusterId == "" || req.SourceType == "" {
 		return fmt.Errorf("source_type and cluster_id are required for --mode new (wizard should send these as hidden fields)")
 	}
@@ -714,8 +764,8 @@ func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequ
 // flattenMigrateTopicsProject concatenates per-topic .tf files into a single
 // main.tf string so the legacy UI wizard contract stays intact while the CLI
 // uses the per-file layout.
-func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject) types.TerraformFiles {
-	out := types.TerraformFiles{}
+func flattenMigrateTopicsProject(project hcltypes.MigrationScriptsTerraformProject) hcltypes.TerraformFiles {
+	out := hcltypes.TerraformFiles{}
 	if len(project.Folders) == 0 {
 		return out
 	}
@@ -738,7 +788,7 @@ func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject)
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
-	var req types.MigrateSchemasRequest
+	var req hclrequests.MigrateSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -758,7 +808,7 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateGlueSchemasAssets(c echo.Context) error {
-	var req types.MigrateGlueSchemasRequest
+	var req hclrequests.MigrateGlueSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",

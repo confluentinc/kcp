@@ -5,6 +5,7 @@ package hcl
 import (
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -13,12 +14,12 @@ func TestMigrationScripts_MirrorTopics(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		SelectedTopics:            []string{"orders", "events", "users"},
 		ClusterLinkName:           "msk-to-cc-link",
 		TargetClusterId:           "lkc-xyz789",
 		TargetClusterRestEndpoint: "https://pkc-abc123.us-east-1.aws.confluent.cloud:443",
-		Mode:                      types.MigrateTopicsModeMirror,
+		Mode:                      hclrequests.MigrateTopicsModeMirror,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -39,7 +40,7 @@ func TestMigrationScripts_NewTopics(t *testing.T) {
 	replication := "3"      // not allow-listed; must be filtered out
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{
 				Name:       "orders",
@@ -56,7 +57,7 @@ func TestMigrationScripts_NewTopics(t *testing.T) {
 		},
 		TargetClusterId:           "lkc-xyz789",
 		TargetClusterRestEndpoint: "https://pkc-abc123.us-east-1.aws.confluent.cloud:443",
-		Mode:                      types.MigrateTopicsModeNew,
+		Mode:                      hclrequests.MigrateTopicsModeNew,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -72,7 +73,7 @@ func TestMigrationScripts_MigrateACLs(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"app_user"},
 		TargetClusterId:           "lkc-xyz789",
 		TargetClusterRestEndpoint: "https://pkc-abc123.us-east-1.aws.confluent.cloud:443",
@@ -143,9 +144,9 @@ func TestMigrationScripts_MigrateSchemas(t *testing.T) {
 	t.Parallel()
 
 	service := &MigrationScriptsHCLService{SchemaRegistryClusterID: "testcluster"}
-	request := types.MigrateSchemasRequest{
+	request := hclrequests.MigrateSchemasRequest{
 		ConfluentCloudSchemaRegistryURL: "https://psrc-abc123.us-east-1.aws.confluent.cloud",
-		SchemaRegistries: []types.SchemaRegistryExporterConfig{
+		SchemaRegistries: []hclrequests.SchemaRegistryExporterConfig{
 			{
 				Migrate:   true,
 				Subjects:  []string{"orders-value", "events-value"},
@@ -167,9 +168,9 @@ func TestMigrationScripts_MigrateGlueSchemas(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MigrateGlueSchemasRequest{
+	request := hclrequests.MigrateGlueSchemasRequest{
 		ConfluentCloudSchemaRegistryURL: "https://psrc-abc123.us-east-1.aws.confluent.cloud",
-		GlueRegistries: []types.GlueSchemaRegistryMigrationConfig{
+		GlueRegistries: []hclrequests.GlueSchemaRegistryMigrationConfig{
 			{
 				Migrate:      true,
 				RegistryName: "my-glue-registry",

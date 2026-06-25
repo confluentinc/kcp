@@ -1,8 +1,6 @@
 package plan
 
-import (
-	"github.com/confluentinc/kcp/internal/types"
-)
+import "github.com/confluentinc/kcp/internal/services/report"
 
 // downtime_tolerance enum values. Stable identifiers — used as YAML
 // input tokens AND as keys in the style mapping.
@@ -40,17 +38,17 @@ const (
 // distinct from "the customer set `prefer_gateway: false`" but
 // indistinguishable at this layer. Callers from tests should construct
 // inputs via the resolver, not by struct literal.
-func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) types.CutoverDecision {
+func decideCutover(clusters []report.ProcessedCluster, inputs PlanInputsResolved) CutoverDecision {
 	style, sub := resolveStyle(inputs)
 
 	// Blue/Green sidesteps the gateway question entirely — the gateway
 	// doesn't sit on a parallel-run cutover step.
-	if style == types.CutoverBlueGreen {
-		return types.CutoverDecision{
+	if style == CutoverBlueGreen {
+		return CutoverDecision{
 			Style:                style,
 			SubPattern:           sub,
-			GatewayMediated:      types.GatewayMediatedNotApplicable,
-			RecommendationStatus: types.RecommendationCustomerChoice,
+			GatewayMediated:      GatewayMediatedNotApplicable,
+			RecommendationStatus: RecommendationCustomerChoice,
 			AlternativesShown:    alternativesShown(style),
 			Prereqs:              prereqsForStyle(style, inputs, fleetUsesIAM(clusters)),
 		}
@@ -60,33 +58,33 @@ func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsRes
 	eligible := gatewayEligible(inputs, iamInUse)
 	ambiguous := ambiguousGatewayIntent(inputs, iamInUse)
 
-	var mediated types.GatewayMediated
-	var status types.RecommendationStatus
+	var mediated GatewayMediated
+	var status RecommendationStatus
 	switch {
 	case !inputs.PreferGateway:
-		mediated = types.GatewayMediatedFalse
-		status = types.RecommendationCustomerChoice
+		mediated = GatewayMediatedFalse
+		status = RecommendationCustomerChoice
 	case eligible:
-		mediated = types.GatewayMediatedTrue
-		status = types.RecommendationCanonical
+		mediated = GatewayMediatedTrue
+		status = RecommendationCanonical
 	case ambiguous:
-		mediated = types.GatewayMediatedFalse
-		status = types.RecommendationDegradedAwaitingOQ
+		mediated = GatewayMediatedFalse
+		status = RecommendationDegradedAwaitingOQ
 	default:
 		// `prefer_gateway: true` but at least one prereq is still
 		// `not_started`. Customer has engaged but not finished.
-		mediated = types.GatewayMediatedFalse
-		status = types.RecommendationDegradedPrereqsPending
+		mediated = GatewayMediatedFalse
+		status = RecommendationDegradedPrereqsPending
 	}
 
 	// Suppress the gateway prereq table when the customer opted out of
 	// the gateway — those prereqs aren't needed for plain Cluster
 	// Linking, so showing "not started" against them is misleading.
-	var prereqs []types.Prereq
-	if mediated != types.GatewayMediatedFalse || status != types.RecommendationCustomerChoice {
+	var prereqs []Prereq
+	if mediated != GatewayMediatedFalse || status != RecommendationCustomerChoice {
 		prereqs = prereqsForStyle(style, inputs, iamInUse)
 	}
-	return types.CutoverDecision{
+	return CutoverDecision{
 		Style:                style,
 		SubPattern:           sub,
 		GatewayMediated:      mediated,
@@ -99,37 +97,37 @@ func decideCutover(clusters []types.ProcessedCluster, inputs types.PlanInputsRes
 // resolveStyle maps downtime_tolerance to a CutoverStyle plus optional
 // sub-pattern. sub-pattern is only populated when style is
 // Stop-Restart-Repeat; for everything else it's empty.
-func resolveStyle(inputs types.PlanInputsResolved) (types.CutoverStyle, types.CutoverSubPattern) {
+func resolveStyle(inputs PlanInputsResolved) (CutoverStyle, CutoverSubPattern) {
 	tolerance := inputs.DowntimeTolerance
 	if tolerance == "" {
 		tolerance = DowntimeUnsetFallback
 	}
-	var style types.CutoverStyle
+	var style CutoverStyle
 	switch tolerance {
 	case DowntimeZero:
-		style = types.CutoverBlueGreen
+		style = CutoverBlueGreen
 	case DowntimeSecondsPerService, DowntimeMinutesPerService, DowntimeLetConfluentChoose:
-		style = types.CutoverStopRestartRepeat
+		style = CutoverStopRestartRepeat
 	case DowntimeScheduledWindowSequential:
-		style = types.CutoverStopWaitRestart
+		style = CutoverStopWaitRestart
 	case DowntimeScheduledWindowAllAtOnce:
-		style = types.CutoverRestartAllAtOnce
+		style = CutoverRestartAllAtOnce
 	default:
 		// Unknown value: degrade to the Confluent default rather than
 		// erroring. `detectCutoverOpenQuestions` surfaces an OQ
 		// (`downtime_tolerance_unknown`) so the customer sees the
 		// typo / unrecognised value rather than silently inheriting
 		// the default.
-		style = types.CutoverStopRestartRepeat
+		style = CutoverStopRestartRepeat
 	}
 
-	var sub types.CutoverSubPattern
-	if style == types.CutoverStopRestartRepeat {
+	var sub CutoverSubPattern
+	if style == CutoverStopRestartRepeat {
 		switch inputs.SubPattern {
-		case string(types.SubPatternTopicByTopic):
-			sub = types.SubPatternTopicByTopic
+		case string(SubPatternTopicByTopic):
+			sub = SubPatternTopicByTopic
 		default:
-			sub = types.SubPatternAppByApp
+			sub = SubPatternAppByApp
 		}
 	}
 	return style, sub
@@ -155,8 +153,8 @@ func knownDowntimeTolerance(tolerance string) bool {
 // to app-by-app in resolveStyle).
 func knownCutoverSubPattern(sub string) bool {
 	return knownEnum(sub,
-		string(types.SubPatternAppByApp),
-		string(types.SubPatternTopicByTopic),
+		string(SubPatternAppByApp),
+		string(SubPatternTopicByTopic),
 	)
 }
 
@@ -164,7 +162,7 @@ func knownCutoverSubPattern(sub string) bool {
 // `in_progress` or `complete`. IAM prereq only counts when the fleet
 // actually has IAM enabled (otherwise the IAM-pre-migration constraint
 // is vacuous — there's nothing to pre-migrate).
-func gatewayEligible(inputs types.PlanInputsResolved, iamInUse bool) bool {
+func gatewayEligible(inputs PlanInputsResolved, iamInUse bool) bool {
 	if !prereqAdvanced(inputs.ConfluentForKubernetesStatus) {
 		return false
 	}
@@ -191,7 +189,7 @@ func prereqAdvanced(status string) bool {
 // `iam_pre_migration_status: in_progress` would flip the status from
 // `degraded_awaiting_oq` to `degraded_prereqs_pending` even though the
 // IAM prereq doesn't apply to this fleet.
-func ambiguousGatewayIntent(inputs types.PlanInputsResolved, iamInUse bool) bool {
+func ambiguousGatewayIntent(inputs PlanInputsResolved, iamInUse bool) bool {
 	if !inputs.PreferGateway {
 		return false
 	}
@@ -210,14 +208,14 @@ func ambiguousGatewayIntent(inputs types.PlanInputsResolved, iamInUse bool) bool
 // alternativesShown returns the cutover styles that the renderer
 // should explain for trust ("we considered these and didn't pick
 // them") — every style EXCEPT the recommended one.
-func alternativesShown(recommended types.CutoverStyle) []types.CutoverStyle {
-	all := []types.CutoverStyle{
-		types.CutoverStopRestartRepeat,
-		types.CutoverStopWaitRestart,
-		types.CutoverRestartAllAtOnce,
-		types.CutoverBlueGreen,
+func alternativesShown(recommended CutoverStyle) []CutoverStyle {
+	all := []CutoverStyle{
+		CutoverStopRestartRepeat,
+		CutoverStopWaitRestart,
+		CutoverRestartAllAtOnce,
+		CutoverBlueGreen,
 	}
-	var out []types.CutoverStyle
+	var out []CutoverStyle
 	for _, s := range all {
 		if s != recommended {
 			out = append(out, s)
@@ -231,16 +229,16 @@ func alternativesShown(recommended types.CutoverStyle) []types.CutoverStyle {
 // compatibility are state-derived prereqs surfaced by the renderer
 // based on plan-config; this function only emits the customer-driven
 // gateway prereqs. Blue/Green has no kcp-emitted prereqs.
-func prereqsForStyle(style types.CutoverStyle, inputs types.PlanInputsResolved, iamInUse bool) []types.Prereq {
-	if style == types.CutoverBlueGreen {
+func prereqsForStyle(style CutoverStyle, inputs PlanInputsResolved, iamInUse bool) []Prereq {
+	if style == CutoverBlueGreen {
 		return nil
 	}
-	out := []types.Prereq{
+	out := []Prereq{
 		{Description: "Confluent for Kubernetes (CFK) cluster", Status: prereqStatusFromInput(inputs.ConfluentForKubernetesStatus)},
 		{Description: "Confluent Cloud Gateway Add-On license", Status: prereqStatusFromInput(inputs.CCGatewayLicenseStatus)},
 	}
 	if iamInUse {
-		out = append(out, types.Prereq{
+		out = append(out, Prereq{
 			Description: "IAM clients pre-migrated to SCRAM / mTLS",
 			Status:      prereqStatusFromInput(inputs.IAMPreMigrationStatus),
 		})
@@ -250,15 +248,15 @@ func prereqsForStyle(style types.CutoverStyle, inputs types.PlanInputsResolved, 
 
 // prereqStatusFromInput maps plan-input status tokens to the rendered
 // PrereqStatus enum. Unknown values fall through to `unconfirmed`.
-func prereqStatusFromInput(status string) types.PrereqStatus {
+func prereqStatusFromInput(status string) PrereqStatus {
 	switch status {
 	case PrereqStatusCompleteInput:
-		return types.PrereqMet
+		return PrereqMet
 	case PrereqStatusInProgressInput:
-		return types.PrereqInProgress
+		return PrereqInProgress
 	case PrereqNotStarted:
-		return types.PrereqBlocked
+		return PrereqBlocked
 	default:
-		return types.PrereqUnconfirmed
+		return PrereqUnconfirmed
 	}
 }

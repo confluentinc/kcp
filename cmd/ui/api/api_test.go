@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/labstack/echo/v4"
 )
@@ -17,19 +18,23 @@ import (
 // mockReportService satisfies the ReportService interface for testing
 type mockReportService struct{}
 
-func (m *mockReportService) ProcessState(state types.State) types.ProcessedState {
-	return types.ProcessedState{}
+func (m *mockReportService) ProcessState(state types.State) report.ProcessedState {
+	return report.ProcessedState{}
 }
 
-func (m *mockReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
+func (m *mockReportService) FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error) {
 	return nil, nil
 }
 
-func (m *mockReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (m *mockReportService) FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	return nil, nil
 }
 
-func (m *mockReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (m *mockReportService) FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	return nil, nil
+}
+
+func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	return nil, nil
 }
 

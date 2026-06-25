@@ -20,31 +20,31 @@ func TestCalculateCostAggregates(t *testing.T) {
 	})
 
 	t.Run("routes costs to correct service aggregates", func(t *testing.T) {
-		costs := []types.ProcessedCost{
+		costs := []ProcessedCost{
 			{
 				Start: "2025-01-01", End: "2025-01-02",
 				Service: types.ServiceMSK, UsageType: "USE1-Kafka.m5.large",
-				Values: types.ProcessedCostBreakdown{UnblendedCost: 10.0, BlendedCost: 10.0},
+				Values: ProcessedCostBreakdown{UnblendedCost: 10.0, BlendedCost: 10.0},
 			},
 			{
 				Start: "2025-01-01", End: "2025-01-02",
 				Service: types.ServiceELB, UsageType: "USE1-LoadBalancerUsage",
-				Values: types.ProcessedCostBreakdown{UnblendedCost: 5.0, BlendedCost: 5.0},
+				Values: ProcessedCostBreakdown{UnblendedCost: 5.0, BlendedCost: 5.0},
 			},
 			{
 				Start: "2025-01-01", End: "2025-01-02",
 				Service: types.ServiceVPC, UsageType: "USE1-VpcEndpoint-Hours",
-				Values: types.ProcessedCostBreakdown{UnblendedCost: 3.0, BlendedCost: 3.0},
+				Values: ProcessedCostBreakdown{UnblendedCost: 3.0, BlendedCost: 3.0},
 			},
 			{
 				Start: "2025-01-01", End: "2025-01-02",
 				Service: types.ServiceEC2Other, UsageType: "USE1-NatGateway-Hours",
-				Values: types.ProcessedCostBreakdown{UnblendedCost: 2.0, BlendedCost: 2.0},
+				Values: ProcessedCostBreakdown{UnblendedCost: 2.0, BlendedCost: 2.0},
 			},
 			{
 				Start: "2025-01-01", End: "2025-01-02",
 				Service: types.ServiceAWSCertificateManager, UsageType: "USE1-FreePrivateCA",
-				Values: types.ProcessedCostBreakdown{UnblendedCost: 1.0, BlendedCost: 1.0},
+				Values: ProcessedCostBreakdown{UnblendedCost: 1.0, BlendedCost: 1.0},
 			},
 		}
 
@@ -66,23 +66,23 @@ func TestCalculateCostAggregates(t *testing.T) {
 	})
 
 	t.Run("aggregates multiple entries for same service and usage type", func(t *testing.T) {
-		costs := []types.ProcessedCost{
+		costs := []ProcessedCost{
 			{
 				Start: "2025-01-01", End: "2025-01-02",
 				Service: types.ServiceELB, UsageType: "USE1-LoadBalancerUsage",
-				Values: types.ProcessedCostBreakdown{UnblendedCost: 5.0},
+				Values: ProcessedCostBreakdown{UnblendedCost: 5.0},
 			},
 			{
 				Start: "2025-01-02", End: "2025-01-03",
 				Service: types.ServiceELB, UsageType: "USE1-LoadBalancerUsage",
-				Values: types.ProcessedCostBreakdown{UnblendedCost: 7.0},
+				Values: ProcessedCostBreakdown{UnblendedCost: 7.0},
 			},
 		}
 
 		aggregates := rs.calculateCostAggregates(costs)
 
 		// Sum should be 12.0
-		agg, ok := aggregates.ElasticLoadBalancing.UnblendedCost["USE1-LoadBalancerUsage"].(types.CostAggregate)
+		agg, ok := aggregates.ElasticLoadBalancing.UnblendedCost["USE1-LoadBalancerUsage"].(CostAggregate)
 		require.True(t, ok)
 		require.NotNil(t, agg.Sum)
 		assert.InDelta(t, 12.0, *agg.Sum, 0.001)
@@ -93,7 +93,7 @@ func TestCalculateCostAggregates(t *testing.T) {
 }
 
 func TestForService(t *testing.T) {
-	aggregates := types.NewProcessedAggregates()
+	aggregates := NewProcessedAggregates()
 
 	assert.Equal(t, &aggregates.AmazonManagedStreamingForApacheKafka, aggregates.ForService(types.ServiceMSK))
 	assert.Equal(t, &aggregates.ElasticLoadBalancing, aggregates.ForService(types.ServiceELB))
@@ -103,13 +103,13 @@ func TestForService(t *testing.T) {
 	assert.Nil(t, aggregates.ForService("Unknown Service"))
 }
 
-func assertHasUsageType(t *testing.T, svc types.ServiceCostAggregates, usageType string) {
+func assertHasUsageType(t *testing.T, svc ServiceCostAggregates, usageType string) {
 	t.Helper()
 	_, ok := svc.UnblendedCost[usageType]
 	assert.True(t, ok, "expected usage type %q in UnblendedCost", usageType)
 }
 
-func assertServiceTotal(t *testing.T, svc types.ServiceCostAggregates, expectedTotal float64) {
+func assertServiceTotal(t *testing.T, svc ServiceCostAggregates, expectedTotal float64) {
 	t.Helper()
 	total, ok := svc.UnblendedCost["total"].(float64)
 	require.True(t, ok, "expected 'total' key in UnblendedCost")
@@ -358,16 +358,16 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 	rs := NewReportService()
 
 	// Create a test state with both MSK and OSK clusters
-	processedState := types.ProcessedState{
-		Sources: []types.ProcessedSource{
+	processedState := ProcessedState{
+		Sources: []ProcessedSource{
 			// MSK source with cluster
 			{
 				Type: types.SourceTypeMSK,
-				MSKData: &types.ProcessedMSKSource{
-					Regions: []types.ProcessedRegion{
+				MSKData: &ProcessedMSKSource{
+					Regions: []ProcessedRegion{
 						{
 							Name: "us-east-1",
-							Clusters: []types.ProcessedCluster{
+							Clusters: []ProcessedCluster{
 								{
 									Name: "test-msk-cluster",
 									Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/test-msk-cluster/abc-123",
@@ -391,8 +391,8 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 			// OSK source with cluster
 			{
 				Type: types.SourceTypeOSK,
-				OSKData: &types.ProcessedOSKSource{
-					Clusters: []types.ProcessedOSKCluster{
+				OSKData: &ProcessedOSKSource{
+					Clusters: []ProcessedOSKCluster{
 						{
 							ID:               "my-osk-cluster",
 							BootstrapServers: []string{"broker1:9092"},
@@ -544,12 +544,12 @@ func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 
 	t.Run("OSK cluster without metrics returns cluster with nil metrics", func(t *testing.T) {
 		// Create state with OSK cluster that has no metrics
-		stateWithoutMetrics := types.ProcessedState{
-			Sources: []types.ProcessedSource{
+		stateWithoutMetrics := ProcessedState{
+			Sources: []ProcessedSource{
 				{
 					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					OSKData: &ProcessedOSKSource{
+						Clusters: []ProcessedOSKCluster{
 							{
 								ID:               "no-metrics-cluster",
 								BootstrapServers: []string{"broker1:9092"},
@@ -596,12 +596,12 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 	rs := NewReportService()
 
 	t.Run("OSK cluster with metadata populates Environment and Location", func(t *testing.T) {
-		processedState := types.ProcessedState{
-			Sources: []types.ProcessedSource{
+		processedState := ProcessedState{
+			Sources: []ProcessedSource{
 				{
 					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					OSKData: &ProcessedOSKSource{
+						Clusters: []ProcessedOSKCluster{
 							{
 								ID:               "prod-cluster",
 								BootstrapServers: []string{"broker1:9092"},
@@ -636,12 +636,12 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 	})
 
 	t.Run("OSK cluster without metadata fields has empty Environment and Location", func(t *testing.T) {
-		processedState := types.ProcessedState{
-			Sources: []types.ProcessedSource{
+		processedState := ProcessedState{
+			Sources: []ProcessedSource{
 				{
 					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					OSKData: &ProcessedOSKSource{
+						Clusters: []ProcessedOSKCluster{
 							{
 								ID:               "no-metadata-cluster",
 								BootstrapServers: []string{"broker1:9092"},
@@ -668,12 +668,12 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 	})
 
 	t.Run("OSK cluster with nil metrics still populates metadata", func(t *testing.T) {
-		processedState := types.ProcessedState{
-			Sources: []types.ProcessedSource{
+		processedState := ProcessedState{
+			Sources: []ProcessedSource{
 				{
 					Type: types.SourceTypeOSK,
-					OSKData: &types.ProcessedOSKSource{
-						Clusters: []types.ProcessedOSKCluster{
+					OSKData: &ProcessedOSKSource{
+						Clusters: []ProcessedOSKCluster{
 							{
 								ID:               "no-metrics-cluster",
 								BootstrapServers: []string{"broker1:9092"},
@@ -700,15 +700,15 @@ func TestFilterOSKClusterMetrics_PopulatesMetadata(t *testing.T) {
 	})
 
 	t.Run("MSK cluster has empty Environment and Location", func(t *testing.T) {
-		processedState := types.ProcessedState{
-			Sources: []types.ProcessedSource{
+		processedState := ProcessedState{
+			Sources: []ProcessedSource{
 				{
 					Type: types.SourceTypeMSK,
-					MSKData: &types.ProcessedMSKSource{
-						Regions: []types.ProcessedRegion{
+					MSKData: &ProcessedMSKSource{
+						Regions: []ProcessedRegion{
 							{
 								Name: "us-east-1",
-								Clusters: []types.ProcessedCluster{
+								Clusters: []ProcessedCluster{
 									{
 										Name: "msk-cluster",
 										Arn:  "arn:aws:kafka:us-east-1:123456789012:cluster/msk-cluster/abc",
@@ -749,12 +749,12 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 		return &t
 	}
 
-	oskState := types.ProcessedState{
-		Sources: []types.ProcessedSource{
+	oskState := ProcessedState{
+		Sources: []ProcessedSource{
 			{
 				Type: types.SourceTypeOSK,
-				OSKData: &types.ProcessedOSKSource{
-					Clusters: []types.ProcessedOSKCluster{
+				OSKData: &ProcessedOSKSource{
+					Clusters: []ProcessedOSKCluster{
 						{
 							ID:               "date-test-cluster",
 							BootstrapServers: []string{"broker1:9092"},
@@ -915,5 +915,105 @@ func TestCalculateMetricsAggregates(t *testing.T) {
 		aggs := CalculateMetricsAggregates(makeMetrics("M", values))
 		require.Equal(t, 99, aggs["M"].Count)
 		assert.InDelta(t, 96.0, *aggs["M"].P95, 0.0001)
+	})
+}
+
+func TestFilterConnectMetrics(t *testing.T) {
+	rs := NewReportService()
+
+	connectMetrics := &types.ProcessedClusterMetrics{
+		Metrics: []types.ProcessedMetric{
+			{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "connector-count", Value: ptr(2.0)},
+			{Start: "2025-01-01T00:01:00Z", End: "2025-01-01T00:02:00Z", Label: "connector-count", Value: ptr(2.0)},
+			{Start: "2025-01-02T00:00:00Z", End: "2025-01-02T00:01:00Z", Label: "connector-count", Value: ptr(3.0)},
+		},
+		Metadata: types.MetricMetadata{Period: 60},
+		QueryInfo: []types.MetricQueryInfo{
+			{MetricName: "connector-count", Statistic: "Point-in-time value (per worker)"},
+		},
+	}
+
+	stateWithConnect := ProcessedState{
+		Sources: []ProcessedSource{
+			{
+				Type: types.SourceTypeOSK,
+				OSKData: &ProcessedOSKSource{
+					Clusters: []ProcessedOSKCluster{
+						{
+							ID: "osk-kafka",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								SelfManagedConnectors: &types.SelfManagedConnectors{
+									Connectors: []types.SelfManagedConnector{
+										{Name: "test-connector"},
+									},
+									Metrics: connectMetrics,
+								},
+							},
+							Metadata: types.OSKClusterMetadata{
+								Environment: "test",
+								Location:    "local",
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	stateNoConnect := ProcessedState{
+		Sources: []ProcessedSource{
+			{
+				Type: types.SourceTypeOSK,
+				OSKData: &ProcessedOSKSource{
+					Clusters: []ProcessedOSKCluster{
+						{
+							ID: "osk-kafka-no-connect",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("returns Connect metrics for existing cluster", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 3)
+		assert.Equal(t, "osk-kafka", result.ClusterArn)
+		assert.Equal(t, "test", result.Environment)
+		assert.Equal(t, "local", result.Location)
+		assert.Len(t, result.QueryInfo, 1)
+		assert.Equal(t, "connector-count", result.QueryInfo[0].MetricName)
+	})
+
+	t.Run("filters by date range", func(t *testing.T) {
+		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", &start, &end)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 2) // only Jan 1 metrics
+	})
+
+	t.Run("cluster not found returns error", func(t *testing.T) {
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", nil, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not found")
+	})
+
+	t.Run("cluster without self-managed connectors returns empty metrics", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Nil(t, result.Metrics)
+		assert.Equal(t, "osk-kafka-no-connect", result.ClusterArn)
+	})
+
+	t.Run("case-insensitive cluster ID match", func(t *testing.T) {
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, result)
+		assert.Len(t, result.Metrics, 3)
 	})
 }
