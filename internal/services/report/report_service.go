@@ -73,14 +73,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 		processedOSKClusters := []types.ProcessedOSKCluster{}
 
 		for _, cluster := range state.OSKSources.Clusters {
-			processedOSKClusters = append(processedOSKClusters, types.ProcessedOSKCluster{
-				ID:                          cluster.ID,
-				BootstrapServers:            cluster.BootstrapServers,
-				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
-				ClusterMetrics:              cluster.ClusterMetrics,
-				DiscoveredClients:           cluster.DiscoveredClients,
-				Metadata:                    cluster.Metadata,
-			})
+			processedOSKClusters = append(processedOSKClusters, types.ProcessedOSKCluster(cluster))
 		}
 
 		oskSource := types.ProcessedSource{
