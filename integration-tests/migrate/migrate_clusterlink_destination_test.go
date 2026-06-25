@@ -294,6 +294,7 @@ func newDestReporter(c destCase, dir, manifest, linkName, destID string) *destRe
 		commands: []string{
 			"kcp migrate apply -f migration.yaml --dry-run",
 			"kcp migrate apply -f migration.yaml",
+			"kcp migrate apply -f migration.yaml   # idempotent re-apply",
 			"GET " + linkURL(c.target.baseURL, destID, linkName),
 		},
 		pass: true,

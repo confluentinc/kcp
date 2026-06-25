@@ -84,18 +84,15 @@ func newNewReporter(name, checks, manifest string, srcTopics, targetNames []stri
 	if !reportEnabled {
 		return r
 	}
+	// commands are assembled at commit() to match the output actually captured.
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
 		mode:     "new",
 		name:     name,
 		checks:   checks,
 		manifest: readFileForReport(manifest),
-		commands: []string{
-			"kcp migrate apply -f migration.yaml",
-			"kcp migrate apply -f migration.yaml   # idempotent re-apply",
-		},
-		results: []resultBlock{topicListResult("source topics (catalog)", "", srcTopics)},
-		pass:    true,
+		results:  []resultBlock{topicListResult("source topics (catalog)", "", srcTopics)},
+		pass:     true,
 	}
 	return r
 }
@@ -169,6 +166,7 @@ func (r *newReporter) commit(t *testing.T, poller restClient) {
 	if !reportEnabled {
 		return
 	}
+	r.in.commands = applyCommands(r.in, "")
 	r.in.results = append(r.in.results, targetTopicsResult(poller, destClusterID, r.targetIDs))
 	if t.Failed() {
 		r.in.pass = false

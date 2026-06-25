@@ -111,6 +111,7 @@ type mirrorReporter struct {
 	in       sectionInput
 	manifest string
 	link     string
+	verify   string // the GET command appended to the assembled command list
 }
 
 // newMirrorReporter builds a reporter for a destination-mode mirror case.
@@ -121,19 +122,16 @@ func newMirrorReporter(name, checks, manifest, link string, srcTopics []string) 
 		return r
 	}
 	mirrorsURL := restDest.baseURL + "/kafka/v3/clusters/" + destClusterID + "/links/" + link + "/mirrors"
+	r.verify = "GET " + mirrorsURL
+	// commands are assembled at commit() to match the output actually captured.
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
 		mode:     "destination",
 		name:     name,
 		checks:   checks,
 		manifest: readFileForReport(manifest),
-		commands: []string{
-			"kcp migrate apply -f migration.yaml",
-			"kcp migrate apply -f migration.yaml   # idempotent re-apply",
-			"GET " + mirrorsURL,
-		},
-		results: []resultBlock{topicListResult("source topics (catalog)", "", srcTopics)},
-		pass:    true,
+		results:  []resultBlock{topicListResult("source topics (catalog)", "", srcTopics)},
+		pass:     true,
 	}
 	return r
 }
@@ -171,6 +169,7 @@ func (r *mirrorReporter) commit(t *testing.T, poller restClient) {
 	if !reportEnabled {
 		return
 	}
+	r.in.commands = applyCommands(r.in, r.verify)
 	r.in.results = append(r.in.results, mirrorsResult(poller, destClusterID, r.link))
 	if t.Failed() {
 		r.in.pass = false

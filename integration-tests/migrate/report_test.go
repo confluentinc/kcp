@@ -129,6 +129,30 @@ func (rc *reportCollector) render() string {
 // mdCell escapes pipe characters so a value never breaks a markdown table cell.
 func mdCell(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
 
+// applyCommands assembles a topic section's command list so it matches the output
+// blocks actually captured: a --dry-run line iff dry-run output was captured, the
+// apply line iff apply output was captured, the idempotent re-apply line iff
+// re-apply output was captured, then an optional verify command (e.g. a GET).
+// This keeps the rendered "Commands" consistent with the rendered output — no
+// listing a re-apply that never ran (and vice versa).
+func applyCommands(in sectionInput, verify string) []string {
+	const apply = "kcp migrate apply -f migration.yaml"
+	var cmds []string
+	if in.dryRun != "" {
+		cmds = append(cmds, apply+" --dry-run")
+	}
+	if in.apply != "" {
+		cmds = append(cmds, apply)
+	}
+	if in.reapply != "" {
+		cmds = append(cmds, apply+"   # idempotent re-apply")
+	}
+	if verify != "" {
+		cmds = append(cmds, verify)
+	}
+	return cmds
+}
+
 // TestReportRender_NumberedAnchors verifies the summary "#" column links to each
 // section's anchor and that the section heading carries the same number — so a
 // reader can click a summary row to jump to its test case. Pure string assembly;
@@ -150,6 +174,39 @@ func TestReportRender_NumberedAnchors(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered report missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+// TestApplyCommands verifies the command list matches the captured output: the
+// re-apply (and dry-run) line appears only when that output was captured, so the
+// report never lists a re-apply that didn't run. Pure; no broker.
+func TestApplyCommands(t *testing.T) {
+	const apply = "kcp migrate apply -f migration.yaml"
+	reapply := apply + "   # idempotent re-apply"
+
+	// apply + re-apply captured, with a verify GET.
+	got := applyCommands(sectionInput{apply: "out", reapply: "out2"}, "GET /x")
+	want := []string{apply, reapply, "GET /x"}
+	requireStrings(t, got, want)
+
+	// apply only (no re-apply captured) → no re-apply line.
+	got = applyCommands(sectionInput{apply: "out"}, "GET /x")
+	requireStrings(t, got, []string{apply, "GET /x"})
+
+	// dry-run only (e.g. the dry-run case) → only the --dry-run line, no plain apply.
+	got = applyCommands(sectionInput{dryRun: "out"}, "")
+	requireStrings(t, got, []string{apply + " --dry-run"})
+}
+
+func requireStrings(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
 		}
 	}
 }

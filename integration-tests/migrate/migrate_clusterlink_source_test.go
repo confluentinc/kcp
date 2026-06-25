@@ -240,6 +240,7 @@ func newSourceReporter(c sourceCase, dir, manifest, linkName, destID, srcID stri
 		commands: []string{
 			"kcp migrate apply -f migration.yaml --dry-run",
 			"kcp migrate apply -f migration.yaml",
+			"kcp migrate apply -f migration.yaml   # idempotent re-apply",
 			"GET " + linkURL(c.migrationDestREST.baseURL, destID, linkName) + "   # INBOUND on migration-dest",
 			"GET " + linkURL(c.migrationSourceREST.baseURL, srcID, linkName) + "   # OUTBOUND on migration-source",
 		},
