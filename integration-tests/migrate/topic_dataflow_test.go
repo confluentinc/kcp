@@ -85,11 +85,3 @@ func consumeRecords(t *testing.T, bootstrap, topic string, want int, timeout tim
 	}
 	return out
 }
-
-// The produce/consume helpers are first called by the data-flow topic tests
-// (T4-T6). Until then, anchor compile-time references so the `unused` linter
-// does not flag them; the references cost nothing at runtime.
-var (
-	_ = produceRecords
-	_ = consumeRecords
-)

@@ -24,13 +24,20 @@ type catalogTopic struct {
 // transactions-*) exercise prefix globs; the exotic names exercise dot,
 // underscore and hyphen handling — the only special characters Kafka allows in
 // topic names.
+//
+// NOTE: a dot and an underscore are interchangeable for Kafka's topic-name
+// COLLISION check (metrics.cpu and metrics_cpu cannot coexist — the broker
+// rejects the second with InvalidTopicException). So the catalog must not
+// contain a dotted/underscored pair that collides. We keep the dotted
+// "metrics.cpu" and use a non-colliding underscore name ("latency_ms") to still
+// exercise underscore handling and the dot-vs-underscore distinction.
 func topicCatalog() []catalogTopic {
 	return []catalogTopic{
 		{"orders-1", 3}, {"orders-2", 1}, {"orders-3", 2}, {"orders-4", 1},
 		{"products-1", 2}, {"products-2", 1}, {"products-3", 1}, {"products-4", 1},
 		{"transactions-1", 4}, {"transactions-2", 1}, {"transactions-3", 1}, {"transactions-4", 1},
 		{"orders.created.v2", 3}, {"inventory_snapshot", 1}, {"events-2026.q1", 2},
-		{"metrics.cpu", 1}, {"metrics_cpu", 1},
+		{"metrics.cpu", 1}, {"latency_ms", 1},
 	}
 }
 
@@ -54,10 +61,6 @@ func seedTopicCatalog(t *testing.T, c restClient, clusterID string) {
 		c.createTopic(t, clusterID, ct.name, ct.partitions)
 	}
 }
-
-// seedTopicCatalog is first called by the topic tests (T4-T6). Until then,
-// anchor a compile-time reference so the `unused` linter does not flag it.
-var _ = seedTopicCatalog
 
 // ---------------------------------------------------------------------------
 // Pure smoke test — references the catalog helpers so they are not flagged as

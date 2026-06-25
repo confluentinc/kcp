@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,8 +39,13 @@ func uniqueTopicName(prefix string) string {
 }
 
 // createTopic creates a plain topic on the cluster. Single-node brokers require
-// replication_factor 1. 200/201 are success; 409 (already exists) is tolerated
-// so re-runs and pre-seeding are idempotent.
+// replication_factor 1. 200/201 are success; an "already exists" response is
+// tolerated so re-runs and pre-seeding are idempotent.
+//
+// The cp-server embedded REST API does NOT return 409 for an existing topic — it
+// returns 400 with error_code 40002 and a "Topic '<name>' already exists."
+// message. We treat that specific 400 as success; any other 400 (e.g. a topic
+// name collision, "collides with existing topic") is a real failure.
 func (c restClient) createTopic(t *testing.T, clusterID, name string, partitions int) {
 	t.Helper()
 	body, err := json.Marshal(map[string]any{
@@ -60,6 +66,17 @@ func (c restClient) createTopic(t *testing.T, clusterID, name string, partitions
 	switch resp.StatusCode {
 	case http.StatusOK, http.StatusCreated, http.StatusConflict:
 		return
+	case http.StatusBadRequest:
+		// cp-server returns 400/40002 for an already-existing topic; tolerate
+		// that (idempotent), but fail on any other 400.
+		var b struct {
+			Message string `json:"message"`
+		}
+		_ = json.NewDecoder(resp.Body).Decode(&b)
+		if strings.Contains(b.Message, "already exists") {
+			return
+		}
+		t.Fatalf("create topic %q on %s: status 400: %s", name, clusterID, b.Message)
 	default:
 		t.Fatalf("create topic %q on %s: unexpected status %d", name, clusterID, resp.StatusCode)
 	}
@@ -129,6 +146,33 @@ func (c restClient) listMirrorTopics(clusterID, link string) []string {
 	out := make([]string, 0, len(body.Data))
 	for _, m := range body.Data {
 		out = append(out, m.MirrorTopicName)
+	}
+	return out
+}
+
+// mirrorStatuses returns a map of mirror_topic_name → mirror_status for the named
+// link (e.g. "ACTIVE", "PENDING_MIRROR", "FAILED"). Empty on any error.
+func (c restClient) mirrorStatuses(clusterID, link string) map[string]string {
+	resp, err := c.do(http.MethodGet, "/kafka/v3/clusters/"+clusterID+"/links/"+link+"/mirrors")
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var body struct {
+		Data []struct {
+			MirrorTopicName string `json:"mirror_topic_name"`
+			MirrorStatus    string `json:"mirror_status"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(body.Data))
+	for _, m := range body.Data {
+		out[m.MirrorTopicName] = m.MirrorStatus
 	}
 	return out
 }
@@ -284,7 +328,7 @@ func TestMigrateApply_Topics_MirrorSourceInitiated(t *testing.T) {
 	m := filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(m, []byte(manifest), 0600))
 
-	defer migDestPoller.deleteLink(t, sourceClusterID, link)  // INBOUND on migration-dest
+	defer migDestPoller.deleteLink(t, sourceClusterID, link)   // INBOUND on migration-dest
 	defer migSrcPoller.deleteLink(t, destBasicClusterID, link) // OUTBOUND on migration-source
 
 	// apply: BOTH link sides created (2) + ACTIVE, then both mirrors created on

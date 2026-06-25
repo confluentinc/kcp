@@ -323,15 +323,6 @@ func targetTopicsResult(c restClient, clusterID string, names []string) resultBl
 	}
 }
 
-// The topic report helpers are first called by the topic tests (T4-T6) when
-// assembling their sections. Until then, anchor compile-time references so the
-// `unused` linter does not flag them.
-var (
-	_ = topicListResult
-	_ = mirrorsResult
-	_ = targetTopicsResult
-)
-
 // ---------------------------------------------------------------------------
 // TestMain — writes the report after the matrix runs (when enabled).
 // ---------------------------------------------------------------------------
