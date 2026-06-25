@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/migrate/topicselect"
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -14,6 +16,19 @@ import (
 )
 
 const linkConfigPrefix = "cluster.link.prefix"
+
+// prefixReadRetry* bound the retry of the link-prefix read against the
+// link-propagation race (see readLinkPrefix). Package vars so tests can shrink
+// them.
+var (
+	prefixReadRetryTimeout = 30 * time.Second
+	prefixReadRetryBackoff = 500 * time.Millisecond
+)
+
+// linkNotExist is the substring cp-server returns when a freshly-created cluster
+// link's config is read before the link object is consistently readable on that
+// cluster's REST ("...Cluster link 'X' does not exist.").
+const linkNotExist = "does not exist"
 
 type source interface {
 	ListTopics(ctx context.Context) ([]string, error)
@@ -85,11 +100,10 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("selecting topics: %w", err)
 	}
-	cfgs, err := r.prefixTgt.GetClusterLinkConfigs(ctx, r.cfg.LinkName)
+	prefix, err := r.readLinkPrefix(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reading link prefix: %w", err)
 	}
-	prefix := cfgs[linkConfigPrefix]
 
 	mirrors, err := r.tgt.ListMirrorTopics(ctx, r.cfg.LinkName)
 	if err != nil {
@@ -115,6 +129,38 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].change.Summary < steps[j].change.Summary })
 	return plan{steps: steps}, nil
+}
+
+// readLinkPrefix reads the cluster.link.prefix off the prefix-carrying link
+// (the destination in destination mode, the source-side OUTBOUND link in source
+// mode), retrying the transient "link does not exist" race. In source mode the
+// clusterLink reconciler creates the OUTBOUND link immediately before this runs;
+// cp-server returns 200 on that create but the link object's config read can 404
+// for a brief window until it is consistently readable on that cluster's REST.
+// We retry that specific transient with backoff (mirroring the OUTBOUND-create
+// retry in the clusterlink reconciler) so a single source-initiated `kcp migrate
+// apply` is reliable rather than requiring a manual re-run. All other errors fail
+// immediately.
+func (r *Reconciler) readLinkPrefix(ctx context.Context) (string, error) {
+	deadline := time.Now().Add(prefixReadRetryTimeout)
+	backoff := prefixReadRetryBackoff
+	for {
+		cfgs, err := r.prefixTgt.GetClusterLinkConfigs(ctx, r.cfg.LinkName)
+		if err == nil {
+			return cfgs[linkConfigPrefix], nil
+		}
+		if !strings.Contains(err.Error(), linkNotExist) || time.Now().After(deadline) {
+			return "", err
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 4*time.Second {
+			backoff *= 2
+		}
+	}
 }
 
 func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Outcome, error) {
