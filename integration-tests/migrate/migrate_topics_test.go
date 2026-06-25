@@ -1,6 +1,6 @@
 //go:build integration
 
-package migrateclusterlink
+package migrate
 
 import (
 	"bytes"

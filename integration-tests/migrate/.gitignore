@@ -1,0 +1,5 @@
+# Generated TLS material (produced by generate-certs.sh).
+certs/
+
+# Opt-in evidence report (produced by `make test-migrate-report`).
+migrate-report.md

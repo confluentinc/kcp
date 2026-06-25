@@ -1,8 +1,8 @@
 //go:build integration
 
-// Package migrateclusterlink is a live, end-to-end auth matrix for
+// Package migrate is a live, end-to-end auth matrix for
 // `kcp migrate apply` against cluster links, run against the cp-server brokers
-// brought up by `make test-migrate-clusterlink`.
+// brought up by `make test-migrate`.
 //
 // The matrix sweeps each independent authentication surface on its own, holding
 // every other surface fixed, so a failure points at exactly one surface. The
@@ -22,7 +22,7 @@
 // Each test case: dry-run (asserts "Planned", nothing created) → apply (asserts
 // the created count + link(s) ACTIVE) → re-apply (asserts "already present") →
 // the link(s) are deleted to keep the concurrent link count low.
-package migrateclusterlink
+package migrate
 
 import (
 	"bytes"

@@ -1,6 +1,6 @@
 //go:build integration
 
-package migrateclusterlink
+package migrate
 
 import (
 	"bytes"
@@ -92,8 +92,8 @@ func (rc *reportCollector) render() string {
 	var b strings.Builder
 	b.WriteString("# Cluster-link auth verification report\n\n")
 	fmt.Fprintf(&b, "Generated %s by the live `kcp migrate` cluster-link auth matrix "+
-		"(`make test-migrate-clusterlink-report`), run against the cp-server brokers in "+
-		"`integration-tests/migrate-clusterlink/docker-compose.yml`. Every test case below is a "+
+		"(`make test-migrate-report`), run against the cp-server brokers in "+
+		"`integration-tests/migrate/docker-compose.yml`. Every test case below is a "+
 		"real `kcp migrate apply` against a real broker. The **Result** column and each test "+
 		"case's **Result** section show the observed outcome of that run, including a live Kafka "+
 		"REST `GET …/links/<name>` capturing the link state.\n\n",

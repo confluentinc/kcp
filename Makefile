@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate-clusterlink test-env-down-migrate-clusterlink test-migrate-clusterlink test-migrate-clusterlink-report
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -126,26 +126,26 @@ test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, 
 	@bash integration-tests/schema-registry/run.sh || (bash integration-tests/schema-registry/teardown.sh; exit 1)
 	@bash integration-tests/schema-registry/teardown.sh
 
-test-env-up-migrate-clusterlink: ## Start the cluster-link migrate test env (source + dest cp-server, all auth listeners)
-	bash integration-tests/migrate-clusterlink/generate-certs.sh
+test-env-up-migrate: ## Start the migrate test env (source + dest cp-server, all auth listeners)
+	bash integration-tests/migrate/generate-certs.sh
 	# MDS (dest-bearer) refuses a world-readable user store; git does not preserve
 	# a 0600 mode across a fresh checkout, so enforce it before the broker mounts it.
-	chmod 600 integration-tests/migrate-clusterlink/rest-auth/mds-users.properties
-	docker compose -f integration-tests/migrate-clusterlink/docker-compose.yml up -d
-	bash integration-tests/migrate-clusterlink/setup-scram.sh
+	chmod 600 integration-tests/migrate/rest-auth/mds-users.properties
+	docker compose -f integration-tests/migrate/docker-compose.yml up -d
+	bash integration-tests/migrate/setup-scram.sh
 
-test-env-down-migrate-clusterlink: ## Stop the cluster-link migrate test env
-	docker compose -f integration-tests/migrate-clusterlink/docker-compose.yml down -v
+test-env-down-migrate: ## Stop the migrate test env
+	docker compose -f integration-tests/migrate/docker-compose.yml down -v
 
-test-migrate-clusterlink: build ## Run the cluster-link migrate apply E2E test (all source auth methods)
-	$(MAKE) test-env-up-migrate-clusterlink
-	cd integration-tests/migrate-clusterlink && go test -tags integration -v ./... ; \
-	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate-clusterlink ; exit $$status
+test-migrate: build ## Run the migrate apply E2E tests (cluster link + topics, all source auth methods)
+	$(MAKE) test-env-up-migrate
+	cd integration-tests/migrate && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate ; exit $$status
 
-test-migrate-clusterlink-report: build ## Run the cluster-link auth matrix and write a markdown evidence report to integration-tests/migrate-clusterlink/cluster-link-auth-report.md (gitignored)
-	$(MAKE) test-env-up-migrate-clusterlink
-	cd integration-tests/migrate-clusterlink && KCP_MATRIX_REPORT=cluster-link-auth-report.md go test -tags integration -v ./... ; \
-	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate-clusterlink ; exit $$status
+test-migrate-report: build ## Run the migrate apply E2E tests and write a markdown evidence report to integration-tests/migrate/migrate-report.md (gitignored)
+	$(MAKE) test-env-up-migrate
+	cd integration-tests/migrate && KCP_MATRIX_REPORT=migrate-report.md go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate ; exit $$status
 
 # ==============================================================================
 # Documentation (MkDocs Material + mike)
