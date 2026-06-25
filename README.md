@@ -1,204 +1,85 @@
 # KCP CLI
 
-[![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=license) [![FOSSA Status](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=security)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=security)
+**A command-line tool for planning and executing Kafka migrations to Confluent Cloud.**
 
-This repository is part of the Confluent organization on GitHub.
-It is public and open to contributions from the community.
+Scan existing Kafka deployments, generate migration plans and cost reports, create infrastructure-as-code assets, and execute end-to-end migrations with real-time monitoring.
 
-Please see the LICENSE file for contribution terms.
-Please see the CHANGELOG.md for details of recent updates.
+> **[Full documentation](https://confluentinc.github.io/kcp/)** · **[Latest release](https://github.com/confluentinc/kcp/releases/latest)** · **[Changelog](CHANGELOG.md)**
 
----
+## Installation
 
-<div align="center">
+> [!CAUTION]
+> Do not build from `main` for normal use — `main` is an in-development branch and is not a defined release. **Always install a released binary** for normal use, using the methods below. Builds from `main` are untested and may contain breaking changes.
 
-**A comprehensive command-line tool for planning and executing Kafka migrations to Confluent Cloud.**
+kcp ships pre-built binaries with every [GitHub release](https://github.com/confluentinc/kcp/releases/latest): macOS and Linux (amd64/arm64), and Windows (amd64).
 
-</div>
+### macOS & Linux
 
----
+**Recommended — install script.** Detects your OS and architecture, downloads the latest stable release, verifies its checksum, and installs it onto your `PATH`:
 
-## Table of Contents
+```bash
+curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | sh
+```
 
-- [Overview](#overview)
-- [Development](#development)
-- [Resources and Support](#resources-and-support)
+To pin a specific version or change the install directory:
+
+```bash
+# Install a specific release
+curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | KCP_VERSION=v0.8.5 sh
+
+# Install somewhere other than /usr/local/bin
+curl -fsSL https://raw.githubusercontent.com/confluentinc/kcp/main/install.sh | KCP_INSTALL_DIR="$HOME/.local/bin" sh
+```
+
+**Manual download.** Prefer to do it by hand? Run `uname -m` if unsure of your architecture (`arm64`/`aarch64` → `arm64`; `x86_64` → `amd64`):
+
+```bash
+# Apple Silicon: darwin_arm64. Intel Mac: darwin_amd64. Linux: linux_amd64 or linux_arm64.
+PLATFORM=darwin_arm64
+LATEST_TAG=$(curl -s https://api.github.com/repos/confluentinc/kcp/releases/latest \
+  | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+
+curl -L -o kcp "https://github.com/confluentinc/kcp/releases/download/${LATEST_TAG}/kcp_${PLATFORM}"
+chmod +x kcp
+sudo mv kcp /usr/local/bin/kcp
+kcp version
+```
+
+### Windows
+
+1. Download `kcp_windows_amd64.exe` from the [latest release](https://github.com/confluentinc/kcp/releases/latest).
+2. Rename it to `kcp.exe`.
+3. Create a folder to keep it in, for example `C:\Program Files\kcp`, and move `kcp.exe` there.
+4. Add that folder to your `PATH` so you can run `kcp` from any terminal: open the Start menu, search for **"Edit environment variables for your account"**, select **Path**, click **Edit → New**, paste the folder path, then **OK**.
+5. Open a **new** PowerShell window (so it picks up the updated `PATH`) and verify:
+
+```powershell
+kcp version
+```
+
+## Upgrading
+
+kcp can update itself in place:
+
+```bash
+kcp update              # check for and install the latest release
+kcp update --check-only # report the latest version without installing
+sudo kcp update         # for system-wide installs (e.g. /usr/local/bin)
+```
 
 ## Overview
 
-**Mission**: Simplify and streamline your Kafka migration journey to Confluent Cloud!
-
-kcp helps you migrate your Kafka setups to Confluent Cloud by providing tools to:
-
-- **Scan** scan and identify resources in existing Kafka deployments.
-- **Create** reports for migration planning and cost analysis.
-- **Generate** migration assets and infrastructure configurations.
-- **Migrate** execute end-to-end migrations with real-time offset monitoring and resumable workflows.
-
-### Key Features
-
 | Feature                     | Description                                                                              |
 | --------------------------- | ---------------------------------------------------------------------------------------- |
-| **Multiple Auth Methods**   | Support for SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                              |
-| **Comprehensive Reporting** | Detailed migration planning and cost analysis.                                           |
-| **Infrastructure as Code**  | Generate Terraform and Ansible configurations to seamlessly migrate to Confluent Cloud.  |
-| **Migration Execution**     | FSM-driven migration workflow with lag monitoring, gateway fencing, and topic promotion. |
-| **Private VPC Deployments** | Migrate to Confluent Cloud from private networks and isolated environments.              |
+| **Multiple Auth Methods**   | SASL-IAM, SASL-SCRAM, SASL/PLAIN, TLS, and unauthenticated.                             |
+| **Comprehensive Reporting** | Migration planning and cost analysis reports.                                            |
+| **Infrastructure as Code**  | Generate Terraform and Ansible configurations for Confluent Cloud.                       |
+| **Migration Execution**     | FSM-driven workflow with lag monitoring, gateway fencing, and topic promotion.            |
+| **Private VPC Deployments** | Migrate from private networks and isolated environments.                                 |
 
-### Documentation
+## Contributing
 
-The docs for the latest release are available [here](https://github.com/confluentinc/kcp/releases/latest)
-
-### Installation
-
-The recommended way to install kcp is by downloading the latest release binary. Instructions for installing the latest release are available in the [latest documentation](https://github.com/confluentinc/kcp/releases/latest).
-
-## Development
-
-### Prerequisites
-
-- Go 1.25+
-- Make
-- Node
-- Yarn
-
-```bash
-# Clone the repository
-git clone https://github.com/confluentinc/kcp.git
-cd kcp
-
-# Install to system path (requires sudo)
-make install
-```
-
-### Build Commands
-
-```bash
-# Build for current platform
-make build
-
-# Build for Linux
-make build-linux
-
-# Build for all platforms
-make build-all
-
-# Clean build artifacts
-make clean
-```
-
-### Testing & Quality
-
-```bash
-# Format go code
-make fmt
-
-# Run Go unit tests
-make test-go
-
-# Run Playwright browser tests
-make test-playwright
-
-# Run Go tests with coverage
-make test-go-coverage
-
-# Run Go tests with coverage and open HTML report
-make test-go-coverage-ui
-```
-
-### Playwright E2E Tests
-
-The frontend includes Playwright end-to-end tests for the web UI. These test the migration infrastructure wizards, cluster views, and state loading.
-
-```bash
-cd cmd/ui/frontend
-
-# Run all E2E tests
-npx playwright test
-
-# Run with visible browser
-npx playwright test --headed
-
-# Run with Playwright UI (interactive test runner)
-npx playwright test --ui
-
-# Run a specific test file
-npx playwright test tests/e2e/osk-migration-infra.spec.ts
-
-# Debug a specific test
-npx playwright test -g "Public path" --debug
-```
-
-Test fixtures are in `cmd/ui/frontend/tests/e2e/fixtures/`. The Playwright config starts `kcp ui` with `--state-file` to pre-load test data automatically.
-
-### Integration Tests
-
-Integration tests live in `integration-tests/` and run against real infrastructure via Docker.
-
-#### Apache Kafka Scan Tests
-
-Tests the `kcp scan clusters` command against a Docker Compose environment with a multi-listener KRaft Kafka broker. Covers all supported authentication methods, Jolokia metrics collection (unauthenticated, auth, TLS), and Prometheus metrics collection (unauthenticated, auth, TLS).
-
-**Prerequisites:** Docker
-
-```bash
-make test-osk-scan
-```
-
-This starts the environment, runs all 10 scan variants, and tears down automatically. Credential files and Docker Compose configuration are in `integration-tests/osk-scan/`.
-
-#### Schema Registry Scan Tests
-
-Tests the `kcp scan schema-registry` command against a Docker Compose environment with two Confluent Schema Registry instances (unauthenticated and basic auth). Both instances are pre-loaded with 4 test schemas (Avro and JSON Schema).
-
-**Prerequisites:** Docker
-
-```bash
-make test-schema-registry
-```
-
-This starts a KRaft Kafka broker and two Schema Registry instances, registers test schemas, runs scan tests against both, and tears down automatically. Configuration is in `integration-tests/schema-registry/`.
-
-#### Migration Tests
-
-Tests the full migration lifecycle (`kcp migration init` → `execute`) against a real CFK (Confluent for Kubernetes) cluster in Minikube.
-
-**Prerequisites:**
-
-- [Docker](https://docs.docker.com/get-docker/) with at least **8 GB memory** allocated
-- [Minikube](https://minikube.sigs.k8s.io/docs/start/)
-- [Helm](https://helm.sh/docs/intro/install/)
-- [kubectl](https://kubernetes.io/docs/tasks/tools/)
-
-```bash
-# Run the full lifecycle: setup → test → teardown
-make test-migration
-```
-
-Teardown runs automatically when tests finish (pass or fail). If you need to run steps individually:
-
-```bash
-make test-migration-setup       # Set up Minikube cluster with CFK, Kafka, Gateway, and cluster link
-make test-migration             # Run the migration tests
-make test-migration-teardown    # Tear down the infrastructure
-```
-
-If infrastructure persisted from a previous run (e.g. laptop sleep, interrupted test), run `make test-migration-teardown` before starting again.
-
-Setup creates a Minikube cluster (`kcp-e2e` profile) with 4 CPUs and 8 GB RAM. Setup typically takes 10-15 minutes depending on image pull times. The test timeout is 15 minutes.
-
-### Linting & Pre-commit Hooks
-
-```bash
-# Install golangci-lint
-brew install golangci-lint
-
-# Run Go linters
-make lint
-
-# Install git pre-commit hooks (runs linters automatically on commit)
-make pre-commit-install
-```
+This repository is public and open to community contributions. To build from source, run the tests, or submit a pull request, see **[CONTRIBUTING.md](CONTRIBUTING.md)**.
 
 ## Resources and Support
 
@@ -206,3 +87,6 @@ make pre-commit-install
 - [Migration Hub on Confluent Cloud](https://confluent.cloud/migration-hub)
 - [Talk to a migration expert from Confluent](https://meetings.salesloft.com/confluentinc/confluent-migration-assistance)
 
+---
+
+[![FOSSA License](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=license)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=license) [![FOSSA Security](https://app.fossa.com/api/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp.svg?type=shield&issueType=security)](https://app.fossa.com/projects/custom%2B65%2Fgithub.com%2Fconfluentinc%2Fkcp?ref=badge_shield&issueType=security)
