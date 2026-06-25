@@ -99,18 +99,27 @@ func (rc *reportCollector) render() string {
 		"REST `GET …/links/<name>` capturing the link state.\n\n",
 		time.Now().Format(time.RFC1123))
 
-	// Summary table.
+	// Summary table. The "#" column links to each test case's section via an
+	// explicit HTML anchor (see the section loop below), so you can click a row
+	// number to jump straight to that test case.
 	b.WriteString("## Summary\n\n")
 	b.WriteString("| # | Mode | Test case | What it checks | Result |\n")
 	b.WriteString("|---|---|---|---|---|\n")
 	for i, s := range secs {
-		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n",
-			i+1, s.mode, mdCell(s.name), mdCell(s.checks), s.result)
+		n := i + 1
+		fmt.Fprintf(&b, "| [%d](#test-%d) | %s | %s | %s | %s |\n",
+			n, n, s.mode, mdCell(s.name), mdCell(s.checks), s.result)
 	}
 	b.WriteString("\n")
 
-	// Per-test-case sections.
-	for _, s := range secs {
+	// Per-test-case sections. The display number is the section's position in the
+	// sorted summary, so the numbered heading + its anchor are written here (at
+	// render time), not in buildSection. The `<a id="test-N">` anchor is the link
+	// target for the summary's "#" column; the number is repeated in the heading
+	// so each section is visually identifiable against its summary row.
+	for i, s := range secs {
+		n := i + 1
+		fmt.Fprintf(&b, "<a id=\"test-%d\"></a>\n\n## %d · %s · %s\n\n", n, n, s.mode, s.name)
 		b.WriteString(s.body)
 		b.WriteString("\n")
 	}
@@ -119,6 +128,31 @@ func (rc *reportCollector) render() string {
 
 // mdCell escapes pipe characters so a value never breaks a markdown table cell.
 func mdCell(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
+
+// TestReportRender_NumberedAnchors verifies the summary "#" column links to each
+// section's anchor and that the section heading carries the same number — so a
+// reader can click a summary row to jump to its test case. Pure string assembly;
+// needs no broker (runs under -tags integration without the docker env).
+func TestReportRender_NumberedAnchors(t *testing.T) {
+	rc := &reportCollector{sections: []reportSection{
+		buildSection(sectionInput{seq: 1, mode: "destination", name: "D1=plaintext", checks: "x", manifest: "m", commands: []string{"c"}, pass: true}),
+		buildSection(sectionInput{seq: 2, mode: "source", name: "mts-glob", checks: "y", manifest: "m", commands: []string{"c"}, pass: true}),
+	}}
+	out := rc.render()
+
+	for _, want := range []string{
+		"| [1](#test-1) | destination | D1=plaintext |", // summary row links to anchor
+		"| [2](#test-2) | source | mts-glob |",
+		`<a id="test-1"></a>`,                  // section anchor (link target)
+		"## 1 · destination · D1=plaintext\n",  // numbered heading matches summary #
+		`<a id="test-2"></a>`,
+		"## 2 · source · mts-glob\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered report missing %q\n---\n%s", want, out)
+		}
+	}
+}
 
 // ---------------------------------------------------------------------------
 // section builder
@@ -163,8 +197,10 @@ func buildSection(in sectionInput) reportSection {
 		result = "❌ FAIL"
 	}
 
+	// NOTE: the section's H2 heading (with its display number + anchor) is written
+	// by reportCollector.render at render time, because the number is the section's
+	// position in the sorted summary. The body here starts at "What this checks".
 	var b strings.Builder
-	fmt.Fprintf(&b, "## %s · %s\n\n", in.mode, in.name)
 	fmt.Fprintf(&b, "**What this checks** — %s\n\n", in.checks)
 
 	if !in.pass && in.failMsg != "" {
