@@ -335,13 +335,20 @@ func (c restClient) requireLinkActive(t *testing.T, clusterID, name string) {
 // failures are logged, not fatal (a later run recreates idempotently).
 func (c restClient) deleteLink(t *testing.T, clusterID, name string) {
 	t.Helper()
+	// cp-server refuses (403) to delete a link that still has live mirror topics,
+	// so clear them first (best-effort). For links with no mirrors (e.g. the auth
+	// matrix) listMirrorTopics returns empty and this is a no-op.
+	for _, mirror := range c.listMirrorTopics(clusterID, name) {
+		c.deleteTopic(t, clusterID, mirror)
+	}
 	resp, err := c.do(http.MethodDelete, "/kafka/v3/clusters/"+clusterID+"/links/"+name)
 	if err != nil {
 		t.Logf("delete link %q on %s: %v", name, clusterID, err)
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
+	// 404 = already absent, which is exactly the cleanup's goal — not an error.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusNotFound {
 		t.Logf("delete link %q on %s: unexpected status %d", name, clusterID, resp.StatusCode)
 	}
 }

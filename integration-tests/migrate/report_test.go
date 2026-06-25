@@ -143,8 +143,8 @@ func TestReportRender_NumberedAnchors(t *testing.T) {
 	for _, want := range []string{
 		"| [1](#test-1) | destination | D1=plaintext |", // summary row links to anchor
 		"| [2](#test-2) | source | mts-glob |",
-		`<a id="test-1"></a>`,                  // section anchor (link target)
-		"## 1 · destination · D1=plaintext\n",  // numbered heading matches summary #
+		`<a id="test-1"></a>`,                 // section anchor (link target)
+		"## 1 · destination · D1=plaintext\n", // numbered heading matches summary #
 		`<a id="test-2"></a>`,
 		"## 2 · source · mts-glob\n",
 	} {
