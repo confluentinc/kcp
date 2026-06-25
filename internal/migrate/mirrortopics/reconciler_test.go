@@ -4,10 +4,91 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/reconcile"
 )
+
+// retryTarget fails CreateMirrorTopic with failErr for its first failTimes calls,
+// then succeeds; it counts attempts. Used to exercise createMirror's retry.
+type retryTarget struct {
+	fakeLinkTarget
+	failTimes int
+	failErr   error
+	attempts  int
+}
+
+func (f *retryTarget) CreateMirrorTopic(ctx context.Context, name, sourceTopic, mirrorTopic string) error {
+	f.attempts++
+	if f.attempts <= f.failTimes {
+		return f.failErr
+	}
+	return nil
+}
+
+// shrinkMirrorRetry shrinks the createMirror retry timing for fast tests and
+// restores it on cleanup.
+func shrinkMirrorRetry(t *testing.T) {
+	to, bo := mirrorCreateRetryTimeout, mirrorCreateRetryBackoff
+	t.Cleanup(func() { mirrorCreateRetryTimeout, mirrorCreateRetryBackoff = to, bo })
+	mirrorCreateRetryTimeout, mirrorCreateRetryBackoff = 2*time.Second, time.Millisecond
+}
+
+// TestApply_RetriesLinkNotReadable: a mirror create that hits the transient
+// "Unable to resolve cluster link information" (link just created, not yet
+// readable) is retried until it succeeds — a single apply stays reliable.
+func TestApply_RetriesLinkNotReadable(t *testing.T) {
+	shrinkMirrorRetry(t)
+	tgt := &retryTarget{
+		fakeLinkTarget: fakeLinkTarget{clusterID: "dest-1", configs: map[string]string{linkConfigPrefix: "mt."}},
+		failTimes:      3,
+		failErr:        errStub("unexpected status code 404: {\"message\":\"Unable to resolve cluster link information for mt.orders\"}"),
+	}
+	r := New(Config{LinkName: "lk", Include: []string{"*"}}, &fakeSource{topics: []string{"orders"}}, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	out, err := r.Apply(context.Background(), p)
+	if err != nil {
+		t.Fatalf("Apply: want success after retries, got %v", err)
+	}
+	if len(out.Created) != 1 || len(out.Failed) != 0 {
+		t.Errorf("want 1 created / 0 failed, got %d created / %d failed", len(out.Created), len(out.Failed))
+	}
+	if tgt.attempts != 4 {
+		t.Errorf("want 4 attempts (3 transient + 1 success), got %d", tgt.attempts)
+	}
+}
+
+// TestApply_NonTransientFailsFast: a non-transient create error (e.g. a missing
+// source topic) is NOT retried — it fails fast and is reported per-topic.
+func TestApply_NonTransientFailsFast(t *testing.T) {
+	shrinkMirrorRetry(t)
+	tgt := &retryTarget{
+		fakeLinkTarget: fakeLinkTarget{clusterID: "dest-1", configs: map[string]string{linkConfigPrefix: "mt."}},
+		failTimes:      100, // would fail forever if retried
+		failErr:        errStub("unexpected status code 404: {\"message\":\"source topic does not exist\"}"),
+	}
+	r := New(Config{LinkName: "lk", Include: []string{"*"}}, &fakeSource{topics: []string{"orders"}}, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	out, err := r.Apply(context.Background(), p)
+	if err == nil {
+		t.Fatalf("Apply: want error for non-transient failure")
+	}
+	if len(out.Failed) != 1 {
+		t.Errorf("want 1 failed, got %d", len(out.Failed))
+	}
+	if tgt.attempts != 1 {
+		t.Errorf("non-transient error must not be retried: want 1 attempt, got %d", tgt.attempts)
+	}
+}
 
 // fakeSource scripts the live source topic list.
 type fakeSource struct {

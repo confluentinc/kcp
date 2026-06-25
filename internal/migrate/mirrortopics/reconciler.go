@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/migrate/topicselect"
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -22,6 +23,23 @@ const linkConfigPrefix = "cluster.link.prefix"
 // (before the clusterLink reconciler creates the link) and in the brief
 // post-create propagation window.
 const linkNotExist = "does not exist"
+
+// linkNotReadable is the substring cp-server returns when a mirror is created on
+// a just-created link before that link is consistently readable for mirror
+// operations ("...Unable to resolve cluster link information for X"). The
+// clusterLink reconciler creates the link immediately before mirrorTopics runs
+// and cp-server propagates it asynchronously, so the first mirror create(s) can
+// momentarily 404. createMirror retries this specific transient; all other
+// errors (e.g. a missing source topic) fail immediately and are reported
+// per-topic. (Distinct from linkNotExist, which is the config-read message.)
+const linkNotReadable = "Unable to resolve cluster link information"
+
+// mirrorCreateRetry* bound createMirror's retry of the link-propagation race.
+// Package vars so tests can shrink them.
+var (
+	mirrorCreateRetryTimeout = 30 * time.Second
+	mirrorCreateRetryBackoff = 500 * time.Millisecond
+)
 
 type source interface {
 	ListTopics(ctx context.Context) ([]string, error)
@@ -155,7 +173,7 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 	for _, s := range cp.steps {
 		switch s.change.Action {
 		case reconcile.ActionCreate:
-			if err := r.tgt.CreateMirrorTopic(ctx, r.cfg.LinkName, s.sourceTopic, s.mirrorTopic); err != nil {
+			if err := r.createMirror(ctx, s.sourceTopic, s.mirrorTopic); err != nil {
 				failed++
 				out.Failed = append(out.Failed, reconcile.Change{Action: reconcile.ActionCreate, Summary: s.change.Summary, Detail: err.Error()})
 				continue
@@ -174,4 +192,31 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 		return out, fmt.Errorf("%d of %d mirror topic(s) failed to create", failed, failed+len(out.Created))
 	}
 	return out, nil
+}
+
+// createMirror creates one mirror topic, retrying ONLY the link-not-readable
+// transient (the link was just created by the clusterLink reconciler and cp-server
+// hasn't made it consistently readable for mirror ops yet). All other errors
+// return immediately so genuine failures (e.g. a missing source topic) are
+// reported per-topic without delay.
+func (r *Reconciler) createMirror(ctx context.Context, sourceTopic, mirrorTopic string) error {
+	deadline := time.Now().Add(mirrorCreateRetryTimeout)
+	backoff := mirrorCreateRetryBackoff
+	for {
+		err := r.tgt.CreateMirrorTopic(ctx, r.cfg.LinkName, sourceTopic, mirrorTopic)
+		if err == nil {
+			return nil
+		}
+		if !strings.Contains(err.Error(), linkNotReadable) || time.Now().After(deadline) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		if backoff < 4*time.Second {
+			backoff *= 2
+		}
+	}
 }
