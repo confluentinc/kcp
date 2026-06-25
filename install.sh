@@ -56,10 +56,15 @@ if [ -n "${KCP_VERSION:-}" ]; then
   TAG="$KCP_VERSION"
 else
   echo "Resolving latest kcp release..."
-  TAG=$($DOWNLOAD "https://api.github.com/repos/${REPO}/releases/latest" \
-    | grep '"tag_name":' \
-    | sed -E 's/.*"([^"]+)".*/\1/')
-  [ -n "$TAG" ] || err "could not determine the latest release tag from the GitHub API"
+  # Use the releases/latest redirect instead of the API to avoid
+  # unauthenticated rate limits (60/hr shared per IP).
+  LATEST_URL="https://github.com/${REPO}/releases/latest"
+  if command -v curl >/dev/null 2>&1; then
+    TAG=$(curl -fsSL -o /dev/null -w '%{url_effective}' "$LATEST_URL" | sed 's|.*/tag/||')
+  else
+    TAG=$(wget --spider -S "$LATEST_URL" 2>&1 | grep -i 'Location:' | tail -1 | sed 's|.*/tag/||' | tr -d '[:space:]')
+  fi
+  [ -n "$TAG" ] || err "could not determine the latest release tag"
 fi
 
 BASE_URL="https://github.com/${REPO}/releases/download/${TAG}"
