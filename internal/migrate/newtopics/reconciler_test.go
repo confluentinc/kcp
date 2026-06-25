@@ -247,6 +247,39 @@ func TestPlan_PartitionCountError(t *testing.T) {
 	}
 }
 
+// TestPlanApply_SpecialCharTopicName verifies a source topic with dot and
+// hyphen separators ("events-2026.q1") absent on target flows verbatim into the
+// CreateTopicRequest.Name.
+func TestPlanApply_SpecialCharTopicName(t *testing.T) {
+	src := &fakeSource{
+		topics: []string{"events-2026.q1"},
+		specs: []migrate.TopicSpec{
+			{Name: "events-2026.q1", Partitions: 4, ReplicationFactor: 3},
+		},
+	}
+	tgt := &fakeTarget{clusterID: "cc-1"} // topic absent on target
+	r := New(Config{Include: []string{"*"}}, src, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	got := summaryActions(p.Changes())
+	if act, ok := got[`topic "events-2026.q1"`]; !ok || act != reconcile.ActionCreate {
+		t.Errorf("events-2026.q1: want Create, got %v (present=%v); all=%v", act, ok, got)
+	}
+
+	if _, err := r.Apply(context.Background(), p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(tgt.created) != 1 {
+		t.Fatalf("want 1 created, got %d", len(tgt.created))
+	}
+	if tgt.created[0].Name != "events-2026.q1" {
+		t.Errorf("special-char name not passed through verbatim, got %q", tgt.created[0].Name)
+	}
+}
+
 // TestPlan_EmptyDesiredSet: no topic matches the include glob → plan Empty.
 func TestPlan_EmptyDesiredSet(t *testing.T) {
 	src := &fakeSource{topics: []string{"orders", "_schemas"}}

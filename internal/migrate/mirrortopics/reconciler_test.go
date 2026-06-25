@@ -199,6 +199,37 @@ func TestPlanApply_PrefixTgtDistinctFromTgt(t *testing.T) {
 	}
 }
 
+// TestPlanApply_SpecialCharTopicName verifies a dotted source topic name flows
+// through unchanged: the mirror name is prefix+source ("mt.orders.created.v2")
+// and the create carries the original source topic ("orders.created.v2").
+func TestPlanApply_SpecialCharTopicName(t *testing.T) {
+	src := &fakeSource{topics: []string{"orders.created.v2"}}
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		configs:   map[string]string{linkConfigPrefix: "mt."},
+	}
+	r := New(Config{LinkName: "lk", Include: []string{"*"}}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	got := summaryActions(p.Changes())
+	if act, ok := got[`mirror topic "mt.orders.created.v2"`]; !ok || act != reconcile.ActionCreate {
+		t.Errorf("mt.orders.created.v2: want Create, got %v (present=%v); all=%v", act, ok, got)
+	}
+
+	if _, err := r.Apply(context.Background(), p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(tgt.created) != 1 {
+		t.Fatalf("want 1 created, got %d", len(tgt.created))
+	}
+	if tgt.created[0].mirror != "mt.orders.created.v2" || tgt.created[0].src != "orders.created.v2" {
+		t.Errorf("special-char name not passed through verbatim, got %+v", tgt.created[0])
+	}
+}
+
 type errStub string
 
 func (e errStub) Error() string { return string(e) }
