@@ -4,7 +4,7 @@
 
 Scan existing Kafka deployments, generate migration plans and cost reports, create infrastructure-as-code assets, and execute end-to-end migrations with real-time monitoring.
 
-> **[Full documentation](https://confluentinc.github.io/kcp/)** · **[Latest release](https://github.com/confluentinc/kcp/releases/latest)** · **[Changelog](CHANGELOG.md)**
+> **[Full documentation](https://confluentinc.github.io/kcp/)** · **[Latest release](https://github.com/confluentinc/kcp/releases/latest)**
 
 ## Installation
 
