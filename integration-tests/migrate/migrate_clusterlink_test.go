@@ -25,7 +25,6 @@
 package migrate
 
 import (
-	"bytes"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
@@ -425,21 +424,43 @@ func getLinkConfigs(t *testing.T, c restClient, clusterID, name string) map[stri
 	return out
 }
 
-// linkConfigsJSON returns the link's /configs response as pretty JSON for the
-// evidence report. Only called when reportEnabled.
+// reportedLinkConfigKeys is the curated set of cluster-link config keys shown in
+// the evidence report. The live /configs response carries hundreds of keys (every
+// server default); the report only needs the ones this migration feature actually
+// manages/asserts, so linkConfigsJSON filters to these.
+var reportedLinkConfigKeys = map[string]bool{
+	"cluster.link.prefix":           true,
+	"consumer.offset.sync.enable":   true,
+	"consumer.offset.sync.ms":       true,
+	"consumer.offset.group.filters": true,
+	"topic.config.sync.ms":          true,
+}
+
+// linkConfigsJSON returns the link's /configs response filtered to the
+// report-relevant keys (reportedLinkConfigKeys) as pretty JSON. The live response
+// has hundreds of default configs; the report shows only the keys this migration
+// manages, so it stays readable. Only called when reportEnabled.
 func linkConfigsJSON(c restClient, clusterID, name string) string {
 	resp, err := c.do(http.MethodGet, "/kafka/v3/clusters/"+clusterID+"/links/"+name+"/configs")
 	if err != nil {
 		return fmt.Sprintf("<configs GET failed: %v>", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	var raw json.RawMessage
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	var body struct {
+		Data []struct{ Name, Value string } `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		return fmt.Sprintf("<configs GET decode failed (status %d): %v>", resp.StatusCode, err)
 	}
-	var pretty bytes.Buffer
-	if err := json.Indent(&pretty, raw, "", "  "); err != nil {
-		return string(raw)
+	filtered := map[string]string{}
+	for _, kv := range body.Data {
+		if reportedLinkConfigKeys[kv.Name] {
+			filtered[kv.Name] = kv.Value
+		}
 	}
-	return pretty.String()
+	out, err := json.MarshalIndent(filtered, "", "  ")
+	if err != nil {
+		return fmt.Sprintf("<configs marshal failed: %v>", err)
+	}
+	return string(out)
 }
