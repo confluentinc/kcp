@@ -23,10 +23,6 @@ err() {
   exit 1
 }
 
-need() {
-  command -v "$1" >/dev/null 2>&1 || err "required command not found: $1"
-}
-
 # --- detect downloader -------------------------------------------------------
 if command -v curl >/dev/null 2>&1; then
   DOWNLOAD="curl -fsSL"

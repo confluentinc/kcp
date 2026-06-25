@@ -71,7 +71,7 @@ sudo kcp update         # for system-wide installs (e.g. /usr/local/bin)
 
 | Feature                     | Description                                                                              |
 | --------------------------- | ---------------------------------------------------------------------------------------- |
-| **Multiple Auth Methods**   | SASL-IAM, SASL-SCRAM, TLS, and unauthenticated.                                         |
+| **Multiple Auth Methods**   | SASL-IAM, SASL-SCRAM, SASL/PLAIN, TLS, and unauthenticated.                             |
 | **Comprehensive Reporting** | Migration planning and cost analysis reports.                                            |
 | **Infrastructure as Code**  | Generate Terraform and Ansible configurations for Confluent Cloud.                       |
 | **Migration Execution**     | FSM-driven workflow with lag monitoring, gateway fencing, and topic promotion.            |

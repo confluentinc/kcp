@@ -1,7 +1,7 @@
 # Contributing to kcp
 
 Thanks for your interest in contributing to kcp! This guide covers building from
-source, running the tests, and cutting a release.
+source, running the tests, and how versioning works.
 
 > [!NOTE]
 > If you just want to **use** kcp, you do not need to build from source — install a
