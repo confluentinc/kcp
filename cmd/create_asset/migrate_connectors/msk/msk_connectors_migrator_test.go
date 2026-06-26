@@ -499,7 +499,7 @@ func TestMskConnectorMigrator_Run_CreatesOutputDirectory(t *testing.T) {
 	migrator := NewMskConnectorMigrator(opts)
 
 	// Run will fail at API call, but directory should be created.
-	migrator.Run()
+	_ = migrator.Run()
 
 	// Verify directory was created.
 	info, err := os.Stat(outputPath)
