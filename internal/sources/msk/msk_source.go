@@ -164,27 +164,13 @@ func (s *MSKSource) findClusterInState(state *types.State, region, clusterArn st
 }
 
 func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, clusterAuth types.ClusterAuth) (*client.KafkaAdmin, error) {
-	var kafkaAdmin client.KafkaAdmin
-	var err error
-	switch authType {
-	case types.AuthTypeIAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
-	case types.AuthTypeSASLSCRAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(
-			clusterAuth.AuthMethod.SASLScram.Username,
-			clusterAuth.AuthMethod.SASLScram.Password,
-			clusterAuth.AuthMethod.SASLScram.Mechanism,
-			false, // MSK uses AWS-managed certificates; never skip TLS verification
-		))
-	case types.AuthTypeUnauthenticatedTLS:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedTlsAuth())
-	case types.AuthTypeUnauthenticatedPlaintext:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedPlaintextAuth())
-	case types.AuthTypeTLS:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey))
-	default:
-		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
+	// MSK uses AWS-managed certificates; never skip TLS verification.
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option: %w", err)
 	}
+
+	kafkaAdmin, err := client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, authOpt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
 	}
