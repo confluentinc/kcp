@@ -432,23 +432,24 @@ func TestConfigureSASLTypePlainAuthentication(t *testing.T) {
 }
 
 func TestAdminOptionForAuth_SASLPlain(t *testing.T) {
-	clusterAuth := types.ClusterAuth{
-		AuthMethod: types.AuthMethodConfig{
-			SASLPlain: &types.SASLPlainConfig{
-				Use:      true,
-				Username: "test-user",
-				Password: "test-pass",
-			},
-		},
-	}
-	opt := AdminOptionForAuth(types.AuthTypeSASLPlain, clusterAuth)
-	config := AdminConfig{}
-	opt(&config)
+	clusterAuth := types.ClusterAuth{}
+	clusterAuth.AuthMethod.SASLPlain = &types.SASLPlainConfig{Use: true, Username: "u", Password: "p"}
 
-	assert.Equal(t, types.AuthTypeSASLPlain, config.authType)
-	assert.Equal(t, "test-user", config.username)
-	assert.Equal(t, "test-pass", config.password)
-	assert.True(t, config.disableTLS)
+	opt := AdminOptionForAuth(types.AuthTypeSASLPlain, clusterAuth.AuthMethod)
+
+	cfg := &AdminConfig{}
+	opt(cfg)
+	require.Equal(t, types.AuthTypeSASLPlain, cfg.authType)
+	require.Equal(t, "u", cfg.username)
+	require.Equal(t, "p", cfg.password)
+	require.True(t, cfg.disableTLS)
+}
+
+func TestAdminOptionForAuth_IAM(t *testing.T) {
+	opt := AdminOptionForAuth(types.AuthTypeIAM, types.AuthMethodConfig{IAM: &types.IAMConfig{Use: true}})
+	cfg := &AdminConfig{}
+	opt(cfg)
+	require.Equal(t, types.AuthTypeIAM, cfg.authType)
 }
 
 func TestConfigureUnauthenticatedAuthentication(t *testing.T) {

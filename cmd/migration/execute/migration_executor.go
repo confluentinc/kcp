@@ -154,7 +154,7 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
 	}
 
-	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterAuth)}
+	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterAuth.AuthMethod)}
 	if m.opts.InsecureSkipTLSVerify {
 		opts = append(opts, client.WithInsecureSkipVerify())
 	}

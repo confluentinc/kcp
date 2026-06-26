@@ -101,20 +101,23 @@ func WithInsecureSkipVerify() AdminOption {
 }
 
 // AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
-func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+// It keys off the shared AuthMethodConfig so the scan paths (MSK + OSK) and the
+// migrate path all build admin options from one place. IAM lives here, in the
+// client package — never in the osk package (Apache Kafka has no IAM).
+func AdminOptionForAuth(authType types.AuthType, amc types.AuthMethodConfig) AdminOption {
 	switch authType {
 	case types.AuthTypeIAM:
 		return WithIAMAuth()
 	case types.AuthTypeSASLSCRAM:
-		return WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password, clusterAuth.AuthMethod.SASLScram.Mechanism, false)
+		return WithSASLSCRAMAuth(amc.SASLScram.Username, amc.SASLScram.Password, amc.SASLScram.Mechanism, false)
 	case types.AuthTypeUnauthenticatedTLS:
 		return WithUnauthenticatedTlsAuth()
 	case types.AuthTypeUnauthenticatedPlaintext:
 		return WithUnauthenticatedPlaintextAuth()
 	case types.AuthTypeTLS:
-		return WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey)
+		return WithTLSAuth(amc.TLS.CACert, amc.TLS.ClientCert, amc.TLS.ClientKey)
 	case types.AuthTypeSASLPlain:
-		return WithSASLPlainAuthNoTLS(clusterAuth.AuthMethod.SASLPlain.Username, clusterAuth.AuthMethod.SASLPlain.Password)
+		return WithSASLPlainAuthNoTLS(amc.SASLPlain.Username, amc.SASLPlain.Password)
 	default:
 		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
 		return WithIAMAuth()
