@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/state/migrate"
 
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 )
@@ -1458,5 +1460,66 @@ func TestWriteToFile_RoundTripsContent(t *testing.T) {
 	}
 	if got.KcpBuildInfo.Version != want {
 		t.Fatalf("reloaded version = %q, want %q", got.KcpBuildInfo.Version, want)
+	}
+}
+
+func TestWriteToFileStampsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+
+	s := &State{} // no schema_version set by caller
+	if err := s.WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var probe struct {
+		SchemaVersion int    `json:"schema_version"`
+		UpdatedAt     string `json:"updated_at"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if probe.SchemaVersion != migrate.CurrentSchemaVersion {
+		t.Errorf("schema_version = %d, want %d", probe.SchemaVersion, migrate.CurrentSchemaVersion)
+	}
+	if probe.UpdatedAt == "" {
+		t.Errorf("updated_at not stamped")
+	}
+}
+
+func TestWriteToFileBacksUpMigratingWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+
+	// Existing on-disk file at an OLDER schema_version (0) than current.
+	if err := os.WriteFile(path, []byte(`{"schema_version":0,"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.0"},"timestamp":"2026-05-14T00:00:00Z"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	// Exactly one timestamped .bak should exist, holding the old (schema_version 0) bytes.
+	entries, _ := filepath.Glob(filepath.Join(dir, "kcp-state.json.*.bak"))
+	if len(entries) != 1 {
+		t.Fatalf("want 1 .bak, got %d: %v", len(entries), entries)
+	}
+	bak, _ := os.ReadFile(entries[0])
+	if !strings.Contains(string(bak), `"schema_version":0`) {
+		t.Errorf(".bak should contain the pre-migration file, got: %s", bak)
+	}
+
+	// A same-version rewrite must NOT create another backup.
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = filepath.Glob(filepath.Join(dir, "kcp-state.json.*.bak"))
+	if len(entries) != 1 {
+		t.Errorf("same-version rewrite must not back up; want 1 .bak, got %d", len(entries))
 	}
 }

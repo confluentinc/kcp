@@ -11,15 +11,19 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/state/migrate"
 )
 
 // State represents the unified state file (kcp-state.json)
 type State struct {
+	SchemaVersion    int                    `json:"schema_version"`
 	MSKSources       *MSKSourcesState       `json:"msk_sources,omitempty"`
 	OSKSources       *OSKSourcesState       `json:"osk_sources,omitempty"`
 	SchemaRegistries *SchemaRegistriesState `json:"schema_registries,omitempty"`
 	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
 	Timestamp        time.Time              `json:"timestamp"`
+	UpdatedAt        time.Time              `json:"updated_at,omitempty"`
+	MigratedFrom     string                 `json:"migrated_from,omitempty"`
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -114,6 +118,12 @@ func NewStateFromBytes(data []byte) (*State, error) {
 }
 
 func (s *State) WriteToFile(filePath string) error {
+	if err := backupIfMigrating(filePath); err != nil {
+		return err
+	}
+	s.SchemaVersion = migrate.CurrentSchemaVersion
+	s.UpdatedAt = time.Now()
+
 	data, err := json.Marshal(s)
 	if err != nil {
 		return fmt.Errorf("failed to marshal state: %w", err)
@@ -153,6 +163,37 @@ func (s *State) WriteToFile(filePath string) error {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
+	return nil
+}
+
+// backupIfMigrating copies an existing target to <path>.<UTC-timestamp>.bak when its
+// on-disk schema_version differs from the current one (design D7). New files and same-version
+// rewrites are not backed up. The timestamped name lets multiple upgrades coexist in a
+// folder; a counter suffix guards the rare same-second collision.
+func backupIfMigrating(filePath string) error {
+	existing, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil // no existing file (or unreadable) → nothing to back up
+	}
+	var probe struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	_ = json.Unmarshal(existing, &probe) // absent/invalid → schema_version 0 (legacy) → back up
+	if probe.SchemaVersion == migrate.CurrentSchemaVersion {
+		return nil // same version → not a migrating write
+	}
+	ts := time.Now().UTC().Format("20060102T150405Z")
+	bak := fmt.Sprintf("%s.%s.bak", filePath, ts)
+	for i := 1; ; i++ {
+		if _, err := os.Stat(bak); os.IsNotExist(err) {
+			break
+		}
+		bak = fmt.Sprintf("%s.%s-%d.bak", filePath, ts, i)
+	}
+	if err := os.WriteFile(bak, existing, 0600); err != nil {
+		return fmt.Errorf("failed to back up state file before migrating write: %w", err)
+	}
+	slog.Info("backed up state file before migrating write", "backup", bak)
 	return nil
 }
 
