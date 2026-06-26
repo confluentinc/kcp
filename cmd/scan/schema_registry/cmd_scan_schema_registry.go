@@ -179,6 +179,14 @@ func runScanConfluentSchemaRegistry() error {
 		return fmt.Errorf("failed to get auth option: %v", err)
 	}
 
+	// Pre-flight the endpoint before handing off to the confluent-kafka-go client,
+	// which would otherwise surface a non-JSON (HTML) response as the opaque
+	// "invalid character '<'". The validator's error is already actionable, so it
+	// is returned as-is rather than re-wrapped.
+	if err := client.ValidateConfluentSchemaRegistryURL(opts.Url, authOption); err != nil {
+		return err
+	}
+
 	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, authOption)
 	if err != nil {
 		return fmt.Errorf("failed to create schema registry client: %v", err)
