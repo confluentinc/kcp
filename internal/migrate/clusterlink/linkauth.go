@@ -56,7 +56,7 @@ func (a LinkAuth) LoadTLS() (*svclink.SourceTLSMaterial, error) {
 }
 
 // LinkAuthFromSource maps the source's single enabled auth method to link config.
-func LinkAuthFromSource(c types.OSKClusterAuth) (LinkAuth, error) {
+func LinkAuthFromSource(c types.KafkaSourceConn) (LinkAuth, error) {
 	authType, err := c.GetSelectedAuthType()
 	if err != nil {
 		return LinkAuth{}, err

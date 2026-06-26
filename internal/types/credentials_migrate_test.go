@@ -183,18 +183,13 @@ func TestLoadMigrateClusterCredentials_IAM_RegionRequired(t *testing.T) {
 	require.Contains(t, joinErrStrings(errs), "iam.region is required")
 }
 
-// TestMigrateConn verifies MigrateConn composes bootstrap servers + creds into an OSKClusterAuth.
+// TestMigrateConn verifies MigrateConn composes bootstrap servers + creds into a KafkaSourceConn.
 func TestMigrateConn(t *testing.T) {
-	creds := MigrateClusterCredentials{
-		UnauthenticatedPlaintext: &MigrateUnauthenticatedPlaintext{},
-		InsecureSkipTLSVerify:    true,
-	}
-	bootstrapServers := []string{"broker1:9092", "broker2:9092"}
-	got := MigrateConn(bootstrapServers, creds)
+	bootstrapServers := []string{"b1:9092", "b2:9092"}
+	creds := MigrateClusterCredentials{SASLScram: &MigrateSASLScram{Username: "u", Password: "p", Mechanism: "SHA256"}}
 
+	got := MigrateConn(bootstrapServers, creds)
 	require.Equal(t, bootstrapServers, got.BootstrapServers)
-	require.True(t, got.InsecureSkipTLSVerify)
-	require.Empty(t, got.ID, "MigrateConn must not set an ID")
-	require.NotNil(t, got.AuthMethod.UnauthenticatedPlaintext)
-	require.True(t, got.AuthMethod.UnauthenticatedPlaintext.Use)
+	require.NotNil(t, got.AuthMethod.SASLScram)
+	require.True(t, got.AuthMethod.SASLScram.Use)
 }

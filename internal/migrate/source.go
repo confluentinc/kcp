@@ -7,13 +7,36 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/confluentinc/kcp/internal/sources/osk"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 // buildSourceAdmin opens a Kafka admin connection to the source cluster. It is a
 // package-level var so tests can substitute a mock admin.
-var buildSourceAdmin = osk.BuildKafkaAdmin
+var buildSourceAdmin = buildKafkaSourceAdmin
+
+// buildKafkaSourceAdmin builds a Kafka admin for a migrate source connection,
+// dispatching auth through the shared client.AdminOptionForAuth mapper. For IAM
+// the region comes from AuthMethod.IAM.Region (SigV4). InsecureSkipTLSVerify is
+// applied last so it overrides the per-auth default (needed for test envs with
+// self-signed certs). The encryption-in-transit arg is inert in NewKafkaAdmin
+// (the auth option determines TLS); ClientBrokerTls is passed for parity.
+func buildKafkaSourceAdmin(conn types.KafkaSourceConn) (client.KafkaAdmin, error) {
+	authType, err := conn.GetSelectedAuthType()
+	if err != nil {
+		return nil, fmt.Errorf("determining source auth type: %w", err)
+	}
+	region := ""
+	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
+		region = conn.AuthMethod.IAM.Region
+	}
+	opts := []client.AdminOption{client.AdminOptionForAuth(authType, conn.AuthMethod)}
+	if conn.InsecureSkipTLSVerify {
+		opts = append(opts, client.WithInsecureSkipVerify())
+	}
+	return client.NewKafkaAdmin(conn.BootstrapServers, kafkatypes.ClientBrokerTls, region, "3.6.0", opts...)
+}
 
 // Source is the live read of the migration source. The cluster id supports the
 // desired-state read (§8.2); ListTopics/DescribeTopics support topic mirroring
@@ -33,18 +56,19 @@ type TopicSpec struct {
 	Configs           map[string]string // explicitly-set (non-default) source topic configs
 }
 
-// OSKSourceReader reads an Apache Kafka source via the Kafka admin protocol.
-type OSKSourceReader struct {
-	cluster types.OSKClusterAuth
+// KafkaSourceReader reads a migration source via the Kafka admin protocol. The
+// source may be Apache Kafka, MSK, or Confluent — auth is in the connection.
+type KafkaSourceReader struct {
+	conn types.KafkaSourceConn
 }
 
-func NewOSKSourceReader(cluster types.OSKClusterAuth) *OSKSourceReader {
-	return &OSKSourceReader{cluster: cluster}
+func NewKafkaSourceReader(conn types.KafkaSourceConn) *KafkaSourceReader {
+	return &KafkaSourceReader{conn: conn}
 }
 
 // ClusterID opens an admin connection and returns the live cluster id.
-func (r *OSKSourceReader) ClusterID(ctx context.Context) (string, error) {
-	admin, err := buildSourceAdmin(r.cluster)
+func (r *KafkaSourceReader) ClusterID(ctx context.Context) (string, error) {
+	admin, err := buildSourceAdmin(r.conn)
 	if err != nil {
 		return "", fmt.Errorf("connecting to source: %w", err)
 	}
@@ -61,8 +85,8 @@ func (r *OSKSourceReader) ClusterID(ctx context.Context) (string, error) {
 }
 
 // ListTopics opens an admin connection and returns the source topic names, sorted.
-func (r *OSKSourceReader) ListTopics(ctx context.Context) ([]string, error) {
-	admin, err := buildSourceAdmin(r.cluster)
+func (r *KafkaSourceReader) ListTopics(ctx context.Context) ([]string, error) {
+	admin, err := buildSourceAdmin(r.conn)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to source: %w", err)
 	}
@@ -85,8 +109,8 @@ func (r *OSKSourceReader) ListTopics(ctx context.Context) ([]string, error) {
 // shape of the requested topics, with only explicitly-set (non-default) configs.
 // Topics in names that are absent from the source are silently skipped. Results
 // are sorted by name.
-func (r *OSKSourceReader) DescribeTopics(ctx context.Context, names []string) ([]TopicSpec, error) {
-	admin, err := buildSourceAdmin(r.cluster)
+func (r *KafkaSourceReader) DescribeTopics(ctx context.Context, names []string) ([]TopicSpec, error) {
+	admin, err := buildSourceAdmin(r.conn)
 	if err != nil {
 		return nil, fmt.Errorf("connecting to source: %w", err)
 	}

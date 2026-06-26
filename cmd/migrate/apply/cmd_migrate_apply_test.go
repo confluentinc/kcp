@@ -67,7 +67,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 			"  clusterLink:\n    name: src-to-dest\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"), 0600))
 
 	old := newSourceReader
-	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return staticSource("src-1") }
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
 	t.Cleanup(func() { newSourceReader = old })
 	cmd := NewMigrateApplyCmd()
 	var outBuf, errBuf bytes.Buffer
@@ -174,7 +174,7 @@ func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
 			"    sourceRest:\n      endpoint: "+srcSrv.URL+"\n      credentials: "+srcRestCreds+"\n"), 0600))
 
 	old := newSourceReader
-	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return staticSource("src-1") }
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
 	t.Cleanup(func() { newSourceReader = old })
 
 	cmd := NewMigrateApplyCmd()
@@ -300,7 +300,7 @@ func runManifest(t *testing.T, srvURL, specBody string, src migrate.Source, dryR
 	require.NoError(t, os.WriteFile(mf, []byte(body), 0600))
 
 	old := newSourceReader
-	newSourceReader = func(types.OSKClusterAuth) migrate.Source { return src }
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return src }
 	t.Cleanup(func() { newSourceReader = old })
 
 	cmd := NewMigrateApplyCmd()

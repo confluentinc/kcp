@@ -190,10 +190,25 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 	return mc, errs
 }
 
+// KafkaSourceConn is the neutral, migrate-facing Kafka connection: a bootstrap
+// address plus the single selected auth method (and IAM region, carried on
+// AuthMethod.IAM.Region). It replaces the migrate path's prior reuse of the scan
+// type OSKClusterAuth, which is correctly named only on the scan side.
+type KafkaSourceConn struct {
+	BootstrapServers      []string
+	AuthMethod            AuthMethodConfig
+	InsecureSkipTLSVerify bool
+}
+
+func (c KafkaSourceConn) GetAuthMethods() []AuthType { return c.AuthMethod.GetAuthMethods() }
+func (c KafkaSourceConn) GetSelectedAuthType() (AuthType, error) {
+	return c.AuthMethod.GetSelectedAuthType()
+}
+
 // MigrateConn combines a manifest bootstrap address with auth-only creds into the
-// OSKClusterAuth the source reader / link-auth mapper already consume.
-func MigrateConn(bootstrapServers []string, creds MigrateClusterCredentials) OSKClusterAuth {
-	return OSKClusterAuth{
+// neutral KafkaSourceConn consumed by the migrate source reader and link-auth mapper.
+func MigrateConn(bootstrapServers []string, creds MigrateClusterCredentials) KafkaSourceConn {
+	return KafkaSourceConn{
 		BootstrapServers:      bootstrapServers,
 		AuthMethod:            creds.authMethodConfig(),
 		InsecureSkipTLSVerify: creds.InsecureSkipTLSVerify,

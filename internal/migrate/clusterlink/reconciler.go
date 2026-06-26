@@ -33,7 +33,7 @@ import (
 const ModeSource = "source"
 
 // source is the subset of the live source this reconciler reads.
-// *migrate.OSKSourceReader satisfies this interface.
+// *migrate.KafkaSourceReader satisfies this interface.
 type source interface {
 	ClusterID(ctx context.Context) (string, error)
 }
@@ -103,7 +103,7 @@ func (r *Reconciler) CheckPreconditions(ctx context.Context) error {
 	}
 	// NOTE: Plan reads the source cluster id again. For Phase 1's single
 	// reconciler the duplicate live read is acceptable; if more reconcilers are
-	// added, cache it in OSKSourceReader rather than re-probing here.
+	// added, cache it in KafkaSourceReader rather than re-probing here.
 	if _, err := r.src.ClusterID(ctx); err != nil {
 		return fmt.Errorf("source not reachable: %w", err)
 	}

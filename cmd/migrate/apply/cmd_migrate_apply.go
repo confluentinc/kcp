@@ -18,8 +18,8 @@ import (
 
 // newSourceReader builds the live source reader. It is a package-level var so
 // tests can substitute a fake without opening a live Kafka connection.
-var newSourceReader = func(cluster types.OSKClusterAuth) migrate.Source {
-	return migrate.NewOSKSourceReader(cluster)
+var newSourceReader = func(conn types.KafkaSourceConn) migrate.Source {
+	return migrate.NewKafkaSourceReader(conn)
 }
 
 func NewMigrateApplyCmd() *cobra.Command {
@@ -220,17 +220,17 @@ func resolveLinkConfigs(cl *manifest.ClusterLink) (map[string]string, error) {
 }
 
 // loadMigrateCluster loads + validates a flat migrate credentials file and composes
-// the result with the given bootstrap servers from the manifest into an OSKClusterAuth.
-func loadMigrateCluster(cmd *cobra.Command, field string, bootstrapServers []string, path string) (types.OSKClusterAuth, error) {
+// the result with the given bootstrap servers from the manifest into a KafkaSourceConn.
+func loadMigrateCluster(cmd *cobra.Command, field string, bootstrapServers []string, path string) (types.KafkaSourceConn, error) {
 	if path == "" {
-		return types.OSKClusterAuth{}, fmt.Errorf("%s.credentials is required", field)
+		return types.KafkaSourceConn{}, fmt.Errorf("%s.credentials is required", field)
 	}
 	creds, errs := types.LoadMigrateClusterCredentials(path)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
 		}
-		return types.OSKClusterAuth{}, fmt.Errorf("invalid %s.credentials: %d problem(s) found", field, len(errs))
+		return types.KafkaSourceConn{}, fmt.Errorf("invalid %s.credentials: %d problem(s) found", field, len(errs))
 	}
 	return types.MigrateConn(bootstrapServers, creds), nil
 }

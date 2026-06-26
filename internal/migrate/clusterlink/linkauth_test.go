@@ -75,7 +75,7 @@ func TestLinkAuthFromSource(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			la, err := LinkAuthFromSource(types.OSKClusterAuth{AuthMethod: tc.auth})
+			la, err := LinkAuthFromSource(types.KafkaSourceConn{AuthMethod: tc.auth})
 			require.NoError(t, err)
 			require.Equal(t, tc.wantProto, la.SecurityProtocol)
 			require.Equal(t, tc.wantMech, la.SaslMechanism)
@@ -90,7 +90,7 @@ func TestLinkAuthFromSource(t *testing.T) {
 }
 
 func TestLinkAuthFromSource_MTLS(t *testing.T) {
-	la, err := LinkAuthFromSource(types.OSKClusterAuth{
+	la, err := LinkAuthFromSource(types.KafkaSourceConn{
 		AuthMethod: types.AuthMethodConfig{
 			TLS: &types.TLSConfig{Use: true, CACert: "/c/ca.crt", ClientCert: "/c/client.crt", ClientKey: "/c/client.key"},
 		},
@@ -104,7 +104,7 @@ func TestLinkAuthFromSource_MTLS(t *testing.T) {
 }
 
 func TestLinkAuthFromSource_NoMethod(t *testing.T) {
-	_, err := LinkAuthFromSource(types.OSKClusterAuth{})
+	_, err := LinkAuthFromSource(types.KafkaSourceConn{})
 	require.Error(t, err)
 }
 

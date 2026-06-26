@@ -16,13 +16,13 @@ import (
 func withMockAdmin(t *testing.T, m *mocks.MockKafkaAdmin) {
 	t.Helper()
 	old := buildSourceAdmin
-	buildSourceAdmin = func(types.OSKClusterAuth) (client.KafkaAdmin, error) { return m, nil }
+	buildSourceAdmin = func(types.KafkaSourceConn) (client.KafkaAdmin, error) { return m, nil }
 	t.Cleanup(func() { buildSourceAdmin = old })
 }
 
 func strPtr(s string) *string { return &s }
 
-func TestOSKSourceReader_ListTopics_SortsNames(t *testing.T) {
+func TestKafkaSourceReader_ListTopics_SortsNames(t *testing.T) {
 	withMockAdmin(t, &mocks.MockKafkaAdmin{
 		ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 			return map[string]sarama.TopicDetail{
@@ -34,13 +34,13 @@ func TestOSKSourceReader_ListTopics_SortsNames(t *testing.T) {
 		CloseFunc: func() error { return nil },
 	})
 
-	r := NewOSKSourceReader(types.OSKClusterAuth{})
+	r := NewKafkaSourceReader(types.KafkaSourceConn{})
 	got, err := r.ListTopics(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "mike", "zeta"}, got)
 }
 
-func TestOSKSourceReader_DescribeTopics_FiltersAndMaps(t *testing.T) {
+func TestKafkaSourceReader_DescribeTopics_FiltersAndMaps(t *testing.T) {
 	withMockAdmin(t, &mocks.MockKafkaAdmin{
 		ListTopicsWithNonDefaultConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
 			return map[string]sarama.TopicDetail{
@@ -61,7 +61,7 @@ func TestOSKSourceReader_DescribeTopics_FiltersAndMaps(t *testing.T) {
 		CloseFunc: func() error { return nil },
 	})
 
-	r := NewOSKSourceReader(types.OSKClusterAuth{})
+	r := NewKafkaSourceReader(types.KafkaSourceConn{})
 	got, err := r.DescribeTopics(context.Background(), []string{"orders", "events", "absent"})
 	require.NoError(t, err)
 
