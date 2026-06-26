@@ -90,13 +90,17 @@ func (rc *reportCollector) render() string {
 	sort.Slice(secs, func(i, j int) bool { return secs[i].seq < secs[j].seq })
 
 	var b strings.Builder
-	b.WriteString("# Cluster-link auth verification report\n\n")
-	fmt.Fprintf(&b, "Generated %s by the live `kcp migrate` cluster-link auth matrix "+
+	b.WriteString("# kcp migrate verification report\n\n")
+	fmt.Fprintf(&b, "Generated %s by the live `kcp migrate` verification matrix "+
 		"(`make test-migrate-report`), run against the cp-server brokers in "+
-		"`integration-tests/migrate/docker-compose.yml`. Every test case below is a "+
-		"real `kcp migrate apply` against a real broker. The **Result** column and each test "+
-		"case's **Result** section show the observed outcome of that run, including a live Kafka "+
-		"REST `GET …/links/<name>` capturing the link state.\n\n",
+		"`integration-tests/migrate/docker-compose.yml`. The matrix covers three areas: "+
+		"cluster-link auth, mirror topics (destination- and source-initiated), and new "+
+		"(plain, non-mirror) topics. Most test cases below are a real `kcp migrate apply` "+
+		"against a real broker; a few cases are dry-run-only or document a deferral and run "+
+		"no live apply (their **Result** reflects this). The evidence captured per case is the "+
+		"relevant live Kafka REST read: the link state (`GET …/links/<name>`) for cluster-link "+
+		"cases, the link's mirrors (`GET …/links/<name>/mirrors`) for mirror cases, and the "+
+		"created topics (`GET …/topics/<name>`) for new cases.\n\n",
 		time.Now().Format(time.RFC1123))
 
 	// Summary table. The "#" column links to each test case's section via an
@@ -237,6 +241,7 @@ type sectionInput struct {
 	results  []resultBlock
 	reapply  string // captured idempotent re-apply stdout
 	pass     bool
+	deferred bool   // case runs no live apply (documentation-only) → DEFERRED
 	failMsg  string // failure detail when !pass
 }
 
@@ -250,6 +255,12 @@ type resultBlock struct {
 // buildSection turns a sectionInput into a reportSection (markdown body + row).
 func buildSection(in sectionInput) reportSection {
 	result := "✅ PASS"
+	if in.deferred {
+		// A documentation-only case that runs no live apply: it neither passes nor
+		// fails a live assertion, so render it as DEFERRED. A genuine failure still
+		// wins (a deferred case should never have failed an assertion, but be safe).
+		result = "⏭ DEFERRED"
+	}
 	if !in.pass {
 		result = "❌ FAIL"
 	}
