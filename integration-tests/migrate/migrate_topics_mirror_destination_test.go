@@ -592,8 +592,10 @@ func TestMigrateApply_TopicsMirror_ContinueOnError(t *testing.T) {
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.Error(t, err, "kcp must exit non-zero when a mirror fails:\n%s", out)
-	require.Contains(t, out, "1 created", out)
-	require.Contains(t, out, "1 failed", out)
+	// Scope to the mirrorTopics outcome line. A bare "1 created"/"1 failed" would
+	// also match the engine's `clusterLink: 1 created, …` line, so the test could
+	// pass even if mirrorTopics created nothing — assert the full rendered line.
+	require.Contains(t, out, "mirrorTopics: 1 created, 0 already present, 0 drift, 1 failed", out)
 	require.Contains(t, out, "✖", out)
 
 	// Despite the failure, the good mirror was created.
@@ -711,8 +713,8 @@ func TestMigrateApply_TopicsMirror_StatusNotFailed(t *testing.T) {
 
 	srcTopics := []string{"orders-1", "orders-2", "orders-3", "orders-4"}
 	want := prefixAll(prefix, srcTopics)
-	rep := newMirrorReporter(link, "after creating the orders-* mirrors, every mirror's mirror_status is non-FAILED (ACTIVE or a transitional state) — the link is healthily replicating, not erroring.", m, link, srcTopics)
-	rep.expected("each mirror's mirror_status != FAILED")
+	rep := newMirrorReporter(link, "after creating the orders-* mirrors, every mirror's mirror_status reaches ACTIVE within 60s — the link is healthily replicating, not stuck or erroring (ACTIVE implies non-FAILED and non-stuck).", m, link, srcTopics)
+	rep.expected("each mirror's mirror_status reaches ACTIVE (never FAILED, never stuck PENDING)")
 	defer rep.commit(t, poller)
 
 	out, err := runKCP(t, m)
@@ -722,25 +724,32 @@ func TestMigrateApply_TopicsMirror_StatusNotFailed(t *testing.T) {
 	poller.requireLinkActive(t, destClusterID, link)
 	poller.requireMirrorsPresent(t, destClusterID, link, want)
 
-	// Poll briefly: status should never settle on FAILED.
-	deadline := time.Now().Add(30 * time.Second)
+	// Poll until every mirror reaches ACTIVE. ACTIVE is the healthy steady state:
+	// it implies non-FAILED and proves the mirror is not stuck in a transitional
+	// state (e.g. PENDING) forever. Fail on timeout with the last observed statuses.
+	deadline := time.Now().Add(60 * time.Second)
 	var statuses map[string]string
 	for time.Now().Before(deadline) {
 		statuses = poller.mirrorStatuses(destClusterID, link)
-		anyFailed := false
+		// Guard on FAILED immediately — a FAILED mirror will never become ACTIVE.
+		for name, s := range statuses {
+			require.NotEqual(t, "FAILED", s, "mirror %q must not be FAILED", name)
+		}
+		allActive := len(statuses) >= len(want)
 		for _, s := range statuses {
-			if s == "FAILED" {
-				anyFailed = true
+			if s != "ACTIVE" {
+				allActive = false
 			}
 		}
-		if !anyFailed && len(statuses) >= len(want) {
+		if allActive {
 			break
 		}
 		time.Sleep(2 * time.Second)
 	}
 	require.NotEmpty(t, statuses, "mirror statuses must be readable")
+	require.GreaterOrEqual(t, len(statuses), len(want), "all mirror statuses must be present; observed %v", statuses)
 	for name, s := range statuses {
-		require.NotEqual(t, "FAILED", s, "mirror %q must not be FAILED", name)
+		require.Equal(t, "ACTIVE", s, "mirror %q must reach ACTIVE within the window (last statuses: %v)", name, statuses)
 	}
 }
 
