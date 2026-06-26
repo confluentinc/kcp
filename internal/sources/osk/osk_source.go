@@ -188,7 +188,7 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 
 	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterCreds.AuthMethod, clusterCreds.InsecureSkipTLSVerify)
 	if err != nil {
-		return nil, fmt.Errorf("unsupported auth type for Apache Kafka: %v", authType)
+		return nil, fmt.Errorf("failed to resolve auth option for Apache Kafka: %w", err)
 	}
 
 	// clientBrokerEncryptionInTransit is unused inside NewKafkaAdmin; TLS behavior is

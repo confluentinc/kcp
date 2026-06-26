@@ -167,7 +167,7 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 	// MSK uses AWS-managed certificates; never skip TLS verification.
 	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
 	if err != nil {
-		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
+		return nil, fmt.Errorf("failed to resolve auth option: %w", err)
 	}
 
 	kafkaAdmin, err := client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, authOpt)

@@ -136,7 +136,7 @@ func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConf
 func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
 	opt, err := AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
 	if err != nil {
-		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
+		slog.Warn("could not resolve auth option, defaulting to IAM", "authType", authType, "error", err)
 		return WithIAMAuth()
 	}
 	return opt
