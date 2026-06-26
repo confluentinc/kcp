@@ -23,12 +23,19 @@ import (
 //
 //	unauthenticated_plaintext: {}
 type MigrateClusterCredentials struct {
+	IAM                      *MigrateIAM                      `yaml:"iam,omitempty"`
 	SASLScram                *MigrateSASLScram                `yaml:"sasl_scram,omitempty"`
 	SASLPlain                *MigrateSASLPlain                `yaml:"sasl_plain,omitempty"`
 	MTLS                     *MigrateMTLS                     `yaml:"mtls,omitempty"`
 	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty"`
 	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty"`
+}
+
+// MigrateIAM is the MSK IAM auth block. region is required (SigV4 token signing);
+// there is no auto-derive. Valid only for an MSK source's read credentials.
+type MigrateIAM struct {
+	Region string `yaml:"region"`
 }
 
 // MigrateSASLScram is the SASL/SCRAM auth block for migrate credentials (no use: flag).
@@ -68,6 +75,9 @@ type MigrateUnauthenticatedPlaintext struct{}
 // methodCount returns how many auth method blocks are set (must be exactly 1).
 func (c MigrateClusterCredentials) methodCount() int {
 	n := 0
+	if c.IAM != nil {
+		n++
+	}
 	if c.SASLScram != nil {
 		n++
 	}
@@ -92,6 +102,8 @@ func (c MigrateClusterCredentials) methodCount() int {
 func (c MigrateClusterCredentials) authMethodConfig() AuthMethodConfig {
 	amc := AuthMethodConfig{}
 	switch {
+	case c.IAM != nil:
+		amc.IAM = &IAMConfig{Use: true, Region: c.IAM.Region}
 	case c.SASLScram != nil:
 		amc.SASLScram = &SASLScramConfig{
 			Use:       true,
@@ -159,7 +171,7 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 	switch mc.methodCount() {
 	case 0:
 		errs = append(errs, fmt.Errorf(
-			"no authentication method specified (set exactly one of sasl_scram, sasl_plain, mtls, unauthenticated_tls, unauthenticated_plaintext)"))
+			"no authentication method specified (set exactly one of iam, sasl_scram, sasl_plain, mtls, unauthenticated_tls, unauthenticated_plaintext)"))
 	default:
 		if mc.methodCount() > 1 {
 			errs = append(errs, fmt.Errorf("multiple authentication methods specified (only one allowed)"))
@@ -171,6 +183,9 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 				errs = append(errs, err)
 			}
 		}
+	}
+	if mc.IAM != nil && strings.TrimSpace(mc.IAM.Region) == "" {
+		errs = append(errs, fmt.Errorf("iam.region is required (the AWS region for SigV4 token signing)"))
 	}
 	return mc, errs
 }

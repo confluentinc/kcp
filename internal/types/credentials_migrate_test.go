@@ -157,6 +157,32 @@ func TestLoadMigrateClusterCredentials_RejectsBootstrapServersInFile(t *testing.
 	require.Contains(t, joinErrStrings(errs), "manifest")
 }
 
+func TestLoadMigrateClusterCredentials_IAM(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("iam: { region: us-east-1 }\n"), 0600))
+
+	creds, errs := LoadMigrateClusterCredentials(p)
+	require.Empty(t, errs, joinErrStrings(errs))
+	require.NotNil(t, creds.IAM)
+	require.Equal(t, "us-east-1", creds.IAM.Region)
+
+	conn := MigrateConn([]string{"b:9092"}, creds)
+	require.NotNil(t, conn.AuthMethod.IAM)
+	require.True(t, conn.AuthMethod.IAM.Use)
+	require.Equal(t, "us-east-1", conn.AuthMethod.IAM.Region)
+}
+
+func TestLoadMigrateClusterCredentials_IAM_RegionRequired(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("iam: {}\n"), 0600))
+
+	_, errs := LoadMigrateClusterCredentials(p)
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "iam.region is required")
+}
+
 // TestMigrateConn verifies MigrateConn composes bootstrap servers + creds into an OSKClusterAuth.
 func TestMigrateConn(t *testing.T) {
 	creds := MigrateClusterCredentials{
