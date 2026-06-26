@@ -3,6 +3,7 @@ package types
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -85,36 +86,62 @@ func NewStateFromFile(stateFile string) (*State, error) {
 }
 
 func NewStateFromBytes(data []byte) (*State, error) {
-	var state State
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&state); err != nil {
-		// Decode failed — the schema may have changed between versions,
-		// or the file contains unknown fields from a different KCP version.
-		// Try to extract just the version from the raw bytes to give a more
-		// actionable error than a raw JSON type error.
-		var raw struct {
-			KcpBuildInfo struct {
-				Version string `json:"version"`
-			} `json:"kcp_build_info"`
+	// File-driven dev classification: inspect the FILE's own stamp, never the
+	// reader binary's build_info.Version (spec §6.2/§6.9).
+	fileIsDevStamped := fileBuildIsDev(data)
+
+	migrated, fromLabel, err := migrate.Upgrade(data)
+	if err != nil {
+		switch {
+		case errors.Is(err, migrate.ErrNewerSchemaDev):
+			return nil, fmt.Errorf("%w. This state file was produced by a local/unreleased KCP build whose schema is ahead of this release; there may be no released version that reads it. Open it with the dev build that wrote it, or regenerate it", err)
+		case errors.Is(err, migrate.ErrNewerSchema):
+			return nil, fmt.Errorf("%w. This state file was written by a newer version of KCP than you are running. Run `kcp update` to upgrade, then retry", err)
+		case errors.Is(err, migrate.ErrUnsupportedLegacy):
+			return nil, fmt.Errorf("%w. Run `kcp state upgrade --in <file>` to migrate it to the current format", err)
+		default:
+			return nil, err
 		}
-		if jsonErr := json.Unmarshal(data, &raw); jsonErr == nil {
-			if raw.KcpBuildInfo.Version != "" && raw.KcpBuildInfo.Version != build_info.Version {
-				if strings.HasSuffix(raw.KcpBuildInfo.Version, "-localdev") {
-					return nil, fmt.Errorf("%v (file was created with a local dev build %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka)", err, raw.KcpBuildInfo.Version, build_info.Version)
-				}
-				return nil, fmt.Errorf("%v (file was created with KCP version %q, you are running %q). Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release, or use KCP version %s to load this file", err, raw.KcpBuildInfo.Version, build_info.Version, raw.KcpBuildInfo.Version)
-			}
-			return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
-		}
-		return nil, fmt.Errorf("%v. Please recreate the state file with kcp discover (MSK) or kcp scan clusters (Apache Kafka) using the latest KCP release", err)
 	}
 
+	var state State
+	decoder := json.NewDecoder(bytes.NewReader(migrated))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&state); err != nil {
+		if fileIsDevStamped {
+			return nil, fmt.Errorf("state file was produced by a local/unreleased KCP build (%s) and its schema does not match any released format, so it cannot be migrated automatically: %w. Open it with the dev build that wrote it, or regenerate it", fromLabel, err)
+		}
+		return nil, fmt.Errorf("state file did not match the current schema after migration (migrated from %s): %w. Run `kcp state upgrade --in <file>`, or recreate it with `kcp discover` / `kcp scan clusters`", fromLabel, err)
+	}
+
+	// A dev-stamped file that decodes cleanly is a clean success — no warning
+	// (spec §6.9: the dev stamp is provenance, not a defect). fileIsDevStamped only
+	// shapes the FAILURE messages above.
+	if state.MigratedFrom == "" && fromLabel != fmt.Sprintf("schema_version=%d", migrate.CurrentSchemaVersion) {
+		state.MigratedFrom = fromLabel
+	}
 	if state.KcpBuildInfo.Version == "" {
 		slog.Warn("state file has no kcp_build_info.version, this may not be a valid KCP state file")
 	}
-
 	return &state, nil
+}
+
+// fileBuildIsDev reports whether the state file's OWN kcp_build_info.version is a
+// development sentinel. It reads only the file bytes (never the running binary).
+// A MISSING version is treated as unknown provenance, NOT dev: only a file carrying
+// an actual dev stamp (dev / 0.0.0-localdev) gets the dev-aware error wording, so
+// region-scan files and unrelated JSON (which have no version) fall to the generic
+// "recreate / kcp state upgrade" message (spec N5).
+func fileBuildIsDev(data []byte) bool {
+	var probe struct {
+		KcpBuildInfo struct {
+			Version string `json:"version"`
+		} `json:"kcp_build_info"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		return false
+	}
+	return probe.KcpBuildInfo.Version != "" && build_info.IsDevVersion(probe.KcpBuildInfo.Version)
 }
 
 func (s *State) WriteToFile(filePath string) error {

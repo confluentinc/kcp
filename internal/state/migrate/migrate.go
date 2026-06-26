@@ -35,8 +35,10 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 	if schemaVersion > CurrentSchemaVersion {
 		// File-driven dev check: a dev-STAMPED file may carry a schema_version for an
 		// unreleased/local shape, so do not advise `kcp update` (spec §6.9). We inspect
-		// the file's own build version only — never the reader binary's.
-		if build_info.IsDevVersion(buildVersion) {
+		// the file's own build version only — never the reader binary's. A MISSING
+		// version is "unknown", not dev: such a file takes the released-newer path
+		// (advise `kcp update`), since "dev-stamped" requires an actual dev stamp.
+		if buildVersion != "" && build_info.IsDevVersion(buildVersion) {
 			return nil, "", fmt.Errorf("%w (file is schema_version %d, this build supports up to %d)",
 				ErrNewerSchemaDev, schemaVersion, CurrentSchemaVersion)
 		}
