@@ -17,7 +17,7 @@ type ProcessedState struct {
 	KcpBuildInfo     interface{}                  `json:"kcp_build_info,omitempty"`
 	Timestamp        time.Time                    `json:"timestamp"`
 	SchemaVersion    int                          `json:"schema_version"`
-	UpdatedAt        time.Time                    `json:"updated_at,omitempty"`
+	UpdatedAt        *time.Time                   `json:"updated_at,omitempty"`
 	MigratedFrom     string                       `json:"migrated_from,omitempty"`
 }
 

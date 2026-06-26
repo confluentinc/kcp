@@ -878,11 +878,35 @@ func TestProcessState_CarriesStateMetadata(t *testing.T) {
 	if got.SchemaVersion != 1 {
 		t.Errorf("SchemaVersion = %d, want 1", got.SchemaVersion)
 	}
-	if !got.UpdatedAt.Equal(state.UpdatedAt) {
+	if got.UpdatedAt == nil || !got.UpdatedAt.Equal(state.UpdatedAt) {
 		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, state.UpdatedAt)
 	}
 	if got.MigratedFrom != "kcp_build_info.version=0.7.3" {
 		t.Errorf("MigratedFrom = %q, want kcp_build_info.version=0.7.3", got.MigratedFrom)
+	}
+}
+
+func TestProcessState_LegacyZeroMetadataOmitsUpdatedAt(t *testing.T) {
+	rs := NewReportService()
+
+	// Create an empty state (legacy state file with zero metadata)
+	state := types.State{}
+
+	got := rs.ProcessState(state)
+
+	// Verify schema version is zero (legacy)
+	if got.SchemaVersion != 0 {
+		t.Errorf("SchemaVersion = %d, want 0 (legacy)", got.SchemaVersion)
+	}
+
+	// Verify updated_at is nil so it will be omitted from JSON
+	if got.UpdatedAt != nil {
+		t.Errorf("UpdatedAt = %v, want nil for zero/legacy state", got.UpdatedAt)
+	}
+
+	// Verify migrated_from is empty (legacy)
+	if got.MigratedFrom != "" {
+		t.Errorf("MigratedFrom = %q, want empty string (legacy)", got.MigratedFrom)
 	}
 }
 
