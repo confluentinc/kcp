@@ -180,93 +180,21 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	}, nil
 }
 
-// BuildKafkaAdmin builds a Kafka admin client for an Apache Kafka cluster from
-// its credentials, dispatching on the single enabled auth method. Shared by the
-// scan path and the migrate (cluster-link) path so Surface-1 auth lives in one
-// place.
-func BuildKafkaAdmin(clusterCreds types.OSKClusterAuth) (client.KafkaAdmin, error) {
-	authType, err := clusterCreds.GetSelectedAuthType()
-	if err != nil {
-		return nil, fmt.Errorf("failed to determine auth type for cluster %s: %w", clusterCreds.ID, err)
-	}
-	return buildKafkaAdmin(clusterCreds, authType)
-}
-
-// buildKafkaAdmin is the existing switch, moved verbatim out of the method.
+// buildKafkaAdmin builds a Kafka admin for an OSK/Apache scan source via the
+// shared client.AdminOptionForAuth mapper. InsecureSkipTLSVerify is applied last
+// so it overrides the per-auth default (test envs with self-signed certs). The
+// encryption-in-transit arg is inert in NewKafkaAdmin; ClientBrokerTls is passed
+// for parity.
 func buildKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
-	clientBrokerEncryptionInTransit := kafkatypes.ClientBrokerTls
-	kafkaVersion := "3.6.0"
-	region := ""
-
-	var kafkaAdmin client.KafkaAdmin
-	var err error
-
-	switch authType {
-	case types.AuthTypeSASLSCRAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			clientBrokerEncryptionInTransit,
-			region,
-			kafkaVersion,
-			client.WithSASLSCRAMAuth(
-				clusterCreds.AuthMethod.SASLScram.Username,
-				clusterCreds.AuthMethod.SASLScram.Password,
-				clusterCreds.AuthMethod.SASLScram.Mechanism,
-				clusterCreds.InsecureSkipTLSVerify,
-			),
-		)
-	case types.AuthTypeSASLPlain:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			kafkatypes.ClientBrokerPlaintext,
-			region,
-			kafkaVersion,
-			client.WithSASLPlainAuthNoTLS(
-				clusterCreds.AuthMethod.SASLPlain.Username,
-				clusterCreds.AuthMethod.SASLPlain.Password,
-			),
-		)
-	case types.AuthTypeUnauthenticatedTLS:
-		unauthTLSOpts := []client.AdminOption{client.WithUnauthenticatedTlsAuth()}
-		if clusterCreds.InsecureSkipTLSVerify {
-			unauthTLSOpts = append(unauthTLSOpts, client.WithInsecureSkipVerify())
-		}
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			clientBrokerEncryptionInTransit,
-			region,
-			kafkaVersion,
-			unauthTLSOpts...,
-		)
-	case types.AuthTypeUnauthenticatedPlaintext:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			kafkatypes.ClientBrokerPlaintext,
-			region,
-			kafkaVersion,
-			client.WithUnauthenticatedPlaintextAuth(),
-		)
-	case types.AuthTypeTLS:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			clientBrokerEncryptionInTransit,
-			region,
-			kafkaVersion,
-			client.WithTLSAuth(
-				clusterCreds.AuthMethod.TLS.CACert,
-				clusterCreds.AuthMethod.TLS.ClientCert,
-				clusterCreds.AuthMethod.TLS.ClientKey,
-			),
-		)
-	default:
-		return nil, fmt.Errorf("unsupported auth type for Apache Kafka: %v", authType)
+	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterCreds.AuthMethod)}
+	if clusterCreds.InsecureSkipTLSVerify {
+		opts = append(opts, client.WithInsecureSkipVerify())
 	}
-
+	admin, err := client.NewKafkaAdmin(clusterCreds.BootstrapServers, kafkatypes.ClientBrokerTls, "", "3.6.0", opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin client: %w", err)
 	}
-
-	return kafkaAdmin, nil
+	return admin, nil
 }
 
 // createKafkaAdmin is the scan path's entry point; it delegates to buildKafkaAdmin.
