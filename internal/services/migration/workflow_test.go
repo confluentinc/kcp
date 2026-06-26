@@ -792,6 +792,220 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 }
 
 // ===========================================================================
+// DetectUnroutedProducers tests
+// ===========================================================================
+
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_StableOffsets(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	promoted := make(map[string]bool)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				promoted[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{
+					MirrorTopicName: name,
+					ErrorCode:       0,
+				})
+			}
+			return resp, nil
+		},
+	}
+
+	// Source offsets are stable (same value on every call)
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 500, 1: 600}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
+	wf.quiescenceInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:                  []string{"topic-1", "topic-2"},
+		ClusterRestEndpoint:     "https://cluster",
+		ClusterId:               "lkc-123",
+		ClusterLinkName:         "link-1",
+		DetectUnroutedProducers: true,
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err)
+	assert.True(t, promoted["topic-1"], "topic-1 should have been promoted")
+	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
+}
+
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	// Simulates an unrouted producer: offsets keep increasing on every call.
+	// The settle phase consumes the first call, then snapshot1 and snapshot2
+	// both see increasing values.
+	var callCount int64
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&callCount, 1)
+			if topic == "topic-1" {
+				// Each call returns a higher offset on partition 0
+				return map[int32]int64{0: 100 + n*10, 1: 200}, nil
+			}
+			return map[int32]int64{0: 300}, nil
+		},
+	}
+
+	destOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100, 1: 200}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.promotePollInterval = time.Millisecond
+	wf.quiescenceInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:                  []string{"topic-1"},
+		ClusterRestEndpoint:     "https://cluster",
+		ClusterId:               "lkc-123",
+		ClusterLinkName:         "link-1",
+		DetectUnroutedProducers: true,
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unrouted producer(s) detected")
+	assert.Contains(t, err.Error(), "topic-1 partition 0")
+}
+
+func TestWorkflow_DetectUnroutedProducers_SettlePhaseFalsePositive(t *testing.T) {
+	// Simulates in-flight batches draining after fence: offset increases once
+	// during the settle phase but is stable by the time snapshots are taken.
+	// The check should pass (no false positive).
+	gw := &mockGatewayService{}
+
+	promoted := make(map[string]bool)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				promoted[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{
+					MirrorTopicName: name,
+					ErrorCode:       0,
+				})
+			}
+			return resp, nil
+		},
+	}
+
+	// Offsets jump from 100 → 150 between snapshot1 and snapshot2 only if
+	// drain is still happening. Here we simulate drain completing during the
+	// settle wait: snapshot1 (call 1) and snapshot2 (call 2) both return 150.
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 150}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, sourceOffset)
+	wf.promotePollInterval = time.Millisecond
+	wf.quiescenceInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:                  []string{"topic-1"},
+		ClusterRestEndpoint:     "https://cluster",
+		ClusterId:               "lkc-123",
+		ClusterLinkName:         "link-1",
+		DetectUnroutedProducers: true,
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err, "drain during settle phase should not trigger a false positive")
+	assert.True(t, promoted["topic-1"])
+}
+
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	promoted := make(map[string]bool)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				promoted[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{
+					MirrorTopicName: name,
+					ErrorCode:       0,
+				})
+			}
+			return resp, nil
+		},
+	}
+
+	// Source offsets increase — but flag is off, so it shouldn't matter
+	var callCount int64
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&callCount, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, sourceOffset)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:                  []string{"topic-1"},
+		ClusterRestEndpoint:     "https://cluster",
+		ClusterId:               "lkc-123",
+		ClusterLinkName:         "link-1",
+		DetectUnroutedProducers: false, // flag disabled
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err, "with flag disabled, increasing offsets should not block promotion")
+	assert.True(t, promoted["topic-1"])
+}
+
+func TestWorkflow_DetectUnroutedProducers_ContextCancelled(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.quiescenceInterval = 5 * time.Second // long interval to ensure context cancels first
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel
+
+	err := wf.detectUnroutedProducers(ctx, []string{"topic-1"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// ===========================================================================
 // Helper tests
 // ===========================================================================
 
