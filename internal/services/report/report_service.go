@@ -106,6 +106,9 @@ func (rs *ReportService) ProcessState(state types.State) ProcessedState {
 		SchemaRegistries: state.SchemaRegistries,
 		KcpBuildInfo:     state.KcpBuildInfo,
 		Timestamp:        state.Timestamp,
+		SchemaVersion:    state.SchemaVersion,
+		UpdatedAt:        state.UpdatedAt,
+		MigratedFrom:     state.MigratedFrom,
 	}
 
 	return processedState

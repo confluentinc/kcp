@@ -863,6 +863,29 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 	})
 }
 
+func TestProcessState_CarriesStateMetadata(t *testing.T) {
+	rs := NewReportService()
+	state := types.State{
+		SchemaVersion: 1,
+		KcpBuildInfo:  types.KcpBuildInfo{Version: "0.8.5", Commit: "abc1234", Date: "2026-06-17"},
+		Timestamp:     time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 6, 26, 10, 30, 0, 0, time.UTC),
+		MigratedFrom:  "kcp_build_info.version=0.7.3",
+	}
+
+	got := rs.ProcessState(state)
+
+	if got.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion = %d, want 1", got.SchemaVersion)
+	}
+	if !got.UpdatedAt.Equal(state.UpdatedAt) {
+		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, state.UpdatedAt)
+	}
+	if got.MigratedFrom != "kcp_build_info.version=0.7.3" {
+		t.Errorf("MigratedFrom = %q, want kcp_build_info.version=0.7.3", got.MigratedFrom)
+	}
+}
+
 func TestCalculateMetricsAggregates(t *testing.T) {
 	makeMetrics := func(label string, values []float64) []types.ProcessedMetric {
 		out := make([]types.ProcessedMetric, len(values))
