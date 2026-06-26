@@ -255,6 +255,10 @@ type UnauthenticatedTLSConfig struct {
 
 type IAMConfig struct {
 	Use bool `yaml:"use"`
+	// Region is the AWS region used for MSK IAM SigV4 token signing. Populated by
+	// the migrate credentials path (iam.region); the scan path sources region
+	// elsewhere and leaves this empty.
+	Region string `yaml:"region,omitempty"`
 }
 
 type TLSConfig struct {
