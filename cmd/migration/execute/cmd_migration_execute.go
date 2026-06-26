@@ -34,9 +34,10 @@ var (
 
 	tlsCaCert             string
 	tlsClientCert         string
-	tlsClientKey          string
-	insecureSkipTLSVerify bool
-	rolloutTimeout        time.Duration
+	tlsClientKey              string
+	insecureSkipTLSVerify     bool
+	rolloutTimeout            time.Duration
+	detectUnroutedProducers   bool
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -69,6 +70,7 @@ the migration state file and must be provided each time.`,
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-tls --tls-ca-cert ca.pem --tls-client-cert client.pem --tls-client-key client.key`,
 		SilenceErrors: true,
+		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationExecute,
 		RunE:          runMigrationExecute,
@@ -90,6 +92,7 @@ the migration state file and must be provided each time.`,
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
+	optionalFlags.BoolVar(&detectUnroutedProducers, "detect-unrouted-producers", false, "After fencing, verify source offsets are stable before promoting mirror topics. Detects producers that bypassed the gateway and are still writing directly to the source cluster. Adds ~20s to the migration.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -217,6 +220,9 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", migrationId, migrationStateFile)
 	}
+
+	// Apply runtime flags to config (not stored at init time)
+	config.DetectUnroutedProducers = detectUnroutedProducers
 
 	opts := parseMigrationExecutorOpts(*migrationState, *config)
 

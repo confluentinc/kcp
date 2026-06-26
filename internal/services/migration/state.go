@@ -64,6 +64,12 @@ type MigrationConfig struct {
 	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
 	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
 
+	// DetectUnroutedProducers enables a post-fence safety check that verifies
+	// source offsets are not still increasing before promoting mirror topics.
+	// An increasing offset after fencing indicates a producer that bypassed the
+	// gateway and is writing directly to the source cluster.
+	DetectUnroutedProducers bool `json:"detect_unrouted_producers"`
+
 	// Gateway CR configuration
 	InitialCrName    string `json:"initial_cr_name"`
 	K8sNamespace     string `json:"k8s_namespace"`
