@@ -2,11 +2,15 @@ package types
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 )
 
 func TestNewState(t *testing.T) {
@@ -580,12 +584,10 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 			},
 		},
 		{
-			// Regression test for the post-refactor shape. After removing the
-			// topic-parsing connector discovery from `kcp scan clusters`, a fresh
+			// Regression test for the post-refactor shape. A fresh
 			// `KafkaAdminClientInformation` returned from ScanKafkaResources has
 			// SelfManagedConnectors == nil (not an empty slice). The merge must
-			// preserve previously-discovered connectors written by
-			// `kcp scan self-managed-connectors`. Locks in R6.
+			// preserve connectors that already exist in state. Locks in R6.
 			name: "old connectors preserved when new is nil (post-refactor scan-clusters shape)",
 			current: KafkaAdminClientInformation{
 				SelfManagedConnectors: nil,
@@ -822,36 +824,6 @@ func TestNewStateFrom_PreservesExistingOSKData(t *testing.T) {
 	}
 	if newState.MSKSources == nil {
 		t.Error("MSKSources should be initialized even when copying OSK data")
-	}
-}
-
-func TestProcessedSource_TypeDiscrimination(t *testing.T) {
-	// Test MSK source
-	mskSource := ProcessedSource{
-		Type: SourceTypeMSK,
-		MSKData: &ProcessedMSKSource{
-			Regions: []ProcessedRegion{},
-		},
-	}
-	if mskSource.Type != SourceTypeMSK {
-		t.Errorf("Expected MSK type, got %s", mskSource.Type)
-	}
-	if mskSource.MSKData == nil {
-		t.Error("MSKData should not be nil for MSK source")
-	}
-
-	// Test OSK source
-	oskSource := ProcessedSource{
-		Type: SourceTypeOSK,
-		OSKData: &ProcessedOSKSource{
-			Clusters: []ProcessedOSKCluster{},
-		},
-	}
-	if oskSource.Type != SourceTypeOSK {
-		t.Errorf("Expected OSK type, got %s", oskSource.Type)
-	}
-	if oskSource.OSKData == nil {
-		t.Error("OSKData should not be nil for OSK source")
 	}
 }
 
@@ -1213,6 +1185,104 @@ func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
 	}
 }
 
+func TestUpsertTargetedClusters(t *testing.T) {
+	clusterWithAcls := DiscoveredCluster{
+		Arn:    "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+		Region: "us-east-1",
+		KafkaAdminClientInformation: KafkaAdminClientInformation{
+			Acls: []Acls{{ResourceName: "topic-a", Principal: "User:alice"}},
+		},
+	}
+	siblingCluster := DiscoveredCluster{
+		Arn:    "arn:aws:kafka:us-east-1:111:cluster/b/uuid",
+		Region: "us-east-1",
+	}
+
+	t.Run("creates region when absent", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{}}}
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{clusterWithAcls},
+		})
+		if len(s.MSKSources.Regions) != 1 {
+			t.Fatalf("got %d regions, want 1", len(s.MSKSources.Regions))
+		}
+		if len(s.MSKSources.Regions[0].Clusters) != 1 {
+			t.Fatalf("got %d clusters, want 1", len(s.MSKSources.Regions[0].Clusters))
+		}
+	})
+
+	t.Run("preserves siblings and refreshes region costs", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{{
+			Name:     "us-east-1",
+			Costs:    CostInformation{},
+			Clusters: []DiscoveredCluster{clusterWithAcls, siblingCluster},
+		}}}}
+
+		// targeted re-discovery of cluster A with fresh (empty-admin-info) data + new region costs
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:  "us-east-1",
+			Costs: CostInformation{CostResults: make([]costexplorertypes.ResultByTime, 1)},
+			Clusters: []DiscoveredCluster{{
+				Arn:    "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+				Region: "us-east-1",
+			}},
+		})
+
+		region := s.MSKSources.Regions[0]
+		if len(region.Clusters) != 2 {
+			t.Fatalf("got %d clusters, want 2 (sibling preserved)", len(region.Clusters))
+		}
+		if len(region.Costs.CostResults) != 1 {
+			t.Errorf("region costs not refreshed: got %d results, want 1", len(region.Costs.CostResults))
+		}
+
+		// targeted cluster keeps its scan-acquired ACLs (MergeFrom preserves old when new empty)
+		var clusterA *DiscoveredCluster
+		for i := range region.Clusters {
+			if region.Clusters[i].Arn == "arn:aws:kafka:us-east-1:111:cluster/a/uuid" {
+				clusterA = &region.Clusters[i]
+			}
+		}
+		if clusterA == nil {
+			t.Fatal("targeted cluster A missing")
+		}
+		if len(clusterA.KafkaAdminClientInformation.Acls) != 1 {
+			t.Errorf("scan ACLs not preserved on targeted cluster: got %d, want 1", len(clusterA.KafkaAdminClientInformation.Acls))
+		}
+	})
+
+	t.Run("adds a new cluster to an existing region", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{clusterWithAcls, siblingCluster}, // A, B
+		}}}}
+
+		newCluster := DiscoveredCluster{
+			Arn:    "arn:aws:kafka:us-east-1:111:cluster/c/uuid",
+			Region: "us-east-1",
+		}
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{newCluster},
+		})
+
+		region := s.MSKSources.Regions[0]
+		if len(region.Clusters) != 3 {
+			t.Fatalf("got %d clusters, want 3 (A, B preserved + new C appended)", len(region.Clusters))
+		}
+		found := false
+		for _, c := range region.Clusters {
+			if c.Arn == "arn:aws:kafka:us-east-1:111:cluster/c/uuid" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("new cluster C was not appended to the existing region")
+		}
+	})
+}
+
 func TestFormatQueryDuration(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -1241,5 +1311,152 @@ func TestFormatQueryDuration(t *testing.T) {
 				t.Errorf("FormatQueryDuration(%v) = %q, want %q", tt.d, got, tt.expected)
 			}
 		})
+	}
+}
+
+// skipIfWindows skips file-mode assertions on Windows, where POSIX permission
+// bits are not meaningfully enforced.
+func skipIfWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file-mode semantics do not apply on Windows")
+	}
+}
+
+// TestWriteToFile_NewFileHasOwnerOnlyPerms verifies a freshly written state
+// file is created with mode 0600 (owner read/write only), not world/group
+// readable. (R1)
+func TestWriteToFile_NewFileHasOwnerOnlyPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600", got)
+	}
+}
+
+// TestWriteToFile_StaleLooseTempDoesNotLeak guards against regressing to the old
+// fixed-name temp scheme, whose bug was that a leftover <path>.tmp at 0644 from a
+// crashed run kept its loose mode and the rename carried it through. We seed that
+// exact condition and assert (a) the final state file is still 0600, (b) the
+// stale fixed-name temp is left untouched -- proving the writer created its own
+// unique temp rather than reusing the leftover one -- and (c) the writer's own
+// unique temp is cleaned up on success. (R3 abuse case)
+func TestWriteToFile_StaleLooseTempDoesNotLeak(t *testing.T) {
+	skipIfWindows(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+	// Simulate a crash leaving a fixed-name temp at loose perms -- the exact
+	// condition the old os.WriteFile(path+".tmp", ...) code mishandled.
+	stale := path + ".tmp"
+	if err := os.WriteFile(stale, []byte("{}"), 0644); err != nil {
+		t.Fatalf("seed stale temp: %v", err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600 (stale 0644 temp leaked into result)", got)
+	}
+
+	// The writer must not reuse the stale fixed-name temp: it should still exist,
+	// untouched at 0644, proving a fresh unique temp was used instead.
+	staleInfo, err := os.Stat(stale)
+	if err != nil {
+		t.Fatalf("stale fixed-name temp should be left untouched, but stat failed: %v", err)
+	}
+	if got := staleInfo.Mode().Perm(); got != 0o644 {
+		t.Fatalf("stale fixed-name temp perms = %#o, want 0644 untouched (writer must not reuse the fixed name)", got)
+	}
+
+	// The writer's own unique temp (.kcp-state.json.tmp-*) must be cleaned up on success.
+	matches, err := filepath.Glob(filepath.Join(dir, ".kcp-state.json.tmp-*"))
+	if err != nil {
+		t.Fatalf("glob unique temp: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("unique temp file(s) left behind after success: %v", matches)
+	}
+}
+
+// TestWriteToFile_SecondWritePreservesPerms verifies a rewrite of an existing
+// state file keeps mode 0600 rather than loosening it back to 0644 -- so the
+// hardening holds across every command that persists state, not just the first.
+// (R4 regression guard)
+func TestWriteToFile_SecondWritePreservesPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	for i := 0; i < 2; i++ {
+		if err := (&State{}).WriteToFile(path); err != nil {
+			t.Fatalf("WriteToFile (write %d): %v", i+1, err)
+		}
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms after second write = %#o, want 0600", got)
+	}
+}
+
+// TestWriteToFile_TightensExistingLooseFile verifies that an existing state
+// file already at 0644 (e.g. created by an older kcp build) is tightened to
+// 0600 on the next write -- no separate migration step required. (R5 regression
+// guard)
+func TestWriteToFile_TightensExistingLooseFile(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+		t.Fatalf("seed legacy 0644 state file: %v", err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600 (existing 0644 file not tightened)", got)
+	}
+}
+
+// TestWriteToFile_RoundTripsContent verifies the permission change did not break
+// the write/load round trip -- content is still valid JSON and reloads via the
+// existing loader. (R6 regression guard)
+func TestWriteToFile_RoundTripsContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	want := "round-trip-test-1.2.3"
+	if err := (&State{KcpBuildInfo: KcpBuildInfo{Version: want}}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	got, err := NewStateFromFile(path)
+	if err != nil {
+		t.Fatalf("NewStateFromFile: %v", err)
+	}
+	if got.KcpBuildInfo.Version != want {
+		t.Fatalf("reloaded version = %q, want %q", got.KcpBuildInfo.Version, want)
 	}
 }

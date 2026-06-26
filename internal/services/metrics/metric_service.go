@@ -15,8 +15,25 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
+// cloudWatchGetMetricDataAPI is the subset of the CloudWatch client used by
+// MetricService. It exists so the chunking/stitching logic can be unit-tested
+// with a fake. *cloudwatch.Client satisfies it.
+type cloudWatchGetMetricDataAPI interface {
+	GetMetricData(ctx context.Context, in *cloudwatch.GetMetricDataInput, optFns ...func(*cloudwatch.Options)) (*cloudwatch.GetMetricDataOutput, error)
+}
+
+const (
+	// datapointBudget is CloudWatch's per-request GetMetricData limit (100,800)
+	// with a safety margin. Chunk windows are sized so the datapoints from all
+	// series in a request (fan-out + returned math) stay under it.
+	datapointBudget = 100_000
+	// maxClientAuthTypes bounds the "Client Authentication" dimension cardinality
+	// (TLS, SASL/SCRAM, IAM, Unauthenticated) for the ClientConnectionCount estimate.
+	maxClientAuthTypes = 4
+)
+
 type MetricService struct {
-	client *cloudwatch.Client
+	client cloudWatchGetMetricDataAPI
 }
 
 func NewMetricService(client *cloudwatch.Client) *MetricService {
@@ -83,28 +100,31 @@ func buildProvisionedMetadata(cluster kafkatypes.Cluster, timeWindow types.Cloud
 
 // ProcessProvisionedCluster processes metrics for provisioned aggregated across all brokers in a cluster
 func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster kafkatypes.Cluster, followerFetching bool, timeWindow types.CloudWatchTimeWindow) (*types.ClusterMetrics, error) {
-	slog.Info("🔍 processing provisioned cluster", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime)
+
+	slog.Info("🔍 processing provisioned cluster", "cluster", aws.ToString(cluster.ClusterName), "startDate", timeWindow.StartTime, "endDate", timeWindow.EndTime, "period", timeWindow.Period)
 
 	if cluster.Provisioned == nil {
 		return nil, fmt.Errorf("cluster %s has no provisioned configuration", aws.ToString(cluster.ClusterName))
 	}
 
 	metricsMetadata := buildProvisionedMetadata(cluster, timeWindow, followerFetching)
+	numBrokers := metricsMetadata.NumberOfBrokerNodes
+	clusterName := aws.ToString(cluster.ClusterName)
 
-	brokerQueries, brokerQueryInfos := ms.buildBrokerMetricQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	brokerQueryResult, err := ms.executeMetricQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime)
+	brokerQueries, brokerQueryInfos := ms.buildBrokerMetricQueries(clusterName, timeWindow.Period)
+	brokerQueryResult, err := ms.executeChunkedQuery(ctx, brokerQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, brokerSeriesEstimate(numBrokers), "broker metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
 
-	clientConnectionQueries, clientConnQueryInfos := ms.buildClientConnectionQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	clientConnectionQueryResult, err := ms.executeMetricQuery(ctx, clientConnectionQueries, timeWindow.StartTime, timeWindow.EndTime)
+	clientConnectionQueries, clientConnQueryInfos := ms.buildClientConnectionQueries(clusterName, timeWindow.Period)
+	clientConnectionQueryResult, err := ms.executeChunkedQuery(ctx, clientConnectionQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, clientConnSeriesEstimate(numBrokers), "client-connection metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
 
-	clusterQueries, clusterQueryInfos := ms.buildClusterMetricQueries(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	clusterQueryResult, err := ms.executeMetricQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime)
+	clusterQueries, clusterQueryInfos := ms.buildClusterMetricQueries(clusterName, timeWindow.Period)
+	clusterQueryResult, err := ms.executeChunkedQuery(ctx, clusterQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, 1, "cluster metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -136,14 +156,14 @@ func (ms *MetricService) ProcessProvisionedCluster(ctx context.Context, cluster 
 	} else {
 		slog.Warn("EBS volume size unavailable, local storage metrics may be inaccurate", "cluster", aws.ToString(cluster.ClusterName))
 	}
-	localStorageQueries, localStorageQueryInfos := ms.buildLocalStorageUsageQuery(aws.ToString(cluster.ClusterName), timeWindow.Period, clusterVolumeSizeGB)
-	storageQueryResult, err := ms.executeMetricQuery(ctx, localStorageQueries, timeWindow.StartTime, timeWindow.EndTime)
+	localStorageQueries, localStorageQueryInfos := ms.buildLocalStorageUsageQuery(clusterName, timeWindow.Period, clusterVolumeSizeGB)
+	storageQueryResult, err := ms.executeChunkedQuery(ctx, localStorageQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, storageSeriesEstimate(numBrokers), "local-storage metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
 
-	remoteStorageQueries, remoteStorageQueryInfos := ms.buildRemoteStorageUsageQuery(aws.ToString(cluster.ClusterName), timeWindow.Period)
-	remoteStorageQueryResult, err := ms.executeMetricQuery(ctx, remoteStorageQueries, timeWindow.StartTime, timeWindow.EndTime)
+	remoteStorageQueries, remoteStorageQueryInfos := ms.buildRemoteStorageUsageQuery(clusterName, timeWindow.Period)
+	remoteStorageQueryResult, err := ms.executeChunkedQuery(ctx, remoteStorageQueries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, storageSeriesEstimate(numBrokers), "remote-storage metrics for "+clusterName)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +228,7 @@ func (ms *MetricService) ProcessServerlessCluster(ctx context.Context, cluster k
 	populateCLICommands(queryInfos, queries, timeWindow.StartTime, timeWindow.EndTime, regionFromArn(cluster.ClusterArn))
 
 	// Execute the metric query
-	queryResult, err := ms.executeMetricQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime)
+	queryResult, err := ms.executeChunkedQuery(ctx, queries, timeWindow.StartTime, timeWindow.EndTime, timeWindow.Period, 0, "serverless metrics for "+aws.ToString(cluster.ClusterName))
 	if err != nil {
 		return nil, fmt.Errorf("failed to execute serverless metric queries: %w", err)
 	}
@@ -445,7 +465,10 @@ func newSearchMetricQueryInfo(metricName, searchExpr, mathExpr, stat string, per
 		Period:           period,
 		SearchExpression: searchExpr,
 		MathExpression:   mathExpr,
-		AggregationNote:  fmt.Sprintf("Uses SEARCH to find %s across all %s, then aggregates with %s.", metricName, dimensions, mathExpr),
+		AggregationNote: fmt.Sprintf("Uses SEARCH to find %s across all %s, then aggregates with %s. "+
+			"kcp fetches this metric in time-chunked GetMetricData sub-windows to stay under CloudWatch's 100,800-datapoint per-request limit; "+
+			"the single CLI command above queries the whole window in one request and may return only the most-recent data for large windows or "+
+			"many-broker clusters — split --start-time/--end-time into smaller sub-windows to reproduce the complete series.", metricName, dimensions, mathExpr),
 	}
 }
 
@@ -633,40 +656,229 @@ func regionFromArn(arn *string) string {
 
 // Private Helper Functions - Query Execution
 
-func (ms *MetricService) executeMetricQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
+// executeWindow fetches one [startTime, endTime) window, following NextToken
+// pagination. ScanBy is ascending so callers can concatenate windows in time order.
+func (ms *MetricService) executeWindow(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time) (*cloudwatch.GetMetricDataOutput, error) {
 	input := &cloudwatch.GetMetricDataInput{
 		MetricDataQueries: queries,
 		StartTime:         aws.Time(startTime),
 		EndTime:           aws.Time(endTime),
+		ScanBy:            cloudwatchtypes.ScanByTimestampAscending,
 	}
 
 	var allResults []cloudwatchtypes.MetricDataResult
+	var allMessages []cloudwatchtypes.MessageData
 	var nextToken *string
-
+	pages := 0
 	for {
 		input.NextToken = nextToken
 		result, err := ms.client.GetMetricData(ctx, input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get metric data: %w", err)
 		}
-
+		pages++
+		slog.Debug("GetMetricData request",
+			"start", startTime, "end", endTime, "page", pages,
+			"continuation", nextToken != nil, "resultSeries", len(result.MetricDataResults),
+			"morePages", result.NextToken != nil)
 		allResults = append(allResults, result.MetricDataResults...)
-
+		allMessages = append(allMessages, result.Messages...)
 		if result.NextToken == nil {
 			break
 		}
 		nextToken = result.NextToken
 	}
 
-	// Return a consolidated result with all metric data
-	return &cloudwatch.GetMetricDataOutput{
-		MetricDataResults: allResults,
-	}, nil
+	slog.Debug("fetched metric window", "start", startTime, "end", endTime, "pages", pages, "resultSeries", len(allResults))
+	return &cloudwatch.GetMetricDataOutput{MetricDataResults: allResults, Messages: allMessages}, nil
 }
+
+// resultStitcher concatenates MetricDataResult points per Id across sub-window
+// calls, preserving first-seen Id order and tracking whether any chunk was partial.
+type resultStitcher struct {
+	order   []string
+	byID    map[string]*cloudwatchtypes.MetricDataResult
+	partial bool
+}
+
+func newResultStitcher() *resultStitcher {
+	return &resultStitcher{byID: map[string]*cloudwatchtypes.MetricDataResult{}}
+}
+
+func (s *resultStitcher) markPartial() { s.partial = true }
+
+func (s *resultStitcher) add(results []cloudwatchtypes.MetricDataResult) {
+	for _, r := range results {
+		id := aws.ToString(r.Id)
+		existing, ok := s.byID[id]
+		if !ok {
+			cp := r
+			s.byID[id] = &cp
+			s.order = append(s.order, id)
+			continue
+		}
+		existing.Timestamps = append(existing.Timestamps, r.Timestamps...)
+		existing.Values = append(existing.Values, r.Values...)
+		if r.Label != nil {
+			existing.Label = r.Label
+		}
+		if r.StatusCode == cloudwatchtypes.StatusCodePartialData {
+			existing.StatusCode = cloudwatchtypes.StatusCodePartialData
+		}
+	}
+}
+
+// output returns the stitched results. Per-window Messages are intentionally not
+// carried through (they are consumed during collection via isPartial); current
+// callers only read MetricDataResults.
+func (s *resultStitcher) output() *cloudwatch.GetMetricDataOutput {
+	results := make([]cloudwatchtypes.MetricDataResult, 0, len(s.order))
+	for _, id := range s.order {
+		results = append(results, *s.byID[id])
+	}
+	return &cloudwatch.GetMetricDataOutput{MetricDataResults: results}
+}
+
+// chunkSeconds returns the maximum sub-window length (seconds) that keeps a
+// request under datapointBudget for the given period and series count. Returns
+// 0 when the estimate is unknown (<=0) or period is non-positive, signalling the
+// caller to use the full window and rely on the partial-data fallback.
+func chunkSeconds(period int32, seriesEstimate int) int64 {
+	if period <= 0 || seriesEstimate <= 0 {
+		return 0
+	}
+	maxPtsPerSeries := datapointBudget / seriesEstimate
+	if maxPtsPerSeries < 1 {
+		maxPtsPerSeries = 1
+	}
+	return int64(maxPtsPerSeries) * int64(period)
+}
+
+// Series-count estimates count fan-out series (one per broker) PLUS the returned
+// math-result series, since both consume the datapoint budget. They err high so
+// chunks never exceed the cap; the fallback splitter self-heals any under-estimate.
+func brokerSeriesEstimate(numBrokers int) int     { return 4 * (numBrokers + 1) }                    // 4 metrics
+func clientConnSeriesEstimate(numBrokers int) int { return 2 * (numBrokers*maxClientAuthTypes + 1) } // 2 stats
+func storageSeriesEstimate(numBrokers int) int    { return numBrokers + 2 }                          // 1 returned + 1 intermediate
 
 func getBrokerType(instanceType string) types.BrokerType {
 	if strings.HasPrefix(instanceType, "express.") {
 		return types.BrokerTypeExpress
 	}
 	return types.BrokerTypeStandard
+}
+
+// isPartial reports whether a window response was truncated by the datapoint cap.
+// The per-result PartialData status is the primary, reliable signal; the
+// MaxMetricsExceeded top-level message is a documented secondary signal.
+func isPartial(out *cloudwatch.GetMetricDataOutput) bool {
+	for _, r := range out.MetricDataResults {
+		if r.StatusCode == cloudwatchtypes.StatusCodePartialData {
+			return true
+		}
+	}
+	for _, m := range out.Messages {
+		if aws.ToString(m.Code) == "MaxMetricsExceeded" {
+			return true
+		}
+	}
+	return false
+}
+
+// collectWindow fetches one window into the stitcher. If the response is partial
+// and the window spans more than one period, it bisects and recurses; at the
+// one-period floor it records a partial flag (warned once by executeChunkedQuery).
+func (ms *MetricService) collectWindow(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, start, end time.Time, period int32, st *resultStitcher) error {
+	out, err := ms.executeWindow(ctx, queries, start, end)
+	if err != nil {
+		return err
+	}
+	if isPartial(out) {
+		windowSeconds := int64(end.Sub(start).Seconds())
+		// Snap the split to a period boundary so neither half re-buckets the
+		// datapoint straddling mid (CloudWatch aligns buckets from each call's
+		// StartTime). If the window is too small to split into two period-aligned
+		// halves, we can't reduce further — record partial and keep what we got.
+		halfPeriods := (windowSeconds / 2) / int64(period)
+		if windowSeconds > int64(period) && halfPeriods >= 1 {
+			mid := start.Add(time.Duration(halfPeriods*int64(period)) * time.Second)
+			if mid.After(start) && mid.Before(end) {
+				slog.Debug("partial metric window, bisecting", "start", start, "mid", mid, "end", end, "windowSeconds", windowSeconds)
+				if err := ms.collectWindow(ctx, queries, start, mid, period, st); err != nil {
+					return err
+				}
+				return ms.collectWindow(ctx, queries, mid, end, period, st)
+			}
+		}
+		slog.Debug("partial metric window at minimum resolution, keeping partial data", "start", start, "end", end, "windowSeconds", windowSeconds)
+		st.markPartial()
+	}
+	st.add(out.MetricDataResults)
+	return nil
+}
+
+// executeChunkedQuery fetches metrics across [startTime, endTime), splitting into
+// sub-windows sized to stay under datapointBudget for seriesEstimate series at the
+// given period (seriesEstimate <= 0 means "unknown" -> full window + fallback).
+// Results are stitched per Id; a single warning is emitted if any data remained
+// partial. label identifies the query group/cluster in that warning.
+func (ms *MetricService) executeChunkedQuery(ctx context.Context, queries []cloudwatchtypes.MetricDataQuery, startTime, endTime time.Time, period int32, seriesEstimate int, label string) (*cloudwatch.GetMetricDataOutput, error) {
+	// period drives the bisection's integer division in collectWindow; reject a
+	// non-positive period up front so an invalid caller fails fast rather than
+	// panicking on divide-by-zero (or behaving oddly for negatives) deeper down.
+	if period <= 0 {
+		return nil, fmt.Errorf("executeChunkedQuery: period must be positive, got %d", period)
+	}
+	if len(queries) == 0 || !endTime.After(startTime) {
+		return &cloudwatch.GetMetricDataOutput{}, nil
+	}
+
+	st := newResultStitcher()
+	cs := chunkSeconds(period, seriesEstimate)
+	totalSeconds := int64(endTime.Sub(startTime).Seconds())
+
+	chunked := cs > 0 && totalSeconds > cs
+	numChunks := 1
+	if chunked {
+		numChunks = int((totalSeconds + cs - 1) / cs)
+	}
+	slog.Debug("executing chunked metric query",
+		"query", label, "period", period, "seriesEstimate", seriesEstimate,
+		"start", startTime, "end", endTime, "chunkSeconds", cs, "chunked", chunked, "chunks", numChunks)
+	for _, q := range queries {
+		slog.Debug("metric query expression",
+			"query", label, "id", aws.ToString(q.Id), "label", aws.ToString(q.Label),
+			"expression", aws.ToString(q.Expression), "returnData", aws.ToBool(q.ReturnData))
+	}
+
+	if cs <= 0 || totalSeconds <= cs {
+		if err := ms.collectWindow(ctx, queries, startTime, endTime, period, st); err != nil {
+			return nil, err
+		}
+	} else {
+		for chunkStart := startTime; chunkStart.Before(endTime); {
+			chunkEnd := chunkStart.Add(time.Duration(cs) * time.Second)
+			if chunkEnd.After(endTime) {
+				chunkEnd = endTime
+			}
+			if err := ms.collectWindow(ctx, queries, chunkStart, chunkEnd, period, st); err != nil {
+				return nil, err
+			}
+			chunkStart = chunkEnd
+		}
+	}
+
+	out := st.output()
+	datapoints := 0
+	for _, r := range out.MetricDataResults {
+		datapoints += len(r.Values)
+	}
+	slog.Debug("completed chunked metric query",
+		"query", label, "series", len(out.MetricDataResults), "datapoints", datapoints, "partial", st.partial)
+
+	if st.partial {
+		slog.Warn("metrics may be incomplete: CloudWatch returned partial data at the minimum window",
+			"query", label, "period", period, "start", startTime, "end", endTime)
+	}
+	return out, nil
 }

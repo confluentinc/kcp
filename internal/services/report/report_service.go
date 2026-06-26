@@ -1,6 +1,7 @@
 package report
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"sort"
@@ -11,6 +12,13 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/confluentinc/kcp/internal/types"
 )
+
+// ErrNoConnectMetricsCollected reports that a cluster exists but has never had any
+// self-managed Connect metrics collected. It is deliberately distinct from an empty
+// date-filtered result (a cluster that HAS metrics, none of which fall in the queried
+// window): the former warrants a "run a scan" hint, the latter is a valid empty 200.
+// The API layer maps this sentinel to the scan-guidance response via errors.Is.
+var ErrNoConnectMetricsCollected = errors.New("no Connect metrics collected for cluster")
 
 const (
 	// metricTimestampFormat is the timestamp format used for metric data
@@ -23,24 +31,24 @@ func NewReportService() *ReportService {
 	return &ReportService{}
 }
 
-func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
-	sources := []types.ProcessedSource{}
+func (rs *ReportService) ProcessState(state types.State) ProcessedState {
+	sources := []ProcessedSource{}
 
 	// Process MSK if present
 	if state.MSKSources != nil && len(state.MSKSources.Regions) > 0 {
-		processedRegions := []types.ProcessedRegion{}
+		processedRegions := []ProcessedRegion{}
 
 		for _, region := range state.MSKSources.Regions {
 			// Flatten cost data from nested AWS Cost Explorer format
 			processedCosts := rs.flattenCosts(region)
 
 			// Process each cluster's metrics
-			processedClusters := []types.ProcessedCluster{}
+			processedClusters := []ProcessedCluster{}
 			for _, cluster := range region.Clusters {
 				// Flatten metrics data from nested CloudWatch format
 				processedMetrics := rs.flattenMetrics(cluster)
 
-				processedClusters = append(processedClusters, types.ProcessedCluster{
+				processedClusters = append(processedClusters, ProcessedCluster{
 					Name:                        cluster.Name,
 					Arn:                         cluster.Arn,
 					Region:                      cluster.Region,
@@ -51,7 +59,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 				})
 			}
 
-			processedRegions = append(processedRegions, types.ProcessedRegion{
+			processedRegions = append(processedRegions, ProcessedRegion{
 				Name:           region.Name,
 				Configurations: region.Configurations,
 				Costs:          processedCosts,
@@ -59,9 +67,9 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 			})
 		}
 
-		mskSource := types.ProcessedSource{
+		mskSource := ProcessedSource{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
+			MSKData: &ProcessedMSKSource{
 				Regions: processedRegions,
 			},
 		}
@@ -70,10 +78,10 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 
 	// Process OSK if present
 	if state.OSKSources != nil && len(state.OSKSources.Clusters) > 0 {
-		processedOSKClusters := []types.ProcessedOSKCluster{}
+		processedOSKClusters := []ProcessedOSKCluster{}
 
 		for _, cluster := range state.OSKSources.Clusters {
-			processedOSKClusters = append(processedOSKClusters, types.ProcessedOSKCluster{
+			processedOSKClusters = append(processedOSKClusters, ProcessedOSKCluster{
 				ID:                          cluster.ID,
 				BootstrapServers:            cluster.BootstrapServers,
 				KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
@@ -83,9 +91,9 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 			})
 		}
 
-		oskSource := types.ProcessedSource{
+		oskSource := ProcessedSource{
 			Type: types.SourceTypeOSK,
-			OSKData: &types.ProcessedOSKSource{
+			OSKData: &ProcessedOSKSource{
 				Clusters: processedOSKClusters,
 			},
 		}
@@ -93,7 +101,7 @@ func (rs *ReportService) ProcessState(state types.State) types.ProcessedState {
 	}
 
 	// Return the processed state with unified sources
-	processedState := types.ProcessedState{
+	processedState := ProcessedState{
 		Sources:          sources,
 		SchemaRegistries: state.SchemaRegistries,
 		KcpBuildInfo:     state.KcpBuildInfo,
@@ -136,9 +144,9 @@ func (rs *ReportService) filterMetricsByDateRange(metrics []types.ProcessedMetri
 }
 
 // FilterRegionCosts filters the processed state to return cost data for a specific region
-func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error) {
+func (rs *ReportService) FilterRegionCosts(processedState ProcessedState, regionName string, startTime, endTime *time.Time) (*ProcessedRegionCosts, error) {
 	// Find the MSK source and the specified region
-	var targetRegion *types.ProcessedRegion
+	var targetRegion *ProcessedRegion
 	for _, source := range processedState.Sources {
 		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
 			for _, r := range source.MSKData.Regions {
@@ -160,7 +168,7 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	regionCosts := targetRegion.Costs
 
 	// If no date filters, use all costs but still calculate aggregates
-	var filteredCosts []types.ProcessedCost
+	var filteredCosts []ProcessedCost
 	if startTime == nil && endTime == nil {
 		filteredCosts = regionCosts.Results
 	} else {
@@ -193,7 +201,7 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 	// Calculate aggregates from filtered costs
 	aggregates := rs.calculateCostAggregates(filteredCosts)
 
-	return &types.ProcessedRegionCosts{
+	return &ProcessedRegionCosts{
 		Region:     regionName,
 		Metadata:   regionCosts.Metadata,
 		Results:    filteredCosts,
@@ -204,7 +212,7 @@ func (rs *ReportService) FilterRegionCosts(processedState types.ProcessedState, 
 
 // filterClusterMetrics filters the processed state by cluster ID and date range
 // sourceType can be "msk", "osk", or "auto" (auto-detects based on identifier pattern)
-func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (rs *ReportService) FilterClusterMetrics(processedState ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	if sourceType == "" || sourceType == "auto" {
 		if strings.HasPrefix(clusterID, "arn:") {
 			sourceType = "msk"
@@ -223,9 +231,9 @@ func (rs *ReportService) FilterClusterMetrics(processedState types.ProcessedStat
 	}
 }
 
-func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (rs *ReportService) filterMSKClusterMetrics(processedState ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	var regionName string
-	var targetCluster *types.ProcessedCluster
+	var targetCluster *ProcessedCluster
 
 	for _, source := range processedState.Sources {
 		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
@@ -276,8 +284,8 @@ func (rs *ReportService) filterMSKClusterMetrics(processedState types.ProcessedS
 }
 
 // filterOSKClusterMetrics filters OSK cluster metrics by cluster ID
-func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
-	var targetCluster *types.ProcessedOSKCluster
+func (rs *ReportService) filterOSKClusterMetrics(processedState ProcessedState, clusterID string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+	var targetCluster *ProcessedOSKCluster
 
 	// Find the cluster in OSK sources
 	for _, source := range processedState.Sources {
@@ -295,7 +303,7 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	}
 
 	if targetCluster == nil {
-		return nil, fmt.Errorf("cluster '%s' not found in OSK sources", clusterID)
+		return nil, fmt.Errorf("cluster '%s' not found in Apache Kafka sources", clusterID)
 	}
 
 	// Handle cluster without metrics (nil ClusterMetrics)
@@ -330,10 +338,93 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState types.ProcessedS
 	}, nil
 }
 
+// FilterConnectMetrics filters self-managed Connect metrics for a cluster by cluster ID and
+// date range. Connect is Kafka-distribution agnostic, so the same metrics live on the shared
+// KafkaAdminClientInformation for both MSK and OSK clusters; sourceType selects which source set
+// to search (and which identifier to match: MSK by ARN, OSK by cluster ID). Each branch searches
+// only its own source set, so a cluster identifier never resolves across source types.
+func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+	var adminInfo *types.KafkaAdminClientInformation
+
+	// Dispatch to the matching source set only — this is what structurally prevents
+	// a cluster identifier resolving across source types. Mirrors the dispatcher
+	// shape of FilterClusterMetrics.
+	switch sourceType {
+	case "osk":
+		adminInfo = findOSKConnectAdminInfo(processedState, clusterID)
+	case "msk":
+		adminInfo = findMSKConnectAdminInfo(processedState, clusterID)
+	default:
+		return nil, fmt.Errorf("invalid source type '%s' (must be 'msk' or 'osk')", sourceType)
+	}
+
+	if adminInfo == nil {
+		return nil, fmt.Errorf("cluster '%s' not found in %s sources", clusterID, sourceType)
+	}
+
+	smc := adminInfo.SelfManagedConnectors
+	if smc == nil || smc.Metrics == nil {
+		// The cluster exists but no Connect metrics were ever collected. Signal this
+		// distinctly from the empty date-filtered result returned below, so the API
+		// layer shows the "run a scan" hint only when there is genuinely nothing to
+		// collect — not when the user simply picked a window with no data points.
+		return nil, ErrNoConnectMetricsCollected
+	}
+
+	filteredMetrics := rs.filterMetricsByDateRange(smc.Metrics.Metrics, startTime, endTime)
+	aggregates := CalculateMetricsAggregates(filteredMetrics)
+
+	// Connect metrics carry their own metadata (start/end/period/metrics_source);
+	// region/cluster_arn and the broker-only fields have no meaning here and are
+	// intentionally not part of the Connect shape.
+	return &types.ConnectClusterMetrics{
+		Metadata:   smc.Metrics.Metadata,
+		Metrics:    filteredMetrics,
+		Aggregates: aggregates,
+		QueryInfo:  smc.Metrics.QueryInfo,
+	}, nil
+}
+
+// findOSKConnectAdminInfo returns the admin-client info for the OSK cluster matching
+// clusterID (by cluster ID), or nil if no OSK cluster matches.
+func findOSKConnectAdminInfo(processedState ProcessedState, clusterID string) *types.KafkaAdminClientInformation {
+	for _, source := range processedState.Sources {
+		if source.Type != types.SourceTypeOSK || source.OSKData == nil {
+			continue
+		}
+		for _, cluster := range source.OSKData.Clusters {
+			if strings.EqualFold(cluster.ID, clusterID) {
+				info := cluster.KafkaAdminClientInformation
+				return &info
+			}
+		}
+	}
+	return nil
+}
+
+// findMSKConnectAdminInfo returns the admin-client info for the MSK cluster matching
+// clusterID (by ARN), or nil if no MSK cluster matches.
+func findMSKConnectAdminInfo(processedState ProcessedState, clusterID string) *types.KafkaAdminClientInformation {
+	for _, source := range processedState.Sources {
+		if source.Type != types.SourceTypeMSK || source.MSKData == nil {
+			continue
+		}
+		for _, region := range source.MSKData.Regions {
+			for _, cluster := range region.Clusters {
+				if strings.EqualFold(cluster.Arn, clusterID) {
+					info := cluster.KafkaAdminClientInformation
+					return &info
+				}
+			}
+		}
+	}
+	return nil
+}
+
 // filterMetrics filters the processed state by region, cluster, and date range
-func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
+func (rs *ReportService) FilterMetrics(processedState ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error) {
 	// Find the specified region in MSK sources
-	var targetRegion *types.ProcessedRegion
+	var targetRegion *ProcessedRegion
 	for _, source := range processedState.Sources {
 		if source.Type == types.SourceTypeMSK && source.MSKData != nil {
 			for _, r := range source.MSKData.Regions {
@@ -352,7 +443,7 @@ func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regi
 	}
 
 	// Find the specified cluster within the region
-	var targetCluster *types.ProcessedCluster
+	var targetCluster *ProcessedCluster
 	for _, c := range targetRegion.Clusters {
 		if strings.EqualFold(c.Name, clusterName) {
 			targetCluster = &c
@@ -379,8 +470,8 @@ func (rs *ReportService) FilterMetrics(processedState types.ProcessedState, regi
 
 // calculateCostAggregates takes raw cost data and calculates statistics for each unique combination
 // of service + metric type + usage type, then organizes it into the final nested structure
-func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) types.ProcessedAggregates {
-	aggregates := types.NewProcessedAggregates()
+func (rs *ReportService) calculateCostAggregates(costs []ProcessedCost) ProcessedAggregates {
+	aggregates := NewProcessedAggregates()
 
 	if len(costs) == 0 {
 		return aggregates
@@ -459,7 +550,7 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 		avg := sum / float64(len(data.Values)) // Calculate average
 
 		// Create the final aggregate structure with all statistics
-		costAggregate := types.CostAggregate{
+		costAggregate := CostAggregate{
 			Sum:     &sum,
 			Average: &avg,
 			Maximum: &max,
@@ -495,7 +586,7 @@ func (rs *ReportService) calculateCostAggregates(costs []types.ProcessedCost) ty
 }
 
 // assignToServiceMetric assigns a cost aggregate to the correct metric field
-func (rs *ReportService) assignToServiceMetric(service *types.ServiceCostAggregates, metricName, usageType string, aggregate types.CostAggregate) {
+func (rs *ReportService) assignToServiceMetric(service *ServiceCostAggregates, metricName, usageType string, aggregate CostAggregate) {
 	switch metricName {
 	case "unblended_cost":
 		service.UnblendedCost[usageType] = aggregate
@@ -511,7 +602,7 @@ func (rs *ReportService) assignToServiceMetric(service *types.ServiceCostAggrega
 }
 
 // assignServiceTotal assigns a service total to the correct metric field
-func (rs *ReportService) assignServiceTotal(service *types.ServiceCostAggregates, metricName string, total float64) {
+func (rs *ReportService) assignServiceTotal(service *ServiceCostAggregates, metricName string, total float64) {
 	switch metricName {
 	case "unblended_cost":
 		service.UnblendedCost["total"] = total
@@ -526,8 +617,8 @@ func (rs *ReportService) assignServiceTotal(service *types.ServiceCostAggregates
 	}
 }
 
-func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.ProcessedRegionCosts {
-	var processedCosts []types.ProcessedCost
+func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) ProcessedRegionCosts {
+	var processedCosts []ProcessedCost
 
 	for _, result := range region.Costs.CostResults {
 		if result.TimePeriod == nil {
@@ -545,7 +636,7 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 			service := aws.ToString(&group.Keys[0])
 			lineItem := aws.ToString(&group.Keys[1])
 
-			var costBreakdown types.ProcessedCostBreakdown
+			var costBreakdown ProcessedCostBreakdown
 
 			if metric, exists := group.Metrics["UnblendedCost"]; exists && metric.Amount != nil {
 				if costFloat, err := strconv.ParseFloat(aws.ToString(metric.Amount), 64); err == nil {
@@ -573,7 +664,7 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 				}
 			}
 
-			processedCosts = append(processedCosts, types.ProcessedCost{
+			processedCosts = append(processedCosts, ProcessedCost{
 				Start:     start,
 				End:       end,
 				Service:   service,
@@ -583,7 +674,7 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) types.Proce
 		}
 	}
 
-	return types.ProcessedRegionCosts{
+	return ProcessedRegionCosts{
 		Metadata:  region.Costs.CostMetadata,
 		Results:   processedCosts,
 		QueryInfo: region.Costs.QueryInfo,

@@ -7,12 +7,13 @@ import (
 
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/markdown"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type ReportService interface {
-	ProcessState(state types.State) types.ProcessedState
-	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
+	ProcessState(state types.State) report.ProcessedState
+	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
 }
 
 type CostReporterOpts struct {
@@ -48,7 +49,7 @@ func (r *CostReporter) Run() error {
 	fmt.Printf("🔍 Processing regions: %v (from %s to %s)\n", r.regions, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
 
 	processedState := r.reportService.ProcessState(*r.state)
-	regionCostData := []types.ProcessedRegionCosts{}
+	regionCostData := []report.ProcessedRegionCosts{}
 
 	for _, region := range r.regions {
 		regionCosts, err := r.reportService.FilterRegionCosts(processedState, region, r.startDate, r.endDate)
@@ -68,7 +69,7 @@ func (r *CostReporter) Run() error {
 	return nil
 }
 
-func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCosts) *markdown.Markdown {
+func (r *CostReporter) generateReport(regionCostData []report.ProcessedRegionCosts) *markdown.Markdown {
 	md := markdown.New()
 	// Add main report header
 	md.AddHeading("AWS Cost Report", 1)
@@ -119,7 +120,7 @@ func (r *CostReporter) generateReport(regionCostData []types.ProcessedRegionCost
 	return md
 }
 
-func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string, regionCosts types.ProcessedRegionCosts) {
+func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string, regionCosts report.ProcessedRegionCosts) {
 	md.AddHeading(fmt.Sprintf("Region: %s", regionName), 2)
 	md.AddParagraph(fmt.Sprintf("*Detailed cost breakdown for %s region*", regionName))
 	md.AddParagraph("")
@@ -136,7 +137,7 @@ func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string
 	md.AddParagraph("")
 }
 
-func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName string, aggregates types.ServiceCostAggregates) {
+func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName string, aggregates report.ServiceCostAggregates) {
 	md.AddHeading(fmt.Sprintf("▪ %s", serviceName), 3)
 
 	// Check if this service has any cost data
@@ -152,7 +153,7 @@ func (r *CostReporter) addServiceAggregates(md *markdown.Markdown, serviceName s
 	md.AddParagraph("")
 }
 
-func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates types.ServiceCostAggregates) {
+func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates report.ServiceCostAggregates) {
 	// Collect all unique usage types across all cost types
 	usageTypes := make(map[string]bool)
 
@@ -196,7 +197,7 @@ func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates typ
 
 		for _, costMap := range costTypes {
 			if aggregateData, exists := costMap[usageType]; exists {
-				if costAggregate, ok := aggregateData.(types.CostAggregate); ok {
+				if costAggregate, ok := aggregateData.(report.CostAggregate); ok {
 					value := 0.0
 					if costAggregate.Sum != nil {
 						value = *costAggregate.Sum
@@ -244,7 +245,7 @@ func (r *CostReporter) addServiceCostTable(md *markdown.Markdown, aggregates typ
 	}
 }
 
-func (r *CostReporter) hasServiceData(aggregates types.ServiceCostAggregates) bool {
+func (r *CostReporter) hasServiceData(aggregates report.ServiceCostAggregates) bool {
 	return len(aggregates.UnblendedCost) > 0 ||
 		len(aggregates.BlendedCost) > 0 ||
 		len(aggregates.AmortizedCost) > 0 ||
@@ -252,7 +253,7 @@ func (r *CostReporter) hasServiceData(aggregates types.ServiceCostAggregates) bo
 		len(aggregates.NetUnblendedCost) > 0
 }
 
-func (r *CostReporter) addCostSummary(md *markdown.Markdown, regionCostData []types.ProcessedRegionCosts) {
+func (r *CostReporter) addCostSummary(md *markdown.Markdown, regionCostData []report.ProcessedRegionCosts) {
 	md.AddHeading("Cost Summary", 2)
 	md.AddParagraph("*Overview of total costs across all regions and cost types*")
 	md.AddParagraph("")
@@ -288,11 +289,11 @@ func (r *CostReporter) addCostSummary(md *markdown.Markdown, regionCostData []ty
 	md.AddParagraph("")
 }
 
-func (r *CostReporter) calculateRegionTotalsAllTypes(regionData types.ProcessedRegionCosts) []float64 {
+func (r *CostReporter) calculateRegionTotalsAllTypes(regionData report.ProcessedRegionCosts) []float64 {
 	// Return totals for: Unblended, Blended, Amortized, Net Amortized, Net Unblended
 	totals := make([]float64, 5)
 
-	services := []types.ServiceCostAggregates{
+	services := []report.ServiceCostAggregates{
 		regionData.Aggregates.AmazonManagedStreamingForApacheKafka,
 		regionData.Aggregates.ElasticLoadBalancing,
 		regionData.Aggregates.AmazonVPC,
@@ -311,7 +312,7 @@ func (r *CostReporter) calculateRegionTotalsAllTypes(regionData types.ProcessedR
 
 		for i, costMap := range costMaps {
 			for _, aggregateData := range costMap {
-				if costAggregate, ok := aggregateData.(types.CostAggregate); ok {
+				if costAggregate, ok := aggregateData.(report.CostAggregate); ok {
 					if costAggregate.Sum != nil {
 						totals[i] += *costAggregate.Sum
 					}
@@ -323,7 +324,7 @@ func (r *CostReporter) calculateRegionTotalsAllTypes(regionData types.ProcessedR
 	return totals
 }
 
-func (r *CostReporter) addQueryDetails(md *markdown.Markdown, regionCostData []types.ProcessedRegionCosts) {
+func (r *CostReporter) addQueryDetails(md *markdown.Markdown, regionCostData []report.ProcessedRegionCosts) {
 	// Return early if no region data
 	if len(regionCostData) == 0 {
 		return

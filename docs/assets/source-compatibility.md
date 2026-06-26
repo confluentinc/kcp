@@ -1,6 +1,6 @@
 # Source compatibility
 
-KCP supports two source types - **AWS MSK** and **Open Source Kafka (OSK)** - and not every command supports every source flavour today. This page is the authoritative quick-lookup for which `kcp` subcommands work against which source.
+KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not every command supports every source flavour today. This page is the authoritative quick-lookup for which `kcp` subcommands work against which source.
 
 > [!TIP]
 > Looking for _how_ a command works? See the [Command Reference](command-reference/index.md). This page covers _whether_ it works for your source.
@@ -9,7 +9,7 @@ KCP supports two source types - **AWS MSK** and **Open Source Kafka (OSK)** - an
 
 - **MSK Provisioned / Express** — AWS MSK provisioned clusters (including MSK Express brokers).
 - **MSK Serverless** — AWS MSK Serverless clusters.
-- **OSK** — Any Kafka API compatible source, reached via the Kafka Admin API.
+- **Apache Kafka** — Any Kafka API compatible source, reached via the Kafka Admin API.
 
 ## Legend
 
@@ -19,14 +19,14 @@ KCP supports two source types - **AWS MSK** and **Open Source Kafka (OSK)** - an
 | **Limited**  | Partial support — see the inline note on the row for what's missing.                                 |
 | **No**       | Not supported.                                                                                       |
 | **Coming**   | Planned for an upcoming release.                                                                     |
-| **AWS only** | Supported when the OSK source is hosted on AWS; the generated infrastructure assumes AWS networking. |
+| **AWS only** | Supported when the Apache Kafka source is hosted on AWS; the generated infrastructure assumes AWS networking. |
 | **N/A**      | Command is source-agnostic; the source type does not apply.                                          |
 
 ## Compatibility matrix
 
 <div class="matrix" markdown="1">
 
-| Command                                                 | MSK Provisioned/Express | MSK Serverless                         | OSK                         |
+| Command                                                 | MSK Provisioned/Express | MSK Serverless                         | Apache Kafka                |
 | :------------------------------------------------------ | :---------------------- | :------------------------------------- | :-------------------------- |
 | `kcp discover`                                          | Yes                     | Limited                                | No                          |
 | `kcp scan client-inventory`                             | Yes                     | No                                     | No                          |
@@ -53,6 +53,26 @@ KCP supports two source types - **AWS MSK** and **Open Source Kafka (OSK)** - an
 | `kcp ui`                                                | Yes                     | No                                     | Yes                         |
 
 </div>
+
+## Confluent Cloud destination
+
+The matrix above describes _source_ support. Independently, three `create-asset` commands require a `--cc-type` declaration naming the Confluent Cloud _destination_ — `commercial` (Standard) or `government` (**Confluent Cloud for Government**):
+
+- `kcp create-asset migration-infra`
+- `kcp create-asset migrate-topics`
+- `kcp create-asset migrate-schemas`
+
+The declaration is **required** on these three commands (there is no default). It is not accepted on any other command.
+
+**Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-type government` is declared:
+
+| Path                                            | `commercial` (Standard) | `government` (Government)              |
+| :---------------------------------------------- | :---------------------- | :-------------------------------------------- |
+| `migration-infra` (all `--type` values)         | Supported       | Refused — relies on Cluster Linking           |
+| `migrate-topics --mode mirror`                  | Supported       | Refused — use `--mode new` instead            |
+| `migrate-topics --mode new`                     | Supported       | Supported                                     |
+| `migrate-schemas --url` (Schema Exporter)       | Supported       | Refused — use `--glue-registry` instead       |
+| `migrate-schemas --glue-registry`               | Supported       | Supported                                     |
 
 ---
 

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/goccy/go-yaml"
 )
 
@@ -14,7 +13,7 @@ const defaultSLATarget = "99.9"
 // is empty (no file supplied is a valid state — the Plan still generates
 // from defaults). Missing fields never fail because no field is required
 // at the YAML schema level.
-func LoadPlanInputs(path string) (*types.PlanInputs, error) {
+func LoadPlanInputs(path string) (*PlanInputs, error) {
 	if path == "" {
 		return nil, nil
 	}
@@ -22,7 +21,7 @@ func LoadPlanInputs(path string) (*types.PlanInputs, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read plan-inputs %s: %w", path, err)
 	}
-	var in types.PlanInputs
+	var in PlanInputs
 	if err := yaml.Unmarshal(data, &in); err != nil {
 		return nil, fmt.Errorf("failed to parse plan-inputs %s: %w", path, err)
 	}
@@ -34,9 +33,9 @@ func LoadPlanInputs(path string) (*types.PlanInputs, error) {
 // falls back to PlanConfig.PlanInputDefaults. Raw is preserved so
 // downstream consumers can detect which sizing fields the customer
 // explicitly set (HeadroomFraction, SLATarget, SizingPercentile, etc.).
-func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsResolved {
+func ResolvePlanInputs(in *PlanInputs, cfg *PlanConfig) PlanInputsResolved {
 	defaults := cfg.PlanInputDefaults
-	out := types.PlanInputsResolved{
+	out := PlanInputsResolved{
 		Raw:                                  in,
 		SizingPercentile:                     defaults.SizingPercentile,
 		HeadroomFraction:                     defaults.HeadroomFraction,
@@ -132,6 +131,20 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 	if in.ConfluentSRCPEdition != nil {
 		out.ConfluentSRCPEdition = *in.ConfluentSRCPEdition
 	}
+	if in.ExactlyOnceTransactionsInUse != nil {
+		v := *in.ExactlyOnceTransactionsInUse
+		out.ExactlyOnceTransactionsInUse = &v
+	}
+	if in.KafkaStreamsInUse != nil {
+		v := *in.KafkaStreamsInUse
+		out.KafkaStreamsInUse = &v
+	}
+	if in.ConsumerHistoryRequirement != nil {
+		out.ConsumerHistoryRequirement = *in.ConsumerHistoryRequirement
+	}
+	if in.HistoricalDataStrategy != nil {
+		out.HistoricalDataStrategy = *in.HistoricalDataStrategy
+	}
 	return out
 }
 
@@ -145,7 +158,7 @@ func ResolvePlanInputs(in *types.PlanInputs, cfg *PlanConfig) types.PlanInputsRe
 // **Hot path note:** when iterating many clusters, prefer
 // `applyClusterOverride` against a pre-resolved global view — this
 // function re-resolves globals on every call.
-func ResolvePlanInputsForCluster(in *types.PlanInputs, cfg *PlanConfig, clusterName string) types.PlanInputsResolved {
+func ResolvePlanInputsForCluster(in *PlanInputs, cfg *PlanConfig, clusterName string) PlanInputsResolved {
 	out := ResolvePlanInputs(in, cfg)
 	return applyClusterOverride(out, in, clusterName)
 }
@@ -156,7 +169,7 @@ func ResolvePlanInputsForCluster(in *types.PlanInputs, cfg *PlanConfig, clusterN
 // avoid re-running the (cheap but non-trivial) global resolution
 // against `in.Raw` for every cluster — the global view is computed
 // once and reused.
-func applyClusterOverride(out types.PlanInputsResolved, in *types.PlanInputs, clusterName string) types.PlanInputsResolved {
+func applyClusterOverride(out PlanInputsResolved, in *PlanInputs, clusterName string) PlanInputsResolved {
 	if in == nil {
 		return out
 	}
@@ -196,6 +209,12 @@ func applyClusterOverride(out types.PlanInputsResolved, in *types.PlanInputs, cl
 	}
 	if override.TargetAuthMethod != nil {
 		out.TargetAuthMethod = *override.TargetAuthMethod
+	}
+	if override.DowntimeTolerance != nil {
+		out.DowntimeTolerance = *override.DowntimeTolerance
+	}
+	if override.SubPattern != nil {
+		out.SubPattern = *override.SubPattern
 	}
 	return out
 }

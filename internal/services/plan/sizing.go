@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"math"
 
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 // bytesPerMBps turns CloudWatch byte-rates into MBps (1024 * 1024).
 const bytesPerMBps = 1_048_576.0
 
-// ComputeClusterSizing implements the deterministic sizing formula:
+// computeClusterSizing implements the deterministic sizing formula:
 //
 //	max_ratio = max(P95In/per_eCKU_ingress_mbps,
 //	                P95Out/per_eCKU_egress_mbps,
@@ -26,7 +27,7 @@ const bytesPerMBps = 1_048_576.0
 // FinalECKU = SLA floor and Degraded = true rather than failing the whole
 // plan build. The renderer surfaces the gap so the customer knows the
 // sizing column is a placeholder.
-func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs types.PlanInputsResolved) types.ClusterSizing {
+func computeClusterSizing(c report.ProcessedCluster, cfg *PlanConfig, inputs PlanInputsResolved) ClusterSizing {
 	caps := cfg.EnterpriseCaps
 	aggs := c.ClusterMetrics.Aggregates
 
@@ -35,14 +36,14 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 	p95OutBytes, haveOut := pickPercentile(aggs, "BytesOutPerSec", pct)
 	if !haveIn || !haveOut {
 		slaFloor := slaFloorECKU(inputs.SLATarget, cfg.PlanInputDefaults.SLAFloorECKU)
-		return types.ClusterSizing{
+		return ClusterSizing{
 			ClusterID:      c.Name,
 			UserPartitions: userPartitionsOf(c),
 			SLAFloorECKU:   slaFloor,
 			FinalECKU:      slaFloor,
 			Degraded:       true,
 			DegradedReason: missingMetricsReason(haveIn, haveOut, pct),
-			Citations: []types.FieldCitation{
+			Citations: []FieldCitation{
 				{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.%s", c.Name, citationKey(pct)), Value: nil},
 				{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesOutPerSec.%s", c.Name, citationKey(pct)), Value: nil},
 			},
@@ -88,7 +89,7 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 
 	spikyRatio := inputs.SpikyWorkloadRatio
 
-	return types.ClusterSizing{
+	return ClusterSizing{
 		ClusterID:           c.Name,
 		SizedInMBps:         p95InMBps,
 		SizedOutMBps:        p95OutMBps,
@@ -110,7 +111,7 @@ func ComputeClusterSizing(c types.ProcessedCluster, cfg *PlanConfig, inputs type
 		PeakBurstPctOfPLCap: peakBurstPctOfPLCap,
 		SpikyIngress:        peakInMBps > spikyRatio*p95InMBps,
 		SpikyEgress:         peakOutMBps > spikyRatio*p95OutMBps,
-		Citations: []types.FieldCitation{
+		Citations: []FieldCitation{
 			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.%s", c.Name, citationKey(pct)), Value: p95InBytes},
 			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesOutPerSec.%s", c.Name, citationKey(pct)), Value: p95OutBytes},
 			{Path: fmt.Sprintf("cluster[%s].metrics.aggregates.BytesInPerSec.max", c.Name), Value: peakInBytes},
@@ -159,7 +160,7 @@ func pickMaxDriver(ingress, egress, partitions float64) (float64, string) {
 	return maxR, driver
 }
 
-func userPartitionsOf(c types.ProcessedCluster) int {
+func userPartitionsOf(c report.ProcessedCluster) int {
 	if c.KafkaAdminClientInformation.Topics == nil {
 		return 0
 	}

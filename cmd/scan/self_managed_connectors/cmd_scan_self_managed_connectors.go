@@ -41,7 +41,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd := &cobra.Command{
 		Use:   "self-managed-connectors",
 		Short: "Scan self-managed Kafka Connect cluster for connector information",
-		Long:  "Scan a self-managed Kafka Connect cluster using its REST API to discover connector configurations and status",
+		Long:  "Scan a self-managed Kafka Connect cluster using its REST API to discover connector configurations and status. Sensitive config values are redacted before being written to the state file.",
 		Example: `  # Scan connectors for an MSK cluster (auto-detected from ARN format)
   kcp scan self-managed-connectors \
     --state-file kcp-state.json \
@@ -80,21 +80,17 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		Hidden:        false,
 	}
 
-	groups := map[*pflag.FlagSet]string{}
-
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file to update with connector information.")
 	requiredFlags.StringVar(&connectRestURL, "connect-rest-url", "", "The Kafka Connect REST API URL (e.g., http://localhost:8083).")
 	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and OSK cluster IDs.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = OSK).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(optionalFlags)
-	groups[optionalFlags] = "Optional Flags"
 
 	authMethodFlags := pflag.NewFlagSet("auth-method", pflag.ExitOnError)
 	authMethodFlags.SortFlags = false
@@ -102,14 +98,12 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	authMethodFlags.BoolVar(&useTls, "use-tls", false, "Use TLS certificate authentication (requires --tls-ca-cert, --tls-client-cert, and --tls-client-key).")
 	authMethodFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use no authentication.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(authMethodFlags)
-	groups[authMethodFlags] = "Authentication Method (choose one)"
 
 	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
 	saslScramFlags.SortFlags = false
 	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username (required when using --use-sasl-scram).")
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password (required when using --use-sasl-scram).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(saslScramFlags)
-	groups[saslScramFlags] = "SASL/SCRAM Credentials"
 
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
@@ -117,17 +111,15 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to client certificate file (required when using --use-tls).")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to client key file (required when using --use-tls).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(tlsFlags)
-	groups[tlsFlags] = "TLS Credentials"
 
 	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
 	metricsFlags.SortFlags = false
-	metricsFlags.StringVar(&metricsSource, "metrics", "", "Metrics backend: 'jolokia' or 'prometheus'. Requires --credentials-file.")
-	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia metrics (e.g., 5m, 30m). Required with --metrics jolokia.")
-	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia metrics (default: 10s).")
+	metricsFlags.StringVar(&metricsSource, "metrics", "", "Collect Connect worker metrics: 'jolokia' or 'prometheus'. Requires --credentials-file. Endpoints/filters must target the Connect workers, not the Kafka brokers.")
+	metricsFlags.StringVar(&metricsDuration, "metrics-duration", "", "Duration to poll Jolokia metrics (e.g. 5m, 1h). Required with --metrics jolokia.")
+	metricsFlags.StringVar(&metricsInterval, "metrics-interval", "10s", "Polling interval for Jolokia metrics (e.g. 10s, 30s). Default: 10s.")
 	metricsFlags.StringVar(&metricsRange, "metrics-range", "", "Day range to query from Prometheus (e.g. 7d, 30d). Required with --metrics prometheus.")
-	metricsFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to OSK credentials file containing Jolokia/Prometheus configuration.")
+	metricsFlags.StringVar(&credentialsFile, "credentials-file", "", "Path to the apache-kafka-credentials.yaml file providing Jolokia/Prometheus configuration. Required with --metrics.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(metricsFlags)
-	groups[metricsFlags] = "Metrics Collection"
 
 	selfManagedConnectorsCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
@@ -178,35 +170,47 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
 
-	// Validate metrics flags
+	// Validate metrics flags. Mirrors the cluster-scan validation style
+	// (cmd/scan/clusters): mutual exclusion via Flags().Changed, fail fast
+	// before any collection. Error values carry no credential material.
 	if metricsSource != "" {
-		if metricsSource != "jolokia" && metricsSource != "prometheus" {
-			return fmt.Errorf("invalid --metrics '%s': must be 'jolokia' or 'prometheus'", metricsSource)
-		}
-		_ = cmd.MarkFlagRequired("credentials-file")
 		switch metricsSource {
 		case "jolokia":
-			_ = cmd.MarkFlagRequired("metrics-duration")
-			if _, err := time.ParseDuration(metricsDuration); metricsDuration != "" && err != nil {
+			if metricsDuration == "" {
+				return fmt.Errorf("--metrics-duration is required when --metrics jolokia is set")
+			}
+			if _, err := time.ParseDuration(metricsDuration); err != nil {
 				return fmt.Errorf("invalid --metrics-duration '%s': %w", metricsDuration, err)
 			}
 			if _, err := time.ParseDuration(metricsInterval); err != nil {
 				return fmt.Errorf("invalid --metrics-interval '%s': %w", metricsInterval, err)
 			}
-			if metricsDuration != "" {
-				duration, _ := time.ParseDuration(metricsDuration)
-				interval, _ := time.ParseDuration(metricsInterval)
-				if duration <= interval {
-					return fmt.Errorf("--metrics-duration (%s) must be greater than --metrics-interval (%s) to collect at least one data point", metricsDuration, metricsInterval)
-				}
+			duration, _ := time.ParseDuration(metricsDuration)
+			interval, _ := time.ParseDuration(metricsInterval)
+			if duration <= interval {
+				return fmt.Errorf("--metrics-duration (%s) must be greater than --metrics-interval (%s) to collect at least one data point", metricsDuration, metricsInterval)
+			}
+			if cmd.Flags().Changed("metrics-range") {
+				return fmt.Errorf("--metrics-range cannot be used with --metrics jolokia")
 			}
 		case "prometheus":
-			_ = cmd.MarkFlagRequired("metrics-range")
-			if metricsRange != "" {
-				if _, err := utils.ParseDurationDays(metricsRange); err != nil {
-					return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
-				}
+			if metricsRange == "" {
+				return fmt.Errorf("--metrics-range is required when --metrics prometheus is set")
 			}
+			if _, err := utils.ParseDurationDays(metricsRange); err != nil {
+				return fmt.Errorf("invalid --metrics-range '%s': must be like 1d, 7d, 30d", metricsRange)
+			}
+			if cmd.Flags().Changed("metrics-duration") {
+				return fmt.Errorf("--metrics-duration cannot be used with --metrics prometheus")
+			}
+			if cmd.Flags().Changed("metrics-interval") {
+				return fmt.Errorf("--metrics-interval cannot be used with --metrics prometheus")
+			}
+		default:
+			return fmt.Errorf("invalid --metrics '%s': must be 'jolokia' or 'prometheus'", metricsSource)
+		}
+		if credentialsFile == "" {
+			return fmt.Errorf("--credentials-file is required when --metrics is set")
 		}
 	}
 
@@ -219,7 +223,10 @@ func runScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to parse scan self-managed connectors opts: %v", err)
 	}
 
-	scanner := NewSelfManagedConnectorsScanner(*opts)
+	scanner, err := NewSelfManagedConnectorsScanner(*opts)
+	if err != nil {
+		return fmt.Errorf("failed to create self-managed connectors scanner: %v", err)
+	}
 	if err := scanner.Run(); err != nil {
 		return fmt.Errorf("failed to scan self-managed connectors: %v", err)
 	}
@@ -290,25 +297,29 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		}
 	}
 
-	// If metrics are requested, resolve the cluster credentials from the credentials file
+	// Resolve metrics cluster credentials only when metrics collection is
+	// requested. Credentials are read from the file here and never persisted to
+	// state or logged. The lookup is routed by source type (MSK ARN or OSK id),
+	// and the error path carries the cluster identifier and file path only — no
+	// credential material (R11).
 	var metricsClusterCreds *types.OSKClusterAuth
-	if metricsSource != "" && credentialsFile != "" {
+	if metricsSource != "" {
 		creds, errs := types.NewOSKCredentialsFromFile(credentialsFile)
 		if len(errs) > 0 {
-			return nil, fmt.Errorf("failed to load credentials file: %v", errs)
+			return nil, fmt.Errorf("failed to load credentials file %s: %v", credentialsFile, errs)
 		}
 		lookupID := oskClusterID
 		if detectedSourceType == types.SourceTypeMSK {
 			lookupID = clusterArn
 		}
-		for i, c := range creds.Clusters {
-			if c.ID == lookupID {
+		for i := range creds.Clusters {
+			if creds.Clusters[i].ID == lookupID {
 				metricsClusterCreds = &creds.Clusters[i]
 				break
 			}
 		}
 		if metricsClusterCreds == nil {
-			return nil, fmt.Errorf("cluster %q not found in credentials file %s; metrics collection requires a matching cluster entry", lookupID, credentialsFile)
+			return nil, fmt.Errorf("no matching cluster entry for %q in credentials file %s; metrics collection requires a matching cluster entry", lookupID, credentialsFile)
 		}
 	}
 

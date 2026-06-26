@@ -40,8 +40,6 @@ func discoverIAMAnnotation() string {
 					"kafka:GetClusterPolicy",
 					"kafka:DescribeConfigurationRevision",
 					"kafka:DescribeReplicator",
-					"kafkaconnect:ListConnectors",
-					"kafkaconnect:DescribeConnector",
 				},
 			},
 			{
@@ -73,15 +71,24 @@ func discoverIAMAnnotation() string {
 				Sid:     "MSKNetworkingScanPermission",
 				Actions: []string{"ec2:DescribeSubnets"},
 			},
+			{
+				Sid: "MSKConnectScanPermissions",
+				Actions: []string{
+					"kafkaconnect:ListConnectors",
+					"kafkaconnect:DescribeConnector",
+				},
+			},
 		},
 	)
 }
 
 var (
-	regions     []string
-	skipCosts   bool
-	skipMetrics bool
-	skipTopics  bool
+	regions            []string
+	skipCosts          bool
+	skipMetrics        bool
+	skipTopics         bool
+	metricsGranularity string
+	clusterArns        []string
 )
 
 func NewDiscoverCmd() *cobra.Command {
@@ -97,7 +104,29 @@ func NewDiscoverCmd() *cobra.Command {
   kcp discover --region us-east-1,eu-west-3
 
   # Skip topic/cost/metric discovery for faster runs or reduced IAM scope
-  kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics`,
+  kcp discover --region us-east-1 --skip-topics --skip-costs --skip-metrics
+
+
+  # Specify metrics granularity (mutually exclusive with --skip-metrics)
+  kcp discover --region us-east-1 --metrics-granularity 60s
+  kcp discover --region us-east-1 --metrics-granularity 5m
+  kcp discover --region us-east-1 --metrics-granularity 1h
+  kcp discover --region us-east-1 --metrics-granularity 1d
+
+  The maximum time range for each granularity is:
+  - 60s = 15 days
+  - 5m = 63 days
+  - 1h = 365 days
+  - 1d = 365 days
+
+  The finer the granularity, the more detailed the metrics data, but also more data is stored in the state-file, resulting in state-file growth. Coarser granularity is recommended for averaging workloads over longer time periods, but will smooth out spikes, while finer granularity is recommended for analyzing more bursty workloads and uncovering spikes over short time periods.
+
+  # Discover a single cluster (region inferred from the ARN); create or replace it in state
+  kcp discover --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/uuid
+
+  # Re-discover one cluster at a finer metrics granularity without touching other clusters
+  kcp discover --cluster-arn arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/uuid --metrics-granularity 60s
+  `,
 		Annotations: map[string]string{
 			iampolicy.AnnotationKey: discoverIAMAnnotation(),
 		},
@@ -109,25 +138,34 @@ func NewDiscoverCmd() *cobra.Command {
 
 	groups := map[*pflag.FlagSet]string{}
 
+	// Exactly one of --region / --cluster-arn must be provided (enforced below via
+	// MarkFlagsMutuallyExclusive + MarkFlagsOneRequired), so they share a group whose
+	// label reflects that either-or requirement rather than implying both are needed.
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag)")
+	requiredFlags.StringSliceVar(&regions, "region", []string{}, "The AWS region(s) to scan (comma separated list or repeated flag). Mutually exclusive with --cluster-arn.")
+	requiredFlags.StringSliceVar(&clusterArns, "cluster-arn", []string{}, "Discover only the specified MSK cluster ARN(s) (comma separated or repeated flag). Region is inferred from each ARN. Mutually exclusive with --region.")
 	discoverCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags"
+	groups[requiredFlags] = "Required Flags (provide exactly one)"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skips the topic discovery through the AWS MSK API")
 	optionalFlags.BoolVar(&skipCosts, "skip-costs", false, "Skips the cost discovery through the AWS Cost Explorer API")
 	optionalFlags.BoolVar(&skipMetrics, "skip-metrics", false, "Skips the metrics discovery through the AWS CloudWatch API")
+	optionalFlags.StringVar(&metricsGranularity, "metrics-granularity", "1d", "The granularity for which to query for CloudWatch metrics. Valid values: 60s, 5m, 1h, 1d. The maximum time range for each granularity is: 60s = 15 days, 5m = 63 days, 1h = 365 days, 1d = 365 days.")
 	discoverCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
+
+	discoverCmd.MarkFlagsMutuallyExclusive("skip-metrics", "metrics-granularity")
+	discoverCmd.MarkFlagsMutuallyExclusive("region", "cluster-arn")
+	discoverCmd.MarkFlagsOneRequired("region", "cluster-arn")
 
 	discoverCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
-		groupNames := []string{"Required Flags", "Optional Flags"}
+		groupNames := []string{"Required Flags (provide exactly one)", "Optional Flags"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -141,14 +179,26 @@ func NewDiscoverCmd() *cobra.Command {
 		return nil
 	})
 
-	_ = discoverCmd.MarkFlagRequired("region")
-
 	return discoverCmd
 }
 
 func preRunDiscover(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
+	}
+
+	// Validate metrics granularity.
+	switch metricsGranularity {
+	case "60s", "5m", "1h", "1d":
+	default:
+		return fmt.Errorf("invalid metrics-granularity %q: must be one of: 60s, 5m, 1h, 1d", metricsGranularity)
+	}
+
+	// Validate cluster ARNs are well-formed (region is parsed from each ARN).
+	if len(clusterArns) > 0 {
+		if _, err := regionsFromClusterArns(clusterArns); err != nil {
+			return err
+		}
 	}
 
 	return nil
@@ -207,12 +257,24 @@ func parseDiscoverOpts() (*DiscovererOpts, error) {
 		slog.Debug("using existing credentials file", "file", credentialsFileName)
 	}
 
+	// In targeted mode regions are inferred from the cluster ARNs; otherwise use --region.
+	effectiveRegions := regions
+	if len(clusterArns) > 0 {
+		derived, err := regionsFromClusterArns(clusterArns)
+		if err != nil {
+			return nil, err
+		}
+		effectiveRegions = derived
+	}
+
 	return &DiscovererOpts{
-		Regions:     regions,
-		SkipCosts:   skipCosts,
-		SkipMetrics: skipMetrics,
-		SkipTopics:  skipTopics,
-		State:       state,
-		Credentials: credentials,
+		Regions:            effectiveRegions,
+		SkipCosts:          skipCosts,
+		SkipMetrics:        skipMetrics,
+		SkipTopics:         skipTopics,
+		State:              state,
+		Credentials:        credentials,
+		MetricsGranularity: metricsGranularity,
+		ClusterArns:        clusterArns,
 	}, nil
 }

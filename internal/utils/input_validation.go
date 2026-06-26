@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
@@ -49,19 +49,19 @@ func ValidateAWSZones(awsZonesStr string) ([]AWSZone, error) {
 	return awsZones, nil
 }
 
-func ParseTerraformState(targetEnvFolder string, requiredFields []string) (*types.TerraformState, error) {
+func ParseTerraformState(targetEnvFolder string, requiredFields []string) (*hcltypes.TerraformState, error) {
 	outputJsonFile, err := os.ReadFile(filepath.Join(targetEnvFolder, "terraform.tfstate"))
 	if err != nil {
 		return nil, err
 	}
 
-	var terraformState types.TerraformState
+	var terraformState hcltypes.TerraformState
 	if err := json.Unmarshal(outputJsonFile, &terraformState); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal terraform state: %w", err)
 	}
 
 	output := terraformState.Outputs
-	if output == (types.TerraformOutputOld{}) {
+	if output == (hcltypes.TerraformOutputOld{}) {
 		return nil, fmt.Errorf("terraform outputs are missing")
 	}
 
@@ -89,26 +89,26 @@ func ParseTerraformState(targetEnvFolder string, requiredFields []string) (*type
 	return &terraformState, nil
 }
 
-type TerraformOutputGetter func(types.TerraformOutputOld) any
+type TerraformOutputGetter func(hcltypes.TerraformOutputOld) any
 
 // terraformOutputGetters maps field names to functions that extract values from TerraformOutput
 var terraformOutputGetters = map[string]TerraformOutputGetter{
-	"confluent_cloud_cluster_api_key": func(output types.TerraformOutputOld) any {
+	"confluent_cloud_cluster_api_key": func(output hcltypes.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterApiKey.Value
 	},
-	"confluent_cloud_cluster_api_key_secret": func(output types.TerraformOutputOld) any {
+	"confluent_cloud_cluster_api_key_secret": func(output hcltypes.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterApiKeySecret.Value
 	},
-	"confluent_cloud_cluster_id": func(output types.TerraformOutputOld) any {
+	"confluent_cloud_cluster_id": func(output hcltypes.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterId.Value
 	},
-	"confluent_cloud_cluster_rest_endpoint": func(output types.TerraformOutputOld) any {
+	"confluent_cloud_cluster_rest_endpoint": func(output hcltypes.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterRestEndpoint.Value
 	},
-	"confluent_cloud_cluster_bootstrap_endpoint": func(output types.TerraformOutputOld) any {
+	"confluent_cloud_cluster_bootstrap_endpoint": func(output hcltypes.TerraformOutputOld) any {
 		return output.ConfluentCloudClusterBootstrapEndpoint.Value
 	},
-	"confluent_platform_controller_bootstrap_server": func(output types.TerraformOutputOld) any {
+	"confluent_platform_controller_bootstrap_server": func(output hcltypes.TerraformOutputOld) any {
 		return output.ConfluentPlatformControllerBootstrapServer.Value
 	},
 }
@@ -124,7 +124,7 @@ func BindEnvToFlags(cmd *cobra.Command) error {
 		// e.g., "vpc-id" -> "VPC_ID"
 		envVarName := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 
-		v.BindEnv(flagName, envVarName)
+		_ = v.BindEnv(flagName, envVarName)
 
 		// If the flag wasn't explicitly set via command line
 		// AND
@@ -133,7 +133,7 @@ func BindEnvToFlags(cmd *cobra.Command) error {
 		// set the flag value from the environment
 		if !f.Changed && v.IsSet(flagName) {
 			val := v.Get(flagName)
-			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
+			_ = cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
 		}
 	})
 

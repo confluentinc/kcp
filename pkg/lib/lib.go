@@ -51,9 +51,9 @@ func GeneratePlan(stateJSON, planInputsYAML []byte) (*PlanResult, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load plan-config: %w", err)
 	}
-	var pi *types.PlanInputs
+	var pi *plan.PlanInputs
 	if len(planInputsYAML) > 0 {
-		var parsed types.PlanInputs
+		var parsed plan.PlanInputs
 		if err := yaml.Unmarshal(planInputsYAML, &parsed); err != nil {
 			return nil, fmt.Errorf("parse plan-inputs: %w", err)
 		}

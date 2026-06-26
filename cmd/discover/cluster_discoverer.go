@@ -14,6 +14,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
+	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -61,7 +62,7 @@ func NewClusterDiscoverer(mskService ClusterDiscovererMSKService, ec2Service Clu
 	}
 }
 
-func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool) (*types.DiscoveredCluster, error) {
+func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region string, skipTopics bool, skipMetrics bool, metricsGranularity string) (*types.DiscoveredCluster, error) {
 	awsClientInfo, kafkaClientInfo, err := cd.discoverAWSClientInformation(ctx, clusterArn, skipTopics)
 	if err != nil {
 		return nil, err
@@ -72,7 +73,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 		fmt.Printf("  ⏭️  Skipping metrics discovery\n")
 		clusterMetric = &types.ClusterMetrics{}
 	} else {
-		clusterMetric, err = cd.discoverMetrics(ctx, clusterArn)
+		clusterMetric, err = cd.discoverMetrics(ctx, clusterArn, metricsGranularity)
 		if err != nil {
 			return nil, err
 		}
@@ -153,12 +154,6 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		awsClientInfo.ClusterNetworking = networking
 	}
 
-	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
-	if err != nil {
-		return nil, nil, err
-	}
-	awsClientInfo.Connectors = connectors
-
 	if !skipTopics {
 		topics, err := cd.discoverTopics(ctx, clusterArn)
 		if err != nil {
@@ -169,7 +164,157 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		fmt.Printf("  ⏭️  Skipping topic discovery\n")
 	}
 
+	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
+	if err != nil {
+		return nil, nil, err
+	}
+	awsClientInfo.Connectors = connectors
+
 	return &awsClientInfo, &kafkaClientInfo, nil
+}
+
+// discoverMatchingConnectors lists MSK Connect connectors and returns those whose
+// bootstrap servers match this cluster. Sensitive config values are redacted
+// before the connector summary is built, so raw secrets never enter the state
+// file or logs. All failures are non-fatal: a warning is logged and connector
+// discovery is skipped rather than aborting the wider discover run (R3).
+func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, awsClientInfo *types.AWSClientInformation) ([]types.ConnectorSummary, error) {
+	fmt.Printf("  🔍 Scanning for matching connectors\n")
+	var matchingConnectors []types.ConnectorSummary
+
+	totalRedacted := 0
+	// Page through ListConnectors so accounts with more than one page of
+	// connectors are not silently truncated (R3). Mirrors the manual NextToken
+	// loop used by ListClientVpcConnections.
+	var input kafkaconnect.ListConnectorsInput
+	for {
+		mskConnectResult, err := cd.mskConnectService.ListConnectors(ctx, &input)
+		if err != nil {
+			// Non-fatal (R3). On a first-page error nothing has been collected, so
+			// this returns empty; on a mid-pagination error it returns the
+			// connectors gathered from earlier pages rather than discarding them —
+			// the merge-on-rerun seam (U3) then keeps any connector that lived only
+			// on the un-fetched page via its prior redacted copy in state.
+			slog.Warn("failed to list MSK Connect connectors; skipping remaining connector discovery", "error", err)
+			return matchingConnectors, nil
+		}
+
+		for _, connector := range mskConnectResult.Connectors {
+			// Guard against partial AWS responses so a malformed connector is skipped
+			// rather than panicking and aborting discovery (R3). These fields all come
+			// from the ListConnectors summary, so the check runs before any per-connector
+			// DescribeConnector call.
+			if connector.KafkaClusterClientAuthentication == nil ||
+				connector.KafkaCluster == nil || connector.KafkaCluster.ApacheKafkaCluster == nil ||
+				connector.Capacity == nil || connector.CreationTime == nil {
+				slog.Warn("skipping connector with incomplete connector summary", "connectorArn", aws.ToString(connector.ConnectorArn))
+				continue
+			}
+
+			authType, err := connectorAuthType(connector)
+			if err != nil {
+				slog.Warn("skipping connector with unsupported auth/encryption type", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
+				continue
+			}
+
+			brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
+			if err != nil {
+				slog.Warn("failed to resolve bootstrap brokers; skipping connector", "authType", authType, "error", err)
+				continue
+			}
+
+			// A connector belongs to this cluster only if its bootstrap servers match the cluster's.
+			// The match decision uses only ListConnectors summary fields, so DescribeConnector is
+			// deferred until after a match — avoiding C×K DescribeConnector calls (one discover run
+			// per cluster) when only the matching connectors need their full config (R3, perf).
+			connectorBootstrap := aws.ToString(connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers)
+			if !bootstrapMatches(connectorBootstrap, brokerAddresses) {
+				continue
+			}
+
+			// Only matching connectors need a DescribeConnector call (for ConnectorConfiguration
+			// and Plugins, which the summary does not carry).
+			describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
+				ConnectorArn: connector.ConnectorArn,
+			})
+			if err != nil {
+				slog.Warn("failed to describe connector; skipping", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
+				continue
+			}
+
+			// Redact sensitive values before they enter the persisted summary (R11).
+			redactedConfig, redactedCount := redact.RedactStringMap(describeConnector.ConnectorConfiguration)
+			totalRedacted += redactedCount
+
+			fmt.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
+			matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
+				ConnectorArn:                     aws.ToString(connector.ConnectorArn),
+				ConnectorName:                    aws.ToString(connector.ConnectorName),
+				ConnectorState:                   string(connector.ConnectorState),
+				CreationTime:                     connector.CreationTime.Format(time.RFC3339),
+				KafkaCluster:                     *connector.KafkaCluster.ApacheKafkaCluster,
+				KafkaClusterClientAuthentication: *connector.KafkaClusterClientAuthentication,
+				Capacity:                         *connector.Capacity,
+				Plugins:                          describeConnector.Plugins,
+				ConnectorConfiguration:           redactedConfig,
+			})
+		}
+
+		if mskConnectResult.NextToken == nil {
+			break
+		}
+		input.NextToken = mskConnectResult.NextToken
+	}
+
+	if totalRedacted > 0 {
+		// Counts only — never the redacted keys or values (R13).
+		slog.Info("redacted sensitive connector config fields", "redacted_fields", totalRedacted, "connectors", len(matchingConnectors))
+	}
+
+	return matchingConnectors, nil
+}
+
+// connectorAuthType maps an MSK Connect connector's authentication/encryption
+// settings to the cluster AuthType used for bootstrap-broker matching.
+func connectorAuthType(connector kafkaconnecttypes.ConnectorSummary) (types.AuthType, error) {
+	switch connector.KafkaClusterClientAuthentication.AuthenticationType {
+	case kafkaconnecttypes.KafkaClusterClientAuthenticationTypeIam:
+		return types.AuthTypeIAM, nil
+	case kafkaconnecttypes.KafkaClusterClientAuthenticationTypeNone:
+		if connector.KafkaClusterEncryptionInTransit == nil {
+			return "", fmt.Errorf("connector has no encryption-in-transit information")
+		}
+		switch connector.KafkaClusterEncryptionInTransit.EncryptionType {
+		case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypeTls:
+			return types.AuthTypeUnauthenticatedTLS, nil
+		case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypePlaintext:
+			return types.AuthTypeUnauthenticatedPlaintext, nil
+		default:
+			return "", fmt.Errorf("unsupported connector encryption type: %s", connector.KafkaClusterEncryptionInTransit.EncryptionType)
+		}
+	default:
+		return "", fmt.Errorf("unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
+	}
+}
+
+// bootstrapMatches reports whether the connector and the cluster share at least one
+// bootstrap broker. Both sides are comma-separated host:port lists; we compare by exact
+// host:port equality (after splitting and trimming) rather than substring containment,
+// so a broker address can't spuriously match by being a substring of an unrelated
+// connector's bootstrap string (e.g. a host that merely shares a DNS prefix/suffix).
+func bootstrapMatches(connectorBootstrap string, brokerAddresses []string) bool {
+	connectorHosts := make(map[string]struct{})
+	for _, addr := range strings.Split(connectorBootstrap, ",") {
+		if trimmed := strings.TrimSpace(addr); trimmed != "" {
+			connectorHosts[trimmed] = struct{}{}
+		}
+	}
+	for _, brokerAddress := range brokerAddresses {
+		if _, ok := connectorHosts[strings.TrimSpace(brokerAddress)]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
@@ -373,7 +518,7 @@ func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.N
 	return subnetInfo
 }
 
-func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string) (*types.ClusterMetrics, error) {
+func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn string, metricsGranularity string) (*types.ClusterMetrics, error) {
 	// TODO: this issues a second DescribeClusterV2 call for the same cluster, and also
 	// drops the caller's ctx by using context.Background(). Consider refactoring to
 	// accept the already-fetched cluster from discoverAWSClientInformation to eliminate
@@ -395,7 +540,8 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	now := time.Now().UTC()
 	previousMidnight := time.Date(now.Year(), now.Month(), now.Day()-1, 0, 0, 0, 0, time.UTC)
 	endTime := previousMidnight.Add(24 * time.Hour)
-	timeWindow, err := metrics.GetTimeWindow(endTime, metrics.LastYear)
+
+	timeWindow, err := metrics.GetTimeWindowForGranularity(endTime, metricsGranularity)
 	if err != nil {
 		return nil, fmt.Errorf("failed to calculate time window: %v", err)
 	}
@@ -414,72 +560,6 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 	}
 
 	return clusterMetrics, nil
-}
-
-func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, awsClientInfo *types.AWSClientInformation) ([]types.ConnectorSummary, error) {
-	fmt.Printf("  🔍 Scanning for matching connectors\n")
-	var matchingConnectors []types.ConnectorSummary
-
-	mskConnectResult, err := cd.mskConnectService.ListConnectors(ctx, &kafkaconnect.ListConnectorsInput{})
-	if err != nil {
-		return nil, fmt.Errorf("failed to list connectors: %v", err)
-	}
-
-	for _, connector := range mskConnectResult.Connectors {
-		describeConnector, err := cd.mskConnectService.DescribeConnector(ctx, &kafkaconnect.DescribeConnectorInput{
-			ConnectorArn: connector.ConnectorArn,
-		})
-		if err != nil {
-			slog.Error("failed to describe connector", "connectorArn", aws.ToString(connector.ConnectorArn), "error", err)
-			continue
-		}
-
-		var authType types.AuthType
-		switch connector.KafkaClusterClientAuthentication.AuthenticationType {
-		case kafkaconnecttypes.KafkaClusterClientAuthenticationTypeIam:
-			authType = types.AuthTypeIAM
-		case kafkaconnecttypes.KafkaClusterClientAuthenticationTypeNone:
-			switch connector.KafkaClusterEncryptionInTransit.EncryptionType {
-			case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypeTls:
-				authType = types.AuthTypeUnauthenticatedTLS
-			case kafkaconnecttypes.KafkaClusterEncryptionInTransitTypePlaintext:
-				authType = types.AuthTypeUnauthenticatedPlaintext
-			default:
-				return nil, fmt.Errorf("unsupported connector encryption type: %s", connector.KafkaClusterEncryptionInTransit.EncryptionType)
-			}
-		default:
-			return nil, fmt.Errorf("unsupported connector auth type: %s", connector.KafkaClusterClientAuthentication.AuthenticationType)
-		}
-
-		brokerAddresses, err := awsClientInfo.GetAllBootstrapBrokersForAuthType(authType)
-		if err != nil {
-			slog.Error("failed to get bootstrap brokers for auth type", "authType", authType, "error", err)
-			continue
-		}
-
-		// Only way to confirm if a connector belongs to a cluster is to compare the bootstrap servers and look for a match between connector and cluster.
-		connectorBootstrap := aws.ToString(connector.KafkaCluster.ApacheKafkaCluster.BootstrapServers)
-		for _, brokerAddress := range brokerAddresses {
-			if strings.Contains(connectorBootstrap, brokerAddress) {
-				fmt.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
-
-				matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
-					ConnectorArn:                     aws.ToString(connector.ConnectorArn),
-					ConnectorName:                    aws.ToString(connector.ConnectorName),
-					ConnectorState:                   string(connector.ConnectorState),
-					CreationTime:                     connector.CreationTime.Format(time.RFC3339),
-					KafkaCluster:                     *connector.KafkaCluster.ApacheKafkaCluster,
-					KafkaClusterClientAuthentication: *connector.KafkaClusterClientAuthentication,
-					Capacity:                         *connector.Capacity,
-					Plugins:                          describeConnector.Plugins,
-					ConnectorConfiguration:           describeConnector.ConnectorConfiguration,
-				})
-				break
-			}
-		}
-	}
-
-	return matchingConnectors, nil
 }
 
 func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {

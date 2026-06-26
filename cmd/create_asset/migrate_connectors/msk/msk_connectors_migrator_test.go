@@ -8,12 +8,236 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCountRedactedConnectors(t *testing.T) {
+	tests := []struct {
+		name       string
+		connectors []types.ConnectorSummary
+		want       int
+	}{
+		{
+			name: "one redacted, one clean",
+			connectors: []types.ConnectorSummary{
+				{ConnectorName: "a", ConnectorConfiguration: map[string]string{"database.password": redact.Placeholder, "tasks.max": "3"}},
+				{ConnectorName: "b", ConnectorConfiguration: map[string]string{"tasks.max": "1"}},
+			},
+			want: 1,
+		},
+		{
+			name: "none redacted",
+			connectors: []types.ConnectorSummary{
+				{ConnectorName: "a", ConnectorConfiguration: map[string]string{"connector.class": "io.x"}},
+			},
+			want: 0,
+		},
+		{
+			name:       "empty list",
+			connectors: []types.ConnectorSummary{},
+			want:       0,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := countRedactedConnectors(tt.connectors); got != tt.want {
+				t.Errorf("countRedactedConnectors() = %d, want %d", got, tt.want)
+			}
+		})
+	}
+}
+
+// echoTranslateServer returns a translate-API stub that echoes back the config
+// it receives, so the generated Terraform reflects the (already-redacted) source
+// config exactly. This lets the test exercise the full Run() generation path.
+func echoTranslateServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		var cfg map[string]any
+		require.NoError(t, json.Unmarshal(body, &cfg))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(TranslateResponse{Config: cfg})
+	}))
+}
+
+// The real trust boundary (R5): the persisted *.tf a user runs `terraform apply`
+// on must carry the <kcp-redacted> placeholder for a redacted field, never a raw
+// secret. A redacted source config must round-trip into the generated Terraform
+// as the placeholder (fail-closed), not as a working credential.
+func TestMskConnectorMigrator_Run_GeneratedTerraformIsLeakFree(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewMskConnectorMigrator(MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "pg-sink",
+				ConnectorConfiguration: map[string]string{
+					"connector.class":   "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"database.password": redact.Placeholder,
+					"tasks.max":         "3",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	require.NoError(t, migrator.Run())
+
+	tf, err := os.ReadFile(filepath.Join(outDir, "pg-sink-connector.tf"))
+	require.NoError(t, err)
+	// The sensitive key must render with the placeholder as its value, proving a
+	// redacted value round-trips into the persisted artifact as <kcp-redacted>
+	// (fail-closed) rather than as a working credential.
+	assert.Contains(t, string(tf), fmt.Sprintf("%q = %q", "database.password", redact.Placeholder),
+		"sensitive field must render as the redaction placeholder in the generated Terraform")
+}
+
+// Path traversal: a connector name carrying "../" (attacker-controllable via a
+// hostile state file even though AWS constrains MSK Connect names server-side) must
+// not let the generated .tf escape OutputDir. Mirrors the self-managed migrator test
+// so the security-critical write-containment is asserted on both identical paths.
+func TestMskConnectorMigrator_Run_HostileNameStaysInOutputDir(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	root := t.TempDir()
+	outDir := filepath.Join(root, "out")
+
+	migrator := NewMskConnectorMigrator(MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "../escaped",
+				ConnectorConfiguration: map[string]string{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	require.NoError(t, migrator.Run())
+
+	// The traversal target the unsanitized name would have produced must not exist.
+	_, err := os.Stat(filepath.Join(root, "escaped-connector.tf"))
+	assert.True(t, os.IsNotExist(err), "connector must not be written outside OutputDir")
+
+	// Every file the run produced must live inside OutputDir.
+	entries, err := os.ReadDir(outDir)
+	require.NoError(t, err)
+	var connectorFiles int
+	for _, e := range entries {
+		assert.NotContains(t, e.Name(), string(filepath.Separator))
+		if strings.HasSuffix(e.Name(), "-connector.tf") {
+			connectorFiles++
+		}
+	}
+	assert.Equal(t, 1, connectorFiles, "exactly one connector .tf must be written inside OutputDir")
+}
+
+func captureStdout(t *testing.T, fn func()) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = old }()
+	fn()
+	require.NoError(t, w.Close())
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	return string(out)
+}
+
+func TestMskConnectorMigrator_Run_WarnsWhenConfigRedacted(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewMskConnectorMigrator(MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "pg-sink",
+				ConnectorConfiguration: map[string]string{
+					"connector.class":   "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"database.password": redact.Placeholder,
+				},
+			},
+			{
+				ConnectorName: "clean-sink",
+				ConnectorConfiguration: map[string]string{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"tasks.max":       "3",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	out := captureStdout(t, func() { require.NoError(t, migrator.Run()) })
+
+	// "1 of 2" exercises the numerator and denominator independently, guarding
+	// against an "N of N" regression that a 1-of-1 case would miss.
+	assert.Contains(t, out, "1 of 2", "warning must be count-based")
+	assert.Contains(t, out, redact.Placeholder, "warning must name the placeholder so the operator knows what to look for")
+	// Count-only (R5/D3): never leak the connector name or field key.
+	assert.NotContains(t, out, "pg-sink", "warning must not include the connector name")
+	assert.NotContains(t, out, "database.password", "warning must not include the field key")
+}
+
+func TestMskConnectorMigrator_Run_NoWarningWhenNoRedaction(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewMskConnectorMigrator(MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "clean",
+				ConnectorConfiguration: map[string]string{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"tasks.max":       "3",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	out := captureStdout(t, func() { require.NoError(t, migrator.Run()) })
+
+	assert.NotContains(t, out, redact.Placeholder, "no warning when nothing is redacted")
+	assert.NotContains(t, out, "redacted sensitive fields", "no warning when nothing is redacted")
+}
 
 func TestMskConnectorMigrator_Run_NoConnectors(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -215,6 +439,42 @@ func TestMskConnectorMigrator_TranslateConnectorConfig_UnsupportedConnectorClass
 	assert.Contains(t, err.Error(), "failed to determine plugin name")
 }
 
+func TestMskConnectorMigrator_Run_WritesProvidersTfAndVariablesTf(t *testing.T) {
+	tmpDir := t.TempDir()
+	outputPath := filepath.Join(tmpDir, "connectors-output")
+
+	opts := MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "test-connector",
+				ConnectorConfiguration: map[string]string{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"topics":          "test-topic",
+				},
+			},
+		},
+		OutputDir: outputPath,
+	}
+
+	migrator := NewMskConnectorMigrator(opts)
+	// Run will fail at API call, but providers.tf and variables.tf should be written first.
+	_ = migrator.Run()
+
+	providersTf, err := os.ReadFile(filepath.Join(outputPath, "providers.tf"))
+	require.NoError(t, err, "providers.tf should exist")
+	assert.Contains(t, string(providersTf), "confluentinc/confluent", "providers.tf should declare the Confluent provider")
+	assert.Contains(t, string(providersTf), "required_providers", "providers.tf should contain required_providers block")
+
+	variablesTf, err := os.ReadFile(filepath.Join(outputPath, "variables.tf"))
+	require.NoError(t, err, "variables.tf should exist")
+	assert.Contains(t, string(variablesTf), "confluent_cloud_api_key", "variables.tf should declare API key variable")
+	assert.Contains(t, string(variablesTf), "confluent_cloud_api_secret", "variables.tf should declare API secret variable")
+}
+
 func TestMskConnectorMigrator_Run_CreatesOutputDirectory(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "connectors-output")
@@ -239,7 +499,7 @@ func TestMskConnectorMigrator_Run_CreatesOutputDirectory(t *testing.T) {
 	migrator := NewMskConnectorMigrator(opts)
 
 	// Run will fail at API call, but directory should be created.
-	migrator.Run()
+	_ = migrator.Run()
 
 	// Verify directory was created.
 	info, err := os.Stat(outputPath)

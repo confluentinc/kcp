@@ -19,8 +19,8 @@ import (
 
 type MigrationExecutorOpts struct {
 	MigrationStateFile    string
-	MigrationState        types.MigrationState
-	MigrationConfig       types.MigrationConfig
+	MigrationState        migration.MigrationState
+	MigrationConfig       migration.MigrationConfig
 	LagThreshold          int64
 	ClusterApiKey         string
 	ClusterApiSecret      string
@@ -30,6 +30,7 @@ type MigrationExecutorOpts struct {
 	AuthType              types.AuthType
 	SaslScramUsername     string
 	SaslScramPassword     string
+	SaslScramMechanism    string
 	SaslPlainUsername     string
 	SaslPlainPassword     string
 	TlsCaCert             string
@@ -61,14 +62,14 @@ func (m *MigrationExecutor) Run() error {
 	if err != nil {
 		return err
 	}
-	defer sourceOffset.Close()
+	defer func() { _ = sourceOffset.Close() }()
 
 	// Create destination Kafka client (CC)
 	destinationOffset, err := m.createDestinationOffset()
 	if err != nil {
 		return err
 	}
-	defer destinationOffset.Close()
+	defer func() { _ = destinationOffset.Close() }()
 
 	httpClient := http.DefaultClient
 	if m.opts.InsecureSkipTLSVerify {
@@ -127,9 +128,10 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 	switch authType {
 	case types.AuthTypeSASLSCRAM:
 		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
-			Use:      true,
-			Username: m.opts.SaslScramUsername,
-			Password: m.opts.SaslScramPassword,
+			Use:       true,
+			Username:  m.opts.SaslScramUsername,
+			Password:  m.opts.SaslScramPassword,
+			Mechanism: m.opts.SaslScramMechanism,
 		}
 	case types.AuthTypeTLS:
 		clusterAuth.AuthMethod.TLS = &types.TLSConfig{

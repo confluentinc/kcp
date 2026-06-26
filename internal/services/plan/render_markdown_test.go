@@ -1,10 +1,10 @@
 package plan
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -15,15 +15,15 @@ import (
 // the verdict, not buried in an appendix.
 func TestRenderMarkdown_CostCalloutOnCustomerDeclaredDedicated(t *testing.T) {
 	cfg := defaultCfg(t)
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "wrong-click", FinalECKU: 5, SizedInMBps: 10, SizedOutMBps: 10, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{
+		ClusterTypeDecision: []ClusterTypeDecision{
 			{
 				ClusterID: "wrong-click",
-				Verdict:   types.ClusterTypeDedicated,
-				Triggers: []types.HardLimitTrigger{
+				Verdict:   ClusterTypeDedicated,
+				Triggers: []HardLimitTrigger{
 					{
 						RowID:            "sla_99_95_single_zone",
 						Description:      "99.95% SLA within a single zone required",
@@ -33,8 +33,8 @@ func TestRenderMarkdown_CostCalloutOnCustomerDeclaredDedicated(t *testing.T) {
 				},
 			},
 		},
-		NetworkingDecision: []types.NetworkingDecision{
-			{ClusterID: "wrong-click", Verdict: types.NetworkingPNI, Reason: "Dedicated cluster — PNI required"},
+		NetworkingDecision: []NetworkingDecision{
+			{ClusterID: "wrong-click", Verdict: NetworkingPNI, Reason: "Dedicated cluster — PNI required"},
 		},
 	}
 
@@ -52,12 +52,12 @@ func TestRenderMarkdown_CostCalloutOnCustomerDeclaredDedicated(t *testing.T) {
 // guard the renderer would print "+Inf" or "NaN" as the multiplier.
 func TestRenderMarkdown_SpikyNoteHandlesZeroP95(t *testing.T) {
 	cfg := defaultCfg(t)
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "zero-p95", FinalECKU: 1, SizedInMBps: 0, PeakInMBps: 5, SpikyIngress: true, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{{ClusterID: "zero-p95", Verdict: types.ClusterTypeEnterprise}},
-		NetworkingDecision:  []types.NetworkingDecision{{ClusterID: "zero-p95", Verdict: types.NetworkingPrivateLink, Reason: "fits"}},
+		ClusterTypeDecision: []ClusterTypeDecision{{ClusterID: "zero-p95", Verdict: ClusterTypeEnterprise}},
+		NetworkingDecision:  []NetworkingDecision{{ClusterID: "zero-p95", Verdict: NetworkingPrivateLink, Reason: "fits"}},
 	}
 	out, err := RenderMarkdown(p, cfg)
 	require.NoError(t, err)
@@ -74,33 +74,33 @@ func TestRenderMarkdown_SpikyNoteHandlesZeroP95(t *testing.T) {
 func TestRenderMarkdown_DedicatedTopologyAndCKULabel(t *testing.T) {
 	cfg := defaultCfg(t)
 	cku := 4
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "ent-small", FinalECKU: 2, SizedInMBps: 10, SizedOutMBps: 20, MaxRatioDriver: "ingress"},
 			{ClusterID: "ded-mz", FinalECKU: 4, SizedInMBps: 100, SizedOutMBps: 180, MaxRatioDriver: "ingress"},
 			{ClusterID: "ded-sz", FinalECKU: 4, SizedInMBps: 50, SizedOutMBps: 80, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{
-			{ClusterID: "ent-small", Verdict: types.ClusterTypeEnterprise},
+		ClusterTypeDecision: []ClusterTypeDecision{
+			{ClusterID: "ent-small", Verdict: ClusterTypeEnterprise},
 			{
 				ClusterID: "ded-mz",
-				Verdict:   types.ClusterTypeDedicated,
-				Topology:  types.TopologyMultiZone,
+				Verdict:   ClusterTypeDedicated,
+				Topology:  TopologyMultiZone,
 				FinalCKU:  &cku,
-				Triggers:  []types.HardLimitTrigger{{RowID: "eCKU_exceeds_pni_cap", Description: "x", Evidence: "y"}},
+				Triggers:  []HardLimitTrigger{{RowID: "eCKU_exceeds_pni_cap", Description: "x", Evidence: "y"}},
 			},
 			{
 				ClusterID: "ded-sz",
-				Verdict:   types.ClusterTypeDedicated,
-				Topology:  types.TopologySingleZone,
+				Verdict:   ClusterTypeDedicated,
+				Topology:  TopologySingleZone,
 				FinalCKU:  &cku,
-				Triggers:  []types.HardLimitTrigger{{RowID: "sla_99_95_single_zone", Description: "99.95 SZ", Evidence: "flag", CustomerDeclared: true}},
+				Triggers:  []HardLimitTrigger{{RowID: "sla_99_95_single_zone", Description: "99.95 SZ", Evidence: "flag", CustomerDeclared: true}},
 			},
 		},
-		NetworkingDecision: []types.NetworkingDecision{
-			{ClusterID: "ent-small", Verdict: types.NetworkingPrivateLink, Reason: "fits"},
-			{ClusterID: "ded-mz", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
-			{ClusterID: "ded-sz", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
+		NetworkingDecision: []NetworkingDecision{
+			{ClusterID: "ent-small", Verdict: NetworkingPrivateLink, Reason: "fits"},
+			{ClusterID: "ded-mz", Verdict: NetworkingPNI, Reason: "Dedicated"},
+			{ClusterID: "ded-sz", Verdict: NetworkingPNI, Reason: "Dedicated"},
 		},
 	}
 
@@ -139,15 +139,15 @@ func splitLine(body, clusterID string) string {
 // recommendation isn't recoverable by flipping a YAML flag.
 func TestRenderMarkdown_NoCostCalloutOnStateDerivedDedicated(t *testing.T) {
 	cfg := defaultCfg(t)
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "real-big", FinalECKU: 50, SizedInMBps: 4000, SizedOutMBps: 4000, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{
+		ClusterTypeDecision: []ClusterTypeDecision{
 			{
 				ClusterID: "real-big",
-				Verdict:   types.ClusterTypeDedicated,
-				Triggers: []types.HardLimitTrigger{
+				Verdict:   ClusterTypeDedicated,
+				Triggers: []HardLimitTrigger{
 					{
 						RowID:       "eCKU_exceeds_pni_cap",
 						Description: "Sized eCKU exceeds Enterprise PNI cap",
@@ -157,8 +157,8 @@ func TestRenderMarkdown_NoCostCalloutOnStateDerivedDedicated(t *testing.T) {
 				},
 			},
 		},
-		NetworkingDecision: []types.NetworkingDecision{
-			{ClusterID: "real-big", Verdict: types.NetworkingPNI, Reason: "Dedicated cluster — PNI required"},
+		NetworkingDecision: []NetworkingDecision{
+			{ClusterID: "real-big", Verdict: NetworkingPNI, Reason: "Dedicated cluster — PNI required"},
 		},
 	}
 
@@ -183,20 +183,20 @@ func TestRenderMarkdown_NoCostCalloutOnStateDerivedDedicated(t *testing.T) {
 // sees what to fix.
 func TestRenderMarkdown_InputsMissingMarksProvisional(t *testing.T) {
 	cfg := defaultCfg(t)
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "ok", FinalECKU: 1, SizedInMBps: 5, SizedOutMBps: 8, MaxRatioDriver: "ingress"},
 			{ClusterID: "gap", FinalECKU: 1, SLAFloorECKU: 1, MaxRatioDriver: "ingress", InputsMissing: []string{"topics", "acls"}},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{
-			{ClusterID: "ok", Verdict: types.ClusterTypeEnterprise},
-			{ClusterID: "gap", Verdict: types.ClusterTypeEnterprise, InputsMissing: []string{"topics", "acls"}},
+		ClusterTypeDecision: []ClusterTypeDecision{
+			{ClusterID: "ok", Verdict: ClusterTypeEnterprise},
+			{ClusterID: "gap", Verdict: ClusterTypeEnterprise, InputsMissing: []string{"topics", "acls"}},
 		},
-		NetworkingDecision: []types.NetworkingDecision{
-			{ClusterID: "ok", Verdict: types.NetworkingPNI, Reason: "PNI default"},
-			{ClusterID: "gap", Verdict: types.NetworkingPNI, Reason: "PNI default"},
+		NetworkingDecision: []NetworkingDecision{
+			{ClusterID: "ok", Verdict: NetworkingPNI, Reason: "PNI default"},
+			{ClusterID: "gap", Verdict: NetworkingPNI, Reason: "PNI default"},
 		},
-		SizingAppendix: []types.SizingMathDetail{
+		SizingAppendix: []SizingMathDetail{
 			{ClusterID: "ok", Formula: "CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))"},
 		},
 	}
@@ -231,20 +231,20 @@ func TestRenderMarkdown_InputsMissingMarksProvisional(t *testing.T) {
 // injection vector the code reviewer flagged.
 func TestRenderMarkdown_AppendixA2EscapesPipeInTableCells(t *testing.T) {
 	cfg := defaultCfg(t)
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "weird|name", FinalECKU: 1, SizedInMBps: 1, SizedOutMBps: 1, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{
+		ClusterTypeDecision: []ClusterTypeDecision{
 			{
 				ClusterID: "weird|name",
-				Verdict:   types.ClusterTypeEnterprise,
-				EvaluatedRules: []types.RuleEvaluation{
-					{RowID: "demo", Description: "Demo rule", Outcome: types.RuleNotFired, Evidence: "value a|b"},
+				Verdict:   ClusterTypeEnterprise,
+				EvaluatedRules: []RuleEvaluation{
+					{RowID: "demo", Description: "Demo rule", Outcome: RuleNotFired, Evidence: "value a|b"},
 				},
 			},
 		},
-		NetworkingDecision: []types.NetworkingDecision{{ClusterID: "weird|name", Verdict: types.NetworkingPNI, Reason: "x"}},
+		NetworkingDecision: []NetworkingDecision{{ClusterID: "weird|name", Verdict: NetworkingPNI, Reason: "x"}},
 	}
 	out, err := RenderMarkdown(p, cfg)
 	require.NoError(t, err)
@@ -260,19 +260,19 @@ func TestRenderMarkdown_AppendixA2EscapesPipeInTableCells(t *testing.T) {
 // appears for each.
 func TestRenderMarkdown_CostCalloutMultipleTriggers(t *testing.T) {
 	cfg := defaultCfg(t)
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "combo", FinalECKU: 2, SizedInMBps: 10, SizedOutMBps: 10, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{{
+		ClusterTypeDecision: []ClusterTypeDecision{{
 			ClusterID: "combo",
-			Verdict:   types.ClusterTypeDedicated,
-			Triggers: []types.HardLimitTrigger{
+			Verdict:   ClusterTypeDedicated,
+			Triggers: []HardLimitTrigger{
 				{RowID: "sla_99_95_single_zone", Description: "99.95% single-zone SLA required", CustomerDeclared: true},
 				{RowID: "broker_side_schema_validation_required", Description: "Broker-side schema ID validation required", CustomerDeclared: true},
 			},
 		}},
-		NetworkingDecision: []types.NetworkingDecision{{ClusterID: "combo", Verdict: types.NetworkingPNI, Reason: "Dedicated"}},
+		NetworkingDecision: []NetworkingDecision{{ClusterID: "combo", Verdict: NetworkingPNI, Reason: "Dedicated"}},
 	}
 	out, err := RenderMarkdown(p, cfg)
 	require.NoError(t, err)
@@ -289,12 +289,12 @@ func TestRenderMarkdown_CostCalloutMultipleTriggers(t *testing.T) {
 // the `_Inputs missing_` Why-line note or a `*` provisional marker.
 func TestRenderMarkdown_HealthyClusterHasNoProvisionalMarker(t *testing.T) {
 	cfg := defaultCfg(t)
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "ok", FinalECKU: 1, SizedInMBps: 5, SizedOutMBps: 8, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{{ClusterID: "ok", Verdict: types.ClusterTypeEnterprise}},
-		NetworkingDecision:  []types.NetworkingDecision{{ClusterID: "ok", Verdict: types.NetworkingPNI, Reason: "default"}},
+		ClusterTypeDecision: []ClusterTypeDecision{{ClusterID: "ok", Verdict: ClusterTypeEnterprise}},
+		NetworkingDecision:  []NetworkingDecision{{ClusterID: "ok", Verdict: NetworkingPNI, Reason: "default"}},
 	}
 	out, err := RenderMarkdown(p, cfg)
 	require.NoError(t, err)
@@ -309,24 +309,24 @@ func TestRenderMarkdown_HealthyClusterHasNoProvisionalMarker(t *testing.T) {
 // callouts.
 func TestRenderMarkdown_GlobalTriggerCollapsesToBanner(t *testing.T) {
 	cfg := defaultCfg(t)
-	mkTrigger := func(id, desc string) []types.HardLimitTrigger {
-		return []types.HardLimitTrigger{{RowID: id, Description: desc, CustomerDeclared: true}}
+	mkTrigger := func(id, desc string) []HardLimitTrigger {
+		return []HardLimitTrigger{{RowID: id, Description: desc, CustomerDeclared: true}}
 	}
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "a", FinalECKU: 1, MaxRatioDriver: "ingress"},
 			{ClusterID: "b", FinalECKU: 1, MaxRatioDriver: "ingress"},
 			{ClusterID: "c", FinalECKU: 1, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{
-			{ClusterID: "a", Verdict: types.ClusterTypeDedicated, Topology: types.TopologySingleZone, Triggers: mkTrigger("sla_99_95_single_zone", "99.95% single-zone SLA required")},
-			{ClusterID: "b", Verdict: types.ClusterTypeDedicated, Topology: types.TopologySingleZone, Triggers: mkTrigger("sla_99_95_single_zone", "99.95% single-zone SLA required")},
-			{ClusterID: "c", Verdict: types.ClusterTypeDedicated, Topology: types.TopologySingleZone, Triggers: mkTrigger("sla_99_95_single_zone", "99.95% single-zone SLA required")},
+		ClusterTypeDecision: []ClusterTypeDecision{
+			{ClusterID: "a", Verdict: ClusterTypeDedicated, Topology: TopologySingleZone, Triggers: mkTrigger("sla_99_95_single_zone", "99.95% single-zone SLA required")},
+			{ClusterID: "b", Verdict: ClusterTypeDedicated, Topology: TopologySingleZone, Triggers: mkTrigger("sla_99_95_single_zone", "99.95% single-zone SLA required")},
+			{ClusterID: "c", Verdict: ClusterTypeDedicated, Topology: TopologySingleZone, Triggers: mkTrigger("sla_99_95_single_zone", "99.95% single-zone SLA required")},
 		},
-		NetworkingDecision: []types.NetworkingDecision{
-			{ClusterID: "a", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
-			{ClusterID: "b", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
-			{ClusterID: "c", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
+		NetworkingDecision: []NetworkingDecision{
+			{ClusterID: "a", Verdict: NetworkingPNI, Reason: "Dedicated"},
+			{ClusterID: "b", Verdict: NetworkingPNI, Reason: "Dedicated"},
+			{ClusterID: "c", Verdict: NetworkingPNI, Reason: "Dedicated"},
 		},
 	}
 	out, err := RenderMarkdown(p, cfg)
@@ -364,25 +364,25 @@ func TestSlaFloorList_SortedDeterministic(t *testing.T) {
 // firing cluster (the global banner must NOT appear).
 func TestDetectGlobalCustomerTriggers_PartialFireKeepsInline(t *testing.T) {
 	cfg := defaultCfg(t)
-	mkTrigger := func() []types.HardLimitTrigger {
-		return []types.HardLimitTrigger{{RowID: "sla_99_95_single_zone", Description: "99.95% single-zone SLA required", CustomerDeclared: true}}
+	mkTrigger := func() []HardLimitTrigger {
+		return []HardLimitTrigger{{RowID: "sla_99_95_single_zone", Description: "99.95% single-zone SLA required", CustomerDeclared: true}}
 	}
-	p := &types.Plan{
-		Sizing: []types.ClusterSizing{
+	p := &Plan{
+		Sizing: []ClusterSizing{
 			{ClusterID: "a", FinalECKU: 1, MaxRatioDriver: "ingress"},
 			{ClusterID: "b", FinalECKU: 1, MaxRatioDriver: "ingress"},
 			{ClusterID: "c", FinalECKU: 1, MaxRatioDriver: "ingress"},
 		},
-		ClusterTypeDecision: []types.ClusterTypeDecision{
+		ClusterTypeDecision: []ClusterTypeDecision{
 			// a + b fire; c doesn't (Enterprise default)
-			{ClusterID: "a", Verdict: types.ClusterTypeDedicated, Topology: types.TopologySingleZone, Triggers: mkTrigger()},
-			{ClusterID: "b", Verdict: types.ClusterTypeDedicated, Topology: types.TopologySingleZone, Triggers: mkTrigger()},
-			{ClusterID: "c", Verdict: types.ClusterTypeEnterprise},
+			{ClusterID: "a", Verdict: ClusterTypeDedicated, Topology: TopologySingleZone, Triggers: mkTrigger()},
+			{ClusterID: "b", Verdict: ClusterTypeDedicated, Topology: TopologySingleZone, Triggers: mkTrigger()},
+			{ClusterID: "c", Verdict: ClusterTypeEnterprise},
 		},
-		NetworkingDecision: []types.NetworkingDecision{
-			{ClusterID: "a", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
-			{ClusterID: "b", Verdict: types.NetworkingPNI, Reason: "Dedicated"},
-			{ClusterID: "c", Verdict: types.NetworkingPNI, Reason: "default for AWS Enterprise"},
+		NetworkingDecision: []NetworkingDecision{
+			{ClusterID: "a", Verdict: NetworkingPNI, Reason: "Dedicated"},
+			{ClusterID: "b", Verdict: NetworkingPNI, Reason: "Dedicated"},
+			{ClusterID: "c", Verdict: NetworkingPNI, Reason: "default for AWS Enterprise"},
 		},
 	}
 	out, err := RenderMarkdown(p, cfg)
@@ -392,6 +392,111 @@ func TestDetectGlobalCustomerTriggers_PartialFireKeepsInline(t *testing.T) {
 	perClusterCount := strings.Count(body, "  - ⚠ **Cost callout:**")
 	szTradeoffCount := strings.Count(body, "Single-Zone resilience tradeoff")
 	assert.Equal(t, 0, bannerCount, "partial fire (2 of 3) must NOT collapse to a global banner")
-	assert.Equal(t, 2, perClusterCount, "each firing cluster must keep its inline cost callout when scope is partial")
-	assert.Equal(t, 2, szTradeoffCount, "each SZ cluster must keep its inline resilience tradeoff when scope is partial")
+	// Both firing clusters share identical rationale + identical extras,
+	// so they collapse to ONE bullet with both clusters listed and the
+	// inline cost callout rendered once. The non-firing cluster (c) is
+	// its own bullet with no callout. Pre-fix behavior rendered the
+	// same paragraph N times; post-fix collapses identical paragraphs.
+	assert.Equal(t, 1, perClusterCount, "identical inline cost callouts must collapse to one bullet across firing clusters")
+	assert.Equal(t, 1, szTradeoffCount, "identical SZ tradeoff callouts must collapse to one bullet across firing clusters")
+}
+
+// groupOpenQuestions collapses two OQs identical except for the
+// embedded `--region <X>` flag in HowToClose: the per-region command
+// difference must NOT defeat the grouping, and the renderer should
+// swap a `<region>` placeholder once multiple distinct regions exist
+// in the merged group.
+func TestGroupOpenQuestions_RegionFlagNormalizationCollapses(t *testing.T) {
+	oqs := []OpenQuestion{
+		{
+			ID:         "auth_posture_unknown",
+			ClusterID:  "a",
+			Title:      "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
+			Body:       "Body shared across regions",
+			HowToClose: "Re-run `kcp discover --region us-east-1` against the source AWS account.",
+		},
+		{
+			ID:         "auth_posture_unknown",
+			ClusterID:  "b",
+			Title:      "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
+			Body:       "Body shared across regions",
+			HowToClose: "Re-run `kcp discover --region eu-central-1` against the source AWS account.",
+		},
+	}
+	groups := groupOpenQuestions(oqs)
+	require.Len(t, groups, 1, "OQs identical except for --region must collapse to one group")
+	require.Len(t, groups[0].clusters, 2)
+	require.Len(t, groups[0].regions, 2, "the two distinct regions must be tracked")
+}
+
+// Renderer swap path: when a grouped OQ spans multiple regions, the
+// concrete `--region <X>` is replaced with `--region <region>` in the
+// rendered HowToClose so the user sees a generic command, not the
+// first-seen region.
+func TestActionsNeededRender_MultiRegionGroupSwapsPlaceholder(t *testing.T) {
+	cfg := defaultCfg(t)
+	p := &Plan{
+		OpenQuestions: []OpenQuestion{
+			{
+				ID:         "auth_posture_unknown",
+				ClusterID:  "a",
+				Title:      "No client-authentication methods detected — region a",
+				Body:       "shared body",
+				HowToClose: "Re-run `kcp discover --region us-east-1` against the source AWS account.",
+			},
+			{
+				ID:         "auth_posture_unknown",
+				ClusterID:  "b",
+				Title:      "No client-authentication methods detected — region a",
+				Body:       "shared body",
+				HowToClose: "Re-run `kcp discover --region eu-central-1` against the source AWS account.",
+			},
+		},
+	}
+	out, err := RenderMarkdown(p, cfg)
+	require.NoError(t, err)
+	body := string(out)
+	assert.Contains(t, body, "--region <region>", "multi-region grouped OQ must render a placeholder")
+	assert.NotContains(t, body, "--region us-east-1", "concrete first-seen region must be swapped out")
+	assert.NotContains(t, body, "--region eu-central-1")
+}
+
+// §5 Schema Migration "Scan gap" branch: when the customer declared
+// `migrate_existing_schema_registry` but the scan found no SR, both
+// the recommended-path line and the strategy-declared line should
+// surface the contradiction so the reader doesn't see a misleading
+// "Pending — declare the missing input".
+func TestSchemaLabels_ScanGapWhenDeclaredButNotScanned(t *testing.T) {
+	dec := &SchemaDecision{Source: SchemaSourceNone}
+	pathLabel := schemaPathsLabelForContext(nil, SchemaStrategyMigrateExistingSchemaRegistry, dec.Source)
+	assert.Contains(t, pathLabel, "Scan gap", "recommended-path should call out the scan gap explicitly")
+	assert.Contains(t, pathLabel, "re-run", "scan-gap label must nudge the customer to re-run the scan")
+
+	strategyLabel := schemaStrategyDeclaredLabel(SchemaStrategyMigrateExistingSchemaRegistry, dec)
+	assert.Contains(t, strategyLabel, "⚠", "declared strategy must carry the ⚠ marker when it contradicts the scan")
+	assert.Contains(t, strategyLabel, "no Schema Registry", "the strategy label must name the contradiction")
+}
+
+// formatUSDWithCommas handles the edge cases that broke the prior
+// implementation: small-magnitude negatives losing their sign, and
+// fractional carry on values just below an integer boundary.
+func TestFormatUSDWithCommas(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{0, "0.00"},
+		{0.5, "0.50"},
+		{1.999, "2.00"},      // fractional carry
+		{-0.99, "-0.99"},     // small-magnitude negative kept its sign
+		{1234.5, "1,234.50"}, // thousands separator
+		{1234567.89, "1,234,567.89"},
+		{-1234567.89, "-1,234,567.89"},
+		{1795.75, "1,795.75"}, // the canonical §Cost Reconciliation amount
+	}
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("%v", c.in), func(t *testing.T) {
+			assert.Equal(t, c.want, formatUSDWithCommas(c.in))
+		})
+	}
 }

@@ -20,7 +20,7 @@ global_job_config:
     commands:
       - sem-version node 24.6.0
       - npm install -g yarn@1.22.22
-      - sem-version go 1.25.10
+      - sem-version go 1.25.11
       - export "GOPATH=$(go env GOPATH)"
       - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
       - export "PATH=${GOPATH}/bin:${PATH}"
@@ -86,8 +86,6 @@ blocks:
 
   - name: 'terraform validation tests'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
-    run:
-      when: "change_in(['/internal/services/hcl/', '/internal/types/types.go', '/internal/types/kafka.go', '/cmd/create_asset/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       prologue:
         commands:
@@ -107,8 +105,6 @@ blocks:
 
   - name: 'integration: osk scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
-    run:
-      when: "change_in(['/cmd/scan/', '/internal/sources/', '/internal/client/', '/internal/types/', '/internal/services/jmx/', '/internal/services/prometheus/', '/internal/services/kafka/', '/integration-tests/osk-scan/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       prologue:
         commands:
@@ -123,28 +119,8 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-osk-scan
 
-  - name: 'integration: kafka connect scan'
-    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
-    run:
-      when: "change_in(['/cmd/scan/self_managed_connectors/', '/internal/types/self_managed_connect.go', '/integration-tests/osk-scan/docker-compose.yml', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
-    task:
-      prologue:
-        commands:
-          # keytool (from JDK) is required for TLS certificate generation
-          - sem-version java 17
-      jobs:
-        - name: 'kafka connect scan'
-          commands:
-            - cache restore frontend-dependencies
-            - cache restore go-mod-cache
-            - cache restore go-build-cache
-            - cd cmd/ui/frontend && yarn install && yarn build && cd -
-            - make test-kafka-connect
-
   - name: 'integration: schema registry scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
-    run:
-      when: "change_in(['/cmd/scan/schema_registry/', '/internal/client/schema_registry.go', '/internal/services/schema_registry/', '/integration-tests/schema-registry/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       jobs:
         - name: 'schema registry scan'
@@ -157,8 +133,6 @@ blocks:
 
   - name: 'integration: migration e2e'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
-    run:
-      when: "change_in(['/cmd/migration/', '/internal/services/migration/', '/internal/types/migration_config.go', '/internal/types/migration_state.go', '/internal/types/migration_constants.go', '/internal/services/gateway/', '/internal/services/clusterlink/', '/internal/services/offset/', '/integration-tests/migration/', '/Makefile', '/.semaphore/semaphore.yml'], {default_branch: 'main'})"
     task:
       agent:
         machine:
@@ -198,7 +172,7 @@ blocks:
           value: 'ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db'
       prologue:
         commands:
-          - sem-version go 1.25.10
+          - sem-version go 1.25.11
           - export "GOPATH=$(go env GOPATH)"
           - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
           - export "PATH=${GOPATH}/bin:${PATH}"

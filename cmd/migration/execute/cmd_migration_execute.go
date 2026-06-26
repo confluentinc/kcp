@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -24,8 +25,9 @@ var (
 	useUnauthenticatedTLS       bool
 	useUnauthenticatedPlaintext bool
 
-	saslScramUsername string
-	saslScramPassword string
+	saslScramUsername  string
+	saslScramPassword  string
+	saslScramMechanism string
 
 	saslPlainUsername string
 	saslPlainPassword string
@@ -59,7 +61,7 @@ the migration state file and must be provided each time.`,
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-sasl-iam --aws-region us-east-1
 
-  # OSK source with TLS
+  # Apache Kafka source with TLS
   kcp migration execute \
       --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
       --lag-threshold 0 \
@@ -108,6 +110,7 @@ the migration state file and must be provided each time.`,
 	saslScramFlags.SortFlags = false
 	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
+	saslScramFlags.StringVar(&saslScramMechanism, "sasl-scram-mechanism", "SHA512", "SASL/SCRAM mechanism (SHA256 or SHA512). Defaults to SHA512 for MSK compatibility.")
 	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
@@ -180,6 +183,12 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
+		switch saslScramMechanism {
+		case "SHA256", "SHA512":
+			// valid
+		default:
+			return fmt.Errorf("invalid --sasl-scram-mechanism %q: must be SHA256 or SHA512", saslScramMechanism)
+		}
 	}
 
 	if useSaslPlain {
@@ -198,7 +207,7 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 
 func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// Load migration state (following established pattern)
-	migrationState, err := types.NewMigrationStateFromFile(migrationStateFile)
+	migrationState, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init' to create a new migration first", migrationStateFile, err)
 	}
@@ -238,7 +247,7 @@ func resolveAuthType() types.AuthType {
 	}
 }
 
-func parseMigrationExecutorOpts(migrationState types.MigrationState, config types.MigrationConfig) MigrationExecutorOpts {
+func parseMigrationExecutorOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
 		MigrationStateFile:    migrationStateFile,
 		MigrationState:        migrationState,
@@ -252,6 +261,7 @@ func parseMigrationExecutorOpts(migrationState types.MigrationState, config type
 		AuthType:              resolveAuthType(),
 		SaslScramUsername:     saslScramUsername,
 		SaslScramPassword:     saslScramPassword,
+		SaslScramMechanism:    saslScramMechanism,
 		SaslPlainUsername:     saslPlainUsername,
 		SaslPlainPassword:     saslPlainPassword,
 		TlsCaCert:             tlsCaCert,
