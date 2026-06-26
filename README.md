@@ -9,7 +9,7 @@ Scan existing Kafka deployments, generate migration plans and cost reports, crea
 ## Installation
 
 > [!CAUTION]
-> Do not build from `main` for normal use — `main` is an in-development branch and is not a defined release. **Always install a released binary** for normal use, using the methods below. Builds from `main` are untested and may contain breaking changes.
+> **Do not build from source for normal use.** Install a released binary using the methods below instead. Source builds can contain breaking, untested changes.
 
 kcp ships pre-built binaries with every [GitHub release](https://github.com/confluentinc/kcp/releases/latest): macOS and Linux (amd64/arm64), and Windows (amd64).
 
@@ -66,16 +66,6 @@ kcp update              # check for and install the latest release
 kcp update --check-only # report the latest version without installing
 sudo kcp update         # for system-wide installs (e.g. /usr/local/bin)
 ```
-
-## Overview
-
-| Feature                     | Description                                                                              |
-| --------------------------- | ---------------------------------------------------------------------------------------- |
-| **Multiple Auth Methods**   | SASL-IAM, SASL-SCRAM, SASL/PLAIN, TLS, and unauthenticated.                             |
-| **Comprehensive Reporting** | Migration planning and cost analysis reports.                                            |
-| **Infrastructure as Code**  | Generate Terraform and Ansible configurations for Confluent Cloud.                       |
-| **Migration Execution**     | FSM-driven workflow with lag monitoring, gateway fencing, and topic promotion.            |
-| **Private VPC Deployments** | Migrate from private networks and isolated environments.                                 |
 
 ## Contributing
 
