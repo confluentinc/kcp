@@ -25,6 +25,9 @@ type MigrationWorkflow struct {
 	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
 	// wait runs until the operator reports ready or the user cancels.
 	rolloutTimeout time.Duration
+	// quiescenceInterval is the wait between two source offset snapshots when
+	// detecting unrouted producers. Defaults to 10 seconds.
+	quiescenceInterval time.Duration
 }
 
 func NewMigrationWorkflow(
@@ -36,6 +39,7 @@ func NewMigrationWorkflow(
 		clusterLinkService:  clusterLinkService,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
+		quiescenceInterval:  10 * time.Second,
 	}
 }
 
@@ -52,6 +56,7 @@ func NewMigrationWorkflowWithOffsets(
 		destinationOffset:   destinationOffset,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
+		quiescenceInterval:  10 * time.Second,
 	}
 }
 
@@ -294,10 +299,82 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationC
 	return nil
 }
 
+// detectUnroutedProducers waits for in-flight producer batches to settle after
+// fencing, then takes two source offset snapshots separated by the quiescence
+// interval. Only partitions whose offset increases in BOTH intervals are
+// reported — this filters out one-off drain from fenced producers whose
+// in-flight batches landed just after the fence took effect.
+func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics []string) error {
+	// Phase 1: settle — allow in-flight batches from fenced producers to drain
+	fmt.Printf("   ↳ Waiting %s for in-flight batches to settle...\n", s.quiescenceInterval)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(s.quiescenceInterval):
+	}
+
+	// Phase 2: first snapshot
+	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
+	snapshot1 := make(map[string]map[int32]int64, len(topics))
+	for _, topic := range topics {
+		offsets, err := s.sourceOffset.Get(topic)
+		if err != nil {
+			return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
+		}
+		snapshot1[topic] = offsets
+	}
+
+	// Phase 3: wait, then second snapshot
+	fmt.Printf("   ↳ Monitoring source offsets for %s...\n", s.quiescenceInterval)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(s.quiescenceInterval):
+	}
+
+	slog.Debug("taking second source offset snapshot")
+	var violations []string
+	for _, topic := range topics {
+		offsets, err := s.sourceOffset.Get(topic)
+		if err != nil {
+			return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
+		}
+		for p, o2 := range offsets {
+			if o1, ok := snapshot1[topic][p]; ok && o2 > o1 {
+				delta := o2 - o1
+				rate := float64(delta) / s.quiescenceInterval.Seconds()
+				violations = append(violations, fmt.Sprintf(
+					"topic %s partition %d: offset %d → %d (+%d, ~%.0f msg/s)",
+					topic, p, o1, o2, delta, rate))
+			}
+		}
+	}
+
+	if len(violations) > 0 {
+		sort.Strings(violations)
+		return fmt.Errorf("source offsets are still increasing after fencing — unrouted producer(s) detected:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nStop them and re-run 'kcp migration execute' to resume",
+			strings.Join(violations, "\n  "))
+	}
+
+	return nil
+}
+
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
 func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
+	}
+
+	// If enabled, verify source offsets are stable before promoting.
+	// An increasing offset after fencing indicates a producer bypassing the gateway.
+	if config.DetectUnroutedProducers {
+		fmt.Printf("\n%s Checking for unrouted producers...\n",
+			color.CyanString("🔍"))
+		if err := s.detectUnroutedProducers(ctx, config.Topics); err != nil {
+			return err
+		}
+		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
+			color.GreenString("✔"))
 	}
 
 	slog.Debug("topic promotion process started")
