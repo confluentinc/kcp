@@ -173,6 +173,77 @@ func TestPlan_CreatePresentInternalFilter(t *testing.T) {
 	}
 }
 
+func TestPlan_DriftOnInactiveMirror(t *testing.T) {
+	// The manifest selects source "orders" (→ expected mirror "dc-orders"). The
+	// mirror exists but is PAUSED (tampered with out-of-band) → Drift (report
+	// only), not Present/Create.
+	src := &fakeSource{topics: []string{"orders"}}
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		configs:   map[string]string{linkConfigPrefix: "dc-"},
+		mirrors:   []svclink.MirrorTopic{{MirrorTopicName: "dc-orders", SourceTopicName: "orders", MirrorStatus: "PAUSED"}},
+	}
+	r := New(Config{LinkName: "lk", Include: []string{"*"}}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	changes := p.Changes()
+	if len(changes) != 1 {
+		t.Fatalf("want 1 change, got %d", len(changes))
+	}
+	c := changes[0]
+	if c.Action != reconcile.ActionDrift {
+		t.Errorf("want Drift, got %v", c.Action)
+	}
+	if !strings.Contains(c.Detail, `"PAUSED"`) || !strings.Contains(c.Detail, "expected ACTIVE") {
+		t.Errorf("drift detail should name the live status and expected ACTIVE, got %q", c.Detail)
+	}
+	if !p.Empty() {
+		t.Errorf("a drift-only plan has no creates, so it must be Empty")
+	}
+
+	// Apply records the drift report-only: no mirror created, drift surfaced.
+	out, err := r.Apply(context.Background(), p)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(tgt.created) != 0 {
+		t.Errorf("drift must never create a mirror, got %v", tgt.created)
+	}
+	if len(out.Drift) != 1 || len(out.Created) != 0 || len(out.Present) != 0 {
+		t.Errorf("want 1 drift / 0 created / 0 present, got %d/%d/%d",
+			len(out.Drift), len(out.Created), len(out.Present))
+	}
+}
+
+func TestPlan_PresentWhenActiveOrUnknownStatus(t *testing.T) {
+	// An ACTIVE mirror and a mirror whose status the broker didn't report (empty)
+	// are both Present — the empty case must NOT be fabricated into drift.
+	src := &fakeSource{topics: []string{"orders", "events"}}
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		configs:   map[string]string{linkConfigPrefix: "dc-"},
+		mirrors: []svclink.MirrorTopic{
+			{MirrorTopicName: "dc-orders", SourceTopicName: "orders", MirrorStatus: "ACTIVE"},
+			{MirrorTopicName: "dc-events", SourceTopicName: "events"}, // status unreported
+		},
+	}
+	r := New(Config{LinkName: "lk", Include: []string{"*"}}, src, tgt, tgt)
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	got := summaryActions(p.Changes())
+	if act := got[`mirror topic "dc-orders"`]; act != reconcile.ActionPresent {
+		t.Errorf("ACTIVE mirror → want Present, got %v", act)
+	}
+	if act := got[`mirror topic "dc-events"`]; act != reconcile.ActionPresent {
+		t.Errorf("unknown-status mirror → want Present (no fabricated drift), got %v", act)
+	}
+}
+
 func TestPlan_NoPrefix(t *testing.T) {
 	src := &fakeSource{topics: []string{"orders"}}
 	tgt := &fakeLinkTarget{

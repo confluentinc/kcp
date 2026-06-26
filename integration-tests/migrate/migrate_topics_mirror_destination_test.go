@@ -222,6 +222,59 @@ func TestMigrateApply_TopicsMirror_FamilyGlob(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Case 1b — drift: a mirror is created ACTIVE, then paused out-of-band; re-apply
+// must REPORT it as drift (present but not ACTIVE) and never alter/recreate it.
+//
+// This is the realistic "user tampered with a mirror" case. The source-name
+// mismatch we first considered is structurally impossible: cp-server enforces
+// mirror_topic_name == prefix + source_topic_name (error 40035), so a mirror
+// named prefix+S always mirrors S. A paused/stopped/failed mirror, however, is
+// constructible and worth catching.
+// ---------------------------------------------------------------------------
+
+func TestMigrateApply_TopicsMirror_DriftOnInactiveMirror(t *testing.T) {
+	dir := t.TempDir()
+	link := uniqueLinkName("mt-drift")
+	prefix := uniqueMirrorPrefix(link)
+
+	srcPoller := newRestClient(t, restSource)
+	srcPoller.waitForClusterID(t)
+	seedTopicCatalog(t, srcPoller, sourceClusterID)
+
+	m := writeMirrorManifest(t, dir, mirrorManifestOpts{link: link, prefix: prefix, include: []string{"orders-1"}})
+
+	poller := newRestClient(t, restDest)
+	poller.waitForClusterID(t)
+	defer poller.deleteLink(t, destClusterID, link)
+
+	mirror := prefix + "orders-1"
+	rep := newMirrorReporter(link, "a mirror is created ACTIVE, then paused out-of-band (operator tamper); re-apply reports it as drift (present but status PAUSED) and never alters or recreates it.", m, link, []string{"orders-1"})
+	rep.expected("after pause, re-apply reports 0 created, 0 already present, 1 drift, 0 failed; the mirror stays PAUSED (drift is report-only)")
+	defer rep.commit(t, poller)
+
+	// 1. Apply → mirror created and ACTIVE.
+	out, err := runKCP(t, m)
+	rep.apply(out)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "mirrorTopics: 1 created", out)
+	poller.requireLinkActive(t, destClusterID, link)
+	poller.requireMirrorStatus(t, destClusterID, link, mirror, "ACTIVE")
+
+	// 2. Simulate an operator pausing the mirror out-of-band.
+	poller.pauseMirror(t, destClusterID, link, mirror)
+	poller.requireMirrorStatus(t, destClusterID, link, mirror, "PAUSED")
+
+	// 3. Re-apply → drift reported; the mirror is left exactly as it was.
+	out, err = runKCP(t, m)
+	rep.reapply(out)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "mirrorTopics: 0 created, 0 already present, 1 drift, 0 failed", out)
+	require.Contains(t, out, `present but mirror status is "PAUSED"`, out)
+	require.Len(t, poller.listMirrorTopics(destClusterID, link), 1, "drift must not create or remove the mirror")
+	require.Equal(t, "PAUSED", poller.mirrorStatuses(destClusterID, link)[mirror], "drift is report-only; the mirror stays paused")
+}
+
+// ---------------------------------------------------------------------------
 // Case 2 — single-char ? wildcard
 // ---------------------------------------------------------------------------
 

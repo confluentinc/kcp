@@ -52,6 +52,7 @@ type MirrorLag struct {
 
 type MirrorTopic struct {
 	MirrorTopicName string      `json:"mirror_topic_name"`
+	SourceTopicName string      `json:"source_topic_name"`
 	MirrorStatus    string      `json:"mirror_status"`
 	MirrorLags      []MirrorLag `json:"mirror_lags"`
 }

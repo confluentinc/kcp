@@ -124,26 +124,55 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listing mirror topics: %w", err)
 	}
-	existing := map[string]struct{}{}
+	// Map each existing mirror name to its live status, so the plan can tell a
+	// healthy mirror (Present) from one that exists but is no longer actively
+	// mirroring — e.g. paused/stopped/failed out-of-band (Drift).
+	//
+	// Note on a related state that is NOT detectable here: cp-server enforces
+	// mirror_topic_name == prefix + source_topic_name (error 40035 on any other
+	// name), so a mirror named prefix+S is guaranteed to mirror source S. A
+	// "same name, different source" mismatch is therefore structurally
+	// impossible and needs no check.
+	existingStatus := map[string]string{}
 	for _, m := range mirrors {
-		existing[m.MirrorTopicName] = struct{}{}
+		existingStatus[m.MirrorTopicName] = m.MirrorStatus
 	}
 
 	steps := make([]mirrorStep, 0, len(desired))
 	for _, srcTopic := range desired {
 		mirrorName := prefix + srcTopic
 		summary := fmt.Sprintf("mirror topic %q", mirrorName)
-		if _, ok := existing[mirrorName]; ok {
+		status, ok := existingStatus[mirrorName]
+		switch {
+		case !ok:
+			steps = append(steps, mirrorStep{
+				change:      reconcile.Change{Action: reconcile.ActionCreate, Summary: summary, Detail: fmt.Sprintf("source %s", srcTopic)},
+				sourceTopic: srcTopic, mirrorTopic: mirrorName,
+			})
+		case mirrorHealthy(status):
 			steps = append(steps, mirrorStep{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}})
-			continue
+		default:
+			// Mirror exists but is not actively mirroring (paused/stopped/failed,
+			// e.g. tampered with out-of-band). Report-only — never altered or
+			// recreated (§8.6); remediation is a deliberate operator action.
+			steps = append(steps, mirrorStep{change: reconcile.Change{
+				Action:  reconcile.ActionDrift,
+				Summary: summary,
+				Detail:  fmt.Sprintf("present but mirror status is %q (expected %s)", status, svclink.MirrorStatusActive),
+			}})
 		}
-		steps = append(steps, mirrorStep{
-			change:      reconcile.Change{Action: reconcile.ActionCreate, Summary: summary, Detail: fmt.Sprintf("source %s", srcTopic)},
-			sourceTopic: srcTopic, mirrorTopic: mirrorName,
-		})
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].change.Summary < steps[j].change.Summary })
 	return plan{steps: steps}, nil
+}
+
+// mirrorHealthy reports whether a present mirror's status counts as healthy
+// (Present) rather than drift. ACTIVE is healthy; an empty status is treated as
+// healthy too, so a read that omits the field never fabricates drift (matching
+// the config-drift policy). Every other reported state (PAUSED, STOPPED,
+// FAILED, …) means the mirror exists but is not actively mirroring → drift.
+func mirrorHealthy(status string) bool {
+	return status == "" || status == svclink.MirrorStatusActive
 }
 
 // readLinkPrefix returns the prefix to use for mirror names. It prefers the LIVE
@@ -181,10 +210,7 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 			out.Created = append(out.Created, s.change)
 		case reconcile.ActionPresent:
 			out.Present = append(out.Present, s.change)
-		default:
-			// No Drift today: drift detection is deferred because MirrorTopic
-			// exposes no source-topic-name field to compare against. This branch
-			// is defensive (switch exhaustiveness) and currently unreachable.
+		default: // ActionDrift — report only, never alter or recreate (§8.6).
 			out.Drift = append(out.Drift, s.change)
 		}
 	}

@@ -243,6 +243,45 @@ func (c restClient) requireMirrorsPresent(t *testing.T, clusterID, link string, 
 	t.Fatalf("mirrors %v not all present on link %q (cluster %s); observed %v", wanted, link, clusterID, keys(have))
 }
 
+// pauseMirror pauses a mirror topic via the cp-server alter-mirrors API
+// (POST .../links/{link}/mirrors:pause). Simulates an operator stopping a mirror
+// out-of-band, which the reconciler must then report as drift. Fatal on non-2xx.
+func (c restClient) pauseMirror(t *testing.T, clusterID, link, mirrorName string) {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{"mirror_topic_names": []string{mirrorName}})
+	require.NoError(t, err)
+	url := c.base + "/kafka/v3/clusters/" + clusterID + "/links/" + link + "/mirrors:pause"
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	require.NoError(t, err)
+	if c.header != "" {
+		req.Header.Set("Authorization", c.header)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.client.Do(req)
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		t.Fatalf("pause mirror %q on link %q: status %d: %s", mirrorName, link, resp.StatusCode, string(b))
+	}
+}
+
+// requireMirrorStatus polls until the named mirror reports the wanted status,
+// failing on timeout (mirror state transitions propagate asynchronously).
+func (c restClient) requireMirrorStatus(t *testing.T, clusterID, link, mirrorName, want string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var last string
+	for time.Now().Before(deadline) {
+		last = c.mirrorStatuses(clusterID, link)[mirrorName]
+		if last == want {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("mirror %q on link %q: want status %q, last observed %q", mirrorName, link, want, last)
+}
+
 func keys(m map[string]struct{}) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {
