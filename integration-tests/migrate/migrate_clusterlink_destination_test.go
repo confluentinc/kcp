@@ -245,7 +245,14 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 	if reportEnabled {
 		in.results = append(in.results, resultBlock{label: "link configs after drift re-apply (UNCHANGED)", url: configsURL, json: linkConfigsJSON(poller, destClusterID, link)})
 	}
+	// The changed key is reported as drift but never mutated...
 	require.Equal(t, "30000", cfgs["consumer.offset.sync.ms"], "drift must not alter the live config")
+	// ...and so are the OTHER managed configs set at create time: a drift re-apply
+	// must leave the whole managed config set as it was created, not just the one
+	// key that changed.
+	require.Equal(t, "mig.", cfgs["cluster.link.prefix"], "drift re-apply must not alter cluster.link.prefix")
+	require.Equal(t, "true", cfgs["consumer.offset.sync.enable"], "drift re-apply must not alter consumer.offset.sync.enable")
+	require.Contains(t, cfgs["consumer.offset.group.filters"], "\"filterType\":\"INCLUDE\"", "drift re-apply must not alter the consumer-offset group filters")
 }
 
 // ---------------------------------------------------------------------------
