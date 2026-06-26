@@ -62,14 +62,14 @@ func (m *MigrationExecutor) Run() error {
 	if err != nil {
 		return err
 	}
-	defer sourceOffset.Close()
+	defer func() { _ = sourceOffset.Close() }()
 
 	// Create destination Kafka client (CC)
 	destinationOffset, err := m.createDestinationOffset()
 	if err != nil {
 		return err
 	}
-	defer destinationOffset.Close()
+	defer func() { _ = destinationOffset.Close() }()
 
 	httpClient := http.DefaultClient
 	if m.opts.InsecureSkipTLSVerify {

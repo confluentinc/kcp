@@ -182,80 +182,20 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 
 // createKafkaAdmin creates a Kafka Admin client for the OSK cluster
 func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
-	// OSK clusters don't have AWS-specific encryption settings, so we default to TLS
-	// For unauthenticated plaintext, the client will handle disabling TLS
-	clientBrokerEncryptionInTransit := kafkatypes.ClientBrokerTls
-
-	// Default Kafka version for OSK clusters (can be overridden if needed)
+	// Default Kafka version for OSK clusters; region is not applicable for OSK.
 	kafkaVersion := "3.6.0"
-
-	// Region is not applicable for OSK, use empty string
 	region := ""
 
-	// Create admin client with appropriate auth options
-	var kafkaAdmin client.KafkaAdmin
-	var err error
-
-	switch authType {
-	case types.AuthTypeSASLSCRAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			clientBrokerEncryptionInTransit,
-			region,
-			kafkaVersion,
-			client.WithSASLSCRAMAuth(
-				clusterCreds.AuthMethod.SASLScram.Username,
-				clusterCreds.AuthMethod.SASLScram.Password,
-				clusterCreds.AuthMethod.SASLScram.Mechanism,
-				clusterCreds.InsecureSkipTLSVerify,
-			),
-		)
-	case types.AuthTypeSASLPlain:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			kafkatypes.ClientBrokerPlaintext,
-			region,
-			kafkaVersion,
-			client.WithSASLPlainAuthNoTLS(
-				clusterCreds.AuthMethod.SASLPlain.Username,
-				clusterCreds.AuthMethod.SASLPlain.Password,
-			),
-		)
-	case types.AuthTypeUnauthenticatedTLS:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			clientBrokerEncryptionInTransit,
-			region,
-			kafkaVersion,
-			client.WithUnauthenticatedTlsAuth(),
-		)
-	case types.AuthTypeUnauthenticatedPlaintext:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			kafkatypes.ClientBrokerPlaintext,
-			region,
-			kafkaVersion,
-			client.WithUnauthenticatedPlaintextAuth(),
-		)
-	case types.AuthTypeTLS:
-		kafkaAdmin, err = client.NewKafkaAdmin(
-			clusterCreds.BootstrapServers,
-			clientBrokerEncryptionInTransit,
-			region,
-			kafkaVersion,
-			client.WithTLSAuth(
-				clusterCreds.AuthMethod.TLS.CACert,
-				clusterCreds.AuthMethod.TLS.ClientCert,
-				clusterCreds.AuthMethod.TLS.ClientKey,
-			),
-		)
-	default:
-		return nil, fmt.Errorf("unsupported auth type for Apache Kafka: %v", authType)
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterCreds.AuthMethod, clusterCreds.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option for Apache Kafka: %w", err)
 	}
 
+	// clientBrokerEncryptionInTransit is unused inside NewKafkaAdmin; TLS behavior is
+	// driven by the auth option. Pass a uniform value — behavior is unchanged.
+	kafkaAdmin, err := client.NewKafkaAdmin(clusterCreds.BootstrapServers, kafkatypes.ClientBrokerTls, region, kafkaVersion, authOpt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin client: %w", err)
 	}
-
 	return kafkaAdmin, nil
 }

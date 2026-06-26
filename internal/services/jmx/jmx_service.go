@@ -383,14 +383,14 @@ func buildJMXQueryInfo(endpointURLs []string, duration, interval time.Duration, 
 				mb.ValueKey, mb.MBean, entityName)
 		}
 		infos = append(infos, types.MetricQueryInfo{
-			MetricName:    mb.Name,
-			SourceType:    types.MetricBackendJolokia,
-			Statistic:     statistic,
-			Period:        periodSec,
-			QueryDuration: durationStr,
-			MBeanPath:     mb.MBean,
-			JolokiaURL:    exampleURL,
-			CurlCommand:   fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
+			MetricName:      mb.Name,
+			SourceType:      types.MetricBackendJolokia,
+			Statistic:       statistic,
+			Period:          periodSec,
+			QueryDuration:   durationStr,
+			MBeanPath:       mb.MBean,
+			JolokiaURL:      exampleURL,
+			CurlCommand:     fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
 			AggregationNote: note,
 		})
 	}
@@ -417,14 +417,14 @@ func buildJMXQueryInfo(endpointURLs []string, duration, interval time.Duration, 
 			"Wildcard MBean pattern %s; the %s attribute is summed across all matching MBeans on all %d %s(s). Add -u user:pass to the curl command if authentication is configured.",
 			mb.MBean, mb.Attribute, endpointCount, entityName)
 		infos = append(infos, types.MetricQueryInfo{
-			MetricName:    mb.Name,
-			SourceType:    types.MetricBackendJolokia,
-			Statistic:     statistic,
-			Period:        periodSec,
-			QueryDuration: durationStr,
-			MBeanPath:     mb.MBean,
-			JolokiaURL:    exampleURL,
-			CurlCommand:   fmt.Sprintf("curl '%s/read/%s/%s'", exampleURL, mb.MBean, mb.Attribute),
+			MetricName:      mb.Name,
+			SourceType:      types.MetricBackendJolokia,
+			Statistic:       statistic,
+			Period:          periodSec,
+			QueryDuration:   durationStr,
+			MBeanPath:       mb.MBean,
+			JolokiaURL:      exampleURL,
+			CurlCommand:     fmt.Sprintf("curl '%s/read/%s/%s'", exampleURL, mb.MBean, mb.Attribute),
 			AggregationNote: note,
 		})
 	}

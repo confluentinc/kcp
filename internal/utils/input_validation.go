@@ -124,7 +124,7 @@ func BindEnvToFlags(cmd *cobra.Command) error {
 		// e.g., "vpc-id" -> "VPC_ID"
 		envVarName := strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_"))
 
-		v.BindEnv(flagName, envVarName)
+		_ = v.BindEnv(flagName, envVarName)
 
 		// If the flag wasn't explicitly set via command line
 		// AND
@@ -133,7 +133,7 @@ func BindEnvToFlags(cmd *cobra.Command) error {
 		// set the flag value from the environment
 		if !f.Changed && v.IsSet(flagName) {
 			val := v.Get(flagName)
-			cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
+			_ = cmd.Flags().Set(f.Name, fmt.Sprintf("%v", val))
 		}
 	})
 
