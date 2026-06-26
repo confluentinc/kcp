@@ -9,8 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -253,146 +251,10 @@ func keys(m map[string]struct{}) []string {
 	return out
 }
 
-// ---------------------------------------------------------------------------
-// Test 1 — mirror, destination-initiated
-// ---------------------------------------------------------------------------
-
-// TestMigrateApply_Topics_MirrorDestination establishes a destination-initiated
-// link with a prefix, then mirrors two selected source topics. It asserts the
-// mirrorTopics section creates both with prefixed names, that re-apply is an
-// idempotent no-op, and that the prefix is applied to the live mirror names.
-func TestMigrateApply_Topics_MirrorDestination(t *testing.T) {
-	dir := t.TempDir()
-	link := uniqueLinkName("mt-dest")
-	const prefix = "mt."
-
-	// Source topics live on the source broker (read over the host PLAINTEXT
-	// listener; mirrored onto the destination via the docker INTERNAL listener).
-	srcPoller := newRestClient(t, restSource)
-	srcPoller.waitForClusterID(t)
-	t1 := uniqueTopicName("dsrc")
-	t2 := uniqueTopicName("dsrc")
-	srcPoller.createTopic(t, sourceClusterID, t1, 3)
-	srcPoller.createTopic(t, sourceClusterID, t2, 2)
-	defer srcPoller.deleteTopic(t, sourceClusterID, t1)
-	defer srcPoller.deleteTopic(t, sourceClusterID, t2)
-
-	srcCreds := filepath.Join(dir, "source-creds.yaml")
-	writeKafkaCreds(t, srcCreds, kafkaAuth{authPlaintext, "localhost:19092"})
-	linkCreds := filepath.Join(dir, "link-source-creds.yaml")
-	writeKafkaCreds(t, linkCreds, kafkaAuth{authPlaintext, "source:29092"})
-	targetCreds := writeRestCreds(t, dir, "target-creds.yaml", restDest)
-
-	manifest := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n" +
-		"metadata:\n  name: mcl-" + link + "\n" +
-		"spec:\n  source:\n    type: apache-kafka\n    bootstrapServers: [\"localhost:19092\"]\n    credentials: " + srcCreds + "\n" +
-		"  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n" +
-		"    kafka:\n      restEndpoint: " + restDest.baseURL + "\n" +
-		"  clusterLink:\n    name: " + link + "\n    mode: destination\n" +
-		"    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: " + linkCreds + "\n" +
-		"    prefix: \"" + prefix + "\"\n" +
-		"  topics:\n    mode: mirror\n    include: [\"" + t1 + "\", \"" + t2 + "\"]\n"
-	m := filepath.Join(dir, "migration.yaml")
-	require.NoError(t, os.WriteFile(m, []byte(manifest), 0600))
-
-	poller := newRestClient(t, restDest)
-	poller.waitForClusterID(t)
-	defer poller.deleteLink(t, destClusterID, link)
-
-	// apply: link created + ACTIVE, then both mirrors created.
-	out, err := runKCP(t, m)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "== mirrorTopics", out)
-	require.Contains(t, out, "mirrorTopics: 2 created", out)
-	poller.requireLinkActive(t, destClusterID, link)
-
-	wantMirrors := []string{prefix + t1, prefix + t2}
-	poller.requireMirrorsPresent(t, destClusterID, link, wantMirrors)
-
-	// re-apply: mirrors already present, nothing new created.
-	out, err = runKCP(t, m)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "mirrorTopics: 0 created, 2 already present", out)
-}
-
-// ---------------------------------------------------------------------------
-// Test 2 — mirror, source-initiated
-// ---------------------------------------------------------------------------
-
-// TestMigrateApply_Topics_MirrorSourceInitiated drives mode:mirror in the
-// source-initiated (push) topology. Per the baseline source case, the data
-// SOURCE is the migration-source (dest-basic broker, destBasicClusterID), the
-// OUTBOUND link carrying the prefix lives there, and mirrors are created on the
-// migration-dest (source broker, sourceClusterID). It verifies the prefix is read
-// off the OUTBOUND (source-side) link and applied to the mirror names created on
-// the migration-dest, and that re-apply is idempotent.
-func TestMigrateApply_Topics_MirrorSourceInitiated(t *testing.T) {
-	dir := t.TempDir()
-	link := uniqueLinkName("mt-source")
-	const prefix = "mts."
-
-	// migration-source = dest-basic broker (host PLAINTEXT listener localhost:29192,
-	// clusterID destBasicClusterID). Topics to mirror are created there.
-	migSrcPoller := newRestClient(t, restDestBasic)
-	migSrcPoller.waitForClusterID(t)
-	// migration-dest = source broker (restSource / sourceClusterID): mirrors land here.
-	migDestPoller := newRestClient(t, restSource)
-	migDestPoller.waitForClusterID(t)
-
-	t1 := uniqueTopicName("ssrc")
-	t2 := uniqueTopicName("ssrc")
-	migSrcPoller.createTopic(t, destBasicClusterID, t1, 3)
-	migSrcPoller.createTopic(t, destBasicClusterID, t2, 1)
-	defer migSrcPoller.deleteTopic(t, destBasicClusterID, t1)
-	defer migSrcPoller.deleteTopic(t, destBasicClusterID, t2)
-
-	// D1: read migration-source cluster id over its host PLAINTEXT listener.
-	srcCreds := filepath.Join(dir, "source-creds.yaml")
-	writeKafkaCreds(t, srcCreds, kafkaAuth{authPlaintext, "localhost:29192"})
-	// D4: migration-source REST creds (where the OUTBOUND link is created).
-	srcRestCreds := writeRestCreds(t, dir, "source-rest-creds.yaml", restDestBasic)
-	// D3: migration-dest (target) REST creds (where the INBOUND link is created).
-	targetCreds := writeRestCreds(t, dir, "target-creds.yaml", restSource)
-	// D5: source→destination connection creds (OUTBOUND link dials migration-dest).
-	destConnCreds := filepath.Join(dir, "dest-conn-creds.yaml")
-	writeKafkaCreds(t, destConnCreds, kafkaAuth{authPlaintext, "source:29092"})
-
-	manifest := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n" +
-		"metadata:\n  name: mcl-" + link + "\n" +
-		"spec:\n  source:\n    type: confluent-platform\n    bootstrapServers: [\"localhost:29192\"]\n    credentials: " + srcCreds + "\n" +
-		"  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n" +
-		"    kafka:\n      restEndpoint: " + restSource.baseURL + "\n" +
-		"  clusterLink:\n    name: " + link + "\n    mode: source\n" +
-		"    sourceRest:\n      endpoint: " + restDestBasic.baseURL + "\n      credentials: " + srcRestCreds + "\n" +
-		"    destination:\n      bootstrapServers: [\"source:29092\"]\n      credentials: " + destConnCreds + "\n" +
-		"    prefix: \"" + prefix + "\"\n" +
-		"  topics:\n    mode: mirror\n    include: [\"" + t1 + "\", \"" + t2 + "\"]\n"
-	m := filepath.Join(dir, "migration.yaml")
-	require.NoError(t, os.WriteFile(m, []byte(manifest), 0600))
-
-	defer migDestPoller.deleteLink(t, sourceClusterID, link)   // INBOUND on migration-dest
-	defer migSrcPoller.deleteLink(t, destBasicClusterID, link) // OUTBOUND on migration-source
-
-	// apply: BOTH link sides created (2) + ACTIVE, then both mirrors created on
-	// the migration-dest.
-	out, err := runKCP(t, m)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "clusterLink: 2 created", out)
-	require.Contains(t, out, "== mirrorTopics", out)
-	require.Contains(t, out, "mirrorTopics: 2 created", out)
-	migDestPoller.requireLinkActive(t, sourceClusterID, link)
-	migSrcPoller.requireLinkActive(t, destBasicClusterID, link)
-
-	// Mirror names are prefixed with the OUTBOUND (source-side) link prefix and
-	// created on the migration-dest (restSource / sourceClusterID).
-	wantMirrors := []string{prefix + t1, prefix + t2}
-	migDestPoller.requireMirrorsPresent(t, sourceClusterID, link, wantMirrors)
-
-	// re-apply: idempotent for both the link pair and the mirrors.
-	out, err = runKCP(t, m)
-	require.NoError(t, err, out)
-	require.Contains(t, out, "clusterLink: 0 created, 2 already present", out)
-	require.Contains(t, out, "mirrorTopics: 0 created, 2 already present", out)
-}
-
-// mode:new (no cluster link) coverage lives in migrate_topics_new_test.go.
+// The destination- and source-initiated mode:mirror integration tests live in
+// migrate_topics_mirror_{destination,source}_test.go (full selection matrix +
+// idempotency, incremental, continue-on-error, dry-run, status, and data-flow
+// cases). The earlier TestMigrateApply_Topics_Mirror{Destination,SourceInitiated}
+// tests that lived here were strict subsets of those matrices and have been
+// removed; only the shared helpers above remain. mode:new (no cluster link)
+// coverage lives in migrate_topics_new_test.go.

@@ -36,11 +36,12 @@ import (
 // these cases prove.
 //
 // NOTE on dry-run: a from-scratch source-initiated `apply --dry-run` that creates
-// BOTH the link pair AND the mirrors fails at planning, because the mirrorTopics
-// reconciler reads the prefix from the LIVE OUTBOUND link (which dry-run never
-// creates). That product limitation is handled separately; dry-run of mirrorTopics
-// is covered against an existing link in destination mode, so it is intentionally
-// not repeated here.
+// BOTH the link pair AND the mirrors PLANS correctly and creates nothing. The
+// mirrorTopics reconciler prefers the prefix off the LIVE OUTBOUND link but falls
+// back to the manifest's clusterLink.prefix when the link does not yet exist (the
+// T6.5 manifest-prefix fallback in mirrortopics.readLinkPrefix) — exactly the
+// from-scratch dry-run case, in BOTH modes. TestMigrateApply_TopicsMirrorSource_DryRun
+// proves this for source mode (the destination matrix proves it for destination mode).
 //
 // Tests run SERIALLY (no t.Parallel): they share the source/dest-basic brokers.
 
@@ -140,6 +141,12 @@ func (r *sourceMirrorReporter) reapply(out string) {
 	}
 }
 
+func (r *sourceMirrorReporter) dryRun(out string) {
+	if reportEnabled {
+		r.in.dryRun = out
+	}
+}
+
 func (r *sourceMirrorReporter) expected(note string) {
 	if reportEnabled {
 		r.in.results = append(r.in.results, topicListResult("expected", "", note))
@@ -222,7 +229,118 @@ func TestMigrateApply_TopicsMirrorSource_FamilyGlob(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Case 2 — source-initiated DATA FLOW: produce → mirror → consume
+// Case 2 — source-initiated from-scratch dry-run (manifest-prefix fallback)
+// ---------------------------------------------------------------------------
+
+// TestMigrateApply_TopicsMirrorSource_DryRun proves a from-scratch source-initiated
+// `apply --dry-run` PLANS the prefixed mirrors and creates NOTHING. The link pair
+// does not exist yet, so the mirrorTopics reconciler cannot read cluster.link.prefix
+// off the live OUTBOUND link during Plan — it falls back to the manifest's
+// clusterLink.prefix (the T6.5 manifest-prefix fallback). Dry-run must therefore
+// PLAN the four PREFIXED mirrors (proving the fallback drove planning) while
+// creating neither link side nor any mirror. This is the source-mode counterpart
+// to TestMigrateApply_TopicsMirror_DryRun (destination mode).
+func TestMigrateApply_TopicsMirrorSource_DryRun(t *testing.T) {
+	dir := t.TempDir()
+	link := uniqueLinkName("mts-dry")
+	prefix := uniqueMirrorPrefix(link)
+
+	// migration-source = dest-basic broker: seed the catalog there (the OUTBOUND
+	// link + the prefix would live here, but dry-run creates neither).
+	migSrcPoller := newRestClient(t, restDestBasic)
+	migSrcPoller.waitForClusterID(t)
+	seedTopicCatalog(t, migSrcPoller, destBasicClusterID)
+
+	// migration-dest = source broker: mirrors would land here (INBOUND link).
+	migDestPoller := newRestClient(t, restSource)
+	migDestPoller.waitForClusterID(t)
+
+	m := writeSourceMirrorManifest(t, dir, link, prefix, []string{"orders-*"})
+
+	// Defensive cleanup in case a bug created either link side during dry-run.
+	defer migDestPoller.deleteLink(t, sourceClusterID, link)
+	defer migSrcPoller.deleteLink(t, destBasicClusterID, link)
+
+	srcTopics := []string{"orders-1", "orders-2", "orders-3", "orders-4"}
+	rep := newSourceMirrorReporter(link,
+		"from-scratch source-initiated --dry-run with include:[orders-*] on a NOT-YET-CREATED link pair PLANS the four prefixed mirrors (output shows 'Planned' + the prefixed mirror-topic plan lines, e.g. "+prefix+"orders-1) via the manifest-prefix fallback — but creates nothing: neither link side nor any mirror.",
+		m, link, srcTopics)
+	rep.expected("dry-run: plans 4 prefixed mirrors, creates 0; neither link side exists and no mirror afterward")
+	defer rep.commit(t, migDestPoller)
+
+	out, err := runKCP(t, m, "--dry-run")
+	rep.dryRun(out)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "Planned", out)
+	// The planned mirror names are PREFIXED — proof the manifest-prefix fallback
+	// drove planning rather than a (non-existent) live OUTBOUND-link read.
+	require.Contains(t, out, `+ mirror topic "`+prefix+`orders-1"`, out)
+
+	// Dry-run created nothing: neither link side exists, and no mirror was created.
+	require.Empty(t, migDestPoller.linkState(sourceClusterID, link), "dry-run must not create the INBOUND link")
+	require.Empty(t, migSrcPoller.linkState(destBasicClusterID, link), "dry-run must not create the OUTBOUND link")
+	require.Empty(t, migDestPoller.listMirrorTopics(sourceClusterID, link), "dry-run must not create any mirror")
+}
+
+// ---------------------------------------------------------------------------
+// Case 3 — source-initiated failure / continue-on-error
+// ---------------------------------------------------------------------------
+
+// TestMigrateApply_TopicsMirrorSource_ContinueOnError forces ONE source-initiated
+// mirror to fail while another succeeds, using the same clean trigger as the
+// destination ContinueOnError case: pre-create a PLAIN topic on the migration-dest
+// (source broker, sourceClusterID) occupying the second mirror's target name. The
+// INBOUND link then rejects that mirror create (the topic already exists) while the
+// other mirror is created cleanly. Apply reports `mirrorTopics: 1 created, …,
+// 1 failed`, prints a ✖ line, exits non-zero — and the good mirror survives.
+func TestMigrateApply_TopicsMirrorSource_ContinueOnError(t *testing.T) {
+	dir := t.TempDir()
+	link := uniqueLinkName("mts-fail")
+	prefix := uniqueMirrorPrefix(link)
+
+	// migration-source = dest-basic broker: seed the catalog + OUTBOUND link there.
+	migSrcPoller := newRestClient(t, restDestBasic)
+	migSrcPoller.waitForClusterID(t)
+	seedTopicCatalog(t, migSrcPoller, destBasicClusterID)
+
+	// migration-dest = source broker: mirrors land here (INBOUND link).
+	migDestPoller := newRestClient(t, restSource)
+	migDestPoller.waitForClusterID(t)
+
+	m := writeSourceMirrorManifest(t, dir, link, prefix, []string{"orders-1", "orders-2"})
+
+	defer migDestPoller.deleteLink(t, sourceClusterID, link)   // INBOUND on migration-dest
+	defer migSrcPoller.deleteLink(t, destBasicClusterID, link) // OUTBOUND on migration-source
+
+	// Pre-create a PLAIN topic on the migration-dest occupying the orders-2 mirror's
+	// target name so that mirror create fails while orders-1 mirrors cleanly.
+	blocker := prefix + "orders-2"
+	migDestPoller.createTopic(t, sourceClusterID, blocker, 1)
+	defer migDestPoller.deleteTopic(t, sourceClusterID, blocker)
+
+	srcTopics := []string{"orders-1", "orders-2"}
+	rep := newSourceMirrorReporter(link,
+		"source-initiated include:[orders-1, orders-2] where the migration-dest target name for orders-2 is pre-occupied by a plain topic: orders-1 mirrors successfully while the orders-2 mirror fails — apply reports 1 created + 1 failed, prints a ✖ line, and kcp exits non-zero; the good mirror survives.",
+		m, link, srcTopics)
+	rep.expected("orders-1 mirror created on migration-dest; orders-2 mirror fails (name pre-occupied); output shows 'mirrorTopics: 1 created, …, 1 failed' and '✖'; exit non-zero")
+	defer rep.commit(t, migDestPoller)
+
+	out, err := runKCP(t, m)
+	rep.apply(out)
+	require.Error(t, err, "kcp must exit non-zero when a source-mode mirror fails:\n%s", out)
+	// Scope to the mirrorTopics outcome line: a bare "1 failed" would also match the
+	// clusterLink line. The full rendered line proves the mirror create failed.
+	require.Contains(t, out, "mirrorTopics: 1 created, 0 already present, 0 drift, 1 failed", out)
+	require.Contains(t, out, "✖", out)
+
+	// Despite the failure, the good mirror was created on the migration-dest.
+	migDestPoller.requireLinkActive(t, sourceClusterID, link)
+	migSrcPoller.requireLinkActive(t, destBasicClusterID, link)
+	migDestPoller.requireMirrorsPresent(t, sourceClusterID, link, []string{prefix + "orders-1"})
+}
+
+// ---------------------------------------------------------------------------
+// Case 4 — source-initiated DATA FLOW: produce → mirror → consume
 // ---------------------------------------------------------------------------
 
 // TestMigrateApply_TopicsMirrorSource_DataFlow proves end-to-end replication in

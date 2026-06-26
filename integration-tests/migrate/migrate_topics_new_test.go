@@ -16,8 +16,11 @@ import (
 // matrix. Each case seeds the standard topic catalog on the SOURCE broker
 // (idempotent, shared fixture, never deleted), builds a new-mode manifest with NO
 // cluster link, and asserts that KCP creates plain topics on the TARGET
-// reproducing the source partition count, replication factor and non-default
-// configs. Cases cover glob families, the ? wildcard, multi-include, exclude,
+// reproducing the source partition count and explicitly-set (non-default) configs.
+// The source replication factor is passed through on create, but RF is not
+// separately verified here: these are single-node brokers (everything is RF=1), so
+// RF reproduction is not observable in this environment. Cases cover glob families,
+// the ? wildcard, multi-include, exclude,
 // internal-topic exclusion, empty match, special-char names, partition
 // inheritance, non-default config pass-through, partition-count drift
 // (report-only), dry-run, and a failure/continue-on-error note.
@@ -475,25 +478,33 @@ func TestMigrateApply_TopicsNew_ConfigPassThrough(t *testing.T) {
 	tgtPoller := newRestClient(t, restDest)
 	tgtPoller.waitForClusterID(t)
 
-	// Dedicated source topic with a non-default, settable config. The source reader
-	// returns only explicitly-set (non-default) configs, so retention.ms=604800000
-	// (7d, non-default) must be reproduced on the target topic.
-	const retention = "604800000"
+	// Dedicated source topic with TWO non-default, settable configs. The source
+	// reader returns only explicitly-set (non-default) configs, so both
+	// retention.ms=604800000 (7d) and max.message.bytes=2097152 (2MiB) must be
+	// reproduced on the target topic.
+	const (
+		retention = "604800000"
+		maxBytes  = "2097152"
+	)
 	srcTopic := uniqueTopicName("cfg")
 	srcPoller.createTopic(t, sourceClusterID, srcTopic, 2)
 	srcPoller.setTopicConfig(t, sourceClusterID, srcTopic, "retention.ms", retention)
+	srcPoller.setTopicConfig(t, sourceClusterID, srcTopic, "max.message.bytes", maxBytes)
 	defer srcPoller.deleteTopic(t, sourceClusterID, srcTopic)
 	defer tgtPoller.deleteTopic(t, destClusterID, srcTopic)
 
-	// Verify the source carries the non-default value before the apply.
+	// Verify the source carries both non-default values before the apply.
 	srcVal, ok := srcPoller.topicConfig(sourceClusterID, srcTopic, "retention.ms")
 	require.True(t, ok, "source topic must carry retention.ms")
 	require.Equal(t, retention, srcVal, "source retention.ms must be the non-default value")
+	srcMaxBytes, ok := srcPoller.topicConfig(sourceClusterID, srcTopic, "max.message.bytes")
+	require.True(t, ok, "source topic must carry max.message.bytes")
+	require.Equal(t, maxBytes, srcMaxBytes, "source max.message.bytes must be the non-default value")
 
 	m := writeNewManifest(t, dir, newManifestOpts{name: "cfg-" + runID, include: []string{srcTopic}})
 
-	rep := newNewReporter("ConfigPassThrough", "a source topic with a non-default retention.ms=604800000 is reproduced on the target: the new-mode reconciler forwards all explicitly-set source configs on create, so the target topic carries retention.ms=604800000.", m, []string{srcTopic}, []string{srcTopic})
-	rep.expected("target topic carries retention.ms=604800000 (non-default config reproduced from source)")
+	rep := newNewReporter("ConfigPassThrough", "a source topic with TWO non-default configs (retention.ms=604800000, max.message.bytes=2097152) is reproduced on the target: the new-mode reconciler forwards all explicitly-set source configs on create, so the target topic carries BOTH values.", m, []string{srcTopic}, []string{srcTopic})
+	rep.expected("target topic carries retention.ms=604800000 AND max.message.bytes=2097152 (both non-default configs reproduced from source)")
 	defer rep.commit(t, tgtPoller)
 
 	out, err := runKCP(t, m)
@@ -505,10 +516,24 @@ func TestMigrateApply_TopicsNew_ConfigPassThrough(t *testing.T) {
 	tgtVal, ok := tgtPoller.topicConfig(destClusterID, srcTopic, "retention.ms")
 	require.True(t, ok, "target topic must carry retention.ms")
 	require.Equal(t, retention, tgtVal, "target retention.ms must match the source non-default value")
+	tgtMaxBytes, ok := tgtPoller.topicConfig(destClusterID, srcTopic, "max.message.bytes")
+	require.True(t, ok, "target topic must carry max.message.bytes")
+	require.Equal(t, maxBytes, tgtMaxBytes, "target max.message.bytes must match the source non-default value")
 	rep.note("config pass-through (live)", map[string]string{
-		"source.retention.ms": srcVal,
-		"target.retention.ms": tgtVal,
+		"source.retention.ms":      srcVal,
+		"target.retention.ms":      tgtVal,
+		"source.max.message.bytes": srcMaxBytes,
+		"target.max.message.bytes": tgtMaxBytes,
 	})
+
+	// Target-rejection path (per-topic Failed + aggregated error): NOT exercised
+	// live. On this single-node cp-server there is no config that is cleanly
+	// settable on the source yet rejected by the target on create — the two brokers
+	// are identical embedded cp-server instances, and managed/tier configs cannot
+	// even be set on the source topic in the first place. Rather than fake an
+	// assertion, the create-failure / continue-on-error path is covered
+	// deterministically by the unit test newtopics/reconciler_test.go
+	// TestApply_ContinueOnError.
 }
 
 // ---------------------------------------------------------------------------
@@ -632,7 +657,8 @@ func TestMigrateApply_TopicsNew_FailureDeferred(t *testing.T) {
 		},
 		results: []resultBlock{topicListResult("deferral reason", "",
 			"no deterministic one-of-N create failure exists for plain topics on the single-node broker; unit-covered instead")},
-		pass: true,
+		pass:     true,
+		deferred: true,
 	}
 	collector.add(buildSection(in))
 }
