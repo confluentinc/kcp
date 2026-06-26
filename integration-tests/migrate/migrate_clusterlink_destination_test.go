@@ -189,6 +189,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 	if reportEnabled {
 		in = sectionInput{
 			seq:      nextReportSeq(),
+			category: catClusterLink,
 			mode:     "destination",
 			name:     "config+drift",
 			checks:   "Sets cluster.link.prefix + consumer-offset-sync on the link at create time, then re-applies with a changed interval — drift is reported and the live link config is left unchanged (report-only, never altered).",
@@ -197,12 +198,6 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 				{"D1 source-read", "source-creds.yaml", "yaml", readFileForReport(srcCreds)},
 				{"D2 link→source", "link-source-creds.yaml", "yaml", readFileForReport(linkCreds)},
 				{"D3 target REST", "target-creds.yaml", "yaml", readFileForReport(targetCreds)},
-			},
-			commands: []string{
-				"kcp migrate apply -f m1.yaml",
-				"GET " + configsURL,
-				"kcp migrate apply -f m2.yaml   # m2 changes consumerOffsetSync.intervalMs 30000 -> 1000",
-				"GET " + configsURL + "   # unchanged after drift",
 			},
 			pass: true,
 		}
@@ -216,7 +211,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 
 	out, err := runKCP(t, m1)
 	if reportEnabled {
-		in.apply = out
+		in.addRun("Apply (m1)", "kcp migrate apply -f m1.yaml", out)
 	}
 	require.NoError(t, err, out)
 	require.Contains(t, out, "1 created", out)
@@ -224,7 +219,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 
 	cfgs := getLinkConfigs(t, poller, destClusterID, link)
 	if reportEnabled {
-		in.results = append(in.results, resultBlock{label: "link configs after apply", url: configsURL, json: linkConfigsJSON(poller, destClusterID, link)})
+		in.addRead("Verify — link configs after apply", "GET "+configsURL, linkConfigsJSON(poller, destClusterID, link))
 	}
 	require.Equal(t, "mig.", cfgs["cluster.link.prefix"])
 	require.Equal(t, "true", cfgs["consumer.offset.sync.enable"])
@@ -235,7 +230,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 	require.NoError(t, os.WriteFile(m2, []byte(manifestFor("1000")), 0600))
 	out, err = runKCP(t, m2)
 	if reportEnabled {
-		in.reapply = out
+		in.addRun("Re-apply (m2 — changes consumerOffsetSync.intervalMs 30000 → 1000)", "kcp migrate apply -f m2.yaml", out)
 	}
 	require.NoError(t, err, out)
 	require.Contains(t, out, "1 drift", out)
@@ -243,7 +238,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 
 	cfgs = getLinkConfigs(t, poller, destClusterID, link)
 	if reportEnabled {
-		in.results = append(in.results, resultBlock{label: "link configs after drift re-apply (UNCHANGED)", url: configsURL, json: linkConfigsJSON(poller, destClusterID, link)})
+		in.addRead("Verify — link configs after drift re-apply (unchanged)", "GET "+configsURL, linkConfigsJSON(poller, destClusterID, link))
 	}
 	// The changed key is reported as drift but never mutated...
 	require.Equal(t, "30000", cfgs["consumer.offset.sync.ms"], "drift must not alter the live config")
@@ -263,9 +258,9 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 func destChecks(c destCase) string {
 	switch {
 	case strings.HasPrefix(c.name, "D1="):
-		return fmt.Sprintf("KCP reads the source cluster id over a %s connection that a real broker accepts (spec.source.credentials); the destination-initiated link still reaches ACTIVE.", c.d1.kind)
+		return fmt.Sprintf("KCP reads the source cluster id over a %s connection (spec.source.credentials); the destination-initiated link reaches ACTIVE.", c.d1.kind)
 	case strings.HasPrefix(c.name, "D2="):
-		return fmt.Sprintf("KCP builds a %s link→source connection (spec.clusterLink.sourceCredentials) that a real broker accepts; the destination-initiated link reaches ACTIVE.", c.d2.kind)
+		return fmt.Sprintf("KCP builds a %s link→source connection (spec.clusterLink.sourceCredentials); the destination-initiated link reaches ACTIVE.", c.d2.kind)
 	case strings.HasPrefix(c.name, "D3="):
 		return fmt.Sprintf("KCP authenticates to the target Kafka REST with %s auth (spec.target.credentials) and creates the link there; the link reaches ACTIVE.", c.target.kind)
 	}
@@ -289,6 +284,7 @@ func newDestReporter(c destCase, dir, manifest, linkName, destID string) *destRe
 	}
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
+		category: catClusterLink,
 		mode:     "destination",
 		name:     c.name,
 		checks:   destChecks(c),
@@ -298,12 +294,6 @@ func newDestReporter(c destCase, dir, manifest, linkName, destID string) *destRe
 			{"D2 link→source", "link-source-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "link-source-creds.yaml"))},
 			{"D3 target REST", "target-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "target-creds.yaml"))},
 		},
-		commands: []string{
-			"kcp migrate apply -f migration.yaml --dry-run",
-			"kcp migrate apply -f migration.yaml",
-			"kcp migrate apply -f migration.yaml   # idempotent re-apply",
-			"GET " + linkURL(c.target.baseURL, destID, linkName),
-		},
 		pass: true,
 	}
 	return r
@@ -311,29 +301,29 @@ func newDestReporter(c destCase, dir, manifest, linkName, destID string) *destRe
 
 func (r *destReporter) dryRun(out string) {
 	if reportEnabled {
-		r.in.dryRun = out
+		r.in.addRun("Dry run", applyDryRunCmd, out)
 	}
 }
 
 func (r *destReporter) apply(out string) {
 	if reportEnabled {
-		r.in.apply = out
+		r.in.addRun("Apply", applyCmd, out)
 	}
 }
 
 func (r *destReporter) result(poller restClient) {
 	if reportEnabled {
-		r.in.results = []resultBlock{{
+		r.in.addReadBlock(resultBlock{
 			label: "link on destination",
 			url:   linkURL(r.target.baseURL, r.destID, r.link),
 			json:  poller.linkJSON(r.destID, r.link),
-		}}
+		})
 	}
 }
 
 func (r *destReporter) reapply(out string) {
 	if reportEnabled {
-		r.in.reapply = out
+		r.in.addRun("Idempotent re-apply", applyCmd, out)
 	}
 }
 
@@ -358,17 +348,17 @@ func (r *destReporter) captureFailureState(poller restClient) {
 	state, linkErr := poller.link(r.destID, r.link)
 	if state == "" {
 		r.in.failMsg = fmt.Sprintf("at failure: link %q on %s was not present", r.link, r.destID)
-		r.in.results = []resultBlock{{
+		r.in.addReadBlock(resultBlock{
 			label: "link on destination (not found)",
 			url:   linkURL(r.target.baseURL, r.destID, r.link),
 			json:  fmt.Sprintf("<link %q not present on %s>", r.link, r.destID),
-		}}
+		})
 		return
 	}
 	r.in.failMsg = fmt.Sprintf("at failure: link %q on %s was in state %q (link_error: %q)", r.link, r.destID, state, linkErr)
-	r.in.results = []resultBlock{{
+	r.in.addReadBlock(resultBlock{
 		label: "link on destination",
 		url:   linkURL(r.target.baseURL, r.destID, r.link),
 		json:  poller.linkJSON(r.destID, r.link),
-	}}
+	})
 }

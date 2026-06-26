@@ -102,9 +102,8 @@ func writeSourceMirrorManifest(t *testing.T, dir, link, prefix string, include [
 // the mirrors on the migration-DEST (restSource/sourceClusterID), where source-mode
 // mirrors land.
 type sourceMirrorReporter struct {
-	in     sectionInput
-	link   string
-	verify string // the GET command appended to the assembled command list
+	in   sectionInput
+	link string
 }
 
 // newSourceMirrorReporter builds a reporter for a source-mode mirror case.
@@ -114,11 +113,9 @@ func newSourceMirrorReporter(name, checks, manifest, link string, srcTopics []st
 	if !reportEnabled {
 		return r
 	}
-	mirrorsURL := restSource.baseURL + "/kafka/v3/clusters/" + sourceClusterID + "/links/" + link + "/mirrors"
-	r.verify = "GET " + mirrorsURL + "   # mirrors on the migration-dest (INBOUND side)"
-	// commands are assembled at commit() to match the output actually captured.
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
+		category: catMirror,
 		mode:     "source",
 		name:     name,
 		checks:   checks,
@@ -131,19 +128,19 @@ func newSourceMirrorReporter(name, checks, manifest, link string, srcTopics []st
 
 func (r *sourceMirrorReporter) apply(out string) {
 	if reportEnabled {
-		r.in.apply = out
+		r.in.addRun("Apply", applyCmd, out)
 	}
 }
 
 func (r *sourceMirrorReporter) reapply(out string) {
 	if reportEnabled {
-		r.in.reapply = out
+		r.in.addRun("Idempotent re-apply", applyCmd, out)
 	}
 }
 
 func (r *sourceMirrorReporter) dryRun(out string) {
 	if reportEnabled {
-		r.in.dryRun = out
+		r.in.addRun("Dry run", applyDryRunCmd, out)
 	}
 }
 
@@ -159,8 +156,7 @@ func (r *sourceMirrorReporter) commit(t *testing.T, migDestPoller restClient) {
 	if !reportEnabled {
 		return
 	}
-	r.in.commands = applyCommands(r.in, r.verify)
-	r.in.results = append(r.in.results, mirrorsResult(migDestPoller, sourceClusterID, r.link))
+	r.in.addReadBlock(mirrorsResult(migDestPoller, sourceClusterID, r.link))
 	if t.Failed() {
 		r.in.pass = false
 	}

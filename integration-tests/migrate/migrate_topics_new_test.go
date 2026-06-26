@@ -90,6 +90,7 @@ func newNewReporter(name, checks, manifest string, srcTopics, targetNames []stri
 	// commands are assembled at commit() to match the output actually captured.
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
+		category: catNew,
 		mode:     "new",
 		name:     name,
 		checks:   checks,
@@ -102,19 +103,19 @@ func newNewReporter(name, checks, manifest string, srcTopics, targetNames []stri
 
 func (r *newReporter) apply(out string) {
 	if reportEnabled {
-		r.in.apply = out
+		r.in.addRun("Apply", applyCmd, out)
 	}
 }
 
 func (r *newReporter) reapply(out string) {
 	if reportEnabled {
-		r.in.reapply = out
+		r.in.addRun("Idempotent re-apply", applyCmd, out)
 	}
 }
 
 func (r *newReporter) dryRun(out string) {
 	if reportEnabled {
-		r.in.dryRun = out
+		r.in.addRun("Dry run", applyDryRunCmd, out)
 	}
 }
 
@@ -169,8 +170,7 @@ func (r *newReporter) commit(t *testing.T, poller restClient) {
 	if !reportEnabled {
 		return
 	}
-	r.in.commands = applyCommands(r.in, "")
-	r.in.results = append(r.in.results, targetTopicsResult(poller, destClusterID, r.targetIDs))
+	r.in.addReadBlock(targetTopicsResult(poller, destClusterID, r.targetIDs))
 	if t.Failed() {
 		r.in.pass = false
 	}
@@ -648,17 +648,16 @@ func TestMigrateApply_TopicsNew_FailureDeferred(t *testing.T) {
 		t.Skip("documentation-only case; covered by unit test TestApply_ContinueOnError")
 	}
 	in := sectionInput{
-		seq:    nextReportSeq(),
-		mode:   "new",
-		name:   "FailureDeferred",
-		checks: "continue-on-error (Created N, Failed M, non-zero exit) has no clean live trigger on the single-node cp-server broker for plain topic creates; it is deterministically covered by the unit test newtopics/reconciler_test.go TestApply_ContinueOnError and DEFERRED here rather than forced into a flaky setup.",
-		commands: []string{
-			"# deferred — see newtopics/reconciler_test.go TestApply_ContinueOnError",
-		},
+		seq:      nextReportSeq(),
+		category: catNew,
+		mode:     "new",
+		name:     "FailureDeferred",
+		checks:   "continue-on-error (Created N, Failed M, non-zero exit) has no clean live trigger on the single-node cp-server broker for plain topic creates; it is deterministically covered by the unit test newtopics/reconciler_test.go TestApply_ContinueOnError and DEFERRED here rather than forced into a flaky setup.",
 		results: []resultBlock{topicListResult("deferral reason", "",
 			"no deterministic one-of-N create failure exists for plain topics on the single-node broker; unit-covered instead")},
 		pass:     true,
 		deferred: true,
 	}
+	in.addRun("Deferred — no live apply", "# covered by unit test newtopics/reconciler_test.go TestApply_ContinueOnError", "")
 	collector.add(buildSection(in))
 }

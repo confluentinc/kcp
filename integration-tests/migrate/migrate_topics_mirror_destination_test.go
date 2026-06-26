@@ -111,7 +111,6 @@ type mirrorReporter struct {
 	in       sectionInput
 	manifest string
 	link     string
-	verify   string // the GET command appended to the assembled command list
 }
 
 // newMirrorReporter builds a reporter for a destination-mode mirror case.
@@ -121,11 +120,9 @@ func newMirrorReporter(name, checks, manifest, link string, srcTopics []string) 
 	if !reportEnabled {
 		return r
 	}
-	mirrorsURL := restDest.baseURL + "/kafka/v3/clusters/" + destClusterID + "/links/" + link + "/mirrors"
-	r.verify = "GET " + mirrorsURL
-	// commands are assembled at commit() to match the output actually captured.
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
+		category: catMirror,
 		mode:     "destination",
 		name:     name,
 		checks:   checks,
@@ -138,19 +135,19 @@ func newMirrorReporter(name, checks, manifest, link string, srcTopics []string) 
 
 func (r *mirrorReporter) apply(out string) {
 	if reportEnabled {
-		r.in.apply = out
+		r.in.addRun("Apply", applyCmd, out)
 	}
 }
 
 func (r *mirrorReporter) reapply(out string) {
 	if reportEnabled {
-		r.in.reapply = out
+		r.in.addRun("Idempotent re-apply", applyCmd, out)
 	}
 }
 
 func (r *mirrorReporter) dryRun(out string) {
 	if reportEnabled {
-		r.in.dryRun = out
+		r.in.addRun("Dry run", applyDryRunCmd, out)
 	}
 }
 
@@ -169,8 +166,7 @@ func (r *mirrorReporter) commit(t *testing.T, poller restClient) {
 	if !reportEnabled {
 		return
 	}
-	r.in.commands = applyCommands(r.in, r.verify)
-	r.in.results = append(r.in.results, mirrorsResult(poller, destClusterID, r.link))
+	r.in.addReadBlock(mirrorsResult(poller, destClusterID, r.link))
 	if t.Failed() {
 		r.in.pass = false
 	}

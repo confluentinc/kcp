@@ -227,6 +227,7 @@ func newSourceReporter(c sourceCase, dir, manifest, linkName, destID, srcID stri
 	}
 	r.in = sectionInput{
 		seq:      nextReportSeq(),
+		category: catClusterLink,
 		mode:     "source",
 		name:     c.name,
 		checks:   sourceChecks(c),
@@ -237,13 +238,6 @@ func newSourceReporter(c sourceCase, dir, manifest, linkName, destID, srcID stri
 			{"D3 migration-dest REST", "target-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "target-creds.yaml"))},
 			{"D5 source→dest connection", "dest-conn-creds.yaml", "yaml", readFileForReport(filepath.Join(dir, "dest-conn-creds.yaml"))},
 		},
-		commands: []string{
-			"kcp migrate apply -f migration.yaml --dry-run",
-			"kcp migrate apply -f migration.yaml",
-			"kcp migrate apply -f migration.yaml   # idempotent re-apply",
-			"GET " + linkURL(c.migrationDestREST.baseURL, destID, linkName) + "   # INBOUND on migration-dest",
-			"GET " + linkURL(c.migrationSourceREST.baseURL, srcID, linkName) + "   # OUTBOUND on migration-source",
-		},
 		pass: true,
 	}
 	return r
@@ -251,36 +245,34 @@ func newSourceReporter(c sourceCase, dir, manifest, linkName, destID, srcID stri
 
 func (r *sourceReporter) dryRun(out string) {
 	if reportEnabled {
-		r.in.dryRun = out
+		r.in.addRun("Dry run", applyDryRunCmd, out)
 	}
 }
 
 func (r *sourceReporter) apply(out string) {
 	if reportEnabled {
-		r.in.apply = out
+		r.in.addRun("Apply", applyCmd, out)
 	}
 }
 
 func (r *sourceReporter) result(destPoller, srcPoller restClient) {
 	if reportEnabled {
-		r.in.results = []resultBlock{
-			{
-				label: "INBOUND link on migration-dest",
-				url:   linkURL(r.destREST.baseURL, r.destID, r.link),
-				json:  destPoller.linkJSON(r.destID, r.link),
-			},
-			{
-				label: "OUTBOUND link on migration-source",
-				url:   linkURL(r.srcREST.baseURL, r.srcID, r.link),
-				json:  srcPoller.linkJSON(r.srcID, r.link),
-			},
-		}
+		r.in.addReadBlock(resultBlock{
+			label: "INBOUND link on migration-dest",
+			url:   linkURL(r.destREST.baseURL, r.destID, r.link),
+			json:  destPoller.linkJSON(r.destID, r.link),
+		})
+		r.in.addReadBlock(resultBlock{
+			label: "OUTBOUND link on migration-source",
+			url:   linkURL(r.srcREST.baseURL, r.srcID, r.link),
+			json:  srcPoller.linkJSON(r.srcID, r.link),
+		})
 	}
 }
 
 func (r *sourceReporter) reapply(out string) {
 	if reportEnabled {
-		r.in.reapply = out
+		r.in.addRun("Idempotent re-apply", applyCmd, out)
 	}
 }
 
@@ -304,7 +296,8 @@ func (r *sourceReporter) commit(t *testing.T, destPoller, srcPoller restClient) 
 func (r *sourceReporter) captureFailureState(destPoller, srcPoller restClient) {
 	inbound := failureResultBlock("INBOUND link on migration-dest", destPoller, r.destREST.baseURL, r.destID, r.link)
 	outbound := failureResultBlock("OUTBOUND link on migration-source", srcPoller, r.srcREST.baseURL, r.srcID, r.link)
-	r.in.results = []resultBlock{inbound.block, outbound.block}
+	r.in.addReadBlock(inbound.block)
+	r.in.addReadBlock(outbound.block)
 	r.in.failMsg = inbound.msg + "; " + outbound.msg
 }
 

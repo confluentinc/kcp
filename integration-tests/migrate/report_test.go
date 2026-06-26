@@ -18,9 +18,10 @@ import (
 // ---------------------------------------------------------------------------
 // Opt-in markdown evidence report.
 //
-// When KCP_MATRIX_REPORT names a file path, the auth matrix collects a verbose
-// markdown evidence report (manifest + creds + commands + apply output + a live
-// REST GET of the resulting link state) and writes it after all test cases run.
+// When KCP_MATRIX_REPORT names a file path, the matrix collects a verbose
+// markdown evidence report (manifest + creds + each command interleaved with its
+// output, ending in a live REST read of the result) and writes it after all test
+// cases run.
 //
 // When the env var is unset (CI default) reportEnabled is false and the matrix
 // does ZERO extra work: no captured strings, no extra REST calls. Every capture
@@ -35,9 +36,9 @@ var reportPath = os.Getenv("KCP_MATRIX_REPORT")
 // extra work is performed.
 var reportEnabled = reportPath != ""
 
-// reportCollector accumulates per-test-case sections + summary rows across the
-// two matrices. Test cases may run in their own subtests, so appends are
-// mutex-guarded.
+// reportCollector accumulates per-test-case sections + summary rows across all
+// three areas (cluster-link auth, mirror topics, new topics). Test cases may run
+// in their own subtests, so appends are mutex-guarded.
 type reportCollector struct {
 	mu       sync.Mutex
 	sections []reportSection
@@ -45,12 +46,36 @@ type reportCollector struct {
 
 // reportSection is one fully-built test-case section plus its summary-row fields.
 type reportSection struct {
-	seq    int    // global ordering key (stable, navigable output)
-	mode   string // "destination" / "source"
-	name   string // test case name, e.g. "D2=scram256"
-	checks string // one-sentence "what it checks"
-	result string // "✅ PASS" / "❌ FAIL"
-	body   string // the full markdown section body
+	seq      int    // global ordering key (stable, navigable output)
+	category string // summary-table grouping: catClusterLink / catMirror / catNew
+	mode     string // "destination" / "source" / "new"
+	name     string // test case name, e.g. "D2=scram256"
+	checks   string // one-sentence "what it checks"
+	result   string // "✅ PASS" / "❌ FAIL"
+	body     string // the full markdown section body
+}
+
+// Summary-table categories. Each test case belongs to exactly one area; the
+// summary renders one table per area (see summaryGroups). mode ("destination" /
+// "source") distinguishes the cluster-link topology within the cluster-link and
+// mirror tables; the new-topics table has no such dimension (every case is
+// mode:new with no cluster link), so it omits the Mode column.
+const (
+	catClusterLink = "clusterlink"
+	catMirror      = "mirror"
+	catNew         = "new"
+)
+
+// summaryGroups defines the per-area summary tables, in render order. showMode
+// controls whether the table carries a Mode column.
+var summaryGroups = []struct {
+	category string
+	title    string
+	showMode bool
+}{
+	{category: catClusterLink, title: "Cluster link", showMode: true},
+	{category: catMirror, title: "Mirror topics", showMode: true},
+	{category: catNew, title: "New topics", showMode: false},
 }
 
 var collector = &reportCollector{}
@@ -80,7 +105,8 @@ var reportSeqCh = func() chan int {
 
 func nextReportSeq() int { return <-reportSeqCh }
 
-// render builds the full markdown document: header, summary table, sections.
+// render builds the full markdown document: header, per-area summary tables,
+// then the per-test-case sections.
 func (rc *reportCollector) render() string {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
@@ -95,34 +121,58 @@ func (rc *reportCollector) render() string {
 		"(`make test-migrate-report`), run against the cp-server brokers in "+
 		"`integration-tests/migrate/docker-compose.yml`. The matrix covers three areas: "+
 		"cluster-link auth, mirror topics (destination- and source-initiated), and new "+
-		"(plain, non-mirror) topics. Most test cases below are a real `kcp migrate apply` "+
-		"against a real broker; a few cases are dry-run-only or document a deferral and run "+
-		"no live apply (their **Result** reflects this). The evidence captured per case is the "+
-		"relevant live Kafka REST read: the link state (`GET …/links/<name>`) for cluster-link "+
-		"cases, the link's mirrors (`GET …/links/<name>/mirrors`) for mirror cases, and the "+
-		"created topics (`GET …/topics/<name>`) for new cases.\n\n",
+		"(plain, non-mirror) topics. Most test cases below run a live `kcp migrate apply`; "+
+		"a few are dry-run-only or document a deferral and run no apply (their **Result** "+
+		"reflects this). Each case shows the commands it ran with their output inline, ending "+
+		"with the relevant live Kafka REST read: the link state (`GET …/links/<name>`) for "+
+		"cluster-link cases, the link's mirrors (`GET …/links/<name>/mirrors`) for mirror "+
+		"cases, and the created topics (`GET …/topics/<name>`) for new cases.\n\n",
 		time.Now().Format(time.RFC1123))
 
-	// Summary table. The "#" column links to each test case's section via an
-	// explicit HTML anchor (see the section loop below), so you can click a row
-	// number to jump straight to that test case.
-	b.WriteString("## Summary\n\n")
-	b.WriteString("| # | Mode | Test case | What it checks | Result |\n")
-	b.WriteString("|---|---|---|---|---|\n")
+	// Each section's display number is its 1-based position in the seq-sorted
+	// list; numbers are stable across the summary tables and the section
+	// headings/anchors below. seqNum maps seq → display number.
+	seqNum := make(map[int]int, len(secs))
 	for i, s := range secs {
-		n := i + 1
-		fmt.Fprintf(&b, "| [%d](#test-%d) | %s | %s | %s | %s |\n",
-			n, n, s.mode, mdCell(s.name), mdCell(s.checks), s.result)
+		seqNum[s.seq] = i + 1
 	}
-	b.WriteString("\n")
 
-	// Per-test-case sections. The display number is the section's position in the
-	// sorted summary, so the numbered heading + its anchor are written here (at
-	// render time), not in buildSection. The `<a id="test-N">` anchor is the link
-	// target for the summary's "#" column; the number is repeated in the heading
-	// so each section is visually identifiable against its summary row.
-	for i, s := range secs {
-		n := i + 1
+	// Summary. One table per area (cluster-link auth, mirror topics, new topics).
+	// The "#" column links to each test case's section via an explicit HTML
+	// anchor (see the section loop below), so you can click a row number to jump
+	// straight to that test case. rendered tracks which sections landed in a
+	// table so any section with an unrecognised category surfaces in an "Other"
+	// table rather than silently vanishing.
+	b.WriteString("## Summary\n\n")
+	rendered := make(map[int]bool, len(secs))
+	for _, grp := range summaryGroups {
+		rows := make([]reportSection, 0, len(secs))
+		for _, s := range secs {
+			if s.category == grp.category {
+				rows = append(rows, s)
+				rendered[s.seq] = true
+			}
+		}
+		writeSummaryTable(&b, grp.title, rows, grp.showMode, seqNum)
+	}
+	// Defensive: any section not claimed by a known group (a miscategorised or
+	// uncategorised case) still appears, so the report never drops a test case.
+	var leftover []reportSection
+	for _, s := range secs {
+		if !rendered[s.seq] {
+			leftover = append(leftover, s)
+		}
+	}
+	writeSummaryTable(&b, "Other", leftover, true, seqNum)
+
+	// Per-test-case sections, in global seq order. The display number is the
+	// section's position in the seq-sorted list (matching the summary), so the
+	// numbered heading + its anchor are written here (at render time), not in
+	// buildSection. The `<a id="test-N">` anchor is the link target for the
+	// summary's "#" column; the number is repeated in the heading so each section
+	// is visually identifiable against its summary row.
+	for _, s := range secs {
+		n := seqNum[s.seq]
 		fmt.Fprintf(&b, "<a id=\"test-%d\"></a>\n\n## %d · %s · %s\n\n", n, n, s.mode, s.name)
 		b.WriteString(s.body)
 		b.WriteString("\n")
@@ -130,31 +180,73 @@ func (rc *reportCollector) render() string {
 	return b.String()
 }
 
+// writeSummaryTable renders one per-area summary table under a "### <title>"
+// heading. With showMode it includes a Mode column (destination/source); without
+// it the column is omitted (the new-topics area has no cluster-link dimension).
+// A nil/empty rows slice renders nothing (no heading), so empty areas — and the
+// defensive "Other" bucket when all sections are categorised — leave no trace.
+func writeSummaryTable(b *strings.Builder, title string, rows []reportSection, showMode bool, seqNum map[int]int) {
+	if len(rows) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "### %s\n\n", title)
+	if showMode {
+		b.WriteString("| # | Mode | Test case | Verifies | Result |\n")
+		b.WriteString("|---|---|---|---|---|\n")
+		for _, s := range rows {
+			n := seqNum[s.seq]
+			fmt.Fprintf(b, "| [%d](#test-%d) | %s | %s | %s | %s |\n",
+				n, n, s.mode, mdCell(s.name), mdCell(s.checks), s.result)
+		}
+	} else {
+		b.WriteString("| # | Test case | Verifies | Result |\n")
+		b.WriteString("|---|---|---|---|\n")
+		for _, s := range rows {
+			n := seqNum[s.seq]
+			fmt.Fprintf(b, "| [%d](#test-%d) | %s | %s | %s |\n",
+				n, n, mdCell(s.name), mdCell(s.checks), s.result)
+		}
+	}
+	b.WriteString("\n")
+}
+
 // mdCell escapes pipe characters so a value never breaks a markdown table cell.
 func mdCell(s string) string { return strings.ReplaceAll(s, "|", "\\|") }
 
-// applyCommands assembles a topic section's command list so it matches the output
-// blocks actually captured: a --dry-run line iff dry-run output was captured, the
-// apply line iff apply output was captured, the idempotent re-apply line iff
-// re-apply output was captured, then an optional verify command (e.g. a GET).
-// This keeps the rendered "Commands" consistent with the rendered output — no
-// listing a re-apply that never ran (and vice versa).
-func applyCommands(in sectionInput, verify string) []string {
-	const apply = "kcp migrate apply -f migration.yaml"
-	var cmds []string
-	if in.dryRun != "" {
-		cmds = append(cmds, apply+" --dry-run")
-	}
-	if in.apply != "" {
-		cmds = append(cmds, apply)
-	}
-	if in.reapply != "" {
-		cmds = append(cmds, apply+"   # idempotent re-apply")
-	}
-	if verify != "" {
-		cmds = append(cmds, verify)
-	}
-	return cmds
+// The standard apply command lines. Cases with a non-standard manifest path
+// (e.g. the config+drift case using m1.yaml/m2.yaml) pass their own literal
+// command strings to addRun instead of using these.
+const (
+	applyCmd       = "kcp migrate apply -f migration.yaml"
+	applyDryRunCmd = applyCmd + " --dry-run"
+)
+
+// reportStep is one stage of a test case (dry run, apply, idempotent re-apply, a
+// verification read): a title, the command it ran, and the output that command
+// produced. Each step renders as its own "#### <title>" sub-section under the
+// section's "### Steps" heading, with the command and its output directly
+// beneath — so each stage is self-contained and individually navigable.
+type reportStep struct {
+	title string // sub-section heading, e.g. "Dry run", "Apply", "Verify — …"
+	cmd   string // the command line, shown in a shell fence
+	out   string // the output it produced (omitted from the render when empty)
+	lang  string // output fence language: "" for stdout, "json" for a REST read
+}
+
+// addRun appends a command-line step (dry run / apply / re-apply) and its stdout.
+func (in *sectionInput) addRun(title, cmd, out string) {
+	in.steps = append(in.steps, reportStep{title: title, cmd: cmd, out: out})
+}
+
+// addRead appends a verification read step: a titled `GET` command and its JSON body.
+func (in *sectionInput) addRead(title, cmd, jsonBody string) {
+	in.steps = append(in.steps, reportStep{title: title, cmd: cmd, out: jsonBody, lang: "json"})
+}
+
+// addReadBlock appends a verification read step built from a resultBlock (a live
+// REST GET), titling the step "Verify — <label>".
+func (in *sectionInput) addReadBlock(b resultBlock) {
+	in.addRead("Verify — "+b.label, "GET "+b.url, b.json)
 }
 
 // TestReportRender_NumberedAnchors verifies the summary "#" column links to each
@@ -163,55 +255,83 @@ func applyCommands(in sectionInput, verify string) []string {
 // needs no broker (runs under -tags integration without the docker env).
 func TestReportRender_NumberedAnchors(t *testing.T) {
 	rc := &reportCollector{sections: []reportSection{
-		buildSection(sectionInput{seq: 1, mode: "destination", name: "D1=plaintext", checks: "x", manifest: "m", commands: []string{"c"}, pass: true}),
-		buildSection(sectionInput{seq: 2, mode: "source", name: "mts-glob", checks: "y", manifest: "m", commands: []string{"c"}, pass: true}),
+		buildSection(sectionInput{seq: 1, category: catClusterLink, mode: "destination", name: "D1=plaintext", checks: "x", manifest: "m", pass: true}),
+		buildSection(sectionInput{seq: 2, category: catMirror, mode: "source", name: "mts-glob", checks: "y", manifest: "m", pass: true}),
+		buildSection(sectionInput{seq: 3, category: catNew, mode: "new", name: "nt-passthrough", checks: "z", manifest: "m", pass: true}),
 	}}
 	out := rc.render()
 
 	for _, want := range []string{
-		"| [1](#test-1) | destination | D1=plaintext |", // summary row links to anchor
-		"| [2](#test-2) | source | mts-glob |",
-		`<a id="test-1"></a>`,                 // section anchor (link target)
-		"## 1 · destination · D1=plaintext\n", // numbered heading matches summary #
+		"### Cluster link\n",
+		"### Mirror topics\n",
+		"### New topics\n",
+		"| [1](#test-1) | destination | D1=plaintext |", // cluster-link row (has Mode)
+		"| [2](#test-2) | source | mts-glob |",          // mirror row (has Mode)
+		"| [3](#test-3) | nt-passthrough |",             // new-topics row (no Mode column)
+		`<a id="test-1"></a>`,                           // section anchor (link target)
+		"## 1 · destination · D1=plaintext\n",           // numbered heading matches summary #
 		`<a id="test-2"></a>`,
 		"## 2 · source · mts-glob\n",
+		`<a id="test-3"></a>`,
+		"## 3 · new · nt-passthrough\n",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rendered report missing %q\n---\n%s", want, out)
 		}
 	}
-}
 
-// TestApplyCommands verifies the command list matches the captured output: the
-// re-apply (and dry-run) line appears only when that output was captured, so the
-// report never lists a re-apply that didn't run. Pure; no broker.
-func TestApplyCommands(t *testing.T) {
-	const apply = "kcp migrate apply -f migration.yaml"
-	reapply := apply + "   # idempotent re-apply"
-
-	// apply + re-apply captured, with a verify GET.
-	got := applyCommands(sectionInput{apply: "out", reapply: "out2"}, "GET /x")
-	want := []string{apply, reapply, "GET /x"}
-	requireStrings(t, got, want)
-
-	// apply only (no re-apply captured) → no re-apply line.
-	got = applyCommands(sectionInput{apply: "out"}, "GET /x")
-	requireStrings(t, got, []string{apply, "GET /x"})
-
-	// dry-run only (e.g. the dry-run case) → only the --dry-run line, no plain apply.
-	got = applyCommands(sectionInput{dryRun: "out"}, "")
-	requireStrings(t, got, []string{apply + " --dry-run"})
-}
-
-func requireStrings(t *testing.T, got, want []string) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Fatalf("got %v, want %v", got, want)
+	// The new-topics table must NOT carry a Mode column, so the "new" mode value
+	// never appears as a summary cell between two pipes for that area.
+	if strings.Contains(out, "| [3](#test-3) | new |") {
+		t.Errorf("new-topics summary row should omit the Mode column\n---\n%s", out)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("got %v, want %v", got, want)
+
+	// No "Other" table when every section is categorised.
+	if strings.Contains(out, "### Other\n") {
+		t.Errorf("unexpected Other table — all sections were categorised\n---\n%s", out)
+	}
+}
+
+// TestBuildSectionStepSubSections verifies each stage renders as its own titled
+// "#### <title>" sub-section under "### Steps", with its command immediately
+// followed by its output, in step order. Pure; no broker.
+func TestBuildSectionStepSubSections(t *testing.T) {
+	in := sectionInput{
+		seq: 1, category: catMirror, mode: "destination", name: "x",
+		checks: "c", manifest: "m", pass: true,
+	}
+	in.addRun("Dry run", applyDryRunCmd, "DRY-RUN-OUTPUT")
+	in.addRun("Apply", applyCmd, "APPLY-OUTPUT")
+	in.addReadBlock(resultBlock{label: "mirror topics on target", url: "http://h/mirrors", json: "READ-JSON"})
+	body := buildSection(in).body
+
+	// The steps wrapper, each step's "#### <title>" header, and each command
+	// followed by its own output must appear in execution order.
+	mustOrder(t, body,
+		"### Steps",
+		"#### Dry run", applyDryRunCmd, "DRY-RUN-OUTPUT",
+		"#### Apply", applyCmd, "APPLY-OUTPUT",
+		"#### Verify — mirror topics on target", "GET http://h/mirrors", "READ-JSON",
+	)
+
+	// A step with no output renders its header + command but no empty output fence.
+	in2 := sectionInput{seq: 1, category: catNew, mode: "new", name: "y", checks: "c", manifest: "m", pass: true}
+	in2.addRun("Deferred", "# see unit test", "")
+	if !strings.Contains(buildSection(in2).body, "#### Deferred") {
+		t.Errorf("output-less step should still render its header + command")
+	}
+}
+
+// mustOrder asserts that the given substrings appear in body in the given order.
+func mustOrder(t *testing.T, body string, want ...string) {
+	t.Helper()
+	idx := 0
+	for _, w := range want {
+		next := strings.Index(body[idx:], w)
+		if next < 0 {
+			t.Fatalf("substring %q not found after position %d\n---\n%s", w, idx, body)
 		}
+		idx += next + len(w)
 	}
 }
 
@@ -230,25 +350,25 @@ type fencedFile struct {
 // sectionInput carries everything a test case captured for its section.
 type sectionInput struct {
 	seq      int
-	mode     string // "destination" / "source"
-	name     string // "D2=scram256"
-	checks   string // one-sentence "what it checks" statement
-	manifest string // generated migration.yaml content
-	creds    []fencedFile
-	commands []string // literal commands run
-	dryRun   string   // captured dry-run stdout
-	apply    string   // captured apply stdout
-	results  []resultBlock
-	reapply  string // captured idempotent re-apply stdout
+	category string        // summary grouping: catClusterLink / catMirror / catNew
+	mode     string        // "destination" / "source" / "new"
+	name     string        // "D2=scram256"
+	checks   string        // one-sentence "what it checks" statement
+	manifest string        // generated migration.yaml content
+	creds    []fencedFile  //
+	results  []resultBlock // non-command context: source topics, expected, notes
+	steps    []reportStep  // ordered command+output pairs (the Commands & output run)
 	pass     bool
 	deferred bool   // case runs no live apply (documentation-only) → DEFERRED
 	failMsg  string // failure detail when !pass
 }
 
-// resultBlock is one live REST link GET capturing the observed link state.
+// resultBlock is one piece of evidence: either a non-command context block
+// (source topics, expected outcome — url empty) shown in the Context zone, or a
+// live REST read converted to a command step via addReadBlock (url set).
 type resultBlock struct {
 	label string // e.g. "INBOUND link on migration-dest"
-	url   string // the GET URL
+	url   string // the GET URL ("" for a non-command context block)
 	json  string // pretty-printed response body
 }
 
@@ -267,9 +387,9 @@ func buildSection(in sectionInput) reportSection {
 
 	// NOTE: the section's H2 heading (with its display number + anchor) is written
 	// by reportCollector.render at render time, because the number is the section's
-	// position in the sorted summary. The body here starts at "What this checks".
+	// position in the sorted summary. The body here starts at "Verifies".
 	var b strings.Builder
-	fmt.Fprintf(&b, "**What this checks** — %s\n\n", in.checks)
+	fmt.Fprintf(&b, "**Verifies** — %s\n\n", in.checks)
 
 	if !in.pass && in.failMsg != "" {
 		fmt.Fprintf(&b, "**Failure** — %s\n\n", in.failMsg)
@@ -278,53 +398,47 @@ func buildSection(in sectionInput) reportSection {
 	b.WriteString("**Manifest** — generated `migration.yaml`:\n\n")
 	fence(&b, "yaml", in.manifest)
 
-	b.WriteString("**Credential files**\n\n")
-	for _, f := range in.creds {
-		fmt.Fprintf(&b, "_%s — `%s`_\n\n", f.role, f.name)
-		fence(&b, f.lang, f.body)
+	if len(in.creds) > 0 {
+		b.WriteString("**Credential files**\n\n")
+		for _, f := range in.creds {
+			fmt.Fprintf(&b, "_%s — `%s`_\n\n", f.role, f.name)
+			fence(&b, f.lang, f.body)
+		}
 	}
 
-	b.WriteString("**Commands**\n\n")
-	fence(&b, "shell", strings.Join(in.commands, "\n"))
-
-	if in.dryRun != "" {
-		b.WriteString("**Dry-run output**\n\n")
-		fence(&b, "", in.dryRun)
-	}
-	if in.apply != "" {
-		b.WriteString("**Apply output**\n\n")
-		fence(&b, "", in.apply)
-	}
-
+	// Context: non-command evidence (source topics, expected outcome, notes).
 	if len(in.results) > 0 {
-		b.WriteString("**Result — link state** (live REST `GET`, captured before deletion)\n\n")
+		b.WriteString("**Context**\n\n")
 		for _, p := range in.results {
-			// A result block may have no single URL (e.g. a "source topics"
-			// listing assembled from local fixture data); render just the label
-			// in that case rather than a dangling `GET `.
-			if p.url == "" {
-				fmt.Fprintf(&b, "_%s_\n\n", p.label)
-			} else {
-				fmt.Fprintf(&b, "_%s — `GET %s`_\n\n", p.label, p.url)
-			}
+			fmt.Fprintf(&b, "_%s_\n\n", p.label)
 			fence(&b, "json", p.json)
 		}
 	}
 
-	if in.reapply != "" {
-		b.WriteString("**Idempotent re-apply output**\n\n")
-		fence(&b, "", in.reapply)
+	// Steps: each stage (dry run, apply, idempotent re-apply, verification read)
+	// is its own "#### <title>" sub-section, with the command and the output it
+	// produced directly beneath — in execution order.
+	if len(in.steps) > 0 {
+		b.WriteString("### Steps\n\n")
+		for _, s := range in.steps {
+			fmt.Fprintf(&b, "#### %s\n\n", s.title)
+			fence(&b, "shell", s.cmd)
+			if s.out != "" {
+				fence(&b, s.lang, s.out)
+			}
+		}
 	}
 
 	fmt.Fprintf(&b, "**Result:** %s\n", result)
 
 	return reportSection{
-		seq:    in.seq,
-		mode:   in.mode,
-		name:   in.name,
-		checks: in.checks,
-		result: result,
-		body:   b.String(),
+		seq:      in.seq,
+		category: in.category,
+		mode:     in.mode,
+		name:     in.name,
+		checks:   in.checks,
+		result:   result,
+		body:     b.String(),
 	}
 }
 
