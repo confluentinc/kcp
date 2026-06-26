@@ -17,6 +17,7 @@ func TestLoadFixtures(t *testing.T) {
 	}{
 		{"era-c-v0.8.0.json", true},
 		{"era-c-v0.8.5.json", true},
+		{"era-b-v0.7.3.json", true},
 	}
 	base := filepath.Join("..", "state", "migrate", "testdata")
 	for _, tc := range cases {

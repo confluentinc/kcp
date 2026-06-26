@@ -1,7 +1,10 @@
 package migrate
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -97,15 +100,31 @@ func TestUpgradeCurrentIsIdentity(t *testing.T) {
 	}
 }
 
-func TestUpgradeUnsupportedLegacy(t *testing.T) {
-	// An Era B file has no upcaster yet in Tasks 1–6 (the B→C step lands in Task 7, after
-	// which all Era B is handled — this test is REMOVED there). It must report the legacy
-	// error, NOT pass through. (Pre-v0.4.0 / Era A is out of scope and is covered by
-	// TestUpgradeUnrecognizedIsNotSpecialCased below, not by ErrUnsupportedLegacy.)
-	data := `{"regions":[],"kcp_build_info":{"version":"0.7.3"}}`
-	_, _, err := Upgrade([]byte(data))
-	if !errors.Is(err, ErrUnsupportedLegacy) {
-		t.Fatalf("want ErrUnsupportedLegacy, got %v", err)
+func TestUpgradeEraBv073ToC(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("testdata", "era-b-v0.7.3.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	migrated, from, err := Upgrade(data)
+	if err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	if from != "kcp_build_info.version=0.7.3" {
+		t.Errorf("from = %q", from)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(migrated, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["regions"]; ok {
+		t.Error("top-level regions should be gone after B->C")
+	}
+	msk, ok := doc["msk_sources"].(map[string]any)
+	if !ok {
+		t.Fatal("msk_sources missing after B->C")
+	}
+	if _, ok := msk["regions"]; !ok {
+		t.Error("regions should be nested under msk_sources")
 	}
 }
 
