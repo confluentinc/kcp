@@ -352,7 +352,7 @@ func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics 
 
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		return fmt.Errorf("source offsets are still increasing after fencing — unrouted producer(s) detected:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nStop them and re-run 'kcp migration execute' to resume",
+		return fmt.Errorf("source offsets are still increasing after fencing — unrouted producer(s) detected:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
 			strings.Join(violations, "\n  "))
 	}
 

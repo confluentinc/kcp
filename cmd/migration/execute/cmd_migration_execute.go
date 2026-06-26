@@ -32,12 +32,12 @@ var (
 	saslPlainUsername string
 	saslPlainPassword string
 
-	tlsCaCert             string
-	tlsClientCert         string
-	tlsClientKey              string
-	insecureSkipTLSVerify     bool
-	rolloutTimeout            time.Duration
-	detectUnroutedProducers   bool
+	tlsCaCert               string
+	tlsClientCert           string
+	tlsClientKey            string
+	insecureSkipTLSVerify   bool
+	rolloutTimeout          time.Duration
+	detectUnroutedProducers bool
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
