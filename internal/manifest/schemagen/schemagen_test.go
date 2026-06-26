@@ -37,7 +37,7 @@ func TestGenerate_TopLevelProperties(t *testing.T) {
 func TestGenerate_Enums(t *testing.T) {
 	spec := props(t, props(t, asMap(t))["spec"].(map[string]any))
 	srcType := props(t, spec["source"].(map[string]any))["type"].(map[string]any)
-	require.Equal(t, []any{"apache-kafka", "confluent-platform"}, srcType["enum"])
+	require.Equal(t, []any{"msk", "apache-kafka", "confluent-platform"}, srcType["enum"])
 	tgtType := props(t, spec["target"].(map[string]any))["type"].(map[string]any)
 	require.Equal(t, []any{"confluent-cloud", "confluent-platform"}, tgtType["enum"])
 	mode := props(t, spec["topics"].(map[string]any))["mode"].(map[string]any)

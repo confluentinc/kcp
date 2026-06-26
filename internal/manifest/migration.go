@@ -12,6 +12,9 @@ const (
 	// OSK). Such sources can only be the source of a destination-initiated link —
 	// they cannot initiate (host a link object).
 	SourceApacheKafka = "apache-kafka"
+	// SourceMSK is an AWS MSK source. Distinct from apache-kafka so validation can
+	// gate IAM (only MSK uses it). Like apache-kafka, it cannot initiate a link.
+	SourceMSK = "msk"
 	// SourceConfluentPlatform is a Confluent Platform source. Required for
 	// source-initiated ("external") links, where the source dials out to the
 	// destination (e.g. a private on-prem CP migrating to public Confluent Cloud).

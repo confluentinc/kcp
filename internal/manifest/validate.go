@@ -106,7 +106,7 @@ func (m *Migration) Validate() []error {
 		add("metadata.name: must not be empty")
 	}
 
-	if err := validateEnum("spec.source.type", m.Spec.Source.Type, SourceApacheKafka, SourceConfluentPlatform); err != nil {
+	if err := validateEnum("spec.source.type", m.Spec.Source.Type, SourceMSK, SourceApacheKafka, SourceConfluentPlatform); err != nil {
 		errs = append(errs, err)
 	}
 	errs = append(errs, validateBootstrapServers("spec.source.bootstrapServers", m.Spec.Source.BootstrapServers)...)
@@ -190,8 +190,8 @@ func (m *Migration) Validate() []error {
 			if cl.Source != nil {
 				add("spec.clusterLink.source: not valid for mode %q", ClusterLinkModeSource)
 			}
-			if m.Spec.Source.Type == SourceApacheKafka {
-				add("spec.clusterLink.mode: %q is not supported when spec.source.type is %q (only confluent-platform/confluent-cloud can initiate a link)", ClusterLinkModeSource, SourceApacheKafka)
+			if m.Spec.Source.Type == SourceApacheKafka || m.Spec.Source.Type == SourceMSK {
+				add("spec.clusterLink.mode: %q is not supported when spec.source.type is %q (only confluent-platform/confluent-cloud can initiate a link)", ClusterLinkModeSource, m.Spec.Source.Type)
 			}
 		case "bidirectional":
 			add(`spec.clusterLink.mode: "bidirectional" is not supported (DR/active-active, not migration); use two unidirectional links`)

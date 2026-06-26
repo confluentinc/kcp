@@ -28,6 +28,7 @@
             "type": {
               "type": "string",
               "enum": [
+                "msk",
                 "apache-kafka",
                 "confluent-platform"
               ]

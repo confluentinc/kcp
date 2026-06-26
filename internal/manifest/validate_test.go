@@ -502,3 +502,21 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 		})
 	}
 }
+
+func TestValidate_SourceMSK_Valid(t *testing.T) {
+	m := validCC()
+	m.Spec.Source.Type = SourceMSK
+	require.Empty(t, m.Validate())
+}
+
+func TestValidate_SourceMSK_CannotSourceInitiate(t *testing.T) {
+	m := validCC()
+	m.Spec.Source.Type = SourceMSK
+	m.Spec.ClusterLink = &ClusterLink{
+		Name:        "l",
+		Mode:        ClusterLinkModeSource,
+		SourceRest:  &RestRef{Endpoint: "https://s", Credentials: "./s.yaml"},
+		Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./d.yaml"},
+	}
+	require.True(t, errorContains(m.Validate(), "is not supported when spec.source.type"))
+}
