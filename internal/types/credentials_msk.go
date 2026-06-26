@@ -162,39 +162,10 @@ type ClusterAuth struct {
 }
 
 func (ce ClusterAuth) GetSelectedAuthType() (AuthType, error) {
-	enabledMethods := ce.GetAuthMethods()
-	if len(enabledMethods) == 0 {
-		return "", fmt.Errorf("no authentication method enabled for cluster")
-	}
-	return enabledMethods[0], nil
-
+	return ce.AuthMethod.GetSelectedAuthType()
 }
 
-// Gets a list of the authentication method(s) selected in the `creds.yaml` file generated during discovery.
-func (ce ClusterAuth) GetAuthMethods() []AuthType {
-	enabledMethods := []AuthType{}
-
-	if ce.AuthMethod.UnauthenticatedPlaintext != nil && ce.AuthMethod.UnauthenticatedPlaintext.Use {
-		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedPlaintext)
-	}
-	if ce.AuthMethod.UnauthenticatedTLS != nil && ce.AuthMethod.UnauthenticatedTLS.Use {
-		enabledMethods = append(enabledMethods, AuthTypeUnauthenticatedTLS)
-	}
-	if ce.AuthMethod.IAM != nil && ce.AuthMethod.IAM.Use {
-		enabledMethods = append(enabledMethods, AuthTypeIAM)
-	}
-	if ce.AuthMethod.SASLScram != nil && ce.AuthMethod.SASLScram.Use {
-		enabledMethods = append(enabledMethods, AuthTypeSASLSCRAM)
-	}
-	if ce.AuthMethod.SASLPlain != nil && ce.AuthMethod.SASLPlain.Use {
-		enabledMethods = append(enabledMethods, AuthTypeSASLPlain)
-	}
-	if ce.AuthMethod.TLS != nil && ce.AuthMethod.TLS.Use {
-		enabledMethods = append(enabledMethods, AuthTypeTLS)
-	}
-
-	return enabledMethods
-}
+func (ce ClusterAuth) GetAuthMethods() []AuthType { return ce.AuthMethod.GetAuthMethods() }
 
 type AuthMethodConfig struct {
 	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
@@ -203,6 +174,41 @@ type AuthMethodConfig struct {
 	TLS                      *TLSConfig                      `yaml:"tls,omitempty"`
 	UnauthenticatedTLS       *UnauthenticatedTLSConfig       `yaml:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *UnauthenticatedPlaintextConfig `yaml:"unauthenticated_plaintext,omitempty"`
+}
+
+// GetAuthMethods returns the enabled auth methods in canonical order. This is the
+// single source of truth; OSKClusterAuth, ClusterAuth, and KafkaSourceConn all
+// delegate to it.
+func (amc AuthMethodConfig) GetAuthMethods() []AuthType {
+	enabled := []AuthType{}
+	if amc.UnauthenticatedPlaintext != nil && amc.UnauthenticatedPlaintext.Use {
+		enabled = append(enabled, AuthTypeUnauthenticatedPlaintext)
+	}
+	if amc.UnauthenticatedTLS != nil && amc.UnauthenticatedTLS.Use {
+		enabled = append(enabled, AuthTypeUnauthenticatedTLS)
+	}
+	if amc.IAM != nil && amc.IAM.Use {
+		enabled = append(enabled, AuthTypeIAM)
+	}
+	if amc.SASLScram != nil && amc.SASLScram.Use {
+		enabled = append(enabled, AuthTypeSASLSCRAM)
+	}
+	if amc.SASLPlain != nil && amc.SASLPlain.Use {
+		enabled = append(enabled, AuthTypeSASLPlain)
+	}
+	if amc.TLS != nil && amc.TLS.Use {
+		enabled = append(enabled, AuthTypeTLS)
+	}
+	return enabled
+}
+
+// GetSelectedAuthType returns the first enabled auth method, or an error if none.
+func (amc AuthMethodConfig) GetSelectedAuthType() (AuthType, error) {
+	enabled := amc.GetAuthMethods()
+	if len(enabled) == 0 {
+		return "", fmt.Errorf("no authentication method enabled for cluster")
+	}
+	return enabled[0], nil
 }
 
 // MergeWith preserves existing auth configurations only for auth methods that still exist in the new config
