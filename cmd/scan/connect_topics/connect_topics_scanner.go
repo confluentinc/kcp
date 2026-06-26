@@ -48,6 +48,7 @@ func NewConnectTopicsScanner(opts ConnectTopicsScannerOpts) *ConnectTopicsScanne
 // callers can branch on the exit code) or when the underlying admin client
 // could not be built.
 func (s *ConnectTopicsScanner) Run(ctx context.Context) error {
+	slog.Warn("⚠️ scan connect-topics is a best-effort discovery attempt; results may be incomplete")
 	slog.Info("scanning cluster for Connect worker addresses",
 		"cluster_id", s.clusterID,
 		"source", s.source.Type(),

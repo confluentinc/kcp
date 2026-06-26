@@ -50,9 +50,13 @@ func NewScanConnectTopicsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "connect-topics",
 		Short: "Discover Kafka Connect cluster addresses by parsing the connect-status topic",
-		Long: `Read one or more Kafka topics that play the role of Kafka Connect's default ` + "`connect-status`" + ` storage topic, parse the messages for worker_id values, and print the unique Kafka Connect worker addresses to stdout.
+		Long: `Read one or more Kafka topics acting as Kafka Connect's ` + "`connect-status`" + ` storage topic, extract the worker_id values, and print the unique Connect worker addresses to stdout. Unlike ` + "`kcp scan self-managed-connectors`" + ` (which inventories a Connect cluster you already have a REST URL for), this surfaces Connect clusters you may not know about.
 
-The goal is to surface Kafka Connect clusters that may be running against a Kafka cluster without the operator's knowledge — orthogonal to ` + "`kcp scan self-managed-connectors`" + `, which inventories a Connect cluster the operator already knows the REST URL of.`,
+Experimental & best-effort — key caveats:
+1. Requires read access to the topic's message data.
+2. You must name the exact status topic(s); KCP cannot discover or validate them.
+3. Addresses are whatever each worker advertised — often internal/in-cluster names not reachable from where KCP runs.
+4. Distributed-mode Connect only; output is raw host:port (no scheme); results are a point-in-time snapshot.`,
 		Example: `  # Discover Connect worker addresses for one OSK cluster
   kcp scan connect-topics \
       --credentials-file osk-credentials.yaml \
