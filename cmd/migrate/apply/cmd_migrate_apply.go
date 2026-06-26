@@ -71,6 +71,9 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
+	if err := ensureIAMAllowed(srcCluster, m.Spec.Source.Type, "spec.source.credentials", false); err != nil {
+		return err
+	}
 	src := newSourceReader(srcCluster)
 
 	// --- destination target (confluent-platform) ---
@@ -122,6 +125,9 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 			if err != nil {
 				return err
 			}
+			if err := ensureIAMAllowed(linkCluster, m.Spec.Source.Type, "spec.clusterLink.source.credentials", true); err != nil {
+				return err
+			}
 			auth, err := mclusterlink.LinkAuthFromSource(linkCluster)
 			if err != nil {
 				return fmt.Errorf("deriving cluster-link source auth: %w", err)
@@ -153,6 +159,9 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 
 			destCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.destination", cl.Destination.BootstrapServers, cl.Destination.Credentials)
 			if err != nil {
+				return err
+			}
+			if err := ensureIAMAllowed(destCluster, m.Spec.Source.Type, "spec.clusterLink.destination.credentials", true); err != nil {
 				return err
 			}
 			destAuth, err := mclusterlink.LinkAuthFromSource(destCluster)
@@ -217,6 +226,24 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 // clusterLink fields (with migration defaults), used as the reconciler's Configs.
 func resolveLinkConfigs(cl *manifest.ClusterLink) (map[string]string, error) {
 	return cl.ResolvedLinkConfigs()
+}
+
+// ensureIAMAllowed rejects IAM where it cannot work: a cluster link can never
+// authenticate via IAM (isLinkCreds), and IAM as a source-read method requires
+// an MSK source. Non-IAM auth always passes. A selection error is left for the
+// downstream loader/reader to surface.
+func ensureIAMAllowed(conn types.KafkaSourceConn, sourceType, field string, isLinkCreds bool) error {
+	at, err := conn.GetSelectedAuthType()
+	if err != nil || at != types.AuthTypeIAM {
+		return nil
+	}
+	if isLinkCreds {
+		return fmt.Errorf("%s: iam cannot authenticate a cluster link; use sasl_scram or mtls", field)
+	}
+	if sourceType != manifest.SourceMSK {
+		return fmt.Errorf("%s: iam auth requires spec.source.type: msk (got %q)", field, sourceType)
+	}
+	return nil
 }
 
 // loadMigrateCluster loads + validates a flat migrate credentials file and composes

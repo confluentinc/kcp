@@ -361,6 +361,48 @@ func TestApply_NothingToApply(t *testing.T) {
 	require.Contains(t, err.Error(), "spec.clusterLink and/or spec.topics is required")
 }
 
+// runWithSourceCreds writes a manifest with the given source.type and a source
+// credentials file with the given body (used for both spec.source and the
+// clusterLink.source), stubs the live read, and runs apply. Returns the error.
+func runWithSourceCreds(t *testing.T, sourceType, sourceCredsBody string) error {
+	t.Helper()
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("basic:\n  username: admin\n  password: admin-secret\n"), 0600))
+	sourceCreds := filepath.Join(dir, "source.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte(sourceCredsBody), 0600))
+	mf := filepath.Join(dir, "migration.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: "+sourceType+"\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-platform\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: http://127.0.0.1:1\n"+
+			"  clusterLink:\n    name: src-to-dest\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"), 0600))
+
+	old := newSourceReader
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
+	t.Cleanup(func() { newSourceReader = old })
+	cmd := NewMigrateApplyCmd()
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"-f", mf})
+	return cmd.Execute()
+}
+
+func TestApply_IAM_RejectedForApacheKafka(t *testing.T) {
+	err := runWithSourceCreds(t, "apache-kafka", "iam: { region: us-east-1 }\n")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "iam auth requires spec.source.type: msk")
+}
+
+func TestApply_IAM_RejectedInLinkCreds(t *testing.T) {
+	// source.type msk so the source-read check passes; the link creds (same file)
+	// must still be rejected because a link cannot speak IAM.
+	err := runWithSourceCreds(t, "msk", "iam: { region: us-east-1 }\n")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cannot authenticate a cluster link")
+}
+
 func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
 	cl := &manifest.ClusterLink{Name: "l", Prefix: "p."}
 	got, err := resolveLinkConfigs(cl)
