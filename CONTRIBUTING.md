@@ -4,8 +4,7 @@ Thanks for your interest in contributing to kcp! This guide covers building from
 source, running the tests, and how versioning works.
 
 > [!CAUTION]
-> Do not build from `main` for normal use — `main` is an in-development branch and is not a defined release. **Always install a released binary** for normal use, using the methods in the [Installation](README.md#installation) section of the README. Builds from `main` are untested and may contain breaking changes.
-
+> **Do not build from source for normal use.** Install a released binary using the methods in the [main README installation section](README.md#installation) instead. Source builds can contain breaking, untested changes.
 ## Prerequisites
 
 - Go 1.25+
