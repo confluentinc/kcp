@@ -3,3 +3,6 @@ certs/
 
 # Opt-in evidence report (produced by `make test-migrate-report`).
 migrate-report.md
+
+# Opt-in cloud evidence report (produced by `make test-migrate-cloud-report`).
+migrate-cloud-report.md

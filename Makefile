@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -146,6 +146,12 @@ test-migrate-report: build ## Run the migrate apply E2E tests and write a markdo
 	$(MAKE) test-env-up-migrate
 	cd integration-tests/migrate && KCP_MATRIX_REPORT=migrate-report.md go test -tags integration -v ./... ; \
 	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate ; exit $$status
+
+test-migrate-cloud: build ## Run the live MSK→CC cloud tests (env-gated; needs CC_*/MSK_* creds; no docker)
+	cd integration-tests/migrate && go test -tags integration -run Cloud -v ./...
+
+test-migrate-cloud-report: build ## Run the live cloud tests and write migrate-cloud-report.md (gitignored)
+	cd integration-tests/migrate && KCP_MATRIX_REPORT=migrate-cloud-report.md go test -tags integration -run Cloud -v ./...
 
 # ==============================================================================
 # Documentation (MkDocs Material + mike)
