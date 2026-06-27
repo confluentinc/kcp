@@ -15,6 +15,8 @@ spec:
     type: confluent-cloud                  # or: confluent-platform
     clusterId: lkc-xxxxx
     credentials: ./target-creds.yaml
+    kafka:
+      restEndpoint: https://pkc-1n6m13.us-east-1.aws.confluent.cloud:443
 
   clusterLink:
     name: source-to-cc

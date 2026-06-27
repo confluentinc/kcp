@@ -119,8 +119,8 @@ func (m *Migration) Validate() []error {
 		if blank(m.Spec.Target.ClusterID) {
 			add("spec.target.clusterId: required for target type %q", TargetConfluentCloud)
 		}
-		if m.Spec.Target.Kafka != nil {
-			add("spec.target.kafka: not valid for target type %q", TargetConfluentCloud)
+		if m.Spec.Target.Kafka == nil || blank(m.Spec.Target.Kafka.RestEndpoint) {
+			add("spec.target.kafka.restEndpoint: required for target type %q", TargetConfluentCloud)
 		}
 		if m.Spec.Target.SchemaRegistry != nil {
 			add("spec.target.schemaRegistry: not valid for target type %q", TargetConfluentCloud)

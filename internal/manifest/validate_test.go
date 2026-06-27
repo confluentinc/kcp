@@ -36,7 +36,7 @@ func validCC() *Migration {
 		Metadata:   Metadata{Name: "m"},
 		Spec: Spec{
 			Source: Source{Type: SourceApacheKafka, BootstrapServers: []string{"b:9092"}, Credentials: "./s.yaml"},
-			Target: Target{Type: TargetConfluentCloud, ClusterID: "lkc-1", Credentials: "./t.yaml"},
+			Target: Target{Type: TargetConfluentCloud, ClusterID: "lkc-1", Credentials: "./t.yaml", Kafka: &TargetKafka{RestEndpoint: "https://pkc-x.confluent.cloud:443"}},
 		},
 	}
 }
@@ -210,10 +210,10 @@ func TestValidate_TopicsNewModeNoClusterLink_Valid(t *testing.T) {
 	require.Empty(t, m.Validate())
 }
 
-func TestValidate_CCTargetRejectsKafkaBlock(t *testing.T) {
+func TestValidate_CCTargetRequiresRestEndpoint(t *testing.T) {
 	m := validCC()
-	m.Spec.Target.Kafka = &TargetKafka{RestEndpoint: "https://broker:8090"}
-	require.True(t, errorContains(m.Validate(), "spec.target.kafka"))
+	m.Spec.Target.Kafka = nil
+	require.True(t, errorContains(m.Validate(), "spec.target.kafka.restEndpoint"))
 }
 
 func TestValidate_CPTargetRejectsCluster(t *testing.T) {
