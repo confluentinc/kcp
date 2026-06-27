@@ -136,14 +136,20 @@ func (r *cloudReporter) commit(t *testing.T) {
 // the source-read creds into dir; returns their paths. readVia is "scram" or "iam".
 func writeCloudCreds(t *testing.T, dir string, cfg cloudConfig, readVia string) (target, linkSource, sourceRead string) {
 	t.Helper()
+	// Block-style YAML with double-quoted scalars: secrets/passwords can contain
+	// YAML-significant characters (e.g. the SCRAM password "Qj8O_v18M%VX?[V&" has a
+	// '[' that would start a flow sequence in flow style and break parsing).
+	q := func(s string) string {
+		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+	}
 	target = filepath.Join(dir, "cc.yaml")
-	require.NoError(t, os.WriteFile(target, []byte("api_key: "+cfg.ccKey+"\napi_secret: "+cfg.ccSecret+"\n"), 0600))
+	require.NoError(t, os.WriteFile(target, []byte("api_key: "+q(cfg.ccKey)+"\napi_secret: "+q(cfg.ccSecret)+"\n"), 0600))
 	linkSource = filepath.Join(dir, "msk-scram.yaml")
 	require.NoError(t, os.WriteFile(linkSource, []byte(
-		"sasl_scram: { username: "+cfg.mskScramUser+", password: "+cfg.mskScramPass+", mechanism: SHA512 }\n"), 0600))
+		"sasl_scram:\n  username: "+q(cfg.mskScramUser)+"\n  password: "+q(cfg.mskScramPass)+"\n  mechanism: SHA512\n"), 0600))
 	if readVia == "iam" {
 		sourceRead = filepath.Join(dir, "msk-iam.yaml")
-		require.NoError(t, os.WriteFile(sourceRead, []byte("iam: { region: "+cfg.mskRegion+" }\n"), 0600))
+		require.NoError(t, os.WriteFile(sourceRead, []byte("iam:\n  region: "+q(cfg.mskRegion)+"\n"), 0600))
 	} else {
 		sourceRead = linkSource
 	}
@@ -182,6 +188,7 @@ func TestCloud_MSKtoCC_DestinationLink(t *testing.T) {
 	defer rc.deleteLink(t, cfg.ccClusterID, name)
 
 	rep := newCloudReporter(catClusterLink, "MSK→CC destination-initiated link", "Destination-initiated external cluster link from public MSK (SCRAM) to CC reaches ACTIVE.", readFileString(t, mf))
+	defer rep.commit(t)
 
 	out, err := runKCP(t, mf, "--dry-run")
 	require.NoError(t, err, out)
@@ -199,7 +206,6 @@ func TestCloud_MSKtoCC_DestinationLink(t *testing.T) {
 	require.Contains(t, out, "already present")
 	rep.addRun("Idempotent re-apply", applyCmd, out)
 
-	rep.commit(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -213,7 +219,7 @@ func TestCloud_MSKtoCC_MirrorTopics(t *testing.T) {
 
 	prefix := "kcp-" + runID + "-"
 	seeded := seedMSKCatalog(t, admin, prefix)
-	grantUserReadDescribe(t, admin, cfg.mskScramUser, seeded)
+	grantUserMirrorACLs(t, admin, cfg.mskScramUser, seeded)
 	defer cleanupMSK(t, admin, cfg.mskScramUser, seeded)
 
 	rc := cfg.ccRestClient()
@@ -230,6 +236,7 @@ func TestCloud_MSKtoCC_MirrorTopics(t *testing.T) {
 	}()
 
 	rep := newCloudReporter(catMirror, "MSK→CC mirror topics", "Mirror topics created on CC from public MSK over the SCRAM link; out-of-band pause is reported as drift.", readFileString(t, mf))
+	defer rep.commit(t)
 
 	out, err := runKCP(t, mf)
 	require.NoError(t, err, out)
@@ -249,7 +256,6 @@ func TestCloud_MSKtoCC_MirrorTopics(t *testing.T) {
 	require.Contains(t, out, "drift")
 	rep.addRun("Re-apply after out-of-band pause (drift)", applyCmd, out)
 
-	rep.commit(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -266,6 +272,7 @@ func TestCloud_MSKtoCC_IAMSourceRead(t *testing.T) {
 	defer rc.deleteLink(t, cfg.ccClusterID, name)
 
 	rep := newCloudReporter(catClusterLink, "MSK→CC with IAM source-read", "spec.source reads MSK via IAM (SigV4); the destination-initiated link dials MSK via SCRAM and reaches ACTIVE.", readFileString(t, mf))
+	defer rep.commit(t)
 
 	out, err := runKCP(t, mf)
 	require.NoError(t, err, out)
@@ -273,5 +280,4 @@ func TestCloud_MSKtoCC_IAMSourceRead(t *testing.T) {
 	rep.addRun("Apply (IAM read, SCRAM link)", applyCmd, out)
 	rc.requireLinkActive(t, cfg.ccClusterID, name)
 
-	rep.commit(t)
 }

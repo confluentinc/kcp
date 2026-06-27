@@ -64,14 +64,17 @@ func isTopicExists(err error) bool {
 	return false
 }
 
-// grantUserReadDescribe grants the SCRAM user READ+DESCRIBE on each topic (LITERAL)
-// so the cluster link (authenticating as that user) can replicate them.
-func grantUserReadDescribe(t *testing.T, admin sarama.ClusterAdmin, user string, topics []string) {
+// grantUserMirrorACLs grants the SCRAM user the source-topic ACLs a destination
+// cluster link needs to mirror it (LITERAL): DESCRIBE + DESCRIBE_CONFIGS (CC
+// fetches the source topic's configuration when creating the mirror — without
+// DESCRIBE_CONFIGS the create fails with 40301 "Topic authorization failed") and
+// READ (to replicate the data). DESCRIBE alone only allows listing.
+func grantUserMirrorACLs(t *testing.T, admin sarama.ClusterAdmin, user string, topics []string) {
 	t.Helper()
 	principal := "User:" + user
 	for _, topic := range topics {
 		res := sarama.Resource{ResourceType: sarama.AclResourceTopic, ResourceName: topic, ResourcePatternType: sarama.AclPatternLiteral}
-		for _, op := range []sarama.AclOperation{sarama.AclOperationRead, sarama.AclOperationDescribe} {
+		for _, op := range []sarama.AclOperation{sarama.AclOperationRead, sarama.AclOperationDescribe, sarama.AclOperationDescribeConfigs} {
 			acl := sarama.Acl{Principal: principal, Host: "*", Operation: op, PermissionType: sarama.AclPermissionAllow}
 			require.NoError(t, admin.CreateACL(res, acl), "grant %v on %q to %s", op, topic, principal)
 		}
