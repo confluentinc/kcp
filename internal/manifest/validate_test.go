@@ -36,7 +36,7 @@ func validCC() *Migration {
 		Metadata:   Metadata{Name: "m"},
 		Spec: Spec{
 			Source: Source{Type: SourceApacheKafka, BootstrapServers: []string{"b:9092"}, Credentials: "./s.yaml"},
-			Target: Target{Type: TargetConfluentCloud, Cluster: "lkc-1", Credentials: "./t.yaml"},
+			Target: Target{Type: TargetConfluentCloud, ClusterID: "lkc-1", Credentials: "./t.yaml"},
 		},
 	}
 }
@@ -96,8 +96,8 @@ func TestValidate_SourceBootstrapServers_InvalidFormat(t *testing.T) {
 
 func TestValidate_TargetCCRequiresCluster(t *testing.T) {
 	m := validCC()
-	m.Spec.Target.Cluster = ""
-	require.True(t, errorContains(m.Validate(), "spec.target.cluster"))
+	m.Spec.Target.ClusterID = ""
+	require.True(t, errorContains(m.Validate(), "spec.target.clusterId"))
 }
 
 func TestValidate_TargetCPRequiresRestEndpoint(t *testing.T) {
@@ -222,9 +222,9 @@ func TestValidate_CPTargetRejectsCluster(t *testing.T) {
 		Type:        TargetConfluentPlatform,
 		Credentials: "./t.yaml",
 		Kafka:       &TargetKafka{RestEndpoint: "https://broker:8090"},
-		Cluster:     "lkc-1",
+		ClusterID:   "lkc-1",
 	}
-	require.True(t, errorContains(m.Validate(), "spec.target.cluster"))
+	require.True(t, errorContains(m.Validate(), "spec.target.clusterId"))
 }
 
 func TestValidate_ClusterLinkConfigFields(t *testing.T) {

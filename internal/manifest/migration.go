@@ -70,7 +70,7 @@ type Source struct {
 type Target struct {
 	Type           string       `yaml:"type" json:"type"`
 	Credentials    string       `yaml:"credentials" json:"credentials"`
-	Cluster        string       `yaml:"cluster,omitempty" json:"cluster,omitempty"`
+	ClusterID      string       `yaml:"clusterId,omitempty" json:"clusterId,omitempty"`
 	Kafka          *TargetKafka `yaml:"kafka,omitempty" json:"kafka,omitempty"`
 	SchemaRegistry *Endpoint    `yaml:"schemaRegistry,omitempty" json:"schemaRegistry,omitempty"`
 	Connect        *Endpoint    `yaml:"connect,omitempty" json:"connect,omitempty"`

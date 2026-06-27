@@ -9,7 +9,7 @@ spec:
     credentials: ./source-creds.yaml
   target:
     type: confluent-cloud
-    cluster: lkc-xxxxx
+    clusterId: lkc-xxxxx
     credentials: ./target-creds.yaml
   clusterLink:
     name: source-to-cc

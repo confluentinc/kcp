@@ -13,7 +13,7 @@ spec:
 
   target:
     type: confluent-cloud                  # or: confluent-platform
-    cluster: lkc-xxxxx
+    clusterId: lkc-xxxxx
     credentials: ./target-creds.yaml
 
   clusterLink:

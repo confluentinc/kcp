@@ -116,8 +116,8 @@ func (m *Migration) Validate() []error {
 
 	switch m.Spec.Target.Type {
 	case TargetConfluentCloud:
-		if blank(m.Spec.Target.Cluster) {
-			add("spec.target.cluster: required for target type %q", TargetConfluentCloud)
+		if blank(m.Spec.Target.ClusterID) {
+			add("spec.target.clusterId: required for target type %q", TargetConfluentCloud)
 		}
 		if m.Spec.Target.Kafka != nil {
 			add("spec.target.kafka: not valid for target type %q", TargetConfluentCloud)
@@ -132,8 +132,8 @@ func (m *Migration) Validate() []error {
 		if m.Spec.Target.Kafka == nil || blank(m.Spec.Target.Kafka.RestEndpoint) {
 			add("spec.target.kafka.restEndpoint: required for target type %q", TargetConfluentPlatform)
 		}
-		if !blank(m.Spec.Target.Cluster) {
-			add("spec.target.cluster: not valid for target type %q", TargetConfluentPlatform)
+		if !blank(m.Spec.Target.ClusterID) {
+			add("spec.target.clusterId: not valid for target type %q", TargetConfluentPlatform)
 		}
 	case "":
 		add("spec.target.type: must not be empty")

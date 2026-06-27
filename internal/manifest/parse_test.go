@@ -22,7 +22,7 @@ func TestParse_Valid(t *testing.T) {
 	require.Equal(t, "example-migration", m.Metadata.Name)
 	require.Equal(t, "apache-kafka", m.Spec.Source.Type)
 	require.Equal(t, "confluent-cloud", m.Spec.Target.Type)
-	require.Equal(t, "lkc-xxxxx", m.Spec.Target.Cluster)
+	require.Equal(t, "lkc-xxxxx", m.Spec.Target.ClusterID)
 	require.NotNil(t, m.Spec.ClusterLink)
 	require.Equal(t, "source-to-cc", m.Spec.ClusterLink.Name)
 	require.NotNil(t, m.Spec.Topics)
@@ -57,7 +57,7 @@ spec:
     credentials: ./s.yaml
   target:
     type: confluent-cloud
-    cluster: lkc-1
+    clusterId: lkc-1
     credentials: ./t.yaml
   clusterLink:
     name: l
