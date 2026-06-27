@@ -1,6 +1,7 @@
 package types
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/state/migrate"
 
 	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 )
@@ -1021,11 +1023,12 @@ func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected load error from fallback, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
+	// The source file's version is surfaced via the "migrated from ..." breadcrumb.
 	if !strings.Contains(err.Error(), "0.5.0") {
-		t.Errorf("expected error to contain file version, got: %v", err)
+		t.Errorf("expected error to reference the file's version, got: %v", err)
 	}
 }
 
@@ -1045,8 +1048,8 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected unmarshal error, got: %v", err)
+	if !strings.Contains(err.Error(), "state file") {
+		t.Errorf("expected a state-file error, got: %v", err)
 	}
 }
 
@@ -1068,8 +1071,8 @@ func TestNewStateFromFile_SchemaMismatch_NoVersion_SurfacesFriendlyError(t *test
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected friendly error for versionless schema mismatch, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance for versionless schema mismatch, got: %v", err)
 	}
 }
 
@@ -1111,22 +1114,29 @@ func TestNewStateFromBytes_SchemaMismatch_WithVersion(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+	// The file's version is surfaced via the "migrated from ..." breadcrumb. The new
+	// contract no longer echoes the running binary's version (superseded #308 behavior);
+	// it gives actionable upgrade/recreate guidance instead.
 	if !strings.Contains(err.Error(), "0.5.0") {
-		t.Errorf("expected error to contain file version, got: %v", err)
+		t.Errorf("expected error to reference the file's version, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), build_info.Version) {
-		t.Errorf("expected error to contain running version, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
 }
 
 func TestNewStateFromBytes_SchemaMismatch_NoVersion(t *testing.T) {
+	// An Era C-shaped file (msk_sources present) whose msk_sources is malformed passes
+	// through migration unchanged (era C, no schema_version) and fails the strict decode.
+	// With no version stamp it is NOT dev-classified, so it gets the generic, actionable
+	// recreate/upgrade message rather than a dev-build message (spec N5).
 	data := []byte(`{"msk_sources":["unexpected","array"]}`)
 	_, err := NewStateFromBytes(data)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected friendly error, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
 }
 
@@ -1136,8 +1146,9 @@ func TestNewStateFromBytes_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected unmarshal error, got: %v", err)
+	// Invalid JSON fails during version inspection; the message names the state file.
+	if !strings.Contains(err.Error(), "state file") {
+		t.Errorf("expected a state-file error, got: %v", err)
 	}
 }
 
@@ -1152,28 +1163,30 @@ func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
 	}
 }
 
-func TestNewStateFromBytes_UnknownFields_WithVersion_RejectsWithVersionContext(t *testing.T) {
+// Legacy Era B files (top-level `regions`) are recognised by the migration engine but
+// have no upcaster in Plan 1 (the B→C step lands in Task 7). The loader must surface the
+// actionable `kcp state upgrade` guidance rather than the superseded #308 "recreate or
+// downgrade with version context" message. The "kcp state upgrade" guidance is stable
+// across Task 3 (ErrUnsupportedLegacy) and Task 7 (post-B→C decode guidance).
+func TestNewStateFromBytes_LegacyEraB_WithVersion_SuggestsUpgrade(t *testing.T) {
 	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1"}]}`)
 	_, err := NewStateFromBytes(data)
 	if err == nil {
-		t.Fatal("expected error for unknown fields, got nil")
+		t.Fatal("expected error for legacy Era B file, got nil")
 	}
-	if !strings.Contains(err.Error(), "0.7.2") {
-		t.Errorf("expected error to contain file version, got: %v", err)
-	}
-	if !strings.Contains(err.Error(), build_info.Version) {
-		t.Errorf("expected error to contain running version, got: %v", err)
+	if !strings.Contains(err.Error(), "kcp state upgrade") {
+		t.Errorf("expected actionable `kcp state upgrade` guidance, got: %v", err)
 	}
 }
 
-func TestNewStateFromBytes_UnknownFields_NoVersion_Rejects(t *testing.T) {
+func TestNewStateFromBytes_LegacyEraB_NoVersion_SuggestsUpgrade(t *testing.T) {
 	data := []byte(`{"regions":[{"region_name":"us-east-1"}]}`)
 	_, err := NewStateFromBytes(data)
 	if err == nil {
-		t.Fatal("expected error for unknown fields, got nil")
+		t.Fatal("expected error for legacy Era B file, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected load error, got: %v", err)
+	if !strings.Contains(err.Error(), "kcp state upgrade") {
+		t.Errorf("expected actionable `kcp state upgrade` guidance, got: %v", err)
 	}
 }
 
@@ -1458,5 +1471,109 @@ func TestWriteToFile_RoundTripsContent(t *testing.T) {
 	}
 	if got.KcpBuildInfo.Version != want {
 		t.Fatalf("reloaded version = %q, want %q", got.KcpBuildInfo.Version, want)
+	}
+}
+
+func TestWriteToFileStampsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+
+	s := &State{} // no schema_version set by caller
+	if err := s.WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var probe struct {
+		SchemaVersion int    `json:"schema_version"`
+		UpdatedAt     string `json:"updated_at"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if probe.SchemaVersion != migrate.CurrentSchemaVersion {
+		t.Errorf("schema_version = %d, want %d", probe.SchemaVersion, migrate.CurrentSchemaVersion)
+	}
+	if probe.UpdatedAt == "" {
+		t.Errorf("updated_at not stamped")
+	}
+}
+
+func TestWriteToFileBacksUpMigratingWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+
+	// Existing on-disk file at an OLDER schema_version (0) than current.
+	if err := os.WriteFile(path, []byte(`{"schema_version":0,"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.0"},"timestamp":"2026-05-14T00:00:00Z"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	// Exactly one timestamped .bak should exist, holding the old (schema_version 0) bytes.
+	entries, _ := filepath.Glob(filepath.Join(dir, "kcp-state.json.*.bak"))
+	if len(entries) != 1 {
+		t.Fatalf("want 1 .bak, got %d: %v", len(entries), entries)
+	}
+	bak, _ := os.ReadFile(entries[0])
+	if !strings.Contains(string(bak), `"schema_version":0`) {
+		t.Errorf(".bak should contain the pre-migration file, got: %s", bak)
+	}
+
+	// A same-version rewrite must NOT create another backup.
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = filepath.Glob(filepath.Join(dir, "kcp-state.json.*.bak"))
+	if len(entries) != 1 {
+		t.Errorf("same-version rewrite must not back up; want 1 .bak, got %d", len(entries))
+	}
+}
+
+func TestNewStateFromBytesLoadsCurrentEraC(t *testing.T) {
+	data := []byte(`{"schema_version":1,"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.5","commit":"x","date":"y"},"timestamp":"2026-01-01T00:00:00Z"}`)
+	st, err := NewStateFromBytes(data)
+	if err != nil {
+		t.Fatalf("NewStateFromBytes: %v", err)
+	}
+	if st.MSKSources == nil {
+		t.Fatalf("msk_sources not decoded")
+	}
+}
+
+func TestNewStateFromBytesNewerSchemaIsActionable(t *testing.T) {
+	data := []byte(`{"schema_version":99,"msk_sources":{}}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for newer schema")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "newer") || !strings.Contains(msg, "kcp update") {
+		t.Errorf("error should tell the user to update, got: %q", msg)
+	}
+	if strings.Contains(msg, "recreate") || strings.Contains(msg, "downgrade") {
+		t.Errorf("error must NOT suggest recreate/downgrade for a newer file, got: %q", msg)
+	}
+}
+
+func TestNewStateFromBytesDevStampedNewerSchema(t *testing.T) {
+	// Official-release reader opening a dev-STAMPED file with a newer schema_version:
+	// must explain it's a dev build, NOT advise `kcp update` (spec §6.9).
+	data := []byte(`{"schema_version":99,"kcp_build_info":{"version":"0.0.0-localdev"},"msk_sources":{}}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "development build") {
+		t.Errorf("error should name the development build, got: %q", msg)
+	}
+	if strings.Contains(msg, "kcp update") {
+		t.Errorf("error must NOT advise `kcp update` for a dev-stamped file, got: %q", msg)
 	}
 }
