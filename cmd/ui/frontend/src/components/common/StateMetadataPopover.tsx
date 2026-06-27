@@ -9,6 +9,14 @@ interface StateMetadataPopoverProps {
   className?: string
 }
 
+// formatMaybeDate formats a parseable date string, falling back to the raw
+// value if it isn't a date (build_info.date is set at build time and may not
+// always be RFC3339).
+function formatMaybeDate(value: string): string {
+  const formatted = formatDate(value)
+  return formatted === 'Invalid Date' ? value : formatted
+}
+
 export function StateMetadataPopover({ className }: StateMetadataPopoverProps) {
   const state = useKcpState()
   if (!state) return null
@@ -28,13 +36,13 @@ export function StateMetadataPopover({ className }: StateMetadataPopoverProps) {
     rows.push({ key: 'commit', label: 'Commit', value: build.commit })
   }
   if (build?.date && build.date !== 'unknown') {
-    rows.push({ key: 'date', label: 'Build date', value: build.date })
+    rows.push({ key: 'date', label: 'Build date', value: formatMaybeDate(build.date) })
   }
   if (state.timestamp) {
-    rows.push({ key: 'created', label: 'Created', value: formatDate(state.timestamp) })
+    rows.push({ key: 'created', label: 'Created', value: formatMaybeDate(state.timestamp) })
   }
   if (state.updated_at) {
-    rows.push({ key: 'updated', label: 'Last updated', value: formatDate(state.updated_at) })
+    rows.push({ key: 'updated', label: 'Last updated', value: formatMaybeDate(state.updated_at) })
   }
   if (state.migrated_from) {
     rows.push({ key: 'migrated', label: 'Migrated from', value: state.migrated_from })
@@ -53,18 +61,18 @@ export function StateMetadataPopover({ className }: StateMetadataPopoverProps) {
           <Info className="h-4 w-4" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" className="w-72">
-        <p className="mb-2 text-sm font-semibold">State file</p>
-        <div className="space-y-1 text-sm">
+      <PopoverContent align="end" className="w-80">
+        <p className="mb-3 text-sm font-semibold">State file</p>
+        <dl className="space-y-2.5 text-sm">
           {rows.map((row) => (
-            <div key={row.key} className="flex justify-between gap-4">
-              <span className="text-muted-foreground">{row.label}</span>
-              <span className="break-all text-right font-mono" data-testid={`meta-${row.key}`}>
+            <div key={row.key}>
+              <dt className="text-xs text-muted-foreground">{row.label}</dt>
+              <dd className="break-words font-mono" data-testid={`meta-${row.key}`}>
                 {row.value}
-              </span>
+              </dd>
             </div>
           ))}
-        </div>
+        </dl>
       </PopoverContent>
     </Popover>
   )
