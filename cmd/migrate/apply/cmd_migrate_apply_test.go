@@ -403,6 +403,50 @@ func TestApply_IAM_RejectedInLinkCreds(t *testing.T) {
 	require.Contains(t, err.Error(), "cannot authenticate a cluster link")
 }
 
+func TestApply_ConfluentCloudTarget_CreatesLinkOnLkcPath(t *testing.T) {
+	lkc := "lkc-v3922j"
+	createHit := false
+	mux := http.NewServeMux()
+	// CC has no list endpoint; if apply calls it, that's a bug.
+	mux.HandleFunc("/kafka/v3/clusters", func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("apply must not call GET /kafka/v3/clusters for a CC target")
+		w.WriteHeader(http.StatusNotFound)
+	})
+	mux.HandleFunc("/kafka/v3/clusters/"+lkc+"/links/src-to-cc", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound) // link absent -> to create
+	})
+	mux.HandleFunc("/kafka/v3/clusters/"+lkc+"/links/", func(w http.ResponseWriter, _ *http.Request) {
+		createHit = true
+		w.WriteHeader(http.StatusCreated)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "t.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("api_key: k\napi_secret: s\n"), 0600))
+	sourceCreds := filepath.Join(dir, "s.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
+	mf := filepath.Join(dir, "m.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+lkc+"\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+srv.URL+"\n"+
+			"  clusterLink:\n    name: src-to-cc\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"), 0600))
+
+	old := newSourceReader
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
+	t.Cleanup(func() { newSourceReader = old })
+	cmd := NewMigrateApplyCmd()
+	var out, errb bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errb)
+	cmd.SetArgs([]string{"-f", mf})
+	require.NoError(t, cmd.Execute(), errb.String())
+	require.True(t, createHit, "expected a link create on the lkc-scoped path")
+	require.Contains(t, out.String(), "1 created")
+}
+
 func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
 	cl := &manifest.ClusterLink{Name: "l", Prefix: "p."}
 	got, err := resolveLinkConfigs(cl)

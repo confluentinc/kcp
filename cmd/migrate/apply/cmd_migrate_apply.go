@@ -76,10 +76,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	}
 	src := newSourceReader(srcCluster)
 
-	// --- destination target (confluent-platform) ---
-	if m.Spec.Target.Type != manifest.TargetConfluentPlatform {
-		return fmt.Errorf("phase 1 supports target type %q only", manifest.TargetConfluentPlatform)
-	}
+	// --- destination target ---
 	tgtCreds, err := targets.LoadCredentials(m.Spec.Target.Credentials)
 	if err != nil {
 		return err
@@ -88,7 +85,15 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	if err != nil {
 		return err
 	}
-	tgt := targets.NewConfluentPlatformTarget(m.Spec.Target.Kafka.RestEndpoint, tgtCreds, tgtClient)
+	var tgt *targets.LinkEndpoint
+	switch m.Spec.Target.Type {
+	case manifest.TargetConfluentPlatform:
+		tgt = targets.NewConfluentPlatformTarget(m.Spec.Target.Kafka.RestEndpoint, tgtCreds, tgtClient)
+	case manifest.TargetConfluentCloud:
+		tgt = targets.NewConfluentCloudTarget(m.Spec.Target.Kafka.RestEndpoint, m.Spec.Target.ClusterID, tgtCreds, tgtClient)
+	default:
+		return fmt.Errorf("unsupported target type %q", m.Spec.Target.Type)
+	}
 
 	// --- reconcilers ---
 	// The engine runs reconcilers in order; the cluster link (when present) is the
