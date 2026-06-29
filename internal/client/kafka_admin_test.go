@@ -1,6 +1,8 @@
 package client
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -250,7 +252,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLSCRAMAuth sets SASL/SCRAM auth",
-			option: WithSASLSCRAMAuth("test-user", "test-pass", "SHA256", false),
+			option: WithSASLSCRAMAuth("test-user", "test-pass", "SHA256", "", false),
 			expectedConfig: AdminConfig{
 				authType:      types.AuthTypeSASLSCRAM,
 				username:      "test-user",
@@ -260,7 +262,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithUnauthenticatedAuth sets unauthenticated auth",
-			option: WithUnauthenticatedTlsAuth(),
+			option: WithUnauthenticatedTlsAuth(""),
 			expectedConfig: AdminConfig{
 				authType: types.AuthTypeUnauthenticatedTLS,
 			},
@@ -277,7 +279,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLPlainAuth sets SASL/PLAIN auth with TLS",
-			option: WithSASLPlainAuth("test-user", "test-pass"),
+			option: WithSASLPlainAuth("test-user", "test-pass", ""),
 			expectedConfig: AdminConfig{
 				authType: types.AuthTypeSASLPlain,
 				username: "test-user",
@@ -286,7 +288,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLPlainAuthNoTLS sets SASL/PLAIN auth without TLS",
-			option: WithSASLPlainAuthNoTLS("test-user", "test-pass"),
+			option: WithSASLPlainAuthNoTLS("test-user", "test-pass", ""),
 			expectedConfig: AdminConfig{
 				authType:   types.AuthTypeSASLPlain,
 				username:   "test-user",
@@ -380,7 +382,7 @@ func TestConfigureSASLTypeSCRAMAuthentication(t *testing.T) {
 			username := "test-user"
 			password := "test-pass"
 
-			_ = configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism, false)
+			require.NoError(t, configureSASLTypeSCRAMAuthentication(config, username, password, tt.mechanism, "", false))
 
 			// Verify SASL/SCRAM configuration
 			assert.True(t, config.Net.TLS.Enable)
@@ -420,7 +422,8 @@ func TestConfigureSASLTypePlainAuthentication(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := sarama.NewConfig()
-			configureSASLTypePlainAuthentication(config, "user", "pass", tt.withTLSEncryption, false)
+			err := configureSASLTypePlainAuthentication(config, "user", "pass", tt.withTLSEncryption, "", false)
+			require.NoError(t, err)
 
 			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
 			assert.True(t, config.Net.SASL.Enable)
@@ -481,7 +484,8 @@ func TestConfigureUnauthenticatedAuthentication(t *testing.T) {
 
 			// Determine if TLS should be enabled based on the encryption type
 			withTLSEncryption := tt.clientBrokerEncryptionInTransit != kafkatypes.ClientBrokerPlaintext
-			configureUnauthenticatedAuthentication(config, withTLSEncryption, false)
+			err := configureUnauthenticatedAuthentication(config, withTLSEncryption, "", false)
+			require.NoError(t, err)
 
 			assert.Equal(t, tt.expectedTLSEnabled, config.Net.TLS.Enable)
 			if tt.expectedTLSEnabled {
@@ -558,6 +562,86 @@ func TestConfigureTLSAuth(t *testing.T) {
 	}
 }
 
+// writeTestCAPEM generates a self-signed CA, PEM-encodes it, writes it to a
+// file in t.TempDir(), and returns the path. No checked-in fixture needed.
+func writeTestCAPEM(t *testing.T) string {
+	t.Helper()
+	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(100),
+		Subject:               pkix.Name{Organization: []string{"KCP Test CA"}},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &priv.PublicKey, priv)
+	require.NoError(t, err)
+
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(path, pemBytes, 0600))
+	return path
+}
+
+func TestTLSConfigWithCA_PopulatesRootCAs(t *testing.T) {
+	caPath := writeTestCAPEM(t)
+
+	cfg, err := tlsConfigWithCA(caPath, false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.NotNil(t, cfg.RootCAs)
+	assert.False(t, cfg.InsecureSkipVerify)
+}
+
+func TestTLSConfigWithCA_EmptyUsesSystemRoots(t *testing.T) {
+	cfg, err := tlsConfigWithCA("", false)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	// Empty CA must fall back to system roots (nil RootCAs) — identical to prior behavior.
+	assert.Nil(t, cfg.RootCAs)
+}
+
+func TestTLSConfigWithCA_BadFile(t *testing.T) {
+	cfg, err := tlsConfigWithCA(filepath.Join(t.TempDir(), "does-not-exist.pem"), false)
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "failed to read CA certificate file")
+}
+
+func TestTLSConfigWithCA_GarbagePEM(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "garbage.pem")
+	require.NoError(t, os.WriteFile(path, []byte("not a pem certificate"), 0600))
+
+	cfg, err := tlsConfigWithCA(path, false)
+	require.Error(t, err)
+	assert.Nil(t, cfg)
+	assert.Contains(t, err.Error(), "failed to append CA certificate to pool")
+}
+
+func TestConfigureSCRAM_WithCA_SetsRootCAs(t *testing.T) {
+	caPath := writeTestCAPEM(t)
+	config := sarama.NewConfig()
+
+	err := configureSASLTypeSCRAMAuthentication(config, "user", "pass", "SHA256", caPath, false)
+	require.NoError(t, err)
+	require.NotNil(t, config.Net.TLS.Config)
+	assert.NotNil(t, config.Net.TLS.Config.RootCAs)
+}
+
+func TestConfigureUnauthenticatedTLS_WithCA_SetsRootCAs(t *testing.T) {
+	caPath := writeTestCAPEM(t)
+	config := sarama.NewConfig()
+
+	err := configureUnauthenticatedAuthentication(config, true, caPath, false)
+	require.NoError(t, err)
+	require.NotNil(t, config.Net.TLS.Config)
+	assert.NotNil(t, config.Net.TLS.Config.RootCAs)
+}
+
 func TestMSKAccessTokenProvider_Token(t *testing.T) {
 
 	t.Skip("skipping integration test that requires credentials configuration")
@@ -611,7 +695,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9096"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass", "SHA256", false)},
+			opts:                            []AdminOption{WithSASLSCRAMAuth("user", "pass", "SHA256", "", false)},
 			expectError:                     false,
 		},
 		{
@@ -619,7 +703,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9094"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithUnauthenticatedTlsAuth()},
+			opts:                            []AdminOption{WithUnauthenticatedTlsAuth("")},
 			expectError:                     false,
 		},
 		{
@@ -704,7 +788,7 @@ func TestNewKafkaAdmin_MultipleOptions(t *testing.T) {
 	// Test that multiple options can be applied
 	opts := []AdminOption{
 		WithIAMAuth(),
-		WithSASLSCRAMAuth("user", "pass", "SHA256", false), // This should override the IAM auth
+		WithSASLSCRAMAuth("user", "pass", "SHA256", "", false), // This should override the IAM auth
 	}
 
 	admin, err := NewKafkaAdmin([]string{"broker1:9096"}, kafkatypes.ClientBrokerTls, "us-west-2", "4.0.0", opts...)

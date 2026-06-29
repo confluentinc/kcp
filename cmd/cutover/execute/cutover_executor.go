@@ -172,7 +172,7 @@ func (m *CutoverExecutor) createSourceOffset(_ context.Context) (*offset.Service
 func (m *CutoverExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
-	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret)}
+	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret, "")}
 	if m.opts.InsecureSkipTLSVerify {
 		destOpts = append(destOpts, client.WithInsecureSkipVerify())
 	}
