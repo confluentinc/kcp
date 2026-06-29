@@ -93,7 +93,10 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	case manifest.TargetConfluentPlatform:
 		tgt = targets.NewConfluentPlatformTarget(m.Spec.Target.Kafka.RestEndpoint, tgtCreds, tgtClient)
 	case manifest.TargetConfluentCloud:
-		tgt = targets.NewConfluentCloudTarget(m.Spec.Target.Kafka.RestEndpoint, m.Spec.Target.ClusterID, tgtCreds, tgtClient)
+		tgt, err = targets.NewConfluentCloudTarget(m.Spec.Target.Kafka.RestEndpoint, m.Spec.Target.ClusterID, tgtCreds, tgtClient)
+		if err != nil {
+			return err
+		}
 	default:
 		return fmt.Errorf("unsupported target type %q", m.Spec.Target.Type)
 	}

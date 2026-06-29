@@ -25,10 +25,20 @@ func TestNewConfluentCloudTarget_SeedsClusterID_NoDiscovery(t *testing.T) {
 	defer srv.Close()
 
 	creds := &Credentials{APIKey: "k", APISecret: "s"}
-	tgt := NewConfluentCloudTarget(srv.URL, "lkc-v3922j", creds, http.DefaultClient)
+	tgt, err := NewConfluentCloudTarget(srv.URL, "lkc-v3922j", creds, http.DefaultClient)
+	require.NoError(t, err)
 
 	id, err := tgt.ClusterID(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, "lkc-v3922j", id)
 	require.False(t, listHit, "CC target must not call GET /kafka/v3/clusters")
+}
+
+// A CC target cannot discover its own id, so an empty clusterID must be rejected
+// at construction rather than falling through to the CC-404 list endpoint.
+func TestNewConfluentCloudTarget_EmptyClusterID_Errors(t *testing.T) {
+	tgt, err := NewConfluentCloudTarget("https://example.confluent.cloud", "", &Credentials{APIKey: "k", APISecret: "s"}, http.DefaultClient)
+	require.Error(t, err)
+	require.Nil(t, tgt)
+	require.Contains(t, err.Error(), "clusterId is required")
 }
