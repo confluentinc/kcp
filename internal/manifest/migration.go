@@ -94,8 +94,9 @@ type KafkaConn struct {
 type ClusterLink struct {
 	Name string `yaml:"name" json:"name"`
 	// Mode is the cluster-link mode: "destination" (default) or "source".
-	// Empty is treated as "destination".
-	Mode string `yaml:"mode" json:"mode"`
+	// Empty is treated as "destination", so it is optional (omitempty keeps it
+	// out of the generated schema's required set, matching the validator).
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 	// Source is the link→source connection in destination mode (D2).
 	Source *KafkaConn `yaml:"source,omitempty" json:"source,omitempty"`
 	// SourceRest is the KCP→source REST endpoint for source-initiated mode.

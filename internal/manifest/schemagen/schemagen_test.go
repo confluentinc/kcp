@@ -70,6 +70,9 @@ func TestGenerate_AllRequiredSets(t *testing.T) {
 	require.ElementsMatch(t, []any{"type", "credentials"}, requiredOf(spec["target"].(map[string]any)))
 	require.ElementsMatch(t, []any{"restEndpoint"}, requiredOf(target["kafka"].(map[string]any)))
 	require.ElementsMatch(t, []any{"mode", "include"}, requiredOf(spec["topics"].(map[string]any)))
+	// clusterLink.mode is optional (validator defaults empty → "destination"), so
+	// only name is required — guards against the schema re-adding mode (M0).
+	require.ElementsMatch(t, []any{"name"}, requiredOf(spec["clusterLink"].(map[string]any)))
 	for _, sec := range []string{"acls", "schemas", "connectors"} {
 		require.ElementsMatch(t, []any{"include"}, requiredOf(spec[sec].(map[string]any)))
 	}

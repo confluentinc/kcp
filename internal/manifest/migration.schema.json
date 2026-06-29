@@ -281,8 +281,7 @@
             }
           },
           "required": [
-            "name",
-            "mode"
+            "name"
           ],
           "additionalProperties": false
         },
