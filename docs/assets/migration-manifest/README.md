@@ -24,6 +24,8 @@ sasl_scram: { username: admin, password: secret, mechanism: SHA256, ca_cert: ./c
 insecure_skip_tls_verify: false   # optional; test environments only
 ```
 
+`ca_cert` (on `sasl_scram`, `sasl_plain`, `mtls`, `unauthenticated_tls`) is the PEM path used to verify the source broker's TLS certificate. Supply it only when the source is fronted by a **private/internal CA**; public-CA sources — e.g. AWS MSK, which presents Amazon's publicly-trusted certificates — validate against the system trust store and need no `ca_cert`. It is honored on both the source read and the cluster-link truststore.
+
 This is distinct from the `kcp scan` `apache-kafka-credentials.yaml` (which lists multiple `clusters:`, each with its own `bootstrap_servers`, an `auth_method:` wrapper with `use:` flags, and scan-only metrics blocks). Passing the scan format — an `auth_method:` wrapper, a `clusters:` list, or a stray `bootstrap_servers:` — to a migrate creds file is rejected with a hint.
 
 **REST credentials** (`spec.target.credentials`, `spec.clusterLink.sourceRest.credentials`) authenticate to the Kafka REST / Admin API and use one of a `basic`, `api_key`, `bearer`, or `mtls` block.
