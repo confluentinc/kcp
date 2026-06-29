@@ -84,6 +84,29 @@ func TestPlan_PresentWhenTargetOmitsSourceID(t *testing.T) {
 	require.Equal(t, reconcile.ActionPresent, plan.Changes()[0].Action)
 }
 
+func TestPlan_ExistsButFailed_IsDrift(t *testing.T) {
+	// A link that exists with the right source but is in a non-ACTIVE state
+	// (e.g. source creds revoked after a once-healthy link) must be reported as
+	// drift, not Present — otherwise a re-apply reports green while no data flows.
+	r := newReconciler(fakeSource{id: "src-1"}, &fakeTarget{clusterID: "dest-1",
+		existing: &svclink.ClusterLink{LinkName: "src-to-dest", SourceClusterID: "src-1", LinkState: "FAILED", LinkError: "authentication failed"}})
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, reconcile.ActionDrift, plan.Changes()[0].Action)
+	require.Contains(t, plan.Changes()[0].Detail, "FAILED")
+	require.Contains(t, plan.Changes()[0].Detail, "authentication failed")
+	require.True(t, plan.Empty(), "an unhealthy link is drift (report-only), never a create")
+}
+
+func TestPlan_ExistsAndActive_IsPresent(t *testing.T) {
+	// An explicit ACTIVE state with a matching source is healthy → Present.
+	r := newReconciler(fakeSource{id: "src-1"}, &fakeTarget{clusterID: "dest-1",
+		existing: &svclink.ClusterLink{LinkName: "src-to-dest", SourceClusterID: "src-1", LinkState: "ACTIVE"}})
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, reconcile.ActionPresent, plan.Changes()[0].Action)
+}
+
 func TestApply_CreatesWithDerivedRequest(t *testing.T) {
 	tgt := &fakeTarget{clusterID: "dest-1", existing: nil}
 	r := newReconciler(fakeSource{id: "src-1"}, tgt)
@@ -215,6 +238,24 @@ func TestSourceInitiated_Plan_TwoCreatesInOrder(t *testing.T) {
 	require.Equal(t, reconcile.ActionCreate, changes[1].Action)
 	require.Contains(t, changes[0].Summary, "destination side")
 	require.Contains(t, changes[1].Summary, "source side")
+}
+
+func TestSourceInitiated_Plan_FailedDestLink_IsDrift(t *testing.T) {
+	// The destination (INBOUND) link already exists but is non-ACTIVE; the source
+	// (OUTBOUND) side is absent. Expect: dest side → drift (report-only), src side → create.
+	log := &createLog{}
+	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log,
+		existing: &svclink.ClusterLink{LinkName: "src-to-dest", LinkState: "FAILED", LinkError: "source unreachable"}}
+	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log}
+	r := newSourceInitiated(fakeSource{id: "src-1"}, dest, srcLink)
+
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	changes := plan.Changes()
+	require.Len(t, changes, 2)
+	require.Equal(t, reconcile.ActionDrift, changes[0].Action, "failed dest link must be drift, not present")
+	require.Contains(t, changes[0].Detail, "FAILED")
+	require.Equal(t, reconcile.ActionCreate, changes[1].Action, "absent source side still plans a create")
 }
 
 func TestSourceInitiated_Apply_RoutesToCorrectClientInOrder(t *testing.T) {

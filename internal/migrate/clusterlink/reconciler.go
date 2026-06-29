@@ -183,6 +183,16 @@ func (r *Reconciler) planDestination(ctx context.Context, sourceID string) (reco
 		}}}, nil
 	}
 
+	// A link can exist but be unhealthy (e.g. source creds rotated/revoked or the
+	// source went down after a once-ACTIVE link was created). Report that as drift
+	// (report-only, §8.6) rather than "Present" — otherwise a re-apply reports a
+	// green link while no data replicates. Checked before source-id/config so a
+	// dead link surfaces regardless.
+	if !linkHealthy(actual) {
+		return plan{steps: []step{{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
+			Detail: unhealthyLinkDetail(actual)}}}}, nil
+	}
+
 	if actual.SourceClusterID == "" || actual.SourceClusterID == sourceID {
 		// Present: the link matches the desired source, OR the target did not
 		// report a source id (older CP) so we cannot prove drift — treat as
@@ -222,7 +232,8 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 	// mirror-create is rejected (error 40035 "Topic renaming for mirroring not yet
 	// supported"). The OUTBOUND link also carries the configs (below) so the
 	// prefix can be read from the source side per the mirrorTopics wiring.
-	if destActual == nil {
+	switch {
+	case destActual == nil:
 		steps = append(steps, step{
 			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: destSummary,
 				Detail: fmt.Sprintf("INBOUND, source %s", sourceID)},
@@ -234,7 +245,9 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 			},
 			onSource: false,
 		})
-	} else {
+	case !linkHealthy(destActual):
+		steps = append(steps, step{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: destSummary, Detail: unhealthyLinkDetail(destActual)}})
+	default:
 		steps = append(steps, step{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: destSummary}})
 	}
 
@@ -261,7 +274,9 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 		})
 	} else {
 		change := reconcile.Change{Action: reconcile.ActionPresent, Summary: srcSummary}
-		if detail := r.configDrift(ctx, r.srcLinkTgt, r.cfg.LinkName); detail != "" {
+		if !linkHealthy(srcActual) {
+			change = reconcile.Change{Action: reconcile.ActionDrift, Summary: srcSummary, Detail: unhealthyLinkDetail(srcActual)}
+		} else if detail := r.configDrift(ctx, r.srcLinkTgt, r.cfg.LinkName); detail != "" {
 			change = reconcile.Change{Action: reconcile.ActionDrift, Summary: srcSummary, Detail: detail}
 		}
 		steps = append(steps, step{change: change})
@@ -313,6 +328,26 @@ func (r *Reconciler) configDrift(ctx context.Context, tgt target, name string) s
 		}
 	}
 	return strings.Join(diffs, "; ")
+}
+
+// linkHealthy reports whether an existing link is healthy (Present) rather than
+// drift. We key off link_error — the field whose purpose is to report why a link
+// is broken — NOT link_state: link_state has transient/healthy values (a link
+// passes through pre-ACTIVE states before settling, and PAUSED is a deliberate
+// cutover step), so flagging "state != ACTIVE" would fabricate drift on healthy
+// links. A non-empty link_error means the broker reports the link as broken
+// (e.g. revoked/invalid source auth, unreachable source) — report-only drift
+// (§8.6), since a re-apply otherwise reports a green link while no data flows.
+func linkHealthy(l *svclink.ClusterLink) bool {
+	return l.LinkError == ""
+}
+
+// unhealthyLinkDetail describes a link that exists but reports a broker error.
+func unhealthyLinkDetail(l *svclink.ClusterLink) string {
+	if l.LinkState != "" {
+		return fmt.Sprintf("link exists but reports an error (state %q): %s", l.LinkState, l.LinkError)
+	}
+	return fmt.Sprintf("link exists but reports an error: %s", l.LinkError)
 }
 
 func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Outcome, error) {
