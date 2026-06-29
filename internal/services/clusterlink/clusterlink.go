@@ -345,11 +345,15 @@ func (s *ConfluentCloudService) CreateMirrorTopic(ctx context.Context, config Co
 }
 
 // CreateTopicRequest describes a plain (non-mirror) topic to create on a cluster.
+// CreateTopicRequest describes a plain (non-mirror) topic to create on a cluster.
+// Replication factor is deliberately NOT included: KCP never specifies it, so the
+// target cluster applies its own default. Confluent Cloud requires RF=3 and
+// rejects any explicit other value (40002), and a self-managed CP target may have
+// fewer brokers than the source — forwarding the source's RF would fail either.
 type CreateTopicRequest struct {
-	Name              string
-	Partitions        int
-	ReplicationFactor int
-	Configs           map[string]string
+	Name       string
+	Partitions int
+	Configs    map[string]string
 }
 
 func (s *ConfluentCloudService) ListTopics(ctx context.Context, config Config) ([]string, error) {
@@ -399,12 +403,13 @@ func (s *ConfluentCloudService) CreateTopic(ctx context.Context, config Config, 
 	for _, k := range keys {
 		cfgs = append(cfgs, cfgEntry{Name: k, Value: req.Configs[k]})
 	}
+	// replication_factor is intentionally omitted so the target cluster applies
+	// its default (CC → 3; CP → broker default.replication.factor).
 	body := struct {
-		TopicName         string     `json:"topic_name"`
-		PartitionsCount   int        `json:"partitions_count"`
-		ReplicationFactor int        `json:"replication_factor"`
-		Configs           []cfgEntry `json:"configs,omitempty"`
-	}{req.Name, req.Partitions, req.ReplicationFactor, cfgs}
+		TopicName       string     `json:"topic_name"`
+		PartitionsCount int        `json:"partitions_count"`
+		Configs         []cfgEntry `json:"configs,omitempty"`
+	}{req.Name, req.Partitions, cfgs}
 
 	path := fmt.Sprintf("/kafka/v3/clusters/%s/topics", url.PathEscape(config.ClusterID))
 	if err := s.doPostRequestExpectStatus(ctx, config, path, body); err != nil {

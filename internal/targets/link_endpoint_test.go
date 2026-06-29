@@ -148,7 +148,7 @@ func TestLinkEndpoint_CreateTopic(t *testing.T) {
 	defer srv.Close()
 
 	e := NewLinkEndpoint(srv.URL, &Credentials{}, srv.Client())
-	err := e.CreateTopic(context.Background(), clusterlink.CreateTopicRequest{Name: "orders", Partitions: 6, ReplicationFactor: 3})
+	err := e.CreateTopic(context.Background(), clusterlink.CreateTopicRequest{Name: "orders", Partitions: 6})
 	require.NoError(t, err)
 	require.Equal(t, "/kafka/v3/clusters/c-1/topics", createPath)
 	require.Equal(t, http.MethodPost, createMethod)

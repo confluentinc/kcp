@@ -149,7 +149,9 @@ func TestPlanApply_ForwardsAllExplicitConfigs(t *testing.T) {
 		t.Fatalf("want 1 created topic, got %d", len(tgt.created))
 	}
 	req := tgt.created[0]
-	if req.Name != "orders" || req.Partitions != 6 || req.ReplicationFactor != 3 {
+	// Replication factor is intentionally NOT forwarded (the target applies its
+	// default), so the create request carries only name/partitions/configs.
+	if req.Name != "orders" || req.Partitions != 6 {
 		t.Errorf("unexpected create req shape: %+v", req)
 	}
 	if got := req.Configs["retention.ms"]; got != "1000" {

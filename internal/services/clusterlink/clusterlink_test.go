@@ -829,16 +829,18 @@ func TestCreateTopic_Success_PostsBodyWithSortedConfigs(t *testing.T) {
 	cfg := Config{RestEndpoint: server.URL, ClusterID: clusterID}
 
 	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{
-		Name:              "orders",
-		Partitions:        6,
-		ReplicationFactor: 3,
-		Configs:           map[string]string{"retention.ms": "604800000", "cleanup.policy": "compact"},
+		Name:       "orders",
+		Partitions: 6,
+		Configs:    map[string]string{"retention.ms": "604800000", "cleanup.policy": "compact"},
 	})
 	require.NoError(t, err)
 
 	assert.Equal(t, "orders", gotBody["topic_name"])
 	assert.Equal(t, float64(6), gotBody["partitions_count"])
-	assert.Equal(t, float64(3), gotBody["replication_factor"])
+	// replication_factor must be omitted entirely so the target applies its
+	// default (CC requires RF=3 and rejects any explicit other value).
+	_, hasRF := gotBody["replication_factor"]
+	assert.False(t, hasRF, "replication_factor must not be sent")
 
 	configs, ok := gotBody["configs"].([]interface{})
 	require.True(t, ok, "configs array present")
@@ -864,7 +866,7 @@ func TestCreateTopic_NoConfigs_OmitsConfigsField(t *testing.T) {
 	svc := NewConfluentCloudService(server.Client())
 	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
 
-	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "t", Partitions: 1, ReplicationFactor: 1})
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "t", Partitions: 1})
 	require.NoError(t, err)
 	_, hasConfigs := raw["configs"]
 	assert.False(t, hasConfigs, "configs field omitted when empty")
@@ -879,7 +881,7 @@ func TestCreateTopic_HTTPError(t *testing.T) {
 	svc := NewConfluentCloudService(server.Client())
 	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
 
-	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "bad", Partitions: 1, ReplicationFactor: 1})
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "bad", Partitions: 1})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `failed to create topic "bad"`)
 }

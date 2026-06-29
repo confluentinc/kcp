@@ -143,7 +143,9 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		steps = append(steps, topicStep{
 			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
 				Detail: fmt.Sprintf("%d partitions", spec.Partitions)},
-			req: svclink.CreateTopicRequest{Name: name, Partitions: spec.Partitions, ReplicationFactor: spec.ReplicationFactor, Configs: configs},
+			// Replication factor is intentionally not forwarded — the target cluster
+			// applies its default (CC requires RF=3 and rejects other values).
+			req: svclink.CreateTopicRequest{Name: name, Partitions: spec.Partitions, Configs: configs},
 		})
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].change.Summary < steps[j].change.Summary })
