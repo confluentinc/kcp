@@ -3,7 +3,7 @@ package list
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -50,7 +50,7 @@ func preRunMigrationList(cmd *cobra.Command, args []string) error {
 
 func runMigrationList(cmd *cobra.Command, args []string) error {
 	// Load migration state (following KCP pattern)
-	migrationState, err := migration.NewMigrationStateFromFile(migrationStateFile)
+	migrationState, err := cutover.NewCutoverStateFromFile(migrationStateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load migration state file %q: %w\nEnsure the file exists or run 'kcp migration init' to create a new migration", migrationStateFile, err)
 	}

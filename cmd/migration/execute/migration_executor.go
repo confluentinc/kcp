@@ -11,16 +11,16 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
 type MigrationExecutorOpts struct {
 	MigrationStateFile    string
-	MigrationState        migration.MigrationState
-	MigrationConfig       migration.MigrationConfig
+	MigrationState        cutover.CutoverState
+	MigrationConfig       cutover.CutoverConfig
 	LagThreshold          int64
 	ClusterApiKey         string
 	ClusterApiSecret      string
@@ -82,22 +82,22 @@ func (m *MigrationExecutor) Run() error {
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
-	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
+	workflow := cutover.NewCutoverWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
 
-	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
+	clusterLinkConfig := cutover.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
 	persist := func() error {
-		m.opts.MigrationState.UpsertMigration(config)
+		m.opts.MigrationState.UpsertCutover(config)
 		return m.opts.MigrationState.WriteToFile(m.opts.MigrationStateFile)
 	}
 
 	// Pre-execute bookend: disable consumer.offset.sync.enable if the
 	// operator opted in at init time. Idempotent and safe on resume.
-	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
+	if err := cutover.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
 		return err
 	}
 
-	orchestrator := migration.NewMigrationOrchestrator(
+	orchestrator := cutover.NewCutoverOrchestrator(
 		&config,
 		workflow,
 		&m.opts.MigrationState,
@@ -105,15 +105,15 @@ func (m *MigrationExecutor) Run() error {
 	)
 
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
-		migration.WarnIfPausedOnExecuteFailure(&config, err)
+		cutover.WarnIfPausedOnExecuteFailure(&config, err)
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
 	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
 	// so a restore error does not roll back a successful switchover.
-	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
+	cutover.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
 
-	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
+	fmt.Printf("✅ Migration completed: %s\n", config.CutoverId)
 	return nil
 }
 

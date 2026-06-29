@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -207,13 +207,13 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 
 func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// Load migration state (following established pattern)
-	migrationState, err := migration.NewMigrationStateFromFile(migrationStateFile)
+	migrationState, err := cutover.NewCutoverStateFromFile(migrationStateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init' to create a new migration first", migrationStateFile, err)
 	}
 
 	// Get MigrationConfig by ID with two-level error handling
-	config, err := migrationState.GetMigrationById(migrationId)
+	config, err := migrationState.GetCutoverById(migrationId)
 	if err != nil {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", migrationId, migrationStateFile)
 	}
@@ -247,7 +247,7 @@ func resolveAuthType() types.AuthType {
 	}
 }
 
-func parseMigrationExecutorOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationExecutorOpts {
+func parseMigrationExecutorOpts(migrationState cutover.CutoverState, config cutover.CutoverConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
 		MigrationStateFile:    migrationStateFile,
 		MigrationState:        migrationState,

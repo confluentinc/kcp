@@ -6,18 +6,18 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/fatih/color"
 )
 
 type MigrationListerOpts struct {
 	MigrationStateFile string
-	MigrationState     migration.MigrationState
+	MigrationState     cutover.CutoverState
 }
 
 type MigrationLister struct {
 	migrationStateFile string
-	migrationState     migration.MigrationState
+	migrationState     cutover.CutoverState
 }
 
 func NewMigrationLister(opts MigrationListerOpts) *MigrationLister {
@@ -28,7 +28,7 @@ func NewMigrationLister(opts MigrationListerOpts) *MigrationLister {
 }
 
 func (ml *MigrationLister) Run() error {
-	migrations := ml.migrationState.Migrations
+	migrations := ml.migrationState.Cutovers
 
 	if len(migrations) == 0 {
 		fmt.Printf("\n%s No migrations found in %s\n\n", color.YellowString("ℹ"), ml.migrationStateFile)
@@ -52,7 +52,7 @@ func (ml *MigrationLister) Run() error {
 
 	// Sort migrations by creation time (newest first)
 	// We'll use the migration ID timestamp if available, otherwise just reverse order
-	sortedMigrations := make([]migration.MigrationConfig, len(migrations))
+	sortedMigrations := make([]cutover.CutoverConfig, len(migrations))
 	copy(sortedMigrations, migrations)
 	slices.Reverse(sortedMigrations)
 
@@ -64,12 +64,12 @@ func (ml *MigrationLister) Run() error {
 	return nil
 }
 
-func (ml *MigrationLister) displayMigration(index int, migration migration.MigrationConfig) {
+func (ml *MigrationLister) displayMigration(index int, migration cutover.CutoverConfig) {
 	// Index and Migration ID
 	fmt.Printf("%s %s %s\n",
 		color.HiBlackString("[%d]", index),
 		color.HiBlackString("Migration ID:"),
-		color.New(color.Bold, color.FgWhite).Sprint(migration.MigrationId))
+		color.New(color.Bold, color.FgWhite).Sprint(migration.CutoverId))
 
 	// Status with color coding
 	statusColor := ml.getStatusColor(migration.CurrentState)

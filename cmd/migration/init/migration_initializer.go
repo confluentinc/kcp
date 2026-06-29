@@ -7,14 +7,14 @@ import (
 	"net/http"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/services/migration"
 )
 
 type MigrationInitializerOpts struct {
 	MigrationStateFile    string
-	MigrationState        migration.MigrationState
-	MigrationConfig       migration.MigrationConfig
+	MigrationState        cutover.CutoverState
+	MigrationConfig       cutover.CutoverConfig
 	ClusterApiKey         string
 	ClusterApiSecret      string
 	InsecureSkipTLSVerify bool
@@ -44,9 +44,9 @@ func (m *MigrationInitializer) Run() error {
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
-	workflow := migration.NewMigrationWorkflow(gatewayService, clusterLinkService)
+	workflow := cutover.NewCutoverWorkflow(gatewayService, clusterLinkService)
 
-	orchestrator := migration.NewMigrationOrchestrator(
+	orchestrator := cutover.NewCutoverOrchestrator(
 		&config,
 		workflow,
 		&m.opts.MigrationState,

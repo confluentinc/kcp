@@ -6,7 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/google/uuid"
 	"github.com/spf13/cobra"
@@ -239,16 +239,16 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
 	// ===== PHASE 1: Load or create state =====
-	var migrationState *migration.MigrationState
+	var migrationState *cutover.CutoverState
 	if _, err := os.Stat(migrationStateFile); err == nil {
 		// File exists, load it
-		migrationState, err = migration.NewMigrationStateFromFile(migrationStateFile)
+		migrationState, err = cutover.NewCutoverStateFromFile(migrationStateFile)
 		if err != nil {
 			return fmt.Errorf("failed to load migration state: %w", err)
 		}
 	} else {
 		// File doesn't exist, create new state
-		migrationState = migration.NewMigrationState()
+		migrationState = cutover.NewCutoverState()
 	}
 
 	// ===== PHASE 2: Read YAML files =====
@@ -273,8 +273,8 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
-	config := &migration.MigrationConfig{
-		MigrationId:             fmt.Sprintf("migration-%s", uuid.New().String()),
+	config := &cutover.CutoverConfig{
+		CutoverId:               fmt.Sprintf("migration-%s", uuid.New().String()),
 		SourceBootstrap:         sourceBootstrap,
 		ClusterBootstrap:        clusterBootstrap,
 		K8sNamespace:            k8sNamespace,
@@ -286,20 +286,20 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		Topics:                  topics,
 		FencedCrYAML:            fencedCrYAML,
 		SwitchoverCrYAML:        switchoverCrYAML,
-		CurrentState:            migration.StateUninitialized,
+		CurrentState:            cutover.StateUninitialized,
 		PauseConsumerOffsetSync: pauseConsumerOffsetSync,
 	}
 
 	// ===== PHASE 3: Early write - upsert migration and write to file =====
 	// CRITICAL: File MUST exist before orchestrator runs to prevent panic
-	migrationState.UpsertMigration(*config)
+	migrationState.UpsertCutover(*config)
 	if err := migrationState.WriteToFile(migrationStateFile); err != nil {
 		return fmt.Errorf("failed to write migration state file: %w", err)
 	}
 
 	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
 	if skipValidate {
-		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
+		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.CutoverId)
 		return nil
 	}
 
@@ -310,11 +310,11 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✅ Migration initialized: %s\n", config.MigrationId)
+	fmt.Printf("✅ Migration initialized: %s\n", config.CutoverId)
 	return nil
 }
 
-func parseMigrationInitializerOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationInitializerOpts {
+func parseMigrationInitializerOpts(migrationState cutover.CutoverState, config cutover.CutoverConfig) MigrationInitializerOpts {
 	return MigrationInitializerOpts{
 		MigrationStateFile:    migrationStateFile,
 		MigrationState:        migrationState,

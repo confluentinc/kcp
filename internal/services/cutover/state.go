@@ -1,4 +1,4 @@
-package migration
+package cutover
 
 import (
 	"encoding/json"
@@ -11,7 +11,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-// ----- migration FSM state and events -----
+// ----- cutover FSM state and events -----
 
 // FSM State constants
 const (
@@ -32,12 +32,12 @@ const (
 	EventSwitch      = "switch"
 )
 
-// ----- migration configuration -----
+// ----- cutover configuration -----
 
-// MigrationConfig holds all domain configuration for a migration
+// CutoverConfig holds all domain configuration for a cutover
 // This is pure data with no behavior - just fields that get serialized
-type MigrationConfig struct {
-	MigrationId  string `json:"migration_id"`
+type CutoverConfig struct {
+	CutoverId    string `json:"cutover_id"`
 	CurrentState string `json:"current_state"`
 
 	// Gateway configuration
@@ -53,7 +53,7 @@ type MigrationConfig struct {
 	ClusterLinkName     string   `json:"cluster_link_name"`
 	Topics              []string `json:"topics"`
 
-	// Migration runtime data (populated during initialization)
+	// Cutover runtime data (populated during initialization)
 	ClusterLinkTopics  []string          `json:"cluster_link_topics"`
 	ClusterLinkConfigs map[string]string `json:"cluster_link_configs"`
 
@@ -72,20 +72,20 @@ type MigrationConfig struct {
 	SwitchoverCrYAML []byte `json:"switchover_cr_yaml"`
 }
 
-// ----- migration state file -----
+// ----- cutover state file -----
 
-// MigrationState represents the migration state file structure
-// This is a dedicated state file for migration commands (init, execute, list)
-type MigrationState struct {
-	Migrations   []MigrationConfig  `json:"migrations"`
+// CutoverState represents the cutover state file structure
+// This is a dedicated state file for cutover commands (init, execute, list)
+type CutoverState struct {
+	Cutovers     []CutoverConfig    `json:"cutovers"`
 	KcpBuildInfo types.KcpBuildInfo `json:"kcp_build_info"`
 	Timestamp    time.Time          `json:"timestamp"`
 }
 
-// NewMigrationState creates a new empty MigrationState with metadata
-func NewMigrationState() *MigrationState {
-	return &MigrationState{
-		Migrations: []MigrationConfig{},
+// NewCutoverState creates a new empty CutoverState with metadata
+func NewCutoverState() *CutoverState {
+	return &CutoverState{
+		Cutovers: []CutoverConfig{},
 		KcpBuildInfo: types.KcpBuildInfo{
 			Version: build_info.Version,
 			Commit:  build_info.Commit,
@@ -95,38 +95,38 @@ func NewMigrationState() *MigrationState {
 	}
 }
 
-// NewMigrationStateFromFile loads a MigrationState from a JSON file
-func NewMigrationStateFromFile(filePath string) (*MigrationState, error) {
+// NewCutoverStateFromFile loads a CutoverState from a JSON file
+func NewCutoverStateFromFile(filePath string) (*CutoverState, error) {
 	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read migration state file: %w", err)
+		return nil, fmt.Errorf("failed to read cutover state file: %w", err)
 	}
 
-	var state MigrationState
+	var state CutoverState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal migration state: %w", err)
+		return nil, fmt.Errorf("failed to unmarshal cutover state: %w", err)
 	}
 
 	return &state, nil
 }
 
-// WriteToFile saves the MigrationState to a JSON file using atomic write
-func (ms *MigrationState) WriteToFile(filePath string) error {
+// WriteToFile saves the CutoverState to a JSON file using atomic write
+func (ms *CutoverState) WriteToFile(filePath string) error {
 	// Update timestamp
 	ms.Timestamp = time.Now()
 
 	// Marshal to JSON with indentation
 	data, err := json.MarshalIndent(ms, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal migration state: %w", err)
+		return fmt.Errorf("failed to marshal cutover state: %w", err)
 	}
 
 	// Atomic write: write to a uniquely-named temp file (created at mode 0600 by
 	// os.CreateTemp and pinned explicitly), then rename it onto the target. The
-	// migration state holds sensitive metadata, so it must never be group/world
+	// cutover state holds sensitive metadata, so it must never be group/world
 	// readable, even briefly or under an unusual umask. The real file is only
 	// ever replaced by the rename and is never deleted directly, so a crash
-	// before the rename leaves the previous migration state intact.
+	// before the rename leaves the previous cutover state intact.
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)
@@ -156,24 +156,24 @@ func (ms *MigrationState) WriteToFile(filePath string) error {
 	return nil
 }
 
-// UpsertMigration adds a new migration or updates an existing one by ID
-func (ms *MigrationState) UpsertMigration(config MigrationConfig) {
-	for i, existing := range ms.Migrations {
-		if existing.MigrationId == config.MigrationId {
-			ms.Migrations[i] = config
+// UpsertCutover adds a new cutover or updates an existing one by ID
+func (ms *CutoverState) UpsertCutover(config CutoverConfig) {
+	for i, existing := range ms.Cutovers {
+		if existing.CutoverId == config.CutoverId {
+			ms.Cutovers[i] = config
 			return
 		}
 	}
-	ms.Migrations = append(ms.Migrations, config)
+	ms.Cutovers = append(ms.Cutovers, config)
 }
 
-// GetMigrationById retrieves a migration by its ID
-func (ms *MigrationState) GetMigrationById(migrationId string) (*MigrationConfig, error) {
-	for _, config := range ms.Migrations {
-		if config.MigrationId == migrationId {
+// GetCutoverById retrieves a cutover by its ID
+func (ms *CutoverState) GetCutoverById(cutoverId string) (*CutoverConfig, error) {
+	for _, config := range ms.Cutovers {
+		if config.CutoverId == cutoverId {
 			c := config
 			return &c, nil
 		}
 	}
-	return nil, fmt.Errorf("migration not found: %s", migrationId)
+	return nil, fmt.Errorf("cutover not found: %s", cutoverId)
 }

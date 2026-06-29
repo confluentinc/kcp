@@ -1,4 +1,4 @@
-package migration
+package cutover
 
 import (
 	"context"
@@ -29,7 +29,7 @@ const bookendCallTimeout = 30 * time.Second
 //
 // No-op cases (return nil without contacting the cluster link):
 //   - intent flag not set
-//   - migration is already at StateSwitched (re-run after success)
+//   - cutover is already at StateSwitched (re-run after success)
 //   - PauseConsumerOffsetSyncFlipped is already true (resume after partial failure)
 //
 // Active path: re-queries the cluster link for drift, calls AlterConfigs to
@@ -41,18 +41,18 @@ func DisableOffsetSync(
 	ctx context.Context,
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
-	config *MigrationConfig,
+	config *CutoverConfig,
 	persist func() error,
 ) error {
 	if !config.PauseConsumerOffsetSync {
 		return nil
 	}
 	if config.CurrentState == StateSwitched {
-		slog.Debug("disable bookend skipped: migration already switched", "migrationId", config.MigrationId)
+		slog.Debug("disable bookend skipped: cutover already switched", "cutoverId", config.CutoverId)
 		return nil
 	}
 	if config.PauseConsumerOffsetSyncFlipped {
-		slog.Info("resume: consumer.offset.sync.enable already flipped, skipping disable", "migrationId", config.MigrationId)
+		slog.Info("resume: consumer.offset.sync.enable already flipped, skipping disable", "cutoverId", config.CutoverId)
 		return nil
 	}
 
@@ -85,7 +85,7 @@ func DisableOffsetSync(
 
 	config.PauseConsumerOffsetSyncFlipped = true
 	if err := persist(); err != nil {
-		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
+		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the cutover state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
 	}
 
 	fmt.Printf("   %s %s set to false on cluster link %s\n", color.GreenString("✔"), offsetSyncEnableKey, config.ClusterLinkName)
@@ -98,7 +98,7 @@ func DisableOffsetSync(
 // succeeded (R13). The PauseConsumerOffsetSyncFlipped marker stays true on
 // failure so the state file records that a restore is still owed.
 //
-// Diff-based restore: when MigrationConfig.ClusterLinkConfigs holds an init
+// Diff-based restore: when CutoverConfig.ClusterLinkConfigs holds an init
 // snapshot, restore queries the cluster link for its current consumer.offset.*
 // state and re-applies snapshot values for keys that the disable bookend
 // cleared (current is missing, empty, or "false"). Keys whose current value
@@ -118,7 +118,7 @@ func RestoreOffsetSync(
 	_ context.Context,
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
-	config *MigrationConfig,
+	config *CutoverConfig,
 	persist func() error,
 ) {
 	if !config.PauseConsumerOffsetSyncFlipped {
@@ -141,7 +141,7 @@ func RestoreOffsetSync(
 		listCancel()
 		if err != nil {
 			fmt.Fprintf(os.Stderr,
-				"%s Migration completed but failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.\n",
+				"%s Cutover completed but failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.\n",
 				color.YellowString("⚠️"),
 				config.ClusterLinkName,
 				err,
@@ -232,7 +232,7 @@ func RestoreOffsetSync(
 				appliedStr = strings.Join(applied, ", ")
 			}
 			fmt.Fprintf(os.Stderr,
-				"%s Migration completed but failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.\n",
+				"%s Cutover completed but failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.\n",
 				color.YellowString("⚠️"),
 				consumerOffsetPrefix,
 				config.ClusterLinkName,
@@ -263,12 +263,12 @@ func RestoreOffsetSync(
 //
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.
-func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
+func WarnIfPausedOnExecuteFailure(config *CutoverConfig, execErr error) {
 	if !config.PauseConsumerOffsetSyncFlipped {
 		return
 	}
 	fmt.Fprintf(os.Stderr,
-		"%s Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.\n",
+		"%s Cutover execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp cutover execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.\n",
 		color.YellowString("⚠️"),
 		execErr,
 		config.ClusterLinkName,
@@ -277,10 +277,10 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	)
 }
 
-// BuildClusterLinkConfig assembles a clusterlink.Config from a migration
+// BuildClusterLinkConfig assembles a clusterlink.Config from a cutover
 // config plus runtime API credentials. Centralized here so the bookend
-// callers in cmd/migration/execute don't duplicate the field layout.
-func BuildClusterLinkConfig(config *MigrationConfig, apiKey, apiSecret string) clusterlink.Config {
+// callers in cmd/cutover/execute don't duplicate the field layout.
+func BuildClusterLinkConfig(config *CutoverConfig, apiKey, apiSecret string) clusterlink.Config {
 	return clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
