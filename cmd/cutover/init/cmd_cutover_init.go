@@ -14,7 +14,7 @@ import (
 )
 
 var (
-	migrationStateFile      string
+	cutoverStateFile        string
 	skipValidate            bool
 	pauseConsumerOffsetSync bool
 
@@ -53,22 +53,22 @@ var (
 	tlsClientKey  string
 )
 
-func NewMigrationInitCmd() *cobra.Command {
-	migrationInitCmd := &cobra.Command{
+func NewCutoverInitCmd() *cobra.Command {
+	cutoverInitCmd := &cobra.Command{
 		Use:   "init",
-		Short: "Initialize a new migration",
-		Long: `Initialize a new migration by validating infrastructure and persisting migration state.
+		Short: "Initialize a new cutover",
+		Long: `Initialize a new cutover by validating infrastructure and persisting cutover state.
 
 This command validates the cluster link and mirror topics on the destination cluster,
 fetches the current gateway CR from Kubernetes, validates consistency across the initial,
-fenced, and switchover gateway CRs, and writes the migration configuration to the state file.
+fenced, and switchover gateway CRs, and writes the cutover configuration to the state file.
 
-The state file can then be used by 'kcp migration execute' to run the migration.
+The state file can then be used by 'kcp cutover execute' to run the cutover.
 
 All flags can be provided via environment variables using uppercase names with underscores
 (e.g. ` + "`--cluster-api-key`" + ` → ` + "`CLUSTER_API_KEY`" + `, ` + "`--source-bootstrap`" + ` → ` + "`SOURCE_BOOTSTRAP`" + `).`,
 		Example: `  # MSK source with IAM auth
-  kcp migration init \
+  kcp cutover init \
       --k8s-namespace my-namespace \
       --initial-cr-name my-gateway \
       --source-bootstrap b1.my-cluster.kafka.us-east-1.amazonaws.com:9098 \
@@ -83,7 +83,7 @@ All flags can be provided via environment variables using uppercase names with u
       --use-sasl-iam
 
   # SASL/SCRAM source
-  kcp migration init \
+  kcp cutover init \
       --k8s-namespace my-namespace --initial-cr-name my-gateway \
       --source-bootstrap broker1:9096 --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
       --cluster-id lkc-abc123 --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
@@ -93,8 +93,8 @@ All flags can be provided via environment variables using uppercase names with u
       --use-sasl-scram --sasl-scram-username kafkauser --sasl-scram-password kafkapass`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationInit,
-		RunE:          runMigrationInit,
+		PreRunE:       preRunCutoverInit,
+		RunE:          runCutoverInit,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
@@ -110,26 +110,26 @@ All flags can be provided via environment variables using uppercase names with u
 	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "Name of the cluster link on the destination cluster.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
-	requiredFlags.StringVar(&fencedCrYamlPath, "fenced-cr-yaml", "", "Path to the gateway CR YAML that blocks traffic during migration.")
+	requiredFlags.StringVar(&fencedCrYamlPath, "fenced-cr-yaml", "", "Path to the gateway CR YAML that blocks traffic during cutover.")
 	requiredFlags.StringVar(&switchoverCrYamlPath, "switchover-cr-yaml", "", "Path to the gateway CR YAML that routes traffic to Confluent Cloud.")
 
-	migrationInitCmd.Flags().AddFlagSet(requiredFlags)
+	cutoverInitCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
-	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
+	optionalFlags.StringVar(&cutoverStateFile, "cutover-state-file", "cutover-state.json", "The path to the cutover state file. If it doesn't exist, it will be created. If it exists, the new cutover will be appended.")
+	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates cutover metadata without validating gateway/Kubernetes resources. Useful for testing.")
 	optionalFlags.BoolVar(&pauseConsumerOffsetSync, "pause-consumer-offset-sync", false, "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.")
-	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
-	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
+	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the cutover.")
+	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to cut over (comma separated list or repeated flag).")
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
-	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
+	cutoverInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
 	// Authentication flags. These are validated at init time so the user declares their source auth
 	// strategy up front (fail-fast), but credentials are not passed to the initializer — source cluster
-	// connections only happen during 'migration execute'.
+	// connections only happen during 'cutover execute'.
 	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
@@ -138,7 +138,7 @@ All flags can be provided via environment variables using uppercase names with u
 	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source MSK cluster.")
-	migrationInitCmd.Flags().AddFlagSet(authFlags)
+	cutoverInitCmd.Flags().AddFlagSet(authFlags)
 	groups[authFlags] = "Source Cluster Authentication Flags"
 
 	// SASL/SCRAM credential flags.
@@ -146,7 +146,7 @@ All flags can be provided via environment variables using uppercase names with u
 	saslScramFlags.SortFlags = false
 	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
-	migrationInitCmd.Flags().AddFlagSet(saslScramFlags)
+	cutoverInitCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
 	// SASL/PLAIN credential flags.
@@ -154,7 +154,7 @@ All flags can be provided via environment variables using uppercase names with u
 	saslPlainFlags.SortFlags = false
 	saslPlainFlags.StringVar(&saslPlainUsername, "sasl-plain-username", "", "SASL/PLAIN username for the source cluster.")
 	saslPlainFlags.StringVar(&saslPlainPassword, "sasl-plain-password", "", "SASL/PLAIN password for the source cluster.")
-	migrationInitCmd.Flags().AddFlagSet(saslPlainFlags)
+	cutoverInitCmd.Flags().AddFlagSet(saslPlainFlags)
 	groups[saslPlainFlags] = "SASL/PLAIN Flags"
 
 	// TLS credential flags.
@@ -163,10 +163,10 @@ All flags can be provided via environment variables using uppercase names with u
 	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source MSK cluster.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
-	migrationInitCmd.Flags().AddFlagSet(tlsFlags)
+	cutoverInitCmd.Flags().AddFlagSet(tlsFlags)
 	groups[tlsFlags] = "TLS Flags"
 
-	migrationInitCmd.SetUsageFunc(func(c *cobra.Command) error {
+	cutoverInitCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, saslScramFlags, saslPlainFlags, tlsFlags}
@@ -184,36 +184,36 @@ All flags can be provided via environment variables using uppercase names with u
 		return nil
 	})
 
-	_ = migrationInitCmd.MarkFlagRequired("source-bootstrap")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-bootstrap")
-	_ = migrationInitCmd.MarkFlagRequired("k8s-namespace")
-	_ = migrationInitCmd.MarkFlagRequired("initial-cr-name")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-id")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-link-name")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-api-key")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-api-secret")
-	_ = migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
-	_ = migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
+	_ = cutoverInitCmd.MarkFlagRequired("source-bootstrap")
+	_ = cutoverInitCmd.MarkFlagRequired("cluster-bootstrap")
+	_ = cutoverInitCmd.MarkFlagRequired("k8s-namespace")
+	_ = cutoverInitCmd.MarkFlagRequired("initial-cr-name")
+	_ = cutoverInitCmd.MarkFlagRequired("cluster-id")
+	_ = cutoverInitCmd.MarkFlagRequired("cluster-rest-endpoint")
+	_ = cutoverInitCmd.MarkFlagRequired("cluster-link-name")
+	_ = cutoverInitCmd.MarkFlagRequired("cluster-api-key")
+	_ = cutoverInitCmd.MarkFlagRequired("cluster-api-secret")
+	_ = cutoverInitCmd.MarkFlagRequired("fenced-cr-yaml")
+	_ = cutoverInitCmd.MarkFlagRequired("switchover-cr-yaml")
 
-	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
-	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	cutoverInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	cutoverInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	// --pause-consumer-offset-sync requires the init-time snapshot captured by
 	// the validation path, so it cannot be combined with --skip-validate.
 	// Without the snapshot, the restore bookend has nothing to diff against
 	// and would silently leave the cluster link disabled after switchover.
-	migrationInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
+	cutoverInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
 
 	// If any credential in a pair/trio is set, the whole set must be set.
-	migrationInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
-	migrationInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
-	migrationInitCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
+	cutoverInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
+	cutoverInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
+	cutoverInitCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
 
-	return migrationInitCmd
+	return cutoverInitCmd
 }
 
-func preRunMigrationInit(cmd *cobra.Command, args []string) error {
+func preRunCutoverInit(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -237,18 +237,18 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runMigrationInit(cmd *cobra.Command, args []string) error {
+func runCutoverInit(cmd *cobra.Command, args []string) error {
 	// ===== PHASE 1: Load or create state =====
-	var migrationState *cutover.CutoverState
-	if _, err := os.Stat(migrationStateFile); err == nil {
+	var cutoverState *cutover.CutoverState
+	if _, err := os.Stat(cutoverStateFile); err == nil {
 		// File exists, load it
-		migrationState, err = cutover.NewCutoverStateFromFile(migrationStateFile)
+		cutoverState, err = cutover.NewCutoverStateFromFile(cutoverStateFile)
 		if err != nil {
-			return fmt.Errorf("failed to load migration state: %w", err)
+			return fmt.Errorf("failed to load cutover state: %w", err)
 		}
 	} else {
 		// File doesn't exist, create new state
-		migrationState = cutover.NewCutoverState()
+		cutoverState = cutover.NewCutoverState()
 	}
 
 	// ===== PHASE 2: Read YAML files =====
@@ -274,7 +274,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
 	config := &cutover.CutoverConfig{
-		CutoverId:               fmt.Sprintf("migration-%s", uuid.New().String()),
+		CutoverId:               fmt.Sprintf("cutover-%s", uuid.New().String()),
 		SourceBootstrap:         sourceBootstrap,
 		ClusterBootstrap:        clusterBootstrap,
 		K8sNamespace:            k8sNamespace,
@@ -290,35 +290,35 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		PauseConsumerOffsetSync: pauseConsumerOffsetSync,
 	}
 
-	// ===== PHASE 3: Early write - upsert migration and write to file =====
+	// ===== PHASE 3: Early write - upsert cutover and write to file =====
 	// CRITICAL: File MUST exist before orchestrator runs to prevent panic
-	migrationState.UpsertCutover(*config)
-	if err := migrationState.WriteToFile(migrationStateFile); err != nil {
-		return fmt.Errorf("failed to write migration state file: %w", err)
+	cutoverState.UpsertCutover(*config)
+	if err := cutoverState.WriteToFile(cutoverStateFile); err != nil {
+		return fmt.Errorf("failed to write cutover state file: %w", err)
 	}
 
 	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
 	if skipValidate {
-		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.CutoverId)
+		fmt.Printf("✅ Cutover created (validation skipped): %s\n", config.CutoverId)
 		return nil
 	}
 
 	// ===== PHASE 5: Pass to initializer for validation orchestration only =====
-	opts := parseMigrationInitializerOpts(*migrationState, *config)
-	migrationInitializer := NewMigrationInitializer(opts)
-	if err := migrationInitializer.Run(); err != nil {
+	opts := parseCutoverInitializerOpts(*cutoverState, *config)
+	cutoverInitializer := NewCutoverInitializer(opts)
+	if err := cutoverInitializer.Run(); err != nil {
 		return err
 	}
 
-	fmt.Printf("✅ Migration initialized: %s\n", config.CutoverId)
+	fmt.Printf("✅ Cutover initialized: %s\n", config.CutoverId)
 	return nil
 }
 
-func parseMigrationInitializerOpts(migrationState cutover.CutoverState, config cutover.CutoverConfig) MigrationInitializerOpts {
-	return MigrationInitializerOpts{
-		MigrationStateFile:    migrationStateFile,
-		MigrationState:        migrationState,
-		MigrationConfig:       config,
+func parseCutoverInitializerOpts(state cutover.CutoverState, config cutover.CutoverConfig) CutoverInitializerOpts {
+	return CutoverInitializerOpts{
+		CutoverStateFile:      cutoverStateFile,
+		CutoverState:          state,
+		CutoverConfig:         config,
 		ClusterApiKey:         clusterApiKey,
 		ClusterApiSecret:      clusterApiSecret,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,

@@ -17,10 +17,10 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type MigrationExecutorOpts struct {
-	MigrationStateFile    string
-	MigrationState        cutover.CutoverState
-	MigrationConfig       cutover.CutoverConfig
+type CutoverExecutorOpts struct {
+	CutoverStateFile      string
+	CutoverState          cutover.CutoverState
+	CutoverConfig         cutover.CutoverConfig
 	LagThreshold          int64
 	ClusterApiKey         string
 	ClusterApiSecret      string
@@ -43,18 +43,18 @@ type MigrationExecutorOpts struct {
 	RolloutTimeout time.Duration
 }
 
-type MigrationExecutor struct {
-	opts MigrationExecutorOpts
+type CutoverExecutor struct {
+	opts CutoverExecutorOpts
 }
 
-func NewMigrationExecutor(opts MigrationExecutorOpts) *MigrationExecutor {
-	return &MigrationExecutor{
+func NewCutoverExecutor(opts CutoverExecutorOpts) *CutoverExecutor {
+	return &CutoverExecutor{
 		opts: opts,
 	}
 }
 
-func (m *MigrationExecutor) Run() error {
-	config := m.opts.MigrationConfig
+func (m *CutoverExecutor) Run() error {
+	config := m.opts.CutoverConfig
 	ctx := context.Background()
 
 	// Create source Kafka client (MSK)
@@ -87,8 +87,8 @@ func (m *MigrationExecutor) Run() error {
 
 	clusterLinkConfig := cutover.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
 	persist := func() error {
-		m.opts.MigrationState.UpsertCutover(config)
-		return m.opts.MigrationState.WriteToFile(m.opts.MigrationStateFile)
+		m.opts.CutoverState.UpsertCutover(config)
+		return m.opts.CutoverState.WriteToFile(m.opts.CutoverStateFile)
 	}
 
 	// Pre-execute bookend: disable consumer.offset.sync.enable if the
@@ -100,24 +100,24 @@ func (m *MigrationExecutor) Run() error {
 	orchestrator := cutover.NewCutoverOrchestrator(
 		&config,
 		workflow,
-		&m.opts.MigrationState,
-		m.opts.MigrationStateFile,
+		&m.opts.CutoverState,
+		m.opts.CutoverStateFile,
 	)
 
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		cutover.WarnIfPausedOnExecuteFailure(&config, err)
-		return fmt.Errorf("failed to execute migration: %w", err)
+		return fmt.Errorf("failed to execute cutover: %w", err)
 	}
 
 	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
 	// so a restore error does not roll back a successful switchover.
 	cutover.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
 
-	fmt.Printf("✅ Migration completed: %s\n", config.CutoverId)
+	fmt.Printf("✅ Cutover completed: %s\n", config.CutoverId)
 	return nil
 }
 
-func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
+func (m *CutoverExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
 	authType := m.opts.AuthType
 	brokerAddresses := strings.Split(m.opts.SourceBootstrap, ",")
 
@@ -169,7 +169,7 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 	return offset.NewOffsetService(sourceClient), nil
 }
 
-func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
+func (m *CutoverExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
 	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret)}

@@ -10,10 +10,10 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/cmd/create_asset"
+	"github.com/confluentinc/kcp/cmd/cutover"
 	"github.com/confluentinc/kcp/cmd/discover"
 	"github.com/confluentinc/kcp/cmd/docs"
 	"github.com/confluentinc/kcp/cmd/migrate"
-	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
 	"github.com/confluentinc/kcp/cmd/scan"
 	"github.com/confluentinc/kcp/cmd/ui"
@@ -97,7 +97,7 @@ func init() {
 		ui.NewUICmd(),
 		discover.NewDiscoverCmd(),
 		migrate.NewMigrateCmd(),
-		migration.NewMigrationCmd(),
+		cutover.NewCutoverCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
 		docs.NewDocsCmd(),

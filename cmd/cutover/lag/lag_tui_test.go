@@ -1,4 +1,4 @@
-package lagcheck
+package lag
 
 import (
 	"testing"

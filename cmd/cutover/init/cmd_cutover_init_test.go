@@ -16,10 +16,10 @@ func resetAuthFlags() {
 	useUnauthenticatedPlaintext = false
 }
 
-func TestMigrationInit_NoAuthFlag_ReturnsError(t *testing.T) {
+func TestCutoverInit_NoAuthFlag_ReturnsError(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationInitCmd()
+	cmd := NewCutoverInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -39,10 +39,10 @@ func TestMigrationInit_NoAuthFlag_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least one of the flags")
 }
 
-func TestMigrationInit_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
+func TestCutoverInit_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationInitCmd()
+	cmd := NewCutoverInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -63,10 +63,10 @@ func TestMigrationInit_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 	assert.Contains(t, err.Error(), "sasl-plain-username")
 }
 
-func TestMigrationInit_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing.T) {
+func TestCutoverInit_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationInitCmd()
+	cmd := NewCutoverInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -90,10 +90,10 @@ func TestMigrationInit_WithSaslPlainFlagAndCredentials_PassesValidation(t *testi
 	assert.NotContains(t, err.Error(), "at least one of the flags")
 }
 
-func TestMigrationInit_WithAuthFlag_PassesValidation(t *testing.T) {
+func TestCutoverInit_WithAuthFlag_PassesValidation(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationInitCmd()
+	cmd := NewCutoverInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -115,26 +115,26 @@ func TestMigrationInit_WithAuthFlag_PassesValidation(t *testing.T) {
 	assert.NotContains(t, err.Error(), "at least one of the flags")
 }
 
-func TestMigrationInit_PauseOffsetSyncFlag_Registered(t *testing.T) {
+func TestCutoverInit_PauseOffsetSyncFlag_Registered(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationInitCmd()
+	cmd := NewCutoverInitCmd()
 	flag := cmd.Flags().Lookup("pause-consumer-offset-sync")
 	require.NotNil(t, flag, "--pause-consumer-offset-sync flag must be registered")
 	assert.Equal(t, "false", flag.DefValue, "default must be false (opt-in)")
 }
 
-// TestMigrationInit_PauseOffsetSync_SkipValidate_MutuallyExclusive verifies that
+// TestCutoverInit_PauseOffsetSync_SkipValidate_MutuallyExclusive verifies that
 // --pause-consumer-offset-sync and --skip-validate cannot be combined. The
 // restore bookend needs the init-time snapshot captured by the validation path;
 // without it, restore has nothing to diff against and would silently leave the
 // cluster link disabled after switchover.
-func TestMigrationInit_PauseOffsetSync_SkipValidate_MutuallyExclusive(t *testing.T) {
+func TestCutoverInit_PauseOffsetSync_SkipValidate_MutuallyExclusive(t *testing.T) {
 	resetAuthFlags()
 	pauseConsumerOffsetSync = false
 	skipValidate = false
 
-	cmd := NewMigrationInitCmd()
+	cmd := NewCutoverInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",

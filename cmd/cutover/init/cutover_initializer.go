@@ -11,27 +11,27 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 )
 
-type MigrationInitializerOpts struct {
-	MigrationStateFile    string
-	MigrationState        cutover.CutoverState
-	MigrationConfig       cutover.CutoverConfig
+type CutoverInitializerOpts struct {
+	CutoverStateFile      string
+	CutoverState          cutover.CutoverState
+	CutoverConfig         cutover.CutoverConfig
 	ClusterApiKey         string
 	ClusterApiSecret      string
 	InsecureSkipTLSVerify bool
 }
 
-type MigrationInitializer struct {
-	opts MigrationInitializerOpts
+type CutoverInitializer struct {
+	opts CutoverInitializerOpts
 }
 
-func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitializer {
-	return &MigrationInitializer{
+func NewCutoverInitializer(opts CutoverInitializerOpts) *CutoverInitializer {
+	return &CutoverInitializer{
 		opts: opts,
 	}
 }
 
-func (m *MigrationInitializer) Run() error {
-	config := m.opts.MigrationConfig
+func (m *CutoverInitializer) Run() error {
+	config := m.opts.CutoverConfig
 
 	httpClient := http.DefaultClient
 	if m.opts.InsecureSkipTLSVerify {
@@ -49,13 +49,13 @@ func (m *MigrationInitializer) Run() error {
 	orchestrator := cutover.NewCutoverOrchestrator(
 		&config,
 		workflow,
-		&m.opts.MigrationState,
-		m.opts.MigrationStateFile,
+		&m.opts.CutoverState,
+		m.opts.CutoverStateFile,
 	)
 
 	ctx := context.Background()
 	if err := orchestrator.Initialize(ctx, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
-		return fmt.Errorf("failed to initialize migration: %w", err)
+		return fmt.Errorf("failed to initialize cutover: %w", err)
 	}
 
 	return nil

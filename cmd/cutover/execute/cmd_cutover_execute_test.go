@@ -24,12 +24,12 @@ func resetAuthFlags() {
 	rolloutTimeout = 0
 }
 
-func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
+func TestCutoverExecute_NoAuthFlag_ReturnsError(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
+		"--cutover-id", "test-cutover",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -40,12 +40,12 @@ func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least one of the flags")
 }
 
-func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
+func TestCutoverExecute_WithAuthFlag_PassesValidation(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
+		"--cutover-id", "test-cutover",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -56,15 +56,15 @@ func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
 	// Should fail later (missing state file), NOT on auth validation.
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "at least one of the flags")
-	assert.Contains(t, err.Error(), "migration state file")
+	assert.Contains(t, err.Error(), "cutover state file")
 }
 
-func TestMigrationExecute_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
+func TestCutoverExecute_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
+		"--cutover-id", "test-cutover",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -76,12 +76,12 @@ func TestMigrationExecute_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 	assert.Contains(t, err.Error(), "sasl-plain-username")
 }
 
-func TestMigrationExecute_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing.T) {
+func TestCutoverExecute_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
+		"--cutover-id", "test-cutover",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -93,15 +93,15 @@ func TestMigrationExecute_WithSaslPlainFlagAndCredentials_PassesValidation(t *te
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "at least one of the flags")
-	assert.Contains(t, err.Error(), "migration state file")
+	assert.Contains(t, err.Error(), "cutover state file")
 }
 
-func TestMigrationExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
+func TestCutoverExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
+		"--cutover-id", "test-cutover",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -118,12 +118,12 @@ func TestMigrationExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
 // --sasl-scram-mechanism flag tests
 // ===========================================================================
 
-func TestMigrationExecute_SaslScramMechanism_DefaultIsSHA512(t *testing.T) {
+func TestCutoverExecute_SaslScramMechanism_DefaultIsSHA512(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
+		"--cutover-id", "test",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -132,16 +132,16 @@ func TestMigrationExecute_SaslScramMechanism_DefaultIsSHA512(t *testing.T) {
 		"--sasl-scram-password", "pass",
 	}))
 
-	opts := parseMigrationExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
 	assert.Equal(t, "SHA512", opts.SaslScramMechanism, "default --sasl-scram-mechanism should be SHA512 for MSK compatibility")
 }
 
-func TestMigrationExecute_SaslScramMechanism_ExplicitSHA256(t *testing.T) {
+func TestCutoverExecute_SaslScramMechanism_ExplicitSHA256(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
+		"--cutover-id", "test",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -151,17 +151,17 @@ func TestMigrationExecute_SaslScramMechanism_ExplicitSHA256(t *testing.T) {
 		"--sasl-scram-mechanism", "SHA256",
 	}))
 
-	opts := parseMigrationExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
 	assert.Equal(t, "SHA256", opts.SaslScramMechanism)
 }
 
-func TestMigrationExecute_SaslScramMechanism_BindFromEnvVar(t *testing.T) {
+func TestCutoverExecute_SaslScramMechanism_BindFromEnvVar(t *testing.T) {
 	resetAuthFlags()
 	t.Setenv("SASL_SCRAM_MECHANISM", "SHA256")
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
+		"--cutover-id", "test",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -171,16 +171,16 @@ func TestMigrationExecute_SaslScramMechanism_BindFromEnvVar(t *testing.T) {
 	}))
 	require.NoError(t, utils.BindEnvToFlags(cmd))
 
-	opts := parseMigrationExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
 	assert.Equal(t, "SHA256", opts.SaslScramMechanism, "SASL_SCRAM_MECHANISM env var should override the default")
 }
 
-func TestMigrationExecute_SaslScramMechanism_InvalidValueRejected(t *testing.T) {
+func TestCutoverExecute_SaslScramMechanism_InvalidValueRejected(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
+		"--cutover-id", "test-cutover",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -199,7 +199,7 @@ func TestMigrationExecute_SaslScramMechanism_InvalidValueRejected(t *testing.T) 
 // SASL/SCRAM mechanism end-to-end test
 // ===========================================================================
 
-func TestMigrationExecute_SaslScramMechanism_ReachesKafkaClient(t *testing.T) {
+func TestCutoverExecute_SaslScramMechanism_ReachesKafkaClient(t *testing.T) {
 	// Verify the mechanism value propagates from opts through createSourceOffset
 	// into the Kafka client SASL configuration. We capture slog output to confirm
 	// configureSASLTypeSCRAMAuthentication receives the correct mechanism.
@@ -209,7 +209,7 @@ func TestMigrationExecute_SaslScramMechanism_ReachesKafkaClient(t *testing.T) {
 	slog.SetDefault(slog.New(handler))
 	defer slog.SetDefault(original)
 
-	executor := NewMigrationExecutor(MigrationExecutorOpts{
+	executor := NewCutoverExecutor(CutoverExecutorOpts{
 		SourceBootstrap:    "localhost:19999", // bogus port, will fail to connect
 		AuthType:           types.AuthTypeSASLSCRAM,
 		SaslScramUsername:  "user",
@@ -229,28 +229,28 @@ func TestMigrationExecute_SaslScramMechanism_ReachesKafkaClient(t *testing.T) {
 // --rollout-timeout flag tests
 // ===========================================================================
 
-func TestMigrationExecute_RolloutTimeout_DefaultIsZero(t *testing.T) {
+func TestCutoverExecute_RolloutTimeout_DefaultIsZero(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
+		"--cutover-id", "test",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
 		"--use-unauthenticated-plaintext",
 	}))
 
-	opts := parseMigrationExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
 	assert.Equal(t, time.Duration(0), opts.RolloutTimeout, "default --rollout-timeout should be 0 (no deadline)")
 }
 
-func TestMigrationExecute_RolloutTimeout_ExplicitValueParsed(t *testing.T) {
+func TestCutoverExecute_RolloutTimeout_ExplicitValueParsed(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
+		"--cutover-id", "test",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -258,16 +258,16 @@ func TestMigrationExecute_RolloutTimeout_ExplicitValueParsed(t *testing.T) {
 		"--rollout-timeout", "10m",
 	}))
 
-	opts := parseMigrationExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
 	assert.Equal(t, 10*time.Minute, opts.RolloutTimeout)
 }
 
-func TestMigrationExecute_RolloutTimeout_InvalidDurationFails(t *testing.T) {
+func TestCutoverExecute_RolloutTimeout_InvalidDurationFails(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	err := cmd.ParseFlags([]string{
-		"--migration-id", "test",
+		"--cutover-id", "test",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -278,13 +278,13 @@ func TestMigrationExecute_RolloutTimeout_InvalidDurationFails(t *testing.T) {
 	assert.Contains(t, err.Error(), "rollout-timeout")
 }
 
-func TestMigrationExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
+func TestCutoverExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
 	resetAuthFlags()
 	t.Setenv("ROLLOUT_TIMEOUT", "7m")
 
-	cmd := NewMigrationExecuteCmd()
+	cmd := NewCutoverExecuteCmd()
 	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
+		"--cutover-id", "test",
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
@@ -292,6 +292,6 @@ func TestMigrationExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
 	}))
 	require.NoError(t, utils.BindEnvToFlags(cmd))
 
-	opts := parseMigrationExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
 	assert.Equal(t, 7*time.Minute, opts.RolloutTimeout, "ROLLOUT_TIMEOUT env var should populate the flag")
 }

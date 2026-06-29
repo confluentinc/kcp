@@ -1,4 +1,4 @@
-package lagcheck
+package lag
 
 import (
 	"context"
@@ -25,18 +25,18 @@ var (
 	pollInterval int
 )
 
-func NewMigrationLagCheckCmd() *cobra.Command {
+func NewCutoverLagCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "lag-check",
+		Use:   "lag",
 		Short: "Show mirror topic lag for the cluster link",
 		Long: `Interactive TUI that displays mirror topic lag for the cluster link. Run in a terminal with cluster link credentials. Press q to quit, p to toggle partition details, r to refresh, +/- to adjust interval, arrow keys to scroll.
 
 All flags can be provided via environment variables (uppercase, with underscores).`,
-		Example:       `  kcp migration lag-check --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx`,
+		Example:       `  kcp cutover lag --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationLagCheck,
-		RunE:          runMigrationLagCheck,
+		PreRunE:       preRunCutoverLag,
+		RunE:          runCutoverLag,
 	}
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
@@ -70,11 +70,11 @@ All flags can be provided via environment variables (uppercase, with underscores
 	return cmd
 }
 
-func preRunMigrationLagCheck(cmd *cobra.Command, args []string) error {
+func preRunCutoverLag(cmd *cobra.Command, args []string) error {
 	return utils.BindEnvToFlags(cmd)
 }
 
-func runMigrationLagCheck(cmd *cobra.Command, args []string) error {
+func runCutoverLag(cmd *cobra.Command, args []string) error {
 	interval := max(pollInterval, 1)
 	interval = min(interval, 60)
 
