@@ -131,7 +131,7 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-schema-registry
 
-  - name: 'integration: migration e2e'
+  - name: 'integration: cutover e2e'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:
       agent:
@@ -148,18 +148,18 @@ blocks:
           # Restore cached minikube preloads (K8s tarballs) to skip re-download
           - cache restore minikube-cache
       jobs:
-        - name: 'migration e2e'
+        - name: 'cutover e2e'
           commands:
             - cache restore frontend-dependencies
             - cache restore go-mod-cache
             - cache restore go-build-cache
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
-            - make test-migration-setup
-            - make test-migration
+            - make test-cutover-setup
+            - make test-cutover
       epilogue:
         always:
           commands:
-            - make test-migration-teardown
+            - make test-cutover-teardown
         on_pass:
           commands:
             - cache store minikube-cache ~/.minikube/cache/

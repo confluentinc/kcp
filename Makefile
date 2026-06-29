@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-cutover test-cutover-setup test-cutover-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -100,16 +100,16 @@ test-go-coverage-ui: build-frontend ## Run Go tests with coverage and open HTML 
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
-test-migration: test-migration-setup ## Run full migration E2E lifecycle (setup, test, teardown)
-	@trap 'echo ""; echo "Tearing down migration E2E infrastructure..."; bash integration-tests/migration/testdata/teardown.sh' EXIT; \
-	echo "Running migration E2E tests..."; \
-	go test -v -tags=e2e -timeout 15m ./integration-tests/migration/...
+test-cutover: test-cutover-setup ## Run full cutover E2E lifecycle (setup, test, teardown)
+	@trap 'echo ""; echo "Tearing down cutover E2E infrastructure..."; bash integration-tests/cutover/testdata/teardown.sh' EXIT; \
+	echo "Running cutover E2E tests..."; \
+	go test -v -tags=e2e -timeout 15m ./integration-tests/cutover/...
 
-test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
-	@bash integration-tests/migration/testdata/setup.sh
+test-cutover-setup: ## Set up Minikube + CFK infrastructure for cutover E2E
+	@bash integration-tests/cutover/testdata/setup.sh
 
-test-migration-teardown: ## Tear down migration E2E infrastructure
-	@bash integration-tests/migration/testdata/teardown.sh
+test-cutover-teardown: ## Tear down cutover E2E infrastructure
+	@bash integration-tests/cutover/testdata/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
