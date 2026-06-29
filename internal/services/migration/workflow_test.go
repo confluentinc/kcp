@@ -841,19 +841,22 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_StableOffsets(t *testing
 	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
 }
 
-func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets(t *testing.T) {
-	gw := &mockGatewayService{}
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_UnfencesGateway(t *testing.T) {
+	var unfenced bool
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			unfenced = true
+			return nil
+		},
+	}
 	cl := &mockClusterLinkService{}
 
 	// Simulates an unrouted producer: offsets keep increasing on every call.
-	// The settle phase consumes the first call, then snapshot1 and snapshot2
-	// both see increasing values.
 	var callCount int64
 	sourceOffset := &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
 			n := atomic.AddInt64(&callCount, 1)
 			if topic == "topic-1" {
-				// Each call returns a higher offset on partition 0
 				return map[int32]int64{0: 100 + n*10, 1: 200}, nil
 			}
 			return map[int32]int64{0: 300}, nil
@@ -875,62 +878,16 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets(t *tes
 		ClusterId:               "lkc-123",
 		ClusterLinkName:         "link-1",
 		DetectUnroutedProducers: true,
+		InitialCrYAML:           []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n"),
+		InitialCrName:           "my-gw",
+		K8sNamespace:            "ns",
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unrouted producer(s) detected")
 	assert.Contains(t, err.Error(), "topic-1 partition 0")
-}
-
-func TestWorkflow_DetectUnroutedProducers_SettlePhaseFalsePositive(t *testing.T) {
-	// Simulates in-flight batches draining after fence: offset increases once
-	// during the settle phase but is stable by the time snapshots are taken.
-	// The check should pass (no false positive).
-	gw := &mockGatewayService{}
-
-	promoted := make(map[string]bool)
-	cl := &mockClusterLinkService{
-		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
-			resp := &clusterlink.PromoteMirrorTopicsResponse{}
-			for _, name := range topicNames {
-				promoted[name] = true
-				resp.Data = append(resp.Data, struct {
-					MirrorTopicName string `json:"mirror_topic_name"`
-					ErrorMessage    string `json:"error_message,omitempty"`
-					ErrorCode       int    `json:"error_code,omitempty"`
-				}{
-					MirrorTopicName: name,
-					ErrorCode:       0,
-				})
-			}
-			return resp, nil
-		},
-	}
-
-	// Offsets jump from 100 → 150 between snapshot1 and snapshot2 only if
-	// drain is still happening. Here we simulate drain completing during the
-	// settle wait: snapshot1 (call 1) and snapshot2 (call 2) both return 150.
-	sourceOffset := &mockOffsetProvider{
-		getFn: func(topic string) (map[int32]int64, error) {
-			return map[int32]int64{0: 150}, nil
-		},
-	}
-
-	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, sourceOffset)
-	wf.promotePollInterval = time.Millisecond
-	wf.quiescenceInterval = time.Millisecond
-	config := &MigrationConfig{
-		Topics:                  []string{"topic-1"},
-		ClusterRestEndpoint:     "https://cluster",
-		ClusterId:               "lkc-123",
-		ClusterLinkName:         "link-1",
-		DetectUnroutedProducers: true,
-	}
-
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
-	require.NoError(t, err, "drain during settle phase should not trigger a false positive")
-	assert.True(t, promoted["topic-1"])
+	assert.True(t, unfenced, "gateway should be unfenced after detecting unrouted producers")
 }
 
 func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.T) {

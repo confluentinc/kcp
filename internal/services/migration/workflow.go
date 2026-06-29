@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
+	"github.com/goccy/go-yaml"
 )
 
 type MigrationWorkflow struct {
@@ -299,21 +300,41 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationC
 	return nil
 }
 
-// detectUnroutedProducers waits for in-flight producer batches to settle after
-// fencing, then takes two source offset snapshots separated by the quiescence
-// interval. Only partitions whose offset increases in BOTH intervals are
-// reported — this filters out one-off drain from fenced producers whose
-// in-flight batches landed just after the fence took effect.
-func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics []string) error {
-	// Phase 1: settle — allow in-flight batches from fenced producers to drain
-	fmt.Printf("   ↳ Waiting %s for in-flight batches to settle...\n", s.quiescenceInterval)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(s.quiescenceInterval):
+// unfenceGateway reapplies the initial gateway CR to restore normal traffic.
+// The initial CR YAML fetched from k8s contains server-managed metadata
+// (managedFields, resourceVersion, status) that breaks server-side apply,
+// so we strip it before applying.
+func (s *MigrationWorkflow) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
+	// Parse the initial CR, strip server metadata, re-marshal
+	var obj map[string]interface{}
+	if err := yaml.Unmarshal(config.InitialCrYAML, &obj); err != nil {
+		return fmt.Errorf("failed to parse initial CR YAML: %w", err)
 	}
 
-	// Phase 2: first snapshot
+	// Remove server-managed fields that break re-apply
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		delete(metadata, "managedFields")
+		delete(metadata, "resourceVersion")
+		delete(metadata, "uid")
+		delete(metadata, "creationTimestamp")
+		delete(metadata, "generation")
+	}
+	delete(obj, "status")
+
+	cleanYAML, err := yaml.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
+	}
+
+	return s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML)
+}
+
+// detectUnroutedProducers takes two source offset snapshots separated by the
+// quiescence interval. If any partition's offset increases between snapshots,
+// it means a producer is writing directly to the source cluster (bypassing the
+// fenced gateway) and the migration should not proceed.
+func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics []string) error {
+	// Snapshot 1
 	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
 	snapshot1 := make(map[string]map[int32]int64, len(topics))
 	for _, topic := range topics {
@@ -324,7 +345,7 @@ func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics 
 		snapshot1[topic] = offsets
 	}
 
-	// Phase 3: wait, then second snapshot
+	// Wait, then snapshot 2
 	fmt.Printf("   ↳ Monitoring source offsets for %s...\n", s.quiescenceInterval)
 	select {
 	case <-ctx.Done():
@@ -368,15 +389,24 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 	// If enabled, verify source offsets are stable before promoting.
 	// An increasing offset after fencing indicates a producer bypassing the gateway.
 	if config.DetectUnroutedProducers {
-		fmt.Printf("\n%s Checking for unrouted producers...\n",
-			color.CyanString("🔍"))
+		fmt.Printf("\n%s\n", color.CyanString("🔍 Checking for unrouted producers..."))
 		if err := s.detectUnroutedProducers(ctx, config.Topics); err != nil {
+			fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
+				color.YellowString("⚠️"))
+			if unfenceErr := s.unfenceGateway(ctx, config); unfenceErr != nil {
+				slog.Error("❌ failed to unfence gateway after detecting unrouted producers", "error", unfenceErr)
+			} else {
+				fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
+					color.GreenString("✔"))
+			}
 			return err
 		}
 		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
 			color.GreenString("✔"))
+		fmt.Printf("%s\n", color.GreenString("✅ Done"))
 	}
 
+	fmt.Printf("\n%s\n", color.CyanString("📤 Promoting mirror topics..."))
 	slog.Debug("topic promotion process started")
 
 	const maxPromoteRetries = 3
