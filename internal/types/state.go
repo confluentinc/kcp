@@ -98,7 +98,7 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		case errors.Is(err, migrate.ErrNewerSchema):
 			return nil, fmt.Errorf("%w. This state file was written by a newer version of KCP than you are running. Run `kcp update` to upgrade, then retry", err)
 		case errors.Is(err, migrate.ErrUnsupportedLegacy):
-			return nil, fmt.Errorf("%w. Run `kcp state upgrade --in <file>` to migrate it to the current format", err)
+			return nil, fmt.Errorf("%w. This kcp build cannot read this format; recreate the file with `kcp discover` (MSK) or `kcp scan clusters` (Apache Kafka), or use a kcp release that supports it", err)
 		default:
 			return nil, err
 		}
@@ -111,7 +111,7 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		if fileIsDevStamped {
 			return nil, fmt.Errorf("state file was produced by a local/unreleased KCP build (%s) and its schema does not match any released format, so it cannot be migrated automatically: %w. Open it with the dev build that wrote it, or regenerate it", fromLabel, err)
 		}
-		return nil, fmt.Errorf("state file did not match the current schema after migration (migrated from %s): %w. Run `kcp state upgrade --in <file>`, or recreate it with `kcp discover` / `kcp scan clusters`", fromLabel, err)
+		return nil, fmt.Errorf("state file could not be loaded: its schema does not match this build of kcp (migrated from %s): %w. This kcp build does not support this file's format; recreate it with `kcp discover` (MSK) or `kcp scan clusters` (Apache Kafka), or use a kcp release that supports it", fromLabel, err)
 	}
 
 	// A dev-stamped file that decodes cleanly is a clean success — no warning
@@ -131,7 +131,7 @@ func NewStateFromBytes(data []byte) (*State, error) {
 // A MISSING version is treated as unknown provenance, NOT dev: only a file carrying
 // an actual dev stamp (dev / 0.0.0-localdev) gets the dev-aware error wording, so
 // region-scan files and unrelated JSON (which have no version) fall to the generic
-// "recreate / kcp state upgrade" message (spec N5).
+// "recreate it with kcp discover / kcp scan clusters" message (spec N5).
 func fileBuildIsDev(data []byte) bool {
 	var probe struct {
 		KcpBuildInfo struct {

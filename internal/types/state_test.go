@@ -1163,31 +1163,43 @@ func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
 	}
 }
 
-// Legacy Era B files (top-level `regions`) are recognised by the migration engine but
-// have no upcaster in Plan 1 (the B→C step lands in Task 7). The loader must surface the
-// actionable `kcp state upgrade` guidance rather than the superseded #308 "recreate or
-// downgrade with version context" message. The "kcp state upgrade" guidance is stable
-// across Task 3 (ErrUnsupportedLegacy) and Task 7 (post-B→C decode guidance).
-func TestNewStateFromBytes_LegacyEraB_WithVersion_SuggestsUpgrade(t *testing.T) {
-	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1"}]}`)
-	_, err := NewStateFromBytes(data)
+// A legacy Era B file that the engine can't fully migrate (here, an unknown field after the
+// B→C reshape) must fail with actionable, NON-CIRCULAR guidance: recreate with discover/scan.
+// It must NOT advise `kcp state upgrade` — that command shares this exact loader, so it would
+// fail identically (circular advice). Guards the fix for the schema_registries-style load failure.
+func assertNonCircularLoadError(t *testing.T, err error) {
+	t.Helper()
 	if err == nil {
-		t.Fatal("expected error for legacy Era B file, got nil")
+		t.Fatal("expected error for unsupported legacy file, got nil")
 	}
-	if !strings.Contains(err.Error(), "kcp state upgrade") {
-		t.Errorf("expected actionable `kcp state upgrade` guidance, got: %v", err)
+	msg := err.Error()
+	if strings.Contains(msg, "kcp state upgrade") {
+		t.Errorf("error must NOT advise `kcp state upgrade` (circular — same loader), got: %v", err)
+	}
+	if !strings.Contains(msg, "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
 }
 
-func TestNewStateFromBytes_LegacyEraB_NoVersion_SuggestsUpgrade(t *testing.T) {
+func TestNewStateFromBytes_LegacyEraB_WithVersion_NonCircularAdvice(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1"}]}`)
+	_, err := NewStateFromBytes(data)
+	assertNonCircularLoadError(t, err)
+}
+
+func TestNewStateFromBytes_LegacyEraB_NoVersion_NonCircularAdvice(t *testing.T) {
 	data := []byte(`{"regions":[{"region_name":"us-east-1"}]}`)
 	_, err := NewStateFromBytes(data)
-	if err == nil {
-		t.Fatal("expected error for legacy Era B file, got nil")
-	}
-	if !strings.Contains(err.Error(), "kcp state upgrade") {
-		t.Errorf("expected actionable `kcp state upgrade` guidance, got: %v", err)
-	}
+	assertNonCircularLoadError(t, err)
+}
+
+// Mirrors the real v0.4.2–v0.7.1 case: schema_registries is an ARRAY, which the current
+// object-typed field can't decode (the Plan 2 upcaster is not yet implemented). The error
+// must give non-circular advice, not point back at `kcp state upgrade`.
+func TestNewStateFromBytes_ArraySchemaRegistries_NonCircularAdvice(t *testing.T) {
+	data := []byte(`{"regions":[],"schema_registries":[{"type":"CONFLUENT","url":"http://sr:8081"}],"kcp_build_info":{"version":"0.5.0"}}`)
+	_, err := NewStateFromBytes(data)
+	assertNonCircularLoadError(t, err)
 }
 
 func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {

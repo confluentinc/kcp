@@ -14,6 +14,7 @@ func NewStateUpgradeCmd() *cobra.Command {
 		Short:         "Migrate a kcp-state.json file to the current schema",
 		Long:          "Reads a state file produced by any prior KCP version, migrates it to the current schema, and writes the result. Writes in place if --out is omitted.",
 		SilenceErrors: true,
+		SilenceUsage:  true, // a load/runtime error is not a usage error — don't dump the flags
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			state, err := types.NewStateFromFile(in)
