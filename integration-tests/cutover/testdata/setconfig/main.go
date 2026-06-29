@@ -1,5 +1,5 @@
 // Test fixture helper: PUTs a value to the cluster link's per-config endpoint
-// inside the migration e2e environment. Used by TestMigrationE2E_PauseOffsetSync_*
+// inside the cutover e2e environment. Used by TestCutoverE2E_PauseOffsetSync_*
 // to flip consumer.offset.sync.enable between true/false without depending on
 // curl (busybox wget cannot do PUT).
 //

@@ -1,4 +1,4 @@
-// Minimal sarama producer used in the migration e2e tests.
+// Minimal sarama producer used in the cutover e2e tests.
 //
 // Writes records to --topic at --rate records/sec for --duration. Exits
 // cleanly on SIGTERM/SIGINT. Plaintext unauthenticated — matches the e2e
