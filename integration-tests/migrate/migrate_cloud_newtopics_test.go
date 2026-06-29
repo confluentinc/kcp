@@ -3,11 +3,14 @@
 package migrate
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,6 +42,36 @@ func TestCloud_MSKtoCC_NewTopics(t *testing.T) {
 	require.NoError(t, err, out)
 	require.True(t, rc.topicExists(cfg.ccClusterID, srcTopic),
 		"mode:new must create %q on CC (replication_factor omitted → CC default):\n%s", srcTopic, out)
+}
+
+// TestCloud_MSKtoCC_NewTopics_RF2Source is the true RF≠3 regression for M2: it
+// seeds an RF=2 topic on the MSK playground (valid on its 3 brokers; CC requires
+// RF=3), then mode:new MSK→CC must still create it — because KCP omits the source
+// replication factor and CC applies its default (3). Pre-fix, KCP forwarded the
+// source RF and the create failed with 40002 "replication factor must be 3".
+// Seeded and read via IAM (admin principal) — needs AWS creds, like the other IAM
+// cloud tests; kafka-user-1 (SCRAM) cannot create topics.
+func TestCloud_MSKtoCC_NewTopics_RF2Source(t *testing.T) {
+	cfg := loadCloudConfig(t)
+	rc := cfg.ccRestClient()
+	dir := t.TempDir()
+	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+
+	topic := fmt.Sprintf("m2-rf2-%d", time.Now().UnixNano())
+	iamBootstrap := splitCSV(cfg.mskIAMBootstrap)
+	admin := newMSKIAMAdmin(t, iamBootstrap, cfg.mskRegion)
+	defer func() { _ = admin.Close() }()
+	require.NoError(t, admin.CreateTopic(topic, &sarama.TopicDetail{NumPartitions: 2, ReplicationFactor: 2}, false),
+		"seed RF=2 source topic on MSK")
+	defer func() { _ = admin.DeleteTopic(topic) }()
+	defer rc.deleteTopic(t, cfg.ccClusterID, topic)
+
+	mf := writeNewModeCloudManifest(t, dir, "m2-rf2", cfg, target, sourceRead, iamBootstrap, []string{topic})
+
+	out, err := runKCP(t, mf)
+	require.NoError(t, err, out)
+	require.True(t, rc.topicExists(cfg.ccClusterID, topic),
+		"mode:new must create the RF=2 source topic on CC (RF omitted → CC default 3):\n%s", out)
 }
 
 // writeNewModeCloudManifest writes a mode:new MSK→CC manifest (no cluster link)
