@@ -143,3 +143,40 @@ func TestUpgradeUnrecognizedIsNotSpecialCased(t *testing.T) {
 		t.Errorf("unrecognised JSON must pass through unchanged.\n got: %s\nwant: %s", got, data)
 	}
 }
+
+func TestUpgradeNormalizesArraySchemaRegistries(t *testing.T) {
+	// Era B file (top-level regions) with the old ARRAY-form schema_registries.
+	data := `{"regions":[{"name":"us-east-1","clusters":[]}],"schema_registries":[{"type":"confluent","url":"http://sr:8081","subjects":[]}],"kcp_build_info":{"version":"0.5.0"},"timestamp":"2026-01-01T00:00:00Z"}`
+	migrated, _, err := Upgrade([]byte(data))
+	if err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(migrated, &doc); err != nil {
+		t.Fatal(err)
+	}
+	sr, ok := doc["schema_registries"].(map[string]any)
+	if !ok {
+		t.Fatalf("schema_registries should be normalized to an object, got %T", doc["schema_registries"])
+	}
+	csr, ok := sr["confluent_schema_registry"].([]any)
+	if !ok || len(csr) != 1 {
+		t.Errorf("confluent_schema_registry should carry the 1 array entry, got %#v", sr["confluent_schema_registry"])
+	}
+	// The B->C reshape still happened.
+	if _, ok := doc["msk_sources"].(map[string]any); !ok {
+		t.Error("msk_sources missing after B->C")
+	}
+	if _, ok := doc["regions"]; ok {
+		t.Error("top-level regions should be gone after B->C")
+	}
+}
+
+func TestUpgradeArraySchemaRegistriesNonConfluentErrors(t *testing.T) {
+	// Array-form schema_registries only ever held confluent registries; an unexpected type
+	// must fail loudly rather than be mis-bucketed.
+	data := `{"regions":[],"schema_registries":[{"type":"glue","registry_arn":"arn:x"}],"kcp_build_info":{"version":"0.5.0"}}`
+	if _, _, err := Upgrade([]byte(data)); err == nil {
+		t.Fatal("expected error for non-confluent type in array-form schema_registries")
+	}
+}

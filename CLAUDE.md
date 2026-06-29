@@ -103,7 +103,7 @@ migrates, decodes, and lands non-empty — the ground-truth backward-compat regr
 - The archive (secret-scrubbed) lives in S3 (`s3://confluent-kcp-test-fixtures/state-archive/`, `us-east-1`), reachable by **local devs only — not CI**.
 - **The test triggers ONLY when `KCP_STATE_ARCHIVE` is set** — a plain `go test ./...` / `make test-go` always skips it (so the normal suite stays green and never depends on S3).
 - Run it with **`make test-state-archive`** (downloads, sha256-verifies, extracts to `.cache/state-archive/`, sets `KCP_STATE_ARCHIVE`, runs the test). To run manually: `make fetch-state-archive` then `KCP_STATE_ARCHIVE=$(pwd)/.cache/state-archive go test ./internal/types/ -run TestStateArchiveLoads`.
-- **Known red (until Plan 2):** the pinned archive includes v0.4.2–v0.7.1, whose `schema_registries` is the old array form the loader doesn't yet support — those subtests fail by design until the array→object upcaster lands.
+- All archived versions (v0.4.0–v0.8.5) currently load — including v0.4.2–v0.7.1, whose old array-form `schema_registries` is recovered by the array→object upcaster.
 - Refreshing the archive (e.g. a new release): upload `state-archive-vN.tar.gz`, then bump `STATE_ARCHIVE_VERSION` + `STATE_ARCHIVE_SHA256` in the `Makefile` in one commit.
 
 ### Playwright E2E Tests

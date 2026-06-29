@@ -1193,15 +1193,6 @@ func TestNewStateFromBytes_LegacyEraB_NoVersion_NonCircularAdvice(t *testing.T) 
 	assertNonCircularLoadError(t, err)
 }
 
-// Mirrors the real v0.4.2–v0.7.1 case: schema_registries is an ARRAY, which the current
-// object-typed field can't decode (the Plan 2 upcaster is not yet implemented). The error
-// must give non-circular advice, not point back at `kcp state upgrade`.
-func TestNewStateFromBytes_ArraySchemaRegistries_NonCircularAdvice(t *testing.T) {
-	data := []byte(`{"regions":[],"schema_registries":[{"type":"CONFLUENT","url":"http://sr:8081"}],"kcp_build_info":{"version":"0.5.0"}}`)
-	_, err := NewStateFromBytes(data)
-	assertNonCircularLoadError(t, err)
-}
-
 func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
 	data := []byte(`{"kcp_build_info":{"version":"` + build_info.Version + `"},"unexpected_field":"value"}`)
 	_, err := NewStateFromBytes(data)
