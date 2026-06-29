@@ -15,6 +15,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -154,6 +155,106 @@ func TestCredentials_HTTPClient_MTLS(t *testing.T) {
 	// A default client (no client cert, no CA trust) must be rejected.
 	_, err = http.DefaultClient.Get(srv.URL)
 	require.Error(t, err, "certless client must be rejected")
+}
+
+// startTLSServer starts an httptest TLS server and writes its CA cert to a temp
+// file so tests can configure a custom trust root. Returns the server and the
+// path to the CA PEM file.
+func startTLSServer(t *testing.T) (*httptest.Server, string) {
+	t.Helper()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	caPath := filepath.Join(t.TempDir(), "ca.pem")
+	f, err := os.Create(caPath)
+	require.NoError(t, err)
+	err = pem.Encode(f, &pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	require.NoError(t, err)
+	require.NoError(t, f.Close())
+	return srv, caPath
+}
+
+// TestHTTPClient_BasicWithCACert_TrustsPrivateCA confirms a basic-auth client
+// with an explicit ca_cert trusts the httptest server's self-signed certificate.
+func TestHTTPClient_BasicWithCACert_TrustsPrivateCA(t *testing.T) {
+	srv, caPath := startTLSServer(t)
+	c := Credentials{Basic: &BasicAuth{Username: "u", Password: "p", CACert: caPath}}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	resp, err := concreteClient.Get(srv.URL) //nolint:noctx
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestHTTPClient_BasicNoCACert_FailsVerification confirms that a basic-auth
+// client without a ca_cert fails the TLS handshake against a private-CA server.
+func TestHTTPClient_BasicNoCACert_FailsVerification(t *testing.T) {
+	srv, _ := startTLSServer(t)
+	c := Credentials{Basic: &BasicAuth{Username: "u", Password: "p"}}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	_, err = concreteClient.Get(srv.URL) //nolint:noctx
+	require.Error(t, err)
+	errStr := strings.ToLower(err.Error())
+	assert.True(t, strings.Contains(errStr, "x509") || strings.Contains(errStr, "certificate"),
+		"expected TLS verification error, got: %v", err)
+}
+
+// TestHTTPClient_BasicSkipVerify_Connects confirms insecure_skip_verify bypasses
+// certificate verification even without a ca_cert.
+func TestHTTPClient_BasicSkipVerify_Connects(t *testing.T) {
+	srv, _ := startTLSServer(t)
+	c := Credentials{Basic: &BasicAuth{Username: "u", Password: "p", InsecureSkipVerify: true}}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	resp, err := concreteClient.Get(srv.URL) //nolint:noctx
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestHTTPClient_BearerWithCACert_TrustsPrivateCA confirms a bearer-auth client
+// with an explicit ca_cert trusts the httptest server's self-signed certificate.
+func TestHTTPClient_BearerWithCACert_TrustsPrivateCA(t *testing.T) {
+	srv, caPath := startTLSServer(t)
+	c := Credentials{Bearer: &BearerCreds{Token: "t", CACert: caPath}}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	resp, err := concreteClient.Get(srv.URL) //nolint:noctx
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestHTTPClient_NotDefaultClient confirms HTTPClient never returns the shared
+// http.DefaultClient.
+func TestHTTPClient_NotDefaultClient(t *testing.T) {
+	c := Credentials{Basic: &BasicAuth{Username: "u", Password: "p"}}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	assert.NotSame(t, http.DefaultClient, concreteClient)
+}
+
+// TestLoadCredentials_BasicBadCACert confirms LoadCredentials rejects a basic
+// block whose ca_cert points to a non-existent file.
+func TestLoadCredentials_BasicBadCACert(t *testing.T) {
+	yaml := "basic:\n  username: u\n  password: p\n  ca_cert: /no/such/file\n"
+	_, err := LoadCredentials(writeTemp(t, yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ca_cert")
 }
 
 // genCertMaterial returns (caPEM, certPEM, keyPEM) where the leaf cert is signed

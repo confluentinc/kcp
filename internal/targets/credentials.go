@@ -17,14 +17,18 @@ import (
 
 // BasicAuth is HTTP basic auth (CP) — also how CC api_key/api_secret are sent.
 type BasicAuth struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
+	Username           string `yaml:"username"`
+	Password           string `yaml:"password"`
+	CACert             string `yaml:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
 }
 
 // BearerCreds carries an RBAC/OAuth bearer token (e.g. an MDS-issued JWT) sent
 // as `Authorization: Bearer <token>`.
 type BearerCreds struct {
-	Token string `yaml:"token"`
+	Token              string `yaml:"token"`
+	CACert             string `yaml:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
 }
 
 // MTLSCreds carries client-certificate material for mutual TLS to the target
@@ -78,6 +82,16 @@ func LoadCredentials(path string) (*Credentials, error) {
 			}
 		}
 	}
+	if c.Basic != nil && c.Basic.CACert != "" {
+		if _, err := os.Stat(c.Basic.CACert); err != nil {
+			return nil, fmt.Errorf("basic ca_cert file %q: %w", c.Basic.CACert, err)
+		}
+	}
+	if c.Bearer != nil && c.Bearer.CACert != "" {
+		if _, err := os.Stat(c.Bearer.CACert); err != nil {
+			return nil, fmt.Errorf("bearer ca_cert file %q: %w", c.Bearer.CACert, err)
+		}
+	}
 	return &c, nil
 }
 
@@ -113,31 +127,48 @@ func (c Credentials) authenticator() clusterlink.Authenticator {
 	}
 }
 
-// HTTPClient builds the HTTP client for these credentials. basic/bearer use the
-// default client; mtls returns a client whose transport presents the client
-// certificate and trusts the configured CA.
+// HTTPClient builds the HTTP client for these credentials. Always returns a
+// fresh client cloned from the default transport (never http.DefaultClient) with
+// TLS trust sourced from the active auth block. basic and bearer support
+// optional ca_cert / insecure_skip_verify to reach CP/MDS targets behind a
+// private CA. api_key (CC) uses system roots. mtls additionally presents a
+// client certificate.
 func (c Credentials) HTTPClient() (clusterlink.HTTPClient, error) {
-	if c.MTLS == nil {
-		return http.DefaultClient, nil
-	}
-	cert, err := tls.LoadX509KeyPair(c.MTLS.ClientCert, c.MTLS.ClientKey)
-	if err != nil {
-		return nil, fmt.Errorf("loading mtls client cert/key: %w", err)
-	}
-	tlsCfg := &tls.Config{
-		Certificates:       []tls.Certificate{cert},
-		InsecureSkipVerify: c.MTLS.InsecureSkipVerify,
-	}
-	if c.MTLS.CACert != "" {
-		pem, err := os.ReadFile(c.MTLS.CACert)
+	caCertFile, skipVerify := c.tlsTrust()
+	tlsCfg := &tls.Config{InsecureSkipVerify: skipVerify} //nolint:gosec // user-controlled flag
+	if caCertFile != "" {
+		pemBytes, err := os.ReadFile(caCertFile)
 		if err != nil {
-			return nil, fmt.Errorf("reading mtls ca_cert: %w", err)
+			return nil, fmt.Errorf("reading ca_cert: %w", err)
 		}
 		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pem) {
-			return nil, fmt.Errorf("no certificates found in mtls ca_cert %q", c.MTLS.CACert)
+		if !pool.AppendCertsFromPEM(pemBytes) {
+			return nil, fmt.Errorf("no certificates found in ca_cert %q", caCertFile)
 		}
 		tlsCfg.RootCAs = pool
 	}
-	return &http.Client{Transport: &http.Transport{TLSClientConfig: tlsCfg}}, nil
+	if c.MTLS != nil {
+		cert, err := tls.LoadX509KeyPair(c.MTLS.ClientCert, c.MTLS.ClientKey)
+		if err != nil {
+			return nil, fmt.Errorf("loading mtls client cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+	return &http.Client{Transport: transport}, nil
+}
+
+// tlsTrust returns the ca_cert path and insecure-skip flag from the active block.
+func (c Credentials) tlsTrust() (string, bool) {
+	switch {
+	case c.MTLS != nil:
+		return c.MTLS.CACert, c.MTLS.InsecureSkipVerify
+	case c.Bearer != nil:
+		return c.Bearer.CACert, c.Bearer.InsecureSkipVerify
+	case c.Basic != nil:
+		return c.Basic.CACert, c.Basic.InsecureSkipVerify
+	default: // api_key/api_secret (CC) — public CA
+		return "", false
+	}
 }
