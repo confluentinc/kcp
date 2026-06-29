@@ -2,6 +2,7 @@ package state
 
 import (
 	"github.com/confluentinc/kcp/cmd/state/upgrade"
+	"github.com/confluentinc/kcp/cmd/state/version"
 	"github.com/spf13/cobra"
 )
 
@@ -15,6 +16,7 @@ func NewStateCmd() *cobra.Command {
 	}
 	stateCmd.AddCommand(
 		upgrade.NewStateUpgradeCmd(),
+		version.NewStateVersionCmd(),
 	)
 	return stateCmd
 }
