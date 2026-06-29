@@ -35,7 +35,7 @@ var commandOrder = map[string][]string{
 		"scan",
 		"report",
 		"create-asset",
-		"migration",
+		"cutover",
 		"ui",
 		"docs",
 		"update",
@@ -50,10 +50,10 @@ var commandOrder = map[string][]string{
 		"migrate-acls",
 		"migrate-connectors",
 	},
-	"kcp migration": {
+	"kcp cutover": {
 		"init",
 		"execute",
-		"lag-check",
+		"lag",
 		"list",
 	},
 	"kcp scan": {
