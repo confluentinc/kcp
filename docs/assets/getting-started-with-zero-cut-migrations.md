@@ -1,6 +1,6 @@
 # Confluent Cloud Migration: KCP + Gateway Reference Guide
 
-**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the three KCP migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp create-asset`, etc.) are covered in the [KCP documentation](https://confluentinc.github.io/kcp/) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
+**Scope**: This document is a reference for the KCP + Gateway migration approach. It focuses specifically on the three KCP migration commands (`kcp cutover init`, `kcp cutover lag`, `kcp cutover execute`) that orchestrate the client cutover. KCP's discovery and provisioning commands (`kcp scan`, `kcp create-asset`, etc.) are covered in the [KCP documentation](https://confluentinc.github.io/kcp/) and are treated here as prerequisites. Covers component overview, licensing, infrastructure requirements, authentication support matrix, and operational guidance.
 
 ---
 
@@ -18,7 +18,7 @@ Migration scope is organized into groups. A group is any set of topics you defin
 
 There are three active components in the migration:
 
-**KCP CLI** orchestrates the cutover through three commands: `kcp migration init` (validates setup and creates the migration plan), `kcp migration lag-check` (monitors replication lag), and `kcp migration execute` (runs the cutover). It runs from a local machine or bastion host and can be installed as a Confluent CLI plugin.
+**KCP CLI** orchestrates the cutover through three commands: `kcp cutover init` (validates setup and creates the migration plan), `kcp cutover lag` (monitors replication lag), and `kcp cutover execute` (runs the cutover). It runs from a local machine or bastion host and can be installed as a Confluent CLI plugin.
 
 **CC Gateway** is a Kafka protocol proxy deployed in (or adjacent to) the source cluster's network. Clients connect to the gateway instead of the source cluster directly. The gateway forwards traffic to the source cluster during the migration window, handles auth translation between source credentials and Confluent Cloud credentials, and switches routing to Confluent Cloud at cutover, all without a restart. It is deployed on Kubernetes via Confluent for Kubernetes and requires a Confluent Platform license.
 
@@ -48,7 +48,7 @@ For public product documentation, see the [Confluent Cloud Gateway Overview](htt
 
 KCP expects three things to already exist and be reachable: the CC Gateway deployed in Kubernetes with Confluent for Kubernetes, a Confluent Cloud destination cluster (Dedicated or Enterprise) with Cluster Linking enabled, and a network path from wherever KCP runs to both the source cluster brokers and the CC REST API.
 
-The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before migration init.
+The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before cutover init.
 
 KCP itself needs credentials to the source cluster's cloud provider in the standard credential chain and a kubeconfig pointing at the Kubernetes cluster hosting the gateway. Full permissions required are in §7.
 
@@ -71,7 +71,7 @@ This is the most operationally complex part of the migration. There are three di
 2. **Gateway → Source**: how the gateway authenticates to the source cluster on the client's behalf.
 3. **Gateway → CC**: how the gateway authenticates to Confluent Cloud after cutover.
 
-The `--auth-mode` parameter in `kcp migration init` determines which direction uses passthrough vs. swap:
+The `--auth-mode` parameter in `kcp cutover init` determines which direction uses passthrough vs. swap:
 
 - `dest_swap` (default): clients present their **source credentials** to the gateway. Gateway passes these through to the source; gateway swaps them for CC credentials when routing to CC.
 - `source_swap`: clients present their **CC credentials** to the gateway. Gateway passes these through to CC; gateway swaps them for source credentials when routing to the source.
@@ -91,7 +91,7 @@ Clients using AWS IAM must complete a pre-migration step to SASL/SCRAM or mTLS b
 
 ### 5.2 IAM Pre-Migration Path
 
-IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS before the gateway onboarding step. This is a client configuration change (not a migration cutover) and happens before any KCP migration commands are run. The broad steps are:
+IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS before the gateway onboarding step. This is a client configuration change (not a migration cutover) and happens before any KCP cutover commands are run. The broad steps are:
 
 1. Provision a corresponding SCRAM user in the source cluster for each IAM principal.
 2. Update each client's auth config from `sasl.mechanism=AWS_MSK_IAM` to `sasl.mechanism=SCRAM-SHA-512` with the new SCRAM credentials. The bootstrap URL continues to point at the source cluster (or gateway, if they onboard directly).
@@ -127,15 +127,15 @@ One important configuration best practice from the official docs: each client sh
 
 ## 6. Cluster Linking
 
-Cluster Linking must be configured before running any KCP migration commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
+Cluster Linking must be configured before running any KCP cutover commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
 
-KCP's `kcp migration init` validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.
+KCP's `kcp cutover init` validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.
 
 ---
 
 ## 7. KCP Permissions Required
 
-The following permissions are required specifically for the three migration commands (`kcp migration init`, `kcp migration lag-check`, `kcp migration execute`). Permissions for discovery and provisioning commands are documented in the [KCP repository](https://confluentinc.github.io/kcp/latest/command-reference/) under each command that interacts with AWS/MSK.
+The following permissions are required specifically for the three migration commands (`kcp cutover init`, `kcp cutover lag`, `kcp cutover execute`). Permissions for discovery and provisioning commands are documented in the [KCP repository](https://confluentinc.github.io/kcp/latest/command-reference/) under each command that interacts with AWS/MSK.
 
 **Confluent Cloud:**
 
@@ -151,7 +151,7 @@ The following permissions are required specifically for the three migration comm
 
 ## 8. Client Experience During Cutover
 
-When KCP blocks traffic on the gateway route (Step 2 of `kcp migration execute`), clients see:
+When KCP blocks traffic on the gateway route (Step 2 of `kcp cutover execute`), clients see:
 
 - **Error code**: `BROKER_NOT_AVAILABLE` (standard Kafka error code 8)
 - **Error message**: `"Migration to Confluent Cloud in progress. Your client will automatically retry. Expected completion: 60 seconds."`
@@ -170,7 +170,7 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 **IAM clients require advance prep**: IAM clients must migrate to SCRAM or mTLS before gateway onboarding. Build this pre-migration step into the project timeline as it requires client-team coordination and application restarts.
 
-**Consumer group offsets**: Consumer offset sync (`consumer.offset.sync.enable=true`) must be enabled on the cluster link before migration. Without it, consumers reconnecting after cutover may restart from an incorrect position. KCP validates this during `kcp migration init`. Post-cutover, consider stopping consumer offset sync for fully migrated consumer groups, as syncing stale offsets back from the source cluster after promotion serves no purpose.
+**Consumer group offsets**: Consumer offset sync (`consumer.offset.sync.enable=true`) must be enabled on the cluster link before migration. Without it, consumers reconnecting after cutover may restart from an incorrect position. KCP validates this during `kcp cutover init`. Post-cutover, consider stopping consumer offset sync for fully migrated consumer groups, as syncing stale offsets back from the source cluster after promotion serves no purpose.
 
 **Gateway HA**: KCP patches gateway Kubernetes CRDs atomically across all gateway nodes. A gateway pod restart mid-cutover causes a brief client reconnection but does not lose data. A minimum of 2 gateway replicas (3 recommended) is the standard for production migrations.
 
@@ -192,7 +192,7 @@ KCP sits outside the data path. It configures and orchestrates the gateway (patc
 
 ### Prerequisites
 
-Before running any `kcp migration` command, confirm the following are in place:
+Before running any `kcp cutover` command, confirm the following are in place:
 
 - **CC Gateway** deployed in Kubernetes, configured with two streaming domains (source cluster and CC), auth configured per §5, and clients already pointing at the gateway bootstrap URL
 - **Cluster Linking** active: cluster link in CC, mirror topics replicating for all topics in the group, consumer offset sync enabled
@@ -206,23 +206,23 @@ Before running any `kcp migration` command, confirm the following are in place:
 
 Before init, you need three gateway CR files ready on disk. The **initial CR** is your currently deployed gateway config — you reference it by name, KCP reads it from Kubernetes. The **fenced CR** is a modified version that blocks all traffic on the route and returns `BROKER_NOT_AVAILABLE` to clients. The **switchover CR** is another version that points the route at Confluent Cloud instead of the source cluster.
 
-KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running init, and pass their file paths to `kcp migration init`. Working examples for every supported auth combination are in the KCP repo at under [Gateway Switchover](https://confluentinc.github.io/kcp/latest/gateway-switchover/).
+KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running init, and pass their file paths to `kcp cutover init`. Working examples for every supported auth combination are in the KCP repo at under [Gateway Switchover](https://confluentinc.github.io/kcp/latest/gateway-switchover/).
 
 ![Description](images/image-20260112-174757.png)
 
 ---
 
-### Step 2: `kcp migration init`
+### Step 2: `kcp cutover init`
 
 Run once per migration group. Init validates the entire setup before anything is changed: it confirms the cluster link is active, all topics in the group are replicating, the gateway CR exists and matches expectations, the fenced and switchover files parse correctly, and consumer offset sync is enabled. No traffic is affected at this step.
 
-On success, KCP writes a `migration-state.json` file and prints a `migration-id`. That ID ties together all state for this group — you pass it to `lag-check` and `execute`. If KCP is installed as a Confluent CLI plugin, it inherits authentication from `confluent login` and the CC credential flags are not required.
+On success, KCP writes a `cutover-state.json` file and prints a `cutover-id`. That ID ties together all state for this group — you pass it to `lag` and `execute`. If KCP is installed as a Confluent CLI plugin, it inherits authentication from `confluent login` and the CC credential flags are not required.
 
-Full flag reference: [`kcp migration init --help`](https://confluentinc.github.io/kcp/latest/command-reference/migration/init/)
+Full flag reference: [`kcp cutover init --help`](https://confluentinc.github.io/kcp/latest/command-reference/cutover/init/)
 
 ---
 
-### Step 3: `kcp migration lag-check`
+### Step 3: `kcp cutover lag`
 
 A live terminal UI that polls the Cluster Link REST API and shows per-topic replication lag in real time. Use it to judge when the group is ready to cut over. There is no rule for what "ready" means — it depends on your tolerance for the block window. Topics with large lag take longer to promote, so a group with one very high-lag topic extends the downtime window for all clients in that group.
 
@@ -235,11 +235,11 @@ demo-topic3   ACTIVE     9,503     ███████
 
 Run it until lag is consistently near zero across all topics, then Ctrl+C and proceed.
 
-Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.github.io/kcp/latest/command-reference/migration/lag-check/)
+Full flag reference: [`kcp cutover lag --help`](https://confluentinc.github.io/kcp/latest/command-reference/cutover/lag/)
 
 ---
 
-### Step 4: `kcp migration execute`
+### Step 4: `kcp cutover execute`
 
 Performs the cutover in four automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.
 
@@ -260,4 +260,4 @@ Steps:
 ![Description](images/image-20260112-175233.png)
 ![Description](images/image-20260112-175246.png)
 
-Full flag reference: [`kcp migration execute --help`](https://confluentinc.github.io/kcp/latest/command-reference/migration/execute/)
+Full flag reference: [`kcp cutover execute --help`](https://confluentinc.github.io/kcp/latest/command-reference/cutover/execute/)

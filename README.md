@@ -161,7 +161,7 @@ This starts a KRaft Kafka broker and two Schema Registry instances, registers te
 
 #### Migration Tests
 
-Tests the full migration lifecycle (`kcp migration init` → `execute`) against a real CFK (Confluent for Kubernetes) cluster in Minikube.
+Tests the full migration lifecycle (`kcp cutover init` → `execute`) against a real CFK (Confluent for Kubernetes) cluster in Minikube.
 
 **Prerequisites:**
 
