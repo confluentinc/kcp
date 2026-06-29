@@ -28,7 +28,7 @@ insecure_skip_tls_verify: false   # optional; test environments only
 
 This is distinct from the `kcp scan` `apache-kafka-credentials.yaml` (which lists multiple `clusters:`, each with its own `bootstrap_servers`, an `auth_method:` wrapper with `use:` flags, and scan-only metrics blocks). Passing the scan format — an `auth_method:` wrapper, a `clusters:` list, or a stray `bootstrap_servers:` — to a migrate creds file is rejected with a hint.
 
-**REST credentials** (`spec.target.credentials`, `spec.clusterLink.sourceRest.credentials`) authenticate to the Kafka REST / Admin API and use one of a `basic`, `api_key`, `bearer`, or `mtls` block.
+**REST credentials** (`spec.target.credentials`, `spec.clusterLink.sourceRest.credentials`) authenticate to the Kafka REST / Admin API and use one of a `basic`, `api_key`, `bearer`, or `mtls` block. The `basic`, `bearer`, and `mtls` blocks each accept an optional `ca_cert` (PEM path) and `insecure_skip_verify` to validate a TLS-fronted endpoint served by a **private/internal CA** — e.g. a self-managed Confluent Platform / MDS endpoint. Public-CA endpoints (such as Confluent Cloud via `api_key`) validate against the system trust store and need neither.
 
 ## spec.topics
 
