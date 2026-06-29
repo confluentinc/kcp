@@ -32,7 +32,12 @@ func TestParse_Valid(t *testing.T) {
 	require.Equal(t, []string{"*"}, m.Spec.ACLs.Include)
 	require.NotNil(t, m.Spec.Schemas)
 	require.Equal(t, "src.", m.Spec.ClusterLink.Prefix)
-	require.Equal(t, map[string]string{"consumer.offset.sync.enable": "true"}, m.Spec.ClusterLink.Configs)
+	// Offset-sync is expressed via the typed field (not the configs escape-hatch,
+	// which would be rejected by Validate as a managed key).
+	require.Empty(t, m.Spec.ClusterLink.Configs)
+	require.NotNil(t, m.Spec.ClusterLink.ConsumerOffsetSync)
+	require.NotNil(t, m.Spec.ClusterLink.ConsumerOffsetSync.Enable)
+	require.True(t, *m.Spec.ClusterLink.ConsumerOffsetSync.Enable)
 }
 
 func TestParse_Malformed(t *testing.T) {

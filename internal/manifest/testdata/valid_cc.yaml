@@ -20,8 +20,8 @@ spec:
       bootstrapServers: ["broker1:9092"]
       credentials: ./source-creds.yaml
     prefix: "src."
-    configs:
-      consumer.offset.sync.enable: "true"
+    consumerOffsetSync:
+      enable: true
   topics:
     mode: mirror
     include: ["*"]

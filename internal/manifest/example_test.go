@@ -20,3 +20,9 @@ func TestValidCPFixtureIsValid(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, m.Validate())
 }
+
+func TestValidCCFixtureIsValid(t *testing.T) {
+	m, err := Parse(readFixture(t, "valid_cc.yaml"))
+	require.NoError(t, err)
+	require.Empty(t, m.Validate(), "valid_cc.yaml must validate clean (it must not put a managed key in clusterLink.configs)")
+}
