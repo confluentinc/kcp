@@ -18,6 +18,10 @@ func TestLoadFixtures(t *testing.T) {
 		{"era-c-v0.8.0.json", true},
 		{"era-c-v0.8.5.json", true},
 		{"era-b-v0.7.3.json", true},
+		// Array-form schema_registries (v0.4.2–v0.7.1). The loader can't yet read this
+		// shape, so it currently fails to load. This locks that behavior into CI; flip to
+		// `true` when the Plan 2 array→object schema_registries upcaster lands.
+		{"era-b-v0.5.0.json", false},
 	}
 	base := filepath.Join("..", "state", "migrate", "testdata")
 	for _, tc := range cases {
