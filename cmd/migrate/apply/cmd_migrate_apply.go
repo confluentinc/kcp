@@ -74,6 +74,9 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	if err := ensureIAMAllowed(srcCluster, m.Spec.Source.Type, "spec.source.credentials", false); err != nil {
 		return err
 	}
+	if err := ensureMSKScramMechanism(srcCluster, m.Spec.Source.Type, "spec.source.credentials"); err != nil {
+		return err
+	}
 	src := newSourceReader(srcCluster)
 
 	// --- destination target ---
@@ -131,6 +134,9 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 				return err
 			}
 			if err := ensureIAMAllowed(linkCluster, m.Spec.Source.Type, "spec.clusterLink.source.credentials", true); err != nil {
+				return err
+			}
+			if err := ensureMSKScramMechanism(linkCluster, m.Spec.Source.Type, "spec.clusterLink.source.credentials"); err != nil {
 				return err
 			}
 			auth, err := mclusterlink.LinkAuthFromSource(linkCluster)
@@ -237,6 +243,24 @@ func resolveLinkConfigs(cl *manifest.ClusterLink) (map[string]string, error) {
 // authenticate via IAM (isLinkCreds), and IAM as a source-read method requires
 // an MSK source. Non-IAM auth always passes. A selection error is left for the
 // downstream loader/reader to surface.
+// ensureMSKScramMechanism rejects a SCRAM connection to an MSK source that is not
+// SHA-512. MSK's SCRAM is SHA-512-only, so SHA-256 (the read-path default for an
+// unspecified mechanism) fails auth with an opaque "ran out of brokers" error.
+// Only meaningful for an MSK source; other source types keep their own defaults.
+func ensureMSKScramMechanism(conn types.KafkaSourceConn, sourceType, field string) error {
+	if sourceType != manifest.SourceMSK {
+		return nil
+	}
+	at, err := conn.GetSelectedAuthType()
+	if err != nil || at != types.AuthTypeSASLSCRAM {
+		return nil
+	}
+	if types.NormalizeSaslMechanism(conn.AuthMethod.SASLScram.Mechanism) != "SCRAM-SHA-512" {
+		return fmt.Errorf("%s: MSK requires SCRAM-SHA-512 (set mechanism: SHA512), got %q", field, conn.AuthMethod.SASLScram.Mechanism)
+	}
+	return nil
+}
+
 func ensureIAMAllowed(conn types.KafkaSourceConn, sourceType, field string, isLinkCreds bool) error {
 	at, err := conn.GetSelectedAuthType()
 	if err != nil || at != types.AuthTypeIAM {

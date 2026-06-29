@@ -454,3 +454,19 @@ func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
 	require.Equal(t, "p.", got["cluster.link.prefix"])
 	require.Equal(t, "true", got["consumer.offset.sync.enable"])
 }
+
+func TestEnsureMSKScramMechanism(t *testing.T) {
+	scram := func(mech string) types.KafkaSourceConn {
+		return types.KafkaSourceConn{AuthMethod: types.AuthMethodConfig{
+			SASLScram: &types.SASLScramConfig{Use: true, Username: "u", Password: "p", Mechanism: mech}}}
+	}
+	// MSK source + SCRAM must be SHA-512 (MSK is SHA-512-only).
+	require.Error(t, ensureMSKScramMechanism(scram("SHA256"), manifest.SourceMSK, "spec.source.credentials"))
+	require.NoError(t, ensureMSKScramMechanism(scram("SHA512"), manifest.SourceMSK, "f"))
+	require.NoError(t, ensureMSKScramMechanism(scram("SCRAM-SHA-512"), manifest.SourceMSK, "f"))
+	// Non-MSK source: no SHA-512 constraint.
+	require.NoError(t, ensureMSKScramMechanism(scram("SHA256"), manifest.SourceApacheKafka, "f"))
+	// MSK + non-SCRAM (IAM): not subject to the SCRAM mechanism rule.
+	iam := types.KafkaSourceConn{AuthMethod: types.AuthMethodConfig{IAM: &types.IAMConfig{Use: true, Region: "us-east-1"}}}
+	require.NoError(t, ensureMSKScramMechanism(iam, manifest.SourceMSK, "f"))
+}

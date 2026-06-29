@@ -44,6 +44,31 @@ func TestLoadMigrateClusterCredentials_SASLScram(t *testing.T) {
 	require.Equal(t, "SHA256", conn.AuthMethod.SASLScram.Mechanism)
 }
 
+// TestLoadMigrateClusterCredentials_SCRAMMechanismRequired verifies migrate creds
+// require an explicit, valid SCRAM mechanism (no silent SHA256 default — that is
+// wrong for MSK, which is SHA-512-only).
+func TestLoadMigrateClusterCredentials_SCRAMMechanismRequired(t *testing.T) {
+	dir := t.TempDir()
+	load := func(body string) []error {
+		p := filepath.Join(dir, "c.yaml")
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		_, errs := LoadMigrateClusterCredentials(p)
+		return errs
+	}
+	hasMechErr := func(errs []error) bool {
+		for _, e := range errs {
+			if strings.Contains(e.Error(), "mechanism") {
+				return true
+			}
+		}
+		return false
+	}
+	require.True(t, hasMechErr(load("sasl_scram: { username: u, password: p }\n")), "missing mechanism must be rejected")
+	require.True(t, hasMechErr(load("sasl_scram: { username: u, password: p, mechanism: MD5 }\n")), "invalid mechanism must be rejected")
+	require.Empty(t, load("sasl_scram: { username: u, password: p, mechanism: SHA512 }\n"), "SHA512 is valid")
+	require.Empty(t, load("sasl_scram: { username: u, password: p, mechanism: SHA256 }\n"), "SHA256 is valid")
+}
+
 // TestLoadMigrateClusterCredentials_Plaintext verifies that unauthenticated_plaintext: {}
 // (presence selection, empty block) is parsed correctly and the mapped config has Use == true.
 func TestLoadMigrateClusterCredentials_Plaintext(t *testing.T) {

@@ -187,7 +187,26 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 	if mc.IAM != nil && strings.TrimSpace(mc.IAM.Region) == "" {
 		errs = append(errs, fmt.Errorf("iam.region is required (the AWS region for SigV4 token signing)"))
 	}
+	// Migrate creds are hand-written (unlike scan creds, which kcp discover fills
+	// in), so require an explicit SCRAM mechanism rather than silently defaulting
+	// to SHA256 — that default is wrong for MSK (SHA-512-only) and surfaces only as
+	// an opaque auth failure. (The scan format keeps its SHA256 default; this check
+	// is migrate-only, hence here and not in the shared validateAuthMethodConfig.)
+	if mc.SASLScram != nil && !isValidScramMechanism(mc.SASLScram.Mechanism) {
+		errs = append(errs, fmt.Errorf("sasl_scram.mechanism is required and must be SHA256 or SHA512 (MSK requires SHA512)"))
+	}
 	return mc, errs
+}
+
+// isValidScramMechanism reports whether m is an explicitly-specified, supported
+// SCRAM mechanism (empty is NOT valid for migrate creds).
+func isValidScramMechanism(m string) bool {
+	switch m {
+	case "SHA256", "SCRAM-SHA-256", "SHA512", "SCRAM-SHA-512":
+		return true
+	default:
+		return false
+	}
 }
 
 // KafkaSourceConn is the neutral, migrate-facing Kafka connection: a bootstrap
