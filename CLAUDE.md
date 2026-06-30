@@ -14,6 +14,7 @@ Before committing or pushing any changes, always:
 2. **Show generated artifacts** — if code generates state files, Terraform, or other output, show the content.
 3. **Suggest visual verification** — for UI changes, offer to spin up `kcp ui --state-file` with relevant test data so the user can inspect the frontend in a browser.
 4. **Wait for user approval** — never commit or push without explicit confirmation.
+5. **Push with `git push-external`, not `git push`** — this is a public repo behind Confluent's Airlock proprietary-code scan; plain `git push` is rejected by an org ruleset (`~ALL` refs, require-PR). Use the same args you'd give `git push` (e.g. `git push-external -u origin <branch>`, `git push-external --force-with-lease origin <branch>`).
 
 ## Project Overview
 
@@ -36,6 +37,7 @@ make install            # install to system path (sudo)
 make fmt                # format Go + frontend
 make test-go            # all Go unit tests
 make test-playwright    # frontend e2e (builds first)
+make test-state-archive # opt-in: load every real archived kcp-state.json from S3 (local only, needs AWS creds)
 go test ./<pkg> -v      # single-package tests
 make clean              # remove build artifacts
 ```
@@ -71,6 +73,8 @@ The workflow is state-driven. Commands progressively append to these files:
 - `migration-state.json` — created by `kcp migration init`.
 
 For Apache Kafka metrics collection (Jolokia and Prometheus backends), see `docs/assets/apache-kafka-configuration/metrics-collection.md`.
+
+**Backward compatibility:** `kcp-state.json` is versioned (`schema_version`); the loader migrates files from any release back to `v0.4.0` to the current shape on read (`internal/state/migrate`, never mutating the file). Inspect a file's metadata with `kcp state version --in <f>`; migrate it on disk with `kcp state upgrade --in <f>`. **Any change to the `types.State` shape fails `TestStateSchemaSnapshot` by design** — do not just regenerate the golden; bump `migrate.CurrentSchemaVersion`, add an upcaster in `internal/state/migrate/steps.go` + a fixture, then regenerate (see the test's failure message). `make test-state-archive` loads every real v0.4.0–v0.8.5 file as the ground-truth guard (opt-in/local — S3, not CI).
 
 ### Internal services
 

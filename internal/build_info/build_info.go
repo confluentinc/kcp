@@ -30,6 +30,15 @@ func isDev(v string) bool {
 	return v == "" || v == "dev" || strings.HasSuffix(v, "-localdev")
 }
 
+// IsDevVersion reports whether the given version string (e.g. a state file's
+// kcp_build_info.version) is a development sentinel. Unlike IsDev(), it does not
+// read the running binary's build_info.Version — it classifies the supplied
+// value, which is what the state-migration engine needs (file-driven, never
+// reader-driven; see the state backward-compatibility design §6.2/§6.9).
+func IsDevVersion(v string) bool {
+	return isDev(v)
+}
+
 // DocsURL returns the versioned documentation URL matching the running binary.
 // Development builds resolve to the "dev" alias (tip of main); released builds
 // resolve to the matching vX.Y.Z subdirectory.
