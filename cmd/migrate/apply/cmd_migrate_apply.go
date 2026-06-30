@@ -122,7 +122,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 			mode = manifest.ClusterLinkModeDestination
 		}
 
-		linkConfigs, err := resolveLinkConfigs(cl)
+		linkConfigs, err := cl.ResolvedLinkConfigs()
 		if err != nil {
 			return fmt.Errorf("resolving cluster-link configs: %w", err)
 		}
@@ -245,12 +245,6 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	// not consumed yet (a later phase may use it for a machine-readable summary).
 	_, err = eng.Run(cmd.Context(), recs, dryRun)
 	return err
-}
-
-// resolveLinkConfigs builds the link-config map from the manifest's typed
-// clusterLink fields (with migration defaults), used as the reconciler's Configs.
-func resolveLinkConfigs(cl *manifest.ClusterLink) (map[string]string, error) {
-	return cl.ResolvedLinkConfigs()
 }
 
 // ensureIAMAllowed rejects IAM where it cannot work: a cluster link can never

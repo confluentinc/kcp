@@ -449,7 +449,7 @@ func TestApply_ConfluentCloudTarget_CreatesLinkOnLkcPath(t *testing.T) {
 
 func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
 	cl := &manifest.ClusterLink{Name: "l", Prefix: "p."}
-	got, err := resolveLinkConfigs(cl)
+	got, err := cl.ResolvedLinkConfigs()
 	require.NoError(t, err)
 	require.Equal(t, "p.", got["cluster.link.prefix"])
 	require.Equal(t, "true", got["consumer.offset.sync.enable"])
