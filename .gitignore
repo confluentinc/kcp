@@ -4,6 +4,7 @@
 
 # Superpowers brainstorm artifacts
 .superpowers/
+.claude/
 
 # Local .terraform directories
 **/.terraform/*
