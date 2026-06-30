@@ -203,7 +203,7 @@ func TestCloud_MSKtoCC_DestinationLink(t *testing.T) {
 
 	out, err = runKCP(t, mf)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "already present")
+	require.Contains(t, out, "unchanged")
 	rep.addRun("Idempotent re-apply", applyCmd, out)
 
 }

@@ -104,7 +104,7 @@ func TestApply_AlreadyPresent(t *testing.T) {
 	defer srv.Close()
 	out, _, err := run(t, srv.URL, false)
 	require.NoError(t, err)
-	require.Contains(t, out, "1 already present")
+	require.Contains(t, out, "1 unchanged")
 }
 
 // createCapture records the create requests seen by a stub link endpoint.

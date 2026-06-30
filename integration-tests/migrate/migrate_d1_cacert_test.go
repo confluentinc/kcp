@@ -91,7 +91,7 @@ func TestMigrateApply_D1_SASLSSL_CACert(t *testing.T) {
 		// re-apply: idempotent.
 		out, err = runKCP(t, manifestPath)
 		require.NoError(t, err, "re-apply must succeed:\n%s", out)
-		require.Contains(t, out, "1 already present", out)
+		require.Contains(t, out, "1 unchanged", out)
 	})
 
 	t.Run("negative/no_ca_cert_no_skip_verify", func(t *testing.T) {

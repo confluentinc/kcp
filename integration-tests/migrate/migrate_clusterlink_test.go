@@ -20,7 +20,7 @@
 //     connection in SOURCE mode (apache-kafka creds).
 //
 // Each test case: dry-run (asserts "Planned", nothing created) → apply (asserts
-// the created count + link(s) ACTIVE) → re-apply (asserts "already present") →
+// the created count + link(s) ACTIVE) → re-apply (asserts "unchanged") →
 // the link(s) are deleted to keep the concurrent link count low.
 package migrate
 

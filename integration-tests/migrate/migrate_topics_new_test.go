@@ -200,15 +200,15 @@ func TestMigrateApply_TopicsNew_FamilyGlob(t *testing.T) {
 		defer tgtPoller.deleteTopic(t, destClusterID, n)
 	}
 
-	rep := newNewReporter("FamilyGlob", "include:[orders-*] creates the four orders-* source topics as plain topics on the target, each reproducing the source partition count (orders-1=3, orders-2=1, orders-3=2, orders-4=1); re-apply is an idempotent no-op (4 already present).", m, created, created)
-	rep.expected("orders-* → 4 created on target with partitions 3,1,2,1; re-apply: 0 created, 4 already present")
+	rep := newNewReporter("FamilyGlob", "include:[orders-*] creates the four orders-* source topics as plain topics on the target, each reproducing the source partition count (orders-1=3, orders-2=1, orders-3=2, orders-4=1); re-apply is an idempotent no-op (4 unchanged).", m, created, created)
+	rep.expected("orders-* → 4 created on target with partitions 3,1,2,1; re-apply: 0 created, 4 unchanged")
 	defer rep.commit(t, tgtPoller)
 
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.NoError(t, err, out)
 	require.Contains(t, out, "== newTopics", out)
-	require.Contains(t, out, "newTopics: 4 created, 0 already present, 0 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 4 created, 0 unchanged, 0 drift, 0 failed", out)
 
 	// Each target topic reproduces the source partition count.
 	wantPartitions := map[string]int{"orders-1": 3, "orders-2": 1, "orders-3": 2, "orders-4": 1}
@@ -217,11 +217,11 @@ func TestMigrateApply_TopicsNew_FamilyGlob(t *testing.T) {
 		require.Equal(t, want, tgtPoller.topicPartitions(destClusterID, n), "target topic %q partition count reproduced from source", n)
 	}
 
-	// re-apply: all four now already present, none created.
+	// re-apply: all four now unchanged, none created.
 	out, err = runKCP(t, m)
 	rep.reapply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 0 created, 4 already present, 0 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 0 created, 4 unchanged, 0 drift, 0 failed", out)
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +253,7 @@ func TestMigrateApply_TopicsNew_QuestionWildcard(t *testing.T) {
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 4 created, 0 already present, 0 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 4 created, 0 unchanged, 0 drift, 0 failed", out)
 	for _, n := range created {
 		require.True(t, tgtPoller.topicExists(destClusterID, n), "target topic %q must exist", n)
 	}
@@ -291,7 +291,7 @@ func TestMigrateApply_TopicsNew_MultiInclude(t *testing.T) {
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 8 created, 0 already present, 0 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 8 created, 0 unchanged, 0 drift, 0 failed", out)
 	for _, n := range created {
 		require.True(t, tgtPoller.topicExists(destClusterID, n), "target topic %q must exist", n)
 	}
@@ -383,7 +383,7 @@ func TestMigrateApply_TopicsNew_InternalExclusion(t *testing.T) {
 	}
 	// KCP must never select (and so never report creating) a broker-internal,
 	// leading-underscore topic. The apply output enumerates each created topic as
-	// `+ topic "<name>"`; assert no such line names a leading-underscore topic.
+	// `+ created  topic "<name>"`; assert no such line names a leading-underscore topic.
 	for _, line := range strings.Split(out, "\n") {
 		idx := strings.Index(line, `topic "`)
 		if idx < 0 {
@@ -440,7 +440,7 @@ func TestMigrateApply_TopicsNew_InternalOptIn(t *testing.T) {
 
 	// The ONLY leading-underscore topic KCP may select/create is the opted-in
 	// _optin; broker internals (__consumer_offsets, _confluent*) are NOT opted in
-	// by "*". The apply output lists each created topic as `+ topic "<name>"`.
+	// by "*". The apply output lists each created topic as `+ created  topic "<name>"`.
 	for _, line := range strings.Split(out, "\n") {
 		idx := strings.Index(line, `topic "`)
 		if idx < 0 {
@@ -480,7 +480,7 @@ func TestMigrateApply_TopicsNew_EmptyMatch(t *testing.T) {
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 0 created, 0 already present, 0 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 0 created, 0 unchanged, 0 drift, 0 failed", out)
 	require.False(t, tgtPoller.topicExists(destClusterID, "nope-1"), "no target topic created on empty match")
 }
 
@@ -516,7 +516,7 @@ func TestMigrateApply_TopicsNew_SpecialCharNames(t *testing.T) {
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 3 created, 0 already present, 0 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 3 created, 0 unchanged, 0 drift, 0 failed", out)
 	for _, n := range created {
 		require.True(t, tgtPoller.topicExists(destClusterID, n), "special-char target topic %q must exist", n)
 	}
@@ -569,7 +569,7 @@ func TestMigrateApply_TopicsNew_ConfigPassThrough(t *testing.T) {
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 1 created, 0 already present, 0 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 1 created, 0 unchanged, 0 drift, 0 failed", out)
 	require.True(t, tgtPoller.topicExists(destClusterID, srcTopic), "target topic must exist")
 
 	tgtVal, ok := tgtPoller.topicConfig(destClusterID, srcTopic, "retention.ms")
@@ -627,13 +627,13 @@ func TestMigrateApply_TopicsNew_Drift(t *testing.T) {
 	out, err := runKCP(t, m)
 	rep.apply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 0 created, 0 already present, 1 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 0 created, 0 unchanged, 1 drift, 0 failed", out)
 	require.Equal(t, 2, tgtPoller.topicPartitions(destClusterID, "orders-1"), "drift topic must not be altered (still 2 partitions)")
 
 	out, err = runKCP(t, m)
 	rep.reapply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "newTopics: 0 created, 0 already present, 1 drift, 0 failed", out)
+	require.Contains(t, out, "newTopics: 0 created, 0 unchanged, 1 drift, 0 failed", out)
 	require.Equal(t, 2, tgtPoller.topicPartitions(destClusterID, "orders-1"), "drift topic still unaltered after re-apply")
 }
 
@@ -670,7 +670,9 @@ func TestMigrateApply_TopicsNew_DryRun(t *testing.T) {
 	rep.dryRun(out)
 	require.NoError(t, err, out)
 	require.Contains(t, out, "Planned", out)
-	require.Contains(t, out, `+ topic "orders-1"`, out)
+	// dry-run plans the topic (future-tense "create" action line), creates nothing.
+	require.Contains(t, out, "create", out)
+	require.Contains(t, out, `topic "orders-1"`, out)
 
 	// Dry-run created nothing on the target.
 	for _, n := range created {

@@ -147,7 +147,7 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 			out, err = runKCP(t, manifest)
 			rep.reapply(out)
 			require.NoError(t, err, out)
-			require.Contains(t, out, "1 already present", out)
+			require.Contains(t, out, "1 unchanged", out)
 
 			poller.deleteLink(t, destID, linkName)
 		})

@@ -220,8 +220,8 @@ func TestMigrateApply_TopicsMirrorSource_FamilyGlob(t *testing.T) {
 	out, err = runKCP(t, m)
 	rep.reapply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "clusterLink: 0 created, 2 already present", out)
-	require.Contains(t, out, "mirrorTopics: 0 created, 4 already present", out)
+	require.Contains(t, out, "clusterLink: 0 created, 2 unchanged", out)
+	require.Contains(t, out, "mirrorTopics: 0 created, 4 unchanged", out)
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +270,8 @@ func TestMigrateApply_TopicsMirrorSource_DryRun(t *testing.T) {
 	require.Contains(t, out, "Planned", out)
 	// The planned mirror names are PREFIXED — proof the manifest-prefix fallback
 	// drove planning rather than a (non-existent) live OUTBOUND-link read.
-	require.Contains(t, out, `+ mirror topic "`+prefix+`orders-1"`, out)
+	require.Contains(t, out, "create", out)
+	require.Contains(t, out, `mirror topic "`+prefix+`orders-1"`, out)
 
 	// Dry-run created nothing: neither link side exists, and no mirror was created.
 	require.Empty(t, migDestPoller.linkState(sourceClusterID, link), "dry-run must not create the INBOUND link")
@@ -326,7 +327,7 @@ func TestMigrateApply_TopicsMirrorSource_ContinueOnError(t *testing.T) {
 	require.Error(t, err, "kcp must exit non-zero when a source-mode mirror fails:\n%s", out)
 	// Scope to the mirrorTopics outcome line: a bare "1 failed" would also match the
 	// clusterLink line. The full rendered line proves the mirror create failed.
-	require.Contains(t, out, "mirrorTopics: 1 created, 0 already present, 0 drift, 1 failed", out)
+	require.Contains(t, out, "mirrorTopics: 1 created, 0 unchanged, 0 drift, 1 failed", out)
 	require.Contains(t, out, "✖", out)
 
 	// Despite the failure, the good mirror was created on the migration-dest.

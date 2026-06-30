@@ -218,7 +218,7 @@ func TestMigrateApply_TopicsMirror_FamilyGlob(t *testing.T) {
 	out, err = runKCP(t, m)
 	rep.reapply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "mirrorTopics: 0 created, 4 already present", out)
+	require.Contains(t, out, "mirrorTopics: 0 created, 4 unchanged", out)
 }
 
 // ---------------------------------------------------------------------------
@@ -249,7 +249,7 @@ func TestMigrateApply_TopicsMirror_DriftOnInactiveMirror(t *testing.T) {
 
 	mirror := prefix + "orders-1"
 	rep := newMirrorReporter(link, "a mirror is created ACTIVE, then paused out-of-band (operator tamper); re-apply reports it as drift (present but status PAUSED) and never alters or recreates it.", m, link, []string{"orders-1"})
-	rep.expected("after pause, re-apply reports 0 created, 0 already present, 1 drift, 0 failed; the mirror stays PAUSED (drift is report-only)")
+	rep.expected("after pause, re-apply reports 0 created, 0 unchanged, 1 drift, 0 failed; the mirror stays PAUSED (drift is report-only)")
 	defer rep.commit(t, poller)
 
 	// 1. Apply → mirror created and ACTIVE.
@@ -268,7 +268,7 @@ func TestMigrateApply_TopicsMirror_DriftOnInactiveMirror(t *testing.T) {
 	out, err = runKCP(t, m)
 	rep.reapply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "mirrorTopics: 0 created, 0 already present, 1 drift, 0 failed", out)
+	require.Contains(t, out, "mirrorTopics: 0 created, 0 unchanged, 1 drift, 0 failed", out)
 	require.Contains(t, out, `present but mirror status is "PAUSED"`, out)
 	require.Len(t, poller.listMirrorTopics(destClusterID, link), 1, "drift must not create or remove the mirror")
 	require.Equal(t, "PAUSED", poller.mirrorStatuses(destClusterID, link)[mirror], "drift is report-only; the mirror stays paused")
@@ -545,7 +545,7 @@ func TestMigrateApply_TopicsMirror_NoPrefix(t *testing.T) {
 	// shared dest broker — the same fixed catalog names the mode:new matrix
 	// reproduces as plain topics. Deleting the link alone leaves those mirror
 	// topics behind (a link with live mirrors cannot be deleted — 403), which would
-	// make a later new-mode "4 created" assertion see them as already present.
+	// make a later new-mode "4 created" assertion see them as unchanged.
 	// Delete the mirror topics first (defers run LIFO, so these run BEFORE the link
 	// delete) so the dest is clean for subsequent cases.
 	defer poller.deleteLink(t, destClusterID, link)
@@ -568,7 +568,7 @@ func TestMigrateApply_TopicsMirror_NoPrefix(t *testing.T) {
 	out, err = runKCP(t, m)
 	rep.reapply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "mirrorTopics: 0 created, 4 already present", out)
+	require.Contains(t, out, "mirrorTopics: 0 created, 4 unchanged", out)
 }
 
 // ---------------------------------------------------------------------------
@@ -627,8 +627,8 @@ func TestMigrateApply_TopicsMirror_Incremental(t *testing.T) {
 	defer poller.deleteLink(t, destClusterID, link)
 
 	srcTopics := []string{"orders-1", "orders-2", "orders-3", "orders-4"}
-	rep := newMirrorReporter(link, "apply include:[orders-1] (1 created), then widen to include:[orders-*]: the three new orders topics are created and orders-1 is reported already present.", m1, link, srcTopics)
-	rep.expected("first apply: orders-1 (1 created); second apply orders-*: 3 created, 1 already present")
+	rep := newMirrorReporter(link, "apply include:[orders-1] (1 created), then widen to include:[orders-*]: the three new orders topics are created and orders-1 is reported unchanged.", m1, link, srcTopics)
+	rep.expected("first apply: orders-1 (1 created); second apply orders-*: 3 created, 1 unchanged")
 	defer rep.commit(t, poller)
 
 	out, err := runKCP(t, m1)
@@ -646,7 +646,7 @@ func TestMigrateApply_TopicsMirror_Incremental(t *testing.T) {
 	out, err = runKCP(t, m2)
 	rep.reapply(out)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "mirrorTopics: 3 created, 1 already present", out)
+	require.Contains(t, out, "mirrorTopics: 3 created, 1 unchanged", out)
 	poller.requireMirrorsPresent(t, destClusterID, link, prefixAll(prefix, srcTopics))
 }
 
@@ -692,7 +692,7 @@ func TestMigrateApply_TopicsMirror_ContinueOnError(t *testing.T) {
 	// Scope to the mirrorTopics outcome line. A bare "1 created"/"1 failed" would
 	// also match the engine's `clusterLink: 1 created, …` line, so the test could
 	// pass even if mirrorTopics created nothing — assert the full rendered line.
-	require.Contains(t, out, "mirrorTopics: 1 created, 0 already present, 0 drift, 1 failed", out)
+	require.Contains(t, out, "mirrorTopics: 1 created, 0 unchanged, 0 drift, 1 failed", out)
 	require.Contains(t, out, "✖", out)
 
 	// Despite the failure, the good mirror was created.
