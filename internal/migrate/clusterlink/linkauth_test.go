@@ -63,14 +63,17 @@ func TestLinkAuthFromSource(t *testing.T) {
 			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
 		},
 		{
-			// sasl_plain_with_ca: even when the creds carry a ca_cert, SASL/PLAIN uses
-			// SASL_PLAINTEXT (no TLS), so no truststore is wired. CACertPath must be empty.
+			// sasl_plain_with_ca (R2-H1): a ca_cert on a SASL/PLAIN source selects
+			// SASL_SSL and wires the CA into the link truststore, matching the
+			// source-read path (AdminOptionForAuth). Without it, the link would
+			// attempt SASL_PLAINTEXT against a TLS listener (or send the password
+			// in cleartext) and disagree with how KCP scanned the source.
 			name:      "sasl_plain_with_ca",
 			auth:      types.AuthMethodConfig{SASLPlain: &types.SASLPlainConfig{Use: true, Username: "admin", Password: "admin-secret", CACert: "/certs/ca.pem"}},
-			wantProto: "SASL_PLAINTEXT",
+			wantProto: "SASL_SSL",
 			wantMech:  "PLAIN",
 			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
-			wantCA:    "", // PLAIN has no TLS; truststore ignored even if ca_cert is set
+			wantCA:    "/certs/ca.pem",
 		},
 	}
 	for _, tc := range tests {

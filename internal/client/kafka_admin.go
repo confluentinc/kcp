@@ -86,7 +86,8 @@ func WithSASLPlainAuth(username, password, caCertFile string) AdminOption {
 }
 
 // WithSASLPlainAuthNoTLS configures SASL/PLAIN authentication without TLS encryption.
-// Used for source clusters using SASL_PLAINTEXT listeners.
+// Used for source clusters on SASL_PLAINTEXT listeners (no ca_cert supplied).
+// For TLS-wrapped SASL/PLAIN (SASL_SSL) use WithSASLPlainAuth.
 func WithSASLPlainAuthNoTLS(username, password, caCertFile string) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeSASLPlain
@@ -121,7 +122,14 @@ func AdminOptionForAuth(authType types.AuthType, amc types.AuthMethodConfig) Adm
 	case types.AuthTypeTLS:
 		return WithTLSAuth(amc.TLS.CACert, amc.TLS.ClientCert, amc.TLS.ClientKey)
 	case types.AuthTypeSASLPlain:
-		return WithSASLPlainAuthNoTLS(amc.SASLPlain.Username, amc.SASLPlain.Password, amc.SASLPlain.CACert)
+		// SASL/PLAIN over TLS (SASL_SSL) when the credential supplies a ca_cert;
+		// otherwise SASL_PLAINTEXT. The presence of ca_cert is the model's signal
+		// that the listener is TLS-wrapped — without it we'd silently transmit the
+		// password in cleartext and ignore the CA the user provided.
+		if amc.SASLPlain.CACert != "" {
+			return WithSASLPlainAuth(amc.SASLPlain.Username, amc.SASLPlain.Password, amc.SASLPlain.CACert)
+		}
+		return WithSASLPlainAuthNoTLS(amc.SASLPlain.Username, amc.SASLPlain.Password, "")
 	default:
 		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
 		return WithIAMAuth()

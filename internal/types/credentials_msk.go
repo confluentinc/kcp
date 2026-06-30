@@ -300,5 +300,5 @@ type SASLPlainConfig struct {
 	Use      bool   `yaml:"use"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
-	CACert   string `yaml:"ca_cert,omitempty"` // optional CA cert path for SASL_SSL link truststore
+	CACert   string `yaml:"ca_cert,omitempty"` // optional CA cert path; its presence selects SASL_SSL (TLS) for both the source connection and the link truststore
 }

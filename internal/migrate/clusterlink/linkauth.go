@@ -17,8 +17,9 @@ type LinkAuth struct {
 	SaslJaasConfig   string // "" unless SASL
 	// TLS material (paths to PEM files) for SSL/SASL_SSL truststore and mTLS keystore.
 	// CACertPath is populated from the source's ca_cert for the mTLS (tls),
-	// sasl_scram, and unauthenticated_tls credential methods.
-	// sasl_plain does NOT carry a truststore — it uses SASL_PLAINTEXT (no TLS).
+	// sasl_scram, unauthenticated_tls, and sasl_plain (when a ca_cert is set →
+	// SASL_SSL) credential methods. A sasl_plain source without a ca_cert uses
+	// SASL_PLAINTEXT and carries no truststore.
 	CACertPath     string // truststore CA path
 	ClientCertPath string // mTLS keystore cert chain ("" unless mTLS)
 	ClientKeyPath  string // mTLS keystore key ("" unless mTLS)
@@ -78,13 +79,19 @@ func LinkAuthFromSource(c types.KafkaSourceConn) (LinkAuth, error) {
 			CACertPath:       c.AuthMethod.SASLScram.CACert,
 		}, nil
 	case types.AuthTypeSASLPlain:
-		// SASL/PLAIN uses SASL_PLAINTEXT to match KCP's source read path
-		// (WithSASLPlainAuthNoTLS): no TLS, so no truststore/CA.
-		return LinkAuth{
+		// SASL/PLAIN over SASL_SSL when the source supplies a ca_cert (truststore),
+		// otherwise SASL_PLAINTEXT. Mirrors KCP's source read path
+		// (AdminOptionForAuth) so the link and the scan agree on transport.
+		la := LinkAuth{
 			SecurityProtocol: "SASL_PLAINTEXT",
 			SaslMechanism:    "PLAIN",
 			SaslJaasConfig:   plainJaas(c.AuthMethod.SASLPlain.Username, c.AuthMethod.SASLPlain.Password),
-		}, nil
+		}
+		if c.AuthMethod.SASLPlain.CACert != "" {
+			la.SecurityProtocol = "SASL_SSL"
+			la.CACertPath = c.AuthMethod.SASLPlain.CACert
+		}
+		return la, nil
 	case types.AuthTypeTLS: // mTLS
 		return LinkAuth{
 			SecurityProtocol: "SSL",

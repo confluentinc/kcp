@@ -445,7 +445,53 @@ func TestAdminOptionForAuth_SASLPlain(t *testing.T) {
 	require.Equal(t, types.AuthTypeSASLPlain, cfg.authType)
 	require.Equal(t, "u", cfg.username)
 	require.Equal(t, "p", cfg.password)
+	// No ca_cert → SASL_PLAINTEXT (TLS disabled). Preserves the SASL_PLAINTEXT
+	// listener path (e.g. the osk-scan kafka-sasl-plain test on port 9098).
 	require.True(t, cfg.disableTLS)
+}
+
+// Regression for R2-H1: a sasl_plain credential carrying a ca_cert must connect
+// over SASL_SSL (TLS), trusting the supplied CA — not silently fall back to
+// cleartext SASL_PLAINTEXT and discard the CA.
+func TestAdminOptionForAuth_SASLPlainWithCACertEnablesTLS(t *testing.T) {
+	caCertFile, _, _ := createTestCertificates(t)
+
+	amc := types.AuthMethodConfig{
+		SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p", CACert: caCertFile},
+	}
+
+	cfg := &AdminConfig{}
+	AdminOptionForAuth(types.AuthTypeSASLPlain, amc)(cfg)
+
+	// Routing: ca_cert present → TLS variant (disableTLS stays false), CA captured.
+	require.Equal(t, types.AuthTypeSASLPlain, cfg.authType)
+	require.False(t, cfg.disableTLS, "ca_cert present must select the TLS (SASL_SSL) variant")
+	require.Equal(t, caCertFile, cfg.caCertFile)
+
+	// End-to-end: the build path enables TLS and trusts the supplied CA.
+	sc := sarama.NewConfig()
+	err := configureSASLTypePlainAuthentication(sc, cfg.username, cfg.password, !cfg.disableTLS, cfg.caCertFile, cfg.insecureSkipTLSVerify)
+	require.NoError(t, err)
+	require.True(t, sc.Net.TLS.Enable, "SASL/PLAIN + ca_cert must enable TLS")
+	require.NotNil(t, sc.Net.TLS.Config)
+	require.NotNil(t, sc.Net.TLS.Config.RootCAs, "the supplied CA must be trusted, not discarded")
+	require.True(t, sc.Net.SASL.Enable)
+	require.Equal(t, string(sarama.SASLTypePlaintext), string(sc.Net.SASL.Mechanism))
+}
+
+// A bad ca_cert path must surface an error rather than silently connecting in
+// cleartext — proving the CA is actually read on the SASL/PLAIN + ca_cert path.
+func TestAdminOptionForAuth_SASLPlainBadCACertErrors(t *testing.T) {
+	amc := types.AuthMethodConfig{
+		SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p", CACert: "/no/such/ca.pem"},
+	}
+	cfg := &AdminConfig{}
+	AdminOptionForAuth(types.AuthTypeSASLPlain, amc)(cfg)
+	require.False(t, cfg.disableTLS)
+
+	sc := sarama.NewConfig()
+	err := configureSASLTypePlainAuthentication(sc, cfg.username, cfg.password, !cfg.disableTLS, cfg.caCertFile, cfg.insecureSkipTLSVerify)
+	require.Error(t, err, "an unreadable ca_cert must error, not be silently ignored")
 }
 
 func TestAdminOptionForAuth_IAM(t *testing.T) {
