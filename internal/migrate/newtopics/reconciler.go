@@ -112,7 +112,16 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 
 	steps := make([]topicStep, 0, len(desired))
 	for _, name := range desired {
-		spec := specByName[name]
+		// A selected topic absent from the describe result vanished from the source
+		// between ListTopics and DescribeTopics (separate connections). Skip it with
+		// a warning rather than reading the zero-value spec (which would emit a
+		// 0-partition create, or fabricate partition drift against an existing target
+		// topic). Keys off the map miss — not spec.Partitions == 0.
+		spec, ok := specByName[name]
+		if !ok {
+			slog.Warn("source topic vanished between list and describe; skipping", "topic", name)
+			continue
+		}
 		summary := fmt.Sprintf("topic %q", name)
 		if _, ok := existing[name]; ok {
 			if hasPC {

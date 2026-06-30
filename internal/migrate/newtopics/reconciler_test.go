@@ -124,6 +124,76 @@ func TestPlan_CreatePresentDrift(t *testing.T) {
 	}
 }
 
+// TestPlan_TopicVanishedBetweenListAndDescribe: a topic returned by ListTopics
+// but absent from DescribeTopics (it was deleted on the source between the two
+// reads) must be skipped, NOT emitted as a 0-partition create. Regression for
+// the spec := specByName[name] map-miss returning a zero-value TopicSpec.
+func TestPlan_TopicVanishedBetweenListAndDescribe(t *testing.T) {
+	src := &fakeSource{
+		// "vanished" is selected (in ListTopics) but missing from DescribeTopics.
+		topics: []string{"orders", "vanished"},
+		specs: []migrate.TopicSpec{
+			{Name: "orders", Partitions: 6, ReplicationFactor: 3},
+		},
+	}
+	tgt := &fakeTarget{clusterID: "cc-1"} // empty target → "orders" is a Create
+	r := New(Config{Include: []string{"*"}}, src, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	got := summaryActions(p.Changes())
+	if _, present := got[`topic "vanished"`]; present {
+		t.Errorf("vanished topic must produce no plan step, got action %v", got[`topic "vanished"`])
+	}
+	if act, ok := got[`topic "orders"`]; !ok || act != reconcile.ActionCreate {
+		t.Errorf("orders: want Create, got %v (present=%v)", act, ok)
+	}
+	if len(p.Changes()) != 1 {
+		t.Errorf("want 1 change (orders only), got %d", len(p.Changes()))
+	}
+
+	// Apply must not send a 0-partition create for the vanished topic.
+	if _, err := r.Apply(context.Background(), p); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(tgt.created) != 1 || tgt.created[0].Name != "orders" {
+		t.Fatalf("want only 'orders' created, got %+v", tgt.created)
+	}
+	for _, req := range tgt.created {
+		if req.Partitions == 0 {
+			t.Errorf("no create request may have 0 partitions, got %+v", req)
+		}
+	}
+}
+
+// TestPlan_VanishedTopicOnTarget_NoFalseDrift: a topic that vanished from the
+// source (absent from DescribeTopics) but still EXISTS on the target must be
+// skipped, not reported as partition drift against the zero-value spec.
+func TestPlan_VanishedTopicOnTarget_NoFalseDrift(t *testing.T) {
+	src := &fakeSource{
+		topics: []string{"vanished"},
+		specs:  []migrate.TopicSpec{}, // DescribeTopics returns nothing
+	}
+	tgt := &fakePCTarget{
+		fakeTarget: fakeTarget{clusterID: "cc-1", topics: []string{"vanished"}},
+		partitions: map[string]int{"vanished": 6},
+	}
+	r := New(Config{Include: []string{"*"}}, src, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if len(p.Changes()) != 0 {
+		t.Errorf("vanished source topic on target must produce no step (no false drift), got %+v", p.Changes())
+	}
+	if !p.Empty() {
+		t.Errorf("plan should be Empty")
+	}
+}
+
 // TestPlanApply_ForwardsAllExplicitConfigs asserts the Create req for orders
 // carries ALL explicitly-set source configs with no filtering: there is no
 // skip-list, so both retention.ms and confluent.tier.enable are forwarded. If
