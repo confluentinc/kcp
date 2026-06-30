@@ -118,36 +118,21 @@ func (r *Reconciler) CheckPreconditions(ctx context.Context) error {
 	return nil
 }
 
-// step is one ordered create-or-noop in a plan, bound to the client that owns it.
-type step struct {
-	change   reconcile.Change
-	req      *svclink.CreateClusterLinkRequest // non-nil only when change.Action==Create
+// linkPayload is the create-time data for one link step: the request plus which
+// side owns it (source REST vs destination). Meaningful only for ActionCreate.
+type linkPayload struct {
+	req      *svclink.CreateClusterLinkRequest // non-nil only when Action==Create
 	onSource bool                              // true → apply via srcLinkTgt; false → via tgt
 }
 
-// plan is the concrete reconcile.Plan carrying an ordered list of steps
-// (1 for destination mode, up to 2 for source-initiated mode).
-type plan struct {
-	steps []step
-}
-
-func (p plan) Changes() []reconcile.Change {
-	out := make([]reconcile.Change, len(p.steps))
-	for i, s := range p.steps {
-		out[i] = s.change
-	}
-	return out
-}
-
-// Empty reports true when no step is a create (Present and Drift are no-ops for Apply).
-func (p plan) Empty() bool {
-	for _, s := range p.steps {
-		if s.change.Action == reconcile.ActionCreate {
-			return false
-		}
-	}
-	return true
-}
+// step / plan reuse the generic reconcile types so Changes()/Empty() are shared,
+// not re-implemented here. A plan carries 1 step (destination mode) or up to 2
+// (source-initiated). Apply is bespoke (fail-fast + per-side routing), so it is
+// implemented on the Reconciler rather than via reconcile.ApplyContinueOnError.
+type (
+	step = reconcile.Step[linkPayload]
+	plan = reconcile.StepPlan[linkPayload]
+)
 
 func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	sourceID, err := r.src.ClusterID(ctx)
@@ -176,10 +161,10 @@ func (r *Reconciler) planDestination(ctx context.Context, sourceID string) (reco
 		if err != nil {
 			return nil, err
 		}
-		return plan{steps: []step{{
-			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
+		return plan{Steps: []step{{
+			Change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
 				Detail: fmt.Sprintf("source %s", sourceID)},
-			req: req,
+			Payload: linkPayload{req: req},
 		}}}, nil
 	}
 
@@ -189,7 +174,7 @@ func (r *Reconciler) planDestination(ctx context.Context, sourceID string) (reco
 	// green link while no data replicates. Checked before source-id/config so a
 	// dead link surfaces regardless.
 	if !linkHealthy(actual) {
-		return plan{steps: []step{{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
+		return plan{Steps: []step{{Change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
 			Detail: unhealthyLinkDetail(actual)}}}}, nil
 	}
 
@@ -198,12 +183,12 @@ func (r *Reconciler) planDestination(ctx context.Context, sourceID string) (reco
 		// report a source id (older CP) so we cannot prove drift — treat as
 		// present rather than fabricate drift (both are non-mutating anyway).
 		if detail := r.configDrift(ctx, r.tgt, r.cfg.LinkName); detail != "" {
-			return plan{steps: []step{{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary, Detail: detail}}}}, nil
+			return plan{Steps: []step{{Change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary, Detail: detail}}}}, nil
 		}
-		return plan{steps: []step{{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}}}}, nil
+		return plan{Steps: []step{{Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}}}}, nil
 	}
 
-	return plan{steps: []step{{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
+	return plan{Steps: []step{{Change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
 		Detail: fmt.Sprintf("exists but points at source %s, manifest expects %s", actual.SourceClusterID, sourceID)}}}}, nil
 }
 
@@ -235,20 +220,22 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 	switch {
 	case destActual == nil:
 		steps = append(steps, step{
-			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: destSummary,
+			Change: reconcile.Change{Action: reconcile.ActionCreate, Summary: destSummary,
 				Detail: fmt.Sprintf("INBOUND, source %s", sourceID)},
-			req: &svclink.CreateClusterLinkRequest{
-				LinkMode:        "DESTINATION",
-				ConnectionMode:  "INBOUND",
-				SourceClusterID: sourceID,
-				Configs:         r.cfg.Configs,
+			Payload: linkPayload{
+				req: &svclink.CreateClusterLinkRequest{
+					LinkMode:        "DESTINATION",
+					ConnectionMode:  "INBOUND",
+					SourceClusterID: sourceID,
+					Configs:         r.cfg.Configs,
+				},
+				onSource: false,
 			},
-			onSource: false,
 		})
 	case !linkHealthy(destActual):
-		steps = append(steps, step{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: destSummary, Detail: unhealthyLinkDetail(destActual)}})
+		steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionDrift, Summary: destSummary, Detail: unhealthyLinkDetail(destActual)}})
 	default:
-		steps = append(steps, step{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: destSummary}})
+		steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: destSummary}})
 	}
 
 	// Source side second.
@@ -258,19 +245,21 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 			return nil, fmt.Errorf("loading source→destination TLS material: %w", err)
 		}
 		steps = append(steps, step{
-			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: srcSummary,
+			Change: reconcile.Change{Action: reconcile.ActionCreate, Summary: srcSummary,
 				Detail: "OUTBOUND to destination"},
-			req: &svclink.CreateClusterLinkRequest{
-				LinkMode:               "SOURCE",
-				ConnectionMode:         "OUTBOUND",
-				SourceBootstrapServers: r.cfg.DestBootstrapServers,
-				SecurityProtocol:       r.cfg.DestAuth.SecurityProtocol,
-				SaslMechanism:          r.cfg.DestAuth.SaslMechanism,
-				SaslJaasConfig:         r.cfg.DestAuth.SaslJaasConfig,
-				SourceTLS:              tls,
-				Configs:                r.cfg.Configs,
+			Payload: linkPayload{
+				req: &svclink.CreateClusterLinkRequest{
+					LinkMode:               "SOURCE",
+					ConnectionMode:         "OUTBOUND",
+					SourceBootstrapServers: r.cfg.DestBootstrapServers,
+					SecurityProtocol:       r.cfg.DestAuth.SecurityProtocol,
+					SaslMechanism:          r.cfg.DestAuth.SaslMechanism,
+					SaslJaasConfig:         r.cfg.DestAuth.SaslJaasConfig,
+					SourceTLS:              tls,
+					Configs:                r.cfg.Configs,
+				},
+				onSource: true,
 			},
-			onSource: true,
 		})
 	} else {
 		change := reconcile.Change{Action: reconcile.ActionPresent, Summary: srcSummary}
@@ -279,10 +268,10 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 		} else if detail := r.configDrift(ctx, r.srcLinkTgt, r.cfg.LinkName); detail != "" {
 			change = reconcile.Change{Action: reconcile.ActionDrift, Summary: srcSummary, Detail: detail}
 		}
-		steps = append(steps, step{change: change})
+		steps = append(steps, step{Change: change})
 	}
 
-	return plan{steps: steps}, nil
+	return plan{Steps: steps}, nil
 }
 
 // destinationLinkRequest builds the create request for a destination-initiated
@@ -362,23 +351,23 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 	}
 
 	var out reconcile.Outcome
-	for _, s := range cp.steps {
-		switch s.change.Action {
+	for _, s := range cp.Steps {
+		switch s.Change.Action {
 		case reconcile.ActionCreate:
 			tgt := r.tgt
-			if s.onSource {
+			if s.Payload.onSource {
 				tgt = r.srcLinkTgt
 			}
-			if err := r.createClusterLink(ctx, tgt, *s.req, s.onSource); err != nil {
+			if err := r.createClusterLink(ctx, tgt, *s.Payload.req, s.Payload.onSource); err != nil {
 				// Return what we created before the failure so the caller can see
 				// partial progress; the engine surfaces the error.
 				return out, fmt.Errorf("creating cluster link: %w", err)
 			}
-			out.Created = append(out.Created, s.change)
+			out.Created = append(out.Created, s.Change)
 		case reconcile.ActionPresent:
-			out.Present = append(out.Present, s.change)
+			out.Present = append(out.Present, s.Change)
 		default: // ActionDrift — report only, never override (§8.6)
-			out.Drift = append(out.Drift, s.change)
+			out.Drift = append(out.Drift, s.Change)
 		}
 	}
 	return out, nil

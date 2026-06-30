@@ -82,29 +82,14 @@ func (r *Reconciler) CheckPreconditions(ctx context.Context) error {
 	return nil
 }
 
-type mirrorStep struct {
-	change      reconcile.Change
+// mirrorPayload is the create-time data for one mirror (source + mirror name),
+// used only for ActionCreate steps. Changes()/Empty() come from reconcile.StepPlan.
+type mirrorPayload struct {
 	sourceTopic string
 	mirrorTopic string
 }
 
-type plan struct{ steps []mirrorStep }
-
-func (p plan) Changes() []reconcile.Change {
-	out := make([]reconcile.Change, len(p.steps))
-	for i, s := range p.steps {
-		out[i] = s.change
-	}
-	return out
-}
-func (p plan) Empty() bool {
-	for _, s := range p.steps {
-		if s.change.Action == reconcile.ActionCreate {
-			return false
-		}
-	}
-	return true
-}
+type step = reconcile.Step[mirrorPayload]
 
 func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	all, err := r.src.ListTopics(ctx)
@@ -138,32 +123,32 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		existingStatus[m.MirrorTopicName] = m.MirrorStatus
 	}
 
-	steps := make([]mirrorStep, 0, len(desired))
+	steps := make([]step, 0, len(desired))
 	for _, srcTopic := range desired {
 		mirrorName := prefix + srcTopic
 		summary := fmt.Sprintf("mirror topic %q", mirrorName)
 		status, ok := existingStatus[mirrorName]
 		switch {
 		case !ok:
-			steps = append(steps, mirrorStep{
-				change:      reconcile.Change{Action: reconcile.ActionCreate, Summary: summary, Detail: fmt.Sprintf("source %s", srcTopic)},
-				sourceTopic: srcTopic, mirrorTopic: mirrorName,
+			steps = append(steps, step{
+				Change:  reconcile.Change{Action: reconcile.ActionCreate, Summary: summary, Detail: fmt.Sprintf("source %s", srcTopic)},
+				Payload: mirrorPayload{sourceTopic: srcTopic, mirrorTopic: mirrorName},
 			})
 		case mirrorHealthy(status):
-			steps = append(steps, mirrorStep{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}})
+			steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}})
 		default:
 			// Mirror exists but is not actively mirroring (paused/stopped/failed,
 			// e.g. tampered with out-of-band). Report-only — never altered or
 			// recreated (§8.6); remediation is a deliberate operator action.
-			steps = append(steps, mirrorStep{change: reconcile.Change{
+			steps = append(steps, step{Change: reconcile.Change{
 				Action:  reconcile.ActionDrift,
 				Summary: summary,
 				Detail:  fmt.Sprintf("present but mirror status is %q (expected %s)", status, svclink.MirrorStatusActive),
 			}})
 		}
 	}
-	sort.Slice(steps, func(i, j int) bool { return steps[i].change.Summary < steps[j].change.Summary })
-	return plan{steps: steps}, nil
+	sort.Slice(steps, func(i, j int) bool { return steps[i].Change.Summary < steps[j].Change.Summary })
+	return reconcile.StepPlan[mirrorPayload]{Steps: steps}, nil
 }
 
 // mirrorHealthy reports whether a present mirror's status counts as healthy
@@ -192,32 +177,12 @@ func (r *Reconciler) readLinkPrefix(ctx context.Context) (string, error) {
 	return "", err
 }
 
+// Apply creates each missing mirror topic, continuing past per-mirror failures
+// (collected in Outcome.Failed). Drift is reported only, never recreated (§8.6).
 func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Outcome, error) {
-	cp, ok := p.(plan)
-	if !ok {
-		return reconcile.Outcome{}, fmt.Errorf("mirrortopics: unexpected plan type %T", p)
-	}
-	var out reconcile.Outcome
-	var failed int
-	for _, s := range cp.steps {
-		switch s.change.Action {
-		case reconcile.ActionCreate:
-			if err := r.createMirror(ctx, s.sourceTopic, s.mirrorTopic); err != nil {
-				failed++
-				out.Failed = append(out.Failed, reconcile.Change{Action: reconcile.ActionCreate, Summary: s.change.Summary, Detail: err.Error()})
-				continue
-			}
-			out.Created = append(out.Created, s.change)
-		case reconcile.ActionPresent:
-			out.Present = append(out.Present, s.change)
-		default: // ActionDrift — report only, never alter or recreate (§8.6).
-			out.Drift = append(out.Drift, s.change)
-		}
-	}
-	if failed > 0 {
-		return out, fmt.Errorf("%d of %d mirror topic(s) failed to create", failed, failed+len(out.Created))
-	}
-	return out, nil
+	return reconcile.ApplyContinueOnError(ctx, p, "mirror topic(s)", func(ctx context.Context, m mirrorPayload) error {
+		return r.createMirror(ctx, m.sourceTopic, m.mirrorTopic)
+	})
 }
 
 // createMirror creates one mirror topic, retrying ONLY the link-not-readable

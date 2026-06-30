@@ -59,28 +59,9 @@ func (r *Reconciler) CheckPreconditions(ctx context.Context) error {
 	return nil
 }
 
-type topicStep struct {
-	change reconcile.Change
-	req    svclink.CreateTopicRequest // valid only for ActionCreate
-}
-
-type plan struct{ steps []topicStep }
-
-func (p plan) Changes() []reconcile.Change {
-	out := make([]reconcile.Change, len(p.steps))
-	for i, s := range p.steps {
-		out[i] = s.change
-	}
-	return out
-}
-func (p plan) Empty() bool {
-	for _, s := range p.steps {
-		if s.change.Action == reconcile.ActionCreate {
-			return false
-		}
-	}
-	return true
-}
+// step is a planned topic action; the payload is the create request, used only
+// for ActionCreate. Changes()/Empty() come from reconcile.StepPlan.
+type step = reconcile.Step[svclink.CreateTopicRequest]
 
 func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	all, err := r.src.ListTopics(ctx)
@@ -110,7 +91,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	}
 	pc, hasPC := r.tgt.(partitionCounter)
 
-	steps := make([]topicStep, 0, len(desired))
+	steps := make([]step, 0, len(desired))
 	for _, name := range desired {
 		// A selected topic absent from the describe result vanished from the source
 		// between ListTopics and DescribeTopics (separate connections). Skip it with
@@ -134,12 +115,12 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 					slog.Warn("could not read target partition count; treating topic as present without drift check",
 						"topic", name, "error", err)
 				case actual != spec.Partitions:
-					steps = append(steps, topicStep{change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
+					steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionDrift, Summary: summary,
 						Detail: fmt.Sprintf("target has %d partitions, manifest expects %d", actual, spec.Partitions)}})
 					continue
 				}
 			}
-			steps = append(steps, topicStep{change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}})
+			steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}})
 			continue
 		}
 		// Forward all explicitly-set source configs (DescribeTopics already returns
@@ -149,42 +130,20 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		for k, v := range spec.Configs {
 			configs[k] = v
 		}
-		steps = append(steps, topicStep{
-			change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
+		steps = append(steps, step{
+			Change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
 				Detail: fmt.Sprintf("%d partitions", spec.Partitions)},
 			// Replication factor is intentionally not forwarded — the target cluster
 			// applies its default (CC requires RF=3 and rejects other values).
-			req: svclink.CreateTopicRequest{Name: name, Partitions: spec.Partitions, Configs: configs},
+			Payload: svclink.CreateTopicRequest{Name: name, Partitions: spec.Partitions, Configs: configs},
 		})
 	}
-	sort.Slice(steps, func(i, j int) bool { return steps[i].change.Summary < steps[j].change.Summary })
-	return plan{steps: steps}, nil
+	sort.Slice(steps, func(i, j int) bool { return steps[i].Change.Summary < steps[j].Change.Summary })
+	return reconcile.StepPlan[svclink.CreateTopicRequest]{Steps: steps}, nil
 }
 
+// Apply creates each selected topic on the target, continuing past per-topic
+// failures (collected in Outcome.Failed). Drift is reported only, never altered.
 func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Outcome, error) {
-	cp, ok := p.(plan)
-	if !ok {
-		return reconcile.Outcome{}, fmt.Errorf("newtopics: unexpected plan type %T", p)
-	}
-	var out reconcile.Outcome
-	var failed int
-	for _, s := range cp.steps {
-		switch s.change.Action {
-		case reconcile.ActionCreate:
-			if err := r.tgt.CreateTopic(ctx, s.req); err != nil {
-				failed++
-				out.Failed = append(out.Failed, reconcile.Change{Action: reconcile.ActionCreate, Summary: s.change.Summary, Detail: err.Error()})
-				continue
-			}
-			out.Created = append(out.Created, s.change)
-		case reconcile.ActionPresent:
-			out.Present = append(out.Present, s.change)
-		default: // ActionDrift — report only, never alter (partitions can't be safely changed)
-			out.Drift = append(out.Drift, s.change)
-		}
-	}
-	if failed > 0 {
-		return out, fmt.Errorf("%d of %d topic(s) failed to create", failed, failed+len(out.Created))
-	}
-	return out, nil
+	return reconcile.ApplyContinueOnError(ctx, p, "topic(s)", r.tgt.CreateTopic)
 }
