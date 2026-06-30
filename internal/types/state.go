@@ -24,7 +24,7 @@ type State struct {
 	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
 	Timestamp        time.Time              `json:"timestamp"`
 	UpdatedAt        time.Time              `json:"updated_at,omitempty"`
-	MigratedFrom     string                 `json:"migrated_from,omitempty"`
+	MigratedFrom     string                 `json:"migration_source,omitempty"`
 }
 
 func NewStateFrom(fromState *State) *State {
