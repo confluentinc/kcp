@@ -253,6 +253,10 @@ func startStubTopicTarget(t *testing.T) *httptest.Server {
 		}
 		_, _ = w.Write([]byte(`{"data":[]}`))
 	})
+	// List cluster links (mirror-collision detection) — none, so no collision.
+	mux.HandleFunc("/kafka/v3/clusters/dest-1/links", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	})
 	// Link configs (carries cluster.link.prefix) — empty prefix here.
 	mux.HandleFunc("/kafka/v3/clusters/dest-1/links/src-to-dest/configs", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":[]}`))

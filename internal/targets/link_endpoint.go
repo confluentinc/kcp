@@ -95,6 +95,15 @@ func (e *LinkEndpoint) ListTopics(ctx context.Context) ([]string, error) {
 	return e.svc.ListTopics(ctx, e.config(""))
 }
 
+// ListClusterLinks returns the names of all cluster links on the endpoint's
+// cluster. It discovers (and caches) the cluster id first.
+func (e *LinkEndpoint) ListClusterLinks(ctx context.Context) ([]string, error) {
+	if _, err := e.ClusterID(ctx); err != nil {
+		return nil, err
+	}
+	return e.svc.ListClusterLinks(ctx, e.config(""))
+}
+
 // CreateTopic creates a plain (non-mirror) topic on the endpoint's cluster. It
 // discovers (and caches) the cluster id first.
 func (e *LinkEndpoint) CreateTopic(ctx context.Context, req clusterlink.CreateTopicRequest) error {

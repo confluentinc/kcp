@@ -50,6 +50,12 @@ type linkTarget interface {
 	GetClusterLinkConfigs(ctx context.Context, name string) (map[string]string, error)
 	ListMirrorTopics(ctx context.Context, name string) ([]svclink.MirrorTopic, error)
 	CreateMirrorTopic(ctx context.Context, name, sourceTopic, mirrorTopic string) error
+	// ListTopics returns every topic on the cluster (incl. mirror topics) — used
+	// to detect a mirror-name collision with an existing topic.
+	ListTopics(ctx context.Context) ([]string, error)
+	// ListClusterLinks returns every cluster link on the cluster — used to
+	// classify a colliding name as another link's mirror vs a plain topic.
+	ListClusterLinks(ctx context.Context) ([]string, error)
 }
 
 type Config struct {
@@ -123,21 +129,35 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		existingStatus[m.MirrorTopicName] = m.MirrorStatus
 	}
 
+	// A desired mirror name may already be taken on the destination — by a plain
+	// topic, or by a mirror on a DIFFERENT cluster link. Either way the create
+	// would fail (40002 "already exists"), so detect it and report drift with the
+	// cause instead of planning a doomed create.
+	destTopics, err := r.tgt.ListTopics(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing destination topics: %w", err)
+	}
+	destTopicSet := make(map[string]struct{}, len(destTopics))
+	for _, t := range destTopics {
+		destTopicSet[t] = struct{}{}
+	}
+	foreignMirror, err := r.foreignMirrors(ctx)
+	if err != nil {
+		return nil, err
+	}
+
 	steps := make([]step, 0, len(desired))
 	for _, srcTopic := range desired {
 		mirrorName := prefix + srcTopic
 		summary := fmt.Sprintf("mirror topic %q", mirrorName)
-		status, ok := existingStatus[mirrorName]
+		status, isOurs := existingStatus[mirrorName]
+		owner := foreignMirror[mirrorName]
+		_, plainTopic := destTopicSet[mirrorName]
 		switch {
-		case !ok:
-			steps = append(steps, step{
-				Change:  reconcile.Change{Action: reconcile.ActionCreate, Summary: summary, Detail: fmt.Sprintf("source %s", srcTopic)},
-				Payload: mirrorPayload{sourceTopic: srcTopic, mirrorTopic: mirrorName},
-			})
-		case mirrorHealthy(status):
+		case isOurs && mirrorHealthy(status):
 			steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary}})
-		default:
-			// Mirror exists but is not actively mirroring (paused/stopped/failed,
+		case isOurs:
+			// Our mirror exists but is not actively mirroring (paused/stopped/failed,
 			// e.g. tampered with out-of-band). Report-only — never altered or
 			// recreated (§8.6); remediation is a deliberate operator action.
 			steps = append(steps, step{Change: reconcile.Change{
@@ -145,10 +165,63 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 				Summary: summary,
 				Detail:  fmt.Sprintf("present but mirror status is %q (expected %s)", status, svclink.MirrorStatusActive),
 			}})
+		case owner != "":
+			// The name is already a mirror on ANOTHER link — the create would
+			// collide (40002). Report-only drift naming the owning link.
+			steps = append(steps, step{Change: reconcile.Change{
+				Action:  reconcile.ActionDrift,
+				Summary: summary,
+				Detail:  fmt.Sprintf("a topic named %q is already a mirror on cluster link %q — cannot create it here; use a clusterLink.prefix or remove that link", mirrorName, owner),
+			}})
+		case plainTopic:
+			// The name is taken by a plain (non-mirror) topic — the create would
+			// collide (40002). Report-only drift.
+			steps = append(steps, step{Change: reconcile.Change{
+				Action:  reconcile.ActionDrift,
+				Summary: summary,
+				Detail:  fmt.Sprintf("a plain (non-mirror) topic named %q already exists on the destination — remove it or use a clusterLink.prefix", mirrorName),
+			}})
+		default:
+			steps = append(steps, step{
+				Change:  reconcile.Change{Action: reconcile.ActionCreate, Summary: summary, Detail: fmt.Sprintf("source %s", srcTopic)},
+				Payload: mirrorPayload{sourceTopic: srcTopic, mirrorTopic: mirrorName},
+			})
 		}
 	}
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Change.Summary < steps[j].Change.Summary })
 	return reconcile.StepPlan[mirrorPayload]{Steps: steps}, nil
+}
+
+// foreignMirrors maps every mirror-topic name on the destination to the cluster
+// link that owns it, EXCLUDING this reconciler's own link (whose mirrors are
+// handled via the per-link status read above). Used to tell "name taken by
+// another link's mirror" from "name taken by a plain topic".
+func (r *Reconciler) foreignMirrors(ctx context.Context) (map[string]string, error) {
+	links, err := r.tgt.ListClusterLinks(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("listing destination cluster links: %w", err)
+	}
+	owner := map[string]string{}
+	for _, link := range links {
+		// Skip our own link (its mirrors are classified via existingStatus above)
+		// and any empty-named link. cp-server transiently lists empty-named link
+		// entries while a source-initiated link is being established — exactly the
+		// window mirrorTopics runs in — and "/links//mirrors" is a malformed path
+		// (400). Skipping is safe: a real mirror-name collision is still caught by
+		// destTopicSet below (mirror topics appear in ListTopics), just reported as
+		// a plain-topic collision rather than naming the owning link.
+		if link == "" || link == r.cfg.LinkName {
+			continue
+		}
+		mirrors, err := r.tgt.ListMirrorTopics(ctx, link)
+		if err != nil {
+			return nil, fmt.Errorf("listing mirror topics on link %q: %w", link, err)
+		}
+		for _, m := range mirrors {
+			owner[m.MirrorTopicName] = link
+		}
+	}
+	return owner, nil
 }
 
 // mirrorHealthy reports whether a present mirror's status counts as healthy

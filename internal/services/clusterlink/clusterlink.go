@@ -213,6 +213,27 @@ func (s *ConfluentCloudService) ListMirrorTopics(ctx context.Context, config Con
 	return migrationTopics, nil
 }
 
+// ListClusterLinks returns the names of every cluster link on the cluster
+// (GET /kafka/v3/clusters/{cluster_id}/links). config.LinkName is ignored.
+func (s *ConfluentCloudService) ListClusterLinks(ctx context.Context, config Config) ([]string, error) {
+	path := fmt.Sprintf("/kafka/v3/clusters/%s/links", url.PathEscape(config.ClusterID))
+
+	var response struct {
+		Data []struct {
+			LinkName string `json:"link_name"`
+		} `json:"data"`
+	}
+	if err := s.doRequest(ctx, config, path, &response); err != nil {
+		return nil, fmt.Errorf("failed to list cluster links: %w", err)
+	}
+
+	names := make([]string, 0, len(response.Data))
+	for _, l := range response.Data {
+		names = append(names, l.LinkName)
+	}
+	return names, nil
+}
+
 // ListConfigs retrieves cluster link configurations
 func (s *ConfluentCloudService) ListConfigs(ctx context.Context, config Config) (map[string]string, error) {
 	path := linkPath(config) + "/configs"

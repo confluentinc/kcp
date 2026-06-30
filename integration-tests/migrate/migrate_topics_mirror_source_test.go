@@ -304,22 +304,26 @@ func TestMigrateApply_TopicsMirrorSource_ContinueOnError(t *testing.T) {
 	migDestPoller := newRestClient(t, restSource)
 	migDestPoller.waitForClusterID(t)
 
-	m := writeSourceMirrorManifest(t, dir, link, prefix, []string{"orders-1", "orders-2"})
+	// Force ONE mirror to fail at apply while the other succeeds, via a failure that
+	// survives planning. A 245-char source topic makes its mirror name (prefix +
+	// name) exceed Kafka's 249-char topic-name limit, so the broker rejects the
+	// mirror create at apply (40002 "longer than the max allowed length 249") while
+	// orders-1 mirrors cleanly. Deliberately NOT a name collision (now caught at plan
+	// time as drift) nor a non-existent source topic (silently dropped by selection).
+	tooLong := strings.Repeat("x", 245)
+	migSrcPoller.createTopic(t, destBasicClusterID, tooLong, 1)
+	defer migSrcPoller.deleteTopic(t, destBasicClusterID, tooLong)
+
+	m := writeSourceMirrorManifest(t, dir, link, prefix, []string{"orders-1", tooLong})
 
 	defer migDestPoller.deleteLink(t, sourceClusterID, link)   // INBOUND on migration-dest
 	defer migSrcPoller.deleteLink(t, destBasicClusterID, link) // OUTBOUND on migration-source
 
-	// Pre-create a PLAIN topic on the migration-dest occupying the orders-2 mirror's
-	// target name so that mirror create fails while orders-1 mirrors cleanly.
-	blocker := prefix + "orders-2"
-	migDestPoller.createTopic(t, sourceClusterID, blocker, 1)
-	defer migDestPoller.deleteTopic(t, sourceClusterID, blocker)
-
-	srcTopics := []string{"orders-1", "orders-2"}
+	srcTopics := []string{"orders-1", tooLong}
 	rep := newSourceMirrorReporter(link,
-		"source-initiated include:[orders-1, orders-2] where the migration-dest target name for orders-2 is pre-occupied by a plain topic: orders-1 mirrors successfully while the orders-2 mirror fails — apply reports 1 created + 1 failed, prints a ✖ line, and kcp exits non-zero; the good mirror survives.",
+		"source-initiated include:[orders-1, <245-char topic>] where the 245-char topic's mirror name (prefix + name) exceeds Kafka's 249-char limit: orders-1 mirrors successfully while the oversized mirror fails at apply — apply reports 1 created + 1 failed, prints a ✖ line, and kcp exits non-zero; the good mirror survives.",
 		m, link, srcTopics)
-	rep.expected("orders-1 mirror created on migration-dest; orders-2 mirror fails (name pre-occupied); output shows 'mirrorTopics: 1 created, …, 1 failed' and '✖'; exit non-zero")
+	rep.expected("orders-1 mirror created on migration-dest; oversized mirror fails (name > 249 chars); output shows 'mirrorTopics: 1 created, …, 1 failed' and '✖'; exit non-zero")
 	defer rep.commit(t, migDestPoller)
 
 	out, err := runKCP(t, m)

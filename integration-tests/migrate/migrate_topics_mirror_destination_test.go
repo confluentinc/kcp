@@ -493,6 +493,68 @@ func TestMigrateApply_TopicsMirror_InternalOptIn(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Case 5c — mirror-name collisions (no prefix): the intended mirror name is
+// already taken on the destination, by another link's mirror or by a plain
+// topic. Plan must report drift (with the cause) in BOTH dry-run and apply —
+// never a blind create that 400s — and apply must exit 0 (drift, not failure).
+// ---------------------------------------------------------------------------
+
+func TestMigrateApply_TopicsMirror_NameCollision(t *testing.T) {
+	dir := t.TempDir()
+	linkA := uniqueLinkName("mt-collide-a")
+	linkB := uniqueLinkName("mt-collide-b")
+	// Unique source topics (no prefix → raw mirror names) so this case can't
+	// collide with the shared catalog or other serial cases.
+	topicM := "collide-mirror-" + runID // link A mirrors it → a foreign mirror on the dest
+	topicP := "collide-plain-" + runID  // pre-created as a PLAIN topic on the dest
+
+	srcPoller := newRestClient(t, restSource)
+	srcPoller.waitForClusterID(t)
+	srcPoller.createTopic(t, sourceClusterID, topicM, 1)
+	srcPoller.createTopic(t, sourceClusterID, topicP, 1)
+	defer srcPoller.deleteTopic(t, sourceClusterID, topicM)
+	defer srcPoller.deleteTopic(t, sourceClusterID, topicP)
+
+	poller := newRestClient(t, restDest)
+	poller.waitForClusterID(t)
+	// LIFO: links deleted before their topics.
+	defer poller.deleteTopic(t, destClusterID, topicM)
+	defer poller.deleteTopic(t, destClusterID, topicP)
+	defer poller.deleteLink(t, destClusterID, linkB)
+	defer poller.deleteLink(t, destClusterID, linkA)
+
+	// A plain (non-mirror) topic on the dest, occupying topicP's name.
+	poller.createTopic(t, destClusterID, topicP, 1)
+
+	// Link A (no prefix) creates mirror topicM on the dest.
+	mA := writeMirrorManifest(t, dir, mirrorManifestOpts{link: linkA, prefix: "", include: []string{topicM}})
+	outA, err := runKCP(t, mA)
+	require.NoError(t, err, outA)
+	poller.requireLinkActive(t, destClusterID, linkA)
+	poller.requireMirrorsPresent(t, destClusterID, linkA, []string{topicM})
+
+	// Link B (no prefix) wants to mirror BOTH names — topicM collides with link A's
+	// mirror, topicP collides with the plain topic.
+	mB := writeMirrorManifest(t, dir, mirrorManifestOpts{link: linkB, prefix: "", include: []string{topicM, topicP}})
+
+	// Dry-run surfaces both collisions as drift, with distinct causes — and plans
+	// no create.
+	outDry, err := runKCP(t, mB, "--dry-run")
+	require.NoError(t, err, outDry)
+	// These detail strings appear only on drift lines, so their presence proves
+	// both mirrors are planned as drift, not creates.
+	require.Contains(t, outDry, `already a mirror on cluster link "`+linkA+`"`, outDry)
+	require.Contains(t, outDry, "plain (non-mirror) topic", outDry)
+
+	// Apply: link B is created; both mirrors report drift (not created, not failed)
+	// and apply exits 0 — no blind create, no 400.
+	outB, err := runKCP(t, mB)
+	require.NoError(t, err, outB)
+	poller.requireLinkActive(t, destClusterID, linkB)
+	require.Contains(t, outB, "mirrorTopics: 0 created, 0 unchanged, 2 drift, 0 failed", outB)
+}
+
+// ---------------------------------------------------------------------------
 // Case 6 — empty match
 // ---------------------------------------------------------------------------
 
@@ -663,27 +725,31 @@ func TestMigrateApply_TopicsMirror_ContinueOnError(t *testing.T) {
 	srcPoller.waitForClusterID(t)
 	seedTopicCatalog(t, srcPoller, sourceClusterID)
 
+	// Force ONE mirror to fail at the broker while the other succeeds, via an
+	// apply-time failure that survives planning. A 245-char source topic makes its
+	// mirror name (prefix + name) exceed Kafka's 249-char topic-name limit, so
+	// cp-server rejects the mirror create at apply (40002 "longer than the max
+	// allowed length 249") while orders-1 mirrors cleanly. This deliberately is NOT
+	// a name collision: a collision is now caught at plan time as drift (see
+	// TestMigrateApply_TopicsMirror_NameCollision), so it cannot exercise the
+	// apply-time continue-on-error path. A non-existent source topic is instead
+	// silently dropped by topic selection (never planned), so it cannot either.
+	tooLong := strings.Repeat("x", 245)
+	srcPoller.createTopic(t, sourceClusterID, tooLong, 1)
+	defer srcPoller.deleteTopic(t, sourceClusterID, tooLong)
+
 	m := writeMirrorManifest(t, dir, mirrorManifestOpts{
 		link: link, prefix: prefix,
-		include: []string{"orders-1", "orders-2"},
+		include: []string{"orders-1", tooLong},
 	})
 
 	poller := newRestClient(t, restDest)
 	poller.waitForClusterID(t)
 	defer poller.deleteLink(t, destClusterID, link)
 
-	// Force ONE mirror to fail at the broker while the other succeeds: pre-create
-	// a PLAIN topic on the dest occupying the second mirror's target name. cp-server
-	// then rejects that mirror create (the topic already exists) while orders-1
-	// mirrors cleanly. A non-existent source topic would instead be silently
-	// dropped by topic selection (never planned), so it cannot exercise a failure.
-	blocker := prefix + "orders-2"
-	poller.createTopic(t, destClusterID, blocker, 1)
-	defer poller.deleteTopic(t, destClusterID, blocker)
-
-	srcTopics := []string{"orders-1", "orders-2"}
-	rep := newMirrorReporter(link, "include:[orders-1, orders-2] where the target name for orders-2 is pre-occupied by a plain dest topic: orders-1 mirrors successfully while the orders-2 mirror fails — apply reports 1 created + 1 failed, prints a ✖ line, and kcp exits non-zero; the good mirror survives the failure.", m, link, srcTopics)
-	rep.expected("orders-1 mirror created; orders-2 mirror fails (name pre-occupied); output shows '1 created' and '1 failed' and '✖'; exit non-zero")
+	srcTopics := []string{"orders-1", tooLong}
+	rep := newMirrorReporter(link, "include:[orders-1, <245-char topic>] where the 245-char topic's mirror name (prefix + name) exceeds Kafka's 249-char limit: orders-1 mirrors successfully while the oversized mirror fails at apply — apply reports 1 created + 1 failed, prints a ✖ line, and kcp exits non-zero; the good mirror survives the failure.", m, link, srcTopics)
+	rep.expected("orders-1 mirror created; oversized mirror fails (name > 249 chars); output shows '1 created' and '1 failed' and '✖'; exit non-zero")
 	defer rep.commit(t, poller)
 
 	out, err := runKCP(t, m)

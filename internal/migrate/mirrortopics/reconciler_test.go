@@ -111,6 +111,13 @@ type fakeLinkTarget struct {
 	mirrorsErr   error
 	createErr    map[string]error // keyed by source topic
 	created      []struct{ src, mirror string }
+
+	// Collision-detection scripting (all optional; nil → no collisions):
+	topics        []string                         // ListTopics: every dest topic
+	topicsErr     error                            //
+	links         []string                         // ListClusterLinks: all links
+	linksErr      error                            //
+	mirrorsByLink map[string][]svclink.MirrorTopic // per-link mirrors; falls back to .mirrors when nil
 }
 
 func (f *fakeLinkTarget) ClusterID(ctx context.Context) (string, error) {
@@ -122,7 +129,21 @@ func (f *fakeLinkTarget) GetClusterLinkConfigs(ctx context.Context, name string)
 }
 
 func (f *fakeLinkTarget) ListMirrorTopics(ctx context.Context, name string) ([]svclink.MirrorTopic, error) {
-	return f.mirrors, f.mirrorsErr
+	if f.mirrorsErr != nil {
+		return nil, f.mirrorsErr
+	}
+	if f.mirrorsByLink != nil {
+		return f.mirrorsByLink[name], nil
+	}
+	return f.mirrors, nil
+}
+
+func (f *fakeLinkTarget) ListTopics(ctx context.Context) ([]string, error) {
+	return f.topics, f.topicsErr
+}
+
+func (f *fakeLinkTarget) ListClusterLinks(ctx context.Context) ([]string, error) {
+	return f.links, f.linksErr
 }
 
 func (f *fakeLinkTarget) CreateMirrorTopic(ctx context.Context, name, sourceTopic, mirrorTopic string) error {
@@ -170,6 +191,89 @@ func TestPlan_CreatePresentInternalFilter(t *testing.T) {
 	}
 	if p.Empty() {
 		t.Errorf("plan with a Create should not be Empty")
+	}
+}
+
+func TestPlan_CollidesWithForeignMirror(t *testing.T) {
+	// No prefix → mirror name == source "orders-1", already a mirror on a DIFFERENT
+	// link ("other-link"). Plan must report drift naming that link, not a create.
+	src := &fakeSource{topics: []string{"orders-1"}}
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		links:     []string{"link-a", "other-link"},
+		mirrorsByLink: map[string][]svclink.MirrorTopic{
+			"other-link": {{MirrorTopicName: "orders-1", MirrorStatus: "ACTIVE"}},
+		},
+		topics: []string{"orders-1"}, // a mirror is also a topic on the dest
+	}
+	r := New(Config{LinkName: "link-a", Include: []string{"*"}}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	changes := p.Changes()
+	if len(changes) != 1 {
+		t.Fatalf("want 1 change, got %d: %+v", len(changes), changes)
+	}
+	if changes[0].Action != reconcile.ActionDrift {
+		t.Errorf("want Drift, got %v", changes[0].Action)
+	}
+	if !strings.Contains(changes[0].Detail, `already a mirror on cluster link "other-link"`) {
+		t.Errorf("detail should name the owning link, got %q", changes[0].Detail)
+	}
+	if !p.Empty() {
+		t.Errorf("a drift-only plan must be Empty (creates nothing)")
+	}
+}
+
+func TestPlan_CollidesWithPlainTopic(t *testing.T) {
+	// No prefix → mirror name "orders-1" is already a PLAIN topic on the dest (not
+	// a mirror on any link). Plan must report drift, not a create.
+	src := &fakeSource{topics: []string{"orders-1"}}
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		links:     []string{"link-a"}, // only our link, with no mirrors
+		topics:    []string{"orders-1", "unrelated"},
+	}
+	r := New(Config{LinkName: "link-a", Include: []string{"*"}}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	changes := p.Changes()
+	if len(changes) != 1 {
+		t.Fatalf("want 1 change, got %d", len(changes))
+	}
+	if changes[0].Action != reconcile.ActionDrift {
+		t.Errorf("want Drift, got %v", changes[0].Action)
+	}
+	if !strings.Contains(changes[0].Detail, "plain (non-mirror) topic") {
+		t.Errorf("detail should identify a plain topic, got %q", changes[0].Detail)
+	}
+}
+
+func TestPlan_OwnMirrorNotFlaggedAsCollision(t *testing.T) {
+	// Our own mirror is also a topic in ListTopics; the per-link status check must
+	// win → Present, never a plain/foreign collision.
+	src := &fakeSource{topics: []string{"orders-1"}}
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		links:     []string{"link-a"},
+		mirrorsByLink: map[string][]svclink.MirrorTopic{
+			"link-a": {{MirrorTopicName: "orders-1", MirrorStatus: "ACTIVE"}},
+		},
+		topics: []string{"orders-1"},
+	}
+	r := New(Config{LinkName: "link-a", Include: []string{"*"}}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+	if got := summaryActions(p.Changes())[`mirror topic "orders-1"`]; got != reconcile.ActionPresent {
+		t.Errorf("own active mirror must be Present, got %v", got)
 	}
 }
 
