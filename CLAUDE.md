@@ -14,6 +14,7 @@ Before committing or pushing any changes, always:
 2. **Show generated artifacts** — if code generates state files, Terraform, or other output, show the content.
 3. **Suggest visual verification** — for UI changes, offer to spin up `kcp ui --state-file` with relevant test data so the user can inspect the frontend in a browser.
 4. **Wait for user approval** — never commit or push without explicit confirmation.
+5. **Push with `git push-external`, not `git push`** — this is a public repo behind Confluent's Airlock proprietary-code scan; plain `git push` is rejected by an org ruleset (`~ALL` refs, require-PR). Use the same args you'd give `git push` (e.g. `git push-external -u origin <branch>`, `git push-external --force-with-lease origin <branch>`).
 
 ## Project Overview
 
