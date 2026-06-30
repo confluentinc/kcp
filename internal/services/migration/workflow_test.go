@@ -826,13 +826,12 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_StableOffsets(t *testing
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	wf.promotePollInterval = time.Millisecond
-	wf.quiescenceInterval = time.Millisecond
 	config := &MigrationConfig{
-		Topics:                  []string{"topic-1", "topic-2"},
-		ClusterRestEndpoint:     "https://cluster",
-		ClusterId:               "lkc-123",
-		ClusterLinkName:         "link-1",
-		DetectUnroutedProducers: true,
+		Topics:                          []string{"topic-1", "topic-2"},
+		ClusterRestEndpoint:             "https://cluster",
+		ClusterId:                       "lkc-123",
+		ClusterLinkName:                 "link-1",
+		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
@@ -871,16 +870,15 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_Unfenc
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
 	wf.promotePollInterval = time.Millisecond
-	wf.quiescenceInterval = time.Millisecond
 	config := &MigrationConfig{
-		Topics:                  []string{"topic-1"},
-		ClusterRestEndpoint:     "https://cluster",
-		ClusterId:               "lkc-123",
-		ClusterLinkName:         "link-1",
-		DetectUnroutedProducers: true,
-		InitialCrYAML:           []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n"),
-		InitialCrName:           "my-gw",
-		K8sNamespace:            "ns",
+		Topics:                          []string{"topic-1"},
+		ClusterRestEndpoint:             "https://cluster",
+		ClusterId:                       "lkc-123",
+		ClusterLinkName:                 "link-1",
+		DetectUnroutedProducersDuration: time.Millisecond,
+		InitialCrYAML:                   []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n"),
+		InitialCrName:                   "my-gw",
+		K8sNamespace:                    "ns",
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
@@ -924,11 +922,11 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, sourceOffset)
 	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{
-		Topics:                  []string{"topic-1"},
-		ClusterRestEndpoint:     "https://cluster",
-		ClusterId:               "lkc-123",
-		ClusterLinkName:         "link-1",
-		DetectUnroutedProducers: false, // flag disabled
+		Topics:                          []string{"topic-1"},
+		ClusterRestEndpoint:             "https://cluster",
+		ClusterId:                       "lkc-123",
+		ClusterLinkName:                 "link-1",
+		DetectUnroutedProducersDuration: 0, // check disabled
 	}
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
@@ -952,12 +950,11 @@ func TestWorkflow_DetectUnroutedProducers_ContextCancelled(t *testing.T) {
 	}
 
 	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
-	wf.quiescenceInterval = 5 * time.Second // long interval to ensure context cancels first
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel
 
-	err := wf.detectUnroutedProducers(ctx, []string{"topic-1"})
+	err := wf.detectUnroutedProducers(ctx, []string{"topic-1"}, 5*time.Second)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }

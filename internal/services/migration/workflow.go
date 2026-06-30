@@ -26,9 +26,6 @@ type MigrationWorkflow struct {
 	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
 	// wait runs until the operator reports ready or the user cancels.
 	rolloutTimeout time.Duration
-	// quiescenceInterval is the wait between two source offset snapshots when
-	// detecting unrouted producers. Defaults to 10 seconds.
-	quiescenceInterval time.Duration
 }
 
 func NewMigrationWorkflow(
@@ -40,7 +37,6 @@ func NewMigrationWorkflow(
 		clusterLinkService:  clusterLinkService,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
-		quiescenceInterval:  10 * time.Second,
 	}
 }
 
@@ -57,7 +53,6 @@ func NewMigrationWorkflowWithOffsets(
 		destinationOffset:   destinationOffset,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
-		quiescenceInterval:  10 * time.Second,
 	}
 }
 
@@ -330,10 +325,10 @@ func (s *MigrationWorkflow) unfenceGateway(ctx context.Context, config *Migratio
 }
 
 // detectUnroutedProducers takes two source offset snapshots separated by the
-// quiescence interval. If any partition's offset increases between snapshots,
-// it means a producer is writing directly to the source cluster (bypassing the
+// given duration. If any partition's offset increases between snapshots, it
+// means a producer is writing directly to the source cluster (bypassing the
 // fenced gateway) and the migration should not proceed.
-func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics []string) error {
+func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
 	// Snapshot 1
 	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
 	snapshot1 := make(map[string]map[int32]int64, len(topics))
@@ -346,11 +341,11 @@ func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics 
 	}
 
 	// Wait, then snapshot 2
-	fmt.Printf("   ↳ Monitoring source offsets for %s...\n", s.quiescenceInterval)
+	fmt.Printf("   ↳ Monitoring source offsets for %s...\n", duration)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
-	case <-time.After(s.quiescenceInterval):
+	case <-time.After(duration):
 	}
 
 	slog.Debug("taking second source offset snapshot")
@@ -363,7 +358,7 @@ func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics 
 		for p, o2 := range offsets {
 			if o1, ok := snapshot1[topic][p]; ok && o2 > o1 {
 				delta := o2 - o1
-				rate := float64(delta) / s.quiescenceInterval.Seconds()
+				rate := float64(delta) / duration.Seconds()
 				violations = append(violations, fmt.Sprintf(
 					"topic %s partition %d: offset %d → %d (+%d, ~%.0f msg/s)",
 					topic, p, o1, o2, delta, rate))
@@ -388,9 +383,9 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 
 	// If enabled, verify source offsets are stable before promoting.
 	// An increasing offset after fencing indicates a producer bypassing the gateway.
-	if config.DetectUnroutedProducers {
+	if config.DetectUnroutedProducersDuration > 0 {
 		fmt.Printf("\n%s\n", color.CyanString("🔍 Checking for unrouted producers..."))
-		if err := s.detectUnroutedProducers(ctx, config.Topics); err != nil {
+		if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
 			fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
 				color.YellowString("⚠️"))
 			if unfenceErr := s.unfenceGateway(ctx, config); unfenceErr != nil {
