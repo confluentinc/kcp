@@ -7,11 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"time"
 )
@@ -35,27 +33,17 @@ func WithPrometheusBasicAuth(username, password string) PrometheusOption {
 	}
 }
 
-// WithPrometheusTLS configures the client to use TLS with an optional custom CA certificate
-func WithPrometheusTLS(caCertFile string, insecureSkipVerify bool) PrometheusOption {
+// WithPrometheusTLS configures TLS, trusting caPool (nil → system roots) and
+// honoring insecureSkipVerify. The caller builds caPool via utils.CACertPool so
+// a bad/unreadable CA fails closed at construction rather than being silently
+// ignored here.
+func WithPrometheusTLS(caPool *x509.CertPool, insecureSkipVerify bool) PrometheusOption {
 	return func(c *PrometheusClient) {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // Only true when explicitly set for test environments
-		}
-
-		if caCertFile != "" {
-			caCert, err := os.ReadFile(caCertFile)
-			if err != nil {
-				slog.Warn("failed to read Prometheus CA certificate file, proceeding without custom CA", "path", caCertFile, "error", err)
-			} else {
-				caCertPool := x509.NewCertPool()
-				if caCertPool.AppendCertsFromPEM(caCert) {
-					tlsConfig.RootCAs = caCertPool
-				}
-			}
-		}
-
 		c.httpClient.Transport = &http.Transport{
-			TLSClientConfig: tlsConfig,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // user-controlled flag
+				RootCAs:            caPool,
+			},
 		}
 	}
 }

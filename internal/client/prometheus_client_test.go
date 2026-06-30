@@ -109,7 +109,7 @@ func TestPrometheusClient_QueryRange_WithTLS(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := NewPrometheusClient(server.URL, WithPrometheusTLS("", true))
+	client := NewPrometheusClient(server.URL, WithPrometheusTLS(nil, true))
 	results, err := client.QueryRange(context.Background(), "test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
 	require.NoError(t, err)
 	assert.Empty(t, results)

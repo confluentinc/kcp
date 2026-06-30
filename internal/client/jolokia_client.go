@@ -7,9 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"net/http"
-	"os"
 	"time"
 )
 
@@ -32,29 +30,17 @@ func WithJolokiaBasicAuth(username, password string) JolokiaOption {
 	}
 }
 
-// WithJolokiaTLS configures the client to use TLS with an optional custom CA certificate
-// and optional insecure skip verify for self-signed certificates
-func WithJolokiaTLS(caCertFile string, insecureSkipVerify bool) JolokiaOption {
+// WithJolokiaTLS configures TLS, trusting caPool (nil → system roots) and
+// honoring insecureSkipVerify. The caller builds caPool via utils.CACertPool so
+// a bad/unreadable CA fails closed at construction rather than being silently
+// ignored here.
+func WithJolokiaTLS(caPool *x509.CertPool, insecureSkipVerify bool) JolokiaOption {
 	return func(c *JolokiaClient) {
-		tlsConfig := &tls.Config{
-			InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // Only true when explicitly set for test environments
-		}
-
-		// Load custom CA certificate if provided
-		if caCertFile != "" {
-			caCert, err := os.ReadFile(caCertFile)
-			if err != nil {
-				slog.Warn("failed to read Jolokia CA certificate file, proceeding without custom CA", "path", caCertFile, "error", err)
-			} else {
-				caCertPool := x509.NewCertPool()
-				if caCertPool.AppendCertsFromPEM(caCert) {
-					tlsConfig.RootCAs = caCertPool
-				}
-			}
-		}
-
 		c.httpClient.Transport = &http.Transport{
-			TLSClientConfig: tlsConfig,
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // user-controlled flag
+				RootCAs:            caPool,
+			},
 		}
 	}
 }

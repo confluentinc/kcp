@@ -2,6 +2,7 @@ package clusters
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"os"
@@ -443,7 +444,15 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.Jolokia.Auth.Username, clusterCreds.Jolokia.Auth.Password))
 	}
 	if clusterCreds.Jolokia.TLS != nil {
-		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.Jolokia.TLS.CACert, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
+		var caPool *x509.CertPool
+		if f := clusterCreds.Jolokia.TLS.CACert; f != "" {
+			p, err := utils.CACertPool(f)
+			if err != nil {
+				return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
+			}
+			caPool = p
+		}
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
 	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(), jolokiaOpts...)
@@ -468,10 +477,15 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 		))
 	}
 	if clusterCreds.Prometheus.TLS != nil {
-		promOpts = append(promOpts, client.WithPrometheusTLS(
-			clusterCreds.Prometheus.TLS.CACert,
-			clusterCreds.Prometheus.TLS.InsecureSkipVerify,
-		))
+		var caPool *x509.CertPool
+		if f := clusterCreds.Prometheus.TLS.CACert; f != "" {
+			p, err := utils.CACertPool(f)
+			if err != nil {
+				return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
+			}
+			caPool = p
+		}
+		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, clusterCreds.Prometheus.TLS.InsecureSkipVerify))
 	}
 
 	var labels map[string]string

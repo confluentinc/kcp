@@ -581,7 +581,7 @@ func TestConfigureTLSAuth(t *testing.T) {
 			clientCertFile: clientCertFile,
 			clientKeyFile:  clientKeyFile,
 			expectError:    true,
-			errorContains:  "failed to read CA certificate file",
+			errorContains:  "reading CA certificate",
 		},
 	}
 
@@ -655,7 +655,7 @@ func TestTLSConfigWithCA_BadFile(t *testing.T) {
 	cfg, err := tlsConfigWithCA(filepath.Join(t.TempDir(), "does-not-exist.pem"), false)
 	require.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "failed to read CA certificate file")
+	assert.Contains(t, err.Error(), "reading CA certificate")
 }
 
 func TestTLSConfigWithCA_GarbagePEM(t *testing.T) {
@@ -665,7 +665,7 @@ func TestTLSConfigWithCA_GarbagePEM(t *testing.T) {
 	cfg, err := tlsConfigWithCA(path, false)
 	require.Error(t, err)
 	assert.Nil(t, cfg)
-	assert.Contains(t, err.Error(), "failed to append CA certificate to pool")
+	assert.Contains(t, err.Error(), "contains no valid PEM certificate")
 }
 
 func TestConfigureSCRAM_WithCA_SetsRootCAs(t *testing.T) {

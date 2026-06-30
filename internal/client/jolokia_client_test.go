@@ -150,7 +150,7 @@ func TestJolokiaClient_ReadMBean_WithTLS(t *testing.T) {
 	require.Error(t, err)
 
 	// With insecure skip verify — should succeed
-	clientInsecure := NewJolokiaClient(server.URL, WithJolokiaTLS("", true))
+	clientInsecure := NewJolokiaClient(server.URL, WithJolokiaTLS(nil, true))
 	values, err := clientInsecure.ReadMBean(context.Background(), "test:type=Test")
 	require.NoError(t, err)
 	assert.Equal(t, 12345.0, values["Count"])
@@ -172,13 +172,13 @@ func TestJolokiaClient_ReadMBean_WithTLSAndAuth(t *testing.T) {
 	defer server.Close()
 
 	// TLS only, no auth — should fail 401
-	clientTLSOnly := NewJolokiaClient(server.URL, WithJolokiaTLS("", true))
+	clientTLSOnly := NewJolokiaClient(server.URL, WithJolokiaTLS(nil, true))
 	_, err := clientTLSOnly.ReadMBean(context.Background(), "test:type=Test")
 	require.Error(t, err)
 
 	// TLS + auth — should succeed
 	clientBoth := NewJolokiaClient(server.URL,
-		WithJolokiaTLS("", true),
+		WithJolokiaTLS(nil, true),
 		WithJolokiaBasicAuth("monitor", "secret"),
 	)
 	values, err := clientBoth.ReadMBean(context.Background(), "test:type=Test")

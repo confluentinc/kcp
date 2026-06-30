@@ -6,12 +6,12 @@ package targets
 
 import (
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"net/http"
 	"os"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/goccy/go-yaml"
 )
 
@@ -137,13 +137,9 @@ func (c Credentials) HTTPClient() (clusterlink.HTTPClient, error) {
 	caCertFile, skipVerify := c.tlsTrust()
 	tlsCfg := &tls.Config{InsecureSkipVerify: skipVerify} //nolint:gosec // user-controlled flag
 	if caCertFile != "" {
-		pemBytes, err := os.ReadFile(caCertFile)
+		pool, err := utils.CACertPool(caCertFile)
 		if err != nil {
-			return nil, fmt.Errorf("reading ca_cert: %w", err)
-		}
-		pool := x509.NewCertPool()
-		if !pool.AppendCertsFromPEM(pemBytes) {
-			return nil, fmt.Errorf("no certificates found in ca_cert %q", caCertFile)
+			return nil, err
 		}
 		tlsCfg.RootCAs = pool
 	}

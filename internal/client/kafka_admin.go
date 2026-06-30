@@ -3,16 +3,15 @@ package client
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-msk-iam-sasl-signer-go/signer"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // AdminConfig holds the configuration for creating a Kafka admin client
@@ -156,13 +155,9 @@ func tlsConfigWithCA(caCertFile string, insecureSkipVerify bool) (*tls.Config, e
 	if caCertFile == "" {
 		return cfg, nil
 	}
-	caCert, err := os.ReadFile(caCertFile)
+	pool, err := utils.CACertPool(caCertFile)
 	if err != nil {
-		return nil, fmt.Errorf("failed to read CA certificate file: %w", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(caCert) {
-		return nil, fmt.Errorf("failed to append CA certificate to pool")
+		return nil, err
 	}
 	cfg.RootCAs = pool
 	return cfg, nil
