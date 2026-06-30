@@ -23,7 +23,7 @@ var canonicalWorkflow = []WorkflowStep{
 	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized, "🔍 Initializing migration..."},
 	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk, "⏳ Checking replication lags..."},
 	{EventFence, "fencing gateway", StateLagsOk, StateFenced, "🚧 Fencing gateway..."},
-	{EventPromote, "promoting topics", StateFenced, StatePromoted, "📤 Promoting mirror topics..."},
+	{EventPromote, "promoting topics", StateFenced, StatePromoted, ""},
 	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched, "🔄 Switching gateway to Confluent Cloud..."},
 }
 
@@ -114,7 +114,9 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			continue // Skip already-completed steps (enables resumability)
 		}
 
-		fmt.Printf("\n%s\n", color.CyanString(step.UserMessage))
+		if step.UserMessage != "" {
+			fmt.Printf("\n%s\n", color.CyanString(step.UserMessage))
+		}
 		slog.Debug("executing migration step", "step", step.Description)
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
