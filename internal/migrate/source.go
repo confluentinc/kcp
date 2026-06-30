@@ -60,14 +60,27 @@ type TopicSpec struct {
 // source may be Apache Kafka, MSK, or Confluent — auth is in the connection.
 type KafkaSourceReader struct {
 	conn types.KafkaSourceConn
+
+	// cachedID memoizes the source cluster id for the lifetime of the reader
+	// (one apply). The id is immutable per cluster, and ClusterID is read more
+	// than once per apply (the clusterLink reconciler probes it in
+	// CheckPreconditions, then reads it again in Plan); without this each read
+	// would open a fresh admin connection — a full TLS+SASL handshake.
+	cachedID string
+	idCached bool
 }
 
 func NewKafkaSourceReader(conn types.KafkaSourceConn) *KafkaSourceReader {
 	return &KafkaSourceReader{conn: conn}
 }
 
-// ClusterID opens an admin connection and returns the live cluster id.
+// ClusterID returns the live source cluster id, opening an admin connection on
+// the first call and memoizing the result for subsequent calls. Only a
+// successful read is cached, so a failed probe still retries on the next call.
 func (r *KafkaSourceReader) ClusterID(ctx context.Context) (string, error) {
+	if r.idCached {
+		return r.cachedID, nil
+	}
 	admin, err := buildSourceAdmin(r.conn)
 	if err != nil {
 		return "", fmt.Errorf("connecting to source: %w", err)
@@ -81,7 +94,9 @@ func (r *KafkaSourceReader) ClusterID(ctx context.Context) (string, error) {
 	if meta.ClusterID == "" {
 		return "", fmt.Errorf("source did not report a cluster id")
 	}
-	return meta.ClusterID, nil
+	r.cachedID = meta.ClusterID
+	r.idCached = true
+	return r.cachedID, nil
 }
 
 // ListTopics opens an admin connection and returns the source topic names, sorted.

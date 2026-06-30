@@ -2,6 +2,7 @@ package migrate
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -38,6 +39,64 @@ func TestKafkaSourceReader_ListTopics_SortsNames(t *testing.T) {
 	got, err := r.ListTopics(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, []string{"alpha", "mike", "zeta"}, got)
+}
+
+func TestKafkaSourceReader_ClusterID_CachedAcrossCalls(t *testing.T) {
+	// Count admin connections opened. The reader must fetch the (immutable)
+	// cluster id once and memoize it, not re-connect on every ClusterID call.
+	var conns, metaReads int
+	old := buildSourceAdmin
+	buildSourceAdmin = func(types.KafkaSourceConn) (client.KafkaAdmin, error) {
+		conns++
+		return &mocks.MockKafkaAdmin{
+			GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+				metaReads++
+				return &client.ClusterKafkaMetadata{ClusterID: "src-cluster-1"}, nil
+			},
+			CloseFunc: func() error { return nil },
+		}, nil
+	}
+	t.Cleanup(func() { buildSourceAdmin = old })
+
+	r := NewKafkaSourceReader(types.KafkaSourceConn{})
+	// Mirrors the clusterLink reconciler: CheckPreconditions probes, Plan reads.
+	id1, err := r.ClusterID(context.Background())
+	require.NoError(t, err)
+	id2, err := r.ClusterID(context.Background())
+	require.NoError(t, err)
+
+	require.Equal(t, "src-cluster-1", id1)
+	require.Equal(t, id1, id2)
+	require.Equal(t, 1, conns, "ClusterID must open only one admin connection across calls")
+	require.Equal(t, 1, metaReads, "cluster metadata must be read only once")
+}
+
+func TestKafkaSourceReader_ClusterID_ErrorNotCached(t *testing.T) {
+	// A failed read must NOT be cached — the next call retries (and can succeed).
+	var attempts int
+	old := buildSourceAdmin
+	buildSourceAdmin = func(types.KafkaSourceConn) (client.KafkaAdmin, error) {
+		attempts++
+		first := attempts == 1
+		return &mocks.MockKafkaAdmin{
+			GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+				if first {
+					return nil, fmt.Errorf("boom")
+				}
+				return &client.ClusterKafkaMetadata{ClusterID: "src-cluster-1"}, nil
+			},
+			CloseFunc: func() error { return nil },
+		}, nil
+	}
+	t.Cleanup(func() { buildSourceAdmin = old })
+
+	r := NewKafkaSourceReader(types.KafkaSourceConn{})
+	_, err := r.ClusterID(context.Background())
+	require.Error(t, err)
+	id, err := r.ClusterID(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "src-cluster-1", id)
+	require.Equal(t, 2, attempts, "a failed read must retry, not serve a cached error")
 }
 
 func TestKafkaSourceReader_DescribeTopics_FiltersAndMaps(t *testing.T) {

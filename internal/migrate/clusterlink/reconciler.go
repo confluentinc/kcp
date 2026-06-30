@@ -101,9 +101,9 @@ func (r *Reconciler) CheckPreconditions(ctx context.Context) error {
 	if _, err := r.tgt.ClusterID(ctx); err != nil {
 		return fmt.Errorf("target not reachable: %w", err)
 	}
-	// NOTE: Plan reads the source cluster id again. For Phase 1's single
-	// reconciler the duplicate live read is acceptable; if more reconcilers are
-	// added, cache it in KafkaSourceReader rather than re-probing here.
+	// This probes source reachability; Plan reads the source cluster id again,
+	// but KafkaSourceReader memoizes it, so the second read reuses this
+	// connection's result rather than opening another admin connection.
 	if _, err := r.src.ClusterID(ctx); err != nil {
 		return fmt.Errorf("source not reachable: %w", err)
 	}
