@@ -1580,3 +1580,31 @@ func TestNewStateFromBytesDevStampedNewerSchema(t *testing.T) {
 		t.Errorf("error must NOT advise `kcp update` for a dev-stamped file, got: %q", msg)
 	}
 }
+
+func TestWriteToFileFailsWhenExistingFileUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — 0000 perms do not block reads")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+	// Existing file at an older schema_version (so the next write is a *migrating* write),
+	// then made unreadable. The write must abort rather than silently overwrite with no backup.
+	if err := os.WriteFile(path, []byte(`{"schema_version":0,"kcp_build_info":{"version":"0.8.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) }) // let TempDir cleanup remove it
+
+	if err := (&State{}).WriteToFile(path); err == nil {
+		t.Fatal("WriteToFile must fail when the existing file can't be read (no silent overwrite without backup)")
+	}
+}
+
+func TestNewStateFromBytes_TrailingDataRejected(t *testing.T) {
+	data := []byte(`{"schema_version":1,"kcp_build_info":{"version":"0.8.5"},"msk_sources":{}}{"extra":true}`)
+	if _, err := NewStateFromBytes(data); err == nil {
+		t.Fatal("expected error for trailing data after the JSON object")
+	}
+}

@@ -200,7 +200,12 @@ func (s *State) WriteToFile(filePath string) error {
 func backupIfMigrating(filePath string) error {
 	existing, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil // no existing file (or unreadable) → nothing to back up
+		if os.IsNotExist(err) {
+			return nil // no existing file → nothing to back up
+		}
+		// The file exists but couldn't be read — do NOT silently overwrite it without a
+		// backup; abort the migrating write so the original is preserved (design D7).
+		return fmt.Errorf("failed to read existing state file before migrating write: %w", err)
 	}
 	var probe struct {
 		SchemaVersion int `json:"schema_version"`
@@ -212,7 +217,10 @@ func backupIfMigrating(filePath string) error {
 	ts := time.Now().UTC().Format("20060102T150405Z")
 	bak := fmt.Sprintf("%s.%s.bak", filePath, ts)
 	for i := 1; ; i++ {
-		if _, err := os.Stat(bak); os.IsNotExist(err) {
+		// Break on any non-nil Stat error: not-exist means the name is free to use, and any
+		// other error means we can't stat it — let os.WriteFile below surface the real error
+		// rather than spinning forever (a non-NotExist error would never satisfy IsNotExist).
+		if _, err := os.Stat(bak); err != nil {
 			break
 		}
 		bak = fmt.Sprintf("%s.%s-%d.bak", filePath, ts, i)
