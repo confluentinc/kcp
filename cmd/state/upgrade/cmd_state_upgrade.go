@@ -8,32 +8,30 @@ import (
 )
 
 func NewStateUpgradeCmd() *cobra.Command {
-	var in, out string
+	var stateFile string
 	cmd := &cobra.Command{
-		Use:           "upgrade",
-		Short:         "Migrate a kcp-state.json file to the current schema",
-		Long:          "Reads a state file produced by any prior KCP version, migrates it to the current schema, and writes the result. Writes in place if --out is omitted.",
+		Use:   "upgrade",
+		Short: "Migrate a kcp-state.json file to the current schema",
+		Long:  "Reads a state file produced by any prior KCP version, migrates it to the current schema, and overwrites it in place. Before overwriting, the original is backed up alongside it as <state-file>.<UTC-timestamp>.bak (a file already at the current schema is left unchanged, with no backup).",
+		Example: `  # Migrate a state file to the current schema, overwriting it in place
+  # (the original is preserved as kcp-state.json.<UTC-timestamp>.bak)
+  kcp state upgrade --state-file kcp-state.json`,
 		SilenceErrors: true,
 		SilenceUsage:  true, // a load/runtime error is not a usage error — don't dump the flags
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			state, err := types.NewStateFromFile(in)
+			state, err := types.NewStateFromFile(stateFile)
 			if err != nil {
 				return err
 			}
-			dst := out
-			if dst == "" {
-				dst = in
-			}
-			if err := state.WriteToFile(dst); err != nil {
+			if err := state.WriteToFile(stateFile); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "upgraded %s -> %s (schema_version stamped)\n", in, dst)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "upgraded %s (schema_version stamped)\n", stateFile)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&in, "in", "", "Path to the state file to upgrade (required)")
-	cmd.Flags().StringVar(&out, "out", "", "Where to write the upgraded file (default: overwrite --in)")
-	_ = cmd.MarkFlagRequired("in")
+	cmd.Flags().StringVar(&stateFile, "state-file", "", "Path to the state file to upgrade in place (required)")
+	_ = cmd.MarkFlagRequired("state-file")
 	return cmd
 }

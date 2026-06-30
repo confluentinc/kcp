@@ -74,7 +74,7 @@ The workflow is state-driven. Commands progressively append to these files:
 
 For Apache Kafka metrics collection (Jolokia and Prometheus backends), see `docs/assets/apache-kafka-configuration/metrics-collection.md`.
 
-**Backward compatibility:** `kcp-state.json` is versioned (`schema_version`); the loader migrates files from any release back to `v0.4.0` to the current shape on read (`internal/state/migrate`, never mutating the file). Inspect a file's metadata with `kcp state version --in <f>`; migrate it on disk with `kcp state upgrade --in <f>`. **Any change to the `types.State` shape fails `TestStateSchemaSnapshot` by design** — do not just regenerate the golden; bump `migrate.CurrentSchemaVersion`, add an upcaster in `internal/state/migrate/steps.go` + a fixture, then regenerate (see the test's failure message). `make test-state-archive` loads every real v0.4.0–v0.8.5 file as the ground-truth guard (opt-in/local — S3, not CI).
+**Backward compatibility:** `kcp-state.json` is versioned (`schema_version`); the loader migrates files from any release back to `v0.4.0` to the current shape on read (`internal/state/migrate`, never mutating the file). Inspect a file's metadata with `kcp state version --state-file <f>`; migrate it on disk (in place, original kept as a `.bak`) with `kcp state upgrade --state-file <f>`. **Any change to the `types.State` shape fails `TestStateSchemaSnapshot` by design** — do not just regenerate the golden; bump `migrate.CurrentSchemaVersion`, add an upcaster in `internal/state/migrate/steps.go` + a fixture, then regenerate (see the test's failure message). `make test-state-archive` loads every real v0.4.0–v0.8.5 file as the ground-truth guard (opt-in/local — S3, not CI).
 
 ### Internal services
 

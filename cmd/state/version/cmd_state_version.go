@@ -95,28 +95,30 @@ func renderStateMetadata(w io.Writer, path string, m stateMetadata) {
 }
 
 func NewStateVersionCmd() *cobra.Command {
-	var in string
+	var stateFile string
 	cmd := &cobra.Command{
-		Use:           "version",
-		Short:         "Report the metadata of a kcp-state.json file",
-		Long:          "Reads only the top-level metadata of a state file (schema version, KCP build, created/updated timestamps, migration provenance) using lenient JSON parsing, so it works on state files from any KCP version — even ones that cannot be fully loaded by the current build.",
+		Use:   "version",
+		Short: "Report the metadata of a kcp-state.json file",
+		Long:  "Reads only the top-level metadata of a state file (schema version, KCP build, created/updated timestamps, migration provenance) using lenient JSON parsing, so it works on state files from any KCP version — even ones that cannot be fully loaded by the current build.",
+		Example: `  # Report the schema version and build metadata of a state file
+  kcp state version --state-file kcp-state.json`,
 		SilenceErrors: true,
 		SilenceUsage:  true, // a read/parse error is not a usage error — don't dump the flags
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			data, err := os.ReadFile(in)
+			data, err := os.ReadFile(stateFile)
 			if err != nil {
-				return fmt.Errorf("failed to read state file %s: %w", in, err)
+				return fmt.Errorf("failed to read state file %s: %w", stateFile, err)
 			}
 			meta, err := parseStateMetadata(data)
 			if err != nil {
-				return fmt.Errorf("%s: %w", in, err)
+				return fmt.Errorf("%s: %w", stateFile, err)
 			}
-			renderStateMetadata(cmd.OutOrStdout(), in, meta)
+			renderStateMetadata(cmd.OutOrStdout(), stateFile, meta)
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&in, "in", "", "Path to the state file to inspect (required)")
-	_ = cmd.MarkFlagRequired("in")
+	cmd.Flags().StringVar(&stateFile, "state-file", "", "Path to the state file to inspect (required)")
+	_ = cmd.MarkFlagRequired("state-file")
 	return cmd
 }

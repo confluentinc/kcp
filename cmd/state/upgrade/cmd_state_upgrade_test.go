@@ -9,22 +9,22 @@ import (
 	"github.com/confluentinc/kcp/internal/state/migrate"
 )
 
-func TestUpgradeWritesCurrentSchema(t *testing.T) {
+func TestUpgradeWritesCurrentSchemaInPlace(t *testing.T) {
 	dir := t.TempDir()
-	in := filepath.Join(dir, "old.json")
-	out := filepath.Join(dir, "new.json")
+	stateFile := filepath.Join(dir, "kcp-state.json")
 	// Era C file lacking schema_version (loads, then re-stamped on write).
-	if err := os.WriteFile(in, []byte(`{"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.0","commit":"x","date":"y"},"timestamp":"2026-05-14T00:00:00Z"}`), 0600); err != nil {
+	if err := os.WriteFile(stateFile, []byte(`{"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.0","commit":"x","date":"y"},"timestamp":"2026-05-14T00:00:00Z"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	cmd := NewStateUpgradeCmd()
-	cmd.SetArgs([]string{"--in", in, "--out", out})
+	cmd.SetArgs([]string{"--state-file", stateFile})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 
-	data, err := os.ReadFile(out)
+	// The file is overwritten in place at the current schema.
+	data, err := os.ReadFile(stateFile)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,5 +36,14 @@ func TestUpgradeWritesCurrentSchema(t *testing.T) {
 	}
 	if probe.SchemaVersion != migrate.CurrentSchemaVersion {
 		t.Errorf("schema_version = %d, want %d", probe.SchemaVersion, migrate.CurrentSchemaVersion)
+	}
+
+	// Upgrading an older-schema file in place leaves a timestamped .bak of the original.
+	matches, err := filepath.Glob(stateFile + ".*.bak")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 1 {
+		t.Fatalf("expected exactly one .bak backup, found %d: %v", len(matches), matches)
 	}
 }

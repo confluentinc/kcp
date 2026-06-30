@@ -50,7 +50,7 @@ func TestStateVersionCmd_ReportsMetadata(t *testing.T) {
 	cmd := NewStateVersionCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--in", path})
+	cmd.SetArgs([]string{"--state-file", path})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestStateVersionCmd_NonKCPJSON_NoMisleadingSchemaRow(t *testing.T) {
 	cmd := NewStateVersionCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--in", path})
+	cmd.SetArgs([]string{"--state-file", path})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestStateVersionCmd_LegacyAndAbsentFieldsHidden(t *testing.T) {
 	cmd := NewStateVersionCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
-	cmd.SetArgs([]string{"--in", path})
+	cmd.SetArgs([]string{"--state-file", path})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute: %v", err)
 	}
