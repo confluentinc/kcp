@@ -1,6 +1,7 @@
 package migrate
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,8 +63,16 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 	}
 
 	// Legacy file: run the ordered upcaster chain.
+	// Decode with UseNumber so every JSON number survives as its exact literal
+	// (json.Number) instead of being widened to float64. The upcasters only
+	// reshuffle top-level keys and never read numeric values, so a faithful
+	// round-trip matters: plain json.Unmarshal into map[string]any would lose
+	// integer precision above 2^53 and re-serialize values >= 1e21 in scientific
+	// notation (e.g. "1e+21"), which the strict types.State decode then rejects.
 	var doc map[string]any
-	if err := json.Unmarshal(data, &doc); err != nil {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
+	if err := dec.Decode(&doc); err != nil {
 		return nil, "", fmt.Errorf("failed to parse legacy state file: %w", err)
 	}
 	applied := false
