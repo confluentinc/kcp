@@ -146,7 +146,7 @@ func TestHandleUploadState_EmptyVersion_Succeeds(t *testing.T) {
 	}
 }
 
-func TestHandleUploadState_SchemaMismatch_WithVersion_ReturnsVersionContext(t *testing.T) {
+func TestHandleUploadState_SchemaMismatch_WithVersion_ReturnsActionableError(t *testing.T) {
 	ui := newTestUI()
 	e := echo.New()
 
@@ -169,11 +169,14 @@ func TestHandleUploadState_SchemaMismatch_WithVersion_ReturnsVersionContext(t *t
 		t.Fatalf("failed to parse response body: %v", err)
 	}
 	msg, _ := resp["message"].(string)
+	// The file's version is surfaced via the "migrated from ..." breadcrumb. The new
+	// contract gives actionable upgrade/recreate guidance instead of echoing the running
+	// binary's version (superseded #308 behavior).
 	if !strings.Contains(msg, "0.5.0") {
-		t.Errorf("expected message to contain file version, got: %s", msg)
+		t.Errorf("expected message to reference the file's version, got: %s", msg)
 	}
-	if !strings.Contains(msg, build_info.Version) {
-		t.Errorf("expected message to contain running version, got: %s", msg)
+	if !strings.Contains(msg, "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %s", msg)
 	}
 }
 
