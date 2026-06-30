@@ -60,9 +60,10 @@ const (
 	authPlaintext kafkaAuthKind = iota // unauthenticated_plaintext
 	authScram256                       // sasl_scram SHA256
 	authScram512                       // sasl_scram SHA512
-	authPlain                          // sasl_plain
+	authPlain                          // sasl_plain (SASL_PLAINTEXT, no ca_cert)
 	authTLS                            // unauthenticated_tls (encryption only)
 	authMTLS                           // tls (mutual)
+	authPlainTLS                       // sasl_plain + ca_cert (SASL_SSL) — R2-H1 regression
 )
 
 func (k kafkaAuthKind) String() string {
@@ -79,6 +80,8 @@ func (k kafkaAuthKind) String() string {
 		return "tls"
 	case authMTLS:
 		return "mtls"
+	case authPlainTLS:
+		return "plain-tls"
 	}
 	return "unknown"
 }
@@ -107,6 +110,12 @@ func (a kafkaAuth) authMethodYAML() string {
 			"insecure_skip_tls_verify: true\n"
 	case authPlain:
 		return "sasl_plain: { username: kcp, password: kcp-secret }\n"
+	case authPlainTLS:
+		// R2-H1: ca_cert on sasl_plain must drive a SASL_SSL connection. Pointed at
+		// a SASL_SSL listener that also accepts PLAIN — before the fix this used
+		// SASL_PLAINTEXT and the TLS handshake against that listener would fail.
+		return "sasl_plain: { username: kcp, password: kcp-secret, ca_cert: ./certs/ca.crt }\n" +
+			"insecure_skip_tls_verify: true\n"
 	case authTLS:
 		return "unauthenticated_tls: { ca_cert: ./certs/ca.crt }\n" +
 			"insecure_skip_tls_verify: true\n"

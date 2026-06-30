@@ -82,6 +82,7 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 		{"D1=scram256", kafkaAuth{authScram256, "localhost:19093"}, d2Plaintext, restDest},
 		{"D1=scram512", kafkaAuth{authScram512, "localhost:19093"}, d2Plaintext, restDest},
 		{"D1=plain", kafkaAuth{authPlain, "localhost:19095"}, d2Plaintext, restDest},
+		{"D1=plain-tls", kafkaAuth{authPlainTLS, "localhost:19093"}, d2Plaintext, restDest},
 		{"D1=tls", kafkaAuth{authTLS, "localhost:19094"}, d2Plaintext, restDest},
 		{"D1=mtls", kafkaAuth{authMTLS, "localhost:19094"}, d2Plaintext, restDest},
 
@@ -90,6 +91,7 @@ func TestMigrateApply_ClusterLink_Destination(t *testing.T) {
 		{"D2=scram256", d1Plaintext, kafkaAuth{authScram256, "source:29094"}, restDest},
 		{"D2=scram512", d1Plaintext, kafkaAuth{authScram512, "source:29094"}, restDest},
 		{"D2=plain", d1Plaintext, kafkaAuth{authPlain, "source:29096"}, restDest},
+		{"D2=plain-tls", d1Plaintext, kafkaAuth{authPlainTLS, "source:29094"}, restDest},
 		{"D2=tls", d1Plaintext, kafkaAuth{authTLS, "source:29095"}, restDest},
 		{"D2=mtls", d1Plaintext, kafkaAuth{authMTLS, "source:29095"}, restDest},
 

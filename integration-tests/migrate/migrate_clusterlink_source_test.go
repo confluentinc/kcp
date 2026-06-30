@@ -121,6 +121,7 @@ func TestMigrateApply_ClusterLink_Source(t *testing.T) {
 		{"D5=scram256", d1DestBasic, restDestBasic, restSource, kafkaAuth{authScram256, "source:29094"}},
 		{"D5=scram512", d1DestBasic, restDestBasic, restSource, kafkaAuth{authScram512, "source:29094"}},
 		{"D5=plain", d1DestBasic, restDestBasic, restSource, kafkaAuth{authPlain, "source:29096"}},
+		{"D5=plain-tls", d1DestBasic, restDestBasic, restSource, kafkaAuth{authPlainTLS, "source:29094"}},
 		{"D5=tls", d1DestBasic, restDestBasic, restSource, kafkaAuth{authTLS, "source:29095"}},
 		{"D5=mtls", d1DestBasic, restDestBasic, restSource, kafkaAuth{authMTLS, "source:29095"}},
 	}
