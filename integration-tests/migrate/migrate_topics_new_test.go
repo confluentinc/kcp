@@ -399,6 +399,65 @@ func TestMigrateApply_TopicsNew_InternalExclusion(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Case 5b — internal-topic opt-in (Option A): an underscore-leading include
+// pattern admits a specific internal topic; "*" still excludes the rest.
+// ---------------------------------------------------------------------------
+
+func TestMigrateApply_TopicsNew_InternalOptIn(t *testing.T) {
+	dir := t.TempDir()
+
+	srcPoller := newRestClient(t, restSource)
+	srcPoller.waitForClusterID(t)
+	seedTopicCatalog(t, srcPoller, sourceClusterID)
+	// A real leading-underscore source topic to opt in (kept out of the shared
+	// catalog so the InternalExclusion case stays valid).
+	srcPoller.createTopic(t, sourceClusterID, "_optin", 1)
+
+	tgtPoller := newRestClient(t, restDest)
+	tgtPoller.waitForClusterID(t)
+
+	m := writeNewManifest(t, dir, newManifestOpts{name: "optin-" + runID, include: []string{"*", "_optin"}})
+
+	optinAll := append(catalogUserTopics(), "_optin")
+	for _, n := range optinAll {
+		defer tgtPoller.deleteTopic(t, destClusterID, n)
+	}
+
+	rep := newNewReporter("InternalOptIn", "include:[*, _optin] creates every user catalog topic AND the opted-in internal topic _optin on the target; other internal topics (__consumer_offsets, _confluent*) are still never selected.", m, optinAll, optinAll)
+	rep.expected("catalogUserTopics() + _optin created on target; no OTHER leading-underscore topic created by KCP")
+	defer rep.commit(t, tgtPoller)
+
+	out, err := runKCP(t, m)
+	rep.apply(out)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "== newTopics", out)
+
+	// Every user catalog topic AND the opted-in internal topic created on target.
+	for _, n := range catalogUserTopics() {
+		require.True(t, tgtPoller.topicExists(destClusterID, n), "user catalog topic %q must be created on target", n)
+	}
+	require.True(t, tgtPoller.topicExists(destClusterID, "_optin"), "opted-in internal topic _optin must be created on target")
+
+	// The ONLY leading-underscore topic KCP may select/create is the opted-in
+	// _optin; broker internals (__consumer_offsets, _confluent*) are NOT opted in
+	// by "*". The apply output lists each created topic as `+ topic "<name>"`.
+	for _, line := range strings.Split(out, "\n") {
+		idx := strings.Index(line, `topic "`)
+		if idx < 0 {
+			continue
+		}
+		name := strings.TrimPrefix(line[idx:], `topic "`)
+		if end := strings.Index(name, `"`); end >= 0 {
+			name = name[:end]
+		}
+		if strings.HasPrefix(name, "_") {
+			require.Equal(t, "_optin", name,
+				"only the opted-in _optin internal topic may be created, but output referenced %q", name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Case 6 — empty match
 // ---------------------------------------------------------------------------
 

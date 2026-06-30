@@ -445,6 +445,54 @@ func TestMigrateApply_TopicsMirror_InternalExclusion(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Case 5b — internal-topic opt-in (Option A): an underscore-leading include
+// pattern admits a specific internal topic; "*" still excludes the rest.
+// ---------------------------------------------------------------------------
+
+func TestMigrateApply_TopicsMirror_InternalOptIn(t *testing.T) {
+	dir := t.TempDir()
+	link := uniqueLinkName("mt-optin")
+	prefix := uniqueMirrorPrefix(link)
+
+	srcPoller := newRestClient(t, restSource)
+	srcPoller.waitForClusterID(t)
+	seedTopicCatalog(t, srcPoller, sourceClusterID)
+	// A real leading-underscore source topic to opt in (kept out of the shared
+	// catalog so the InternalExclusion case stays valid).
+	srcPoller.createTopic(t, sourceClusterID, "_optin", 1)
+
+	m := writeMirrorManifest(t, dir, mirrorManifestOpts{link: link, prefix: prefix, include: []string{"*", "_optin"}})
+
+	poller := newRestClient(t, restDest)
+	poller.waitForClusterID(t)
+	defer poller.deleteLink(t, destClusterID, link)
+
+	optinAll := append(catalogUserTopics(), "_optin")
+	rep := newMirrorReporter(link, "include:[*, _optin]: all user topics mirrored AND the opted-in internal topic _optin (as <prefix>_optin); other internal topics (__consumer_offsets, _confluent*) still excluded.", m, link, optinAll)
+	rep.expected("catalogUserTopics() + _optin mirrored as <prefix>*; no OTHER leading-underscore source topic mirrored")
+	defer rep.commit(t, poller)
+
+	out, err := runKCP(t, m)
+	rep.apply(out)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "== mirrorTopics", out)
+	poller.requireLinkActive(t, destClusterID, link)
+
+	// User topics AND the opted-in internal topic mirrored.
+	poller.requireMirrorsPresent(t, destClusterID, link, prefixAll(prefix, optinAll))
+
+	// The ONLY leading-underscore mirror may be the opted-in _optin; broker
+	// internals (__consumer_offsets, _confluent*) are NOT opted in by "*".
+	for _, name := range poller.listMirrorTopics(destClusterID, link) {
+		stripped := strings.TrimPrefix(name, prefix)
+		if strings.HasPrefix(stripped, "_") {
+			require.Equal(t, "_optin", stripped,
+				"only the opted-in _optin internal topic may be mirrored, but found mirror %q", name)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Case 6 — empty match
 // ---------------------------------------------------------------------------
 

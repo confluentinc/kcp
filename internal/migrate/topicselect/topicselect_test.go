@@ -133,12 +133,9 @@ func TestSelectTopics_Exclude(t *testing.T) {
 	require.Contains(t, got, "orders-1")
 }
 
-// TestSelectTopics_InternalExclusion confirms internal topics (leading "_") are
-// dropped first: an "*" include never resurfaces them, and an EXPLICIT include
-// of an internal name still yields nothing (the leading-"_" filter runs before
-// include matching).
+// TestSelectTopics_InternalExclusion confirms a broad "*" include never
+// resurfaces internal topics (leading "_") — they are excluded by default.
 func TestSelectTopics_InternalExclusion(t *testing.T) {
-	// "*" include: internal topics absent, user topics present.
 	got, err := SelectTopics(catalog(), []string{"*"}, nil)
 	require.NoError(t, err)
 	require.NotContains(t, got, "__consumer_offsets")
@@ -146,10 +143,68 @@ func TestSelectTopics_InternalExclusion(t *testing.T) {
 	require.NotContains(t, got, "_schemas")
 	require.Contains(t, got, "orders-1")
 	require.Contains(t, got, "metrics.cpu")
+}
 
-	// Explicit internal include: still dropped (leading-"_" filter wins).
-	// Per design, internal topics are ALWAYS excluded — even when named.
-	got, err = SelectTopics(catalog(), []string{"_schemas"}, nil)
-	require.NoError(t, err)
-	require.Len(t, got, 0)
+// TestSelectTopics_InternalOptIn covers Option A: an internal topic is admitted
+// only when an include pattern that itself starts with "_" matches it; a broad
+// "*" does not opt internals in; and an exclude glob always wins, even over an
+// opted-in internal topic.
+func TestSelectTopics_InternalOptIn(t *testing.T) {
+	tests := []struct {
+		name      string
+		all       []string
+		include   []string
+		exclude   []string
+		wantHas   []string // must be present
+		wantMisse []string // must be absent
+	}{
+		{
+			name:      "literal underscore include opts in just that topic",
+			all:       []string{"orders", "_foo", "_schemas", "__consumer_offsets"},
+			include:   []string{"*", "_foo"},
+			wantHas:   []string{"orders", "_foo"},
+			wantMisse: []string{"_schemas", "__consumer_offsets"}, // not named, "*" doesn't opt in
+		},
+		{
+			name:      "broad star alone opts in no internals",
+			all:       []string{"orders", "_foo", "_schemas"},
+			include:   []string{"*"},
+			wantHas:   []string{"orders"},
+			wantMisse: []string{"_foo", "_schemas"},
+		},
+		{
+			name:      "underscore-star opts in all internal topics",
+			all:       []string{"orders", "_foo", "_schemas", "__consumer_offsets"},
+			include:   []string{"_*"},
+			wantHas:   []string{"_foo", "_schemas", "__consumer_offsets"},
+			wantMisse: []string{"orders"}, // "_*" doesn't match a non-underscore topic
+		},
+		{
+			name:      "exclude wins over an opted-in internal topic",
+			all:       []string{"orders", "_foo", "_schemas"},
+			include:   []string{"*", "_*"},
+			exclude:   []string{"_foo"},
+			wantHas:   []string{"orders", "_schemas"},
+			wantMisse: []string{"_foo"}, // explicitly opted in, but exclude wins
+		},
+		{
+			name:      "double-underscore opt-in via __* pattern",
+			all:       []string{"_schemas", "__consumer_offsets"},
+			include:   []string{"__*"},
+			wantHas:   []string{"__consumer_offsets"},
+			wantMisse: []string{"_schemas"}, // __* doesn't match a single-underscore topic
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := SelectTopics(tc.all, tc.include, tc.exclude)
+			require.NoError(t, err)
+			for _, h := range tc.wantHas {
+				require.Contains(t, got, h)
+			}
+			for _, m := range tc.wantMisse {
+				require.NotContains(t, got, m)
+			}
+		})
+	}
 }
