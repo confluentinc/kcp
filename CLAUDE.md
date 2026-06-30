@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Project conventions for Claude Code in this repo — keep this file thin.
 
 ## Plans
 
@@ -10,211 +10,46 @@ Store implementation plans outside the repository. Use `~/claude-plans/kcp/` as 
 
 Before committing or pushing any changes, always:
 
-1. **Show test output** — run tests and show the user the results, don't just say "tests pass"
-2. **Show generated artifacts** — if code generates state files, Terraform, or other output, show the content
-3. **Suggest visual verification** — for UI changes, offer to spin up `kcp ui --state-file` with relevant test data so the user can inspect the frontend in a browser
-4. **Wait for user approval** — never commit or push without explicit confirmation
+1. **Show test output** — run tests and show the user the results, don't just say "tests pass".
+2. **Show generated artifacts** — if code generates state files, Terraform, or other output, show the content.
+3. **Suggest visual verification** — for UI changes, offer to spin up `kcp ui --state-file` with relevant test data so the user can inspect the frontend in a browser.
+4. **Wait for user approval** — never commit or push without explicit confirmation.
 
 ## Project Overview
 
-KCP is a CLI tool for planning and executing Apache Kafka migrations from **AWS MSK and Apache Kafka** to Confluent Cloud. It provides commands for discovering resources, generating reports, creating migration assets (Terraform), and managing the migration workflow.
+KCP (Kafka Copy Paste) is a CLI for planning and executing Kafka migrations from **AWS MSK and Apache Kafka** to Confluent Cloud. It discovers resources, generates reports, creates migration assets (Terraform), and orchestrates the client migration switchover workflow.
 
 ## Source Types
 
-KCP supports two Kafka source types via a `Source` abstraction pattern:
+KCP supports two Kafka source types via a `Source` abstraction:
 
-### MSK (AWS Managed Streaming for Kafka)
+- **MSK** (AWS Managed Streaming for Kafka) — discovery automated via AWS APIs (`kcp discover`); credentials in `msk-credentials.yaml`. Code: `internal/sources/msk/`.
+- **Apache Kafka** — manual configuration via `apache-kafka-credentials.yaml` (format: `docs/assets/apache-kafka-configuration/credentials.md`). Code: `internal/sources/osk/`.
 
-- **Discovery**: Automated via AWS APIs (`kcp discover`)
-- **Credentials**: Auto-generated in `msk-credentials.yaml`
-- **Authentication**: IAM, SASL/SCRAM-SHA-512
-- **Code location**: `internal/sources/msk/`
-- **Workflow**: AWS API discovery → Kafka Admin API scanning
-
-### Apache Kafka
-
-- **Discovery**: Manual configuration
-- **Credentials**: User-created `apache-kafka-credentials.yaml` file
-- **Authentication**: SASL/SCRAM (SHA-256/SHA-512), TLS/mTLS, Plaintext
-- **Code location**: `internal/sources/osk/`
-- **Workflow**: Direct Kafka Admin API scanning
-- **Test environments**: Docker Compose in `integration-tests/osk-scan/`
-
-## Build Commands
-
-**CRITICAL**: The frontend MUST be built before building the Go binary or running tests.
+## Build & Test
 
 ```bash
-# Build everything (frontend + Go binary)
-make build
+make build              # frontend + Go binary
+make build-frontend     # frontend only (REQUIRED before any Go test)
+make install            # install to system path (sudo)
 
-# Build just the frontend
-make build-frontend
-
-# Build for specific platforms
-make build-linux
-make build-darwin-arm64
-make build-all
-
-# Install to system path (requires sudo)
-make install
+make fmt                # format Go + frontend
+make test-go            # all Go unit tests
+make test-playwright    # frontend e2e (builds first)
+make test-state-archive # opt-in: load every real archived kcp-state.json from S3 (local only, needs AWS creds)
+go test ./<pkg> -v      # single-package tests
+make clean              # remove build artifacts
 ```
 
-## Development Commands
+**Critical**: the frontend MUST be built before Go tests — they embed `cmd/ui/frontend/dist/` via `go:embed`. Tests fail with `pattern all:dist: no matching files found` otherwise.
 
-```bash
-# Format code
-make fmt
+## Architecture
 
-# Run Go unit tests
-make test-go
+The CLI follows a hierarchical Cobra command structure: `discover`, `scan`, `report`, `create-asset`, `migration`, `ui`, `update`, `version`. Run `kcp --help` for the full tree.
 
-# Run Playwright browser tests (builds frontend + Go binary first)
-make test-playwright
+### Source abstraction
 
-# Run Go tests with coverage
-make test-go-coverage
-
-# Run Go tests with coverage HTML viewer
-make test-go-coverage-ui
-
-# Run tests for a specific Go package
-go test ./cmd/scan/clusters -v
-go test ./internal/sources/osk -v
-
-# Clean build artifacts
-make clean
-```
-
-## Testing
-
-### Unit Tests
-
-- All Go tests require the frontend to be built first (`make build-frontend`)
-- Tests will fail with "pattern all:dist: no matching files found" if frontend is not built
-- Run with `make test-go` or `go test ./...`
-
-### State-File Backward-Compat Archive Test (local, opt-in)
-
-`TestStateArchiveLoads` (`internal/types/state_archive_test.go`) loads a real
-`kcp-state.json` generated by every release v0.4.0+ through the loader and asserts each
-migrates, decodes, and lands non-empty — the ground-truth backward-compat regression net.
-
-- The archive (secret-scrubbed) lives in S3 (`s3://confluent-kcp-test-fixtures/state-archive/`, `us-east-1`), reachable by **local devs only — not CI**.
-- **The test triggers ONLY when `KCP_STATE_ARCHIVE` is set** — a plain `go test ./...` / `make test-go` always skips it (so the normal suite stays green and never depends on S3).
-- Run it with **`make test-state-archive`** (downloads, sha256-verifies, extracts to `.cache/state-archive/`, sets `KCP_STATE_ARCHIVE`, runs the test). To run manually: `make fetch-state-archive` then `KCP_STATE_ARCHIVE=$(pwd)/.cache/state-archive go test ./internal/types/ -run TestStateArchiveLoads`.
-- All archived versions (v0.4.0–v0.8.5) currently load — including v0.4.2–v0.7.1, whose old array-form `schema_registries` is recovered by the array→object upcaster.
-- Refreshing the archive (e.g. a new release): upload `state-archive-vN.tar.gz`, then bump `STATE_ARCHIVE_VERSION` + `STATE_ARCHIVE_SHA256` in the `Makefile` in one commit.
-
-### Playwright E2E Tests
-
-- Tests are in `cmd/ui/frontend/tests/e2e/`
-- Playwright config starts `kcp ui` with `--state-file` to pre-load test data
-- Test fixtures in `cmd/ui/frontend/tests/e2e/fixtures/`
-- Run with `make test-playwright` or from `cmd/ui/frontend`: `npx playwright test`
-- Interactive UI mode: `cd cmd/ui/frontend && npx playwright test --ui`
-- Headed mode (visible browser): `cd cmd/ui/frontend && npx playwright test --headed`
-- Debug a test: `cd cmd/ui/frontend && npx playwright test -g "test name" --debug`
-
-### Apache Kafka Integration Tests
-
-A single Docker Compose environment (`integration-tests/osk-scan/`) runs all Apache Kafka test variants via `make test-osk-scan`. It starts a multi-listener KRaft Kafka broker, two JMX-specific brokers, three Prometheus instances, and producer/consumer containers for traffic generation.
-
-| Test Variant | Kafka Port | Metrics Port | Auth Method |
-|---|---|---|---|
-| kafka-plaintext | 9092 | — | None |
-| kafka-sasl | 9093 | — | SASL/SCRAM-SHA-256 |
-| kafka-sasl-sha512 | 9093 | — | SASL/SCRAM-SHA-512 |
-| kafka-sasl-sha512-only | 9099 | — | SASL/SCRAM-SHA-512 (dedicated broker, SHA-512 only) |
-| kafka-tls | 9094 | — | mTLS |
-| kafka-sasl-ssl | 9095 | — | SASL/SCRAM + TLS |
-| jmx-noauth | 9092 | 8778 (Jolokia) | None |
-| jmx-auth | 9096 | 8779 (Jolokia) | Username/password |
-| jmx-tls | 9097 | 8780 (Jolokia) | Username/password + TLS |
-| prometheus-noauth | 9092 | 9290 (Prometheus) | None |
-| prometheus-auth | 9092 | 9291 (Prometheus) | Basic auth |
-| prometheus-tls | 9092 | 9292 (Prometheus) | Basic auth + TLS |
-
-All Kafka environments have an authorizer enabled and are populated with 4 topics (`test-topic-1`, `test-topic-2`, `orders`, `events`) and 12 ACLs across 5 team principals. Prometheus environments are pre-seeded with 30 days of synthetic metrics.
-
-**Test workflow:**
-
-```bash
-# Run all Apache Kafka scan tests
-make test-osk-scan
-```
-
-**Test credentials:**
-
-- SASL Kafka: `kafkauser` / `kafkapass`
-- JMX Jolokia auth: `monitorUser` / `monitorPass`
-- Prometheus basic auth: `promuser` / `prompass`
-- TLS: Certificates generated by `integration-tests/osk-scan/generate-certs.sh`
-- Credential files: `integration-tests/osk-scan/credentials/*.yaml`
-
-### Schema Registry Integration Tests
-
-A Docker Compose environment (`integration-tests/schema-registry/`) tests `kcp scan schema-registry` against two Confluent Schema Registry instances via `make test-schema-registry`.
-
-| Test Variant | Port | Auth Method |
-|---|---|---|
-| unauthenticated | 8081 | None |
-| basic-auth | 8082 | Basic auth |
-
-Both instances are pre-loaded with 4 test schemas: `orders-value` (Avro), `orders-key` (Avro), `events-value` (JSON Schema), `test-topic-1-value` (Avro).
-
-**Test workflow:**
-
-```bash
-# Run all Schema Registry scan tests
-make test-schema-registry
-```
-
-**Test credentials:**
-
-- Basic auth: `schemauser` / `schemapass`
-
-## High-Level Architecture
-
-### Command Structure
-
-The CLI follows a hierarchical command structure using Cobra:
-
-```
-kcp
-├── discover          # Scan AWS account for MSK clusters (MSK only)
-├── scan             # Granular scanning operations
-│   ├── clusters     # Scan cluster-level details via Kafka API (MSK & Apache Kafka)
-│   ├── client-inventory  # Parse S3 broker logs for client discovery
-│   └── schema-registry   # Scan schema registry
-├── report           # Generate reports from discovered data
-│   ├── costs        # Cost analysis reports
-│   └── metrics      # Metrics analysis reports
-├── create-asset     # Generate Terraform for migration
-│   ├── bastion-host
-│   ├── target-infra
-│   ├── migration-infra
-│   ├── migrate-topics
-│   ├── migrate-schemas
-│   ├── migrate-acls
-│   ├── migrate-connectors
-│   └── reverse-proxy
-├── migration        # Migration execution workflow
-│   ├── init         # Initialize migration state
-│   ├── list         # List migrations
-│   ├── status       # Check migration status
-│   └── execute      # Execute migration steps
-├── state            # Inspect/migrate kcp-state.json files
-│   ├── upgrade      # Migrate a state file to the current schema (strict load + re-stamp)
-│   └── version      # Report state-file metadata (lenient raw-JSON; works on any version)
-├── ui               # Web UI for visualization
-├── update           # Self-update the CLI
-└── version          # Show version info
-```
-
-### Source Abstraction Pattern
-
-The `internal/sources/` package implements a `Source` interface that abstracts MSK and Apache Kafka:
+`internal/sources/` exposes a `Source` interface that abstracts MSK and Apache Kafka:
 
 ```go
 type Source interface {
@@ -225,287 +60,78 @@ type Source interface {
 }
 ```
 
-- **MSKSource** (`internal/sources/msk/`): Wraps existing MSK scanning logic
-- **OSKSource** (`internal/sources/osk/`): Implements Kafka Admin API scanning for Apache Kafka
-- **Factory** (`cmd/scan/clusters/`): Creates appropriate source based on `--source-type` flag
-
-### State File Architecture
-
-The workflow is state-driven:
-
-1. **`kcp-state.json`**: Central state file tracking discovered clusters, topics, ACLs, connectors, costs, metrics, and migration progress. Commands progressively append to this file.
-2. **`msk-credentials.yaml`**: Generated by `kcp discover`, contains authentication details for MSK clusters.
-3. **`apache-kafka-credentials.yaml`**: User-created file with Apache Kafka cluster connection details (YAML format).
-4. **`.kcp-migration-state.json`**: Tracks migration execution state (created by `kcp migration init`).
-
-Commands read from and write to these files, making the workflow idempotent and resumable.
-
-**Apache Kafka Credentials Format** (`apache-kafka-credentials.yaml`):
-
-```yaml
-clusters:
-  - id: my-kafka-cluster
-    bootstrap_servers:
-      - broker1:9092
-      - broker2:9092
-    auth_method:
-      sasl_scram:
-        use: true
-        username: admin
-        password: secret
-        mechanism: SHA256 # or SHA512
-      # OR
-      sasl_plain:
-        use: true
-        username: admin
-        password: secret
-      # OR
-      tls:
-        use: true
-        ca_cert: /path/to/ca.pem
-        client_cert: /path/to/client.pem
-        client_key: /path/to/key.pem
-      # OR
-      unauthenticated_plaintext:
-        use: true
-    jolokia: # optional — enables Jolokia metrics collection
-      endpoints:
-        - http://broker1:8778/jolokia
-      auth: # optional — omit for unauthenticated
-        username: monitorRole
-        password: secret
-      tls: # optional — omit for plain HTTP
-        ca_cert: /path/to/ca.pem
-        insecure_skip_verify: false
-    prometheus: # optional — alternative to jolokia
-      url: http://prometheus:9090
-      auth: # optional — omit for unauthenticated
-        username: promuser
-        password: secret
-      tls: # optional — omit for plain HTTP
-        ca_cert: /path/to/ca.pem
-        insecure_skip_verify: false
-    metadata:
-      environment: production
-      location: datacenter-1
-```
-
-### Internal Services
-
-The `internal/services/` directory contains business logic organized by domain:
-
-- **AWS Services**: `msk`, `ec2`, `iam`, `s3`, `msk_connect` - AWS API integrations
-- **Kafka**: `kafka` - Kafka Admin API operations (used by both MSK and Apache Kafka)
-- **Sources**: `sources/` - Source abstraction and implementations (MSK, Apache Kafka)
-- **Cost & Metrics**: `cost`, `metrics` - CloudWatch and Cost Explorer integration
-- **Schema Registry**: `schema_registry` - Schema Registry API client
-- **Infrastructure Generation**: `hcl` - Terraform HCL generation
-- **Cluster Link**: `clusterlink` - Confluent cluster link management
-- **Gateway**: `gateway` - Confluent Gateway integration
-- **Persistence**: `persistence` - State file I/O
-- **Report**: `report` - Report generation logic
-- **Markdown**: `markdown` - Markdown rendering (uses glamour)
-
-### Frontend Architecture
-
-- **Location**: `cmd/ui/frontend/`
-- **Stack**: React + TypeScript + Vite
-- **Build**: Yarn-based (`yarn install && yarn build`)
-- **Embedding**: Built assets are embedded into the Go binary via `embed` directive in `cmd/ui/frontend/frontend.go`
-- **Server**: Echo web framework serves embedded assets and REST API
+`MSKSource` and `OSKSource` implement it; the factory in `cmd/scan/clusters/` picks one based on `--source-type`.
 
-The frontend provides a web UI for visualizing state files, generating TCO reports, and creating migration assets interactively.
+### State files
 
-### Migration Types
+The workflow is state-driven. Commands progressively append to these files:
 
-The tool supports 4 migration infrastructure types (configured via `kcp create-asset migration-infra --type N`):
+- `kcp-state.json` — central state (clusters, topics, ACLs, connectors, costs, metrics, migration progress).
+- `msk-credentials.yaml` — generated by `kcp discover` for MSK.
+- `apache-kafka-credentials.yaml` — user-created for Apache Kafka; format documented in `docs/assets/apache-kafka-configuration/credentials.md`.
+- `migration-state.json` — created by `kcp migration init`.
 
-- **Type 1**: Public source endpoints with SASL/SCRAM cluster link
-- **Type 2**: Private source with external outbound cluster link (SASL/SCRAM)
-- **Type 3**: Private source with jump cluster (SASL/SCRAM)
-- **Type 4**: Private source with jump cluster (IAM) — MSK only
+For Apache Kafka metrics collection (Jolokia and Prometheus backends), see `docs/assets/apache-kafka-configuration/metrics-collection.md`.
 
-Types 1-3 support both MSK and Apache Kafka sources. Type 4 is MSK-only (IAM is an AWS-specific auth method).
+**Backward compatibility:** `kcp-state.json` is versioned (`schema_version`); the loader migrates files from any release back to `v0.4.0` to the current shape on read (`internal/state/migrate`, never mutating the file). Inspect a file's metadata with `kcp state version --in <f>`; migrate it on disk with `kcp state upgrade --in <f>`. **Any change to the `types.State` shape fails `TestStateSchemaSnapshot` by design** — do not just regenerate the golden; bump `migrate.CurrentSchemaVersion`, add an upcaster in `internal/state/migrate/steps.go` + a fixture, then regenerate (see the test's failure message). `make test-state-archive` loads every real v0.4.0–v0.8.5 file as the ground-truth guard (opt-in/local — S3, not CI).
 
-Jump clusters are Confluent Platform brokers that bridge the source Kafka cluster and Confluent Cloud.
+### Internal services
 
-## Key Implementation Patterns
+Business logic in `internal/services/` organized by domain (AWS services, Kafka, schema registry, HCL/Terraform, cluster link, gateway, persistence, report, markdown). Each subdirectory is self-explanatory.
 
-### Command Structure
+### Frontend
 
-Commands follow this pattern:
+React + TypeScript + Vite at `cmd/ui/frontend/`, embedded into the Go binary via `go:embed`. Echo serves both embedded assets and a REST API.
 
-- `cmd/<command>/cmd_<command>.go` - Command definition and flag setup
-- Implementation logic often delegates to `internal/services/` or `internal/sources/`
-- Cobra's `RunE` function for error handling
-- Viper for configuration management
+### Migration types
 
-### State File Operations
+Configured via `kcp create-asset migration-infra --type N`:
 
-When modifying state file logic:
+- **Type 1** — Public source endpoints with SASL/SCRAM cluster link.
+- **Type 2** — Private source with external outbound cluster link (SASL/SCRAM).
+- **Type 3** - Private source with external outbound cluster link (Unauthenticated Plaintext).
+- **Type 4** — Private source with jump cluster (SASL/SCRAM).
+- **Type 5** — Private source with jump cluster (IAM) — MSK only.
 
-1. Read state with `persistence.LoadState()`
-2. Modify the `types.State` struct
-3. Write back with `persistence.SaveState()`
-4. The state file is append-only - new discoveries augment existing data
+Types 1–4 support both MSK and Apache Kafka; Type 4 is MSK-only.
 
-### HCL/Terraform Generation
+## Implementation patterns
 
-The `internal/services/hcl` package generates Terraform configurations:
+### State file operations
 
-- Uses `hashicorp/hcl/v2` for programmatic HCL generation
-- Templates follow Confluent Terraform provider patterns
-- Generated configs are written to output directories (e.g., `migration-infra/`)
+1. `persistence.LoadState(path)` to read.
+2. Mutate the `types.State` struct in memory.
+3. `persistence.SaveState(path, state)` to write.
 
-### Authentication Methods
+State is append-only — new discoveries augment existing data; commands are idempotent and resumable.
 
-The tool supports multiple Kafka authentication methods:
+### Authentication
 
-**MSK:**
+- **MSK**: IAM or SASL/SCRAM-SHA-512 (AWS's SCRAM is SHA-512 only).
+- **Apache Kafka**: SASL/SCRAM (SHA-256 or SHA-512), TLS/mTLS, or unauthenticated/plaintext.
 
-- **IAM**: AWS MSK IAM authentication
-- **SASL/SCRAM-SHA-512**: AWS MSK's SCRAM implementation (SHA-512 only)
-
-**Apache Kafka:**
-
-- **SASL/SCRAM-SHA-256**: Most common for Apache Kafka
-- **SASL/SCRAM-SHA-512**: Also supported
-- **TLS/mTLS**: Client certificate authentication
-- **Unauthenticated/Plaintext**: For testing environments
-
-**Implementation**: The `internal/client/kafka_admin.go` package handles all authentication types. SASL/SCRAM defaults to SHA-256 for Apache Kafka and SHA-512 for MSK (set by `kcp discover`). The SASL mechanism used during scan is stored in `KafkaAdminClientInformation.SaslMechanism` and plumbed through to generated Terraform as `source_sasl_scram_mechanism`.
-
-### Apache Kafka Metrics Collection
-
-Apache Kafka clusters support two metrics collection backends via `--metrics <source>`:
-
-**Jolokia** — real-time polling via Jolokia HTTP bridge:
-
-```bash
-kcp scan clusters --source-type apache-kafka --state-file kcp-state.json \
-  --credentials-file apache-kafka-credentials.yaml \
-  --metrics jolokia --metrics-duration 5m --metrics-interval 10s
-```
-
-- `--metrics jolokia` — requires `jolokia` section in credentials file
-- `--metrics-duration` — how long to poll (required)
-- `--metrics-interval` — polling frequency (default: 10s)
-
-**Prometheus** — historical query via Prometheus HTTP API:
-
-```bash
-kcp scan clusters --source-type apache-kafka --state-file kcp-state.json \
-  --credentials-file apache-kafka-credentials.yaml \
-  --metrics prometheus --metrics-range 30d
-```
-
-- `--metrics prometheus` — requires `prometheus` section in credentials file
-- `--metrics-range` — time range to query (e.g. 7d, 30d) (required)
-
-Both backends are Apache Kafka-only (MSK uses CloudWatch via `kcp discover`). Both output `ProcessedClusterMetrics` — the UI works without changes.
-
-**Metrics collected** (aligned with CloudWatch names): `BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`, `PartitionCount`, `GlobalPartitionCount`, `ClientConnectionCount`, `TotalLocalStorageUsage`
-
-**Implementation**:
-
-- Jolokia: `internal/client/jolokia_client.go`, `internal/services/jmx/jmx_service.go`
-- Prometheus: `internal/client/prometheus_client.go`, `internal/services/prometheus/prometheus_service.go`
-- Results stored as `ClusterMetrics` on `OSKDiscoveredCluster` in state file.
-
-## Common Workflows
-
-### MSK Migration Flow
-
-```bash
-# 1. Discover MSK clusters
-kcp discover --region us-east-1
-
-# 2. Scan clusters for topics/ACLs (requires network access)
-kcp scan clusters --source-type msk --state-file kcp-state.json --credentials-file msk-credentials.yaml
-
-# 3. Generate reports
-kcp report costs --state-file kcp-state.json
-kcp report metrics --state-file kcp-state.json
-
-# 4. Visualize in UI
-kcp ui
-
-# 5. Generate target infrastructure Terraform
-kcp create-asset target-infra --state-file kcp-state.json --cluster-arn <arn> ...
-
-# 6. Generate migration infrastructure Terraform
-kcp create-asset migration-infra --state-file kcp-state.json --cc-type commercial --cluster-arn <arn> --type 3 ...
-
-# 7. Generate migration assets
-kcp create-asset migrate-topics --state-file kcp-state.json --cc-type commercial --cluster-arn <arn> ...
-kcp create-asset migrate-acls kafka --state-file kcp-state.json --cluster-arn <arn>
-kcp create-asset migrate-schemas --state-file kcp-state.json --cc-type commercial --url <schema-registry-url>
-
-# 8. Initialize migration
-kcp migration init --state-file kcp-state.json --cluster-arn <arn>
-
-# 9. Execute migration
-kcp migration execute --state-file kcp-state.json
-```
-
-### Apache Kafka Migration Flow
-
-```bash
-# 1. Create Apache Kafka credentials file (manual)
-cat > apache-kafka-credentials.yaml <<EOF
-clusters:
-  - id: prod-kafka
-    bootstrap_servers: [broker1:9092, broker2:9092]
-    auth_method:
-      sasl_scram:
-        use: true
-        username: admin
-        password: secret
-        mechanism: SHA256
-EOF
-
-# 2. Scan Apache Kafka cluster
-kcp scan clusters --source-type apache-kafka --state-file kcp-state.json --credentials-file apache-kafka-credentials.yaml
-
-# 2b. (Optional) Scan with Jolokia metrics — requires jolokia section in credentials file
-kcp scan clusters --source-type apache-kafka --state-file kcp-state.json --credentials-file apache-kafka-credentials.yaml \
-  --metrics jolokia --metrics-duration 5m --metrics-interval 10s
-
-# 2c. (Optional) Scan with Prometheus metrics — requires prometheus section in credentials file
-kcp scan clusters --source-type apache-kafka --state-file kcp-state.json --credentials-file apache-kafka-credentials.yaml \
-  --metrics prometheus --metrics-range 30d
-
-# 3. Continue with standard migration workflow (same as MSK steps 4-9)
-kcp ui
-# ... etc
-```
-
-## Prerequisites
-
-- Go 1.24+ (currently using 1.25.0)
-- Make
-- Node.js and Yarn (for frontend)
-- Docker (for Apache Kafka integration tests)
-- AWS credentials configured (for MSK, standard AWS credential chain)
-- Network access to Kafka clusters (may require bastion host for private clusters)
+The `internal/client/kafka_admin.go` package handles all auth types. SASL/SCRAM defaults: SHA-256 for Apache Kafka, SHA-512 for MSK.
 
 ## Logging
 
-- Logs written to `kcp.log` via lumberjack (rotating logger)
-- Uses `slog` for structured logging
-- Log level: DEBUG by default
-- Custom pretty handler outputs to both file and stdout
+Logs go to `kcp.log` via lumberjack (rotating) and stdout via a custom `slog` pretty handler. Default level is DEBUG.
 
-## Build Info
+### Emoji standard (PR [#234](https://github.com/confluentinc/kcp/pull/234))
 
-Version information is injected at build time via ldflags:
+Only these six emojis are allowed in log lines. One emoji per line, at the start of the message string:
 
-- `internal/build_info.Version` - Version tag
-- `internal/build_info.Commit` - Git commit hash
-- `internal/build_info.Date` - Build timestamp
+| Emoji | Meaning                | Use when                                                         | Levels                    |
+| ----- | ---------------------- | ---------------------------------------------------------------- | ------------------------- |
+| ✅    | Success / complete     | Operation finished, file written, scan complete                  | `slog.Info`               |
+| ❌    | Failure                | Operation failed (NEVER in `fmt.Errorf`)                         | `slog.Error`, `slog.Warn` |
+| ⚠️    | Warning / caveat       | Non-fatal issue, limitation, missing optional data               | `slog.Warn`               |
+| 🔍    | In progress / scanning | Starting a scan, search, discovery, or processing step           | `slog.Info`               |
+| ⏭️    | Skipped                | Item or step intentionally skipped                               | `slog.Info`, `slog.Debug` |
+| 🚀    | Starting               | Major process or command beginning (top-level entry points only) | `slog.Info`               |
 
-Development builds show a warning banner and set version to "dev".
+Rules:
 
-## Git
-
-- Push: `git push-external` (not `git push`)
+1. **No emojis in `fmt.Errorf()`** — errors are data, not user-facing output.
+2. **No emojis in interactive prompts** (`fmt.Print` for user input).
+3. `slog.Debug` lines: emojis optional; if used, only ⏭️ or 🔍.
+4. Adding a new emoji is a project-wide decision — extend the table here, don't ad-hoc.
