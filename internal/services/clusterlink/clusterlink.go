@@ -453,7 +453,7 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 	if err != nil {
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
@@ -490,7 +490,7 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 	if err != nil {
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)

@@ -5,8 +5,6 @@ import (
 	"net"
 	"os"
 	"strconv"
-
-	"github.com/goccy/go-yaml"
 )
 
 // OSKCredentials represents the apache-kafka-credentials.yaml file
@@ -79,21 +77,7 @@ type PrometheusTLSConfig struct {
 
 // NewOSKCredentialsFromFile loads OSK credentials from a YAML file
 func NewOSKCredentialsFromFile(credentialsYamlPath string) (*OSKCredentials, []error) {
-	data, err := os.ReadFile(credentialsYamlPath)
-	if err != nil {
-		return nil, []error{fmt.Errorf("failed to read apache-kafka-credentials.yaml file: %w", err)}
-	}
-
-	var credsFile OSKCredentials
-	if err := yaml.Unmarshal(data, &credsFile); err != nil {
-		return nil, []error{fmt.Errorf("failed to unmarshal YAML: %w", err)}
-	}
-
-	if valid, errs := credsFile.Validate(); !valid {
-		return nil, errs
-	}
-
-	return &credsFile, nil
+	return loadCredentialsFile[OSKCredentials](credentialsYamlPath)
 }
 
 // Validate checks that the credentials file is valid
@@ -164,12 +148,15 @@ func (c OSKCredentials) Validate() (bool, []error) {
 	return len(errs) == 0, errs
 }
 
-// GetAuthMethods returns the enabled authentication methods for this cluster
-func (c OSKClusterAuth) GetAuthMethods() []AuthType { return c.AuthMethod.GetAuthMethods() }
+// GetAuthMethods returns the enabled authentication methods for this cluster.
+// IAM is not supported for OSK, so it is excluded (includeIAM=false).
+func (c OSKClusterAuth) GetAuthMethods() []AuthType {
+	return c.AuthMethod.EnabledAuthMethods(false)
+}
 
 // GetSelectedAuthType returns the selected auth type for the cluster
 func (c OSKClusterAuth) GetSelectedAuthType() (AuthType, error) {
-	return c.AuthMethod.GetSelectedAuthType()
+	return c.AuthMethod.SelectedAuthType(false)
 }
 
 // HasJolokiaConfig returns true if the cluster has Jolokia configuration
@@ -184,14 +171,7 @@ func (c OSKClusterAuth) HasPrometheusConfig() bool {
 
 // WriteToFile writes the credentials to a YAML file
 func (c *OSKCredentials) WriteToFile(filePath string) error {
-	yamlData, err := yaml.Marshal(c)
-	if err != nil {
-		return fmt.Errorf("failed to marshal YAML: %w", err)
-	}
-	if err := os.WriteFile(filePath, yamlData, 0600); err != nil {
-		return fmt.Errorf("failed to write YAML file: %w", err)
-	}
-	return nil
+	return writeYAMLFile(filePath, c)
 }
 
 // isValidBootstrapServer checks if a bootstrap server string is valid (host:port format).

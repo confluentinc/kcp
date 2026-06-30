@@ -438,7 +438,8 @@ func TestAdminOptionForAuth_SASLPlain(t *testing.T) {
 	clusterAuth := types.ClusterAuth{}
 	clusterAuth.AuthMethod.SASLPlain = &types.SASLPlainConfig{Use: true, Username: "u", Password: "p"}
 
-	opt := AdminOptionForAuth(types.AuthTypeSASLPlain, clusterAuth.AuthMethod)
+	opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, clusterAuth.AuthMethod, false)
+	require.NoError(t, err)
 
 	cfg := &AdminConfig{}
 	opt(cfg)
@@ -461,7 +462,9 @@ func TestAdminOptionForAuth_SASLPlainWithCACertEnablesTLS(t *testing.T) {
 	}
 
 	cfg := &AdminConfig{}
-	AdminOptionForAuth(types.AuthTypeSASLPlain, amc)(cfg)
+	opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, amc, false)
+	require.NoError(t, err)
+	opt(cfg)
 
 	// Routing: ca_cert present → TLS variant (disableTLS stays false), CA captured.
 	require.Equal(t, types.AuthTypeSASLPlain, cfg.authType)
@@ -470,7 +473,7 @@ func TestAdminOptionForAuth_SASLPlainWithCACertEnablesTLS(t *testing.T) {
 
 	// End-to-end: the build path enables TLS and trusts the supplied CA.
 	sc := sarama.NewConfig()
-	err := configureSASLTypePlainAuthentication(sc, cfg.username, cfg.password, !cfg.disableTLS, cfg.caCertFile, cfg.insecureSkipTLSVerify)
+	err = configureSASLTypePlainAuthentication(sc, cfg.username, cfg.password, !cfg.disableTLS, cfg.caCertFile, cfg.insecureSkipTLSVerify)
 	require.NoError(t, err)
 	require.True(t, sc.Net.TLS.Enable, "SASL/PLAIN + ca_cert must enable TLS")
 	require.NotNil(t, sc.Net.TLS.Config)
@@ -486,16 +489,19 @@ func TestAdminOptionForAuth_SASLPlainBadCACertErrors(t *testing.T) {
 		SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p", CACert: "/no/such/ca.pem"},
 	}
 	cfg := &AdminConfig{}
-	AdminOptionForAuth(types.AuthTypeSASLPlain, amc)(cfg)
+	opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, amc, false)
+	require.NoError(t, err)
+	opt(cfg)
 	require.False(t, cfg.disableTLS)
 
 	sc := sarama.NewConfig()
-	err := configureSASLTypePlainAuthentication(sc, cfg.username, cfg.password, !cfg.disableTLS, cfg.caCertFile, cfg.insecureSkipTLSVerify)
+	err = configureSASLTypePlainAuthentication(sc, cfg.username, cfg.password, !cfg.disableTLS, cfg.caCertFile, cfg.insecureSkipTLSVerify)
 	require.Error(t, err, "an unreadable ca_cert must error, not be silently ignored")
 }
 
 func TestAdminOptionForAuth_IAM(t *testing.T) {
-	opt := AdminOptionForAuth(types.AuthTypeIAM, types.AuthMethodConfig{IAM: &types.IAMConfig{Use: true}})
+	opt, err := AdminOptionForAuthMethod(types.AuthTypeIAM, types.AuthMethodConfig{IAM: &types.IAMConfig{Use: true}}, false)
+	require.NoError(t, err)
 	cfg := &AdminConfig{}
 	opt(cfg)
 	require.Equal(t, types.AuthTypeIAM, cfg.authType)
@@ -926,4 +932,104 @@ func TestSaramaKafkaVersionParsing(t *testing.T) {
 			assert.Equal(t, tt.expectedOutput, result)
 		})
 	}
+}
+
+func TestAdminOptionForAuthMethod(t *testing.T) {
+	t.Run("IAM", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeIAM, types.AuthMethodConfig{
+			IAM: &types.IAMConfig{Use: true},
+		}, false)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.Equal(t, types.AuthTypeIAM, cfg.authType)
+	})
+
+	t.Run("SASL/SCRAM honors skipTLSVerify=false", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLSCRAM, types.AuthMethodConfig{
+			SASLScram: &types.SASLScramConfig{Use: true, Username: "u", Password: "p", Mechanism: "SHA512"},
+		}, false)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.Equal(t, types.AuthTypeSASLSCRAM, cfg.authType)
+		assert.Equal(t, "u", cfg.username)
+		assert.Equal(t, "p", cfg.password)
+		assert.Equal(t, "SHA512", cfg.saslMechanism)
+		assert.False(t, cfg.insecureSkipTLSVerify)
+	})
+
+	t.Run("SASL/SCRAM honors skipTLSVerify=true", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLSCRAM, types.AuthMethodConfig{
+			SASLScram: &types.SASLScramConfig{Use: true, Username: "u", Password: "p", Mechanism: "SHA256"},
+		}, true)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.True(t, cfg.insecureSkipTLSVerify)
+	})
+
+	t.Run("SASL/PLAIN disables TLS", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, types.AuthMethodConfig{
+			SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p"},
+		}, false)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.Equal(t, types.AuthTypeSASLPlain, cfg.authType)
+		assert.True(t, cfg.disableTLS)
+	})
+
+	t.Run("TLS", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeTLS, types.AuthMethodConfig{
+			TLS: &types.TLSConfig{Use: true, CACert: "ca.pem", ClientCert: "cert.pem", ClientKey: "key.pem"},
+		}, false)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.Equal(t, types.AuthTypeTLS, cfg.authType)
+		assert.Equal(t, "ca.pem", cfg.caCertFile)
+		assert.Equal(t, "cert.pem", cfg.clientCertFile)
+		assert.Equal(t, "key.pem", cfg.clientKeyFile)
+	})
+
+	t.Run("UnauthenticatedTLS", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeUnauthenticatedTLS, types.AuthMethodConfig{
+			UnauthenticatedTLS: &types.UnauthenticatedTLSConfig{Use: true},
+		}, false)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.Equal(t, types.AuthTypeUnauthenticatedTLS, cfg.authType)
+	})
+
+	t.Run("UnauthenticatedPlaintext", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeUnauthenticatedPlaintext, types.AuthMethodConfig{
+			UnauthenticatedPlaintext: &types.UnauthenticatedPlaintextConfig{Use: true},
+		}, false)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.Equal(t, types.AuthTypeUnauthenticatedPlaintext, cfg.authType)
+	})
+
+	t.Run("unknown auth type returns error", func(t *testing.T) {
+		_, err := AdminOptionForAuthMethod(types.AuthType("bogus"), types.AuthMethodConfig{}, false)
+		require.Error(t, err)
+	})
+
+	t.Run("SASL/SCRAM with nil config returns error", func(t *testing.T) {
+		_, err := AdminOptionForAuthMethod(types.AuthTypeSASLSCRAM, types.AuthMethodConfig{}, false)
+		require.Error(t, err)
+	})
+
+	t.Run("SASL/PLAIN with nil config returns error", func(t *testing.T) {
+		_, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, types.AuthMethodConfig{}, false)
+		require.Error(t, err)
+	})
+
+	t.Run("TLS with nil config returns error", func(t *testing.T) {
+		_, err := AdminOptionForAuthMethod(types.AuthTypeTLS, types.AuthMethodConfig{}, false)
+		require.Error(t, err)
+	})
 }

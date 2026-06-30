@@ -62,14 +62,14 @@ func (m *CutoverExecutor) Run() error {
 	if err != nil {
 		return err
 	}
-	defer sourceOffset.Close()
+	defer func() { _ = sourceOffset.Close() }()
 
 	// Create destination Kafka client (CC)
 	destinationOffset, err := m.createDestinationOffset()
 	if err != nil {
 		return err
 	}
-	defer destinationOffset.Close()
+	defer func() { _ = destinationOffset.Close() }()
 
 	httpClient := http.DefaultClient
 	if m.opts.InsecureSkipTLSVerify {
@@ -154,7 +154,7 @@ func (m *CutoverExecutor) createSourceOffset(_ context.Context) (*offset.Service
 		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
 	}
 
-	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterAuth.AuthMethod)}
+	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterAuth)}
 	if m.opts.InsecureSkipTLSVerify {
 		opts = append(opts, client.WithInsecureSkipVerify())
 	}

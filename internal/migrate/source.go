@@ -31,7 +31,11 @@ func buildKafkaSourceAdmin(conn types.KafkaSourceConn) (client.KafkaAdmin, error
 	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
 		region = conn.AuthMethod.IAM.Region
 	}
-	opts := []client.AdminOption{client.AdminOptionForAuth(authType, conn.AuthMethod)}
+	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("resolving source auth option: %w", err)
+	}
+	opts := []client.AdminOption{authOpt}
 	if conn.InsecureSkipTLSVerify {
 		opts = append(opts, client.WithInsecureSkipVerify())
 	}

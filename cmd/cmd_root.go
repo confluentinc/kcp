@@ -13,6 +13,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/cutover"
 	"github.com/confluentinc/kcp/cmd/discover"
 	"github.com/confluentinc/kcp/cmd/docs"
+	"github.com/confluentinc/kcp/cmd/healthcheck"
 	"github.com/confluentinc/kcp/cmd/migrate"
 	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
@@ -66,11 +67,12 @@ var RootCmd = &cobra.Command{
 		// --- End logging setup ---
 
 		if build_info.IsDev() {
-			fmt.Printf("\n%s\n%s\n%s\n%s\n\n",
-				color.RedString("┌─────────────────────────────────────────────────────────────────────────┐"),
-				color.RedString("│ ⚠️  WARNING: This is a development build                                │"),
-				color.RedString("│ Official releases: https://github.com/confluentinc/kcp/releases         │"),
-				color.RedString("└─────────────────────────────────────────────────────────────────────────┘"))
+			fmt.Printf("\n%s\n%s\n%s\n%s\n%s\n\n",
+				color.RedString("┌─────────────────────────────────────────────────────────────────────────────────────────────┐"),
+				color.RedString("│ ⚠️  WARNING: This is a development build — not a defined release.                            │"),
+				color.RedString("│ This build and any state files it generates should NOT be used for production or live use.  │"),
+				color.RedString("│ Install a released binary: https://github.com/confluentinc/kcp/releases                     │"),
+				color.RedString("└─────────────────────────────────────────────────────────────────────────────────────────────┘"))
 		}
 
 		fmt.Printf("%s %s %s %s\n",
@@ -97,6 +99,7 @@ func init() {
 		report.NewReportCmd(),
 		ui.NewUICmd(),
 		discover.NewDiscoverCmd(),
+		healthcheck.NewHealthcheckCmd(),
 		migrate.NewMigrateCmd(),
 		cutover.NewCutoverCmd(),
 		migration.NewMigrationCmd(), // hidden deprecation stub → points to `kcp cutover`

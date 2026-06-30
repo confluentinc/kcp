@@ -180,24 +180,26 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	}, nil
 }
 
-// buildKafkaAdmin builds a Kafka admin for an OSK/Apache scan source via the
-// shared client.AdminOptionForAuth mapper. InsecureSkipTLSVerify is applied last
-// so it overrides the per-auth default (test envs with self-signed certs). The
-// encryption-in-transit arg is inert in NewKafkaAdmin; ClientBrokerTls is passed
-// for parity.
-func buildKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
-	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterCreds.AuthMethod)}
+// createKafkaAdmin creates a Kafka Admin client for the OSK/Apache Kafka cluster
+// via the shared client.AdminOptionForAuthMethod mapper. clusterCreds.InsecureSkipTLSVerify
+// is passed to the mapper (SASL/SCRAM) and ALSO appended as a global override (last
+// option wins) so it covers every TLS path — mTLS, SASL_SSL, unauthenticated-TLS —
+// for test envs with self-signed certs and no CA provided. region/kafkaVersion are
+// inert for OSK; ClientBrokerTls is passed for parity (TLS is driven by the auth option).
+func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterCreds.AuthMethod, clusterCreds.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option for Apache Kafka: %w", err)
+	}
+
+	opts := []client.AdminOption{authOpt}
 	if clusterCreds.InsecureSkipTLSVerify {
 		opts = append(opts, client.WithInsecureSkipVerify())
 	}
-	admin, err := client.NewKafkaAdmin(clusterCreds.BootstrapServers, kafkatypes.ClientBrokerTls, "", "3.6.0", opts...)
+
+	kafkaAdmin, err := client.NewKafkaAdmin(clusterCreds.BootstrapServers, kafkatypes.ClientBrokerTls, "", "3.6.0", opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin client: %w", err)
 	}
-	return admin, nil
-}
-
-// createKafkaAdmin is the scan path's entry point; it delegates to buildKafkaAdmin.
-func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
-	return buildKafkaAdmin(clusterCreds, authType)
+	return kafkaAdmin, nil
 }

@@ -164,7 +164,13 @@ func (s *MSKSource) findClusterInState(state *types.State, region, clusterArn st
 }
 
 func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, clusterAuth types.ClusterAuth) (*client.KafkaAdmin, error) {
-	kafkaAdmin, err := client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.AdminOptionForAuth(authType, clusterAuth.AuthMethod))
+	// MSK uses AWS-managed certificates; never skip TLS verification.
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option: %w", err)
+	}
+
+	kafkaAdmin, err := client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, authOpt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
 	}

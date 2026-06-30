@@ -248,10 +248,10 @@ func (m model) View() string {
 	b.WriteString("  ")
 	if m.err != nil {
 		b.WriteString(indicatorError)
-		b.WriteString(fmt.Sprintf(" Refreshing every %ds (error, retrying...)", m.pollSeconds))
+		fmt.Fprintf(&b, " Refreshing every %ds (error, retrying...)", m.pollSeconds)
 	} else {
 		b.WriteString(indicatorRunning)
-		b.WriteString(fmt.Sprintf(" Refreshing every %ds", m.pollSeconds))
+		fmt.Fprintf(&b, " Refreshing every %ds", m.pollSeconds)
 	}
 
 	if !m.lastUpdated.IsZero() {

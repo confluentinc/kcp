@@ -2,7 +2,6 @@ package types
 
 import (
 	"fmt"
-	"os"
 
 	"github.com/goccy/go-yaml"
 )
@@ -27,21 +26,7 @@ func NewCredentialsFrom(fromCredentials *Credentials) *Credentials {
 }
 
 func NewCredentialsFromFile(credentialsYamlPath string) (*Credentials, []error) {
-	data, err := os.ReadFile(credentialsYamlPath)
-	if err != nil {
-		return nil, []error{fmt.Errorf("failed to read creds.yaml file: %w", err)}
-	}
-
-	var credsFile Credentials
-	if err := yaml.Unmarshal(data, &credsFile); err != nil {
-		return nil, []error{fmt.Errorf("failed to unmarshal YAML: %w", err)}
-	}
-
-	if valid, errs := credsFile.Validate(); !valid {
-		return nil, errs
-	}
-
-	return &credsFile, nil
+	return loadCredentialsFile[Credentials](credentialsYamlPath)
 }
 
 // UpsertTargetedClusters creates or replaces only the clusters present in newRegion.Clusters,
@@ -75,14 +60,7 @@ func (c *Credentials) UpsertRegion(newRegion RegionAuth) {
 }
 
 func (c *Credentials) WriteToFile(filePath string) error {
-	yamlData, err := c.ToYaml()
-	if err != nil {
-		return fmt.Errorf("failed to marshal YAML: %w", err)
-	}
-	if err := os.WriteFile(filePath, yamlData, 0600); err != nil {
-		return fmt.Errorf("failed to write YAML file: %w", err)
-	}
-	return nil
+	return writeYAMLFile(filePath, c)
 }
 
 func (c *Credentials) ToYaml() ([]byte, error) {
@@ -162,10 +140,13 @@ type ClusterAuth struct {
 }
 
 func (ce ClusterAuth) GetSelectedAuthType() (AuthType, error) {
-	return ce.AuthMethod.GetSelectedAuthType()
+	return ce.AuthMethod.SelectedAuthType(true)
 }
 
-func (ce ClusterAuth) GetAuthMethods() []AuthType { return ce.AuthMethod.GetAuthMethods() }
+// Gets a list of the authentication method(s) selected in the `creds.yaml` file generated during discovery.
+func (ce ClusterAuth) GetAuthMethods() []AuthType {
+	return ce.AuthMethod.EnabledAuthMethods(true)
+}
 
 type AuthMethodConfig struct {
 	IAM                      *IAMConfig                      `yaml:"iam,omitempty"`
@@ -176,35 +157,34 @@ type AuthMethodConfig struct {
 	UnauthenticatedPlaintext *UnauthenticatedPlaintextConfig `yaml:"unauthenticated_plaintext,omitempty"`
 }
 
-// GetAuthMethods returns the enabled auth methods in canonical order. This is the
-// single source of truth; OSKClusterAuth, ClusterAuth, and KafkaSourceConn all
-// delegate to it.
-func (amc AuthMethodConfig) GetAuthMethods() []AuthType {
-	enabled := []AuthType{}
+// EnabledAuthMethods returns the enabled methods in canonical order.
+// includeIAM is false for sources that don't support IAM (Apache Kafka / OSK).
+func (amc AuthMethodConfig) EnabledAuthMethods(includeIAM bool) []AuthType {
+	methods := []AuthType{}
 	if amc.UnauthenticatedPlaintext != nil && amc.UnauthenticatedPlaintext.Use {
-		enabled = append(enabled, AuthTypeUnauthenticatedPlaintext)
+		methods = append(methods, AuthTypeUnauthenticatedPlaintext)
 	}
 	if amc.UnauthenticatedTLS != nil && amc.UnauthenticatedTLS.Use {
-		enabled = append(enabled, AuthTypeUnauthenticatedTLS)
+		methods = append(methods, AuthTypeUnauthenticatedTLS)
 	}
-	if amc.IAM != nil && amc.IAM.Use {
-		enabled = append(enabled, AuthTypeIAM)
+	if includeIAM && amc.IAM != nil && amc.IAM.Use {
+		methods = append(methods, AuthTypeIAM)
 	}
 	if amc.SASLScram != nil && amc.SASLScram.Use {
-		enabled = append(enabled, AuthTypeSASLSCRAM)
+		methods = append(methods, AuthTypeSASLSCRAM)
 	}
 	if amc.SASLPlain != nil && amc.SASLPlain.Use {
-		enabled = append(enabled, AuthTypeSASLPlain)
+		methods = append(methods, AuthTypeSASLPlain)
 	}
 	if amc.TLS != nil && amc.TLS.Use {
-		enabled = append(enabled, AuthTypeTLS)
+		methods = append(methods, AuthTypeTLS)
 	}
-	return enabled
+	return methods
 }
 
-// GetSelectedAuthType returns the first enabled auth method, or an error if none.
-func (amc AuthMethodConfig) GetSelectedAuthType() (AuthType, error) {
-	enabled := amc.GetAuthMethods()
+// SelectedAuthType returns the single enabled method, or an error if none.
+func (amc AuthMethodConfig) SelectedAuthType(includeIAM bool) (AuthType, error) {
+	enabled := amc.EnabledAuthMethods(includeIAM)
 	if len(enabled) == 0 {
 		return "", fmt.Errorf("no authentication method enabled for cluster")
 	}

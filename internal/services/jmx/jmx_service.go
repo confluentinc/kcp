@@ -98,17 +98,19 @@ type jmxSnapshot struct {
 
 // JMXService collects JMX metrics from Kafka brokers via Jolokia
 type JMXService struct {
-	clients []*client.JolokiaClient
-	metrics MetricDefinitions
+	clients    []*client.JolokiaClient
+	metrics    MetricDefinitions
+	entityName string // "broker" or "worker" — used in query info descriptions
 }
 
-// NewJMXService creates a new JMX service with Jolokia clients for each broker endpoint
-func NewJMXService(endpoints []string, defs MetricDefinitions, opts ...client.JolokiaOption) *JMXService {
+// NewJMXService creates a new JMX service with Jolokia clients for each endpoint.
+// entityName describes the endpoint type for query info descriptions (e.g. "broker" or "worker").
+func NewJMXService(endpoints []string, defs MetricDefinitions, entityName string, opts ...client.JolokiaOption) *JMXService {
 	clients := make([]*client.JolokiaClient, len(endpoints))
 	for i, endpoint := range endpoints {
 		clients[i] = client.NewJolokiaClient(endpoint, opts...)
 	}
-	return &JMXService{clients: clients, metrics: defs}
+	return &JMXService{clients: clients, metrics: defs, entityName: entityName}
 }
 
 // collectRawSample reads raw counter and gauge values from all brokers.
@@ -251,12 +253,12 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 		select {
 		case <-ctx.Done():
 			result := toProcessedClusterMetrics(snapshots, startTime, duration, interval)
-			result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval, s.metrics)
+			result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval, s.metrics, s.entityName)
 			return result, ctx.Err()
 		case <-ticker.C:
 			if time.Now().After(deadline) {
 				result := toProcessedClusterMetrics(snapshots, startTime, duration, interval)
-				result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval, s.metrics)
+				result.QueryInfo = buildJMXQueryInfo(brokerURLs, duration, interval, s.metrics, s.entityName)
 				return result, nil
 			}
 
@@ -341,12 +343,13 @@ func calculateAggregates(snapshots []jmxSnapshot) map[string]types.MetricAggrega
 
 // buildJMXQueryInfo generates MetricQueryInfo entries for all JMX metrics,
 // including the MBean path and a curl command to reproduce the query.
-func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration, defs MetricDefinitions) []types.MetricQueryInfo {
-	if len(brokerURLs) == 0 {
+// entityName describes what the endpoints represent (e.g. "broker" or "worker").
+func buildJMXQueryInfo(endpointURLs []string, duration, interval time.Duration, defs MetricDefinitions, entityName string) []types.MetricQueryInfo {
+	if len(endpointURLs) == 0 {
 		return nil
 	}
-	brokerCount := len(brokerURLs)
-	exampleURL := brokerURLs[0]
+	endpointCount := len(endpointURLs)
+	exampleURL := endpointURLs[0]
 	durationStr := types.FormatQueryDuration(duration)
 	periodSec := int32(interval.Seconds())
 
@@ -356,31 +359,39 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration, de
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
 			SourceType:    types.MetricBackendJolokia,
-			Statistic:     "Rate (delta/sec, summed across brokers)",
+			Statistic:     fmt.Sprintf("Rate (delta/sec, summed across %ss)", entityName),
 			Period:        periodSec,
 			QueryDuration: durationStr,
 			MBeanPath:     mb.MBean,
 			JolokiaURL:    exampleURL,
 			CurlCommand:   fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
 			AggregationNote: fmt.Sprintf(
-				"Rate computed from the monotonic Count attribute of %s. Values are summed across all %d broker(s), then the rate is derived from the delta between consecutive polls. Add -u user:pass to the curl command if authentication is configured.",
-				mb.MBean, brokerCount),
+				"Rate computed from the monotonic Count attribute of %s. Values are summed across all %d %s(s), then the rate is derived from the delta between consecutive polls. Add -u user:pass to the curl command if authentication is configured.",
+				mb.MBean, endpointCount, entityName),
 		})
 	}
 
 	for _, mb := range defs.Gauges {
+		statistic := fmt.Sprintf("Sum across %ss", entityName)
+		note := fmt.Sprintf(
+			"Gauge value read from the %s attribute of %s. Summed across all %d %s(s). Add -u user:pass to the curl command if authentication is configured.",
+			mb.ValueKey, mb.MBean, endpointCount, entityName)
+		if endpointCount == 1 {
+			statistic = fmt.Sprintf("Point-in-time value (per %s)", entityName)
+			note = fmt.Sprintf(
+				"Gauge value read from the %s attribute of %s on each %s. Add -u user:pass to the curl command if authentication is configured.",
+				mb.ValueKey, mb.MBean, entityName)
+		}
 		infos = append(infos, types.MetricQueryInfo{
-			MetricName:    mb.Name,
-			SourceType:    types.MetricBackendJolokia,
-			Statistic:     "Sum across brokers",
-			Period:        periodSec,
-			QueryDuration: durationStr,
-			MBeanPath:     mb.MBean,
-			JolokiaURL:    exampleURL,
-			CurlCommand:   fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
-			AggregationNote: fmt.Sprintf(
-				"Gauge value read from the %s attribute of %s. Summed across all %d broker(s). Add -u user:pass to the curl command if authentication is configured.",
-				mb.ValueKey, mb.MBean, brokerCount),
+			MetricName:      mb.Name,
+			SourceType:      types.MetricBackendJolokia,
+			Statistic:       statistic,
+			Period:          periodSec,
+			QueryDuration:   durationStr,
+			MBeanPath:       mb.MBean,
+			JolokiaURL:      exampleURL,
+			CurlCommand:     fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
+			AggregationNote: note,
 		})
 	}
 
@@ -388,31 +399,33 @@ func buildJMXQueryInfo(brokerURLs []string, duration, interval time.Duration, de
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:    mb.Name,
 			SourceType:    types.MetricBackendJolokia,
-			Statistic:     "Controller value (single broker)",
+			Statistic:     fmt.Sprintf("Controller value (single %s)", entityName),
 			Period:        periodSec,
 			QueryDuration: durationStr,
 			MBeanPath:     mb.MBean,
 			JolokiaURL:    exampleURL,
 			CurlCommand:   fmt.Sprintf("curl '%s/read/%s'", exampleURL, mb.MBean),
 			AggregationNote: fmt.Sprintf(
-				"Controller-only MBean %s; queried from the active controller broker. This MBean must be exposed by the Jolokia agent. Add -u user:pass to the curl command if authentication is configured.",
-				mb.MBean),
+				"Controller-only MBean %s; queried from the active controller %s. This MBean must be exposed by the Jolokia agent. Add -u user:pass to the curl command if authentication is configured.",
+				mb.MBean, entityName),
 		})
 	}
 
 	for _, mb := range defs.Aggregates {
+		statistic := fmt.Sprintf("Sum of %s across matching instances", mb.Attribute)
+		note := fmt.Sprintf(
+			"Wildcard MBean pattern %s; the %s attribute is summed across all matching MBeans on all %d %s(s). Add -u user:pass to the curl command if authentication is configured.",
+			mb.MBean, mb.Attribute, endpointCount, entityName)
 		infos = append(infos, types.MetricQueryInfo{
-			MetricName:    mb.Name,
-			SourceType:    types.MetricBackendJolokia,
-			Statistic:     "Sum across brokers",
-			Period:        periodSec,
-			QueryDuration: durationStr,
-			MBeanPath:     mb.MBean,
-			JolokiaURL:    exampleURL,
-			CurlCommand:   fmt.Sprintf("curl '%s/read/%s/%s'", exampleURL, mb.MBean, mb.Attribute),
-			AggregationNote: fmt.Sprintf(
-				"Wildcard MBean pattern %s; the %s attribute is summed across all matching MBeans on all %d broker(s). Add -u user:pass to the curl command if authentication is configured.",
-				mb.MBean, mb.Attribute, brokerCount),
+			MetricName:      mb.Name,
+			SourceType:      types.MetricBackendJolokia,
+			Statistic:       statistic,
+			Period:          periodSec,
+			QueryDuration:   durationStr,
+			MBeanPath:       mb.MBean,
+			JolokiaURL:      exampleURL,
+			CurlCommand:     fmt.Sprintf("curl '%s/read/%s/%s'", exampleURL, mb.MBean, mb.Attribute),
+			AggregationNote: note,
 		})
 	}
 

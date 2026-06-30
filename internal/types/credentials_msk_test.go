@@ -13,11 +13,11 @@ func TestIAMConfig_CarriesRegion(t *testing.T) {
 
 func TestAuthMethodConfig_Selection(t *testing.T) {
 	amc := AuthMethodConfig{SASLScram: &SASLScramConfig{Use: true}}
-	require.Equal(t, []AuthType{AuthTypeSASLSCRAM}, amc.GetAuthMethods())
-	got, err := amc.GetSelectedAuthType()
+	require.Equal(t, []AuthType{AuthTypeSASLSCRAM}, amc.EnabledAuthMethods(true))
+	got, err := amc.SelectedAuthType(true)
 	require.NoError(t, err)
 	require.Equal(t, AuthTypeSASLSCRAM, got)
 
-	_, err = AuthMethodConfig{}.GetSelectedAuthType()
+	_, err = AuthMethodConfig{}.SelectedAuthType(true)
 	require.Error(t, err)
 }

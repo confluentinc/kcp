@@ -219,9 +219,11 @@ type KafkaSourceConn struct {
 	InsecureSkipTLSVerify bool
 }
 
-func (c KafkaSourceConn) GetAuthMethods() []AuthType { return c.AuthMethod.GetAuthMethods() }
+// IAM is included (includeIAM=true): a migrate source may be MSK, which carries
+// IAM on AuthMethod.IAM (region on AuthMethod.IAM.Region).
+func (c KafkaSourceConn) GetAuthMethods() []AuthType { return c.AuthMethod.EnabledAuthMethods(true) }
 func (c KafkaSourceConn) GetSelectedAuthType() (AuthType, error) {
-	return c.AuthMethod.GetSelectedAuthType()
+	return c.AuthMethod.SelectedAuthType(true)
 }
 
 // MigrateConn combines a manifest bootstrap address with auth-only creds into the

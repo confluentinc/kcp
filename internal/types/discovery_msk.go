@@ -28,9 +28,45 @@ type DiscoveredRegion struct {
 // mergeClusterPreservingAdminInfo returns newCluster with its KafkaAdminClientInformation
 // merged from existing (new discoveries take precedence; old scan-acquired values such as
 // ACLs / self-managed connectors are preserved when the new value is empty/nil).
+//
+// MSK connectors live on AWSClientInformation, which MergeFrom does not reach, so they are
+// merged explicitly here: a denied or empty ListConnectors re-run must not wipe connectors
+// already in state. Only Connectors is merge-preserved; every other AWSClientInformation
+// field keeps its wholesale-replace semantics.
 func mergeClusterPreservingAdminInfo(existing, newCluster DiscoveredCluster) DiscoveredCluster {
 	newCluster.KafkaAdminClientInformation.MergeFrom(existing.KafkaAdminClientInformation)
+	newCluster.AWSClientInformation.Connectors = mergeConnectors(
+		newCluster.AWSClientInformation.Connectors,
+		existing.AWSClientInformation.Connectors,
+	)
 	return newCluster
+}
+
+// mergeConnectors merges MSK connectors, with new taking precedence for duplicates
+// (by ConnectorName). Mirrors mergeSelfManagedConnectors: a nil/empty new set preserves
+// the old set (so a denied/empty re-run does not wipe prior connectors), and a nil/empty
+// old set yields the new set.
+func mergeConnectors(newConns, oldConns []ConnectorSummary) []ConnectorSummary {
+	if len(newConns) == 0 {
+		return oldConns
+	}
+	if len(oldConns) == 0 {
+		return newConns
+	}
+
+	connectorsByName := make(map[string]ConnectorSummary, len(oldConns)+len(newConns))
+	for _, c := range oldConns {
+		connectorsByName[c.ConnectorName] = c
+	}
+	for _, c := range newConns {
+		connectorsByName[c.ConnectorName] = c // new takes precedence
+	}
+
+	merged := make([]ConnectorSummary, 0, len(connectorsByName))
+	for _, c := range connectorsByName {
+		merged = append(merged, c)
+	}
+	return merged
 }
 
 // RefreshClusters replaces the cluster list but merges KafkaAdminClientInformation from existing clusters

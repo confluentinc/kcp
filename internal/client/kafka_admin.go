@@ -104,35 +104,60 @@ func WithInsecureSkipVerify() AdminOption {
 	}
 }
 
-// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
-// It keys off the shared AuthMethodConfig so the scan paths (MSK + OSK) and the
-// migrate path all build admin options from one place. IAM lives here, in the
-// client package — never in the osk package (Apache Kafka has no IAM).
-func AdminOptionForAuth(authType types.AuthType, amc types.AuthMethodConfig) AdminOption {
+// AdminOptionForAuthMethod maps an auth type + method config to the corresponding
+// AdminOption. skipTLSVerify applies to SASL/SCRAM (MSK passes false — AWS-managed
+// certs; Apache Kafka passes its InsecureSkipTLSVerify). A supplied ca_cert is
+// plumbed through so a custom CA is trusted on the source connection itself
+// (SASL/SCRAM, SASL/PLAIN-over-TLS, unauthenticated-TLS, mTLS) — not only in the
+// cluster-link truststore. IAM lives here, in the client package — never in the
+// osk package (Apache Kafka has no IAM).
+func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConfig, skipTLSVerify bool) (AdminOption, error) {
 	switch authType {
 	case types.AuthTypeIAM:
-		return WithIAMAuth()
+		return WithIAMAuth(), nil
 	case types.AuthTypeSASLSCRAM:
-		return WithSASLSCRAMAuth(amc.SASLScram.Username, amc.SASLScram.Password, amc.SASLScram.Mechanism, amc.SASLScram.CACert, false)
-	case types.AuthTypeUnauthenticatedTLS:
-		return WithUnauthenticatedTlsAuth(amc.UnauthenticatedTLS.CACert)
-	case types.AuthTypeUnauthenticatedPlaintext:
-		return WithUnauthenticatedPlaintextAuth()
-	case types.AuthTypeTLS:
-		return WithTLSAuth(amc.TLS.CACert, amc.TLS.ClientCert, amc.TLS.ClientKey)
+		if auth.SASLScram == nil {
+			return nil, fmt.Errorf("auth type %q selected but sasl_scram config is nil", authType)
+		}
+		return WithSASLSCRAMAuth(auth.SASLScram.Username, auth.SASLScram.Password, auth.SASLScram.Mechanism, auth.SASLScram.CACert, skipTLSVerify), nil
 	case types.AuthTypeSASLPlain:
+		if auth.SASLPlain == nil {
+			return nil, fmt.Errorf("auth type %q selected but sasl_plain config is nil", authType)
+		}
 		// SASL/PLAIN over TLS (SASL_SSL) when the credential supplies a ca_cert;
 		// otherwise SASL_PLAINTEXT. The presence of ca_cert is the model's signal
 		// that the listener is TLS-wrapped — without it we'd silently transmit the
 		// password in cleartext and ignore the CA the user provided.
-		if amc.SASLPlain.CACert != "" {
-			return WithSASLPlainAuth(amc.SASLPlain.Username, amc.SASLPlain.Password, amc.SASLPlain.CACert)
+		if auth.SASLPlain.CACert != "" {
+			return WithSASLPlainAuth(auth.SASLPlain.Username, auth.SASLPlain.Password, auth.SASLPlain.CACert), nil
 		}
-		return WithSASLPlainAuthNoTLS(amc.SASLPlain.Username, amc.SASLPlain.Password, "")
+		return WithSASLPlainAuthNoTLS(auth.SASLPlain.Username, auth.SASLPlain.Password, ""), nil
+	case types.AuthTypeUnauthenticatedTLS:
+		if auth.UnauthenticatedTLS == nil {
+			return nil, fmt.Errorf("auth type %q selected but unauthenticated_tls config is nil", authType)
+		}
+		return WithUnauthenticatedTlsAuth(auth.UnauthenticatedTLS.CACert), nil
+	case types.AuthTypeUnauthenticatedPlaintext:
+		return WithUnauthenticatedPlaintextAuth(), nil
+	case types.AuthTypeTLS:
+		if auth.TLS == nil {
+			return nil, fmt.Errorf("auth type %q selected but tls config is nil", authType)
+		}
+		return WithTLSAuth(auth.TLS.CACert, auth.TLS.ClientCert, auth.TLS.ClientKey), nil
 	default:
-		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
+		return nil, fmt.Errorf("auth type %q not supported", authType)
+	}
+}
+
+// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
+// Retained for callers keyed to types.ClusterAuth; delegates to AdminOptionForAuthMethod.
+func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+	opt, err := AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
+	if err != nil {
+		slog.Warn("could not resolve auth option, defaulting to IAM", "authType", authType, "error", err)
 		return WithIAMAuth()
 	}
+	return opt
 }
 
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {

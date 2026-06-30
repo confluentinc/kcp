@@ -121,6 +121,11 @@ export const MSKClusterReport = () => {
                 selfManagedConnectors={
                   cluster.kafka_admin_client_information?.self_managed_connectors?.connectors || []
                 }
+                connectMetrics={
+                  cluster.kafka_admin_client_information?.self_managed_connectors?.metrics
+                }
+                clusterId={getClusterArn(cluster) || cluster.arn || undefined}
+                sourceType="msk"
               />
             </div>
           )}

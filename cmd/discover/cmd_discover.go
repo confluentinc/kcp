@@ -71,6 +71,13 @@ func discoverIAMAnnotation() string {
 				Sid:     "MSKNetworkingScanPermission",
 				Actions: []string{"ec2:DescribeSubnets"},
 			},
+			{
+				Sid: "MSKConnectScanPermissions",
+				Actions: []string{
+					"kafkaconnect:ListConnectors",
+					"kafkaconnect:DescribeConnector",
+				},
+			},
 		},
 	)
 }
