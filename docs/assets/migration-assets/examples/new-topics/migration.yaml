@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
+#
+# Example: mode: new — reproduce source topics as PLAIN topics on the target.
+# No cluster link is involved (topics are created directly via the Admin API),
+# so there is no spec.clusterLink block.
+#
+# Credential files are referenced from the shared catalog (../../credentials/).
+# Copy the ones you need next to your real manifest and point the slots at them.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: new-topics-example
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers: ["broker1:9093", "broker2:9093"]
+    credentials: ../../credentials/kafka-sasl-scram.yaml   # Kafka creds (reads the source)
+
+  target:
+    type: confluent-cloud
+    clusterId: lkc-xxxxx
+    credentials: ../../credentials/rest-api-key.yaml       # REST creds (Admin API)
+    kafka:
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+
+  topics:
+    mode: new
+    include: ["orders.*", "payments.*"]   # globs (path.Match) over the live source topic list
+    exclude: ["*.tmp"]                     # optional; internal topics ("_*") are always excluded

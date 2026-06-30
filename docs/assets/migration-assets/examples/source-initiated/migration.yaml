@@ -1,0 +1,43 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
+#
+# Example: mode: mirror, source-initiated link — private Confluent Platform → Confluent Cloud.
+# Use this when the destination cannot reach the source inbound (e.g. a private/
+# firewalled CP cluster). The SOURCE initiates the link outbound to the destination.
+# Source-initiated mode requires spec.source.type: confluent-platform (or confluent-cloud).
+#
+# Connections (note the slots differ from destination mode):
+#   - source read           : SCRAM   (Kafka — reads the source cluster id)
+#   - sourceRest            : Basic   (REST  — KCP → CP MDS, creates the outbound link)
+#   - destination           : SCRAM   (Kafka — the source-side link → Confluent Cloud Kafka)
+#   - target Admin          : API key (REST  — Confluent Cloud)
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: source-initiated-example
+spec:
+  source:
+    type: confluent-platform
+    bootstrapServers: ["cp-broker1:9093", "cp-broker2:9093"]
+    credentials: ../../credentials/kafka-sasl-scram.yaml   # Kafka creds (reads the source)
+
+  target:
+    type: confluent-cloud
+    clusterId: lkc-xxxxx
+    credentials: ../../credentials/rest-api-key.yaml       # REST creds (target Admin API)
+    kafka:
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+
+  clusterLink:
+    name: cp-to-cc
+    mode: source
+    sourceRest:                                            # KCP → source REST (creates the outbound link)
+      endpoint: https://cp-mds:8090
+      credentials: ../../credentials/rest-basic.yaml       # REST creds (CP MDS)
+    destination:                                           # the source-side link → destination (CC) Kafka
+      bootstrapServers: ["pkc-xxxxx.us-east-1.aws.confluent.cloud:9092"]
+      credentials: ../../credentials/kafka-sasl-scram.yaml # Kafka creds (link dials Confluent Cloud)
+    prefix: "cp."                                          # optional; mirror names become cp.<source>
+
+  topics:
+    mode: mirror
+    include: ["orders.*", "payments.*"]

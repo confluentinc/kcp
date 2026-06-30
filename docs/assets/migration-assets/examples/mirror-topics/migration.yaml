@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
+#
+# Example: mode: mirror, destination-initiated link — MSK → Confluent Cloud.
+# The destination (Confluent Cloud) dials the source (MSK) to create the link,
+# so the source must be reachable from the destination. Mirror topics are
+# created read-only on the link, one per selected source topic.
+#
+# Three different credential files are used, one per connection:
+#   - source read   : IAM   (MSK accepts IAM for the cluster-id read)
+#   - link → source : SCRAM (Confluent Cloud cannot present IAM to MSK)
+#   - target Admin  : API key (Confluent Cloud)
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: mirror-topics-example
+spec:
+  source:
+    type: msk
+    bootstrapServers: ["b-1.msk.amazonaws.com:9098", "b-2.msk.amazonaws.com:9098"]
+    credentials: ../../credentials/kafka-iam.yaml          # Kafka creds (reads the source)
+
+  target:
+    type: confluent-cloud
+    clusterId: lkc-xxxxx
+    credentials: ../../credentials/rest-api-key.yaml       # REST creds (Admin API)
+    kafka:
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+
+  clusterLink:
+    name: msk-to-cc
+    mode: destination                                      # default; may be omitted
+    source:                                                # the link → source (MSK) connection
+      bootstrapServers: ["b-1.msk.amazonaws.com:9096", "b-2.msk.amazonaws.com:9096"]
+      credentials: ../../credentials/kafka-sasl-scram.yaml # Kafka creds (link dials MSK via SCRAM)
+    prefix: "msk."                                         # optional; mirror names become msk.<source> (immutable once created)
+    consumerOffsetSync:
+      enable: true                                         # migrate consumer offsets (default)
+
+  topics:
+    mode: mirror
+    include: ["*"]
+    exclude: ["*.internal"]                                # optional; internal topics ("_*") are always excluded
