@@ -33,6 +33,9 @@ crash.*.log
 *.tfvars
 *.tfvars.json
 
+# State-file backups written before a migrating write (e.g. kcp-state.json.<ts>.bak)
+*.bak
+
 # keep generated json files out of commits
 *.json
 # But allow test fixtures
