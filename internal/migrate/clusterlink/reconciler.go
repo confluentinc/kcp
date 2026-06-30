@@ -335,11 +335,16 @@ func (r *Reconciler) configDrift(ctx context.Context, tgt target, name string) s
 // is broken — NOT link_state: link_state has transient/healthy values (a link
 // passes through pre-ACTIVE states before settling, and PAUSED is a deliberate
 // cutover step), so flagging "state != ACTIVE" would fabricate drift on healthy
-// links. A non-empty link_error means the broker reports the link as broken
-// (e.g. revoked/invalid source auth, unreachable source) — report-only drift
-// (§8.6), since a re-apply otherwise reports a green link while no data flows.
+// links.
+//
+// link_error is the Kafka ClusterLinkError enum rendered as a string. Its
+// zero/healthy value is "NO_ERROR" (cp-server 8.x emits exactly that for a
+// healthy link); some surfaces omit the field entirely (""). BOTH mean healthy.
+// Any other value (e.g. AUTHENTICATION_ERROR, SOURCE_UNREACHABLE) means the
+// broker reports the link as broken — report-only drift (§8.6), since a re-apply
+// otherwise shows a green link while no data flows.
 func linkHealthy(l *svclink.ClusterLink) bool {
-	return l.LinkError == ""
+	return l.LinkError == "" || l.LinkError == "NO_ERROR"
 }
 
 // unhealthyLinkDetail describes a link that exists but reports a broker error.

@@ -107,6 +107,18 @@ func TestPlan_ExistsAndActive_IsPresent(t *testing.T) {
 	require.Equal(t, reconcile.ActionPresent, plan.Changes()[0].Action)
 }
 
+// cp-server 8.x reports a healthy link with link_error="NO_ERROR" (the Kafka
+// ClusterLinkError zero-value), not an empty string. That sentinel must be
+// treated as healthy → Present, not drift. Regression: a literal LinkError==""
+// check flagged every healthy cp-server link as drift.
+func TestPlan_ExistsActiveNoErrorSentinel_IsPresent(t *testing.T) {
+	r := newReconciler(fakeSource{id: "src-1"}, &fakeTarget{clusterID: "dest-1",
+		existing: &svclink.ClusterLink{LinkName: "src-to-dest", SourceClusterID: "src-1", LinkState: "ACTIVE", LinkError: "NO_ERROR"}})
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, reconcile.ActionPresent, plan.Changes()[0].Action)
+}
+
 func TestApply_CreatesWithDerivedRequest(t *testing.T) {
 	tgt := &fakeTarget{clusterID: "dest-1", existing: nil}
 	r := newReconciler(fakeSource{id: "src-1"}, tgt)
