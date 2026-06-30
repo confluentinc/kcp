@@ -132,6 +132,12 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		case manifest.ClusterLinkModeDestination:
 			// Destination-initiated: the link→source connection auth comes from
 			// clusterLink.source (D2), NOT spec.source.
+			// Defensive: Validate() (run above) already requires clusterLink.source
+			// in destination mode, so this can't fire today — but guard the deref so
+			// a future validation change can't turn it into a nil panic.
+			if cl.Source == nil {
+				return fmt.Errorf("clusterLink.source is required for mode %q", manifest.ClusterLinkModeDestination)
+			}
 			linkCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.source", cl.Source.BootstrapServers, cl.Source.Credentials)
 			if err != nil {
 				return err
@@ -171,6 +177,11 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 			}
 			srcLinkTgt = targets.NewLinkEndpoint(cl.SourceRest.Endpoint, srcRestCreds, srcRestClient)
 
+			// Defensive: Validate() already requires clusterLink.destination in
+			// source mode; guard the deref against a future validation change.
+			if cl.Destination == nil {
+				return fmt.Errorf("clusterLink.destination is required for mode %q", manifest.ClusterLinkModeSource)
+			}
 			destCluster, err := loadMigrateCluster(cmd, "spec.clusterLink.destination", cl.Destination.BootstrapServers, cl.Destination.Credentials)
 			if err != nil {
 				return err
