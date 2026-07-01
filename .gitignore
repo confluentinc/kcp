@@ -91,3 +91,4 @@ docs/assets/command-reference/
 
 # integration-tests/run-all.sh scratch output
 integration-tests/.run-all-logs/
+integration-tests/.run-all.lock/

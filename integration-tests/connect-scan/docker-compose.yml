@@ -1,0 +1,79 @@
+# Minimal environment for the self-managed-connectors scan suite: a single
+# plaintext KRaft Kafka broker plus a Kafka Connect worker (with a Jolokia agent
+# for Connect metrics). This is intentionally NOT the osk-scan auth matrix — the
+# connector scanner only needs one broker + a Connect REST endpoint.
+services:
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: connect-kafka
+    container_name: kcp-test-connect-kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: 'broker,controller'
+      KAFKA_CONTROLLER_QUORUM_VOTERS: '1@connect-kafka:29093'
+      KAFKA_LISTENERS: 'PLAINTEXT://0.0.0.0:29092,CONTROLLER://connect-kafka:29093,PLAINTEXT_HOST://0.0.0.0:9092'
+      KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://connect-kafka:29092,PLAINTEXT_HOST://localhost:9092'
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
+      KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
+      KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      # Must be a valid 22-char base64-encoded UUID for KRaft storage formatting.
+      CLUSTER_ID: 'CoNnEcTsCaNcLuStErId01'
+
+  kafka-connect:
+    image: confluentinc/cp-kafka-connect:7.6.0
+    hostname: connect-worker
+    container_name: kcp-test-connect-worker
+    depends_on:
+      - kafka
+    # Host ports deliberately off the defaults (8083/8781) so this suite never
+    # collides with a real Kafka Connect / Jolokia the developer may be running.
+    ports:
+      - "18083:8083"
+      - "18781:8781"
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'connect-kafka:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: 'connect-cluster'
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Waiting for Kafka to be ready..."
+        cub kafka-ready -b connect-kafka:29092 1 120
+
+        echo "Downloading Jolokia agent..."
+        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+
+        echo "Starting Kafka Connect with Jolokia..."
+        export KAFKA_OPTS="-javaagent:/tmp/jolokia-agent.jar=port=8781,host=0.0.0.0"
+        /etc/confluent/docker/run &
+        CONNECT_PID=$$!
+
+        echo "Waiting for Connect to start..."
+        MAX_WAIT=60
+        WAIT_TIME=0
+        while [ $$WAIT_TIME -lt $$MAX_WAIT ]; do
+          if curl -s http://localhost:8083/ > /dev/null 2>&1; then
+            echo "Connect is ready"
+            break
+          fi
+          sleep 2
+          WAIT_TIME=$$((WAIT_TIME + 2))
+        done
+
+        wait $$CONNECT_PID

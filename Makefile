@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-cutover test-cutover-setup test-cutover-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-cutover test-cutover test-cutover-setup test-cutover-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -123,9 +123,9 @@ test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	  status=$$? ; cd ../.. ; bash integration-tests/osk-scan/teardown.sh ; exit $$status
 
 test-kafka-connect: build ## Run Kafka Connect self-managed connector scan tests
-	@bash integration-tests/osk-scan/setup.sh
-	@bash integration-tests/osk-scan/run-connect.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
-	@bash integration-tests/osk-scan/teardown.sh
+	@bash integration-tests/connect-scan/setup.sh
+	cd integration-tests/connect-scan && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; bash integration-tests/connect-scan/teardown.sh ; exit $$status
 
 test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, basic auth)
 	@bash integration-tests/schema-registry/setup.sh

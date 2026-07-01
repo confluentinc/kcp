@@ -18,6 +18,28 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 LOG="$ROOT/integration-tests/.run-all-logs"
+
+# Exclusive lock: these suites use FIXED docker container names, host ports, and a
+# single shared Minikube profile (kcp-e2e), so two runs at once silently corrupt
+# each other (port clashes, "resource already exists", one run tearing down the
+# other's env mid-flight). mkdir is atomic, so this refuses a concurrent run
+# instead of producing bogus failures. Also warn on leftover fixtures from a
+# crashed run.
+LOCK="$ROOT/integration-tests/.run-all.lock"
+if ! mkdir "$LOCK" 2>/dev/null; then
+  echo "✗ Another integration run appears to be in progress (lock: $LOCK)."
+  echo "  Integration suites cannot run concurrently — they share fixed ports,"
+  echo "  container names, and the Minikube 'kcp-e2e' profile."
+  echo "  If you are certain no other run is active, remove the lock: rm -rf \"$LOCK\""
+  exit 1
+fi
+echo "$$" > "$LOCK/pid"
+trap 'rm -rf "$LOCK"' EXIT
+if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^kcp-test'; then
+  echo "⚠ leftover kcp-test containers are already running — a previous run may not have torn down."
+  echo "  They may cause port/name clashes. Consider: docker ps | grep kcp-test"
+fi
+
 rm -rf "$LOG"; mkdir -p "$LOG"
 
 WITH_CUTOVER=1
@@ -62,6 +84,8 @@ run_suite osk-scan        integration-tests/osk-scan        integration \
   "bash integration-tests/osk-scan/setup.sh" "bash integration-tests/osk-scan/teardown.sh"
 run_suite schema-registry integration-tests/schema-registry integration \
   "bash integration-tests/schema-registry/setup.sh" "bash integration-tests/schema-registry/teardown.sh"
+run_suite connect-scan    integration-tests/connect-scan    integration \
+  "bash integration-tests/connect-scan/setup.sh" "bash integration-tests/connect-scan/teardown.sh"
 if [[ "$WITH_CUTOVER" == "1" ]]; then
   run_suite cutover integration-tests/cutover e2e \
     "bash integration-tests/cutover/testdata/setup.sh" "bash integration-tests/cutover/testdata/teardown.sh"
