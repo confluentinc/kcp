@@ -100,6 +100,12 @@ test-go-coverage-ui: build-frontend ## Run Go tests with coverage and open HTML 
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
+test-integration: ## Run ALL integration suites in sequence with one aggregated grand total
+	@bash integration-tests/run-all.sh
+
+test-integration-no-cutover: ## Run all integration suites except the heavy cutover/Minikube one
+	@bash integration-tests/run-all.sh --no-cutover
+
 test-cutover: test-cutover-setup ## Run full cutover E2E lifecycle (setup, test, teardown)
 	@trap 'echo ""; echo "Tearing down cutover E2E infrastructure..."; bash integration-tests/cutover/testdata/teardown.sh' EXIT; \
 	echo "Running cutover E2E tests..."; \
@@ -113,8 +119,8 @@ test-cutover-teardown: ## Tear down cutover E2E infrastructure
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
-	@bash integration-tests/osk-scan/run.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
-	@bash integration-tests/osk-scan/teardown.sh
+	cd integration-tests/osk-scan && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; bash integration-tests/osk-scan/teardown.sh ; exit $$status
 
 test-kafka-connect: build ## Run Kafka Connect self-managed connector scan tests
 	@bash integration-tests/osk-scan/setup.sh
@@ -123,8 +129,8 @@ test-kafka-connect: build ## Run Kafka Connect self-managed connector scan tests
 
 test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, basic auth)
 	@bash integration-tests/schema-registry/setup.sh
-	@bash integration-tests/schema-registry/run.sh || (bash integration-tests/schema-registry/teardown.sh; exit 1)
-	@bash integration-tests/schema-registry/teardown.sh
+	cd integration-tests/schema-registry && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; bash integration-tests/schema-registry/teardown.sh ; exit $$status
 
 test-env-up-migrate: ## Start the migrate test env (source + dest cp-server, all auth listeners)
 	bash integration-tests/migrate/generate-certs.sh
