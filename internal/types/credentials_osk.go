@@ -288,6 +288,11 @@ func validatePrometheusConfig(prom *PrometheusConfig) error {
 			return fmt.Errorf("auth password is required when auth is configured")
 		}
 	}
+	if prom.TLS != nil && prom.TLS.CACert != "" {
+		if _, err := os.Stat(prom.TLS.CACert); err != nil {
+			return fmt.Errorf("tls ca_cert file not found: %s", prom.TLS.CACert)
+		}
+	}
 	return nil
 }
 
@@ -302,6 +307,11 @@ func validateJolokiaConfig(jolokia *JolokiaConfig) error {
 		}
 		if jolokia.Auth.Password == "" {
 			return fmt.Errorf("jolokia auth password is required when auth is configured")
+		}
+	}
+	if jolokia.TLS != nil && jolokia.TLS.CACert != "" {
+		if _, err := os.Stat(jolokia.TLS.CACert); err != nil {
+			return fmt.Errorf("tls ca_cert file not found: %s", jolokia.TLS.CACert)
 		}
 	}
 	return nil
