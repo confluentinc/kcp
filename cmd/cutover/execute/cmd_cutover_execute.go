@@ -165,10 +165,13 @@ the cutover state file and must be provided each time.`,
 	cutoverExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	cutoverExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
-	// If any credential in a pair/trio is set, the whole set must be set.
+	// If any credential in a pair is set, the whole pair must be set.
 	cutoverExecuteCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
 	cutoverExecuteCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
-	cutoverExecuteCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
+	// The mTLS client identity is a pair; --tls-ca-cert is deliberately NOT
+	// grouped in, so it can be supplied on its own to trust a private CA on the
+	// SASL/SCRAM, SASL/PLAIN-over-TLS, and unauthenticated-TLS source paths.
+	cutoverExecuteCmd.MarkFlagsRequiredTogether("tls-client-cert", "tls-client-key")
 
 	return cutoverExecuteCmd
 }
@@ -199,7 +202,8 @@ func preRunCutoverExecute(cmd *cobra.Command, args []string) error {
 	}
 
 	if useTls {
-		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		// --tls-ca-cert is NOT required: mTLS against a public/system-trusted CA
+		// works with system roots. It stays optional, for a private/internal CA.
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}

@@ -162,7 +162,7 @@ All flags can be provided via environment variables using uppercase names with u
 	// TLS credential flags.
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the source broker's TLS server certificate. Applies to any TLS-fronted source auth method (SASL/SCRAM, SASL/PLAIN over TLS, TLS/mTLS, unauthenticated-TLS); supply it only for a private/internal CA.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
 	cutoverInitCmd.Flags().AddFlagSet(tlsFlags)
@@ -207,10 +207,13 @@ All flags can be provided via environment variables using uppercase names with u
 	// and would silently leave the cluster link disabled after switchover.
 	cutoverInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
 
-	// If any credential in a pair/trio is set, the whole set must be set.
+	// If any credential in a pair is set, the whole pair must be set.
 	cutoverInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
 	cutoverInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
-	cutoverInitCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
+	// The mTLS client identity is a pair; --tls-ca-cert is deliberately NOT
+	// grouped in, so it can be supplied on its own to trust a private CA on the
+	// SASL/SCRAM, SASL/PLAIN-over-TLS, and unauthenticated-TLS source paths.
+	cutoverInitCmd.MarkFlagsRequiredTogether("tls-client-cert", "tls-client-key")
 
 	return cutoverInitCmd
 }
@@ -231,7 +234,8 @@ func preRunCutoverInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if useTls {
-		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		// --tls-ca-cert is NOT required: mTLS against a public/system-trusted CA
+		// works with system roots. It stays optional, for a private/internal CA.
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}

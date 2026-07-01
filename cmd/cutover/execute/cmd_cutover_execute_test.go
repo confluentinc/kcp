@@ -114,6 +114,52 @@ func TestCutoverExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "if any flags in the group")
 }
 
+// Regression guard: --tls-ca-cert must be usable on a non-mTLS source method
+// (here SASL/SCRAM) without the mTLS client cert/key — it is no longer grouped
+// with them. Fails later (missing state file), not on flag grouping.
+func TestCutoverExecute_SaslScramWithCACertOnly_PassesValidation(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewCutoverExecuteCmd()
+	cmd.SetArgs([]string{
+		"--cutover-id", "test-cutover",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "user",
+		"--sasl-scram-password", "pass",
+		"--tls-ca-cert", "ca.pem",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "if any flags in the group", "--tls-ca-cert must not require the mTLS client cert/key")
+	assert.Contains(t, err.Error(), "cutover state file")
+}
+
+// Regression guard: --use-tls (mTLS) must NOT require --tls-ca-cert — mTLS
+// against a public/system-trusted CA works with system roots.
+func TestCutoverExecute_TLSWithoutCACert_PassesValidation(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewCutoverExecuteCmd()
+	cmd.SetArgs([]string{
+		"--cutover-id", "test-cutover",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-tls",
+		"--tls-client-cert", "cert.pem",
+		"--tls-client-key", "key.pem",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "tls-ca-cert", "mTLS must not require --tls-ca-cert")
+	assert.Contains(t, err.Error(), "cutover state file")
+}
+
 // ===========================================================================
 // --sasl-scram-mechanism flag tests
 // ===========================================================================

@@ -115,6 +115,36 @@ func TestCutoverInit_WithAuthFlag_PassesValidation(t *testing.T) {
 	assert.NotContains(t, err.Error(), "at least one of the flags")
 }
 
+// Regression guard: --tls-ca-cert must be usable on a non-mTLS source method
+// (here SASL/SCRAM) without the mTLS client cert/key — it is no longer grouped
+// with them. Fails later (missing YAML files), not on flag grouping.
+func TestCutoverInit_SaslScramWithCACertOnly_PassesValidation(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewCutoverInitCmd()
+	cmd.SetArgs([]string{
+		"--source-bootstrap", "broker:9092",
+		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
+		"--k8s-namespace", "test-ns",
+		"--initial-cr-name", "test-cr",
+		"--cluster-id", "lkc-123",
+		"--cluster-rest-endpoint", "https://pkc-abc.confluent.cloud:443",
+		"--cluster-link-name", "test-link",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--fenced-cr-yaml", "fenced.yaml",
+		"--switchover-cr-yaml", "switchover.yaml",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "user",
+		"--sasl-scram-password", "pass",
+		"--tls-ca-cert", "ca.pem",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "if any flags in the group", "--tls-ca-cert must not require the mTLS client cert/key")
+}
+
 func TestCutoverInit_PauseOffsetSyncFlag_Registered(t *testing.T) {
 	resetAuthFlags()
 
