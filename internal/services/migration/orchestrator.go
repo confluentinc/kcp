@@ -2,12 +2,18 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/fatih/color"
 	"github.com/looplab/fsm"
 )
+
+// ErrUnroutedProducers is returned when the post-fence check detects producers
+// bypassing the gateway. The orchestrator catches this to trigger an
+// EventAbortFence transition back to initialized state.
+var ErrUnroutedProducers = errors.New("unrouted producers detected")
 
 // WorkflowStep defines a single step in the migration workflow
 type WorkflowStep struct {
@@ -59,7 +65,7 @@ func NewMigrationOrchestrator(
 	}
 
 	// Build FSM events from canonical workflow
-	events := make(fsm.Events, 0, len(canonicalWorkflow))
+	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
 	for _, step := range canonicalWorkflow {
 		events = append(events, fsm.EventDesc{
 			Name: step.Event,
@@ -67,6 +73,12 @@ func NewMigrationOrchestrator(
 			Dst:  step.ToState,
 		})
 	}
+	// Backward transition: unfenced after detecting unrouted producers
+	events = append(events, fsm.EventDesc{
+		Name: EventAbortFence,
+		Src:  []string{StateFenced},
+		Dst:  StateInitialized,
+	})
 
 	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check)
 	orchestrator.fsm = fsm.NewFSM(
@@ -119,6 +131,15 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		}
 		slog.Debug("executing migration step", "step", step.Description)
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
+			// If unrouted producers were detected and the gateway was unfenced,
+			// transition back to initialized so re-running rechecks lags and re-fences.
+			if errors.Is(err, ErrUnroutedProducers) {
+				if abortErr := o.fsm.Event(ctx, EventAbortFence); abortErr != nil {
+					slog.Error("❌ failed to transition back to initialized after unrouted producer detection", "error", abortErr)
+				} else if persistErr := o.persistState(); persistErr != nil {
+					slog.Error("❌ failed to persist state after abort_fence transition", "error", persistErr)
+				}
+			}
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
 		if err := o.persistState(); err != nil {
@@ -184,8 +205,13 @@ func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.
 	}
 }
 
-// leaveFencedCallback delegates to workflow service PromoteTopics
+// leaveFencedCallback delegates to workflow service PromoteTopics.
+// Skip if the event is abort_fence — that transition is a rollback,
+// not a forward step.
 func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
+	if e.Event == EventAbortFence {
+		return
+	}
 	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 		return

@@ -393,10 +393,8 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 			} else {
 				fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
 					color.GreenString("✔"))
-				// Roll back FSM state so re-running execute rechecks lags and re-fences.
-				config.CurrentState = StateInitialized
 			}
-			return err
+			return fmt.Errorf("%w: %w", ErrUnroutedProducers, err)
 		}
 		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
 			color.GreenString("✔"))

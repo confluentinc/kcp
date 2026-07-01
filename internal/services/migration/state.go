@@ -30,6 +30,9 @@ const (
 	EventFence       = "fence"
 	EventPromote     = "promote"
 	EventSwitch      = "switch"
+	// EventAbortFence transitions from fenced back to initialized when
+	// unrouted producers are detected and the gateway has been unfenced.
+	EventAbortFence = "abort_fence"
 )
 
 // ----- migration configuration -----
