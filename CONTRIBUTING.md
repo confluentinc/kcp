@@ -183,12 +183,19 @@ make pre-commit-install
 ## Documentation
 
 The published docs site is built from `docs/assets/` with MkDocs Material.
-The only prerequisite is **Python 3** — the docs targets create and manage a
-local virtualenv (`.venv-docs/`, git-ignored) for you, so there is no global
-`pip install`. If [`uv`](https://docs.astral.sh/uv/) is installed it is used
-automatically (faster); otherwise the standard-library `venv` is used.
+For MkDocs itself the only prerequisite is **Python 3** — the docs targets
+create and manage a local virtualenv (`.venv-docs/`, git-ignored) for you, so
+there is no global `pip install`. If [`uv`](https://docs.astral.sh/uv/) is
+installed it is used automatically (faster); otherwise the standard-library
+`venv` is used.
+
+`docs-gen` (a prerequisite of `docs-serve`/`docs-build`) additionally needs Go
+and a built frontend: `cmd/gen-docs` embeds `cmd/ui/frontend/dist/` via
+`go:embed`, so run `make build-frontend` once on a fresh clone first — otherwise
+you'll see `pattern all:dist: no matching files found`.
 
 ```bash
+make build-frontend # One-time on a fresh clone: builds the UI that docs-gen embeds
 make docs-install   # Set up the local docs env (auto-managed venv; only needs Python 3)
 make docs-gen       # Regenerate the per-command reference from the Cobra definitions
 make docs-serve     # Serve the docs locally with live reload
