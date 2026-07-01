@@ -164,7 +164,8 @@ func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConf
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
 	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+	// MSK presents Amazon's public CA, so no custom CA pool — just honor skip-verify.
+	config.Net.TLS.Config = utils.TLSClientConfig(nil, insecureSkipVerify)
 	config.Net.SASL.Enable = true
 	config.Net.SASL.Mechanism = sarama.SASLTypeOAuth
 	config.Net.SASL.TokenProvider = &MSKAccessTokenProvider{region: region}
@@ -177,16 +178,11 @@ func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, 
 // in the cluster-link truststore. MSK uses Amazon's public CA, so caCertFile is
 // empty there and this falls back to system roots.
 func tlsConfigWithCA(caCertFile string, insecureSkipVerify bool) (*tls.Config, error) {
-	cfg := &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
-	if caCertFile == "" {
-		return cfg, nil
-	}
-	pool, err := utils.CACertPool(caCertFile)
+	pool, err := utils.OptionalCACertPool(caCertFile)
 	if err != nil {
 		return nil, err
 	}
-	cfg.RootCAs = pool
-	return cfg, nil
+	return utils.TLSClientConfig(pool, insecureSkipVerify), nil
 }
 
 func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string, caCertFile string, insecureSkipTLSVerify bool) error {
@@ -260,12 +256,9 @@ func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile s
 	if err != nil {
 		return err
 	}
-
-	cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
-	if err != nil {
-		return fmt.Errorf("failed to load client certificate: %v", err)
+	if err := utils.AppendClientCert(tlsConfig, clientCertFile, clientKeyFile); err != nil {
+		return err
 	}
-	tlsConfig.Certificates = []tls.Certificate{cert}
 
 	config.Net.TLS.Enable = true
 	config.Net.TLS.Config = tlsConfig

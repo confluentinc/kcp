@@ -2,14 +2,11 @@ package self_managed_connectors
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
@@ -95,36 +92,22 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 }
 
 func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectTlsAuth) (*http.Client, error) {
-	client := &http.Client{
-		Timeout: 15 * time.Second,
+	// Trust a supplied CA (private/internal CA) on ANY auth method when the Connect
+	// REST endpoint is HTTPS — not only mTLS. Empty CA → system trust roots.
+	pool, err := utils.OptionalCACertPool(tlsAuth.CACert)
+	if err != nil {
+		return nil, err
 	}
-
-	// Only configure TLS if using TLS client certificate authentication
+	tlsCfg := utils.TLSClientConfig(pool, false)
 	if authMethod == types.ConnectAuthMethodTls {
-		caCert, err := os.ReadFile(tlsAuth.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-		}
-
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
-		}
-
-		clientCert, err := tls.LoadX509KeyPair(tlsAuth.ClientCert, tlsAuth.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
-		}
-
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs:      caCertPool,
-				Certificates: []tls.Certificate{clientCert},
-			},
+		if err := utils.AppendClientCert(tlsCfg, tlsAuth.ClientCert, tlsAuth.ClientKey); err != nil {
+			return nil, err
 		}
 	}
 
-	return client, nil
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+	return &http.Client{Timeout: 15 * time.Second, Transport: transport}, nil
 }
 
 func (s *SelfManagedConnectorsScanner) Run() error {

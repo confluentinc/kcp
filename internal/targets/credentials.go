@@ -5,7 +5,6 @@
 package targets
 
 import (
-	"crypto/tls"
 	"fmt"
 	"net/http"
 	"os"
@@ -135,20 +134,15 @@ func (c Credentials) authenticator() clusterlink.Authenticator {
 // client certificate.
 func (c Credentials) HTTPClient() (clusterlink.HTTPClient, error) {
 	caCertFile, skipVerify := c.tlsTrust()
-	tlsCfg := &tls.Config{InsecureSkipVerify: skipVerify} //nolint:gosec // user-controlled flag
-	if caCertFile != "" {
-		pool, err := utils.CACertPool(caCertFile)
-		if err != nil {
+	pool, err := utils.OptionalCACertPool(caCertFile)
+	if err != nil {
+		return nil, err
+	}
+	tlsCfg := utils.TLSClientConfig(pool, skipVerify)
+	if c.MTLS != nil {
+		if err := utils.AppendClientCert(tlsCfg, c.MTLS.ClientCert, c.MTLS.ClientKey); err != nil {
 			return nil, err
 		}
-		tlsCfg.RootCAs = pool
-	}
-	if c.MTLS != nil {
-		cert, err := tls.LoadX509KeyPair(c.MTLS.ClientCert, c.MTLS.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("loading mtls client cert/key: %w", err)
-		}
-		tlsCfg.Certificates = []tls.Certificate{cert}
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = tlsCfg

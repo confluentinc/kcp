@@ -2,13 +2,14 @@ package client
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // JolokiaClient is an HTTP client for querying Jolokia REST endpoints
@@ -37,10 +38,7 @@ func WithJolokiaBasicAuth(username, password string) JolokiaOption {
 func WithJolokiaTLS(caPool *x509.CertPool, insecureSkipVerify bool) JolokiaOption {
 	return func(c *JolokiaClient) {
 		c.httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // user-controlled flag
-				RootCAs:            caPool,
-			},
+			TLSClientConfig: utils.TLSClientConfig(caPool, insecureSkipVerify),
 		}
 	}
 }

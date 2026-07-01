@@ -571,7 +571,7 @@ func TestConfigureTLSAuth(t *testing.T) {
 			clientCertFile: "nonexistent.crt",
 			clientKeyFile:  clientKeyFile,
 			expectError:    true,
-			errorContains:  "failed to load client certificate",
+			errorContains:  "loading client certificate/key",
 		},
 		{
 			name:           "client key file not found",
@@ -579,7 +579,7 @@ func TestConfigureTLSAuth(t *testing.T) {
 			clientCertFile: clientCertFile,
 			clientKeyFile:  "nonexistent.key",
 			expectError:    true,
-			errorContains:  "failed to load client certificate",
+			errorContains:  "loading client certificate/key",
 		},
 		{
 			name:           "CA certificate file not found",

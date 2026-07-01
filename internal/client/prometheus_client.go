@@ -2,7 +2,6 @@ package client
 
 import (
 	"context"
-	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
@@ -12,6 +11,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // PrometheusClient is an HTTP client for querying the Prometheus API
@@ -40,10 +41,7 @@ func WithPrometheusBasicAuth(username, password string) PrometheusOption {
 func WithPrometheusTLS(caPool *x509.CertPool, insecureSkipVerify bool) PrometheusOption {
 	return func(c *PrometheusClient) {
 		c.httpClient.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: insecureSkipVerify, //nolint:gosec // user-controlled flag
-				RootCAs:            caPool,
-			},
+			TLSClientConfig: utils.TLSClientConfig(caPool, insecureSkipVerify),
 		}
 	}
 }

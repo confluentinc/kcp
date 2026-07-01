@@ -2,7 +2,6 @@ package execute
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type CutoverExecutorOpts struct {
@@ -75,7 +75,7 @@ func (m *CutoverExecutor) Run() error {
 	if m.opts.InsecureSkipTLSVerify {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // user-controlled flag
+				TLSClientConfig: utils.TLSClientConfig(nil, true),
 			},
 		}
 	}

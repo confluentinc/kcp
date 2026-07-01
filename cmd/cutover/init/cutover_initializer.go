@@ -2,13 +2,13 @@ package init
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
 	"net/http"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type CutoverInitializerOpts struct {
@@ -37,7 +37,7 @@ func (m *CutoverInitializer) Run() error {
 	if m.opts.InsecureSkipTLSVerify {
 		httpClient = &http.Client{
 			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // user-controlled flag
+				TLSClientConfig: utils.TLSClientConfig(nil, true),
 			},
 		}
 	}
