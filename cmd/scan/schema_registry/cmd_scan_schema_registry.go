@@ -21,10 +21,16 @@ var (
 	url                string
 	useUnauthenticated bool
 	useBasicAuth       bool
+	useMTLS            bool
 	username           string
 	password           string
 	registryName       string
 	region             string
+
+	tlsCaCert             string
+	tlsClientCert         string
+	tlsClientKey          string
+	insecureSkipTLSVerify bool
 )
 
 func schemaRegistryIAMAnnotation() string {
@@ -80,8 +86,13 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	confluentFlags.StringVar(&url, "url", "", "The URL of the schema registry to scan.")
 	confluentFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use Unauthenticated Authentication")
 	confluentFlags.BoolVar(&useBasicAuth, "use-basic-auth", false, "Use Basic Authentication")
+	confluentFlags.BoolVar(&useMTLS, "use-mtls", false, "Use mutual TLS authentication (requires --tls-client-cert and --tls-client-key).")
 	confluentFlags.StringVar(&username, "username", "", "The username to use for Basic Authentication")
 	confluentFlags.StringVar(&password, "password", "", "The password to use for Basic Authentication")
+	confluentFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the schema registry's TLS certificate. Use when the registry is HTTPS behind a private/internal CA; combinable with any auth method.")
+	confluentFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the client certificate presented for mutual TLS (required when using --use-mtls).")
+	confluentFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the client key presented for mutual TLS (required when using --use-mtls).")
+	confluentFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip schema registry TLS endpoint (hostname) verification. Test environments only; chain validation still applies, so a private CA still needs --tls-ca-cert.")
 	schemaRegistryCmd.Flags().AddFlagSet(confluentFlags)
 
 	glueFlags := pflag.NewFlagSet("glue", pflag.ExitOnError)
@@ -116,9 +127,9 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	_ = schemaRegistryCmd.MarkFlagRequired("state-file")
 	_ = schemaRegistryCmd.MarkFlagRequired("sr-type")
 
-	// --use-unauthenticated and --use-basic-auth cannot be set together.
-	// "One-of" is enforced in preRunE since it only applies when --sr-type=confluent.
-	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated", "use-basic-auth")
+	// The three confluent auth methods are mutually exclusive.
+	// "Exactly one" is enforced in preRunE since it only applies when --sr-type=confluent.
+	schemaRegistryCmd.MarkFlagsMutuallyExclusive("use-unauthenticated", "use-basic-auth", "use-mtls")
 
 	return schemaRegistryCmd
 }
@@ -133,8 +144,14 @@ func preRunScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 		if url == "" {
 			return fmt.Errorf("--url is required when --sr-type=confluent")
 		}
-		if useUnauthenticated == useBasicAuth {
-			return fmt.Errorf("exactly one of --use-unauthenticated or --use-basic-auth is required")
+		authCount := 0
+		for _, on := range []bool{useUnauthenticated, useBasicAuth, useMTLS} {
+			if on {
+				authCount++
+			}
+		}
+		if authCount != 1 {
+			return fmt.Errorf("exactly one of --use-unauthenticated, --use-basic-auth, or --use-mtls is required")
 		}
 		if useBasicAuth {
 			if username == "" {
@@ -142,6 +159,11 @@ func preRunScanSchemaRegistry(cmd *cobra.Command, args []string) error {
 			}
 			if password == "" {
 				return fmt.Errorf("--password is required when --use-basic-auth is set")
+			}
+		}
+		if useMTLS {
+			if tlsClientCert == "" || tlsClientKey == "" {
+				return fmt.Errorf("--tls-client-cert and --tls-client-key are required when --use-mtls is set")
 			}
 		}
 	case "glue":
@@ -179,7 +201,7 @@ func runScanConfluentSchemaRegistry() error {
 		return fmt.Errorf("failed to get auth option: %v", err)
 	}
 
-	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, authOption)
+	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, authOption, client.WithTLS(tlsCaCert, insecureSkipTLSVerify))
 	if err != nil {
 		return fmt.Errorf("failed to create schema registry client: %v", err)
 	}
@@ -256,6 +278,12 @@ func getAuthOptionFromFlags() (client.SchemaRegistryOption, error) {
 			return nil, fmt.Errorf("username and password are required for basic authentication")
 		}
 		return client.WithBasicAuth(username, password), nil
+
+	case useMTLS:
+		if tlsClientCert == "" || tlsClientKey == "" {
+			return nil, fmt.Errorf("client cert and key are required for mutual TLS authentication")
+		}
+		return client.WithMTLS(tlsClientCert, tlsClientKey), nil
 
 	default:
 		return nil, fmt.Errorf("no authentication method specified")

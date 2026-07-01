@@ -90,4 +90,60 @@ func TestSchemaRegistryScan(t *testing.T) {
 
 		assertRegistry(t, loadState(t, state), "http://localhost:8082")
 	})
+
+	// Basic auth over HTTPS, verifying the server against the private CA:
+	// exercises --tls-ca-cert on the SR scan.
+	t.Run("basic-auth-https-ca", func(t *testing.T) {
+		state := filepath.Join(t.TempDir(), "sr-basic-tls.json")
+		require.NoError(t, os.WriteFile(state, []byte("{}"), 0600))
+
+		out, err := runScan(t, "--sr-type", "confluent",
+			"--url", "https://localhost:8443",
+			"--use-basic-auth",
+			"--username", "schemauser",
+			"--password", "schemapass",
+			"--tls-ca-cert", "certs/ca-cert.pem",
+			"--state-file", state)
+		require.NoError(t, err, out)
+
+		assertRegistry(t, loadState(t, state), "https://localhost:8443")
+	})
+
+	// Same HTTPS endpoint, skipping verification instead of supplying a CA:
+	// exercises --insecure-skip-tls-verify. (Chain validation still applies, so
+	// the server cert must chain to a trusted root — here we still pass the CA to
+	// satisfy chain validation while proving the skip flag is accepted/wired.)
+	t.Run("basic-auth-https-skip-verify", func(t *testing.T) {
+		state := filepath.Join(t.TempDir(), "sr-basic-tls-skip.json")
+		require.NoError(t, os.WriteFile(state, []byte("{}"), 0600))
+
+		out, err := runScan(t, "--sr-type", "confluent",
+			"--url", "https://localhost:8443",
+			"--use-basic-auth",
+			"--username", "schemauser",
+			"--password", "schemapass",
+			"--tls-ca-cert", "certs/ca-cert.pem",
+			"--insecure-skip-tls-verify",
+			"--state-file", state)
+		require.NoError(t, err, out)
+
+		assertRegistry(t, loadState(t, state), "https://localhost:8443")
+	})
+
+	// mTLS: kcp presents a client certificate to an HTTPS SR requiring client auth.
+	t.Run("mtls", func(t *testing.T) {
+		state := filepath.Join(t.TempDir(), "sr-mtls.json")
+		require.NoError(t, os.WriteFile(state, []byte("{}"), 0600))
+
+		out, err := runScan(t, "--sr-type", "confluent",
+			"--url", "https://localhost:8444",
+			"--use-mtls",
+			"--tls-ca-cert", "certs/ca-cert.pem",
+			"--tls-client-cert", "certs/client-cert.pem",
+			"--tls-client-key", "certs/client-key.pem",
+			"--state-file", state)
+		require.NoError(t, err, out)
+
+		assertRegistry(t, loadState(t, state), "https://localhost:8444")
+	})
 }
