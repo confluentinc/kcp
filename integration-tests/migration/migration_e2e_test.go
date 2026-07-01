@@ -501,6 +501,7 @@ func TestMigrationE2E(t *testing.T) {
 			"--lag-threshold", "0",
 			"--use-unauthenticated-plaintext",
 			"--insecure-skip-tls-verify",
+			"--detect-unrouted-producers-duration", "0",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
@@ -700,6 +701,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 			"--lag-threshold", "0",
 			"--use-unauthenticated-plaintext",
 			"--insecure-skip-tls-verify",
+			"--detect-unrouted-producers-duration", "0",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
@@ -888,6 +890,7 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 			"--lag-threshold", "0",
 			"--use-unauthenticated-plaintext",
 			"--insecure-skip-tls-verify",
+			"--detect-unrouted-producers-duration", "0",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
