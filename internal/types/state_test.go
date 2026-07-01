@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -826,6 +827,109 @@ func TestNewStateFrom_PreservesExistingOSKData(t *testing.T) {
 	}
 	if newState.MSKSources == nil {
 		t.Error("MSKSources should be initialized even when copying OSK data")
+	}
+}
+
+func TestNewStateFrom_PreservesMigratedFromAndSchemaRegistries(t *testing.T) {
+	// A file that was migrated/upgraded carries a migrated_from breadcrumb and may
+	// hold previously-discovered schema registries. A RUW command (discover/scan)
+	// rebuilds its working state via NewStateFrom, which must carry both forward —
+	// otherwise the next write silently drops them (append-only violation).
+	existingState := &State{
+		MigratedFrom: "era=B",
+		SchemaRegistries: &SchemaRegistriesState{
+			ConfluentSchemaRegistry: []SchemaRegistryInformation{
+				{URL: "https://sr.example.com"},
+			},
+		},
+	}
+
+	newState := NewStateFrom(existingState)
+
+	if newState.MigratedFrom != "era=B" {
+		t.Errorf("MigratedFrom breadcrumb lost: got %q, want %q", newState.MigratedFrom, "era=B")
+	}
+	if newState.SchemaRegistries == nil || len(newState.SchemaRegistries.ConfluentSchemaRegistry) != 1 {
+		t.Errorf("SchemaRegistries lost: got %+v", newState.SchemaRegistries)
+	}
+}
+
+func TestNewStateFrom_PreservesCreatedTimestamp(t *testing.T) {
+	// Timestamp is the "created" time; only updated_at moves on each write. A RUW
+	// rebuild from an existing state must keep the original created-at rather than
+	// resetting it to now on every discover/scan.
+	created := time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC)
+	existingState := &State{Timestamp: created}
+
+	newState := NewStateFrom(existingState)
+
+	if !newState.Timestamp.Equal(created) {
+		t.Errorf("created Timestamp reset: got %s, want %s", newState.Timestamp, created)
+	}
+}
+
+func TestNewStateFrom_FreshStateGetsCreationTimestamp(t *testing.T) {
+	// A brand-new state (no source file) legitimately gets a fresh created-at.
+	newState := NewStateFrom(nil)
+	if newState.Timestamp.IsZero() {
+		t.Error("fresh state should get a non-zero created Timestamp")
+	}
+}
+
+// reDerivedStateFields are the State fields NewStateFrom intentionally does NOT
+// carry from the source, because the writer (re)stamps them rather than treating
+// them as source data. Everything NOT listed here must survive a RUW rebuild.
+var reDerivedStateFields = map[string]bool{
+	"SchemaVersion": true, // WriteToFile stamps the current schema version
+	"KcpBuildInfo":  true, // stamped with the writer's own build
+	"UpdatedAt":     true, // WriteToFile sets the last-write time
+}
+
+// TestNewStateFrom_NoFieldSilentlyDropped guards against the recurring bug class
+// where NewStateFrom (a copy-by-name allowlist) drops a State field on RUW — this
+// is how migrated_from, schema_registries and the created timestamp were all lost.
+// It populates every field, round-trips through NewStateFrom, and requires each
+// field to be either preserved or in reDerivedStateFields.
+//
+// When this fails after you add a State field: decide whether the field is source
+// data (carry it forward in NewStateFrom) or writer-stamped (add it to
+// reDerivedStateFields). Do NOT just add it to the allowlist to go green.
+func TestNewStateFrom_NoFieldSilentlyDropped(t *testing.T) {
+	fixed := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	src := &State{
+		SchemaVersion: 7,
+		MSKSources:    &MSKSourcesState{Regions: []DiscoveredRegion{{Name: "us-east-1"}}},
+		OSKSources:    &OSKSourcesState{Clusters: []OSKDiscoveredCluster{{ID: "osk-1"}}},
+		SchemaRegistries: &SchemaRegistriesState{
+			ConfluentSchemaRegistry: []SchemaRegistryInformation{{URL: "https://sr.example.com"}},
+		},
+		KcpBuildInfo: KcpBuildInfo{Version: "9.9.9", Commit: "abc", Date: "2026-01-01"},
+		Timestamp:    fixed,
+		UpdatedAt:    fixed.Add(time.Hour),
+		MigratedFrom: "era=B",
+	}
+
+	st := reflect.TypeOf(State{})
+	srcV := reflect.ValueOf(*src)
+
+	// Guard the guard: every field must be non-zero, otherwise a dropped field
+	// would read as zero==zero and slip past the comparison below.
+	for i := 0; i < st.NumField(); i++ {
+		if srcV.Field(i).IsZero() {
+			t.Fatalf("test fixture incomplete: State field %q is zero — populate it in this test so the drop-guard is meaningful", st.Field(i).Name)
+		}
+	}
+
+	outV := reflect.ValueOf(*NewStateFrom(src))
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		if reDerivedStateFields[f.Name] {
+			continue
+		}
+		if got, want := outV.Field(i).Interface(), srcV.Field(i).Interface(); !reflect.DeepEqual(got, want) {
+			t.Errorf("NewStateFrom dropped/altered field %q (json:%q) — it is neither carried forward nor writer-stamped.\nCopy it in NewStateFrom, or if the writer re-stamps it add it to reDerivedStateFields.\n got:  %#v\n want: %#v",
+				f.Name, f.Tag.Get("json"), got, want)
+		}
 	}
 }
 

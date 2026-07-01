@@ -72,6 +72,20 @@ func NewStateFrom(fromState *State) *State {
 				Clusters: []OSKDiscoveredCluster{},
 			}
 		}
+
+		// Carry forward data that isn't source-scoped so a RUW write (discover/scan)
+		// doesn't silently drop it: the migrated_from breadcrumb (durable provenance
+		// of the file's origin shape) and any previously discovered schema registries
+		// (discover does not repopulate these — dropping them violates append-only).
+		workingState.MigratedFrom = fromState.MigratedFrom
+		workingState.SchemaRegistries = fromState.SchemaRegistries
+
+		// Timestamp is the created-at; only updated_at moves per write. Preserve the
+		// original so re-running discover/scan doesn't reset creation time to now.
+		// (Fall back to the fresh time.Now() above if the source has none.)
+		if !fromState.Timestamp.IsZero() {
+			workingState.Timestamp = fromState.Timestamp
+		}
 	}
 
 	return workingState
