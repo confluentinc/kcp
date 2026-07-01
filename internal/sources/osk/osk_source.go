@@ -181,11 +181,11 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 }
 
 // createKafkaAdmin creates a Kafka Admin client for the OSK/Apache Kafka cluster
-// via the shared client.AdminOptionForAuthMethod mapper. clusterCreds.InsecureSkipTLSVerify
-// is passed to the mapper (SASL/SCRAM) and ALSO appended as a global override (last
-// option wins) so it covers every TLS path — mTLS, SASL_SSL, unauthenticated-TLS —
-// for test envs with self-signed certs and no CA provided. region/kafkaVersion are
-// inert for OSK; ClientBrokerTls is passed for parity (TLS is driven by the auth option).
+// via the shared client.AdminOptionForAuthMethod mapper, which threads
+// clusterCreds.InsecureSkipTLSVerify into every TLS path (mTLS, SASL_SSL,
+// unauthenticated-TLS, SASL/SCRAM) — so no separate override is needed. region/
+// kafkaVersion are inert for OSK; ClientBrokerTls is passed for parity (TLS is
+// driven by the auth option).
 func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
 	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterCreds.AuthMethod, clusterCreds.InsecureSkipTLSVerify)
 	if err != nil {
@@ -193,9 +193,6 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 	}
 
 	opts := []client.AdminOption{authOpt}
-	if clusterCreds.InsecureSkipTLSVerify {
-		opts = append(opts, client.WithInsecureSkipVerify())
-	}
 
 	kafkaAdmin, err := client.NewKafkaAdmin(clusterCreds.BootstrapServers, kafkatypes.ClientBrokerTls, "", "3.6.0", opts...)
 	if err != nil {

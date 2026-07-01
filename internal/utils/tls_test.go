@@ -57,3 +57,33 @@ Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
 	require.NoError(t, err)
 	require.NotNil(t, pool)
 }
+
+func TestOptionalCACertPool_EmptyPathIsSystemRoots(t *testing.T) {
+	pool, err := OptionalCACertPool("")
+	require.NoError(t, err, "an empty path is not an error — it means 'use system roots'")
+	require.Nil(t, pool, "an empty path yields a nil pool (system roots)")
+}
+
+func TestOptionalCACertPool_BadPathFailsClosed(t *testing.T) {
+	_, err := OptionalCACertPool(filepath.Join(t.TempDir(), "nope.pem"))
+	require.Error(t, err, "a non-empty but unreadable path must still fail closed")
+}
+
+func TestOptionalCACertPool_ValidPathLoads(t *testing.T) {
+	dir := t.TempDir()
+	good := writePEM(t, dir, "ca.pem", `-----BEGIN CERTIFICATE-----
+MIIBhTCCASugAwIBAgIQIRi6zePL6mKjOipn+dNuaTAKBggqhkjOPQQDAjASMRAw
+DgYDVQQKEwdBY21lIENvMB4XDTE3MTAyMDE5NDMwNloXDTE4MTAyMDE5NDMwNlow
+EjEQMA4GA1UEChMHQWNtZSBDbzBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IABD0d
+7VNhbWvZLWPuj/RtHFjvtJBEwOkhbN/BnnE8rnZR8+sbwnc/KhCk3FhnpHZnQz7B
+5aETbbIgmuvewdjvSBSjYzBhMA4GA1UdDwEB/wQEAwICpDATBgNVHSUEDDAKBggr
+BgEFBQcDATAPBgNVHRMBAf8EBTADAQH/MCkGA1UdEQQiMCCCDmxvY2FsaG9zdDo1
+NDUzgg4xMjcuMC4wLjE6NTQ1MzAKBggqhkjOPQQDAgNIADBFAiEA2zpJEPQyz6/l
+Wf86aX6PepsntZv2GYlA5UpabfT2EZICICpJ5h/iI+i341gBmLiAFQOyTDT+/wQc
+6MF9+Yw1Yy0t
+-----END CERTIFICATE-----
+`)
+	pool, err := OptionalCACertPool(good)
+	require.NoError(t, err)
+	require.NotNil(t, pool)
+}

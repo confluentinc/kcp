@@ -6,6 +6,7 @@ package mirrortopics
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -203,19 +204,21 @@ func (r *Reconciler) foreignMirrors(ctx context.Context) (map[string]string, err
 	}
 	owner := map[string]string{}
 	for _, link := range links {
-		// Skip our own link (its mirrors are classified via existingStatus above)
-		// and any empty-named link. cp-server transiently lists empty-named link
-		// entries while a source-initiated link is being established — exactly the
-		// window mirrorTopics runs in — and "/links//mirrors" is a malformed path
-		// (400). Skipping is safe: a real mirror-name collision is still caught by
-		// destTopicSet below (mirror topics appear in ListTopics), just reported as
-		// a plain-topic collision rather than naming the owning link.
-		if link == "" || link == r.cfg.LinkName {
+		// Our own link's mirrors are classified via existingStatus above.
+		// (Empty-named UNMANAGED_SOURCE records are already filtered by ListClusterLinks.)
+		if link == r.cfg.LinkName {
 			continue
 		}
 		mirrors, err := r.tgt.ListMirrorTopics(ctx, link)
 		if err != nil {
-			return nil, fmt.Errorf("listing mirror topics on link %q: %w", link, err)
+			// Tolerate a single unrelated link that can't be read (e.g. mid-teardown
+			// or a permissions edge): it must not fail the whole plan. Worst case we
+			// miss the owning-link attribution for a colliding name — the collision
+			// itself is still caught by destTopicSet (mirror topics appear in
+			// ListTopics), just reported as a plain-topic collision.
+			slog.Warn("skipping cluster link whose mirror topics could not be listed",
+				"link", link, "error", err)
+			continue
 		}
 		for _, m := range mirrors {
 			owner[m.MirrorTopicName] = link

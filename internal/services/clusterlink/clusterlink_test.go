@@ -936,3 +936,29 @@ func TestGetTopicPartitionCount_HTTPError(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `failed to get partition count for topic "missing"`)
 }
+
+// Review finding #4: cp-server lists empty-link_name UNMANAGED_SOURCE records after
+// a source-initiated link is deleted. ListClusterLinks must filter them out — an
+// empty name is never an addressable resource and would build a malformed
+// "/links//..." path in any caller.
+func TestListClusterLinks_FiltersEmptyNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/c/links", r.URL.Path)
+		resp := map[string]interface{}{
+			"data": []map[string]interface{}{
+				{"link_name": "real-link", "link_state": "ACTIVE"},
+				{"link_name": "", "link_state": "UNMANAGED_SOURCE"}, // orphaned remnant
+				{"link_name": "another", "link_state": "ACTIVE"},
+				{"link_name": "", "link_state": "UNMANAGED_SOURCE"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	links, err := svc.ListClusterLinks(context.Background(), Config{RestEndpoint: server.URL, ClusterID: "c"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"real-link", "another"}, links, "empty-named UNMANAGED_SOURCE entries must be filtered")
+}

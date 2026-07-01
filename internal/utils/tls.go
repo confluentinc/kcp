@@ -25,3 +25,15 @@ func CACertPool(path string) (*x509.CertPool, error) {
 	}
 	return pool, nil
 }
+
+// OptionalCACertPool is the "optional CA path" adapter for TLS option builders:
+// an empty path yields (nil, nil) — meaning "use the system trust store" — while
+// a non-empty path is loaded fail-closed via CACertPool. It collapses the
+// repeated `if path != "" { pool, err := CACertPool(path); ... }` block at every
+// Jolokia/Prometheus/Kafka TLS call site into one call.
+func OptionalCACertPool(path string) (*x509.CertPool, error) {
+	if path == "" {
+		return nil, nil
+	}
+	return CACertPool(path)
+}

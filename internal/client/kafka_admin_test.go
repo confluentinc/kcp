@@ -262,14 +262,14 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithUnauthenticatedAuth sets unauthenticated auth",
-			option: WithUnauthenticatedTlsAuth(""),
+			option: WithUnauthenticatedTlsAuth("", false),
 			expectedConfig: AdminConfig{
 				authType: types.AuthTypeUnauthenticatedTLS,
 			},
 		},
 		{
 			name:   "WithTLSAuth sets TLS auth with certificate files",
-			option: WithTLSAuth("ca.crt", "client.crt", "client.key"),
+			option: WithTLSAuth("ca.crt", "client.crt", "client.key", false),
 			expectedConfig: AdminConfig{
 				authType:       types.AuthTypeTLS,
 				caCertFile:     "ca.crt",
@@ -279,7 +279,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLPlainAuth sets SASL/PLAIN auth with TLS",
-			option: WithSASLPlainAuth("test-user", "test-pass", ""),
+			option: WithSASLPlainAuth("test-user", "test-pass", "", false),
 			expectedConfig: AdminConfig{
 				authType: types.AuthTypeSASLPlain,
 				username: "test-user",
@@ -288,7 +288,7 @@ func TestAdminOptionFunctions(t *testing.T) {
 		},
 		{
 			name:   "WithSASLPlainAuthNoTLS sets SASL/PLAIN auth without TLS",
-			option: WithSASLPlainAuthNoTLS("test-user", "test-pass", ""),
+			option: WithSASLPlainAuthNoTLS("test-user", "test-pass"),
 			expectedConfig: AdminConfig{
 				authType:   types.AuthTypeSASLPlain,
 				username:   "test-user",
@@ -755,7 +755,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9094"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithUnauthenticatedTlsAuth("")},
+			opts:                            []AdminOption{WithUnauthenticatedTlsAuth("", false)},
 			expectError:                     false,
 		},
 		{
@@ -771,7 +771,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9094"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithTLSAuth(caCertFile, clientCertFile, clientKeyFile)},
+			opts:                            []AdminOption{WithTLSAuth(caCertFile, clientCertFile, clientKeyFile, false)},
 			expectError:                     false,
 		},
 		{
@@ -779,7 +779,7 @@ func TestNewKafkaAdmin(t *testing.T) {
 			brokerAddresses:                 []string{"broker1:9094"},
 			clientBrokerEncryptionInTransit: kafkatypes.ClientBrokerTls,
 			region:                          "us-west-2",
-			opts:                            []AdminOption{WithTLSAuth("invalid.crt", "invalid.crt", "invalid.key")},
+			opts:                            []AdminOption{WithTLSAuth("invalid.crt", "invalid.crt", "invalid.key", false)},
 			expectError:                     true,
 			errorContains:                   "Failed to configure TLS authentication",
 		},
@@ -1031,5 +1031,45 @@ func TestAdminOptionForAuthMethod(t *testing.T) {
 	t.Run("TLS with nil config returns error", func(t *testing.T) {
 		_, err := AdminOptionForAuthMethod(types.AuthTypeTLS, types.AuthMethodConfig{}, false)
 		require.Error(t, err)
+	})
+
+	// Regression for review finding #2: skipTLSVerify must be threaded into EVERY
+	// TLS-bearing branch (not just SASL/SCRAM), and a supplied ca_cert must be
+	// captured on each — so callers need no separate WithInsecureSkipVerify() override.
+	t.Run("skipTLSVerify and ca_cert thread through every TLS branch", func(t *testing.T) {
+		cases := []struct {
+			name string
+			amc  types.AuthMethodConfig
+		}{
+			{"SASL/SCRAM", types.AuthMethodConfig{SASLScram: &types.SASLScramConfig{Use: true, Username: "u", Password: "p", Mechanism: "SHA512", CACert: "ca.pem"}}},
+			{"SASL/PLAIN over TLS", types.AuthMethodConfig{SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p", CACert: "ca.pem"}}},
+			{"unauthenticated TLS", types.AuthMethodConfig{UnauthenticatedTLS: &types.UnauthenticatedTLSConfig{Use: true, CACert: "ca.pem"}}},
+			{"mTLS", types.AuthMethodConfig{TLS: &types.TLSConfig{Use: true, CACert: "ca.pem", ClientCert: "cert.pem", ClientKey: "key.pem"}}},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				authType, err := tc.amc.SelectedAuthType(false)
+				require.NoError(t, err)
+				opt, err := AdminOptionForAuthMethod(authType, tc.amc, true)
+				require.NoError(t, err)
+				cfg := AdminConfig{}
+				opt(&cfg)
+				assert.True(t, cfg.insecureSkipTLSVerify, "skipTLSVerify must reach %s", tc.name)
+				assert.Equal(t, "ca.pem", cfg.caCertFile, "ca_cert must reach %s", tc.name)
+				assert.False(t, cfg.disableTLS, "%s must stay TLS-enabled", tc.name)
+			})
+		}
+	})
+
+	// SASL/PLAIN with NO ca_cert is cleartext SASL_PLAINTEXT; skipTLSVerify is
+	// irrelevant there and TLS stays disabled.
+	t.Run("SASL/PLAIN without ca_cert stays plaintext regardless of skipTLSVerify", func(t *testing.T) {
+		opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, types.AuthMethodConfig{
+			SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p"},
+		}, true)
+		require.NoError(t, err)
+		cfg := AdminConfig{}
+		opt(&cfg)
+		assert.True(t, cfg.disableTLS)
 	})
 }

@@ -229,6 +229,13 @@ func (s *ConfluentCloudService) ListClusterLinks(ctx context.Context, config Con
 
 	names := make([]string, 0, len(response.Data))
 	for _, l := range response.Data {
+		// Skip empty-named entries. cp-server lists UNMANAGED_SOURCE records with an
+		// empty link_name after a source-initiated link is deleted; an empty name is
+		// never an addressable resource ("/links//..." is a malformed 400 path), so
+		// filter it here at the API boundary rather than in every caller.
+		if l.LinkName == "" {
+			continue
+		}
 		names = append(names, l.LinkName)
 	}
 	return names, nil

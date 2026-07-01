@@ -132,7 +132,7 @@ the cutover state file and must be provided each time.`,
 	// TLS credential flags.
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the CA certificate that verifies the source broker's TLS server certificate. Applies to any TLS-fronted source auth method (SASL/SCRAM, SASL/PLAIN over TLS, TLS/mTLS, unauthenticated-TLS); supply it only for a private/internal CA.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
 	cutoverExecuteCmd.Flags().AddFlagSet(tlsFlags)

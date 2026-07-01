@@ -2,7 +2,6 @@ package clusters
 
 import (
 	"context"
-	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"os"
@@ -444,13 +443,9 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.Jolokia.Auth.Username, clusterCreds.Jolokia.Auth.Password))
 	}
 	if clusterCreds.Jolokia.TLS != nil {
-		var caPool *x509.CertPool
-		if f := clusterCreds.Jolokia.TLS.CACert; f != "" {
-			p, err := utils.CACertPool(f)
-			if err != nil {
-				return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
-			}
-			caPool = p
+		caPool, err := utils.OptionalCACertPool(clusterCreds.Jolokia.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
 		}
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
 	}
@@ -477,13 +472,9 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 		))
 	}
 	if clusterCreds.Prometheus.TLS != nil {
-		var caPool *x509.CertPool
-		if f := clusterCreds.Prometheus.TLS.CACert; f != "" {
-			p, err := utils.CACertPool(f)
-			if err != nil {
-				return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
-			}
-			caPool = p
+		caPool, err := utils.OptionalCACertPool(clusterCreds.Prometheus.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
 		}
 		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, clusterCreds.Prometheus.TLS.InsecureSkipVerify))
 	}

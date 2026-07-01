@@ -2,6 +2,7 @@ package mirrortopics
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -113,11 +114,12 @@ type fakeLinkTarget struct {
 	created      []struct{ src, mirror string }
 
 	// Collision-detection scripting (all optional; nil → no collisions):
-	topics        []string                         // ListTopics: every dest topic
-	topicsErr     error                            //
-	links         []string                         // ListClusterLinks: all links
-	linksErr      error                            //
-	mirrorsByLink map[string][]svclink.MirrorTopic // per-link mirrors; falls back to .mirrors when nil
+	topics           []string                         // ListTopics: every dest topic
+	topicsErr        error                            //
+	links            []string                         // ListClusterLinks: all links
+	linksErr         error                            //
+	mirrorsByLink    map[string][]svclink.MirrorTopic // per-link mirrors; falls back to .mirrors when nil
+	mirrorsErrByLink map[string]error                 // per-link ListMirrorTopics error (foreign-link read failures)
 }
 
 func (f *fakeLinkTarget) ClusterID(ctx context.Context) (string, error) {
@@ -129,6 +131,9 @@ func (f *fakeLinkTarget) GetClusterLinkConfigs(ctx context.Context, name string)
 }
 
 func (f *fakeLinkTarget) ListMirrorTopics(ctx context.Context, name string) ([]svclink.MirrorTopic, error) {
+	if err := f.mirrorsErrByLink[name]; err != nil {
+		return nil, err
+	}
 	if f.mirrorsErr != nil {
 		return nil, f.mirrorsErr
 	}
@@ -191,6 +196,33 @@ func TestPlan_CreatePresentInternalFilter(t *testing.T) {
 	}
 	if p.Empty() {
 		t.Errorf("plan with a Create should not be Empty")
+	}
+}
+
+func TestPlan_ToleratesUnreadableForeignLink(t *testing.T) {
+	// Review finding #1: an unrelated foreign link whose mirrors can't be listed
+	// (mid-teardown / permissions) must NOT fail the whole plan. The colliding-name
+	// attribution for that link is lost, but the plan proceeds. Here "orders-1" does
+	// not collide with anything readable, so it is planned as a normal create.
+	src := &fakeSource{topics: []string{"orders-1"}}
+	tgt := &fakeLinkTarget{
+		clusterID: "dest-1",
+		links:     []string{"link-a", "broken-link"},
+		mirrorsByLink: map[string][]svclink.MirrorTopic{
+			"link-a": {},
+		},
+		mirrorsErrByLink: map[string]error{"broken-link": errors.New("boom: link mid-teardown")},
+		topics:           []string{}, // no existing dest topics
+	}
+	r := New(Config{LinkName: "link-a", Include: []string{"*"}}, src, tgt, tgt)
+
+	p, err := r.Plan(context.Background())
+	if err != nil {
+		t.Fatalf("Plan must tolerate an unreadable foreign link, got: %v", err)
+	}
+	changes := p.Changes()
+	if len(changes) != 1 || changes[0].Action != reconcile.ActionCreate {
+		t.Fatalf("want 1 Create, got %+v", changes)
 	}
 }
 

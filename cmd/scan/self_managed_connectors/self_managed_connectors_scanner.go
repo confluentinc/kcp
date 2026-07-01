@@ -434,13 +434,9 @@ func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(creds.Jolokia.Auth.Username, creds.Jolokia.Auth.Password))
 	}
 	if creds.Jolokia.TLS != nil {
-		var caPool *x509.CertPool
-		if f := creds.Jolokia.TLS.CACert; f != "" {
-			p, err := utils.CACertPool(f)
-			if err != nil {
-				return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
-			}
-			caPool = p
+		caPool, err := utils.OptionalCACertPool(creds.Jolokia.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
 		}
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, creds.Jolokia.TLS.InsecureSkipVerify))
 	}
@@ -467,13 +463,9 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 		promOpts = append(promOpts, client.WithPrometheusBasicAuth(creds.Prometheus.Auth.Username, creds.Prometheus.Auth.Password))
 	}
 	if creds.Prometheus.TLS != nil {
-		var caPool *x509.CertPool
-		if f := creds.Prometheus.TLS.CACert; f != "" {
-			p, err := utils.CACertPool(f)
-			if err != nil {
-				return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
-			}
-			caPool = p
+		caPool, err := utils.OptionalCACertPool(creds.Prometheus.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
 		}
 		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, creds.Prometheus.TLS.InsecureSkipVerify))
 	}

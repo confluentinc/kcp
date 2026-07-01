@@ -117,47 +117,61 @@ func (m *CutoverExecutor) Run() error {
 	return nil
 }
 
+// sourceClusterAuth builds the source ClusterAuth from the execute flags.
+// TlsCaCert is the CA that verifies the source broker's TLS server certificate
+// and is applied to EVERY TLS-fronted auth method — SASL/SCRAM and SASL/PLAIN over
+// TLS (SASL_SSL), one-way unauthenticated TLS, and mTLS — not only the mTLS path.
+// For SASL/PLAIN, supplying it selects SASL_SSL over cleartext SASL_PLAINTEXT.
+func sourceClusterAuth(opts CutoverExecutorOpts) types.ClusterAuth {
+	clusterAuth := types.ClusterAuth{}
+	switch opts.AuthType {
+	case types.AuthTypeSASLSCRAM:
+		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
+			Use:       true,
+			Username:  opts.SaslScramUsername,
+			Password:  opts.SaslScramPassword,
+			Mechanism: opts.SaslScramMechanism,
+			CACert:    opts.TlsCaCert,
+		}
+	case types.AuthTypeTLS:
+		clusterAuth.AuthMethod.TLS = &types.TLSConfig{
+			Use:        true,
+			CACert:     opts.TlsCaCert,
+			ClientCert: opts.TlsClientCert,
+			ClientKey:  opts.TlsClientKey,
+		}
+	case types.AuthTypeSASLPlain:
+		clusterAuth.AuthMethod.SASLPlain = &types.SASLPlainConfig{
+			Use:      true,
+			Username: opts.SaslPlainUsername,
+			Password: opts.SaslPlainPassword,
+			CACert:   opts.TlsCaCert,
+		}
+	case types.AuthTypeIAM:
+		clusterAuth.AuthMethod.IAM = &types.IAMConfig{Use: true}
+	case types.AuthTypeUnauthenticatedTLS:
+		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{Use: true, CACert: opts.TlsCaCert}
+	case types.AuthTypeUnauthenticatedPlaintext:
+		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
+	}
+	return clusterAuth
+}
+
 func (m *CutoverExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
 	authType := m.opts.AuthType
 	brokerAddresses := strings.Split(m.opts.SourceBootstrap, ",")
 
 	region := m.opts.AWSRegion
 
-	// Build ClusterAuth from flag values
-	clusterAuth := types.ClusterAuth{}
-	switch authType {
-	case types.AuthTypeSASLSCRAM:
-		clusterAuth.AuthMethod.SASLScram = &types.SASLScramConfig{
-			Use:       true,
-			Username:  m.opts.SaslScramUsername,
-			Password:  m.opts.SaslScramPassword,
-			Mechanism: m.opts.SaslScramMechanism,
-		}
-	case types.AuthTypeTLS:
-		clusterAuth.AuthMethod.TLS = &types.TLSConfig{
-			Use:        true,
-			CACert:     m.opts.TlsCaCert,
-			ClientCert: m.opts.TlsClientCert,
-			ClientKey:  m.opts.TlsClientKey,
-		}
-	case types.AuthTypeSASLPlain:
-		clusterAuth.AuthMethod.SASLPlain = &types.SASLPlainConfig{
-			Use:      true,
-			Username: m.opts.SaslPlainUsername,
-			Password: m.opts.SaslPlainPassword,
-		}
-	case types.AuthTypeIAM:
-		clusterAuth.AuthMethod.IAM = &types.IAMConfig{Use: true}
-	case types.AuthTypeUnauthenticatedTLS:
-		clusterAuth.AuthMethod.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{Use: true}
-	case types.AuthTypeUnauthenticatedPlaintext:
-		clusterAuth.AuthMethod.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
-	}
+	clusterAuth := sourceClusterAuth(m.opts)
 
-	opts := []client.AdminOption{client.AdminOptionForAuth(authType, clusterAuth)}
-	if m.opts.InsecureSkipTLSVerify {
-		opts = append(opts, client.WithInsecureSkipVerify())
+	// skipTLSVerify is threaded through the mapper into every TLS path, so no
+	// separate WithInsecureSkipVerify() override is needed.
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, m.opts.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("resolving source auth option: %w", err)
 	}
+	opts := []client.AdminOption{authOpt}
 
 	slog.Debug("connecting to source cluster")
 	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, opts...)
@@ -172,10 +186,8 @@ func (m *CutoverExecutor) createSourceOffset(_ context.Context) (*offset.Service
 func (m *CutoverExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
-	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret, "")}
-	if m.opts.InsecureSkipTLSVerify {
-		destOpts = append(destOpts, client.WithInsecureSkipVerify())
-	}
+	// Confluent Cloud: SASL/PLAIN over TLS (SASL_SSL), public CA (no ca_cert).
+	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret, "", m.opts.InsecureSkipTLSVerify)}
 	destClient, err := client.NewKafkaClient(ccBrokers, "", destOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to destination cluster: %w", err)
