@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -12,6 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
+	"github.com/goccy/go-yaml"
 )
 
 type MigrationWorkflow struct {
@@ -294,12 +296,121 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationC
 	return nil
 }
 
+// unfenceGateway reapplies the initial gateway CR to restore normal traffic.
+// The initial CR YAML fetched from k8s contains server-managed metadata
+// (managedFields, resourceVersion, status) that breaks server-side apply,
+// so we strip it before applying.
+func (s *MigrationWorkflow) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
+	// Parse the initial CR, strip server metadata, re-marshal
+	var obj map[string]interface{}
+	if err := yaml.Unmarshal(config.InitialCrYAML, &obj); err != nil {
+		return fmt.Errorf("failed to parse initial CR YAML: %w", err)
+	}
+
+	// Remove server-managed fields that break re-apply
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		delete(metadata, "managedFields")
+		delete(metadata, "resourceVersion")
+		delete(metadata, "uid")
+		delete(metadata, "creationTimestamp")
+		delete(metadata, "generation")
+	}
+	delete(obj, "status")
+
+	cleanYAML, err := yaml.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
+	}
+
+	return s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML)
+}
+
+// detectUnroutedProducers takes two source offset snapshots separated by the
+// given duration. If any partition's offset increases between snapshots, it
+// means a producer is writing directly to the source cluster (bypassing the
+// fenced gateway) and the migration should not proceed.
+func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
+	// Snapshot 1
+	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
+	snapshot1 := make(map[string]map[int32]int64, len(topics))
+	for _, topic := range topics {
+		offsets, err := s.sourceOffset.Get(topic)
+		if err != nil {
+			return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
+		}
+		snapshot1[topic] = offsets
+	}
+
+	// Wait, then snapshot 2
+	fmt.Printf("   ↳ Monitoring source offsets for %s...\n", duration)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(duration):
+	}
+
+	slog.Debug("taking second source offset snapshot")
+	var violations []string
+	for _, topic := range topics {
+		offsets, err := s.sourceOffset.Get(topic)
+		if err != nil {
+			return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
+		}
+		for p, o2 := range offsets {
+			if o1, ok := snapshot1[topic][p]; ok && o2 > o1 {
+				delta := o2 - o1
+				rate := float64(delta) / duration.Seconds()
+				violations = append(violations, fmt.Sprintf(
+					"topic %s partition %d: offset %d → %d (+%d, ~%.0f msg/s)",
+					topic, p, o1, o2, delta, rate))
+			}
+		}
+	}
+
+	if len(violations) > 0 {
+		sort.Strings(violations)
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
+			ErrUnroutedProducers, strings.Join(violations, "\n  "))
+	}
+
+	return nil
+}
+
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
 func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
 
+	// If enabled, verify source offsets are stable before promoting.
+	// An increasing offset after fencing indicates a producer bypassing the gateway.
+	if config.DetectUnroutedProducersDuration > 0 {
+		fmt.Printf("\n%s\n", color.CyanString("🔍 Checking for unrouted producers..."))
+		if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
+			if !errors.Is(err, ErrUnroutedProducers) {
+				// Non-detection error (e.g. network failure fetching offsets) —
+				// do not unfence, just propagate the error.
+				return err
+			}
+			fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
+				color.YellowString("⚠️"))
+			if unfenceErr := s.unfenceGateway(ctx, config); unfenceErr != nil {
+				slog.Error("❌ failed to unfence gateway — gateway remains fenced", "error", unfenceErr)
+				// Return without ErrUnroutedProducers so the orchestrator does
+				// NOT trigger abort_fence. State stays at fenced, which is
+				// accurate since unfencing failed.
+				return fmt.Errorf("unrouted producers detected but failed to unfence gateway: %w", unfenceErr)
+			}
+			fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
+				color.GreenString("✔"))
+			return err
+		}
+		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
+			color.GreenString("✔"))
+		fmt.Printf("%s\n", color.GreenString("✅ Done"))
+	}
+
+	fmt.Printf("\n%s\n", color.CyanString("📤 Promoting mirror topics..."))
 	slog.Debug("topic promotion process started")
 
 	const maxPromoteRetries = 3

@@ -792,6 +792,223 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 }
 
 // ===========================================================================
+// DetectUnroutedProducers tests
+// ===========================================================================
+
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_StableOffsets(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	promoted := make(map[string]bool)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				promoted[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{
+					MirrorTopicName: name,
+					ErrorCode:       0,
+				})
+			}
+			return resp, nil
+		},
+	}
+
+	// Source offsets are stable (same value on every call)
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 500, 1: 600}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:                          []string{"topic-1", "topic-2"},
+		ClusterRestEndpoint:             "https://cluster",
+		ClusterId:                       "lkc-123",
+		ClusterLinkName:                 "link-1",
+		DetectUnroutedProducersDuration: time.Millisecond,
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err)
+	assert.True(t, promoted["topic-1"], "topic-1 should have been promoted")
+	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
+}
+
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_UnfencesGateway(t *testing.T) {
+	var unfenced bool
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			unfenced = true
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+
+	// Simulates an unrouted producer: offsets keep increasing on every call.
+	var callCount int64
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&callCount, 1)
+			if topic == "topic-1" {
+				return map[int32]int64{0: 100 + n*10, 1: 200}, nil
+			}
+			return map[int32]int64{0: 300}, nil
+		},
+	}
+
+	destOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100, 1: 200}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:                          []string{"topic-1"},
+		ClusterRestEndpoint:             "https://cluster",
+		ClusterId:                       "lkc-123",
+		ClusterLinkName:                 "link-1",
+		DetectUnroutedProducersDuration: time.Millisecond,
+		InitialCrYAML:                   []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n"),
+		InitialCrName:                   "my-gw",
+		K8sNamespace:                    "ns",
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "topic-1 partition 0")
+	assert.True(t, unfenced, "gateway should be unfenced after detecting unrouted producers")
+}
+
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	promoted := make(map[string]bool)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				promoted[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{
+					MirrorTopicName: name,
+					ErrorCode:       0,
+				})
+			}
+			return resp, nil
+		},
+	}
+
+	// Source offsets increase — but flag is off, so it shouldn't matter
+	var callCount int64
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&callCount, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, sourceOffset)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:                          []string{"topic-1"},
+		ClusterRestEndpoint:             "https://cluster",
+		ClusterId:                       "lkc-123",
+		ClusterLinkName:                 "link-1",
+		DetectUnroutedProducersDuration: 0, // check disabled
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err, "with flag disabled, increasing offsets should not block promotion")
+	assert.True(t, promoted["topic-1"])
+}
+
+func TestWorkflow_UnfenceGateway_StripsServerMetadata(t *testing.T) {
+	var appliedYAML []byte
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
+			appliedYAML = yaml
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &MigrationConfig{
+		InitialCrName: "my-gw",
+		K8sNamespace:  "confluent",
+		InitialCrYAML: []byte(`apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gw
+  namespace: confluent
+  managedFields:
+  - manager: confluent-operator
+    operation: Apply
+  resourceVersion: "12345"
+  uid: abc-def-123
+  creationTimestamp: "2026-01-01T00:00:00Z"
+  generation: 3
+spec:
+  streamingDomains:
+  - name: source-kafka-cluster
+status:
+  phase: RUNNING
+`),
+	}
+
+	err := wf.unfenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	require.NotNil(t, appliedYAML, "ApplyGatewayYAML should have been called")
+
+	yamlStr := string(appliedYAML)
+	assert.NotContains(t, yamlStr, "managedFields", "managedFields should be stripped")
+	assert.NotContains(t, yamlStr, "resourceVersion", "resourceVersion should be stripped")
+	assert.NotContains(t, yamlStr, "uid", "uid should be stripped")
+	assert.NotContains(t, yamlStr, "creationTimestamp", "creationTimestamp should be stripped")
+	assert.NotContains(t, yamlStr, "generation", "generation should be stripped")
+	assert.NotContains(t, yamlStr, "status", "status should be stripped")
+	assert.Contains(t, yamlStr, "streamingDomains", "spec should be preserved")
+	assert.Contains(t, yamlStr, "source-kafka-cluster", "spec values should be preserved")
+}
+
+func TestWorkflow_DetectUnroutedProducers_ContextCancelled(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // pre-cancel
+
+	err := wf.detectUnroutedProducers(ctx, []string{"topic-1"}, 5*time.Second)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// ===========================================================================
 // Helper tests
 // ===========================================================================
 
