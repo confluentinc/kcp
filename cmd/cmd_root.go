@@ -16,6 +16,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
 	"github.com/confluentinc/kcp/cmd/scan"
+	"github.com/confluentinc/kcp/cmd/state"
 	"github.com/confluentinc/kcp/cmd/ui"
 	"github.com/confluentinc/kcp/cmd/update"
 	"github.com/confluentinc/kcp/cmd/version"
@@ -99,6 +100,7 @@ func init() {
 		discover.NewDiscoverCmd(),
 		healthcheck.NewHealthcheckCmd(),
 		migration.NewMigrationCmd(),
+		state.NewStateCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
 		docs.NewDocsCmd(),
