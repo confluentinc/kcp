@@ -16,5 +16,5 @@
   "kcp_build_info": { "version": "0.8.5", "commit": "abc1234", "date": "2026-06-17" },
   "timestamp": "2026-05-14T00:00:00Z",
   "updated_at": "2026-06-26T10:30:00Z",
-  "migrated_from": "kcp_build_info.version=0.7.3"
+  "upgraded_from": "kcp_build_info.version=0.7.3"
 }

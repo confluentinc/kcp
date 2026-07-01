@@ -114,7 +114,7 @@ func (rs *ReportService) ProcessState(state types.State) ProcessedState {
 		Timestamp:        state.Timestamp,
 		SchemaVersion:    state.SchemaVersion,
 		UpdatedAt:        updatedAt,
-		MigratedFrom:     state.MigratedFrom,
+		UpgradedFrom:     state.UpgradedFrom,
 	}
 
 	return processedState

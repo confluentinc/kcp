@@ -830,13 +830,13 @@ func TestNewStateFrom_PreservesExistingOSKData(t *testing.T) {
 	}
 }
 
-func TestNewStateFrom_PreservesMigratedFromAndSchemaRegistries(t *testing.T) {
-	// A file that was migrated/upgraded carries a migrated_from breadcrumb and may
+func TestNewStateFrom_PreservesUpgradedFromAndSchemaRegistries(t *testing.T) {
+	// A file that was migrated/upgraded carries a upgraded_from breadcrumb and may
 	// hold previously-discovered schema registries. A RUW command (discover/scan)
 	// rebuilds its working state via NewStateFrom, which must carry both forward —
 	// otherwise the next write silently drops them (append-only violation).
 	existingState := &State{
-		MigratedFrom: "era=B",
+		UpgradedFrom: "era=B",
 		SchemaRegistries: &SchemaRegistriesState{
 			ConfluentSchemaRegistry: []SchemaRegistryInformation{
 				{URL: "https://sr.example.com"},
@@ -846,8 +846,8 @@ func TestNewStateFrom_PreservesMigratedFromAndSchemaRegistries(t *testing.T) {
 
 	newState := NewStateFrom(existingState)
 
-	if newState.MigratedFrom != "era=B" {
-		t.Errorf("MigratedFrom breadcrumb lost: got %q, want %q", newState.MigratedFrom, "era=B")
+	if newState.UpgradedFrom != "era=B" {
+		t.Errorf("UpgradedFrom breadcrumb lost: got %q, want %q", newState.UpgradedFrom, "era=B")
 	}
 	if newState.SchemaRegistries == nil || len(newState.SchemaRegistries.ConfluentSchemaRegistry) != 1 {
 		t.Errorf("SchemaRegistries lost: got %+v", newState.SchemaRegistries)
@@ -887,7 +887,7 @@ var reDerivedStateFields = map[string]bool{
 
 // TestNewStateFrom_NoFieldSilentlyDropped guards against the recurring bug class
 // where NewStateFrom (a copy-by-name allowlist) drops a State field on RUW — this
-// is how migrated_from, schema_registries and the created timestamp were all lost.
+// is how upgraded_from, schema_registries and the created timestamp were all lost.
 // It populates every field, round-trips through NewStateFrom, and requires each
 // field to be either preserved or in reDerivedStateFields.
 //
@@ -906,7 +906,7 @@ func TestNewStateFrom_NoFieldSilentlyDropped(t *testing.T) {
 		KcpBuildInfo: KcpBuildInfo{Version: "9.9.9", Commit: "abc", Date: "2026-01-01"},
 		Timestamp:    fixed,
 		UpdatedAt:    fixed.Add(time.Hour),
-		MigratedFrom: "era=B",
+		UpgradedFrom: "era=B",
 	}
 
 	st := reflect.TypeOf(State{})
@@ -1130,7 +1130,7 @@ func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
 	if !strings.Contains(err.Error(), "recreate") {
 		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
-	// The source file's version is surfaced via the "migrated from ..." breadcrumb.
+	// The source file's version is surfaced via the "upgraded from ..." breadcrumb.
 	if !strings.Contains(err.Error(), "0.5.0") {
 		t.Errorf("expected error to reference the file's version, got: %v", err)
 	}
@@ -1218,7 +1218,7 @@ func TestNewStateFromBytes_SchemaMismatch_WithVersion(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	// The file's version is surfaced via the "migrated from ..." breadcrumb. The new
+	// The file's version is surfaced via the "upgraded from ..." breadcrumb. The new
 	// contract no longer echoes the running binary's version (superseded #308 behavior);
 	// it gives actionable upgrade/recreate guidance instead.
 	if !strings.Contains(err.Error(), "0.5.0") {

@@ -870,7 +870,7 @@ func TestProcessState_CarriesStateMetadata(t *testing.T) {
 		KcpBuildInfo:  types.KcpBuildInfo{Version: "0.8.5", Commit: "abc1234", Date: "2026-06-17"},
 		Timestamp:     time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:     time.Date(2026, 6, 26, 10, 30, 0, 0, time.UTC),
-		MigratedFrom:  "kcp_build_info.version=0.7.3",
+		UpgradedFrom:  "kcp_build_info.version=0.7.3",
 	}
 
 	got := rs.ProcessState(state)
@@ -881,8 +881,8 @@ func TestProcessState_CarriesStateMetadata(t *testing.T) {
 	if got.UpdatedAt == nil || !got.UpdatedAt.Equal(state.UpdatedAt) {
 		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, state.UpdatedAt)
 	}
-	if got.MigratedFrom != "kcp_build_info.version=0.7.3" {
-		t.Errorf("MigratedFrom = %q, want kcp_build_info.version=0.7.3", got.MigratedFrom)
+	if got.UpgradedFrom != "kcp_build_info.version=0.7.3" {
+		t.Errorf("UpgradedFrom = %q, want kcp_build_info.version=0.7.3", got.UpgradedFrom)
 	}
 }
 
@@ -904,9 +904,9 @@ func TestProcessState_LegacyZeroMetadataOmitsUpdatedAt(t *testing.T) {
 		t.Errorf("UpdatedAt = %v, want nil for zero/legacy state", got.UpdatedAt)
 	}
 
-	// Verify migrated_from is empty (legacy)
-	if got.MigratedFrom != "" {
-		t.Errorf("MigratedFrom = %q, want empty string (legacy)", got.MigratedFrom)
+	// Verify upgraded_from is empty (legacy)
+	if got.UpgradedFrom != "" {
+		t.Errorf("UpgradedFrom = %q, want empty string (legacy)", got.UpgradedFrom)
 	}
 }
 

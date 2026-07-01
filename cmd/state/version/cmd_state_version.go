@@ -31,7 +31,7 @@ type stateMetadata struct {
 	} `json:"kcp_build_info"`
 	Timestamp    string `json:"timestamp"`
 	UpdatedAt    string `json:"updated_at"`
-	MigratedFrom string `json:"migrated_from"`
+	UpgradedFrom string `json:"upgraded_from"`
 }
 
 // parseStateMetadata leniently extracts metadata from raw state-file bytes. It only fails if
@@ -47,7 +47,7 @@ func parseStateMetadata(data []byte) (stateMetadata, error) {
 // hasKCPMarkers reports whether the file carries any field that identifies it as a kcp-state.json.
 func (m stateMetadata) hasKCPMarkers() bool {
 	return m.KcpBuildInfo.Version != "" || m.SchemaVersion != 0 || m.Timestamp != "" ||
-		m.UpdatedAt != "" || m.MigratedFrom != ""
+		m.UpdatedAt != "" || m.UpgradedFrom != ""
 }
 
 // renderStateMetadata prints the same fields, in the same order, as the UI's state-file info
@@ -88,8 +88,8 @@ func renderStateMetadata(w io.Writer, path string, m stateMetadata) {
 	if m.UpdatedAt != "" {
 		row("Last updated", m.UpdatedAt)
 	}
-	if m.MigratedFrom != "" {
-		row("Migrated from", m.MigratedFrom)
+	if m.UpgradedFrom != "" {
+		row("Upgraded from", m.UpgradedFrom)
 	}
 	_, _ = fmt.Fprintln(w, strings.Join(lines, "\n"))
 }

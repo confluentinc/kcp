@@ -100,7 +100,7 @@ export interface ProcessedState {
   timestamp?: string
   schema_version?: number
   updated_at?: string
-  migrated_from?: string
+  upgraded_from?: string
 }
 
 /**
@@ -128,6 +128,6 @@ export interface StateUploadResponse {
   timestamp?: string
   schema_version?: number
   updated_at?: string
-  migrated_from?: string
+  upgraded_from?: string
   message?: string
 }

@@ -42,7 +42,7 @@ func TestParseStateMetadata_InvalidJSON(t *testing.T) {
 func TestStateVersionCmd_ReportsMetadata(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "kcp-state.json")
-	body := `{"schema_version":1,"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.5","commit":"deadbee","date":"2026-06-17T00:00:00Z"},"timestamp":"2026-05-14T00:00:00Z","updated_at":"2026-06-26T10:30:00Z","migrated_from":"kcp_build_info.version=0.7.3"}`
+	body := `{"schema_version":1,"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.5","commit":"deadbee","date":"2026-06-17T00:00:00Z"},"timestamp":"2026-05-14T00:00:00Z","updated_at":"2026-06-26T10:30:00Z","upgraded_from":"kcp_build_info.version=0.7.3"}`
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestStateVersionCmd_ReportsMetadata(t *testing.T) {
 	}
 
 	got := out.String()
-	for _, want := range []string{"Schema version", "1", "0.8.5", "deadbee", "Created", "2026-05-14T00:00:00Z", "Last updated", "Migrated from", "kcp_build_info.version=0.7.3"} {
+	for _, want := range []string{"Schema version", "1", "0.8.5", "deadbee", "Created", "2026-05-14T00:00:00Z", "Last updated", "Upgraded from", "kcp_build_info.version=0.7.3"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("output missing %q\n--- output ---\n%s", want, got)
 		}
@@ -90,7 +90,7 @@ func TestStateVersionCmd_NonKCPJSON_NoMisleadingSchemaRow(t *testing.T) {
 func TestStateVersionCmd_LegacyAndAbsentFieldsHidden(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "kcp-state.json")
-	// No schema_version, no updated_at/migrated_from, commit "unknown".
+	// No schema_version, no updated_at/upgraded_from, commit "unknown".
 	body := `{"regions":[],"kcp_build_info":{"version":"0.4.0","commit":"unknown","date":"unknown"},"timestamp":"2026-01-01T00:00:00Z"}`
 	if err := os.WriteFile(path, []byte(body), 0600); err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestStateVersionCmd_LegacyAndAbsentFieldsHidden(t *testing.T) {
 	if strings.Contains(got, "Commit") || strings.Contains(got, "unknown") {
 		t.Errorf("'unknown' commit/date must be hidden, got:\n%s", got)
 	}
-	if strings.Contains(got, "Last updated") || strings.Contains(got, "Migrated from") {
-		t.Errorf("absent updated_at/migrated_from rows must be hidden, got:\n%s", got)
+	if strings.Contains(got, "Last updated") || strings.Contains(got, "Upgraded from") {
+		t.Errorf("absent updated_at/upgraded_from rows must be hidden, got:\n%s", got)
 	}
 }

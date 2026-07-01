@@ -18,7 +18,7 @@ type ProcessedState struct {
 	Timestamp        time.Time                    `json:"timestamp"`
 	SchemaVersion    int                          `json:"schema_version"`
 	UpdatedAt        *time.Time                   `json:"updated_at,omitempty"`
-	MigratedFrom     string                       `json:"migrated_from,omitempty"`
+	UpgradedFrom     string                       `json:"upgraded_from,omitempty"`
 }
 
 // ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters

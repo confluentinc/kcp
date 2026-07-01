@@ -44,8 +44,8 @@ export function StateMetadataPopover({ className }: StateMetadataPopoverProps) {
   if (state.updated_at) {
     rows.push({ key: 'updated', label: 'Last updated', value: formatMaybeDate(state.updated_at) })
   }
-  if (state.migrated_from) {
-    rows.push({ key: 'migrated', label: 'Migrated from', value: state.migrated_from })
+  if (state.upgraded_from) {
+    rows.push({ key: 'upgraded', label: 'Upgraded from', value: state.upgraded_from })
   }
 
   return (

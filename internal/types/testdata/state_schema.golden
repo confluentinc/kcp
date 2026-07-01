@@ -2,7 +2,6 @@ kcp_build_info
 kcp_build_info.commit
 kcp_build_info.date
 kcp_build_info.version
-migrated_from
 msk_sources
 msk_sources.regions
 msk_sources.regions.clusters
@@ -212,3 +211,4 @@ schema_registries.confluent_schema_registry.url
 schema_version
 timestamp
 updated_at
+upgraded_from

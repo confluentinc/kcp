@@ -169,7 +169,7 @@ func TestHandleUploadState_SchemaMismatch_WithVersion_ReturnsActionableError(t *
 		t.Fatalf("failed to parse response body: %v", err)
 	}
 	msg, _ := resp["message"].(string)
-	// The file's version is surfaced via the "migrated from ..." breadcrumb. The new
+	// The file's version is surfaced via the "upgraded from ..." breadcrumb. The new
 	// contract gives actionable upgrade/recreate guidance instead of echoing the running
 	// binary's version (superseded #308 behavior).
 	if !strings.Contains(msg, "0.5.0") {

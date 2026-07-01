@@ -24,7 +24,7 @@ type State struct {
 	KcpBuildInfo     KcpBuildInfo           `json:"kcp_build_info"`
 	Timestamp        time.Time              `json:"timestamp"`
 	UpdatedAt        time.Time              `json:"updated_at,omitempty"`
-	MigratedFrom     string                 `json:"migrated_from,omitempty"`
+	UpgradedFrom     string                 `json:"upgraded_from,omitempty"`
 }
 
 func NewStateFrom(fromState *State) *State {
@@ -74,10 +74,10 @@ func NewStateFrom(fromState *State) *State {
 		}
 
 		// Carry forward data that isn't source-scoped so a RUW write (discover/scan)
-		// doesn't silently drop it: the migrated_from breadcrumb (durable provenance
+		// doesn't silently drop it: the upgraded_from breadcrumb (durable provenance
 		// of the file's origin shape) and any previously discovered schema registries
 		// (discover does not repopulate these — dropping them violates append-only).
-		workingState.MigratedFrom = fromState.MigratedFrom
+		workingState.UpgradedFrom = fromState.UpgradedFrom
 		workingState.SchemaRegistries = fromState.SchemaRegistries
 
 		// Timestamp is the created-at; only updated_at moves per write. Preserve the
@@ -131,8 +131,8 @@ func NewStateFromBytes(data []byte) (*State, error) {
 	// A dev-stamped file that decodes cleanly is a clean success — no warning
 	// (spec §6.9: the dev stamp is provenance, not a defect). fileIsDevStamped only
 	// shapes the FAILURE messages above.
-	if state.MigratedFrom == "" && fromLabel != fmt.Sprintf("schema_version=%d", migrate.CurrentSchemaVersion) {
-		state.MigratedFrom = fromLabel
+	if state.UpgradedFrom == "" && fromLabel != fmt.Sprintf("schema_version=%d", migrate.CurrentSchemaVersion) {
+		state.UpgradedFrom = fromLabel
 	}
 	if state.KcpBuildInfo.Version == "" {
 		slog.Warn("state file has no kcp_build_info.version, this may not be a valid KCP state file")
