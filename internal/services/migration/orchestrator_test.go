@@ -270,6 +270,65 @@ func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	assert.Equal(t, StateLagsOk, persisted.CurrentState)
 }
 
+func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testing.T) {
+	// Simulate a rogue producer: source offsets keep increasing on every call.
+	var sourceCallCount int64
+	var promoteCallCount int64
+	var unfenceCalled bool
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+			// Track unfence calls (the second apply is the unfence after detection)
+			unfenceCalled = true
+			return nil
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
+
+	// Enable unrouted producer detection
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	// Set valid YAML for InitialCrYAML so unfenceGateway can parse it
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	// Override source offset provider to return increasing offsets (simulating rogue)
+	orch.workflow.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sourceCallCount, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+
+	// Track promote calls to verify it only runs once (not twice from duplicate callback)
+	originalPromote := orch.workflow.clusterLinkService
+	orch.workflow.clusterLinkService = &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promoteCallCount, 1)
+			return originalPromote.PromoteMirrorTopics(ctx, cfg, topicNames)
+		},
+	}
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
+
+	// FSM state should have rolled back to initialized via abort_fence
+	assert.Equal(t, StateInitialized, config.CurrentState,
+		"FSM state should be rolled back to initialized after unrouted producer detection")
+
+	// State file should be persisted with initialized
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateInitialized, persisted.CurrentState,
+		"persisted state should be initialized after abort_fence transition")
+
+	// Gateway should have been unfenced
+	assert.True(t, unfenceCalled, "gateway should be unfenced after detecting unrouted producers")
+
+	// PromoteTopics should NOT have been called (detection aborts before promotion)
+	assert.Equal(t, int64(0), atomic.LoadInt64(&promoteCallCount),
+		"PromoteMirrorTopics should not be called when unrouted producers are detected")
+}
+
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 	overrides := orchestratorOverrides{
 		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
