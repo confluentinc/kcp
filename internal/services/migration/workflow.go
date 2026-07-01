@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -368,8 +369,8 @@ func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics 
 
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		return fmt.Errorf("source offsets are still increasing after fencing — unrouted producer(s) detected:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
-			strings.Join(violations, "\n  "))
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
+			ErrUnroutedProducers, strings.Join(violations, "\n  "))
 	}
 
 	return nil
@@ -386,18 +387,23 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 	if config.DetectUnroutedProducersDuration > 0 {
 		fmt.Printf("\n%s\n", color.CyanString("🔍 Checking for unrouted producers..."))
 		if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
+			if !errors.Is(err, ErrUnroutedProducers) {
+				// Non-detection error (e.g. network failure fetching offsets) —
+				// do not unfence, just propagate the error.
+				return err
+			}
 			fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
 				color.YellowString("⚠️"))
 			if unfenceErr := s.unfenceGateway(ctx, config); unfenceErr != nil {
 				slog.Error("❌ failed to unfence gateway — gateway remains fenced", "error", unfenceErr)
-				// Return the detection error without ErrUnroutedProducers so the
-				// orchestrator does NOT trigger abort_fence. The state stays at
-				// fenced, which is accurate since unfencing failed.
-				return err
+				// Return without ErrUnroutedProducers so the orchestrator does
+				// NOT trigger abort_fence. State stays at fenced, which is
+				// accurate since unfencing failed.
+				return fmt.Errorf("unrouted producers detected but failed to unfence gateway: %w", unfenceErr)
 			}
 			fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
 				color.GreenString("✔"))
-			return fmt.Errorf("%w: %w", ErrUnroutedProducers, err)
+			return err
 		}
 		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
 			color.GreenString("✔"))

@@ -883,7 +883,7 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_Unfenc
 
 	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unrouted producer(s) detected")
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
 	assert.Contains(t, err.Error(), "topic-1 partition 0")
 	assert.True(t, unfenced, "gateway should be unfenced after detecting unrouted producers")
 }
