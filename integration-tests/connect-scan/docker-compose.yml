@@ -80,7 +80,7 @@ services:
 
   # Basic-auth Connect worker: same broker, its own single-node Connect cluster,
   # REST protected by BasicAuthSecurityRestExtension (HTTP). Exercises kcp's
-  # --use-sasl-scram (HTTP Basic) REST auth.
+  # --use-basic-auth (HTTP Basic) REST auth.
   kafka-connect-basic:
     image: confluentinc/cp-kafka-connect:7.6.0
     hostname: connect-worker-basic

@@ -358,7 +358,7 @@ func TestScanner_CollectConnectPrometheusMetrics_NoPrometheusConfig(t *testing.T
 	assert.Contains(t, err.Error(), "prometheus")
 }
 
-func TestHTTPConnectClient_SaslScramSendsBasicAuth(t *testing.T) {
+func TestHTTPConnectClient_BasicAuthSendsBasicAuth(t *testing.T) {
 	var gotUser, gotPass string
 	var gotOK bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -370,12 +370,12 @@ func TestHTTPConnectClient_SaslScramSendsBasicAuth(t *testing.T) {
 	c := &HTTPConnectClient{
 		baseURL:    srv.URL,
 		httpClient: srv.Client(),
-		authMethod: types.ConnectAuthMethodSaslScram,
-		saslAuth:   types.ConnectSaslScramAuth{Username: "u", Password: "p"},
+		authMethod: types.ConnectAuthMethodBasicAuth,
+		basicAuth:  types.ConnectBasicAuth{Username: "u", Password: "p"},
 	}
 	_, err := c.ListConnectors()
 	require.NoError(t, err)
-	assert.True(t, gotOK, "basic auth header sent for SASL/SCRAM")
+	assert.True(t, gotOK, "basic auth header sent for Basic auth")
 	assert.Equal(t, "u", gotUser)
 	assert.Equal(t, "p", gotPass)
 }
@@ -427,7 +427,7 @@ func TestCmd_MutuallyExclusiveAuthMethods(t *testing.T) {
 	cmd.SilenceUsage = true
 	cmd.SetArgs([]string{
 		"--state-file", "s", "--connect-rest-url", "u", "--cluster-id", "a",
-		"--use-tls", "--use-sasl-scram",
+		"--use-tls", "--use-basic-auth",
 	})
 	require.Error(t, cmd.Execute(), "two auth methods must be rejected")
 }
@@ -935,11 +935,11 @@ func resetCmdGlobals() {
 	connectRestURL = ""
 	clusterID = ""
 	sourceType = ""
-	useSaslScram = false
+	useBasicAuth = false
 	useTls = false
 	useUnauthenticated = false
-	saslScramUsername = ""
-	saslScramPassword = ""
+	username = ""
+	password = ""
 	tlsCaCert = ""
 	tlsClientCert = ""
 	tlsClientKey = ""

@@ -27,7 +27,7 @@ type HTTPConnectClient struct {
 	baseURL    string
 	httpClient *http.Client
 	authMethod types.ConnectAuthMethod
-	saslAuth   types.ConnectSaslScramAuth
+	basicAuth  types.ConnectBasicAuth
 }
 
 type SelfManagedConnectorsScannerOpts struct {
@@ -38,7 +38,7 @@ type SelfManagedConnectorsScannerOpts struct {
 	ClusterArn     string
 	ClusterID      string
 	AuthMethod     types.ConnectAuthMethod
-	SaslScramAuth  types.ConnectSaslScramAuth
+	BasicAuth      types.ConnectBasicAuth
 	TlsAuth        types.ConnectTlsAuth
 
 	MetricsSource       string
@@ -73,7 +73,7 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 		baseURL:    opts.ConnectRestURL,
 		httpClient: httpClient,
 		authMethod: opts.AuthMethod,
-		saslAuth:   opts.SaslScramAuth,
+		basicAuth:  opts.BasicAuth,
 	}
 
 	return &SelfManagedConnectorsScanner{
@@ -298,11 +298,11 @@ func (c *HTTPConnectClient) GetConnectorStatus(name string) (map[string]any, err
 	return status, nil
 }
 
-// addAuthHeaders adds basic authentication for SASL/SCRAM Connect clusters on the
-// list/status/config endpoints.
+// addAuthHeaders adds HTTP Basic authentication for Basic-auth Connect clusters
+// on the list/status/config endpoints.
 func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
-	if c.authMethod == types.ConnectAuthMethodSaslScram {
-		req.SetBasicAuth(c.saslAuth.Username, c.saslAuth.Password)
+	if c.authMethod == types.ConnectAuthMethodBasicAuth {
+		req.SetBasicAuth(c.basicAuth.Username, c.basicAuth.Password)
 	}
 }
 

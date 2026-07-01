@@ -65,7 +65,7 @@ func assertConnectorsDiscovered(t *testing.T, statePath string) {
 
 // TestConnectScanAuthMethods scans a Connect worker over EVERY REST auth method the
 // `scan self-managed-connectors` command supports — unauthenticated, HTTP Basic
-// (--use-sasl-scram), and mTLS (--use-tls) — asserting the connector is discovered
+// (--use-basic-auth), and mTLS (--use-tls) — asserting the connector is discovered
 // in each case (so the auth/TLS wiring is exercised, not just that kcp exited 0).
 func TestConnectScanAuthMethods(t *testing.T) {
 	methods := []struct {
@@ -82,9 +82,9 @@ func TestConnectScanAuthMethods(t *testing.T) {
 			name:    "basic-auth",
 			restURL: "http://localhost:18085",
 			auth: []string{
-				"--use-sasl-scram",
-				"--sasl-scram-username", "connectuser",
-				"--sasl-scram-password", "connectpass",
+				"--use-basic-auth",
+				"--username", "connectuser",
+				"--password", "connectpass",
 			},
 		},
 		{
@@ -103,9 +103,9 @@ func TestConnectScanAuthMethods(t *testing.T) {
 			name:    "basic-auth-https-ca",
 			restURL: "https://localhost:18087",
 			auth: []string{
-				"--use-sasl-scram",
-				"--sasl-scram-username", "connectuser",
-				"--sasl-scram-password", "connectpass",
+				"--use-basic-auth",
+				"--username", "connectuser",
+				"--password", "connectpass",
 				"--tls-ca-cert", certDir + "/ca-cert.pem",
 			},
 		},
@@ -115,9 +115,9 @@ func TestConnectScanAuthMethods(t *testing.T) {
 			name:    "basic-auth-https-skip-verify",
 			restURL: "https://localhost:18087",
 			auth: []string{
-				"--use-sasl-scram",
-				"--sasl-scram-username", "connectuser",
-				"--sasl-scram-password", "connectpass",
+				"--use-basic-auth",
+				"--username", "connectuser",
+				"--password", "connectpass",
 				"--insecure-skip-tls-verify",
 			},
 		},

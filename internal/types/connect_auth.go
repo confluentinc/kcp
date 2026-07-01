@@ -5,14 +5,14 @@ package types
 type ConnectAuthMethod string
 
 const (
-	ConnectAuthMethodSaslScram       ConnectAuthMethod = "SASL/SCRAM"
+	ConnectAuthMethodBasicAuth       ConnectAuthMethod = "BasicAuth"
 	ConnectAuthMethodTls             ConnectAuthMethod = "TLS"
 	ConnectAuthMethodUnauthenticated ConnectAuthMethod = "Unauthenticated"
 )
 
-// ConnectSaslScramAuth holds basic-auth credentials for a SASL/SCRAM-protected
+// ConnectBasicAuth holds HTTP Basic credentials for a Basic-auth-protected
 // Connect REST endpoint.
-type ConnectSaslScramAuth struct {
+type ConnectBasicAuth struct {
 	Username string
 	Password string
 }
