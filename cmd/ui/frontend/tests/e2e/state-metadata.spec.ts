@@ -20,7 +20,7 @@ test.describe('State file metadata popover', () => {
 
     await expect(page.getByTestId('meta-schema')).toHaveText('1')
     await expect(page.getByTestId('meta-build')).toHaveText('0.8.5')
-    await expect(page.getByTestId('meta-migrated')).toHaveText('kcp_build_info.version=0.7.3')
+    await expect(page.getByTestId('meta-upgraded')).toHaveText('kcp_build_info.version=0.7.3')
     await expect(page.getByTestId('meta-created')).toBeVisible()
     await expect(page.getByTestId('meta-updated')).toBeVisible()
   })
