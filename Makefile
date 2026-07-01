@@ -161,19 +161,40 @@ test-state-archive: fetch-state-archive ## Load every archived real state file t
 # Documentation (MkDocs Material + mike)
 # ==============================================================================
 
+# Only prereq is Python 3. An auto-managed venv is created on demand, so there
+# is no global install (avoids PEP 668 "externally-managed-environment") and no
+# pip/pip3/pipx ambiguity. Prefers uv when present (much faster); otherwise the
+# stdlib venv. Neither path hard-codes an index, so pip.conf / CodeArtifact is
+# respected as-is — `dev-login` stays the only auth step.
+DOCS_VENV  := .venv-docs
+DOCS_BIN   := $(DOCS_VENV)/bin
+DOCS_STAMP := $(DOCS_VENV)/.stamp
+
 .PHONY: docs-install docs-gen docs-serve docs-build
 
-docs-install: ## Install MkDocs and plugins (pip)
-	pip install -r requirements-docs.txt
+$(DOCS_STAMP): requirements-docs.txt
+	@if command -v uv >/dev/null 2>&1; then \
+		echo "🔍 Setting up docs env with uv"; \
+		uv venv $(DOCS_VENV); \
+		VIRTUAL_ENV=$(DOCS_VENV) uv pip install -r requirements-docs.txt; \
+	else \
+		echo "🔍 Setting up docs env with python venv"; \
+		python3 -m venv $(DOCS_VENV); \
+		$(DOCS_BIN)/python -m pip install --quiet --upgrade pip; \
+		$(DOCS_BIN)/python -m pip install -r requirements-docs.txt; \
+	fi
+	@touch $@
+
+docs-install: $(DOCS_STAMP) ## Set up the local docs env (only needs Python 3)
 
 docs-gen: ## Regenerate per-command docs from Cobra into docs/assets/command-reference/
 	go run ./cmd/gen-docs --out docs/assets/command-reference
 
-docs-serve: docs-gen ## Serve docs locally with live reload on http://localhost:8000
-	mkdocs serve
+docs-serve: docs-install docs-gen ## Serve docs locally with live reload on http://localhost:8000
+	$(DOCS_BIN)/mkdocs serve
 
-docs-build: docs-gen ## Build the docs site into ./site
-	mkdocs build --strict
+docs-build: docs-install docs-gen ## Build the docs site into ./site
+	$(DOCS_BIN)/mkdocs build --strict
 
 # ==============================================================================
 # Utilities
@@ -182,7 +203,7 @@ docs-build: docs-gen ## Build the docs site into ./site
 .PHONY: clean help
 
 clean: ## Clean build artifacts
-	rm -rf $(BINARY_NAME) coverage.out site/
+	rm -rf $(BINARY_NAME) coverage.out site/ $(DOCS_VENV)
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \
