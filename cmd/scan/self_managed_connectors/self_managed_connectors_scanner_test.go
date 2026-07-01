@@ -439,6 +439,25 @@ func TestCmd_RequiresAnAuthMethod(t *testing.T) {
 	require.Error(t, cmd.Execute(), "an auth method is required")
 }
 
+// Regression guard (#3): --use-tls (mTLS) must NOT require --tls-ca-cert —
+// mTLS against a public/system-trusted CA works with system roots. The command
+// still fails later (the state file does not exist), but never for a missing CA.
+func TestCmd_TLSDoesNotRequireCACert(t *testing.T) {
+	cmd := NewScanSelfManagedConnectorsCmd()
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{
+		"--state-file", "/nonexistent/state.json",
+		"--connect-rest-url", "http://localhost:8083",
+		"--cluster-id", "a",
+		"--use-tls",
+		"--tls-client-cert", "cert.pem",
+		"--tls-client-key", "key.pem",
+	})
+	err := cmd.Execute()
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "tls-ca-cert", "mTLS must not require --tls-ca-cert")
+}
+
 // --- U2a: updateStateWithConnectMetrics (MSK-only attachment) ---
 
 func TestUpdateStateWithConnectMetrics_NoConnectors_Errors(t *testing.T) {

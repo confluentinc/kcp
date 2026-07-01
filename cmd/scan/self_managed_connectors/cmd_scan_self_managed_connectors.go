@@ -96,7 +96,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	authMethodFlags := pflag.NewFlagSet("auth-method", pflag.ExitOnError)
 	authMethodFlags.SortFlags = false
 	authMethodFlags.BoolVar(&useBasicAuth, "use-basic-auth", false, "Use HTTP Basic authentication for the Connect REST API (requires --username and --password).")
-	authMethodFlags.BoolVar(&useTls, "use-tls", false, "Use TLS certificate authentication (requires --tls-ca-cert, --tls-client-cert, and --tls-client-key).")
+	authMethodFlags.BoolVar(&useTls, "use-tls", false, "Use mutual TLS authentication (requires --tls-client-cert and --tls-client-key; add --tls-ca-cert only for a private/internal server CA).")
 	authMethodFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use no authentication.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(authMethodFlags)
 
@@ -108,7 +108,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the Connect REST server's TLS certificate. Usable with ANY auth method when the endpoint is HTTPS behind a private/internal CA; required with --use-tls.")
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the Connect REST server's TLS certificate. Optional, usable with ANY auth method (including --use-tls) when the endpoint is HTTPS behind a private/internal CA; omit for a public/system-trusted CA.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the client certificate presented for mutual TLS (required when using --use-tls).")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the client key presented for mutual TLS (required when using --use-tls).")
 	tlsFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for the Connect REST endpoint. Usable with any auth method; test environments only.")
@@ -167,7 +167,8 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 	}
 
 	if useTls {
-		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		// --tls-ca-cert is NOT required: mTLS against a public/system-trusted CA
+		// works with system roots. It stays optional, for a private/internal CA.
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
