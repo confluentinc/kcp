@@ -3,12 +3,10 @@ package init
 import (
 	"context"
 	"fmt"
-	"net/http"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type CutoverInitializerOpts struct {
@@ -17,6 +15,7 @@ type CutoverInitializerOpts struct {
 	CutoverConfig         cutover.CutoverConfig
 	ClusterApiKey         string
 	ClusterApiSecret      string
+	ClusterRestCACert     string
 	InsecureSkipTLSVerify bool
 }
 
@@ -33,13 +32,11 @@ func NewCutoverInitializer(opts CutoverInitializerOpts) *CutoverInitializer {
 func (m *CutoverInitializer) Run() error {
 	config := m.opts.CutoverConfig
 
-	httpClient := http.DefaultClient
-	if m.opts.InsecureSkipTLSVerify {
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: utils.TLSClientConfig(nil, true),
-			},
-		}
+	// REST client for the destination cluster-link API: trusts a private CA
+	// (--cluster-rest-ca-cert) and/or skips verification, else system roots (CC public CA).
+	httpClient, err := cutover.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
+	if err != nil {
+		return fmt.Errorf("building destination REST client: %w", err)
 	}
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)

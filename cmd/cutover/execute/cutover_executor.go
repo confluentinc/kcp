@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"time"
 
@@ -14,7 +13,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type CutoverExecutorOpts struct {
@@ -36,6 +34,7 @@ type CutoverExecutorOpts struct {
 	TlsCaCert             string
 	TlsClientCert         string
 	TlsClientKey          string
+	ClusterRestCACert     string
 	InsecureSkipTLSVerify bool
 	// RolloutTimeout bounds the gateway-readiness wait during fence and
 	// switch. A value of 0 means no deadline — the wait runs until the
@@ -71,13 +70,11 @@ func (m *CutoverExecutor) Run() error {
 	}
 	defer func() { _ = destinationOffset.Close() }()
 
-	httpClient := http.DefaultClient
-	if m.opts.InsecureSkipTLSVerify {
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: utils.TLSClientConfig(nil, true),
-			},
-		}
+	// REST client for the destination cluster-link API: trusts a private CA
+	// (--cluster-rest-ca-cert) and/or skips verification, else system roots (CC public CA).
+	httpClient, err := cutover.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
+	if err != nil {
+		return fmt.Errorf("building destination REST client: %w", err)
 	}
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)

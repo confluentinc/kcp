@@ -34,6 +34,7 @@ var (
 	fencedCrYamlPath      string
 	switchoverCrYamlPath  string
 	insecureSkipTLSVerify bool
+	clusterRestCaCert     string
 
 	useSaslIam                  bool
 	useSaslScram                bool
@@ -124,6 +125,7 @@ All flags can be provided via environment variables using uppercase names with u
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the cutover.")
 	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to cut over (comma separated list or repeated flag).")
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
+	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
 	cutoverInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -321,6 +323,7 @@ func parseCutoverInitializerOpts(state cutover.CutoverState, config cutover.Cuto
 		CutoverConfig:         config,
 		ClusterApiKey:         clusterApiKey,
 		ClusterApiSecret:      clusterApiSecret,
+		ClusterRestCACert:     clusterRestCaCert,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 	}
 }

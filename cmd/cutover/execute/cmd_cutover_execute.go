@@ -33,6 +33,7 @@ var (
 	saslPlainPassword string
 
 	tlsCaCert             string
+	clusterRestCaCert     string
 	tlsClientCert         string
 	tlsClientKey          string
 	insecureSkipTLSVerify bool
@@ -89,6 +90,7 @@ the cutover state file and must be provided each time.`,
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
+	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	cutoverExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
@@ -265,6 +267,7 @@ func parseCutoverExecutorOpts(state cutover.CutoverState, config cutover.Cutover
 		SaslPlainUsername:     saslPlainUsername,
 		SaslPlainPassword:     saslPlainPassword,
 		TlsCaCert:             tlsCaCert,
+		ClusterRestCACert:     clusterRestCaCert,
 		TlsClientCert:         tlsClientCert,
 		TlsClientKey:          tlsClientKey,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
