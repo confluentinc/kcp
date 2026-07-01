@@ -70,6 +70,7 @@ func TestStateSchemaSnapshot(t *testing.T) {
 			"  1. bump migrate.CurrentSchemaVersion\n"+
 			"  2. add an upcaster in internal/state/migrate/steps.go\n"+
 			"  3. add a fixture in internal/state/migrate/testdata\n"+
-			"  4. regenerate this golden (updateSchemaGolden=true once)\n\n--- got ---\n%s\n--- want ---\n%s", got, want)
+			"  4. add a schemaShapes entry for the new version (see state_schema_freeze_test.go)\n"+
+			"  5. regenerate this golden (updateSchemaGolden=true once)\n\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
 }
