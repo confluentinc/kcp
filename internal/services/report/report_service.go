@@ -101,11 +101,20 @@ func (rs *ReportService) ProcessState(state types.State) ProcessedState {
 	}
 
 	// Return the processed state with unified sources
+	var updatedAt *time.Time
+	if !state.UpdatedAt.IsZero() {
+		u := state.UpdatedAt
+		updatedAt = &u
+	}
+
 	processedState := ProcessedState{
 		Sources:          sources,
 		SchemaRegistries: state.SchemaRegistries,
 		KcpBuildInfo:     state.KcpBuildInfo,
 		Timestamp:        state.Timestamp,
+		SchemaVersion:    state.SchemaVersion,
+		UpdatedAt:        updatedAt,
+		UpgradedFrom:     state.UpgradedFrom,
 	}
 
 	return processedState
