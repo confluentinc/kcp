@@ -36,6 +36,7 @@ make install            # install to system path (sudo)
 make fmt                # format Go + frontend
 make test-go            # all Go unit tests
 make test-playwright    # frontend e2e (builds first)
+make test-state-archive # opt-in: load every real archived kcp-state.json from S3 (local only, needs AWS creds)
 go test ./<pkg> -v      # single-package tests
 make clean              # remove build artifacts
 ```
@@ -71,6 +72,12 @@ The workflow is state-driven. Commands progressively append to these files:
 - `migration-state.json` — created by `kcp migration init`.
 
 For Apache Kafka metrics collection (Jolokia and Prometheus backends), see `docs/assets/apache-kafka-configuration/metrics-collection.md`.
+
+**Backward compatibility:** `kcp-state.json` is versioned (`schema_version`); the loader migrates files from any release back to `v0.4.0` to the current shape on read (`internal/state/migrate`, never mutating the file). Inspect a file's metadata with `kcp state version --state-file <f>`; migrate it on disk (in place, original kept as a `.bak`) with `kcp state upgrade --state-file <f>`. **Any change to the `types.State` shape fails `TestStateSchemaSnapshot` by design** — do not just regenerate the golden. A shape change is a new schema version; in one change you must: (1) bump `migrate.CurrentSchemaVersion`, (2) add an upcaster in `internal/state/migrate/steps.go`, (3) add a fixture in `internal/state/migrate/testdata`, (4) add a `schemaShapes` entry for the new version, (5) regenerate the golden (see the tests' failure messages).
+
+**Schema-version freeze (`schemaShapes` in `internal/types/state_schema_freeze_test.go`):** every `schema_version`'s shape hash is frozen the moment it lands on `main` (not at release — `schema_version` counts shape revisions on `main`, not releases). `TestCurrentSchemaShapeMatchesEntry` then makes a shape change impossible to merge without also bumping the version. **Entries are append-only and immutable: never edit an existing entry — add a new one and bump.** Editing a frozen entry is a compatibility break; it should be caught in review (and is a candidate for a CODEOWNERS rule / a CI diff against the previous release tag).
+
+`make test-state-archive` loads every real v0.4.0–v0.8.5 file as the ground-truth guard (opt-in/local — S3, not CI).
 
 ### Internal services
 
