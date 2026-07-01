@@ -863,6 +863,53 @@ func TestFilterClusterMetrics_DateFiltering(t *testing.T) {
 	})
 }
 
+func TestProcessState_CarriesStateMetadata(t *testing.T) {
+	rs := NewReportService()
+	state := types.State{
+		SchemaVersion: 1,
+		KcpBuildInfo:  types.KcpBuildInfo{Version: "0.8.5", Commit: "abc1234", Date: "2026-06-17"},
+		Timestamp:     time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC),
+		UpdatedAt:     time.Date(2026, 6, 26, 10, 30, 0, 0, time.UTC),
+		UpgradedFrom:  "kcp_build_info.version=0.7.3",
+	}
+
+	got := rs.ProcessState(state)
+
+	if got.SchemaVersion != 1 {
+		t.Errorf("SchemaVersion = %d, want 1", got.SchemaVersion)
+	}
+	if got.UpdatedAt == nil || !got.UpdatedAt.Equal(state.UpdatedAt) {
+		t.Errorf("UpdatedAt = %v, want %v", got.UpdatedAt, state.UpdatedAt)
+	}
+	if got.UpgradedFrom != "kcp_build_info.version=0.7.3" {
+		t.Errorf("UpgradedFrom = %q, want kcp_build_info.version=0.7.3", got.UpgradedFrom)
+	}
+}
+
+func TestProcessState_LegacyZeroMetadataOmitsUpdatedAt(t *testing.T) {
+	rs := NewReportService()
+
+	// Create an empty state (legacy state file with zero metadata)
+	state := types.State{}
+
+	got := rs.ProcessState(state)
+
+	// Verify schema version is zero (legacy)
+	if got.SchemaVersion != 0 {
+		t.Errorf("SchemaVersion = %d, want 0 (legacy)", got.SchemaVersion)
+	}
+
+	// Verify updated_at is nil so it will be omitted from JSON
+	if got.UpdatedAt != nil {
+		t.Errorf("UpdatedAt = %v, want nil for zero/legacy state", got.UpdatedAt)
+	}
+
+	// Verify upgraded_from is empty (legacy)
+	if got.UpgradedFrom != "" {
+		t.Errorf("UpgradedFrom = %q, want empty string (legacy)", got.UpgradedFrom)
+	}
+}
+
 func TestCalculateMetricsAggregates(t *testing.T) {
 	makeMetrics := func(label string, values []float64) []types.ProcessedMetric {
 		out := make([]types.ProcessedMetric, len(values))
