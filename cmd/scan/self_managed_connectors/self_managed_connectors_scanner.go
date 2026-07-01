@@ -98,7 +98,7 @@ func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectT
 	if err != nil {
 		return nil, err
 	}
-	tlsCfg := utils.TLSClientConfig(pool, false)
+	tlsCfg := utils.TLSClientConfig(pool, tlsAuth.InsecureSkipVerify)
 	if authMethod == types.ConnectAuthMethodTls {
 		if err := utils.AppendClientCert(tlsCfg, tlsAuth.ClientCert, tlsAuth.ClientKey); err != nil {
 			return nil, err

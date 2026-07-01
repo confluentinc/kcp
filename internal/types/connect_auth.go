@@ -17,10 +17,13 @@ type ConnectSaslScramAuth struct {
 	Password string
 }
 
-// ConnectTlsAuth holds the certificate paths for a mTLS-protected Connect REST
-// endpoint.
+// ConnectTlsAuth holds the TLS transport options for reaching a Connect REST
+// endpoint over HTTPS. CACert (verify the server against a private/internal CA)
+// and InsecureSkipVerify apply to ANY auth method; ClientCert/ClientKey are the
+// client identity for mTLS (--use-tls).
 type ConnectTlsAuth struct {
-	CACert     string
-	ClientCert string
-	ClientKey  string
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	InsecureSkipVerify bool
 }

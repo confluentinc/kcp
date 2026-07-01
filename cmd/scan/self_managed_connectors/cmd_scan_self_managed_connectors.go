@@ -26,9 +26,10 @@ var (
 	saslScramUsername string
 	saslScramPassword string
 
-	tlsCaCert     string
-	tlsClientCert string
-	tlsClientKey  string
+	tlsCaCert             string
+	tlsClientCert         string
+	tlsClientKey          string
+	insecureSkipTLSVerify bool
 
 	metricsSource   string
 	metricsDuration string
@@ -107,9 +108,10 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to CA certificate file (required when using --use-tls).")
-	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to client certificate file (required when using --use-tls).")
-	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to client key file (required when using --use-tls).")
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the Connect REST server's TLS certificate. Usable with ANY auth method when the endpoint is HTTPS behind a private/internal CA; required with --use-tls.")
+	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the client certificate presented for mutual TLS (required when using --use-tls).")
+	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the client key presented for mutual TLS (required when using --use-tls).")
+	tlsFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for the Connect REST endpoint. Usable with any auth method; test environments only.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(tlsFlags)
 
 	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
@@ -336,9 +338,10 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 			Password: saslScramPassword,
 		},
 		TlsAuth: types.ConnectTlsAuth{
-			CACert:     tlsCaCert,
-			ClientCert: tlsClientCert,
-			ClientKey:  tlsClientKey,
+			CACert:             tlsCaCert,
+			ClientCert:         tlsClientCert,
+			ClientKey:          tlsClientKey,
+			InsecureSkipVerify: insecureSkipTLSVerify,
 		},
 		MetricsSource:       metricsSource,
 		MetricsClusterCreds: metricsClusterCreds,

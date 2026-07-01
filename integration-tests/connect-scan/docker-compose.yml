@@ -77,3 +77,128 @@ services:
         done
 
         wait $$CONNECT_PID
+
+  # Basic-auth Connect worker: same broker, its own single-node Connect cluster,
+  # REST protected by BasicAuthSecurityRestExtension (HTTP). Exercises kcp's
+  # --use-sasl-scram (HTTP Basic) REST auth.
+  kafka-connect-basic:
+    image: confluentinc/cp-kafka-connect:7.6.0
+    hostname: connect-worker-basic
+    container_name: kcp-test-connect-worker-basic
+    depends_on:
+      - kafka
+    ports:
+      - "18085:8083"
+    volumes:
+      - ./connect-jaas.conf:/etc/connect/connect-jaas.conf:ro
+      - ./rest-credentials.properties:/etc/connect/rest-credentials.properties:ro
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'connect-kafka:29092'
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
+      CONNECT_REST_PORT: 8083
+      CONNECT_GROUP_ID: 'connect-cluster-basic'
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs-basic'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets-basic'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status-basic'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
+      CONNECT_REST_EXTENSION_CLASSES: 'org.apache.kafka.connect.rest.basic.auth.extension.BasicAuthSecurityRestExtension'
+      KAFKA_OPTS: '-Djava.security.auth.login.config=/etc/connect/connect-jaas.conf'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Waiting for Kafka to be ready..."
+        cub kafka-ready -b connect-kafka:29092 1 120
+        echo "Starting Basic-auth Kafka Connect..."
+        /etc/confluent/docker/run
+
+  # mTLS Connect worker: same broker, its own single-node Connect cluster, HTTPS
+  # REST listener requiring a client certificate. Exercises kcp's --use-tls (mTLS).
+  kafka-connect-mtls:
+    image: confluentinc/cp-kafka-connect:7.6.0
+    hostname: connect-worker-mtls
+    container_name: kcp-test-connect-worker-mtls
+    depends_on:
+      - kafka
+    ports:
+      - "18086:8083"
+    volumes:
+      - ./certs:/etc/connect-certs:ro
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'connect-kafka:29092'
+      CONNECT_LISTENERS: 'https://0.0.0.0:8083'
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
+      CONNECT_REST_ADVERTISED_LISTENER: 'https'
+      CONNECT_GROUP_ID: 'connect-cluster-mtls'
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs-mtls'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets-mtls'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status-mtls'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
+      CONNECT_LISTENERS_HTTPS_SSL_KEYSTORE_LOCATION: '/etc/connect-certs/connect.server.keystore.jks'
+      CONNECT_LISTENERS_HTTPS_SSL_KEYSTORE_PASSWORD: 'keystorepass'
+      CONNECT_LISTENERS_HTTPS_SSL_KEY_PASSWORD: 'keystorepass'
+      CONNECT_LISTENERS_HTTPS_SSL_TRUSTSTORE_LOCATION: '/etc/connect-certs/connect.server.truststore.jks'
+      CONNECT_LISTENERS_HTTPS_SSL_TRUSTSTORE_PASSWORD: 'truststorepass'
+      CONNECT_LISTENERS_HTTPS_SSL_CLIENT_AUTH: 'required'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Waiting for Kafka to be ready..."
+        cub kafka-ready -b connect-kafka:29092 1 120
+        echo "Starting mTLS Kafka Connect..."
+        /etc/confluent/docker/run
+
+  # HTTPS + Basic-auth Connect worker (server TLS, NO client-cert required):
+  # exercises kcp's TLS transport options on a non-mTLS method — verifying the
+  # server via --tls-ca-cert, and --insecure-skip-tls-verify — combined with Basic auth.
+  kafka-connect-basic-tls:
+    image: confluentinc/cp-kafka-connect:7.6.0
+    hostname: connect-worker-basic-tls
+    container_name: kcp-test-connect-worker-basic-tls
+    depends_on:
+      - kafka
+    ports:
+      - "18087:8083"
+    volumes:
+      - ./certs:/etc/connect-certs:ro
+      - ./connect-jaas.conf:/etc/connect/connect-jaas.conf:ro
+      - ./rest-credentials.properties:/etc/connect/rest-credentials.properties:ro
+    environment:
+      CONNECT_BOOTSTRAP_SERVERS: 'connect-kafka:29092'
+      CONNECT_LISTENERS: 'https://0.0.0.0:8083'
+      CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
+      CONNECT_REST_ADVERTISED_LISTENER: 'https'
+      CONNECT_GROUP_ID: 'connect-cluster-basic-tls'
+      CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs-basic-tls'
+      CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets-basic-tls'
+      CONNECT_STATUS_STORAGE_TOPIC: 'connect-status-basic-tls'
+      CONNECT_CONFIG_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_OFFSET_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_STATUS_STORAGE_REPLICATION_FACTOR: 1
+      CONNECT_KEY_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_VALUE_CONVERTER: 'org.apache.kafka.connect.json.JsonConverter'
+      CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
+      CONNECT_REST_EXTENSION_CLASSES: 'org.apache.kafka.connect.rest.basic.auth.extension.BasicAuthSecurityRestExtension'
+      KAFKA_OPTS: '-Djava.security.auth.login.config=/etc/connect/connect-jaas.conf'
+      CONNECT_LISTENERS_HTTPS_SSL_KEYSTORE_LOCATION: '/etc/connect-certs/connect.server.keystore.jks'
+      CONNECT_LISTENERS_HTTPS_SSL_KEYSTORE_PASSWORD: 'keystorepass'
+      CONNECT_LISTENERS_HTTPS_SSL_KEY_PASSWORD: 'keystorepass'
+    command:
+      - bash
+      - -c
+      - |
+        echo "Waiting for Kafka to be ready..."
+        cub kafka-ready -b connect-kafka:29092 1 120
+        echo "Starting HTTPS Basic-auth Kafka Connect..."
+        /etc/confluent/docker/run
