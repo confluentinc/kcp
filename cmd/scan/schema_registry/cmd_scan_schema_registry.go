@@ -92,7 +92,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	confluentFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the schema registry's TLS certificate. Use when the registry is HTTPS behind a private/internal CA; combinable with any auth method.")
 	confluentFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the client certificate presented for mutual TLS (required when using --use-mtls).")
 	confluentFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the client key presented for mutual TLS (required when using --use-mtls).")
-	confluentFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip schema registry TLS endpoint (hostname) verification. Test environments only; chain validation still applies, so a private CA still needs --tls-ca-cert.")
+	confluentFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip schema registry TLS certificate verification entirely (self-signed, wrong hostname, and expired certs all pass). Test environments only.")
 	schemaRegistryCmd.Flags().AddFlagSet(confluentFlags)
 
 	glueFlags := pflag.NewFlagSet("glue", pflag.ExitOnError)

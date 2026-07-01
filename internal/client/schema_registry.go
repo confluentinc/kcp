@@ -2,9 +2,11 @@ package client
 
 import (
 	"fmt"
+	"net/http"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/schemaregistry"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // SchemaRegistryConfig holds the configuration for creating a Schema Registry client
@@ -44,9 +46,10 @@ func WithUnauthenticated() SchemaRegistryOption {
 // WithTLS configures TLS transport for an HTTPS Schema Registry endpoint. It is
 // orthogonal to the auth method: caCert (empty → system trust roots) verifies the
 // server's certificate against a private/internal CA, and insecureSkip disables
-// endpoint (hostname) verification. Note: SslDisableEndpointVerification skips the
-// HOSTNAME check only, not chain validation — a self-signed server with no CA
-// supplied still requires caCert.
+// certificate verification entirely (test environments only). Both are applied by
+// injecting a custom HTTPClient in NewSchemaRegistryClient — NOT via the confluent
+// client's SslCaLocation/SslDisableEndpointVerification fields (the latter only logs
+// and never actually skips verification).
 func WithTLS(caCert string, insecureSkip bool) SchemaRegistryOption {
 	return func(config *SchemaRegistryConfig) {
 		config.caCert = caCert
@@ -87,19 +90,32 @@ func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemare
 	case types.SchemaRegistryAuthTypeUnauthenticated:
 		// no authentication configuration needed
 	case types.SchemaRegistryAuthTypeMTLS:
-		srConfig.SslCertificateLocation = config.clientCert
-		srConfig.SslKeyLocation = config.clientKey
+		// mTLS client cert is applied via the injected HTTPClient's TLS config below.
 	default:
 		return nil, fmt.Errorf("auth type: %v not supported", config.authType)
 	}
 
-	// TLS transport (orthogonal to the auth method): trust a private/internal CA
-	// and/or skip endpoint verification when the SR endpoint is HTTPS.
-	if config.caCert != "" {
-		srConfig.SslCaLocation = config.caCert
-	}
-	if config.insecureSkip {
-		srConfig.SslDisableEndpointVerification = true
+	// TLS transport (orthogonal to the auth method): custom CA, insecure-skip, and the
+	// mTLS client cert are all applied by injecting our own *http.Client built via the
+	// shared utils.TLSClientConfig helper. This is deliberate: the confluent v2 client's
+	// SslDisableEndpointVerification only logs a warning (it never sets
+	// tls.Config.InsecureSkipVerify), so relying on it makes --insecure-skip-tls-verify a
+	// no-op. NewRestService uses conf.HTTPClient verbatim when set, so this makes skip real
+	// and routes CA + mTLS through the same helper as every other client.
+	if config.caCert != "" || config.insecureSkip || config.clientCert != "" {
+		pool, err := utils.OptionalCACertPool(config.caCert)
+		if err != nil {
+			return nil, err
+		}
+		tlsCfg := utils.TLSClientConfig(pool, config.insecureSkip)
+		if config.clientCert != "" || config.clientKey != "" {
+			if err := utils.AppendClientCert(tlsCfg, config.clientCert, config.clientKey); err != nil {
+				return nil, err
+			}
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = tlsCfg
+		srConfig.HTTPClient = &http.Client{Transport: transport}
 	}
 
 	schemaRegistryClient, err := schemaregistry.NewClient(srConfig)

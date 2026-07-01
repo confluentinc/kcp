@@ -109,10 +109,10 @@ func TestSchemaRegistryScan(t *testing.T) {
 		assertRegistry(t, loadState(t, state), "https://localhost:8443")
 	})
 
-	// Same HTTPS endpoint, skipping verification instead of supplying a CA:
-	// exercises --insecure-skip-tls-verify. (Chain validation still applies, so
-	// the server cert must chain to a trusted root — here we still pass the CA to
-	// satisfy chain validation while proving the skip flag is accepted/wired.)
+	// Same HTTPS endpoint, but WITHOUT --tls-ca-cert: the server cert is signed by a
+	// private CA that system roots don't trust, so this only succeeds if
+	// --insecure-skip-tls-verify genuinely disables verification. Guards against the
+	// flag silently being a no-op.
 	t.Run("basic-auth-https-skip-verify", func(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "sr-basic-tls-skip.json")
 		require.NoError(t, os.WriteFile(state, []byte("{}"), 0600))
@@ -122,7 +122,6 @@ func TestSchemaRegistryScan(t *testing.T) {
 			"--use-basic-auth",
 			"--username", "schemauser",
 			"--password", "schemapass",
-			"--tls-ca-cert", "certs/ca-cert.pem",
 			"--insecure-skip-tls-verify",
 			"--state-file", state)
 		require.NoError(t, err, out)
