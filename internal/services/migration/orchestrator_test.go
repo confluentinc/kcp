@@ -2,6 +2,7 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
@@ -327,6 +328,48 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	// PromoteTopics should NOT have been called (detection aborts before promotion)
 	assert.Equal(t, int64(0), atomic.LoadInt64(&promoteCallCount),
 		"PromoteMirrorTopics should not be called when unrouted producers are detected")
+}
+
+func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtFenced(t *testing.T) {
+	var applyCallCount int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+			n := atomic.AddInt64(&applyCallCount, 1)
+			if n == 1 {
+				// First apply is the fence — succeed
+				return nil
+			}
+			// Second apply is the unfence — fail
+			return fmt.Errorf("k8s API unavailable")
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	// Enable unrouted producer detection
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	// Override source offset provider to return increasing offsets
+	orch.workflow.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&applyCallCount, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	// Error should NOT be ErrUnroutedProducers since unfencing failed
+	assert.False(t, errors.Is(err, ErrUnroutedProducers),
+		"error should not be ErrUnroutedProducers when unfencing fails")
+
+	// State should remain at fenced (abort_fence should NOT have been triggered)
+	// The last successful transition was lags_ok → fenced, so persisted state is fenced
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateFenced, persisted.CurrentState,
+		"state should remain at fenced when unfencing fails")
 }
 
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {

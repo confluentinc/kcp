@@ -934,6 +934,55 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.
 	assert.True(t, promoted["topic-1"])
 }
 
+func TestWorkflow_UnfenceGateway_StripsServerMetadata(t *testing.T) {
+	var appliedYAML []byte
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
+			appliedYAML = yaml
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+
+	wf := NewMigrationWorkflow(gw, cl)
+	config := &MigrationConfig{
+		InitialCrName: "my-gw",
+		K8sNamespace:  "confluent",
+		InitialCrYAML: []byte(`apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gw
+  namespace: confluent
+  managedFields:
+  - manager: confluent-operator
+    operation: Apply
+  resourceVersion: "12345"
+  uid: abc-def-123
+  creationTimestamp: "2026-01-01T00:00:00Z"
+  generation: 3
+spec:
+  streamingDomains:
+  - name: source-kafka-cluster
+status:
+  phase: RUNNING
+`),
+	}
+
+	err := wf.unfenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	require.NotNil(t, appliedYAML, "ApplyGatewayYAML should have been called")
+
+	yamlStr := string(appliedYAML)
+	assert.NotContains(t, yamlStr, "managedFields", "managedFields should be stripped")
+	assert.NotContains(t, yamlStr, "resourceVersion", "resourceVersion should be stripped")
+	assert.NotContains(t, yamlStr, "uid", "uid should be stripped")
+	assert.NotContains(t, yamlStr, "creationTimestamp", "creationTimestamp should be stripped")
+	assert.NotContains(t, yamlStr, "generation", "generation should be stripped")
+	assert.NotContains(t, yamlStr, "status", "status should be stripped")
+	assert.Contains(t, yamlStr, "streamingDomains", "spec should be preserved")
+	assert.Contains(t, yamlStr, "source-kafka-cluster", "spec values should be preserved")
+}
+
 func TestWorkflow_DetectUnroutedProducers_ContextCancelled(t *testing.T) {
 	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{}
