@@ -396,30 +396,40 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 	return nil
 }
 
+// VerifyFence verifies the fence held: source offsets must be stable, because
+// an increasing offset after fencing indicates a producer bypassing the
+// gateway. When detection is disabled (DetectUnroutedProducersDuration == 0)
+// the step succeeds immediately so the FSM still records fence_verified.
+//
+// detectUnroutedProducers wraps ErrUnroutedProducers only for a real
+// detection; a network/fetch error propagates as-is. Either way we just
+// return it — restoring traffic (unfencing the gateway) is the state
+// machine's job on the abort_fence rollback transition, which the
+// orchestrator triggers only for ErrUnroutedProducers.
+func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
+	if config.DetectUnroutedProducersDuration <= 0 {
+		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
+		s.reporter.detail("Detection disabled (--detect-unrouted-producers-duration=0) — skipping check")
+		return nil
+	}
+
+	if s.sourceOffset == nil {
+		return fmt.Errorf("source offset service is required for unrouted producer detection")
+	}
+
+	if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
+		return err
+	}
+	s.reporter.success("Source offsets stable — no unrouted producers detected")
+	return nil
+}
+
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
 func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
 
-	// If enabled, verify source offsets are stable before promoting.
-	// An increasing offset after fencing indicates a producer bypassing the gateway.
-	if config.DetectUnroutedProducersDuration > 0 {
-		s.reporter.section("🔍 Checking for unrouted producers...")
-		if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
-			// detectUnroutedProducers wraps ErrUnroutedProducers only for a real
-			// detection; a network/fetch error propagates as-is. Either way we
-			// just return it — restoring traffic (unfencing the gateway) is the
-			// state machine's job on the abort_fence rollback transition, which
-			// the orchestrator triggers only for ErrUnroutedProducers.
-			return err
-		}
-		s.reporter.success("Source offsets stable — no unrouted producers detected")
-		s.reporter.stepDone()
-	}
-
-	// The step banner is printed by the orchestrator (stepHeaders[EventPromote]);
-	// PromoteTopics emits only progress lines, like the other workflow actions.
 	slog.Debug("topic promotion process started")
 
 	const maxPromoteRetries = 3

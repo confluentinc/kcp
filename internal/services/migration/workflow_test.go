@@ -792,30 +792,12 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 }
 
 // ===========================================================================
-// DetectUnroutedProducers tests
+// VerifyFence / DetectUnroutedProducers tests
 // ===========================================================================
 
-func TestWorkflow_PromoteTopics_DetectUnroutedProducers_StableOffsets(t *testing.T) {
+func TestWorkflow_VerifyFence_StableOffsets(t *testing.T) {
 	gw := &mockGatewayService{}
-
-	promoted := make(map[string]bool)
-	cl := &mockClusterLinkService{
-		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
-			resp := &clusterlink.PromoteMirrorTopicsResponse{}
-			for _, name := range topicNames {
-				promoted[name] = true
-				resp.Data = append(resp.Data, struct {
-					MirrorTopicName string `json:"mirror_topic_name"`
-					ErrorMessage    string `json:"error_message,omitempty"`
-					ErrorCode       int    `json:"error_code,omitempty"`
-				}{
-					MirrorTopicName: name,
-					ErrorCode:       0,
-				})
-			}
-			return resp, nil
-		},
-	}
+	cl := &mockClusterLinkService{}
 
 	// Source offsets are stable (same value on every call)
 	offsetProvider := &mockOffsetProvider{
@@ -825,23 +807,17 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_StableOffsets(t *testing
 	}
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
-	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{
 		Topics:                          []string{"topic-1", "topic-2"},
-		ClusterRestEndpoint:             "https://cluster",
-		ClusterId:                       "lkc-123",
-		ClusterLinkName:                 "link-1",
 		DetectUnroutedProducersDuration: time.Millisecond,
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.VerifyFence(context.Background(), config)
 	require.NoError(t, err)
-	assert.True(t, promoted["topic-1"], "topic-1 should have been promoted")
-	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
 }
 
-func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_ReturnsError(t *testing.T) {
-	// PromoteTopics only detects — it must NOT unfence the gateway itself.
+func TestWorkflow_VerifyFence_IncreasingOffsets_ReturnsError(t *testing.T) {
+	// VerifyFence only detects — it must NOT unfence the gateway itself.
 	// Restoring traffic is the orchestrator's job on the abort_fence rollback
 	// (see TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack).
 	var applyCalled bool
@@ -872,26 +848,65 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_Return
 	}
 
 	wf := NewMigrationActionsWithOffsets(gw, cl, sourceOffset, destOffset)
-	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{
 		Topics:                          []string{"topic-1"},
-		ClusterRestEndpoint:             "https://cluster",
-		ClusterId:                       "lkc-123",
-		ClusterLinkName:                 "link-1",
 		DetectUnroutedProducersDuration: time.Millisecond,
 		InitialCrYAML:                   []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: ns\n  managedFields: []\n  resourceVersion: \"123\"\n"),
 		InitialCrName:                   "my-gw",
 		K8sNamespace:                    "ns",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.VerifyFence(context.Background(), config)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 	assert.Contains(t, err.Error(), "topic-1 partition 0")
-	assert.False(t, applyCalled, "PromoteTopics must not unfence the gateway; that is the orchestrator's responsibility")
+	assert.False(t, applyCalled, "VerifyFence must not unfence the gateway; that is the orchestrator's responsibility")
 }
 
-func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.T) {
+func TestWorkflow_VerifyFence_Disabled_SkipsOffsetChecks(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	// Detection is disabled, so the offset providers must never be consulted.
+	var getCalls int64
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			atomic.AddInt64(&getCalls, 1)
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+
+	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	config := &MigrationConfig{
+		Topics:                          []string{"topic-1"},
+		DetectUnroutedProducersDuration: 0, // check disabled
+	}
+
+	err := wf.VerifyFence(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), atomic.LoadInt64(&getCalls),
+		"offset providers should not be consulted when detection is disabled")
+}
+
+func TestWorkflow_VerifyFence_NilOffsetServices(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	wf := NewMigrationActions(gw, cl) // no offset providers
+	config := &MigrationConfig{
+		Topics:                          []string{"topic-1"},
+		DetectUnroutedProducersDuration: time.Millisecond,
+	}
+
+	err := wf.VerifyFence(context.Background(), config)
+	require.Error(t, err)
+	assert.Equal(t, "source offset service is required for unrouted producer detection", err.Error())
+}
+
+func TestWorkflow_PromoteTopics_IgnoresDetectionConfig(t *testing.T) {
+	// Unrouted-producer detection belongs to the verify_fence step; PromoteTopics
+	// must not re-run it. If it did, this test would block on the 30s detection
+	// window and trip the 2s context deadline.
 	gw := &mockGatewayService{}
 
 	promoted := make(map[string]bool)
@@ -913,27 +928,28 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.
 		},
 	}
 
-	// Source offsets increase — but flag is off, so it shouldn't matter
-	var callCount int64
-	sourceOffset := &mockOffsetProvider{
+	// Zero lag so promotion completes immediately
+	offsetProvider := &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
-			n := atomic.AddInt64(&callCount, 1)
-			return map[int32]int64{0: 100 + n*10}, nil
+			return map[int32]int64{0: 500}, nil
 		},
 	}
 
-	wf := NewMigrationActionsWithOffsets(gw, cl, sourceOffset, sourceOffset)
+	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
 	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{
 		Topics:                          []string{"topic-1"},
 		ClusterRestEndpoint:             "https://cluster",
 		ClusterId:                       "lkc-123",
 		ClusterLinkName:                 "link-1",
-		DetectUnroutedProducersDuration: 0, // check disabled
+		DetectUnroutedProducersDuration: 30 * time.Second,
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
-	require.NoError(t, err, "with flag disabled, increasing offsets should not block promotion")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	err := wf.PromoteTopics(ctx, config, "key", "secret")
+	require.NoError(t, err, "PromoteTopics should not run unrouted-producer detection")
 	assert.True(t, promoted["topic-1"])
 }
 

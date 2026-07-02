@@ -39,7 +39,8 @@ var canonicalWorkflow = []WorkflowStep{
 	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized},
 	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk},
 	{EventFence, "fencing gateway", StateLagsOk, StateFenced},
-	{EventPromote, "promoting topics", StateFenced, StatePromoted},
+	{EventVerifyFence, "verifying gateway fence", StateFenced, StateFenceVerified},
+	{EventPromote, "promoting topics", StateFenceVerified, StatePromoted},
 	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched},
 }
 
@@ -52,6 +53,7 @@ var stepHeaders = map[string]string{
 	EventInitialize:  "🔍 Initializing migration...",
 	EventWaitForLags: "⏳ Checking replication lags...",
 	EventFence:       "🚧 Fencing gateway...",
+	EventVerifyFence: "🔍 Checking for unrouted producers...",
 	EventPromote:     "🚀 Promoting topics...",
 	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
 }
@@ -118,12 +120,19 @@ func NewMigrationOrchestrator(
 		Src:  []string{StateFenced},
 		Dst:  StateInitialized,
 	})
+	// Backward transition: fence verification expires across restarts (fired
+	// at bootstrap below, never during a run)
+	events = append(events, fsm.EventDesc{
+		Name: EventExpireVerification,
+		Src:  []string{StateFenceVerified},
+		Dst:  StateFenced,
+	})
 
 	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check).
 	//
 	// Action callbacks are registered per-event (before_<EVENT>), not per-state
 	// (leave_<STATE>), so each is single-purpose. This matters for the fenced
-	// state, which two events leave — promote (forward) and abort_fence
+	// state, which two events leave — verify_fence (forward) and abort_fence
 	// (rollback) — each with its own callback and no event-sniffing guard.
 	orchestrator.fsm = fsm.NewFSM(
 		config.CurrentState,
@@ -136,11 +145,25 @@ func NewMigrationOrchestrator(
 			"before_" + EventInitialize:  orchestrator.onInitialize,
 			"before_" + EventWaitForLags: orchestrator.onWaitForLags,
 			"before_" + EventFence:       orchestrator.onFence,
+			"before_" + EventVerifyFence: orchestrator.onVerifyFence,
 			"before_" + EventPromote:     orchestrator.onPromote,
 			"before_" + EventAbortFence:  orchestrator.onAbortFence,
 			"before_" + EventSwitch:      orchestrator.onSwitch,
 		},
 	)
+
+	// fence_verified is a point-in-time attestation and never survives a
+	// restart: a rogue producer may have appeared since the run that verified
+	// the fence, and there is no downstream re-verification (PromoteTopics'
+	// zero-lag check samples instants and misses intermittent producers).
+	// Expire it so a resume re-runs the verify_fence detection window. The
+	// transition has no action callback and its source state matches, so it
+	// cannot fail; the guard keeps the FSM honest if that ever changes.
+	if orchestrator.fsm.Is(StateFenceVerified) {
+		if err := orchestrator.fsm.Event(context.Background(), EventExpireVerification); err != nil {
+			slog.Error("❌ failed to expire fence verification at bootstrap", "error", err)
+		}
+	}
 
 	return orchestrator
 }
@@ -188,10 +211,10 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 
 // handleStepFailure is the single place that maps a failed workflow step to its
 // compensating rollback (if any) and returns the wrapped error. The migration
-// defines exactly one compensation: when promotion is aborted because unrouted
-// producers were detected (ErrUnroutedProducers, signalled up from the workflow
-// layer), roll the fence back to initialized via abort_fence — which unfences
-// the gateway (see onAbortFence) — so a re-run rechecks lags and re-fences.
+// defines exactly one compensation: when fence verification detects unrouted
+// producers (ErrUnroutedProducers, signalled up from the workflow layer), roll
+// the fence back to initialized via abort_fence — which unfences the gateway
+// (see onAbortFence) — so a re-run rechecks lags and re-fences.
 //
 // Rollback failures are logged, not returned: the originating step error is
 // always what surfaces to the caller, and a cancelled abort_fence (e.g. the
@@ -263,9 +286,18 @@ func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 	}
 }
 
+// onVerifyFence runs the verify_fence transition: delegates to VerifyFence.
+// Registered on before_verify_fence (not leave_fenced), so it fires only for
+// the verify_fence event — never for the abort_fence rollback that also
+// leaves fenced. On ErrUnroutedProducers the transition is cancelled, leaving
+// the FSM at fenced, and handleStepFailure fires the abort_fence rollback.
+func (o *MigrationOrchestrator) onVerifyFence(ctx context.Context, e *fsm.Event) {
+	if err := o.actions.VerifyFence(ctx, o.config); err != nil {
+		e.Cancel(err)
+	}
+}
+
 // onPromote runs the forward promote transition: delegates to PromoteTopics.
-// Registered on before_promote (not leave_fenced), so it fires only for the
-// promote event — never for the abort_fence rollback that also leaves fenced.
 func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
 	if err := o.actions.PromoteTopics(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
