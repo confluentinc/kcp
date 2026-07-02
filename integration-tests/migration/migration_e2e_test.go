@@ -28,9 +28,9 @@ import (
 // (source topic, cluster link, gateway CR) provisioned by setup.sh so that
 // tests are fully isolated and do not depend on execution order.
 const (
-	scenarioBaseline                 = "baseline"                   // TestMigrationE2E
-	scenarioPauseSyncHappy           = "pause-sync-happy"           // TestMigrationE2E_PauseOffsetSync_HappyPath
-	scenarioPauseSyncRefuses         = "pause-sync-refuses"         // TestMigrationE2E_PauseOffsetSync_InitRefuses
+	scenarioBaseline                 = "baseline"                    // TestMigrationE2E
+	scenarioPauseSyncHappy           = "pause-sync-happy"            // TestMigrationE2E_PauseOffsetSync_HappyPath
+	scenarioPauseSyncRefuses         = "pause-sync-refuses"          // TestMigrationE2E_PauseOffsetSync_InitRefuses
 	scenarioPauseSyncRestoresFilters = "pause-sync-restores-filters" // TestMigrationE2E_PauseOffsetSync_RestoresFilters
 )
 
