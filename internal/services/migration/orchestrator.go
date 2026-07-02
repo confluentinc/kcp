@@ -121,6 +121,15 @@ func NewMigrationOrchestrator(
 		Dst:  StateInitialized,
 	})
 
+	// fence_verified is a point-in-time attestation and never survives a
+	// restart: a rogue producer may have appeared since the run that verified
+	// the fence, and there is no downstream re-verification (PromoteTopics'
+	// zero-lag check samples instants and misses intermittent producers).
+	// Demote to fenced so a resume re-runs the verify_fence detection window.
+	if config.CurrentState == StateFenceVerified {
+		config.CurrentState = StateFenced
+	}
+
 	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check).
 	//
 	// Action callbacks are registered per-event (before_<EVENT>), not per-state

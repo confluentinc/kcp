@@ -428,8 +428,10 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtFen
 
 func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 	// A successful unrouted-producer check is its own FSM transition
-	// (fenced → fence_verified) and must be persisted before promotion starts,
-	// so a later promote failure resumes without repeating the detection window.
+	// (fenced → fence_verified), persisted before promotion starts like every
+	// other step. The persisted value is informational — bootstrap demotes it
+	// back to fenced on the next run (see TestOrchestrator_Bootstrap_DemotesFenceVerified)
+	// — but it must still record the FSM's true mid-run position, never promoted.
 	overrides := orchestratorOverrides{
 		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 			return nil, fmt.Errorf("confluent cloud API unavailable")
@@ -450,21 +452,47 @@ func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 		"successful fence verification should be persisted even when promotion later fails")
 }
 
-func TestOrchestrator_Execute_ResumeFromFenceVerified_SkipsDetection(t *testing.T) {
-	// Resuming from fence_verified must not repeat the detection window. If it
-	// did, the 30s window would trip the 3s context deadline below.
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenceVerified, nil)
-	config.DetectUnroutedProducersDuration = 30 * time.Second
+func TestOrchestrator_Bootstrap_DemotesFenceVerified(t *testing.T) {
+	// fence_verified is a point-in-time attestation and never survives a
+	// restart: construction must demote it to fenced so detection re-runs.
+	_, config, _ := newHappyPathOrchestrator(t, StateFenceVerified, nil)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	assert.Equal(t, StateFenced, config.CurrentState,
+		"bootstrap should demote a persisted fence_verified to fenced")
+}
+
+func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing.T) {
+	// A rogue producer may appear between the run that verified the fence and
+	// a later resume (e.g. promote failed, operator re-runs hours later).
+	// fence_verified must not survive the restart: detection re-runs, catches
+	// the rogue producer, and the abort_fence rollback fires.
+	var sourceCallCount int64
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenceVerified, nil)
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	// Rogue producer: source offsets keep increasing on every call
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sourceCallCount, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+
+	// Deadline bounds the failure mode where detection is skipped and promote
+	// polls forever on never-zero lag; the happy path finishes in milliseconds.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	err := orch.Execute(ctx, 0, "api-key", "api-secret")
-	require.NoError(t, err)
+	require.Error(t, err,
+		"resume from fence_verified must re-run detection and catch the rogue producer")
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
-	assert.Equal(t, StateSwitched, config.CurrentState)
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateInitialized, persisted.CurrentState,
+		"detection on resume should roll back to initialized via abort_fence")
 }
 
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
