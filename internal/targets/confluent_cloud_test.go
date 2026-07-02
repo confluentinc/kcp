@@ -25,12 +25,12 @@ func TestNewConfluentCloudTarget_SeedsClusterID_NoDiscovery(t *testing.T) {
 	defer srv.Close()
 
 	creds := &Credentials{APIKey: "k", APISecret: "s"}
-	tgt, err := NewConfluentCloudTarget(srv.URL, "lkc-v3922j", creds, http.DefaultClient)
+	tgt, err := NewConfluentCloudTarget(srv.URL, "lkc-abc123", creds, http.DefaultClient)
 	require.NoError(t, err)
 
 	id, err := tgt.ClusterID(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, "lkc-v3922j", id)
+	require.Equal(t, "lkc-abc123", id)
 	require.False(t, listHit, "CC target must not call GET /kafka/v3/clusters")
 }
 

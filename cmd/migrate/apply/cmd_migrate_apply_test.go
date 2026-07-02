@@ -408,7 +408,7 @@ func TestApply_IAM_RejectedInLinkCreds(t *testing.T) {
 }
 
 func TestApply_ConfluentCloudTarget_CreatesLinkOnLkcPath(t *testing.T) {
-	lkc := "lkc-v3922j"
+	lkc := "lkc-abc123"
 	createHit := false
 	mux := http.NewServeMux()
 	// CC has no list endpoint; if apply calls it, that's a bug.
