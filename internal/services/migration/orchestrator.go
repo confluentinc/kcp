@@ -43,14 +43,15 @@ var canonicalWorkflow = []WorkflowStep{
 	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched},
 }
 
-// stepHeaders maps a workflow event to the banner shown to the user when the
-// step starts. Kept separate from canonicalWorkflow so the FSM edge definitions
-// carry no presentation.
+// stepHeaders maps a forward workflow event to the banner the Execute loop
+// prints as it walks canonicalWorkflow. Kept separate from canonicalWorkflow so
+// the FSM edge definitions carry no presentation. abort_fence is deliberately
+// absent: it is a compensation fired from handleStepFailure, not a forward loop
+// step, and its messaging is owned by onAbortFence.
 var stepHeaders = map[string]string{
 	EventInitialize:  "🔍 Initializing migration...",
 	EventWaitForLags: "⏳ Checking replication lags...",
 	EventFence:       "🚧 Fencing gateway...",
-	EventAbortFence:  "⚠️ Unrouted producers detected — removing fence to restore traffic...",
 	EventPromote:     "🚀 Promoting topics...",
 	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
 }

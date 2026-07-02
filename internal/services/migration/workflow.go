@@ -403,7 +403,8 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		s.reporter.stepDone()
 	}
 
-	s.reporter.section("📤 Promoting mirror topics...")
+	// The step banner is printed by the orchestrator (stepHeaders[EventPromote]);
+	// PromoteTopics emits only progress lines, like the other workflow actions.
 	slog.Debug("topic promotion process started")
 
 	const maxPromoteRetries = 3
