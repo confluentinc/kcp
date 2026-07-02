@@ -80,20 +80,26 @@ func NewMigrationOrchestrator(
 		Dst:  StateInitialized,
 	})
 
-	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check)
+	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check).
+	//
+	// Action callbacks are registered per-event (before_<EVENT>), not per-state
+	// (leave_<STATE>), so each is single-purpose. This matters for the fenced
+	// state, which two events leave — promote (forward) and abort_fence
+	// (rollback) — each with its own callback and no event-sniffing guard.
 	orchestrator.fsm = fsm.NewFSM(
 		config.CurrentState,
 		events,
 		fsm.Callbacks{
-			"before_event":                orchestrator.beforeEventCallback,
-			"after_event":                 orchestrator.afterEventCallback,
-			"enter_state":                 orchestrator.enterStateCallback,
-			"leave_state":                 orchestrator.leaveStateCallback,
-			"leave_" + StateUninitialized: orchestrator.leaveUninitializedCallback,
-			"leave_" + StateInitialized:   orchestrator.leaveInitializedCallback,
-			"leave_" + StateLagsOk:        orchestrator.leaveLagsOkCallback,
-			"leave_" + StateFenced:        orchestrator.leaveFencedCallback,
-			"leave_" + StatePromoted:      orchestrator.leavePromotedCallback,
+			"before_event":               orchestrator.beforeEventCallback,
+			"after_event":                orchestrator.afterEventCallback,
+			"enter_state":                orchestrator.enterStateCallback,
+			"leave_state":                orchestrator.leaveStateCallback,
+			"before_" + EventInitialize:  orchestrator.onInitialize,
+			"before_" + EventWaitForLags: orchestrator.onWaitForLags,
+			"before_" + EventFence:       orchestrator.onFence,
+			"before_" + EventPromote:     orchestrator.onPromote,
+			"before_" + EventAbortFence:  orchestrator.onAbortFence,
+			"before_" + EventSwitch:      orchestrator.onSwitch,
 		},
 	)
 
@@ -109,7 +115,7 @@ func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, c
 	if err := o.fsm.Event(ctx, EventInitialize); err != nil {
 		return err
 	}
-	return o.persistState()
+	return o.PersistState()
 }
 
 // Execute runs the full migration workflow from the current state
@@ -133,13 +139,13 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
 			// If unrouted producers were detected during promotion, roll the FSM
 			// back to initialized so re-running rechecks lags and re-fences. The
-			// abort_fence transition unfences the gateway (see leaveFencedCallback).
+			// abort_fence transition unfences the gateway (see onAbortFence).
 			if errors.Is(err, ErrUnroutedProducers) {
 				o.rollbackFence(ctx)
 			}
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
-		if err := o.persistState(); err != nil {
+		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
 		fmt.Printf("%s\n", color.GreenString("✅ Done"))
@@ -151,7 +157,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 
 // rollbackFence transitions the FSM back to initialized via abort_fence after
 // unrouted producers are detected during promotion. The abort_fence transition
-// unfences the gateway (see leaveFencedCallback). Failures are logged rather
+// unfences the gateway (see onAbortFence). Failures are logged rather
 // than returned — Execute already surfaces the originating detection error, and
 // a cancelled abort_fence (e.g. unfence failed) correctly leaves the FSM fenced.
 func (o *MigrationOrchestrator) rollbackFence(ctx context.Context) {
@@ -159,7 +165,7 @@ func (o *MigrationOrchestrator) rollbackFence(ctx context.Context) {
 		slog.Error("❌ failed to roll back to initialized after unrouted producer detection", "error", err)
 		return
 	}
-	if err := o.persistState(); err != nil {
+	if err := o.PersistState(); err != nil {
 		slog.Error("❌ failed to persist state after abort_fence transition", "error", err)
 	}
 }
@@ -175,8 +181,12 @@ func (o *MigrationOrchestrator) afterEventCallback(ctx context.Context, e *fsm.E
 	o.config.CurrentState = e.Dst
 }
 
-// persistState saves the current migration state to disk. Called after each successful FSM transition.
-func (o *MigrationOrchestrator) persistState() error {
+// PersistState saves the current migration config to the state file. It is the
+// single writer for migration state: the orchestrator calls it after each
+// successful FSM transition, and the offset-sync bookends (which run outside the
+// FSM) are handed this method so they persist through the same path rather than
+// duplicating the write.
+func (o *MigrationOrchestrator) PersistState() error {
 	if err := o.saveState(); err != nil {
 		return fmt.Errorf("failed to persist state after transition to %s: %w", o.config.CurrentState, err)
 	}
@@ -193,62 +203,57 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 	slog.Debug("FSM: leaving state", "state", e.Src)
 }
 
-// leaveUninitializedCallback delegates to workflow service Initialize
-func (o *MigrationOrchestrator) leaveUninitializedCallback(ctx context.Context, e *fsm.Event) {
+// onInitialize runs the initialize transition: delegates to workflow Initialize.
+func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
 	if err := o.workflow.Initialize(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leaveInitializedCallback delegates to workflow service CheckLags
-func (o *MigrationOrchestrator) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
+// onWaitForLags runs the wait_for_lags transition: delegates to workflow CheckLags.
+func (o *MigrationOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
 	if err := o.workflow.CheckLags(ctx, o.config, o.execParams.LagThreshold, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leaveLagsOkCallback delegates to workflow service FenceGateway
-func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
+// onFence runs the fence transition: delegates to workflow FenceGateway.
+func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 	if err := o.workflow.FenceGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leaveFencedCallback handles transitions out of the fenced state. The forward
-// promote transition delegates to PromoteTopics. The abort_fence rollback
-// (triggered after unrouted producers are detected) unfences the gateway to
-// restore traffic to its pre-migration state — the compensating action for
-// fencing lives on the transition that reverses it.
-func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
-	if e.Event == EventAbortFence {
-		fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
-			color.YellowString("⚠️"))
-		if err := o.workflow.unfenceGateway(ctx, o.config); err != nil {
-			// The gateway is still fenced, so refuse the rollback: cancelling
-			// keeps the FSM in fenced, which honestly reflects reality.
-			// Re-running execute will retry the unfence.
-			slog.Error("❌ failed to unfence gateway after detecting unrouted producers", "error", err)
-			e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
-			return
-		}
-		fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
-			color.GreenString("✔"))
-		return
-	}
+// onPromote runs the forward promote transition: delegates to PromoteTopics.
+// Registered on before_promote (not leave_fenced), so it fires only for the
+// promote event — never for the abort_fence rollback that also leaves fenced.
+func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leavePromotedCallback delegates to workflow service SwitchGateway
-func (o *MigrationOrchestrator) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
+// onAbortFence runs the abort_fence rollback: unfences the gateway to restore
+// traffic to its pre-migration state — the compensating action for fencing
+// lives on the transition that reverses it. If unfencing fails, cancel the
+// rollback so the FSM stays fenced, which honestly reflects reality; re-running
+// execute will retry the unfence.
+func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
+	fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
+		color.YellowString("⚠️"))
+	if err := o.workflow.unfenceGateway(ctx, o.config); err != nil {
+		slog.Error("❌ failed to unfence gateway after detecting unrouted producers", "error", err)
+		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
+		return
+	}
+	fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
+		color.GreenString("✔"))
+}
+
+// onSwitch runs the switch transition: delegates to workflow SwitchGateway.
+func (o *MigrationOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 	if err := o.workflow.SwitchGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 

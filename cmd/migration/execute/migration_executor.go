@@ -85,24 +85,23 @@ func (m *MigrationExecutor) Run() error {
 	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
 
-	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
-	persist := func() error {
-		m.opts.MigrationState.UpsertMigration(config)
-		return m.opts.MigrationState.WriteToFile(m.opts.MigrationStateFile)
-	}
-
-	// Pre-execute bookend: disable consumer.offset.sync.enable if the
-	// operator opted in at init time. Idempotent and safe on resume.
-	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
-		return err
-	}
-
+	// The orchestrator is the single writer for migration state. Build it up
+	// front so its PersistState can back the offset-sync bookends too, rather
+	// than a parallel write closure.
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
 		workflow,
 		&m.opts.MigrationState,
 		m.opts.MigrationStateFile,
 	)
+
+	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
+
+	// Pre-execute bookend: disable consumer.offset.sync.enable if the
+	// operator opted in at init time. Idempotent and safe on resume.
+	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, orchestrator.PersistState); err != nil {
+		return err
+	}
 
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		migration.WarnIfPausedOnExecuteFailure(&config, err)
@@ -111,7 +110,7 @@ func (m *MigrationExecutor) Run() error {
 
 	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
 	// so a restore error does not roll back a successful switchover.
-	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
+	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, orchestrator.PersistState)
 
 	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
 	return nil

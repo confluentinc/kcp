@@ -233,7 +233,7 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 	// Config state should NOT have advanced
 	assert.Equal(t, StateUninitialized, config.CurrentState)
 
-	// State file should not have been written (persistState is called after fsm.Event,
+	// State file should not have been written (PersistState is called after fsm.Event,
 	// and fsm.Event returns error when the callback cancels)
 	_, loadErr := NewMigrationStateFromFile(stateFilePath)
 	if loadErr == nil {
