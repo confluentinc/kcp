@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/fatih/color"
 	"github.com/looplab/fsm"
 )
 
@@ -15,22 +14,35 @@ import (
 // EventAbortFence transition back to initialized state.
 var ErrUnroutedProducers = errors.New("unrouted producers detected")
 
-// WorkflowStep defines a single step in the migration workflow
+// WorkflowStep defines a single step in the migration workflow. It is pure FSM
+// topology plus an ops-facing Description; user-facing presentation lives in
+// stepHeaders, keyed by event, so the edge definitions stay presentation-free.
 type WorkflowStep struct {
 	Event       string
 	Description string
 	FromState   string
 	ToState     string
-	UserMessage string // Emoji-prefixed message shown to the user
 }
 
 // canonicalWorkflow is the single source of truth for the migration workflow sequence
 var canonicalWorkflow = []WorkflowStep{
-	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized, "🔍 Initializing migration..."},
-	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk, "⏳ Checking replication lags..."},
-	{EventFence, "fencing gateway", StateLagsOk, StateFenced, "🚧 Fencing gateway..."},
-	{EventPromote, "promoting topics", StateFenced, StatePromoted, ""},
-	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched, "🔄 Switching gateway to Confluent Cloud..."},
+	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized},
+	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk},
+	{EventFence, "fencing gateway", StateLagsOk, StateFenced},
+	{EventPromote, "promoting topics", StateFenced, StatePromoted},
+	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched},
+}
+
+// stepHeaders maps a workflow event to the banner shown to the user when the
+// step starts. Kept separate from canonicalWorkflow so the FSM edge definitions
+// carry no presentation.
+var stepHeaders = map[string]string{
+	EventInitialize:  "🔍 Initializing migration...",
+	EventWaitForLags: "⏳ Checking replication lags...",
+	EventFence:       "🚧 Fencing gateway...",
+	EventAbortFence:  "⚠️ Unrouted producers detected — removing fence to restore traffic...",
+	EventPromote:     "🚀 Promoting topics...",
+	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
 }
 
 // ExecutionParams holds runtime parameters needed during migration execution
@@ -48,6 +60,7 @@ type MigrationOrchestrator struct {
 	migrationState *MigrationState
 	stateFilePath  string
 	execParams     ExecutionParams // Runtime execution parameters
+	reporter       *reporter       // user-facing terminal output
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
@@ -62,6 +75,7 @@ func NewMigrationOrchestrator(
 		workflow:       workflow,
 		migrationState: migrationState,
 		stateFilePath:  stateFilePath,
+		reporter:       newReporter(),
 	}
 
 	// Build FSM events from canonical workflow
@@ -132,8 +146,8 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			continue // Skip already-completed steps (enables resumability)
 		}
 
-		if step.UserMessage != "" {
-			fmt.Printf("\n%s\n", color.CyanString(step.UserMessage))
+		if header, ok := stepHeaders[step.Event]; ok {
+			o.reporter.section(header)
 		}
 		slog.Debug("executing migration step", "step", step.Description)
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
@@ -142,10 +156,10 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
-		fmt.Printf("%s\n", color.GreenString("✅ Done"))
+		o.reporter.stepDone()
 	}
 
-	fmt.Printf("\n%s\n", color.GreenString("✅ Migration complete!"))
+	o.reporter.complete("✅ Migration complete!")
 	return nil
 }
 
@@ -239,15 +253,13 @@ func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 // rollback so the FSM stays fenced, which honestly reflects reality; re-running
 // execute will retry the unfence.
 func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
-	fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
-		color.YellowString("⚠️"))
+	o.reporter.warn("Unrouted producers detected — removing fence to restore traffic")
 	if err := o.workflow.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to unfence gateway after detecting unrouted producers", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}
-	fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
-		color.GreenString("✔"))
+	o.reporter.success("Gateway unfenced — traffic restored to pre-migration state")
 }
 
 // onSwitch runs the switch transition: delegates to workflow SwitchGateway.
