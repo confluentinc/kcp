@@ -170,11 +170,35 @@ wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup
 #   topic    : e2e-test-topic-<scenario>
 #   link     : e2e-link-<scenario>
 #   gateway  : migration-gateway-<scenario>
-SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters")
+SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters" "batch")
 TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
 rm -rf "${RENDERED_DIR}"
 mkdir -p "${RENDERED_DIR}"
+
+# The "batch" scenario mirrors many topics through a single cluster link so the
+# --promote-batch-size behaviour can be exercised end to end.
+BATCH_TOPIC_COUNT="${BATCH_TOPIC_COUNT:-10}"
+
+# topics_for_scenario prints the source topic name(s) for a scenario, one per
+# line. All scenarios have a single topic except "batch", which has
+# BATCH_TOPIC_COUNT topics.
+topics_for_scenario() {
+  local scenario="$1"
+  if [ "${scenario}" = "batch" ]; then
+    local i
+    for i in $(seq 1 "${BATCH_TOPIC_COUNT}"); do
+      printf 'e2e-test-topic-batch-%02d\n' "${i}"
+    done
+  else
+    printf 'e2e-test-topic-%s\n' "${scenario}"
+  fi
+}
+
+# topic_names_csv prints a scenario's topics as a comma-separated list.
+topic_names_csv() {
+  topics_for_scenario "$1" | paste -sd, -
+}
 
 render_scenario() {
   local template="$1"
@@ -187,6 +211,52 @@ render_scenario() {
       -e "s/__CLUSTER_LINK_NAME__/${link}/g" \
       -e "s/__TOPIC_NAME__/${topic}/g" \
       "${template}" > "${out}"
+  printf '%s\n' "${out}"
+}
+
+# render_topic renders the test-topic template for an explicit topic name.
+render_topic() {
+  local topic="$1"
+  local out="${RENDERED_DIR}/test-topic-${topic}.yaml"
+  sed -e "s/__TOPIC_NAME__/${topic}/g" "${TEMPLATES_DIR}/test-topic.yaml" > "${out}"
+  printf '%s\n' "${out}"
+}
+
+# render_cluster_link builds a scenario's ClusterLink manifest with one
+# mirrorTopics entry per source topic. Generated in-shell (rather than via the
+# single-topic template) so it supports the multi-topic batch scenario without
+# fragile multi-line sed substitution.
+render_cluster_link() {
+  local scenario="$1"
+  local link="e2e-link-${scenario}"
+  local out="${RENDERED_DIR}/cluster-link-${scenario}.yaml"
+  {
+    cat <<EOF
+apiVersion: platform.confluent.io/v1beta1
+kind: ClusterLink
+metadata:
+  name: ${link}
+  namespace: ${NAMESPACE}
+spec:
+  sourceKafkaCluster:
+    kafkaRestClassRef:
+      name: source-kafka-rest-class
+    bootstrapEndpoint: source-kafka.confluent.svc.cluster.local:9071
+  destinationKafkaCluster:
+    kafkaRestClassRef:
+      name: destination-kafka-rest-class
+  mirrorTopics:
+EOF
+    local topic
+    while IFS= read -r topic; do
+      printf '    - name: %s\n' "${topic}"
+    done < <(topics_for_scenario "${scenario}")
+    cat <<EOF
+  configs:
+    consumer.offset.sync.enable: "true"
+    consumer.offset.sync.ms: "1000"
+EOF
+  } > "${out}"
   printf '%s\n' "${out}"
 }
 
@@ -207,37 +277,40 @@ for pid in "${gateway_pids[@]}"; do
   wait "${pid}" || { echo "FATAL: gateway pods failed to become Ready"; exit 1; }
 done
 
-# --- Source topics (one per scenario) ---
+# --- Source topics (one or more per scenario) ---
 echo "Creating source topics..."
 for scenario in "${SCENARIOS[@]}"; do
-  rendered=$(render_scenario "${TEMPLATES_DIR}/test-topic.yaml" "${scenario}")
-  kubectl --context "${PROFILE}" apply -f "${rendered}"
+  while IFS= read -r topic; do
+    rendered=$(render_topic "${topic}")
+    kubectl --context "${PROFILE}" apply -f "${rendered}"
+  done < <(topics_for_scenario "${scenario}")
 done
 
 echo "Waiting for source topics to be CREATED..."
 for scenario in "${SCENARIOS[@]}"; do
-  topic="e2e-test-topic-${scenario}"
-  for i in $(seq 1 60); do
-    if kubectl --context "${PROFILE}" -n "${NAMESPACE}" get kafkatopic "${topic}" -o jsonpath='{.status.state}' 2>/dev/null | grep -q "CREATED"; then
-      echo "  Topic ${topic} is ready."
-      break
-    fi
-    if [ "$i" -eq 60 ]; then
-      echo "FATAL: Topic ${topic} did not reach CREATED state within timeout"
-      exit 1
-    fi
-    sleep 5
-  done
+  while IFS= read -r topic; do
+    for i in $(seq 1 60); do
+      if kubectl --context "${PROFILE}" -n "${NAMESPACE}" get kafkatopic "${topic}" -o jsonpath='{.status.state}' 2>/dev/null | grep -q "CREATED"; then
+        echo "  Topic ${topic} is ready."
+        break
+      fi
+      if [ "$i" -eq 60 ]; then
+        echo "FATAL: Topic ${topic} did not reach CREATED state within timeout"
+        exit 1
+      fi
+      sleep 5
+    done
+  done < <(topics_for_scenario "${scenario}")
 done
 
 # --- Kafka REST Class (shared) ---
 echo "Creating KafkaRestClass for destination..."
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/kafka-rest-class.yaml"
 
-# --- Cluster Links (one per scenario) ---
+# --- Cluster Links (one per scenario, each mirroring the scenario's topics) ---
 echo "Creating cluster links..."
 for scenario in "${SCENARIOS[@]}"; do
-  rendered=$(render_scenario "${TEMPLATES_DIR}/cluster-link.yaml" "${scenario}")
+  rendered=$(render_cluster_link "${scenario}")
   kubectl --context "${PROFILE}" apply -f "${rendered}"
 done
 
@@ -354,6 +427,7 @@ ENV_FILE="${SCRIPT_DIR}/.env"
     upper=$(printf '%s' "${scenario}" | tr '[:lower:]-' '[:upper:]_')
     echo "KCP_E2E_${upper}_CLUSTER_LINK_NAME=e2e-link-${scenario}"
     echo "KCP_E2E_${upper}_TOPIC_NAME=e2e-test-topic-${scenario}"
+    echo "KCP_E2E_${upper}_TOPIC_NAMES=$(topic_names_csv "${scenario}")"
     echo "KCP_E2E_${upper}_GATEWAY_NAME=migration-gateway-${scenario}"
     echo "KCP_E2E_${upper}_FENCED_CR=/workspace/gateway-fenced-${scenario}.yaml"
     echo "KCP_E2E_${upper}_SWITCHOVER_CR=/workspace/gateway-switchover-${scenario}.yaml"
