@@ -840,11 +840,14 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_StableOffsets(t *testing
 	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
 }
 
-func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_UnfencesGateway(t *testing.T) {
-	var unfenced bool
+func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_ReturnsError(t *testing.T) {
+	// PromoteTopics only detects — it must NOT unfence the gateway itself.
+	// Restoring traffic is the orchestrator's job on the abort_fence rollback
+	// (see TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack).
+	var applyCalled bool
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
-			unfenced = true
+			applyCalled = true
 			return nil
 		},
 	}
@@ -885,7 +888,7 @@ func TestWorkflow_PromoteTopics_DetectUnroutedProducers_IncreasingOffsets_Unfenc
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 	assert.Contains(t, err.Error(), "topic-1 partition 0")
-	assert.True(t, unfenced, "gateway should be unfenced after detecting unrouted producers")
+	assert.False(t, applyCalled, "PromoteTopics must not unfence the gateway; that is the orchestrator's responsibility")
 }
 
 func TestWorkflow_PromoteTopics_DetectUnroutedProducers_FlagDisabled(t *testing.T) {

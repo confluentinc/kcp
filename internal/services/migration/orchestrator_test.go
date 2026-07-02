@@ -2,7 +2,6 @@ package migration
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"path/filepath"
 	"sync/atomic"
@@ -361,12 +360,14 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtFenced(t *te
 
 	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
 	require.Error(t, err)
-	// Error should NOT be ErrUnroutedProducers since unfencing failed
-	assert.False(t, errors.Is(err, ErrUnroutedProducers),
-		"error should not be ErrUnroutedProducers when unfencing fails")
+	// Unrouted producers were detected, so the surfaced error still wraps
+	// ErrUnroutedProducers; the unfence happens on the abort_fence rollback and
+	// its failure is logged. The safety-critical invariant is the state below.
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
-	// State should remain at fenced (abort_fence should NOT have been triggered)
-	// The last successful transition was lags_ok → fenced, so persisted state is fenced
+	// State must remain at fenced: the abort_fence transition is cancelled when
+	// unfenceGateway fails, so it is never persisted as initialized. The last
+	// successful transition was lags_ok → fenced.
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateFenced, persisted.CurrentState,
 		"state should remain at fenced when unfencing fails")

@@ -131,14 +131,11 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		}
 		slog.Debug("executing migration step", "step", step.Description)
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
-			// If unrouted producers were detected and the gateway was unfenced,
-			// transition back to initialized so re-running rechecks lags and re-fences.
+			// If unrouted producers were detected during promotion, roll the FSM
+			// back to initialized so re-running rechecks lags and re-fences. The
+			// abort_fence transition unfences the gateway (see leaveFencedCallback).
 			if errors.Is(err, ErrUnroutedProducers) {
-				if abortErr := o.fsm.Event(ctx, EventAbortFence); abortErr != nil {
-					slog.Error("❌ failed to transition back to initialized after unrouted producer detection", "error", abortErr)
-				} else if persistErr := o.persistState(); persistErr != nil {
-					slog.Error("❌ failed to persist state after abort_fence transition", "error", persistErr)
-				}
+				o.rollbackFence(ctx)
 			}
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
@@ -150,6 +147,21 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 
 	fmt.Printf("\n%s\n", color.GreenString("✅ Migration complete!"))
 	return nil
+}
+
+// rollbackFence transitions the FSM back to initialized via abort_fence after
+// unrouted producers are detected during promotion. The abort_fence transition
+// unfences the gateway (see leaveFencedCallback). Failures are logged rather
+// than returned — Execute already surfaces the originating detection error, and
+// a cancelled abort_fence (e.g. unfence failed) correctly leaves the FSM fenced.
+func (o *MigrationOrchestrator) rollbackFence(ctx context.Context) {
+	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
+		slog.Error("❌ failed to roll back to initialized after unrouted producer detection", "error", err)
+		return
+	}
+	if err := o.persistState(); err != nil {
+		slog.Error("❌ failed to persist state after abort_fence transition", "error", err)
+	}
 }
 
 // beforeEventCallback is called before any event transition
@@ -205,11 +217,25 @@ func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.
 	}
 }
 
-// leaveFencedCallback delegates to workflow service PromoteTopics.
-// Skip if the event is abort_fence — that transition is a rollback,
-// not a forward step.
+// leaveFencedCallback handles transitions out of the fenced state. The forward
+// promote transition delegates to PromoteTopics. The abort_fence rollback
+// (triggered after unrouted producers are detected) unfences the gateway to
+// restore traffic to its pre-migration state — the compensating action for
+// fencing lives on the transition that reverses it.
 func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
 	if e.Event == EventAbortFence {
+		fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
+			color.YellowString("⚠️"))
+		if err := o.workflow.unfenceGateway(ctx, o.config); err != nil {
+			// The gateway is still fenced, so refuse the rollback: cancelling
+			// keeps the FSM in fenced, which honestly reflects reality.
+			// Re-running execute will retry the unfence.
+			slog.Error("❌ failed to unfence gateway after detecting unrouted producers", "error", err)
+			e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
+			return
+		}
+		fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
+			color.GreenString("✔"))
 		return
 	}
 	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {

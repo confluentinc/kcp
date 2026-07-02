@@ -2,7 +2,6 @@ package migration
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -387,22 +386,11 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 	if config.DetectUnroutedProducersDuration > 0 {
 		fmt.Printf("\n%s\n", color.CyanString("🔍 Checking for unrouted producers..."))
 		if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
-			if !errors.Is(err, ErrUnroutedProducers) {
-				// Non-detection error (e.g. network failure fetching offsets) —
-				// do not unfence, just propagate the error.
-				return err
-			}
-			fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
-				color.YellowString("⚠️"))
-			if unfenceErr := s.unfenceGateway(ctx, config); unfenceErr != nil {
-				slog.Error("❌ failed to unfence gateway — gateway remains fenced", "error", unfenceErr)
-				// Return without ErrUnroutedProducers so the orchestrator does
-				// NOT trigger abort_fence. State stays at fenced, which is
-				// accurate since unfencing failed.
-				return fmt.Errorf("unrouted producers detected but failed to unfence gateway: %w", unfenceErr)
-			}
-			fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
-				color.GreenString("✔"))
+			// detectUnroutedProducers wraps ErrUnroutedProducers only for a real
+			// detection; a network/fetch error propagates as-is. Either way we
+			// just return it — restoring traffic (unfencing the gateway) is the
+			// state machine's job on the abort_fence rollback transition, which
+			// the orchestrator triggers only for ErrUnroutedProducers.
 			return err
 		}
 		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
