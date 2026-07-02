@@ -143,16 +143,16 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		},
 	}
 
-	workflow := NewMigrationWorkflowWithOffsets(gw, cl, srcOffset, dstOffset)
-	workflow.lagPollInterval = time.Millisecond
-	workflow.promotePollInterval = time.Millisecond
+	actions := NewMigrationActionsWithOffsets(gw, cl, srcOffset, dstOffset)
+	actions.lagPollInterval = time.Millisecond
+	actions.promotePollInterval = time.Millisecond
 
 	stateDir := t.TempDir()
 	stateFilePath := filepath.Join(stateDir, "migration-state.json")
 
 	migrationState := NewMigrationState()
 
-	orch := NewMigrationOrchestrator(config, workflow, migrationState, stateFilePath)
+	orch := NewMigrationOrchestrator(config, actions, migrationState, stateFilePath)
 
 	return orch, config, stateFilePath
 }
@@ -241,7 +241,7 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 	// Config state should NOT have advanced
 	assert.Equal(t, StateUninitialized, config.CurrentState)
 
-	// State file should not have been written (persistState is called after fsm.Event,
+	// State file should not have been written (PersistState is called after fsm.Event,
 	// and fsm.Event returns error when the callback cancels)
 	_, loadErr := NewMigrationStateFromFile(stateFilePath)
 	if loadErr == nil {
@@ -300,7 +300,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
 
 	// Override source offset provider to return increasing offsets (simulating rogue)
-	orch.workflow.sourceOffset = &mockOffsetProvider{
+	orch.actions.sourceOffset = &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
 			n := atomic.AddInt64(&sourceCallCount, 1)
 			return map[int32]int64{0: 100 + n*10}, nil
@@ -308,8 +308,8 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	}
 
 	// Track promote calls to verify it only runs once (not twice from duplicate callback)
-	originalPromote := orch.workflow.clusterLinkService
-	orch.workflow.clusterLinkService = &mockClusterLinkService{
+	originalPromote := orch.actions.clusterLinkService
+	orch.actions.clusterLinkService = &mockClusterLinkService{
 		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 			atomic.AddInt64(&promoteCallCount, 1)
 			return originalPromote.PromoteMirrorTopics(ctx, cfg, topicNames)
@@ -359,7 +359,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtFenced(t *te
 	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
 
 	// Override source offset provider to return increasing offsets
-	orch.workflow.sourceOffset = &mockOffsetProvider{
+	orch.actions.sourceOffset = &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
 			n := atomic.AddInt64(&applyCallCount, 1)
 			return map[int32]int64{0: 100 + n*10}, nil
@@ -407,7 +407,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtFen
 	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
 
 	// Override source offset provider to return increasing offsets
-	orch.workflow.sourceOffset = &mockOffsetProvider{
+	orch.actions.sourceOffset = &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
 			n := atomic.AddInt64(&sourceCallCount, 1)
 			return map[int32]int64{0: 100 + n*10}, nil

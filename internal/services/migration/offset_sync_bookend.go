@@ -4,13 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/fatih/color"
 )
 
 const (
@@ -56,7 +54,8 @@ func DisableOffsetSync(
 		return nil
 	}
 
-	fmt.Printf("\n%s\n", color.CyanString("⏸  Pausing consumer.offset.sync on cluster link..."))
+	r := newReporter()
+	r.section("⏸  Pausing consumer.offset.sync on cluster link...")
 
 	// Per-call deadlines derived from the parent ctx so signal cancellation
 	// still propagates, but a hung REST endpoint cannot block indefinitely.
@@ -88,7 +87,7 @@ func DisableOffsetSync(
 		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
 	}
 
-	fmt.Printf("   %s %s set to false on cluster link %s\n", color.GreenString("✔"), offsetSyncEnableKey, config.ClusterLinkName)
+	r.success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
 	return nil
 }
 
@@ -125,7 +124,8 @@ func RestoreOffsetSync(
 		return
 	}
 
-	fmt.Printf("\n%s\n", color.CyanString("▶️  Restoring consumer.offset.sync on cluster link..."))
+	r := newReporter()
+	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
 
 	var alterations []clusterlink.ConfigAlteration
 
@@ -140,9 +140,8 @@ func RestoreOffsetSync(
 		currentConfigs, err := cl.ListConfigs(listCtx, clCfg)
 		listCancel()
 		if err != nil {
-			fmt.Fprintf(os.Stderr,
-				"%s Migration completed but failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.\n",
-				color.YellowString("⚠️"),
+			r.remediation(
+				"Migration completed but failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.",
 				config.ClusterLinkName,
 				err,
 				offsetSyncEnableKey,
@@ -206,7 +205,7 @@ func RestoreOffsetSync(
 		if err := persist(); err != nil {
 			slog.Warn("cleared restore marker but failed to persist state file", "err", err)
 		}
-		fmt.Printf("   %s %s* configs already match init snapshot on cluster link %s\n", color.GreenString("✔"), consumerOffsetPrefix, config.ClusterLinkName)
+		r.success("%s* configs already match init snapshot on cluster link %s", consumerOffsetPrefix, config.ClusterLinkName)
 		return
 	}
 
@@ -231,9 +230,8 @@ func RestoreOffsetSync(
 			if len(applied) > 0 {
 				appliedStr = strings.Join(applied, ", ")
 			}
-			fmt.Fprintf(os.Stderr,
-				"%s Migration completed but failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.\n",
-				color.YellowString("⚠️"),
+			r.remediation(
+				"Migration completed but failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.",
 				consumerOffsetPrefix,
 				config.ClusterLinkName,
 				err,
@@ -252,7 +250,7 @@ func RestoreOffsetSync(
 	for i, a := range alterations {
 		names[i] = a.Name
 	}
-	fmt.Printf("   %s restored %s* configs on cluster link %s: %s\n", color.GreenString("✔"), consumerOffsetPrefix, config.ClusterLinkName, strings.Join(names, ", "))
+	r.success("restored %s* configs on cluster link %s: %s", consumerOffsetPrefix, config.ClusterLinkName, strings.Join(names, ", "))
 }
 
 // WarnIfPausedOnExecuteFailure prints a stderr remediation message when
@@ -267,9 +265,8 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	if !config.PauseConsumerOffsetSyncFlipped {
 		return
 	}
-	fmt.Fprintf(os.Stderr,
-		"%s Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.\n",
-		color.YellowString("⚠️"),
+	newReporter().remediation(
+		"Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
 		execErr,
 		config.ClusterLinkName,
 		offsetSyncEnableKey,
