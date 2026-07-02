@@ -137,13 +137,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		}
 		slog.Debug("executing migration step", "step", step.Description)
 		if err := o.fsm.Event(ctx, step.Event); err != nil {
-			// If unrouted producers were detected during promotion, roll the FSM
-			// back to initialized so re-running rechecks lags and re-fences. The
-			// abort_fence transition unfences the gateway (see onAbortFence).
-			if errors.Is(err, ErrUnroutedProducers) {
-				o.rollbackFence(ctx)
-			}
-			return fmt.Errorf("failed during %s: %w", step.Description, err)
+			return o.handleStepFailure(ctx, step, err)
 		}
 		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
@@ -155,19 +149,25 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	return nil
 }
 
-// rollbackFence transitions the FSM back to initialized via abort_fence after
-// unrouted producers are detected during promotion. The abort_fence transition
-// unfences the gateway (see onAbortFence). Failures are logged rather
-// than returned — Execute already surfaces the originating detection error, and
-// a cancelled abort_fence (e.g. unfence failed) correctly leaves the FSM fenced.
-func (o *MigrationOrchestrator) rollbackFence(ctx context.Context) {
-	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
-		slog.Error("❌ failed to roll back to initialized after unrouted producer detection", "error", err)
-		return
+// handleStepFailure is the single place that maps a failed workflow step to its
+// compensating rollback (if any) and returns the wrapped error. The migration
+// defines exactly one compensation: when promotion is aborted because unrouted
+// producers were detected (ErrUnroutedProducers, signalled up from the workflow
+// layer), roll the fence back to initialized via abort_fence — which unfences
+// the gateway (see onAbortFence) — so a re-run rechecks lags and re-fences.
+//
+// Rollback failures are logged, not returned: the originating step error is
+// always what surfaces to the caller, and a cancelled abort_fence (e.g. the
+// unfence itself failed) correctly leaves the FSM at fenced.
+func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
+	if errors.Is(stepErr, ErrUnroutedProducers) {
+		if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
+			slog.Error("❌ failed to roll back to initialized after unrouted producer detection", "error", err)
+		} else if err := o.PersistState(); err != nil {
+			slog.Error("❌ failed to persist state after abort_fence transition", "error", err)
+		}
 	}
-	if err := o.PersistState(); err != nil {
-		slog.Error("❌ failed to persist state after abort_fence transition", "error", err)
-	}
+	return fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 }
 
 // beforeEventCallback is called before any event transition
