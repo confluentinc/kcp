@@ -172,6 +172,8 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 **Consumer group offsets**: Consumer offset sync (`consumer.offset.sync.enable=true`) must be enabled on the cluster link before migration. Without it, consumers reconnecting after cutover may restart from an incorrect position. KCP validates this during `kcp cutover init`. Post-cutover, consider stopping consumer offset sync for fully migrated consumer groups, as syncing stale offsets back from the source cluster after promotion serves no purpose.
 
+**Promotion batching**: `kcp migration execute` promotes all caught-up mirror topics in a single request, then waits for every one to reach the terminal `STOPPED` state before switching the gateway. The optional `--promote-batch-size N` flag promotes topics in synchronous batches instead: KCP promotes `N` topics, waits for all of them to reach `STOPPED`, then proceeds to the next batch, until every topic is promoted. It defaults to `0`, which promotes all topics at once (the behaviour described above).
+
 **Gateway HA**: KCP patches gateway Kubernetes CRDs atomically across all gateway nodes. A gateway pod restart mid-cutover causes a brief client reconnection but does not lose data. A minimum of 2 gateway replicas (3 recommended) is the standard for production migrations.
 
 **Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp create-asset target-infra` with appropriate sizing gives you the CC estimate.
@@ -247,10 +249,12 @@ Performs the cutover in four automatic phases. The operation is resumable: if in
 | -------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | **Pre-flight**       | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                 | Normal traffic                                                          |
 | **Block**            | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
-| **Promote**          | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion | Still retrying; records buffered locally                                |
+| **Promote**          | Promotes caught-up mirror topics (waiting for lag=0), then confirms each reaches the terminal `STOPPED` state before proceeding | Still retrying; records buffered locally                                |
 | **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                           | First retry succeeds; clients now on CC                                 |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
+
+`--promote-batch-size N` promotes topics in synchronous batches of `N` (promote `N`, wait for all to reach `STOPPED`, repeat) instead of all at once. See [§9 Known Constraints and Operational Guidance](#9-known-constraints-and-operational-guidance) for details.
 
 Steps:
 ![Description](images/image-20260112-175128.png)

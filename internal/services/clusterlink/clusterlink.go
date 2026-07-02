@@ -60,6 +60,11 @@ type MirrorTopic struct {
 const (
 	// Mirror topic status constants
 	MirrorStatusActive = "ACTIVE"
+	// MirrorStatusStopped is the terminal state once promotion/failover has
+	// completed and the topic is a standalone writable topic. Promotion is
+	// confirmed by waiting for this state; any other (transient) status is
+	// treated as "not done yet".
+	MirrorStatusStopped = "STOPPED"
 )
 
 // Config holds cluster link configuration

@@ -38,6 +38,7 @@ var (
 	tlsClientKey          string
 	insecureSkipTLSVerify bool
 	rolloutTimeout        time.Duration
+	promoteBatchSize      int
 )
 
 func NewCutoverExecuteCmd() *cobra.Command {
@@ -92,6 +93,7 @@ the cutover state file and must be provided each time.`,
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
 	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
+	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
 	cutoverExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -276,5 +278,6 @@ func parseCutoverExecutorOpts(state cutover.CutoverState, config cutover.Cutover
 		TlsClientKey:          tlsClientKey,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 		RolloutTimeout:        rolloutTimeout,
+		PromoteBatchSize:      promoteBatchSize,
 	}
 }

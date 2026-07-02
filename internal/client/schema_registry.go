@@ -72,8 +72,10 @@ func configureBasicAuth(srConfig *schemaregistry.Config, username, password stri
 	srConfig.BasicAuthUserInfo = fmt.Sprintf("%s:%s", username, password)
 }
 
-// NewSchemaRegistryClient creates a new Schema Registry client for the given URL
-func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemaregistry.Client, error) {
+// resolveSchemaRegistryConfig applies the given options onto a default
+// (unauthenticated) config. Shared by NewSchemaRegistryClient and the pre-flight
+// validator so both honor the same auth resolution.
+func resolveSchemaRegistryConfig(opts ...SchemaRegistryOption) SchemaRegistryConfig {
 	config := SchemaRegistryConfig{
 		authType: types.SchemaRegistryAuthTypeUnauthenticated,
 	}
@@ -81,6 +83,36 @@ func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemare
 	for _, opt := range opts {
 		opt(&config)
 	}
+
+	return config
+}
+
+// tlsTransport builds an *http.Transport carrying the config's TLS settings
+// (custom CA, insecure-skip, mTLS client cert) via the shared utils.TLSClientConfig
+// helper, or nil when no TLS options are set. Shared by NewSchemaRegistryClient and
+// the pre-flight validator so both negotiate TLS identically.
+func (c *SchemaRegistryConfig) tlsTransport() (*http.Transport, error) {
+	if c.caCert == "" && !c.insecureSkip && c.clientCert == "" {
+		return nil, nil
+	}
+	pool, err := utils.OptionalCACertPool(c.caCert)
+	if err != nil {
+		return nil, err
+	}
+	tlsCfg := utils.TLSClientConfig(pool, c.insecureSkip)
+	if c.clientCert != "" || c.clientKey != "" {
+		if err := utils.AppendClientCert(tlsCfg, c.clientCert, c.clientKey); err != nil {
+			return nil, err
+		}
+	}
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+	return transport, nil
+}
+
+// NewSchemaRegistryClient creates a new Schema Registry client for the given URL
+func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemaregistry.Client, error) {
+	config := resolveSchemaRegistryConfig(opts...)
 
 	srConfig := schemaregistry.NewConfig(url)
 
@@ -102,19 +134,11 @@ func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemare
 	// tls.Config.InsecureSkipVerify), so relying on it makes --insecure-skip-tls-verify a
 	// no-op. NewRestService uses conf.HTTPClient verbatim when set, so this makes skip real
 	// and routes CA + mTLS through the same helper as every other client.
-	if config.caCert != "" || config.insecureSkip || config.clientCert != "" {
-		pool, err := utils.OptionalCACertPool(config.caCert)
-		if err != nil {
-			return nil, err
-		}
-		tlsCfg := utils.TLSClientConfig(pool, config.insecureSkip)
-		if config.clientCert != "" || config.clientKey != "" {
-			if err := utils.AppendClientCert(tlsCfg, config.clientCert, config.clientKey); err != nil {
-				return nil, err
-			}
-		}
-		transport := http.DefaultTransport.(*http.Transport).Clone()
-		transport.TLSClientConfig = tlsCfg
+	transport, err := config.tlsTransport()
+	if err != nil {
+		return nil, err
+	}
+	if transport != nil {
 		srConfig.HTTPClient = &http.Client{Transport: transport}
 	}
 

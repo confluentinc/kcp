@@ -191,3 +191,23 @@ blocks:
         - name: 'trivy scan'
           commands:
             - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
+
+  - name: 'docs build'
+    dependencies: ['resolve go dependencies']
+    task:
+      prologue:
+        commands:
+          - sem-version python 3.12
+      jobs:
+        - name: 'docs build'
+          commands:
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
+            # gen-docs embeds cmd/ui/frontend/dist via go:embed; the command
+            # reference is pure Cobra output and needs no real assets, so a stub
+            # lets it compile without the full frontend build.
+            - mkdir -p cmd/ui/frontend/dist && echo '<!doctype html>' > cmd/ui/frontend/dist/index.html
+            # Builds a throwaway venv from requirements-docs.txt (no stale cache) and
+            # runs `mkdocs build --strict` — catches dependency-resolution conflicts
+            # and breaking extension changes before they reach contributors.
+            - make docs-build

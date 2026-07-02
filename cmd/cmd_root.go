@@ -18,6 +18,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/migration"
 	"github.com/confluentinc/kcp/cmd/report"
 	"github.com/confluentinc/kcp/cmd/scan"
+	"github.com/confluentinc/kcp/cmd/state"
 	"github.com/confluentinc/kcp/cmd/ui"
 	"github.com/confluentinc/kcp/cmd/update"
 	"github.com/confluentinc/kcp/cmd/version"
@@ -103,6 +104,7 @@ func init() {
 		migrate.NewMigrateCmd(),
 		cutover.NewCutoverCmd(),
 		migration.NewMigrationCmd(), // hidden deprecation stub → points to `kcp cutover`
+		state.NewStateCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
 		docs.NewDocsCmd(),

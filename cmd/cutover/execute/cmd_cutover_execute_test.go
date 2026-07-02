@@ -341,3 +341,74 @@ func TestCutoverExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
 	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
 	assert.Equal(t, 7*time.Minute, opts.RolloutTimeout, "ROLLOUT_TIMEOUT env var should populate the flag")
 }
+
+// ===========================================================================
+// --promote-batch-size flag tests
+// ===========================================================================
+
+func TestCutoverExecute_PromoteBatchSize_DefaultIsZero(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewCutoverExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--cutover-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+	}))
+
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	assert.Equal(t, 0, opts.PromoteBatchSize, "default --promote-batch-size should be 0 (promote all at once)")
+}
+
+func TestCutoverExecute_PromoteBatchSize_ExplicitValueParsed(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewCutoverExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--cutover-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--promote-batch-size", "10",
+	}))
+
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	assert.Equal(t, 10, opts.PromoteBatchSize)
+}
+
+func TestCutoverExecute_PromoteBatchSize_InvalidValueFails(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewCutoverExecuteCmd()
+	err := cmd.ParseFlags([]string{
+		"--cutover-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--promote-batch-size", "not-an-int",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "promote-batch-size")
+}
+
+func TestCutoverExecute_PromoteBatchSize_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("PROMOTE_BATCH_SIZE", "25")
+
+	cmd := NewCutoverExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--cutover-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	opts := parseCutoverExecutorOpts(cutover.CutoverState{}, cutover.CutoverConfig{})
+	assert.Equal(t, 25, opts.PromoteBatchSize, "PROMOTE_BATCH_SIZE env var should populate the flag")
+}
