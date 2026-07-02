@@ -24,7 +24,17 @@ type WorkflowStep struct {
 	ToState     string
 }
 
-// canonicalWorkflow is the single source of truth for the migration workflow sequence
+// canonicalWorkflow is the single source of truth for the migration workflow
+// sequence — the ordered forward transitions the FSM walks on execute.
+//
+// Two deliberate modelling choices are intentionally NOT represented here:
+//   - The offset-sync pause/restore bookends run OUTSIDE the FSM, wrapped around
+//     the whole execute by the command layer (see offset_sync_bookend.go),
+//     because the restore must run even when the run aborts or ctx is cancelled.
+//   - There is no terminal/failed state. A step failure cancels its transition
+//     (e.Cancel) and leaves the FSM at the last good state; re-running execute
+//     resumes from there. The sole backward edge, abort_fence (fenced →
+//     initialized on unrouted-producer detection), is the only rollback.
 var canonicalWorkflow = []WorkflowStep{
 	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized},
 	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk},
@@ -45,11 +55,26 @@ var stepHeaders = map[string]string{
 	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
 }
 
-// ExecutionParams holds runtime parameters needed during migration execution
+// ExecutionParams holds the per-run runtime parameters a transition may need.
+// It is passed to fsm.Event as the sole argument and read back by callbacks via
+// execParamsFromEvent, rather than stashed on the orchestrator, so the values
+// flow with the event instead of living as mutable orchestrator state.
 type ExecutionParams struct {
 	LagThreshold     int64
 	ClusterApiKey    string
 	ClusterApiSecret string
+}
+
+// execParamsFromEvent returns the ExecutionParams passed to fsm.Event. Forward
+// transitions are fired with them; the abort_fence rollback is fired without
+// (onAbortFence needs no runtime params) and this returns the zero value.
+func execParamsFromEvent(e *fsm.Event) ExecutionParams {
+	if len(e.Args) > 0 {
+		if p, ok := e.Args[0].(ExecutionParams); ok {
+			return p
+		}
+	}
+	return ExecutionParams{}
 }
 
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
@@ -59,8 +84,7 @@ type MigrationOrchestrator struct {
 	actions        *MigrationActions
 	migrationState *MigrationState
 	stateFilePath  string
-	execParams     ExecutionParams // Runtime execution parameters
-	reporter       *reporter       // user-facing terminal output
+	reporter       *reporter // user-facing terminal output
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
@@ -122,11 +146,8 @@ func NewMigrationOrchestrator(
 
 // Initialize triggers the initialization event
 func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, clusterApiSecret string) error {
-	// Store API credentials for use by callback
-	o.execParams.ClusterApiKey = clusterApiKey
-	o.execParams.ClusterApiSecret = clusterApiSecret
-
-	if err := o.fsm.Event(ctx, EventInitialize); err != nil {
+	params := ExecutionParams{ClusterApiKey: clusterApiKey, ClusterApiSecret: clusterApiSecret}
+	if err := o.fsm.Event(ctx, EventInitialize, params); err != nil {
 		return err
 	}
 	return o.PersistState()
@@ -134,10 +155,11 @@ func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, c
 
 // Execute runs the full migration workflow from the current state
 func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, clusterApiKey, clusterApiSecret string) error {
-	// Store runtime parameters once for use by all callbacks
-	o.execParams.LagThreshold = lagThreshold
-	o.execParams.ClusterApiKey = clusterApiKey
-	o.execParams.ClusterApiSecret = clusterApiSecret
+	params := ExecutionParams{
+		LagThreshold:     lagThreshold,
+		ClusterApiKey:    clusterApiKey,
+		ClusterApiSecret: clusterApiSecret,
+	}
 
 	// Drive execution from canonical workflow - single source of truth
 	for _, step := range canonicalWorkflow {
@@ -150,7 +172,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			o.reporter.section(header)
 		}
 		slog.Debug("executing migration step", "step", step.Description)
-		if err := o.fsm.Event(ctx, step.Event); err != nil {
+		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
 			return o.handleStepFailure(ctx, step, err)
 		}
 		if err := o.PersistState(); err != nil {
@@ -219,14 +241,16 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 
 // onInitialize runs the initialize transition: delegates to workflow Initialize.
 func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.Initialize(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.Initialize(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
 
 // onWaitForLags runs the wait_for_lags transition: delegates to workflow CheckLags.
 func (o *MigrationOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.CheckLags(ctx, o.config, o.execParams.LagThreshold, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.CheckLags(ctx, o.config, p.LagThreshold, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -242,7 +266,8 @@ func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 // Registered on before_promote (not leave_fenced), so it fires only for the
 // promote event — never for the abort_fence rollback that also leaves fenced.
 func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.PromoteTopics(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
