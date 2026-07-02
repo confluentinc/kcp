@@ -82,15 +82,15 @@ func (m *MigrationExecutor) Run() error {
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
-	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
-	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
+	actions := migration.NewMigrationActionsWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
+	actions.SetRolloutTimeout(m.opts.RolloutTimeout)
 
 	// The orchestrator is the single writer for migration state. Build it up
 	// front so its PersistState can back the offset-sync bookends too, rather
 	// than a parallel write closure.
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
-		workflow,
+		actions,
 		&m.opts.MigrationState,
 		m.opts.MigrationStateFile,
 	)

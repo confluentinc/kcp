@@ -56,7 +56,7 @@ type ExecutionParams struct {
 type MigrationOrchestrator struct {
 	config         *MigrationConfig
 	fsm            *fsm.FSM
-	workflow       *MigrationWorkflow
+	actions        *MigrationActions
 	migrationState *MigrationState
 	stateFilePath  string
 	execParams     ExecutionParams // Runtime execution parameters
@@ -66,13 +66,13 @@ type MigrationOrchestrator struct {
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
 func NewMigrationOrchestrator(
 	config *MigrationConfig,
-	workflow *MigrationWorkflow,
+	actions *MigrationActions,
 	migrationState *MigrationState,
 	stateFilePath string,
 ) *MigrationOrchestrator {
 	orchestrator := &MigrationOrchestrator{
 		config:         config,
-		workflow:       workflow,
+		actions:        actions,
 		migrationState: migrationState,
 		stateFilePath:  stateFilePath,
 		reporter:       newReporter(),
@@ -219,21 +219,21 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 
 // onInitialize runs the initialize transition: delegates to workflow Initialize.
 func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.Initialize(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+	if err := o.actions.Initialize(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
 
 // onWaitForLags runs the wait_for_lags transition: delegates to workflow CheckLags.
 func (o *MigrationOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.CheckLags(ctx, o.config, o.execParams.LagThreshold, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+	if err := o.actions.CheckLags(ctx, o.config, o.execParams.LagThreshold, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
 
 // onFence runs the fence transition: delegates to workflow FenceGateway.
 func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.FenceGateway(ctx, o.config); err != nil {
+	if err := o.actions.FenceGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -242,7 +242,7 @@ func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 // Registered on before_promote (not leave_fenced), so it fires only for the
 // promote event — never for the abort_fence rollback that also leaves fenced.
 func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+	if err := o.actions.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -254,7 +254,7 @@ func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 // execute will retry the unfence.
 func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	o.reporter.warn("Unrouted producers detected — removing fence to restore traffic")
-	if err := o.workflow.unfenceGateway(ctx, o.config); err != nil {
+	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to unfence gateway after detecting unrouted producers", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
@@ -264,7 +264,7 @@ func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) 
 
 // onSwitch runs the switch transition: delegates to workflow SwitchGateway.
 func (o *MigrationOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.SwitchGateway(ctx, o.config); err != nil {
+	if err := o.actions.SwitchGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
 	}
 }

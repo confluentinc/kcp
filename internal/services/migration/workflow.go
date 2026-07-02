@@ -15,7 +15,7 @@ import (
 	"github.com/goccy/go-yaml"
 )
 
-type MigrationWorkflow struct {
+type MigrationActions struct {
 	gatewayService      gateway.Service
 	clusterLinkService  clusterlink.Service
 	sourceOffset        offset.Provider
@@ -29,11 +29,11 @@ type MigrationWorkflow struct {
 	reporter       *reporter // user-facing terminal output
 }
 
-func NewMigrationWorkflow(
+func NewMigrationActions(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-) *MigrationWorkflow {
-	return &MigrationWorkflow{
+) *MigrationActions {
+	return &MigrationActions{
 		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		lagPollInterval:     2 * time.Second,
@@ -42,13 +42,13 @@ func NewMigrationWorkflow(
 	}
 }
 
-func NewMigrationWorkflowWithOffsets(
+func NewMigrationActionsWithOffsets(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
 	sourceOffset offset.Provider,
 	destinationOffset offset.Provider,
-) *MigrationWorkflow {
-	return &MigrationWorkflow{
+) *MigrationActions {
+	return &MigrationActions{
 		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		sourceOffset:        sourceOffset,
@@ -61,11 +61,11 @@ func NewMigrationWorkflowWithOffsets(
 
 // SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
 // A value of 0 means no deadline.
-func (s *MigrationWorkflow) SetRolloutTimeout(d time.Duration) {
+func (s *MigrationActions) SetRolloutTimeout(d time.Duration) {
 	s.rolloutTimeout = d
 }
 
-func (s *MigrationWorkflow) Initialize(
+func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
 	clusterApiKey, clusterApiSecret string,
@@ -167,7 +167,7 @@ func (s *MigrationWorkflow) Initialize(
 }
 
 // CheckLags polls source and destination offsets until lag is below threshold
-func (s *MigrationWorkflow) CheckLags(
+func (s *MigrationActions) CheckLags(
 	ctx context.Context,
 	config *MigrationConfig,
 	lagThreshold int64,
@@ -280,7 +280,7 @@ func formatLag64(n int64) string {
 // generation. The wait runs without a deadline by default — the operator
 // drives convergence and the user can Ctrl-C if a rollout wedges. An optional
 // per-workflow rolloutTimeout caps the wait when set (via SetRolloutTimeout).
-func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
@@ -305,7 +305,7 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationC
 // The initial CR YAML fetched from k8s contains server-managed metadata
 // (managedFields, resourceVersion, status) that breaks server-side apply,
 // so we strip it before applying.
-func (s *MigrationWorkflow) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
 	// Parse the initial CR, strip server metadata, re-marshal
 	var obj map[string]interface{}
 	if err := yaml.Unmarshal(config.InitialCrYAML, &obj); err != nil {
@@ -334,7 +334,7 @@ func (s *MigrationWorkflow) unfenceGateway(ctx context.Context, config *Migratio
 // given duration. If any partition's offset increases between snapshots, it
 // means a producer is writing directly to the source cluster (bypassing the
 // fenced gateway) and the migration should not proceed.
-func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
+func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
 	// Snapshot 1
 	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
 	snapshot1 := make(map[string]map[int32]int64, len(topics))
@@ -382,7 +382,7 @@ func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics 
 }
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
-func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -518,7 +518,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent
 // Cloud and waits for the operator to report the gateway as Ready. The wait
 // uses the same no-deadline-by-default behavior as FenceGateway.
-func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {
@@ -544,7 +544,7 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *Migration
 // A no-op signal (RolloutDetected=false) is preserved from the previous
 // implementation so users see "no pod restart required" when an apply did not
 // trigger a rollout.
-func (s *MigrationWorkflow) printGatewayReadinessProgress(p gateway.GatewayReadinessProgress) {
+func (s *MigrationActions) printGatewayReadinessProgress(p gateway.GatewayReadinessProgress) {
 	if !p.RolloutDetected {
 		s.reporter.success("No pod restart required")
 		return
