@@ -295,10 +295,13 @@ func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationC
 	return nil
 }
 
-// unfenceGateway reapplies the initial gateway CR to restore normal traffic.
-// The initial CR YAML fetched from k8s contains server-managed metadata
-// (managedFields, resourceVersion, status) that breaks server-side apply,
-// so we strip it before applying.
+// unfenceGateway reapplies the initial gateway CR to restore normal traffic,
+// then waits for the operator to report the gateway Ready at the restored
+// spec — the same convergence check FenceGateway uses. Without the wait we
+// would report traffic restored while pods are still cycling, and miss
+// rollout failures entirely. The initial CR YAML fetched from k8s contains
+// server-managed metadata (managedFields, resourceVersion, status) that
+// breaks server-side apply, so we strip it before applying.
 func (s *MigrationWorkflow) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
 	// Parse the initial CR, strip server metadata, re-marshal
 	var obj map[string]interface{}
@@ -321,7 +324,19 @@ func (s *MigrationWorkflow) unfenceGateway(ctx context.Context, config *Migratio
 		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
 	}
 
-	return s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML)
+	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML); err != nil {
+		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
+	}
+	slog.Debug("initial gateway CR applied")
+	fmt.Printf("   %s Initial gateway CR applied\n", color.GreenString("✔"))
+
+	fmt.Printf("   ↳ Waiting for gateway readiness...\n")
+	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
+
+	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, printGatewayReadinessProgress); err != nil {
+		return fmt.Errorf("failed waiting for gateway readiness after unfence: %w", err)
+	}
+	return nil
 }
 
 // detectUnroutedProducers takes two source offset snapshots separated by the
