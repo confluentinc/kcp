@@ -54,7 +54,7 @@ var stepHeaders = map[string]string{
 	EventWaitForLags: "⏳ Checking replication lags...",
 	EventFence:       "🚧 Fencing gateway...",
 	EventVerifyFence: "🔍 Checking for unrouted producers...",
-	EventPromote:     "🚀 Promoting topics...",
+	EventPromote:     "📤 Promoting mirror topics...",
 	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
 }
 
