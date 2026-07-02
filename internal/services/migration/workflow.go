@@ -386,14 +386,9 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 	if config.DetectUnroutedProducersDuration > 0 {
 		fmt.Printf("\n%s\n", color.CyanString("🔍 Checking for unrouted producers..."))
 		if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
-			fmt.Printf("   %s Unrouted producers detected — removing fence to restore traffic\n",
-				color.YellowString("⚠️"))
-			if unfenceErr := s.unfenceGateway(ctx, config); unfenceErr != nil {
-				slog.Error("❌ failed to unfence gateway after detecting unrouted producers", "error", unfenceErr)
-			} else {
-				fmt.Printf("   %s Gateway unfenced — traffic restored to pre-migration state\n",
-					color.GreenString("✔"))
-			}
+			// Signal detection to the orchestrator by wrapping ErrUnroutedProducers.
+			// Restoring traffic (unfencing the gateway) is the state machine's
+			// responsibility, performed on the abort_fence rollback transition.
 			return fmt.Errorf("%w: %w", ErrUnroutedProducers, err)
 		}
 		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
