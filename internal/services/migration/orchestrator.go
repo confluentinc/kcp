@@ -29,6 +29,8 @@ var canonicalWorkflow = []WorkflowStep{
 	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized, "🔍 Initializing migration..."},
 	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk, "⏳ Checking replication lags..."},
 	{EventFence, "fencing gateway", StateLagsOk, StateFenced, "🚧 Fencing gateway..."},
+	// Promote's user message is printed inside PromoteTopics, not here, so the
+	// unrouted-producer check (which can abort promotion) is announced first.
 	{EventPromote, "promoting topics", StateFenced, StatePromoted, ""},
 	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched, "🔄 Switching gateway to Confluent Cloud..."},
 }
