@@ -368,8 +368,8 @@ func (s *MigrationWorkflow) detectUnroutedProducers(ctx context.Context, topics 
 
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		return fmt.Errorf("source offsets are still increasing after fencing — unrouted producer(s) detected:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
-			strings.Join(violations, "\n  "))
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
+			ErrUnroutedProducers, strings.Join(violations, "\n  "))
 	}
 
 	return nil
@@ -386,10 +386,12 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 	if config.DetectUnroutedProducersDuration > 0 {
 		fmt.Printf("\n%s\n", color.CyanString("🔍 Checking for unrouted producers..."))
 		if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
-			// Signal detection to the orchestrator by wrapping ErrUnroutedProducers.
-			// Restoring traffic (unfencing the gateway) is the state machine's
-			// responsibility, performed on the abort_fence rollback transition.
-			return fmt.Errorf("%w: %w", ErrUnroutedProducers, err)
+			// detectUnroutedProducers wraps ErrUnroutedProducers only for a real
+			// detection; a network/fetch error propagates as-is. Either way we
+			// just return it — restoring traffic (unfencing the gateway) is the
+			// state machine's job on the abort_fence rollback transition, which
+			// the orchestrator triggers only for ErrUnroutedProducers.
+			return err
 		}
 		fmt.Printf("   %s Source offsets stable — no unrouted producers detected\n",
 			color.GreenString("✔"))
