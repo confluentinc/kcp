@@ -120,15 +120,13 @@ func NewMigrationOrchestrator(
 		Src:  []string{StateFenced},
 		Dst:  StateInitialized,
 	})
-
-	// fence_verified is a point-in-time attestation and never survives a
-	// restart: a rogue producer may have appeared since the run that verified
-	// the fence, and there is no downstream re-verification (PromoteTopics'
-	// zero-lag check samples instants and misses intermittent producers).
-	// Demote to fenced so a resume re-runs the verify_fence detection window.
-	if config.CurrentState == StateFenceVerified {
-		config.CurrentState = StateFenced
-	}
+	// Backward transition: fence verification expires across restarts (fired
+	// at bootstrap below, never during a run)
+	events = append(events, fsm.EventDesc{
+		Name: EventExpireVerification,
+		Src:  []string{StateFenceVerified},
+		Dst:  StateFenced,
+	})
 
 	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check).
 	//
@@ -153,6 +151,19 @@ func NewMigrationOrchestrator(
 			"before_" + EventSwitch:      orchestrator.onSwitch,
 		},
 	)
+
+	// fence_verified is a point-in-time attestation and never survives a
+	// restart: a rogue producer may have appeared since the run that verified
+	// the fence, and there is no downstream re-verification (PromoteTopics'
+	// zero-lag check samples instants and misses intermittent producers).
+	// Expire it so a resume re-runs the verify_fence detection window. The
+	// transition has no action callback and its source state matches, so it
+	// cannot fail; the guard keeps the FSM honest if that ever changes.
+	if orchestrator.fsm.Is(StateFenceVerified) {
+		if err := orchestrator.fsm.Event(context.Background(), EventExpireVerification); err != nil {
+			slog.Error("❌ failed to expire fence verification at bootstrap", "error", err)
+		}
+	}
 
 	return orchestrator
 }

@@ -10,6 +10,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/looplab/fsm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -459,6 +460,18 @@ func TestOrchestrator_Bootstrap_DemotesFenceVerified(t *testing.T) {
 
 	assert.Equal(t, StateFenced, config.CurrentState,
 		"bootstrap should demote a persisted fence_verified to fenced")
+}
+
+func TestOrchestrator_ExpireVerificationIsAnFSMEdge(t *testing.T) {
+	// The bootstrap demotion must be modelled as an FSM transition
+	// (expire_verification: fence_verified → fenced), not a config mutation
+	// the machine never sees — so it fires through the FSM callbacks and
+	// appears in fsm.Visualize output alongside abort_fence.
+	orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
+
+	assert.Contains(t, fsm.Visualize(orch.fsm),
+		`"fence_verified" -> "fenced" [ label = "expire_verification" ];`,
+		"expire_verification should be a visible edge in the state machine")
 }
 
 func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing.T) {

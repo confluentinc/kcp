@@ -36,6 +36,11 @@ const (
 	// verify_fence step detects unrouted producers; the transition itself
 	// unfences the gateway (see onAbortFence in orchestrator.go).
 	EventAbortFence = "abort_fence"
+	// EventExpireVerification demotes fence_verified to fenced at FSM
+	// bootstrap: the verification is a point-in-time attestation and never
+	// survives a restart, so a resume re-runs the verify_fence detection
+	// window. Fired only by NewMigrationOrchestrator; it has no action.
+	EventExpireVerification = "expire_verification"
 )
 
 // ----- migration configuration -----
