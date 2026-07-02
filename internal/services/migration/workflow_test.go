@@ -986,6 +986,59 @@ status:
 	assert.Contains(t, yamlStr, "source-kafka-cluster", "spec values should be preserved")
 }
 
+func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
+	var applyCalled, waitCalled bool
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			applyCalled = true
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, namespace, name string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			waitCalled = true
+			assert.True(t, applyCalled, "readiness wait must happen after the CR is applied")
+			assert.Equal(t, "confluent", namespace)
+			assert.Equal(t, "my-gw", name)
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+
+	wf := NewMigrationActions(gw, cl)
+	config := &MigrationConfig{
+		InitialCrName: "my-gw",
+		K8sNamespace:  "confluent",
+		InitialCrYAML: []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: confluent\n"),
+	}
+
+	err := wf.unfenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.True(t, waitCalled, "unfenceGateway should wait for gateway readiness after applying the initial CR")
+}
+
+func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("gateway pods did not converge")
+		},
+	}
+	cl := &mockClusterLinkService{}
+
+	wf := NewMigrationActions(gw, cl)
+	config := &MigrationConfig{
+		InitialCrName: "my-gw",
+		K8sNamespace:  "confluent",
+		InitialCrYAML: []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: confluent\n"),
+	}
+
+	err := wf.unfenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed waiting for gateway readiness after unfence")
+	assert.Contains(t, err.Error(), "gateway pods did not converge")
+}
+
 func TestWorkflow_DetectUnroutedProducers_ContextCancelled(t *testing.T) {
 	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{}

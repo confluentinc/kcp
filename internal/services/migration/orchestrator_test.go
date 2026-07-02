@@ -19,6 +19,7 @@ import (
 type orchestratorOverrides struct {
 	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
 	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
+	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
@@ -78,6 +79,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		return &clusterlink.PromoteMirrorTopicsResponse{Data: data}, nil
 	}
 
+	// Default nil → mock returns success
+	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+
 	// Apply overrides if provided
 	if len(overrides) > 0 {
 		o := overrides[0]
@@ -86,6 +90,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		}
 		if o.applyGatewayYAMLFn != nil {
 			applyGatewayYAMLFn = o.applyGatewayYAMLFn
+		}
+		if o.waitForGatewayReadyFn != nil {
+			waitForGatewayReadyFn = o.waitForGatewayReadyFn
 		}
 		if o.promoteMirrorTopicsFn != nil {
 			promoteMirrorTopicsFn = o.promoteMirrorTopicsFn
@@ -107,6 +114,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return nil
 		},
+		waitForGatewayReadyFn: waitForGatewayReadyFn,
 	}
 
 	cl := &mockClusterLinkService{
@@ -371,6 +379,51 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtFenced(t *te
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateFenced, persisted.CurrentState,
 		"state should remain at fenced when unfencing fails")
+}
+
+func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtFenced(t *testing.T) {
+	// The unfence CR applies cleanly but the gateway never converges to Ready.
+	// The abort_fence rollback must be cancelled — persisting initialized while
+	// the gateway is still mid-rollout would misrepresent reality.
+	var waitCallCount int64
+	var sourceCallCount int64
+
+	overrides := orchestratorOverrides{
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			n := atomic.AddInt64(&waitCallCount, 1)
+			if n == 1 {
+				// First wait is the fence rollout — succeed
+				return nil
+			}
+			// Second wait is the unfence rollout — fail
+			return fmt.Errorf("gateway pods did not converge")
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	// Enable unrouted producer detection
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	// Override source offset provider to return increasing offsets
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sourceCallCount, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
+
+	assert.Equal(t, int64(2), atomic.LoadInt64(&waitCallCount),
+		"gateway readiness should be awaited for both the fence and the unfence rollout")
+
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateFenced, persisted.CurrentState,
+		"state should remain at fenced when the unfence rollout never becomes ready")
 }
 
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
