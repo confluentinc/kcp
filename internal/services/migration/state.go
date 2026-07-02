@@ -19,6 +19,7 @@ const (
 	StateInitialized   = "initialized"
 	StateLagsOk        = "lags_ok"
 	StateFenced        = "fenced"
+	StateFenceVerified = "fence_verified"
 	StatePromoted      = "promoted"
 	StateSwitched      = "switched"
 )
@@ -28,11 +29,12 @@ const (
 	EventInitialize  = "initialize"
 	EventWaitForLags = "wait_for_lags"
 	EventFence       = "fence"
+	EventVerifyFence = "verify_fence"
 	EventPromote     = "promote"
 	EventSwitch      = "switch"
-	// EventAbortFence rolls back from fenced to initialized when unrouted
-	// producers are detected; the transition itself unfences the gateway
-	// (see leaveFencedCallback in orchestrator.go).
+	// EventAbortFence rolls back from fenced to initialized when the
+	// verify_fence step detects unrouted producers; the transition itself
+	// unfences the gateway (see onAbortFence in orchestrator.go).
 	EventAbortFence = "abort_fence"
 )
 
