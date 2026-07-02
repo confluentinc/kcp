@@ -194,7 +194,7 @@ func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 }
 
 func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
-	for _, startState := range []string{StateInitialized, StateLagsOk, StateFenced, StatePromoted} {
+	for _, startState := range []string{StateInitialized, StateLagsOk, StateFenced, StateFenceVerified, StatePromoted} {
 		t.Run("from_"+startState, func(t *testing.T) {
 			var getYAMLCalls int32
 			overrides := orchestratorOverrides{
@@ -426,6 +426,47 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtFen
 		"state should remain at fenced when the unfence rollout never becomes ready")
 }
 
+func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
+	// A successful unrouted-producer check is its own FSM transition
+	// (fenced → fence_verified) and must be persisted before promotion starts,
+	// so a later promote failure resumes without repeating the detection window.
+	overrides := orchestratorOverrides{
+		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			return nil, fmt.Errorf("confluent cloud API unavailable")
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
+	config.DetectUnroutedProducersDuration = time.Millisecond
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+
+	// The verify step succeeded (stable offsets) and was persisted; the promote
+	// transition was cancelled, so fence_verified is the last good state.
+	assert.Equal(t, StateFenceVerified, config.CurrentState)
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateFenceVerified, persisted.CurrentState,
+		"successful fence verification should be persisted even when promotion later fails")
+}
+
+func TestOrchestrator_Execute_ResumeFromFenceVerified_SkipsDetection(t *testing.T) {
+	// Resuming from fence_verified must not repeat the detection window. If it
+	// did, the 30s window would trip the 3s context deadline below.
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenceVerified, nil)
+	config.DetectUnroutedProducersDuration = 30 * time.Second
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	err := orch.Execute(ctx, 0, "api-key", "api-secret")
+	require.NoError(t, err)
+
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+}
+
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 	overrides := orchestratorOverrides{
 		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
@@ -438,20 +479,12 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
 	require.Error(t, err)
 
-	// State should remain at fenced — the promote transition was cancelled
-	assert.Equal(t, StateFenced, config.CurrentState)
+	// The verify_fence transition succeeded first (detection disabled → no-op),
+	// then the promote transition was cancelled, so the FSM rests at
+	// fence_verified — never promoted.
+	assert.Equal(t, StateFenceVerified, config.CurrentState)
 
-	// No state file should have been written for this run since no transition succeeded.
-	// (We started at fenced and the first attempted transition fenced->promoted failed.)
-	_, loadErr := NewMigrationStateFromFile(stateFilePath)
-	if loadErr == nil {
-		state, _ := NewMigrationStateFromFile(stateFilePath)
-		if state != nil {
-			m, getErr := state.GetMigrationById(config.MigrationId)
-			if getErr == nil {
-				assert.NotEqual(t, StatePromoted, m.CurrentState,
-					"state file should NOT contain migration at promoted state after promote failure")
-			}
-		}
-	}
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateFenceVerified, persisted.CurrentState,
+		"state file should rest at fence_verified after promote failure, never promoted")
 }
