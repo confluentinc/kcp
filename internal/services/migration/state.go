@@ -30,8 +30,9 @@ const (
 	EventFence       = "fence"
 	EventPromote     = "promote"
 	EventSwitch      = "switch"
-	// EventAbortFence transitions from fenced back to initialized when
-	// unrouted producers are detected and the gateway has been unfenced.
+	// EventAbortFence rolls back from fenced to initialized when unrouted
+	// producers are detected; the transition itself unfences the gateway
+	// (see leaveFencedCallback in orchestrator.go).
 	EventAbortFence = "abort_fence"
 )
 
