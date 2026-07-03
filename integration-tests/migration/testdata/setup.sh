@@ -170,7 +170,7 @@ wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup
 #   topic    : e2e-test-topic-<scenario>
 #   link     : e2e-link-<scenario>
 #   gateway  : migration-gateway-<scenario>
-SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters")
+SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters" "rogue-producer")
 TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
 rm -rf "${RENDERED_DIR}"
