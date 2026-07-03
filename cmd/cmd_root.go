@@ -69,7 +69,7 @@ var RootCmd = &cobra.Command{
 		if build_info.IsDev() {
 			fmt.Printf("\n%s\n%s\n%s\n%s\n%s\n\n",
 				color.RedString("┌─────────────────────────────────────────────────────────────────────────────────────────────┐"),
-				color.RedString("│ ⚠️  WARNING: This is a development build — not a defined release.                            │"),
+				color.RedString("│ ⚠️  WARNING: This is a development build — not a defined release.                           │"),
 				color.RedString("│ This build and any state files it generates should NOT be used for production or live use.  │"),
 				color.RedString("│ Install a released binary: https://github.com/confluentinc/kcp/releases                     │"),
 				color.RedString("└─────────────────────────────────────────────────────────────────────────────────────────────┘"))

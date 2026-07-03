@@ -1,9 +1,12 @@
 nav:
 
-- Home: README.md
-- Source Compatibility: source-compatibility.md
+- Home:
+    - README.md
+    - Zero-Cut Migration: getting-started-with-zero-cut-migrations.md
+    - Compatibility Matrix: source-compatibility.md
+- Configuration:
+    - Migration Assets: migration-assets
+    - apache-kafka-configuration
+- Guides:
+    - gateway-switchover
 - command-reference
-- Migration Assets: migration-assets
-- apache-kafka-configuration
-- Getting Started (Zero-Cut): getting-started-with-zero-cut-migrations.md
-- gateway-switchover
