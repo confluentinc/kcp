@@ -508,6 +508,47 @@ func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing
 		"detection on resume should roll back to initialized via abort_fence")
 }
 
+func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
+	// A transient offset-fetch failure during the detection window is not a
+	// detection: it must propagate without ErrUnroutedProducers so the
+	// orchestrator neither unfences the gateway nor rolls the FSM back.
+	// Re-running execute resumes from fenced and retries verification.
+	var applyCalls int64
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+			atomic.AddInt64(&applyCalls, 1)
+			return nil
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, []string{"topic-a"}, overrides)
+	config.DetectUnroutedProducersDuration = time.Millisecond
+
+	// First snapshot succeeds; the second fails mid-window.
+	var getCalls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt64(&getCalls, 1) == 1 {
+				return map[int32]int64{0: 100}, nil
+			}
+			return nil, fmt.Errorf("connection reset by peer")
+		},
+	}
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrUnroutedProducers,
+		"a fetch failure must not be classified as a detection")
+	assert.Contains(t, err.Error(), "connection reset by peer")
+
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateFenced, persisted.CurrentState,
+		"state must stay fenced — no abort_fence rollback on a fetch error")
+
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"only the fence CR apply should occur; the gateway must not be unfenced")
+}
+
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 	overrides := orchestratorOverrides{
 		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
