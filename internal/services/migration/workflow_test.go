@@ -863,6 +863,36 @@ func TestWorkflow_VerifyFence_IncreasingOffsets_ReturnsError(t *testing.T) {
 	assert.False(t, applyCalled, "VerifyFence must not unfence the gateway; that is the orchestrator's responsibility")
 }
 
+func TestWorkflow_VerifyFence_NewPartitionBetweenSnapshots_IsViolation(t *testing.T) {
+	// A partition that appears only in the second snapshot (created during
+	// the monitoring window, or missing from the first fetch's metadata)
+	// starts at offset 0 — any data on it was written after fencing and must
+	// be flagged, not silently skipped.
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	var call int64
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt64(&call, 1) == 1 {
+				return map[int32]int64{0: 100}, nil // partition 1 not yet visible
+			}
+			return map[int32]int64{0: 100, 1: 50}, nil // partition 0 stable, 1 has data
+		},
+	}
+
+	wf := NewMigrationActionsWithOffsets(gw, cl, sourceOffset, sourceOffset)
+	config := &MigrationConfig{
+		Topics:                          []string{"topic-1"},
+		DetectUnroutedProducersDuration: time.Millisecond,
+	}
+
+	err := wf.VerifyFence(context.Background(), config)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "topic-1 partition 1: offset 0 → 50")
+}
+
 func TestWorkflow_VerifyFence_Disabled_SkipsOffsetChecks(t *testing.T) {
 	gw := &mockGatewayService{}
 	cl := &mockClusterLinkService{}

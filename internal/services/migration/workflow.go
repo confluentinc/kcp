@@ -377,7 +377,11 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 			return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
 		}
 		for p, o2 := range offsets {
-			if o1, ok := snapshot1[topic][p]; ok && o2 > o1 {
+			// A partition absent from the first snapshot (e.g. created during
+			// the window) starts at offset 0, so any data on it was written
+			// after fencing — the zero-value baseline flags it.
+			o1 := snapshot1[topic][p]
+			if o2 > o1 {
 				delta := o2 - o1
 				rate := float64(delta) / duration.Seconds()
 				violations = append(violations, fmt.Sprintf(
