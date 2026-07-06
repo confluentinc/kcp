@@ -16,6 +16,9 @@ type ProcessedState struct {
 	SchemaRegistries *types.SchemaRegistriesState `json:"schema_registries,omitempty"`
 	KcpBuildInfo     interface{}                  `json:"kcp_build_info,omitempty"`
 	Timestamp        time.Time                    `json:"timestamp"`
+	SchemaVersion    int                          `json:"schema_version"`
+	UpdatedAt        *time.Time                   `json:"updated_at,omitempty"`
+	UpgradedFrom     string                       `json:"upgraded_from,omitempty"`
 }
 
 // ProcessedRegion mirrors DiscoveredRegion but with flattened costs and simplified clusters

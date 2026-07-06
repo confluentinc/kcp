@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -59,14 +60,12 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		return nil
 	}
 
-	// ListMirrorTopics returns ACTIVE topics matching config.Topics
-	mirrorTopics := make([]clusterlink.MirrorTopic, len(topics))
-	for i, name := range topics {
-		mirrorTopics[i] = clusterlink.MirrorTopic{
-			MirrorTopicName: name,
-			MirrorStatus:    clusterlink.MirrorStatusActive,
-		}
-	}
+	// Track promoted topics so ListMirrorTopics can model the realistic
+	// ACTIVE -> STOPPED transition that PromoteTopics polls for: a topic is
+	// ACTIVE until its promote request is accepted, then STOPPED once the
+	// (mock) backend has processed it.
+	var mirrorMu sync.Mutex
+	promotedTopics := make(map[string]bool)
 
 	promoteMirrorTopicsFn := func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 		data := make([]struct {
@@ -74,9 +73,12 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 			ErrorMessage    string `json:"error_message,omitempty"`
 			ErrorCode       int    `json:"error_code,omitempty"`
 		}, len(topicNames))
+		mirrorMu.Lock()
 		for i, name := range topicNames {
 			data[i].MirrorTopicName = name
+			promotedTopics[name] = true
 		}
+		mirrorMu.Unlock()
 		return &clusterlink.PromoteMirrorTopicsResponse{Data: data}, nil
 	}
 
@@ -120,7 +122,20 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 
 	cl := &mockClusterLinkService{
 		listMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-			return mirrorTopics, nil
+			mirrorMu.Lock()
+			defer mirrorMu.Unlock()
+			out := make([]clusterlink.MirrorTopic, len(topics))
+			for i, name := range topics {
+				status := clusterlink.MirrorStatusActive
+				if promotedTopics[name] {
+					status = clusterlink.MirrorStatusStopped
+				}
+				out[i] = clusterlink.MirrorTopic{
+					MirrorTopicName: name,
+					MirrorStatus:    status,
+				}
+			}
+			return out, nil
 		},
 		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
 			return map[string]string{"consumer.offset.sync.enable": "true"}, nil

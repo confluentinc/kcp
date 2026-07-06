@@ -22,6 +22,11 @@ type MigrationActions struct {
 	destinationOffset   offset.Provider
 	lagPollInterval     time.Duration
 	promotePollInterval time.Duration
+	// promoteBatchSize caps how many mirror topics are promoted per batch. A
+	// value of 0 means unlimited — all zero-lag topics are promoted at once.
+	// When set (>0), PromoteTopics promotes at most this many topics, waits for
+	// them all to reach STOPPED, then moves on to the next batch.
+	promoteBatchSize int
 	// rolloutTimeout is the deadline applied to gateway-readiness waits in
 	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
 	// wait runs until the operator reports ready or the user cancels.
@@ -63,6 +68,14 @@ func NewMigrationActionsWithOffsets(
 // A value of 0 means no deadline.
 func (s *MigrationActions) SetRolloutTimeout(d time.Duration) {
 	s.rolloutTimeout = d
+}
+
+// SetPromoteBatchSize caps how many mirror topics are promoted per batch during
+// PromoteTopics. A value of 0 (the default) means unlimited — all zero-lag
+// topics are promoted at once. When set (>0), each batch is promoted and fully
+// confirmed STOPPED before the next batch is submitted.
+func (s *MigrationActions) SetPromoteBatchSize(n int) {
+	s.promoteBatchSize = n
 }
 
 func (s *MigrationActions) Initialize(
@@ -447,9 +460,14 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		Topics:       config.Topics,
 	}
 
-	// Track which topics still need promotion
+	// Track which topics still need to reach the terminal STOPPED state.
+	// `awaitingStop` holds topics whose promote request was accepted
+	// (error_code 0) but which have not yet been confirmed STOPPED via
+	// ListMirrorTopics — a promote is fire-and-forget, so error_code 0 only
+	// means the request was enqueued, not that mirroring has actually stopped.
 	remaining := make(map[string]bool)
 	retryCount := make(map[string]int)
+	awaitingStop := make(map[string]bool)
 	for _, topic := range config.Topics {
 		remaining[topic] = true
 	}
@@ -461,14 +479,60 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		default:
 		}
 
+		// Confirm accepted promotions have actually reached STOPPED. Until a
+		// topic is verified STOPPED it stays in `remaining`, which keeps the
+		// workflow in the promote phase and blocks the gateway switchover.
+		if len(awaitingStop) > 0 {
+			mirrorTopics, err := s.clusterLinkService.ListMirrorTopics(ctx, clusterLinkConfig)
+			if err != nil {
+				return fmt.Errorf("failed to verify mirror topic status: %w", err)
+			}
+			statusByTopic := make(map[string]string, len(mirrorTopics))
+			for _, mt := range mirrorTopics {
+				statusByTopic[mt.MirrorTopicName] = mt.MirrorStatus
+			}
+			for topic := range awaitingStop {
+				status := statusByTopic[topic]
+				if status == clusterlink.MirrorStatusStopped {
+					s.reporter.success("%s stopped", topic)
+					slog.Debug("mirror topic promotion confirmed stopped", "topic", topic)
+					delete(awaitingStop, topic)
+					delete(remaining, topic)
+				} else {
+					slog.Debug("mirror topic promotion still pending",
+						"topic", topic, "status", status)
+				}
+			}
+		}
+
 		if len(remaining) == 0 {
-			slog.Debug("all topics promoted")
+			slog.Debug("all topics promoted and confirmed stopped")
 			return nil
 		}
 
-		// Find topics at zero lag using direct offset comparison
+		// In batch mode, don't start a new batch until the current one has
+		// fully drained to STOPPED — this makes each batch synchronous.
+		if s.promoteBatchSize > 0 && len(awaitingStop) > 0 {
+			s.reporter.detail("Waiting for current batch of %d topic(s) to reach STOPPED...",
+				len(awaitingStop))
+			slog.Debug("batch in flight, waiting for STOPPED before next batch",
+				"awaitingStop", len(awaitingStop), "pollInterval", s.promotePollInterval)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(s.promotePollInterval):
+				continue
+			}
+		}
+
+		// Find topics at zero lag that still need a promote request. Topics
+		// already accepted (awaiting STOPPED confirmation) are skipped so we
+		// don't re-promote them.
 		var topicsToPromote []string
 		for topic := range remaining {
+			if awaitingStop[topic] {
+				continue
+			}
 			sourceOffsets, err := s.sourceOffset.Get(topic)
 			if err != nil {
 				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
@@ -485,10 +549,23 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		}
 		sort.Strings(topicsToPromote)
 
+		// Cap the batch when a promote batch size is configured.
+		if s.promoteBatchSize > 0 && len(topicsToPromote) > s.promoteBatchSize {
+			topicsToPromote = topicsToPromote[:s.promoteBatchSize]
+		}
+
 		if len(topicsToPromote) == 0 {
-			s.reporter.detail("Waiting for lag to reach zero (%d topics remaining)...", len(remaining))
-			slog.Debug("no topics at zero lag yet, waiting",
-				"remaining", len(remaining), "pollInterval", s.promotePollInterval)
+			if len(awaitingStop) > 0 {
+				s.reporter.detail("Waiting for %d promoted topic(s) to reach STOPPED...",
+					len(awaitingStop))
+				slog.Debug("waiting for accepted promotions to reach STOPPED",
+					"awaitingStop", len(awaitingStop), "pollInterval", s.promotePollInterval)
+			} else {
+				s.reporter.detail("Waiting for lag to reach zero (%d topics remaining)...",
+					len(remaining))
+				slog.Debug("no topics at zero lag yet, waiting",
+					"remaining", len(remaining), "pollInterval", s.promotePollInterval)
+			}
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
@@ -530,9 +607,10 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 						topic.MirrorTopicName, maxPromoteRetries, topic.ErrorMessage)
 				}
 			} else {
-				s.reporter.success("%s promoted", topic.MirrorTopicName)
-				slog.Debug("topic promotion initiated", "topic", topic.MirrorTopicName)
-				delete(remaining, topic.MirrorTopicName)
+				s.reporter.line(fmt.Sprintf("   %s %s promotion accepted (awaiting STOPPED)",
+					color.GreenString("↳"), topic.MirrorTopicName))
+				slog.Debug("topic promotion accepted, awaiting stopped confirmation", "topic", topic.MirrorTopicName)
+				awaitingStop[topic.MirrorTopicName] = true
 			}
 		}
 

@@ -19,6 +19,15 @@ exclude_docs: |
   ideation/
   plans/
 
+# Fail the strict build on broken internal links and anchors, so problems that
+# would render as dead links when served are caught in CI rather than by readers.
+# External (http/https) links are not validated here — MkDocs skips them by design.
+validation:
+  omitted_files: warn
+  absolute_links: warn
+  unrecognized_links: warn
+  anchors: warn
+
 theme:
   name: material
   logo: images/confluent-logo.svg
