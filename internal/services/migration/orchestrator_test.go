@@ -691,6 +691,7 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 	// promote behavior from the default mock.
 	originalCL := orch.actions.clusterLinkService
 	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listMirrorTopicsFn: originalCL.ListMirrorTopics,
 		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
 			return map[string]string{"consumer.offset.sync.enable": "true"}, nil
 		},
@@ -817,6 +818,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	var alterFail int32 = 1
 	originalCL := orch.actions.clusterLinkService
 	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listMirrorTopicsFn: originalCL.ListMirrorTopics,
 		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
 			return map[string]string{"consumer.offset.sync.enable": "true"}, nil
 		},
@@ -1069,6 +1071,7 @@ func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *tes
 
 	originalCL := orch.actions.clusterLinkService
 	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listMirrorTopicsFn: originalCL.ListMirrorTopics,
 		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
 			atomic.AddInt64(&listCalls, 1)
 			return map[string]string{"consumer.offset.sync.enable": "false"}, nil
