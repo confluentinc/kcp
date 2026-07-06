@@ -50,9 +50,11 @@ const (
 	EventVerifyFence     = "verify_fence"
 	EventPromote         = "promote"
 	EventSwitch          = "switch"
-	// EventAbortFence rolls back from fenced to initialized when the
-	// verify_fence step detects unrouted producers; the transition itself
-	// unfences the gateway (see onAbortFence in orchestrator.go).
+	// EventAbortFence rolls back to initialized when the pause_offset_sync
+	// step fails (from fenced) or the verify_fence step detects unrouted
+	// producers (from offset_sync_paused); the transition itself unfences
+	// the gateway and restores any paused sync config (see onAbortFence in
+	// orchestrator.go).
 	EventAbortFence = "abort_fence"
 	// EventExpireVerification demotes fence_verified to fenced at FSM
 	// bootstrap: the verification is a point-in-time attestation and never

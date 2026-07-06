@@ -50,6 +50,21 @@ func RestoreOffsetSync(
 	config *MigrationConfig,
 	persist func() error,
 ) {
+	restoreOffsetSync(cl, clCfg, config, persist, "Migration completed but")
+}
+
+// restoreOffsetSync is the shared restore engine behind the post-switchover
+// bookend (RestoreOffsetSync) and the abort_fence rollback
+// (MigrationActions.restoreOffsetSyncAfterRollback). The situation prefix
+// keeps the operator-facing remediation wording honest about which flow the
+// restore failed in ("Migration completed but" vs "Gateway unfenced but").
+func restoreOffsetSync(
+	cl clusterlink.Service,
+	clCfg clusterlink.Config,
+	config *MigrationConfig,
+	persist func() error,
+	situation string,
+) {
 	if !config.PauseConsumerOffsetSyncFlipped {
 		return
 	}
@@ -71,7 +86,8 @@ func RestoreOffsetSync(
 		listCancel()
 		if err != nil {
 			r.remediation(
-				"Migration completed but failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.",
+				"%s failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.",
+				situation,
 				config.ClusterLinkName,
 				err,
 				offsetSyncEnableKey,
@@ -161,7 +177,8 @@ func RestoreOffsetSync(
 				appliedStr = strings.Join(applied, ", ")
 			}
 			r.remediation(
-				"Migration completed but failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.",
+				"%s failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.",
+				situation,
 				consumerOffsetPrefix,
 				config.ClusterLinkName,
 				err,

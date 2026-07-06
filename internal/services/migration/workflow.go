@@ -463,6 +463,21 @@ func (s *MigrationActions) PauseOffsetSync(
 	return nil
 }
 
+// restoreOffsetSyncAfterRollback restores the consumer.offset.* config the
+// pause flipped, as the second half of the abort_fence rollback. Soft-fail:
+// the unfence already succeeded and a restore error must not undo it — the
+// flipped marker stays set so the restore remains owed. No-op when nothing
+// was flipped (e.g. the pause failed before its AlterConfigs, or a drift
+// refusal), which also keeps externally-set config untouched.
+func (s *MigrationActions) restoreOffsetSyncAfterRollback(
+	config *MigrationConfig,
+	clusterApiKey, clusterApiSecret string,
+	persist func() error,
+) {
+	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+	restoreOffsetSync(s.clusterLinkService, clCfg, config, persist, "Gateway unfenced but")
+}
+
 // VerifyFence verifies the fence held: source offsets must be stable, because
 // an increasing offset after fencing indicates a producer bypassing the
 // gateway. When detection is disabled (DetectUnroutedProducersDuration == 0)
