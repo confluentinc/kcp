@@ -400,6 +400,69 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 	return nil
 }
 
+// PauseOffsetSync runs the pause_offset_sync stage: with the operator's
+// --pause-consumer-offset-sync opt-in it pauses cluster-link consumer offset
+// sync immediately after fencing; otherwise it passes through so the FSM
+// still records offset_sync_paused. The already-flipped guard makes resumes
+// (and legacy state files whose pause ran pre-FSM) idempotent.
+func (s *MigrationActions) PauseOffsetSync(
+	ctx context.Context,
+	config *MigrationConfig,
+	clusterApiKey, clusterApiSecret string,
+	persist func() error,
+) error {
+	if !config.PauseConsumerOffsetSync {
+		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
+		s.reporter.detail("Offset-sync pause not requested — skipping")
+		return nil
+	}
+	if config.PauseConsumerOffsetSyncFlipped {
+		slog.Info("⏭️ consumer.offset.sync.enable already flipped, skipping pause", "migrationId", config.MigrationId)
+		s.reporter.detail("consumer.offset.sync already paused — skipping")
+		return nil
+	}
+
+	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+
+	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
+
+	// Per-call deadlines derived from the parent ctx so signal cancellation
+	// still propagates, but a hung REST endpoint cannot block indefinitely.
+	listCtx, listCancel := context.WithTimeout(ctx, bookendCallTimeout)
+	currentConfigs, err := s.clusterLinkService.ListConfigs(listCtx, clCfg)
+	listCancel()
+	if err != nil {
+		return fmt.Errorf("failed to query cluster link %q for drift detection: %w", config.ClusterLinkName, err)
+	}
+	observed, present := currentConfigs[offsetSyncEnableKey]
+	switch {
+	case !present:
+		return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
+	case observed != "true":
+		return fmt.Errorf("--pause-consumer-offset-sync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
+	}
+
+	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
+	err = s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
+		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
+	})
+	alterCancel()
+	if err != nil {
+		return fmt.Errorf("failed to disable %s on cluster link %q: %w", offsetSyncEnableKey, config.ClusterLinkName, err)
+	}
+
+	// Inline persist: the marker's crash window (AlterConfigs done, marker not
+	// yet on disk) stays as small as the pre-FSM bookend kept it — the FSM's
+	// own post-transition persist would widen it.
+	config.PauseConsumerOffsetSyncFlipped = true
+	if err := persist(); err != nil {
+		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
+	}
+
+	s.reporter.success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
+	return nil
+}
+
 // VerifyFence verifies the fence held: source offsets must be stable, because
 // an increasing offset after fencing indicates a producer bypassing the
 // gateway. When detection is disabled (DetectUnroutedProducersDuration == 0)

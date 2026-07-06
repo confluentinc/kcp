@@ -2,7 +2,6 @@ package migration
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -21,75 +20,6 @@ const (
 // rather than per-batch so a slow REST endpoint on one PUT does not starve
 // the rest of the restore.
 const bookendCallTimeout = 30 * time.Second
-
-// DisableOffsetSync runs the pre-execute disable bookend for the
-// --pause-consumer-offset-sync flow.
-//
-// No-op cases (return nil without contacting the cluster link):
-//   - intent flag not set
-//   - migration is already at StateSwitched (re-run after success)
-//   - PauseConsumerOffsetSyncFlipped is already true (resume after partial failure)
-//
-// Active path: re-queries the cluster link for drift, calls AlterConfigs to
-// set consumer.offset.sync.enable=false, sets PauseConsumerOffsetSyncFlipped,
-// and persists the marker before returning.
-//
-// A non-nil error stops execution before the FSM runs (R12).
-func DisableOffsetSync(
-	ctx context.Context,
-	cl clusterlink.Service,
-	clCfg clusterlink.Config,
-	config *MigrationConfig,
-	persist func() error,
-) error {
-	if !config.PauseConsumerOffsetSync {
-		return nil
-	}
-	if config.CurrentState == StateSwitched {
-		slog.Debug("disable bookend skipped: migration already switched", "migrationId", config.MigrationId)
-		return nil
-	}
-	if config.PauseConsumerOffsetSyncFlipped {
-		slog.Info("resume: consumer.offset.sync.enable already flipped, skipping disable", "migrationId", config.MigrationId)
-		return nil
-	}
-
-	r := newReporter()
-	r.section("⏸  Pausing consumer.offset.sync on cluster link...")
-
-	// Per-call deadlines derived from the parent ctx so signal cancellation
-	// still propagates, but a hung REST endpoint cannot block indefinitely.
-	listCtx, listCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	currentConfigs, err := cl.ListConfigs(listCtx, clCfg)
-	listCancel()
-	if err != nil {
-		return fmt.Errorf("failed to query cluster link %q for drift detection: %w", config.ClusterLinkName, err)
-	}
-	observed, present := currentConfigs[offsetSyncEnableKey]
-	switch {
-	case !present:
-		return fmt.Errorf("cluster link %q drift detected: no %s key found (expected %q) — refusing to flip", config.ClusterLinkName, offsetSyncEnableKey, "true")
-	case observed != "true":
-		return fmt.Errorf("cluster link %q drift detected: %s=%q, expected %q — refusing to flip", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
-	}
-
-	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	err = cl.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
-		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
-	})
-	alterCancel()
-	if err != nil {
-		return fmt.Errorf("failed to disable %s on cluster link %q: %w", offsetSyncEnableKey, config.ClusterLinkName, err)
-	}
-
-	config.PauseConsumerOffsetSyncFlipped = true
-	if err := persist(); err != nil {
-		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
-	}
-
-	r.success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
-	return nil
-}
 
 // RestoreOffsetSync runs the post-execute restore bookend. Soft-failure
 // semantics: ListConfigs or AlterConfigs failure prints a remediation message

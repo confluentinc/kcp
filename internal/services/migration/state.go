@@ -15,23 +15,41 @@ import (
 
 // FSM State constants
 const (
-	StateUninitialized = "uninitialized"
-	StateInitialized   = "initialized"
-	StateLagsOk        = "lags_ok"
-	StateFenced        = "fenced"
-	StateFenceVerified = "fence_verified"
-	StatePromoted      = "promoted"
-	StateSwitched      = "switched"
+	StateUninitialized    = "uninitialized"
+	StateInitialized      = "initialized"
+	StateLagsOk           = "lags_ok"
+	StateFenced           = "fenced"
+	StateOffsetSyncPaused = "offset_sync_paused"
+	StateFenceVerified    = "fence_verified"
+	StatePromoted         = "promoted"
+	StateSwitched         = "switched"
 )
+
+// isKnownState reports whether s is a state value this binary understands.
+// Execute refuses unknown values so a corrupted state file — or one written
+// by a newer kcp — fails loudly instead of skipping every workflow step.
+func isKnownState(s string) bool {
+	switch s {
+	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
+		StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched:
+		return true
+	}
+	return false
+}
 
 // FSM Event constants
 const (
 	EventInitialize  = "initialize"
 	EventWaitForLags = "wait_for_lags"
 	EventFence       = "fence"
-	EventVerifyFence = "verify_fence"
-	EventPromote     = "promote"
-	EventSwitch      = "switch"
+	// EventPauseOffsetSync pauses cluster-link consumer offset sync
+	// (--pause-consumer-offset-sync) immediately after fencing. Without the
+	// opt-in the transition still fires as a pass-through so the forward
+	// walk is identical either way.
+	EventPauseOffsetSync = "pause_offset_sync"
+	EventVerifyFence     = "verify_fence"
+	EventPromote         = "promote"
+	EventSwitch          = "switch"
 	// EventAbortFence rolls back from fenced to initialized when the
 	// verify_fence step detects unrouted producers; the transition itself
 	// unfences the gateway (see onAbortFence in orchestrator.go).

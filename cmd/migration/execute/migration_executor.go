@@ -97,12 +97,10 @@ func (m *MigrationExecutor) Run() error {
 
 	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
 
-	// Pre-execute bookend: disable consumer.offset.sync.enable if the
-	// operator opted in at init time. Idempotent and safe on resume.
-	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, orchestrator.PersistState); err != nil {
-		return err
-	}
-
+	// The consumer-offset-sync pause runs INSIDE the FSM (the
+	// pause_offset_sync stage, right after fencing) so destination offsets
+	// stay fresh through the lag and fence phases instead of going stale for
+	// the whole run. Only the restore below remains a bookend.
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		migration.WarnIfPausedOnExecuteFailure(&config, err)
 		return fmt.Errorf("failed to execute migration: %w", err)

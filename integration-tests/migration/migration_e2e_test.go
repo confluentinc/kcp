@@ -582,9 +582,11 @@ func TestMigrationE2E(t *testing.T) {
 
 // TestMigrationE2E_PauseOffsetSync_HappyPath exercises the full
 // --pause-consumer-offset-sync flow: init records intent, execute disables
-// the config before the FSM, runs the migration, then restores the config
-// after switchover. Asserts the true → false → true transition is
-// observable via ListConfigs polling.
+// the config from the pause_offset_sync FSM stage (immediately after
+// fencing, so destination offsets stay fresh through the lag and fence
+// phases), runs the migration, then restores the config after switchover.
+// Asserts the true → false → true transition is observable via ListConfigs
+// polling.
 //
 // Runs against the "pause-sync-happy" scenario — its own dedicated source
 // topic, cluster link, and gateway CR provisioned by setup.sh — so it is
@@ -732,13 +734,23 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 
 	// --- Step 3: deterministic assertions ---
 	t.Run("bookend_ran_and_final_state_restored", func(t *testing.T) {
-		// The bookend prints these lines unconditionally when it runs. They
-		// are durable evidence that the disable→restore cycle executed,
-		// without depending on poll timing landing inside the FSM window.
+		// The pause stage and restore bookend print these lines
+		// unconditionally when they run. They are durable evidence that the
+		// disable→restore cycle executed, without depending on poll timing
+		// landing inside the FSM window.
 		assert.Contains(t, executeStdout, "Pausing consumer.offset.sync",
-			"execute stdout must show the disable bookend ran")
+			"execute stdout must show the pause stage ran")
 		assert.Contains(t, executeStdout, "Restoring consumer.offset.sync",
 			"execute stdout must show the restore bookend ran")
+
+		// The pause is an FSM stage that fires AFTER fencing — stdout order
+		// pins the re-timing (previously the disable ran before the FSM).
+		fenceIdx := strings.Index(executeStdout, "Fencing gateway")
+		pauseIdx := strings.Index(executeStdout, "Pausing consumer.offset.sync")
+		require.NotEqual(t, -1, fenceIdx, "execute stdout must show the fence step")
+		require.NotEqual(t, -1, pauseIdx, "execute stdout must show the pause stage")
+		assert.Less(t, fenceIdx, pauseIdx,
+			"the pause must fire after fencing, not as a pre-FSM bookend")
 
 		// And the live cluster link must be back to enable=true.
 		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
