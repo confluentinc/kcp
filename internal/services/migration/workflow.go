@@ -2,10 +2,12 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -13,6 +15,15 @@ import (
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
 )
+
+// maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
+// before CheckLags/PromoteTopics abort. A failed sweep is tolerated by
+// waiting for the loop's next tick (the tick interval is the backoff — no
+// separate schedule), so transient disruptions like leader elections and
+// rolling broker restarts ride out across ~3 ticks (+ GetMany's internal
+// refresh-and-retry per sweep) while a persistent failure still surfaces
+// within seconds. The counter resets on any successful sweep.
+const maxConsecutiveSweepFailures = 3
 
 type MigrationWorkflow struct {
 	gatewayService      gateway.Service
@@ -200,6 +211,7 @@ func (s *MigrationWorkflow) CheckLags(
 	defer ticker.Stop()
 
 	startTime := time.Now()
+	sweepFailures := 0
 
 	for {
 		select {
@@ -211,17 +223,29 @@ func (s *MigrationWorkflow) CheckLags(
 		allBelowThreshold := true
 		topicTotalLags := make(map[string]int64)
 
-		for _, topic := range config.Topics {
-			sourceOffsets, err := s.sourceOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
+		sourceOffsets, destinationOffsets, err := s.fetchSourceAndDestinationOffsets(ctx, config.Topics)
+		if err != nil {
+			sweepFailures++
+			if sweepFailures >= maxConsecutiveSweepFailures {
+				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			destinationOffsets, err := s.destinationOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get destination offsets for %s: %w", topic, err)
+			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
+			// Deliberately not ticker.C: a slow failing sweep can outlast the
+			// tick interval, leaving a tick buffered in the ticker's channel —
+			// receiving that would retry immediately with zero backoff. A fresh
+			// timer guarantees a full interval's pause between failed sweeps.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(s.lagPollInterval):
 			}
+			continue
+		}
+		sweepFailures = 0
 
-			lag := offset.ComputeTotalLag(sourceOffsets, destinationOffsets)
+		for _, topic := range config.Topics {
+			lag := offset.ComputeTotalLag(sourceOffsets[topic], destinationOffsets[topic])
 			if lag > lagThreshold {
 				allBelowThreshold = false
 				topicTotalLags[topic] = lag
@@ -263,6 +287,39 @@ func (s *MigrationWorkflow) CheckLags(
 		case <-ticker.C:
 		}
 	}
+}
+
+// fetchSourceAndDestinationOffsets sweeps both clusters' offsets for the
+// given topics concurrently — the clusters are independent, so a poll tick
+// pays the slower of the two sweeps rather than their sum.
+func (s *MigrationWorkflow) fetchSourceAndDestinationOffsets(ctx context.Context, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
+	var (
+		wg                 sync.WaitGroup
+		source, dest       map[string]map[int32]int64
+		sourceErr, destErr error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		source, sourceErr = s.sourceOffset.GetMany(ctx, topics)
+	}()
+	go func() {
+		defer wg.Done()
+		dest, destErr = s.destinationOffset.GetMany(ctx, topics)
+	}()
+	wg.Wait()
+
+	var errs []error
+	if sourceErr != nil {
+		errs = append(errs, fmt.Errorf("failed to get source offsets: %w", sourceErr))
+	}
+	if destErr != nil {
+		errs = append(errs, fmt.Errorf("failed to get destination offsets: %w", destErr))
+	}
+	if len(errs) > 0 {
+		return nil, nil, errors.Join(errs...)
+	}
+	return source, dest, nil
 }
 
 // formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655")
@@ -337,6 +394,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 	for _, topic := range config.Topics {
 		remaining[topic] = true
 	}
+	sweepFailures := 0
 
 	for {
 		select {
@@ -394,26 +452,39 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 		// Find topics at zero lag that still need a promote request. Topics
 		// already accepted (awaiting STOPPED confirmation) are skipped so we
 		// don't re-promote them.
-		var topicsToPromote []string
+		candidates := make([]string, 0, len(remaining))
 		for topic := range remaining {
 			if awaitingStop[topic] {
 				continue
 			}
-			sourceOffsets, err := s.sourceOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
-			}
-			destinationOffsets, err := s.destinationOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get destination offsets for %s: %w", topic, err)
-			}
+			candidates = append(candidates, topic)
+		}
+		sort.Strings(candidates)
 
-			lag := offset.ComputeTotalLag(sourceOffsets, destinationOffsets)
+		sourceOffsets, destinationOffsets, err := s.fetchSourceAndDestinationOffsets(ctx, candidates)
+		if err != nil {
+			sweepFailures++
+			if sweepFailures >= maxConsecutiveSweepFailures {
+				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
+			}
+			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(s.promotePollInterval):
+			}
+			continue
+		}
+		sweepFailures = 0
+
+		var topicsToPromote []string
+		for _, topic := range candidates {
+			lag := offset.ComputeTotalLag(sourceOffsets[topic], destinationOffsets[topic])
 			if lag == 0 {
 				topicsToPromote = append(topicsToPromote, topic)
 			}
 		}
-		sort.Strings(topicsToPromote)
 
 		// Cap the batch when a promote batch size is configured.
 		if s.promoteBatchSize > 0 && len(topicsToPromote) > s.promoteBatchSize {
