@@ -288,12 +288,16 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	// Simulate a rogue producer: source offsets keep increasing on every call.
 	var sourceCallCount int64
 	var promoteCallCount int64
-	var unfenceCalled bool
+	var mu sync.Mutex
+	var appliedYAMLs []string
 
 	overrides := orchestratorOverrides{
 		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-			// Track unfence calls (the second apply is the unfence after detection)
-			unfenceCalled = true
+			// Record every applied CR so the unfence (the round-tripped initial
+			// CR, distinct from the literal fenced-yaml) can be asserted below.
+			mu.Lock()
+			appliedYAMLs = append(appliedYAMLs, string(yaml))
+			mu.Unlock()
 			return nil
 		},
 	}
@@ -335,8 +339,18 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	assert.Equal(t, StateInitialized, persisted.CurrentState,
 		"persisted state should be initialized after abort_fence transition")
 
-	// Gateway should have been unfenced
-	assert.True(t, unfenceCalled, "gateway should be unfenced after detecting unrouted producers")
+	// Gateway should have been unfenced: the rollback applies the initial CR
+	// (round-tripped through YAML, so it carries the kind), which is neither
+	// the fenced nor the switchover literal.
+	mu.Lock()
+	unfenced := false
+	for _, y := range appliedYAMLs {
+		if strings.Contains(y, "kind: Gateway") {
+			unfenced = true
+		}
+	}
+	mu.Unlock()
+	assert.True(t, unfenced, "gateway should be unfenced after detecting unrouted producers")
 
 	// PromoteTopics should NOT have been called (detection aborts before promotion)
 	assert.Equal(t, int64(0), atomic.LoadInt64(&promoteCallCount),
@@ -435,10 +449,11 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 
 func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 	// A successful unrouted-producer check is its own FSM transition
-	// (fenced → fence_verified), persisted before promotion starts like every
-	// other step. The persisted value is informational — bootstrap demotes it
-	// back to fenced on the next run (see TestOrchestrator_Bootstrap_DemotesFenceVerified)
-	// — but it must still record the FSM's true mid-run position, never promoted.
+	// (offset_sync_paused → fence_verified), persisted before promotion starts
+	// like every other step. The persisted value is informational — bootstrap
+	// demotes it back through fenced to lags_ok on the next run (see
+	// TestOrchestrator_Bootstrap_DemotesFenceVerified) — but it must still
+	// record the FSM's true mid-run position, never promoted.
 	overrides := orchestratorOverrides{
 		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
 			return nil, fmt.Errorf("confluent cloud API unavailable")
@@ -461,23 +476,49 @@ func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 
 func TestOrchestrator_Bootstrap_DemotesFenceVerified(t *testing.T) {
 	// fence_verified is a point-in-time attestation and never survives a
-	// restart: construction must demote it to fenced so detection re-runs.
+	// restart: construction demotes it to fenced (expire_verification) so
+	// detection re-runs, and the fence demotion then carries it to lags_ok so
+	// the resume re-asserts the fenced CR before re-verifying.
 	_, config, _ := newHappyPathOrchestrator(t, StateFenceVerified, nil)
 
-	assert.Equal(t, StateFenced, config.CurrentState,
-		"bootstrap should demote a persisted fence_verified to fenced")
+	assert.Equal(t, StateLagsOk, config.CurrentState,
+		"bootstrap should demote a persisted fence_verified through fenced to lags_ok")
+}
+
+func TestOrchestrator_Bootstrap_DemotesFencedFamily(t *testing.T) {
+	// Whether the live gateway still holds the fenced CR is also a
+	// point-in-time fact: a crash or a partially-completed abort_fence
+	// rollback can leave the gateway unfenced while the state file still says
+	// fenced or offset_sync_paused. Construction demotes both to lags_ok so
+	// the resume re-applies the fenced CR (a no-op rollout when the gateway
+	// never diverged) instead of promoting behind a fence that may not exist.
+	for _, state := range []string{StateFenced, StateOffsetSyncPaused} {
+		t.Run(state, func(t *testing.T) {
+			_, config, _ := newHappyPathOrchestrator(t, state, nil)
+			assert.Equal(t, StateLagsOk, config.CurrentState,
+				"bootstrap should demote a persisted %s to lags_ok", state)
+		})
+	}
 }
 
 func TestOrchestrator_ExpireVerificationIsAnFSMEdge(t *testing.T) {
-	// The bootstrap demotion must be modelled as an FSM transition
-	// (expire_verification: fence_verified → fenced), not a config mutation
-	// the machine never sees — so it fires through the FSM callbacks and
-	// appears in fsm.Visualize output alongside abort_fence.
+	// The bootstrap demotions must be modelled as FSM transitions
+	// (expire_verification: fence_verified → fenced; expire_fence:
+	// {fenced, offset_sync_paused} → lags_ok), not config mutations the
+	// machine never sees — so they fire through the FSM callbacks and appear
+	// in fsm.Visualize output alongside abort_fence.
 	orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	assert.Contains(t, fsm.Visualize(orch.fsm),
+	viz := fsm.Visualize(orch.fsm)
+	assert.Contains(t, viz,
 		`"fence_verified" -> "fenced" [ label = "expire_verification" ];`,
 		"expire_verification should be a visible edge in the state machine")
+	assert.Contains(t, viz,
+		`"fenced" -> "lags_ok" [ label = "expire_fence" ];`,
+		"expire_fence should be a visible edge from fenced")
+	assert.Contains(t, viz,
+		`"offset_sync_paused" -> "lags_ok" [ label = "expire_fence" ];`,
+		"expire_fence should be a visible edge from offset_sync_paused")
 }
 
 func TestOrchestrator_PauseStageIsAnFSMEdge(t *testing.T) {
@@ -500,8 +541,9 @@ func TestOrchestrator_PauseStageIsAnFSMEdge(t *testing.T) {
 
 func TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection(t *testing.T) {
 	// A resume from offset_sync_paused must re-run fence verification before
-	// promoting: verification is its next forward step, so the rogue-producer
-	// attestation never survives a restart even without a demotion edge.
+	// promoting. The bootstrap fence demotion sends it back through the fence
+	// step first; verification then follows as the forward walk's next
+	// attestation, so the rogue-producer check never survives a restart.
 	var getCalls int64
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateOffsetSyncPaused, nil)
@@ -523,6 +565,89 @@ func TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection(t *test
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
+}
+
+func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T) {
+	// The divergence this pins closed: a previous run's rollback applied the
+	// initial (unfenced) CR but died before the rolled-back state reached disk
+	// (or its readiness wait failed after the apply landed). The state file
+	// says fenced/offset_sync_paused while the live gateway is unfenced —
+	// without a re-fence the resume would sample a quiet source through
+	// verify_fence and promote behind a fence that does not exist.
+	for _, state := range []string{StateFenced, StateOffsetSyncPaused} {
+		t.Run(state, func(t *testing.T) {
+			var mu sync.Mutex
+			var appliedYAMLs []string
+			overrides := orchestratorOverrides{
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+					mu.Lock()
+					appliedYAMLs = append(appliedYAMLs, string(yaml))
+					mu.Unlock()
+					return nil
+				},
+			}
+
+			orch, config, stateFilePath := newHappyPathOrchestrator(t, state, nil, overrides)
+
+			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			require.NoError(t, err)
+
+			mu.Lock()
+			defer mu.Unlock()
+			require.NotEmpty(t, appliedYAMLs, "the resume must apply gateway CRs")
+			assert.Equal(t, "fenced-yaml", appliedYAMLs[0],
+				"resume must re-apply the fenced CR before verifying or promoting behind it")
+
+			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+			assert.Equal(t, StateSwitched, persisted.CurrentState)
+		})
+	}
+}
+
+func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing.T) {
+	// The rollback completed (gateway unfenced) but persisting initialized
+	// failed: disk still claims a fenced-family state while reality is
+	// unfenced. A log line alone is not actionable — the returned error must
+	// carry the persist failure and the true gateway state, and the step
+	// error must keep its sentinel classification through the extra wrap.
+	var applyCalls int64
+	var stateDir string
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+			if atomic.AddInt64(&applyCalls, 1) == 2 {
+				// The unfence apply: remove the state directory so every
+				// subsequent persist fails while the unfence itself succeeds.
+				require.NoError(t, os.RemoveAll(stateDir))
+			}
+			return nil
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	stateDir = filepath.Dir(stateFilePath)
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	// Rogue producer: source offsets keep increasing.
+	var sourceCalls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sourceCalls, 1)
+			return map[int32]int64{0: 100 + n*10}, nil
+		},
+	}
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnroutedProducers,
+		"the step error must keep its classification through the persist-failure wrap")
+	assert.Contains(t, err.Error(), "persisting the rolled-back state failed",
+		"a swallowed persist failure after a completed rollback is not actionable")
+	assert.Contains(t, err.Error(), "unfenced",
+		"the error must name the true gateway state")
+	assert.Equal(t, StateInitialized, config.CurrentState,
+		"in-memory state reflects the completed rollback")
 }
 
 func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *testing.T) {

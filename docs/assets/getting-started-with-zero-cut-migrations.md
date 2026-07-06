@@ -241,7 +241,7 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 ### Step 4: `kcp migration execute`
 
-Performs the cutover in six automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.
+Performs the cutover in six automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never verifies or promotes behind a fence that an interrupted rollback may have already removed.
 
 | Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
