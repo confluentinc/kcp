@@ -2,7 +2,6 @@ package migration
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -21,75 +20,6 @@ const (
 // rather than per-batch so a slow REST endpoint on one PUT does not starve
 // the rest of the restore.
 const bookendCallTimeout = 30 * time.Second
-
-// DisableOffsetSync runs the pre-execute disable bookend for the
-// --pause-consumer-offset-sync flow.
-//
-// No-op cases (return nil without contacting the cluster link):
-//   - intent flag not set
-//   - migration is already at StateSwitched (re-run after success)
-//   - PauseConsumerOffsetSyncFlipped is already true (resume after partial failure)
-//
-// Active path: re-queries the cluster link for drift, calls AlterConfigs to
-// set consumer.offset.sync.enable=false, sets PauseConsumerOffsetSyncFlipped,
-// and persists the marker before returning.
-//
-// A non-nil error stops execution before the FSM runs (R12).
-func DisableOffsetSync(
-	ctx context.Context,
-	cl clusterlink.Service,
-	clCfg clusterlink.Config,
-	config *MigrationConfig,
-	persist func() error,
-) error {
-	if !config.PauseConsumerOffsetSync {
-		return nil
-	}
-	if config.CurrentState == StateSwitched {
-		slog.Debug("disable bookend skipped: migration already switched", "migrationId", config.MigrationId)
-		return nil
-	}
-	if config.PauseConsumerOffsetSyncFlipped {
-		slog.Info("resume: consumer.offset.sync.enable already flipped, skipping disable", "migrationId", config.MigrationId)
-		return nil
-	}
-
-	r := newReporter()
-	r.section("⏸  Pausing consumer.offset.sync on cluster link...")
-
-	// Per-call deadlines derived from the parent ctx so signal cancellation
-	// still propagates, but a hung REST endpoint cannot block indefinitely.
-	listCtx, listCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	currentConfigs, err := cl.ListConfigs(listCtx, clCfg)
-	listCancel()
-	if err != nil {
-		return fmt.Errorf("failed to query cluster link %q for drift detection: %w", config.ClusterLinkName, err)
-	}
-	observed, present := currentConfigs[offsetSyncEnableKey]
-	switch {
-	case !present:
-		return fmt.Errorf("cluster link %q drift detected: no %s key found (expected %q) — refusing to flip", config.ClusterLinkName, offsetSyncEnableKey, "true")
-	case observed != "true":
-		return fmt.Errorf("cluster link %q drift detected: %s=%q, expected %q — refusing to flip", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
-	}
-
-	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	err = cl.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
-		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
-	})
-	alterCancel()
-	if err != nil {
-		return fmt.Errorf("failed to disable %s on cluster link %q: %w", offsetSyncEnableKey, config.ClusterLinkName, err)
-	}
-
-	config.PauseConsumerOffsetSyncFlipped = true
-	if err := persist(); err != nil {
-		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
-	}
-
-	r.success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
-	return nil
-}
 
 // RestoreOffsetSync runs the post-execute restore bookend. Soft-failure
 // semantics: ListConfigs or AlterConfigs failure prints a remediation message
@@ -120,6 +50,21 @@ func RestoreOffsetSync(
 	config *MigrationConfig,
 	persist func() error,
 ) {
+	restoreOffsetSync(cl, clCfg, config, persist, "Migration completed but")
+}
+
+// restoreOffsetSync is the shared restore engine behind the post-switchover
+// bookend (RestoreOffsetSync) and the abort_fence rollback
+// (MigrationActions.restoreOffsetSyncAfterRollback). The situation prefix
+// keeps the operator-facing remediation wording honest about which flow the
+// restore failed in ("Migration completed but" vs "Gateway unfenced but").
+func restoreOffsetSync(
+	cl clusterlink.Service,
+	clCfg clusterlink.Config,
+	config *MigrationConfig,
+	persist func() error,
+	situation string,
+) {
 	if !config.PauseConsumerOffsetSyncFlipped {
 		return
 	}
@@ -141,7 +86,8 @@ func RestoreOffsetSync(
 		listCancel()
 		if err != nil {
 			r.remediation(
-				"Migration completed but failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.",
+				"%s failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.",
+				situation,
 				config.ClusterLinkName,
 				err,
 				offsetSyncEnableKey,
@@ -231,7 +177,8 @@ func RestoreOffsetSync(
 				appliedStr = strings.Join(applied, ", ")
 			}
 			r.remediation(
-				"Migration completed but failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.",
+				"%s failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.",
+				situation,
 				consumerOffsetPrefix,
 				config.ClusterLinkName,
 				err,
@@ -259,19 +206,68 @@ func RestoreOffsetSync(
 // bookend only runs after a successful execute, so without this warning the
 // operator has no signal that the cluster link is paused.
 //
+// The wording is shaped by the persisted state. The fenced CR applied at
+// EventFence stays live until SwitchGateway replaces it (or the abort_fence
+// rollback restores the initial CR), so at fenced, offset_sync_paused,
+// fence_verified and promoted the gateway is still blocking client traffic —
+// all four deserve urgent copy describing the observable state. The
+// remediation differs by shape:
+//   - fenced / offset_sync_paused: the same signature also arises from
+//     routine resumable stops (ctx-cancel mid-detection, a verify fetch
+//     error), so the copy deliberately does not claim a rollback failed; a
+//     re-run retries the pause or completes the rollback, and manually
+//     re-applying the initial gateway CR is a safe abort.
+//   - fence_verified: topics are not yet promoted, so the manual abort is
+//     still safe; a re-run re-asserts the fence and resumes forward.
+//   - promoted: topics are already promoted, so routing clients back to the
+//     source would diverge data — completing the switchover is the only way
+//     forward that unblocks clients, and the copy explicitly warns against
+//     re-applying the initial CR.
+//
+// Every other state keeps the softer restore-owed wording: at initialized and
+// lags_ok the fence is not up (a completed rollback whose restore is still
+// owed, or the legacy pre-FSM-pause cohort failing before the fence), and at
+// switched the switchover CR is live.
+//
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.
 func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	if !config.PauseConsumerOffsetSyncFlipped {
 		return
 	}
-	newReporter().remediation(
-		"Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
-		execErr,
-		config.ClusterLinkName,
-		offsetSyncEnableKey,
-		offsetSyncEnableKey,
-	)
+	switch config.CurrentState {
+	case StateFenced, StateOffsetSyncPaused:
+		newReporter().remediation(
+			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — it retries the pause or completes the rollback as needed.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+			offsetSyncEnableKey,
+		)
+	case StateFenceVerified:
+		newReporter().remediation(
+			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — traffic stays blocked until the switchover completes.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+			offsetSyncEnableKey,
+		)
+	case StatePromoted:
+		newReporter().remediation(
+			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to complete the switchover and restore client traffic.\n   Do not re-apply the initial gateway CR: topics are already promoted, and routing clients back to the source would diverge data.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+		)
+	default:
+		newReporter().remediation(
+			"Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+			offsetSyncEnableKey,
+		)
+	}
 }
 
 // BuildClusterLinkConfig assembles a clusterlink.Config from a migration
