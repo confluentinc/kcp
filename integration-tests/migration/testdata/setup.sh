@@ -406,6 +406,36 @@ EOF'
 
 rm -f "${SCRIPT_DIR}/.kcp-linux" "${SCRIPT_DIR}/.producer-linux" "${SCRIPT_DIR}/.consumer-linux" "${SCRIPT_DIR}/.setconfig-linux"
 
+# --- Block CFK reconciliation on the cluster links ---
+# From here on the links are pure REST-managed fixtures: the tests (and kcp's
+# own pause/restore bookends) flip consumer.offset.* configs out-of-band via
+# the REST proxy, while each ClusterLink CR keeps declaring
+# consumer.offset.sync.enable: "true". Left to its own devices CFK re-asserts
+# the declared configs on reconcile, racing the tests — the drift scenario saw
+# its externally-set "false" flip back to "true" mid-run. Wait until every
+# declared mirror topic is visible over REST (so CFK owes the link no further
+# reconciliation), then block reconciliation so REST is the only writer.
+echo "Blocking CFK reconciliation on cluster links..."
+for scenario in "${SCENARIOS[@]}"; do
+  link="e2e-link-${scenario}"
+  want=$(topics_for_scenario "${scenario}" | wc -l | tr -d ' ')
+  mirrors_url="http://destination-kafka.confluent.svc.cluster.local:8090/kafka/v3/clusters/${DEST_CLUSTER_ID}/links/${link}/mirrors"
+  for i in $(seq 1 60); do
+    got=$(kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- wget -qO- "${mirrors_url}" 2>/dev/null | grep -o mirror_topic_name | wc -l | tr -d ' ' || true)
+    if [ "${got}" -eq "${want}" ]; then
+      echo "  Cluster link ${link} has all ${want} mirror topic(s)."
+      break
+    fi
+    if [ "$i" -eq 60 ]; then
+      echo "FATAL: Cluster link ${link} has ${got}/${want} mirror topics after timeout"
+      exit 1
+    fi
+    sleep 5
+  done
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" annotate clusterlink "${link}" \
+    platform.confluent.io/block-reconcile=true --overwrite
+done
+
 # --- Write .env file ---
 ENV_FILE="${SCRIPT_DIR}/.env"
 {
