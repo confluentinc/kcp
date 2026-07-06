@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,7 @@ const (
 	scenarioPauseSyncRestoresFilters = "pause-sync-restores-filters" // TestMigrationE2E_PauseOffsetSync_RestoresFilters
 	scenarioPauseSyncRogue           = "pause-sync-rogue"            // TestMigrationE2E_PauseOffsetSync_RogueProducerRollback
 	scenarioPauseSyncDrift           = "pause-sync-drift"            // TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence
+	scenarioBatch                    = "batch"                       // TestMigrationE2E_PromoteBatchSize
 	scenarioRogueProducer            = "rogue-producer"              // TestMigrationE2E_RogueProducerDetection
 )
 
@@ -55,7 +57,8 @@ type envConfig struct {
 	// Per-scenario resources.
 	Scenario        string
 	ClusterLinkName string
-	TopicName       string
+	TopicName       string   // single-topic scenarios (producer/consumer target)
+	TopicNames      []string // all mirror topics for the scenario (>=1)
 	GatewayName     string
 	FencedCR        string // in-pod fixture path
 	SwitchoverCR    string // in-pod fixture path
@@ -97,6 +100,17 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 	// Per-scenario env-var prefix: lowercase-dash -> UPPERCASE_UNDERSCORE.
 	prefix := "KCP_E2E_" + strings.ReplaceAll(strings.ToUpper(scenario), "-", "_") + "_"
 
+	// TopicNames comes from the comma-separated <PREFIX>TOPIC_NAMES var when
+	// present (multi-topic scenarios); otherwise it falls back to the single
+	// TOPIC_NAME so every scenario exposes a non-empty list.
+	topicName := vars[prefix+"TOPIC_NAME"]
+	var topicNames []string
+	if names := vars[prefix+"TOPIC_NAMES"]; names != "" {
+		topicNames = strings.Split(names, ",")
+	} else if topicName != "" {
+		topicNames = []string{topicName}
+	}
+
 	return envConfig{
 		Kubeconfig:        vars["KCP_E2E_KUBECONFIG"],
 		KubeContext:       vars["KCP_E2E_KUBE_CONTEXT"],
@@ -112,7 +126,8 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 
 		Scenario:        scenario,
 		ClusterLinkName: vars[prefix+"CLUSTER_LINK_NAME"],
-		TopicName:       vars[prefix+"TOPIC_NAME"],
+		TopicName:       topicName,
+		TopicNames:      topicNames,
 		GatewayName:     vars[prefix+"GATEWAY_NAME"],
 		FencedCR:        vars[prefix+"FENCED_CR"],
 		SwitchoverCR:    vars[prefix+"SWITCHOVER_CR"],
@@ -390,6 +405,112 @@ func readMigrationState(t *testing.T, cfg envConfig, podPath string) migrationSt
 	return state
 }
 
+// mirrorTopicStatus is a single entry from the cluster link's mirrors listing.
+type mirrorTopicStatus struct {
+	Name   string
+	Status string
+}
+
+// listMirrorTopics fetches the cluster link's mirror topics and their statuses
+// via the destination Kafka REST proxy (reachable from inside the pod). Mirrors
+// the endpoint kcp itself polls, so it observes the same ACTIVE/PENDING_STOPPED/
+// STOPPED transitions.
+func listMirrorTopics(cfg envConfig) ([]mirrorTopicStatus, error) {
+	mirrorsURL := fmt.Sprintf("%s/kafka/v3/clusters/%s/links/%s/mirrors", cfg.RestProxyEndpoint, cfg.DestClusterID, cfg.ClusterLinkName)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	args := []string{
+		"--context", cfg.KubeContext,
+		"-n", cfg.Namespace,
+		"exec", cfg.KCPPod, "--",
+		"wget", "-qO-", mirrorsURL,
+	}
+	out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("wget cluster link mirrors: %s: %w", out, err)
+	}
+
+	var resp struct {
+		Data []struct {
+			MirrorTopicName string `json:"mirror_topic_name"`
+			MirrorStatus    string `json:"mirror_status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(out, &resp); err != nil {
+		return nil, fmt.Errorf("unmarshalling mirrors response: %s: %w", out, err)
+	}
+
+	result := make([]mirrorTopicStatus, 0, len(resp.Data))
+	for _, d := range resp.Data {
+		result = append(result, mirrorTopicStatus{Name: d.MirrorTopicName, Status: d.MirrorStatus})
+	}
+	return result, nil
+}
+
+// assertAllMirrorsStopped verifies that every expected topic's mirror reports
+// the terminal STOPPED status. Polls briefly to absorb any REST eventual
+// consistency (kcp gates on STOPPED, so this should already be true).
+func assertAllMirrorsStopped(t *testing.T, cfg envConfig, expectedTopics []string) {
+	t.Helper()
+
+	deadline := time.Now().Add(30 * time.Second)
+	var statusByName map[string]string
+	for {
+		mirrors, err := listMirrorTopics(cfg)
+		require.NoError(t, err, "failed to list mirror topics")
+
+		statusByName = make(map[string]string, len(mirrors))
+		for _, m := range mirrors {
+			statusByName[m.Name] = m.Status
+		}
+
+		allStopped := true
+		for _, topic := range expectedTopics {
+			if statusByName[topic] != "STOPPED" {
+				allStopped = false
+				break
+			}
+		}
+		if allStopped || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
+
+	for _, topic := range expectedTopics {
+		assert.Equal(t, "STOPPED", statusByName[topic],
+			"mirror topic %q should be STOPPED after promotion (statuses: %v)", topic, statusByName)
+	}
+}
+
+// podFileLineCount returns the number of lines in a file inside the runner pod,
+// or 0 if the file does not exist. Used to snapshot kcp.log before an action so
+// only the newly-appended lines are inspected afterward.
+func podFileLineCount(t *testing.T, cfg envConfig, podPath string) int {
+	t.Helper()
+	out, err := runInPod(t, cfg, 30*time.Second, "sh", "-c",
+		fmt.Sprintf("wc -l < %s 2>/dev/null || echo 0", podPath))
+	if err != nil {
+		return 0
+	}
+	n, _ := strconv.Atoi(strings.TrimSpace(out))
+	return n
+}
+
+// readPodFileLinesFrom reads a file from the runner pod and returns the lines
+// starting at startLine (0-indexed), i.e. the lines appended since a snapshot
+// taken with podFileLineCount.
+func readPodFileLinesFrom(t *testing.T, cfg envConfig, podPath string, startLine int) []string {
+	t.Helper()
+	data := readPodFile(t, cfg, podPath)
+	lines := strings.Split(string(data), "\n")
+	if startLine >= len(lines) {
+		return nil
+	}
+	return lines[startLine:]
+}
+
 // Constants used by the producer/consumer subtests. Topic name comes from
 // the scenario-resolved cfg.TopicName.
 const (
@@ -563,6 +684,14 @@ func TestMigrationE2E(t *testing.T) {
 		t.FailNow()
 	}
 
+	// --- Step 2b: Verify mirror topics actually reached STOPPED ---
+	// The migration only reports success once kcp confirms each promoted mirror
+	// topic transitioned to the terminal STOPPED state (not merely that the
+	// promote request was accepted). Assert that end state directly.
+	t.Run("verify_mirror_topics_stopped", func(t *testing.T) {
+		assertAllMirrorsStopped(t, cfg, cfg.TopicNames)
+	})
+
 	// --- Step 3: Verify Gateway CR matches switchover fixture ---
 	t.Run("verify_gateway_cr", func(t *testing.T) {
 		cr := getGatewayCR(t, dynClient, cfg.Namespace, cfg.GatewayName)
@@ -620,6 +749,131 @@ func TestMigrationE2E(t *testing.T) {
 	t.Run("offset_sync_unchanged", func(t *testing.T) {
 		value := getClusterLinkOffsetSyncEnable(t, cfg)
 		assert.Equal(t, "true", value, "without --pause-consumer-offset-sync, the cluster link config must remain true throughout the migration")
+	})
+}
+
+// TestMigrationE2E_PromoteBatchSize exercises --promote-batch-size against a
+// scenario whose cluster link mirrors many topics. With a batch size of 1, kcp
+// must promote one topic at a time, waiting for each to reach STOPPED before
+// promoting the next — i.e. fully synchronous batches. Asserts:
+//   - the migration reaches switched,
+//   - every mirror topic reaches STOPPED,
+//   - kcp.log shows one single-topic promote call per topic (no bulk promote),
+//     and one STOPPED confirmation per topic.
+//
+// Runs against the dedicated "batch" scenario provisioned by setup.sh.
+func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
+	cfg := loadEnvConfig(t, scenarioBatch)
+	require.GreaterOrEqual(t, len(cfg.TopicNames), 2,
+		"batch scenario must provision multiple topics (got %v)", cfg.TopicNames)
+
+	stateFile := "/workspace/migration-state-batch.json"
+	const logPath = "/workspace/kcp.log"
+
+	// --- Step 1: init ---
+	t.Run("init", func(t *testing.T) {
+		initArgs := []string{
+			"migration", "init",
+			"--source-bootstrap", cfg.SourceBootstrap,
+			"--cluster-bootstrap", cfg.DestBootstrap,
+			"--cluster-id", cfg.DestClusterID,
+			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
+			"--cluster-link-name", cfg.ClusterLinkName,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--k8s-namespace", cfg.Namespace,
+			"--initial-cr-name", cfg.GatewayName,
+			"--fenced-cr-yaml", cfg.FencedCR,
+			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"--migration-state-file", stateFile,
+			"--use-unauthenticated-plaintext",
+			"--kube-path", cfg.KubePath,
+			"--insecure-skip-tls-verify",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, initArgs...)
+		t.Logf("init stdout:\n%s", stdout)
+		t.Logf("init stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration init failed")
+
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, "initialized", state.Migrations[0].CurrentState)
+	})
+
+	if t.Failed() {
+		t.FailNow()
+	}
+
+	// Snapshot kcp.log so the batching assertion only inspects the execute run.
+	logStart := podFileLineCount(t, cfg, logPath)
+
+	// --- Step 2: execute with --promote-batch-size 1 ---
+	t.Run("execute_batched", func(t *testing.T) {
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		migrationID := state.Migrations[0].MigrationID
+
+		executeArgs := []string{
+			"migration", "execute",
+			"--migration-id", migrationID,
+			"--migration-state-file", stateFile,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--lag-threshold", "0",
+			"--promote-batch-size", "1",
+			"--use-unauthenticated-plaintext",
+			"--insecure-skip-tls-verify",
+			// Required flag; 0 because this scenario's producer writes directly
+			// to the source brokers and would otherwise trip detection.
+			"--detect-unrouted-producers-duration", "0",
+		}
+
+		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
+		t.Logf("execute stdout:\n%s", stdout)
+		t.Logf("execute stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration execute failed")
+
+		state = readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, "switched", state.Migrations[0].CurrentState)
+	})
+
+	if t.Failed() {
+		t.FailNow()
+	}
+
+	// --- Step 3: every mirror topic reached STOPPED ---
+	t.Run("all_mirrors_stopped", func(t *testing.T) {
+		assertAllMirrorsStopped(t, cfg, cfg.TopicNames)
+	})
+
+	// --- Step 4: promotion ran as sequential single-topic batches ---
+	t.Run("promoted_in_single_topic_batches", func(t *testing.T) {
+		lines := readPodFileLinesFrom(t, cfg, logPath, logStart)
+		require.NotEmpty(t, lines, "expected new kcp.log lines from the execute run")
+
+		var singleTopicPromotes, bulkPromotes, stoppedConfirms int
+		for _, ln := range lines {
+			if strings.Contains(ln, "promoting mirror topics") {
+				if strings.Contains(ln, "topicCount=1 topics=") {
+					singleTopicPromotes++
+				} else {
+					bulkPromotes++
+				}
+			}
+			if strings.Contains(ln, "mirror topic promotion confirmed stopped") {
+				stoppedConfirms++
+			}
+		}
+
+		n := len(cfg.TopicNames)
+		assert.Equal(t, n, singleTopicPromotes,
+			"expected exactly one single-topic promote call per topic with --promote-batch-size 1")
+		assert.Zero(t, bulkPromotes,
+			"no promote call should contain more than one topic with --promote-batch-size 1")
+		assert.Equal(t, n, stoppedConfirms,
+			"each promoted topic should be individually confirmed STOPPED")
 	})
 }
 

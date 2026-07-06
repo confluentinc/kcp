@@ -380,3 +380,74 @@ func TestMigrationExecute_DetectUnroutedProducersDuration_Required(t *testing.T)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "detect-unrouted-producers-duration")
 }
+
+// ===========================================================================
+// --promote-batch-size flag tests
+// ===========================================================================
+
+func TestMigrationExecute_PromoteBatchSize_DefaultIsZero(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+	}))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, 0, opts.PromoteBatchSize, "default --promote-batch-size should be 0 (promote all at once)")
+}
+
+func TestMigrationExecute_PromoteBatchSize_ExplicitValueParsed(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--promote-batch-size", "10",
+	}))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, 10, opts.PromoteBatchSize)
+}
+
+func TestMigrationExecute_PromoteBatchSize_InvalidValueFails(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	err := cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--promote-batch-size", "not-an-int",
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "promote-batch-size")
+}
+
+func TestMigrationExecute_PromoteBatchSize_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("PROMOTE_BATCH_SIZE", "25")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, 25, opts.PromoteBatchSize, "PROMOTE_BATCH_SIZE env var should populate the flag")
+}
