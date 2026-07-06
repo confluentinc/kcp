@@ -19,6 +19,7 @@ const (
 	StateInitialized   = "initialized"
 	StateLagsOk        = "lags_ok"
 	StateFenced        = "fenced"
+	StateFenceVerified = "fence_verified"
 	StatePromoted      = "promoted"
 	StateSwitched      = "switched"
 )
@@ -28,8 +29,18 @@ const (
 	EventInitialize  = "initialize"
 	EventWaitForLags = "wait_for_lags"
 	EventFence       = "fence"
+	EventVerifyFence = "verify_fence"
 	EventPromote     = "promote"
 	EventSwitch      = "switch"
+	// EventAbortFence rolls back from fenced to initialized when the
+	// verify_fence step detects unrouted producers; the transition itself
+	// unfences the gateway (see onAbortFence in orchestrator.go).
+	EventAbortFence = "abort_fence"
+	// EventExpireVerification demotes fence_verified to fenced at FSM
+	// bootstrap: the verification is a point-in-time attestation and never
+	// survives a restart, so a resume re-runs the verify_fence detection
+	// window. Fired only by NewMigrationOrchestrator; it has no action.
+	EventExpireVerification = "expire_verification"
 )
 
 // ----- migration configuration -----
@@ -63,6 +74,13 @@ type MigrationConfig struct {
 	// not yet restored — supports drift detection, idempotent resume, and remediation messaging.
 	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
 	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
+
+	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
+	// safety check that verifies source offsets are not still increasing before
+	// promoting mirror topics. A value of 0 skips the check. An increasing offset
+	// after fencing indicates a producer that bypassed the gateway and is writing
+	// directly to the source cluster.
+	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
 
 	// Gateway CR configuration
 	InitialCrName    string `json:"initial_cr_name"`
