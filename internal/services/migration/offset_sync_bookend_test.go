@@ -583,6 +583,81 @@ func TestRestoreOffsetSync_ParentCtxCancelled_StillRestores(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// WarnIfPausedOnExecuteFailure — post-failure guidance shaped by state.
+// ---------------------------------------------------------------------------
+
+func TestWarnIfPaused_MarkerClear_NoOutput(t *testing.T) {
+	// A clean rollback lands at initialized with the marker cleared — there
+	// is nothing to warn about.
+	cfg := &MigrationConfig{
+		ClusterLinkName:                "link-1",
+		CurrentState:                   StateInitialized,
+		PauseConsumerOffsetSyncFlipped: false,
+	}
+
+	out := captureStderr(t, func() {
+		WarnIfPausedOnExecuteFailure(cfg, fmt.Errorf("some failure"))
+	})
+	assert.Empty(t, out, "no guidance when nothing is flipped")
+}
+
+func TestWarnIfPaused_StuckAtRollbackSource_UrgentObservableState(t *testing.T) {
+	// The gateway is still fenced with sync paused — whether from a failed
+	// rollback or a routine resumable stop (ctx-cancel mid-detection, a
+	// verify fetch error). The urgent copy describes the observable state
+	// and points at re-running; it must not claim a rollback failed, because
+	// it cannot know that.
+	for _, state := range []string{StateFenced, StateOffsetSyncPaused} {
+		t.Run(state, func(t *testing.T) {
+			cfg := &MigrationConfig{
+				ClusterLinkName:                "link-1",
+				CurrentState:                   state,
+				PauseConsumerOffsetSyncFlipped: true,
+			}
+
+			out := captureStderr(t, func() {
+				WarnIfPausedOnExecuteFailure(cfg, fmt.Errorf("some failure"))
+			})
+
+			assert.Contains(t, out, "still fenced", "urgent copy names the fenced gateway")
+			assert.Contains(t, out, "blocked", "urgent copy names the client impact")
+			assert.Contains(t, out, "kcp migration execute", "urgent copy points at the re-run")
+			assert.Contains(t, out, "link-1")
+			assert.Contains(t, out, "consumer.offset.sync.enable")
+			assert.NotContains(t, out, "rollback failed",
+				"the same state also arises from routine resumable stops")
+			assert.NotContains(t, out, "restore will run after a successful switchover",
+				"the soft restore-owed wording undersells a fenced gateway")
+		})
+	}
+}
+
+func TestWarnIfPaused_OtherStates_RestoreOwed(t *testing.T) {
+	// Promote/switch failures (sync stays paused by design) and the legacy
+	// cohort failing before the pause stage keep the softer restore-owed
+	// wording — the gateway is not blocking clients in these shapes.
+	for _, state := range []string{StateFenceVerified, StatePromoted, StateInitialized, StateLagsOk} {
+		t.Run(state, func(t *testing.T) {
+			cfg := &MigrationConfig{
+				ClusterLinkName:                "link-1",
+				CurrentState:                   state,
+				PauseConsumerOffsetSyncFlipped: true,
+			}
+
+			out := captureStderr(t, func() {
+				WarnIfPausedOnExecuteFailure(cfg, fmt.Errorf("some failure"))
+			})
+
+			assert.Contains(t, out, "restore will run after a successful switchover")
+			assert.Contains(t, out, "link-1")
+			assert.Contains(t, out, "consumer.offset.sync.enable")
+			assert.NotContains(t, out, "still fenced",
+				"the urgent fenced-gateway wording is wrong for these shapes")
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
 // BuildClusterLinkConfig — small but worth pinning.
 // ---------------------------------------------------------------------------
 

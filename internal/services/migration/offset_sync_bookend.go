@@ -206,10 +206,29 @@ func restoreOffsetSync(
 // bookend only runs after a successful execute, so without this warning the
 // operator has no signal that the cluster link is paused.
 //
+// The wording is shaped by the persisted state. At fenced or
+// offset_sync_paused the gateway is still up and blocking clients — that
+// deserves urgent copy describing the observable state. It deliberately does
+// not claim a rollback failed: the same signature also arises from routine
+// resumable stops (ctx-cancel mid-detection, a verify fetch error). Every
+// other state keeps the softer restore-owed wording — promote/switch
+// failures leave sync paused by design, and the legacy pre-FSM-pause cohort
+// can fail before the pause stage with the marker already set.
+//
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.
 func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	if !config.PauseConsumerOffsetSyncFlipped {
+		return
+	}
+	if config.CurrentState == StateFenced || config.CurrentState == StateOffsetSyncPaused {
+		newReporter().remediation(
+			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — it retries the pause or completes the rollback as needed.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+			offsetSyncEnableKey,
+		)
 		return
 	}
 	newReporter().remediation(
