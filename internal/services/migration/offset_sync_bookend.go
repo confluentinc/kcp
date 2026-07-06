@@ -206,14 +206,28 @@ func restoreOffsetSync(
 // bookend only runs after a successful execute, so without this warning the
 // operator has no signal that the cluster link is paused.
 //
-// The wording is shaped by the persisted state. At fenced or
-// offset_sync_paused the gateway is still up and blocking clients — that
-// deserves urgent copy describing the observable state. It deliberately does
-// not claim a rollback failed: the same signature also arises from routine
-// resumable stops (ctx-cancel mid-detection, a verify fetch error). Every
-// other state keeps the softer restore-owed wording — promote/switch
-// failures leave sync paused by design, and the legacy pre-FSM-pause cohort
-// can fail before the pause stage with the marker already set.
+// The wording is shaped by the persisted state. The fenced CR applied at
+// EventFence stays live until SwitchGateway replaces it (or the abort_fence
+// rollback restores the initial CR), so at fenced, offset_sync_paused,
+// fence_verified and promoted the gateway is still blocking client traffic —
+// all four deserve urgent copy describing the observable state. The
+// remediation differs by shape:
+//   - fenced / offset_sync_paused: the same signature also arises from
+//     routine resumable stops (ctx-cancel mid-detection, a verify fetch
+//     error), so the copy deliberately does not claim a rollback failed; a
+//     re-run retries the pause or completes the rollback, and manually
+//     re-applying the initial gateway CR is a safe abort.
+//   - fence_verified: topics are not yet promoted, so the manual abort is
+//     still safe; a re-run re-asserts the fence and resumes forward.
+//   - promoted: topics are already promoted, so routing clients back to the
+//     source would diverge data — completing the switchover is the only way
+//     forward that unblocks clients, and the copy explicitly warns against
+//     re-applying the initial CR.
+//
+// Every other state keeps the softer restore-owed wording: at initialized and
+// lags_ok the fence is not up (a completed rollback whose restore is still
+// owed, or the legacy pre-FSM-pause cohort failing before the fence), and at
+// switched the switchover CR is live.
 //
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.
@@ -221,7 +235,8 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	if !config.PauseConsumerOffsetSyncFlipped {
 		return
 	}
-	if config.CurrentState == StateFenced || config.CurrentState == StateOffsetSyncPaused {
+	switch config.CurrentState {
+	case StateFenced, StateOffsetSyncPaused:
 		newReporter().remediation(
 			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — it retries the pause or completes the rollback as needed.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
 			execErr,
@@ -229,15 +244,30 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 			offsetSyncEnableKey,
 			offsetSyncEnableKey,
 		)
-		return
+	case StateFenceVerified:
+		newReporter().remediation(
+			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — traffic stays blocked until the switchover completes.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+			offsetSyncEnableKey,
+		)
+	case StatePromoted:
+		newReporter().remediation(
+			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to complete the switchover and restore client traffic.\n   Do not re-apply the initial gateway CR: topics are already promoted, and routing clients back to the source would diverge data.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+		)
+	default:
+		newReporter().remediation(
+			"Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
+			execErr,
+			config.ClusterLinkName,
+			offsetSyncEnableKey,
+			offsetSyncEnableKey,
+		)
 	}
-	newReporter().remediation(
-		"Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
-		execErr,
-		config.ClusterLinkName,
-		offsetSyncEnableKey,
-		offsetSyncEnableKey,
-	)
 }
 
 // BuildClusterLinkConfig assembles a clusterlink.Config from a migration
