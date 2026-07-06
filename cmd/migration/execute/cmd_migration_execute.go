@@ -47,7 +47,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		Long: `Execute an initialized migration through its remaining workflow steps.
 
 This command resumes a migration from its current state, progressing through:
-lag checking, gateway fencing, topic promotion, and gateway switchover.
+lag checking, gateway fencing, pausing consumer offset sync (opt-in), fence
+verification, topic promotion, and gateway switchover.
 
 The migration must first be created with 'kcp migration init'. If execution is
 interrupted, re-running this command will resume from the last completed step.

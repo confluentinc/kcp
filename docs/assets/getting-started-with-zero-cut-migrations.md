@@ -178,7 +178,7 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 **Rollback states**:
 
-- Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD.
+- Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD — and does this automatically when fence verification detects producers bypassing the gateway or the offset-sync pause fails, restoring any paused offset sync in the same rollback. Re-running execute resumes from the lag checks.
 - Rollback after promotion: possible (no data loss) but the cluster link is broken. Requires recreating the cluster link and mirror topics from scratch. This is not automated.
 - Rollback after unblock (traffic flowing to CC): not supported. Manual intervention required.
 
@@ -241,14 +241,16 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 ### Step 4: `kcp migration execute`
 
-Performs the cutover in four automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.
+Performs the cutover in six automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.
 
-| Phase                | What KCP does                                                                                           | What clients see                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| **Pre-flight**       | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                 | Normal traffic                                                          |
-| **Block**            | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
-| **Promote**          | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion | Still retrying; records buffered locally                                |
-| **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                           | First retry succeeds; clients now on CC                                 |
+| Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| **Pre-flight**        | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                                                          | Normal traffic                                                          |
+| **Block**             | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                                                         | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
+| **Pause offset sync** | With `--pause-consumer-offset-sync`, pauses cluster-link consumer offset sync so destination consumer offsets freeze at their freshest values; skipped otherwise | Still retrying                                                          |
+| **Verify fence**      | Monitors source offsets for `--detect-unrouted-producers-duration` to catch producers bypassing the gateway; on detection, unblocks and restores offset sync automatically | Still retrying                                                          |
+| **Promote**           | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion                                          | Still retrying; records buffered locally                                |
+| **Switch + unblock**  | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                                                                    | First retry succeeds; clients now on CC                                 |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
 
