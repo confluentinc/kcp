@@ -87,29 +87,26 @@ func (m *MigrationExecutor) Run() error {
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
-	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
-	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
-	workflow.SetPromoteBatchSize(m.opts.PromoteBatchSize)
+	actions := migration.NewMigrationActionsWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
+	actions.SetRolloutTimeout(m.opts.RolloutTimeout)
+	actions.SetPromoteBatchSize(m.opts.PromoteBatchSize)
 
-	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
-	persist := func() error {
-		m.opts.MigrationState.UpsertMigration(config)
-		return m.opts.MigrationState.WriteToFile(m.opts.MigrationStateFile)
-	}
-
-	// Pre-execute bookend: disable consumer.offset.sync.enable if the
-	// operator opted in at init time. Idempotent and safe on resume.
-	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
-		return err
-	}
-
+	// The orchestrator is the single writer for migration state. Build it up
+	// front so its PersistState can back the offset-sync bookends too, rather
+	// than a parallel write closure.
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
-		workflow,
+		actions,
 		&m.opts.MigrationState,
 		m.opts.MigrationStateFile,
 	)
 
+	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
+
+	// The consumer-offset-sync pause runs INSIDE the FSM (the
+	// pause_offset_sync stage, right after fencing) so destination offsets
+	// stay fresh through the lag and fence phases instead of going stale for
+	// the whole run. Only the restore below remains a bookend.
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
 		migration.WarnIfPausedOnExecuteFailure(&config, err)
 		return fmt.Errorf("failed to execute migration: %w", err)
@@ -117,7 +114,7 @@ func (m *MigrationExecutor) Run() error {
 
 	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
 	// so a restore error does not roll back a successful switchover.
-	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
+	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, orchestrator.PersistState)
 
 	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
 	return nil
