@@ -122,14 +122,30 @@ func (m *mockClusterLinkService) AlterConfigs(ctx context.Context, config cluste
 	return fmt.Errorf("mockClusterLinkService.AlterConfigs not configured")
 }
 
-// mockOffsetProvider implements offset.Provider using a function field for test control.
+// mockOffsetProvider implements offset.Provider using function fields for
+// test control. Tests may script the whole batch via getManyFn or, more
+// commonly, per topic via getFn — the GetMany fallback assembles the batch
+// result from per-topic calls, failing the whole sweep on the first error
+// (matching the real GetMany's all-or-nothing contract).
 type mockOffsetProvider struct {
-	getFn func(topic string) (map[int32]int64, error)
+	getFn     func(topic string) (map[int32]int64, error)
+	getManyFn func(topics []string) (map[string]map[int32]int64, error)
 }
 
-func (m *mockOffsetProvider) Get(topic string) (map[int32]int64, error) {
-	if m.getFn != nil {
-		return m.getFn(topic)
+func (m *mockOffsetProvider) GetMany(_ context.Context, topics []string) (map[string]map[int32]int64, error) {
+	if m.getManyFn != nil {
+		return m.getManyFn(topics)
 	}
-	return nil, fmt.Errorf("mockOffsetProvider.Get not configured")
+	if m.getFn == nil {
+		return nil, fmt.Errorf("mockOffsetProvider not configured")
+	}
+	out := make(map[string]map[int32]int64, len(topics))
+	for _, topic := range topics {
+		offsets, err := m.getFn(topic)
+		if err != nil {
+			return nil, err
+		}
+		out[topic] = offsets
+	}
+	return out, nil
 }
