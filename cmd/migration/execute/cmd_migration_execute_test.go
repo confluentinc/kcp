@@ -381,6 +381,48 @@ func TestMigrationExecute_DetectUnroutedProducersDuration_Required(t *testing.T)
 	assert.Contains(t, err.Error(), "detect-unrouted-producers-duration")
 }
 
+func TestMigrationExecute_DetectUnroutedProducersDuration_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "15s")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration omitted: env must supply it.
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	assert.Equal(t, 15*time.Second, detectUnroutedProducersDuration,
+		"DETECT_UNROUTED_PRODUCERS_DURATION env var should populate the flag")
+}
+
+// TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected
+// pins that an env-provided value still flows through the <10s validation — the
+// bind happens in preRunE ahead of the check, so a below-minimum env value must
+// be rejected exactly as a below-minimum flag value is.
+func TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "5s")
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration omitted: env supplies 5s.
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be at least 10s")
+}
+
 // ===========================================================================
 // --promote-batch-size flag tests
 // ===========================================================================
