@@ -2,64 +2,120 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
-	"github.com/fatih/color"
 	"github.com/looplab/fsm"
 )
 
-// WorkflowStep defines a single step in the migration workflow
+// ErrUnroutedProducers is returned when the post-fence check detects producers
+// bypassing the gateway. The orchestrator catches this to trigger an
+// EventAbortFence transition back to initialized state.
+var ErrUnroutedProducers = errors.New("unrouted producers detected")
+
+// WorkflowStep defines a single step in the migration workflow. It is pure FSM
+// topology plus an ops-facing Description; user-facing presentation lives in
+// stepHeaders, keyed by event, so the edge definitions stay presentation-free.
 type WorkflowStep struct {
 	Event       string
 	Description string
 	FromState   string
 	ToState     string
-	UserMessage string // Emoji-prefixed message shown to the user
 }
 
-// canonicalWorkflow is the single source of truth for the migration workflow sequence
+// canonicalWorkflow is the single source of truth for the migration workflow
+// sequence — the ordered forward transitions the FSM walks on execute.
+//
+// Two deliberate modelling choices are intentionally NOT represented here:
+//   - The offset-sync RESTORE bookend runs OUTSIDE the FSM, after execute, by
+//     the command layer (see offset_sync_bookend.go), because the restore must
+//     run even when the run aborts or ctx is cancelled. The pause half lives
+//     inside the FSM as the pause_offset_sync stage — a pass-through when the
+//     operator did not opt in — so it fires at the latest safe moment (right
+//     after fencing) instead of stretching the paused window across the run.
+//   - There is no terminal/failed state. A step failure cancels its transition
+//     (e.Cancel) and leaves the FSM at the last good state; re-running execute
+//     resumes from there. abort_fence ({fenced, offset_sync_paused} →
+//     initialized) is the only mid-run rollback; the expire_* edges are
+//     bootstrap-only demotions (see NewMigrationOrchestrator).
 var canonicalWorkflow = []WorkflowStep{
-	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized, "🔍 Initializing migration..."},
-	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk, "⏳ Checking replication lags..."},
-	{EventFence, "fencing gateway", StateLagsOk, StateFenced, "🚧 Fencing gateway..."},
-	{EventPromote, "promoting topics", StateFenced, StatePromoted, "📤 Promoting mirror topics..."},
-	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched, "🔄 Switching gateway to Confluent Cloud..."},
+	{EventInitialize, "initializing migration", StateUninitialized, StateInitialized},
+	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk},
+	{EventFence, "fencing gateway", StateLagsOk, StateFenced},
+	{EventPauseOffsetSync, "pausing consumer offset sync", StateFenced, StateOffsetSyncPaused},
+	{EventVerifyFence, "verifying gateway fence", StateOffsetSyncPaused, StateFenceVerified},
+	{EventPromote, "promoting topics", StateFenceVerified, StatePromoted},
+	{EventSwitch, "switching gateway config", StatePromoted, StateSwitched},
 }
 
-// ExecutionParams holds runtime parameters needed during migration execution
+// stepHeaders maps a forward workflow event to the banner the Execute loop
+// prints as it walks canonicalWorkflow. Kept separate from canonicalWorkflow so
+// the FSM edge definitions carry no presentation. abort_fence is deliberately
+// absent: it is a compensation fired from handleStepFailure, not a forward loop
+// step, and its messaging is owned by onAbortFence. pause_offset_sync is also
+// absent: a fixed "Pausing..." banner would mislead on the pass-through path,
+// so PauseOffsetSync owns its own banner-or-skip-line output.
+var stepHeaders = map[string]string{
+	EventInitialize:  "🔍 Initializing migration...",
+	EventWaitForLags: "⏳ Checking replication lags...",
+	EventFence:       "🚧 Fencing gateway...",
+	EventVerifyFence: "🔍 Checking for unrouted producers...",
+	EventPromote:     "📤 Promoting mirror topics...",
+	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
+}
+
+// ExecutionParams holds the per-run runtime parameters a transition may need.
+// It is passed to fsm.Event as the sole argument and read back by callbacks via
+// execParamsFromEvent, rather than stashed on the orchestrator, so the values
+// flow with the event instead of living as mutable orchestrator state.
 type ExecutionParams struct {
 	LagThreshold     int64
 	ClusterApiKey    string
 	ClusterApiSecret string
 }
 
+// execParamsFromEvent returns the ExecutionParams passed to fsm.Event. Forward
+// transitions are fired with them. The abort_fence rollback and the
+// bootstrap-only expire_* transitions are fired without arguments — the
+// rollback's sync-config restore runs in handleStepFailure, which holds the
+// run's params directly — and this returns the zero value.
+func execParamsFromEvent(e *fsm.Event) ExecutionParams {
+	if len(e.Args) > 0 {
+		if p, ok := e.Args[0].(ExecutionParams); ok {
+			return p
+		}
+	}
+	return ExecutionParams{}
+}
+
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
 type MigrationOrchestrator struct {
 	config         *MigrationConfig
 	fsm            *fsm.FSM
-	workflow       *MigrationWorkflow
+	actions        *MigrationActions
 	migrationState *MigrationState
 	stateFilePath  string
-	execParams     ExecutionParams // Runtime execution parameters
+	reporter       *reporter // user-facing terminal output
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
 func NewMigrationOrchestrator(
 	config *MigrationConfig,
-	workflow *MigrationWorkflow,
+	actions *MigrationActions,
 	migrationState *MigrationState,
 	stateFilePath string,
 ) *MigrationOrchestrator {
 	orchestrator := &MigrationOrchestrator{
 		config:         config,
-		workflow:       workflow,
+		actions:        actions,
 		migrationState: migrationState,
 		stateFilePath:  stateFilePath,
+		reporter:       newReporter(),
 	}
 
 	// Build FSM events from canonical workflow
-	events := make(fsm.Events, 0, len(canonicalWorkflow))
+	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
 	for _, step := range canonicalWorkflow {
 		events = append(events, fsm.EventDesc{
 			Name: step.Event,
@@ -67,45 +123,109 @@ func NewMigrationOrchestrator(
 			Dst:  step.ToState,
 		})
 	}
+	// Backward transition: unfence and roll back to initialized. Covers both
+	// states where the fence is up: fenced (pause step failed) and
+	// offset_sync_paused (verify_fence detected unrouted producers).
+	events = append(events, fsm.EventDesc{
+		Name: EventAbortFence,
+		Src:  []string{StateFenced, StateOffsetSyncPaused},
+		Dst:  StateInitialized,
+	})
+	// Backward transition: fence verification expires across restarts (fired
+	// at bootstrap below, never during a run)
+	events = append(events, fsm.EventDesc{
+		Name: EventExpireVerification,
+		Src:  []string{StateFenceVerified},
+		Dst:  StateFenced,
+	})
+	// Backward transition: the fence posture expires across restarts too
+	// (fired at bootstrap below, never during a run), so a resume re-applies
+	// the fenced CR before verifying and promoting behind it.
+	events = append(events, fsm.EventDesc{
+		Name: EventExpireFence,
+		Src:  []string{StateFenced, StateOffsetSyncPaused},
+		Dst:  StateLagsOk,
+	})
 
-	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check)
+	// Bootstrap FSM from persisted state to enable resumability (e.g. "initialized" skips init, resumes at lag check).
+	//
+	// Action callbacks are registered per-event (before_<EVENT>), not per-state
+	// (leave_<STATE>), so each is single-purpose. This matters for the fenced
+	// state, which two events leave — verify_fence (forward) and abort_fence
+	// (rollback) — each with its own callback and no event-sniffing guard.
 	orchestrator.fsm = fsm.NewFSM(
 		config.CurrentState,
 		events,
 		fsm.Callbacks{
-			"before_event":                orchestrator.beforeEventCallback,
-			"after_event":                 orchestrator.afterEventCallback,
-			"enter_state":                 orchestrator.enterStateCallback,
-			"leave_state":                 orchestrator.leaveStateCallback,
-			"leave_" + StateUninitialized: orchestrator.leaveUninitializedCallback,
-			"leave_" + StateInitialized:   orchestrator.leaveInitializedCallback,
-			"leave_" + StateLagsOk:        orchestrator.leaveLagsOkCallback,
-			"leave_" + StateFenced:        orchestrator.leaveFencedCallback,
-			"leave_" + StatePromoted:      orchestrator.leavePromotedCallback,
+			"before_event":                   orchestrator.beforeEventCallback,
+			"after_event":                    orchestrator.afterEventCallback,
+			"enter_state":                    orchestrator.enterStateCallback,
+			"leave_state":                    orchestrator.leaveStateCallback,
+			"before_" + EventInitialize:      orchestrator.onInitialize,
+			"before_" + EventWaitForLags:     orchestrator.onWaitForLags,
+			"before_" + EventFence:           orchestrator.onFence,
+			"before_" + EventPauseOffsetSync: orchestrator.onPauseOffsetSync,
+			"before_" + EventVerifyFence:     orchestrator.onVerifyFence,
+			"before_" + EventPromote:         orchestrator.onPromote,
+			"before_" + EventAbortFence:      orchestrator.onAbortFence,
+			"before_" + EventSwitch:          orchestrator.onSwitch,
 		},
 	)
+
+	// fence_verified is a point-in-time attestation and never survives a
+	// restart: a rogue producer may have appeared since the run that verified
+	// the fence, and there is no downstream re-verification (PromoteTopics'
+	// zero-lag check samples instants and misses intermittent producers).
+	// Expire it so a resume re-runs the verify_fence detection window (the
+	// fence demotion below then carries it on to lags_ok). The transition has
+	// no action callback and its source state matches, so it cannot fail; the
+	// guard keeps the FSM honest if that ever changes.
+	if orchestrator.fsm.Is(StateFenceVerified) {
+		if err := orchestrator.fsm.Event(context.Background(), EventExpireVerification); err != nil {
+			slog.Error("❌ failed to expire fence verification at bootstrap", "error", err)
+		}
+	}
+
+	// The fence posture is a point-in-time fact for the same reason: a crash
+	// or a partially-completed abort_fence rollback (initial CR applied, then
+	// interrupted before the rolled-back state reached disk) leaves the live
+	// gateway unfenced while the state file still says fenced or
+	// offset_sync_paused. Demote to lags_ok so the resume re-runs the fence
+	// step — re-applying the fenced CR is a no-op rollout when the gateway
+	// never diverged — instead of promoting behind a fence that may not exist.
+	if orchestrator.fsm.Is(StateFenced) || orchestrator.fsm.Is(StateOffsetSyncPaused) {
+		if err := orchestrator.fsm.Event(context.Background(), EventExpireFence); err != nil {
+			slog.Error("❌ failed to expire fence posture at bootstrap", "error", err)
+		}
+	}
 
 	return orchestrator
 }
 
 // Initialize triggers the initialization event
 func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, clusterApiSecret string) error {
-	// Store API credentials for use by callback
-	o.execParams.ClusterApiKey = clusterApiKey
-	o.execParams.ClusterApiSecret = clusterApiSecret
-
-	if err := o.fsm.Event(ctx, EventInitialize); err != nil {
+	params := ExecutionParams{ClusterApiKey: clusterApiKey, ClusterApiSecret: clusterApiSecret}
+	if err := o.fsm.Event(ctx, EventInitialize, params); err != nil {
 		return err
 	}
-	return o.persistState()
+	return o.PersistState()
 }
 
 // Execute runs the full migration workflow from the current state
 func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, clusterApiKey, clusterApiSecret string) error {
-	// Store runtime parameters once for use by all callbacks
-	o.execParams.LagThreshold = lagThreshold
-	o.execParams.ClusterApiKey = clusterApiKey
-	o.execParams.ClusterApiSecret = clusterApiSecret
+	// An unknown persisted state (corrupted file, or one written by a newer
+	// kcp) makes every canTransition check below return false, so the loop
+	// would skip every step and falsely report the migration complete. Refuse
+	// loudly instead.
+	if !isKnownState(o.config.CurrentState) {
+		return fmt.Errorf("unrecognized migration state %q in state file — refusing to execute (corrupted file, or written by a newer kcp version?)", o.config.CurrentState)
+	}
+
+	params := ExecutionParams{
+		LagThreshold:     lagThreshold,
+		ClusterApiKey:    clusterApiKey,
+		ClusterApiSecret: clusterApiSecret,
+	}
 
 	// Drive execution from canonical workflow - single source of truth
 	for _, step := range canonicalWorkflow {
@@ -114,19 +234,74 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			continue // Skip already-completed steps (enables resumability)
 		}
 
-		fmt.Printf("\n%s\n", color.CyanString(step.UserMessage))
+		if header, ok := stepHeaders[step.Event]; ok {
+			o.reporter.section(header)
+		}
 		slog.Debug("executing migration step", "step", step.Description)
-		if err := o.fsm.Event(ctx, step.Event); err != nil {
+		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
+			return o.handleStepFailure(ctx, step, err, params)
+		}
+		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
-		if err := o.persistState(); err != nil {
-			return fmt.Errorf("failed during %s: %w", step.Description, err)
-		}
-		fmt.Printf("%s\n", color.GreenString("✅ Done"))
+		o.reporter.stepDone()
 	}
 
-	fmt.Printf("\n%s\n", color.GreenString("✅ Migration complete!"))
+	o.reporter.complete("✅ Migration complete!")
 	return nil
+}
+
+// handleStepFailure is the single place that maps a failed workflow step to its
+// compensating rollback (if any) and returns the wrapped error. Two failures
+// compensate, both via abort_fence (which unfences the gateway — see
+// onAbortFence — followed here by the sync-config restore):
+//   - any pause_offset_sync failure, keyed by step identity: clients must not
+//     be held fenced over a config problem, so the run rolls back and a re-run
+//     rechecks lags, re-fences, and retries the pause;
+//   - fence verification detecting unrouted producers (ErrUnroutedProducers,
+//     keyed by error class because the verify step's fetch errors must NOT
+//     roll back).
+//
+// The rollback event is fired here — never from inside a callback, where
+// looplab's non-reentrant eventMu would deadlock. The sync-config restore also
+// runs here, after the completed transition has been persisted, rather than in
+// onAbortFence: a before_-callback runs ahead of the transition, so a persist
+// from inside it would snapshot the cleared marker against the pre-rollback
+// state — a crash in that window would leave a state file claiming the fence
+// is up when it is not.
+//
+// A cancelled abort_fence (e.g. the unfence itself failed) is logged, not
+// returned: the originating step error is what surfaces, and the FSM correctly
+// stays at the rollback's source. A persist failure after a COMPLETED rollback
+// is different — the gateway is unfenced but the state file still says
+// otherwise — so it is appended to the returned error rather than swallowed;
+// the step error keeps its %w classification either way.
+func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error, params ExecutionParams) error {
+	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
+
+	if step.Event != EventPauseOffsetSync && !errors.Is(stepErr, ErrUnroutedProducers) {
+		return stepFailure
+	}
+
+	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
+		slog.Error("❌ failed to roll back to initialized", "error", err)
+		return stepFailure
+	}
+
+	persistErr := o.PersistState()
+	if persistErr != nil {
+		slog.Error("❌ failed to persist state after abort_fence transition", "error", persistErr)
+	}
+
+	// Restore the paused sync config even when the persist failed: cluster
+	// reality outranks state-file tidiness, and the restore's own persist (via
+	// the same path) keeps the marker honest when it can.
+	o.actions.restoreOffsetSyncAfterRollback(o.config, params.ClusterApiKey, params.ClusterApiSecret, o.PersistState)
+
+	if persistErr != nil {
+		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, persistErr)
+	}
+	return stepFailure
 }
 
 // beforeEventCallback is called before any event transition
@@ -140,8 +315,12 @@ func (o *MigrationOrchestrator) afterEventCallback(ctx context.Context, e *fsm.E
 	o.config.CurrentState = e.Dst
 }
 
-// persistState saves the current migration state to disk. Called after each successful FSM transition.
-func (o *MigrationOrchestrator) persistState() error {
+// PersistState saves the current migration config to the state file. It is the
+// single writer for migration state: the orchestrator calls it after each
+// successful FSM transition, and the offset-sync bookends (which run outside the
+// FSM) are handed this method so they persist through the same path rather than
+// duplicating the write.
+func (o *MigrationOrchestrator) PersistState() error {
 	if err := o.saveState(); err != nil {
 		return fmt.Errorf("failed to persist state after transition to %s: %w", o.config.CurrentState, err)
 	}
@@ -158,43 +337,91 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 	slog.Debug("FSM: leaving state", "state", e.Src)
 }
 
-// leaveUninitializedCallback delegates to workflow service Initialize
-func (o *MigrationOrchestrator) leaveUninitializedCallback(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.Initialize(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+// onInitialize runs the initialize transition: delegates to workflow Initialize.
+func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
+	p := execParamsFromEvent(e)
+	if err := o.actions.Initialize(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leaveInitializedCallback delegates to workflow service CheckLags
-func (o *MigrationOrchestrator) leaveInitializedCallback(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.CheckLags(ctx, o.config, o.execParams.LagThreshold, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+// onWaitForLags runs the wait_for_lags transition: delegates to workflow CheckLags.
+func (o *MigrationOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
+	p := execParamsFromEvent(e)
+	if err := o.actions.CheckLags(ctx, o.config, p.LagThreshold, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leaveLagsOkCallback delegates to workflow service FenceGateway
-func (o *MigrationOrchestrator) leaveLagsOkCallback(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.FenceGateway(ctx, o.config); err != nil {
+// onFence runs the fence transition: delegates to workflow FenceGateway.
+func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
+	if err := o.actions.FenceGateway(ctx, o.config); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leaveFencedCallback delegates to workflow service PromoteTopics
-func (o *MigrationOrchestrator) leaveFencedCallback(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.PromoteTopics(ctx, o.config, o.execParams.ClusterApiKey, o.execParams.ClusterApiSecret); err != nil {
+// onPauseOffsetSync runs the pause_offset_sync transition: delegates to
+// PauseOffsetSync, which pauses cluster-link consumer offset sync when the
+// operator opted in and passes through otherwise. The transition fires either
+// way — promotion's path runs through offset_sync_paused unconditionally.
+func (o *MigrationOrchestrator) onPauseOffsetSync(ctx context.Context, e *fsm.Event) {
+	p := execParamsFromEvent(e)
+	if err := o.actions.PauseOffsetSync(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret, o.PersistState); err != nil {
 		e.Cancel(err)
-		return
 	}
 }
 
-// leavePromotedCallback delegates to workflow service SwitchGateway
-func (o *MigrationOrchestrator) leavePromotedCallback(ctx context.Context, e *fsm.Event) {
-	if err := o.workflow.SwitchGateway(ctx, o.config); err != nil {
+// onVerifyFence runs the verify_fence transition: delegates to VerifyFence.
+// Registered on before_verify_fence (not leave_fenced), so it fires only for
+// the verify_fence event — never for the abort_fence rollback that also
+// leaves fenced. On ErrUnroutedProducers the transition is cancelled, leaving
+// the FSM at fenced, and handleStepFailure fires the abort_fence rollback.
+func (o *MigrationOrchestrator) onVerifyFence(ctx context.Context, e *fsm.Event) {
+	if err := o.actions.VerifyFence(ctx, o.config); err != nil {
 		e.Cancel(err)
+	}
+}
+
+// onPromote runs the forward promote transition: delegates to PromoteTopics.
+func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
+	p := execParamsFromEvent(e)
+	if err := o.actions.PromoteTopics(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
+		e.Cancel(err)
+	}
+}
+
+// onAbortFence runs the abort_fence rollback's gateway half: it unfences the
+// gateway to restore traffic to its pre-migration state — the compensating
+// action for fencing lives on the transition that reverses it. If unfencing
+// fails, cancel the rollback so the FSM stays at its source state: honest when
+// the apply itself failed, and when the apply landed but readiness never
+// confirmed, the bootstrap fence demotion (expire_fence) re-asserts the fenced
+// CR on the next run before anything trusts it. The sync-config restore is
+// deliberately NOT here — it persists state, and a before_-callback runs ahead
+// of the transition, so handleStepFailure runs it after the completed
+// transition has been persisted. It stays ordered after readiness confirms:
+// client traffic beats config tidiness, and a restore error must not undo a
+// completed unfence.
+func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
+	// The reason is unambiguous from the source state: only the pause step
+	// fails at fenced, and only rogue detection fails at offset_sync_paused.
+	reason := "Pausing consumer offset sync failed"
+	if e.Src == StateOffsetSyncPaused {
+		reason = "Unrouted producers detected"
+	}
+	o.reporter.warn("%s — removing fence to restore traffic", reason)
+	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
+		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
+	}
+	o.reporter.success("Gateway unfenced — traffic restored to pre-migration state")
+}
+
+// onSwitch runs the switch transition: delegates to workflow SwitchGateway.
+func (o *MigrationOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
+	if err := o.actions.SwitchGateway(ctx, o.config); err != nil {
+		e.Cancel(err)
 	}
 }
 

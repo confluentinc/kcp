@@ -32,12 +32,13 @@ var (
 	saslPlainUsername string
 	saslPlainPassword string
 
-	tlsCaCert             string
-	tlsClientCert         string
-	tlsClientKey          string
-	insecureSkipTLSVerify bool
-	rolloutTimeout        time.Duration
-	promoteBatchSize      int
+	tlsCaCert                       string
+	tlsClientCert                   string
+	tlsClientKey                    string
+	insecureSkipTLSVerify           bool
+	rolloutTimeout                  time.Duration
+	detectUnroutedProducersDuration time.Duration
+	promoteBatchSize                int
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -47,7 +48,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		Long: `Execute an initialized migration through its remaining workflow steps.
 
 This command resumes a migration from its current state, progressing through:
-lag checking, gateway fencing, topic promotion, and gateway switchover.
+lag checking, gateway fencing, pausing consumer offset sync (opt-in), fence
+verification, topic promotion, and gateway switchover.
 
 The migration must first be created with 'kcp migration init'. If execution is
 interrupted, re-running this command will resume from the last completed step.
@@ -70,6 +72,7 @@ the migration state file and must be provided each time.`,
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-tls --tls-ca-cert ca.pem --tls-client-cert client.pem --tls-client-key client.key`,
 		SilenceErrors: true,
+		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationExecute,
 		RunE:          runMigrationExecute,
@@ -84,6 +87,7 @@ the migration state file and must be provided each time.`,
 	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
+	requiredFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "Time to monitor source offsets after fencing to detect producers bypassing the gateway. Use 0 to skip. Minimum 10s if non-zero.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -162,6 +166,7 @@ the migration state file and must be provided each time.`,
 	_ = migrationExecuteCmd.MarkFlagRequired("lag-threshold")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
+	_ = migrationExecuteCmd.MarkFlagRequired("detect-unrouted-producers-duration")
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
@@ -204,6 +209,10 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
 
+	if detectUnroutedProducersDuration != 0 && detectUnroutedProducersDuration < 10*time.Second {
+		return fmt.Errorf("--detect-unrouted-producers-duration must be at least 10s (got %s). Use 0 to skip the check entirely", detectUnroutedProducersDuration)
+	}
+
 	return nil
 }
 
@@ -219,6 +228,9 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", migrationId, migrationStateFile)
 	}
+
+	// Apply runtime flags to config (not stored at init time)
+	config.DetectUnroutedProducersDuration = detectUnroutedProducersDuration
 
 	opts := parseMigrationExecutorOpts(*migrationState, *config)
 

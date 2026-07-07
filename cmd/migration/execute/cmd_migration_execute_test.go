@@ -22,6 +22,7 @@ func resetAuthFlags() {
 	useUnauthenticatedTLS = false
 	useUnauthenticatedPlaintext = false
 	rolloutTimeout = 0
+	detectUnroutedProducersDuration = 0
 }
 
 func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
@@ -33,6 +34,7 @@ func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -50,6 +52,7 @@ func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
 		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -69,6 +72,7 @@ func TestMigrationExecute_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
 		"--use-sasl-plain",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -88,6 +92,7 @@ func TestMigrationExecute_WithSaslPlainFlagAndCredentials_PassesValidation(t *te
 		"--use-sasl-plain",
 		"--sasl-plain-username", "user",
 		"--sasl-plain-password", "pass",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -107,6 +112,7 @@ func TestMigrationExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
 		"--cluster-api-secret", "secret",
 		"--use-unauthenticated-tls",
 		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -188,6 +194,7 @@ func TestMigrationExecute_SaslScramMechanism_InvalidValueRejected(t *testing.T) 
 		"--sasl-scram-username", "user",
 		"--sasl-scram-password", "pass",
 		"--sasl-scram-mechanism", "MD5",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -294,6 +301,126 @@ func TestMigrationExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
 
 	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, 7*time.Minute, opts.RolloutTimeout, "ROLLOUT_TIMEOUT env var should populate the flag")
+}
+
+// ===========================================================================
+// --detect-unrouted-producers-duration flag tests
+// ===========================================================================
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_ZeroSkipsCheck(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+	})
+
+	err := cmd.Execute()
+	// Should fail on missing state file, not on duration validation
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration state file")
+}
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_ValidDuration(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "10s",
+	})
+
+	err := cmd.Execute()
+	// Should fail on missing state file, not on duration validation
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration state file")
+}
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_BelowMinimumRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "5s",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be at least 10s")
+}
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_Required(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration intentionally omitted
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "detect-unrouted-producers-duration")
+}
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "15s")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration omitted: env must supply it.
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	assert.Equal(t, 15*time.Second, detectUnroutedProducersDuration,
+		"DETECT_UNROUTED_PRODUCERS_DURATION env var should populate the flag")
+}
+
+// TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected
+// pins that an env-provided value still flows through the <10s validation — the
+// bind happens in preRunE ahead of the check, so a below-minimum env value must
+// be rejected exactly as a below-minimum flag value is.
+func TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "5s")
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration omitted: env supplies 5s.
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be at least 10s")
 }
 
 // ===========================================================================

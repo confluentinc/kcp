@@ -15,21 +15,62 @@ import (
 
 // FSM State constants
 const (
-	StateUninitialized = "uninitialized"
-	StateInitialized   = "initialized"
-	StateLagsOk        = "lags_ok"
-	StateFenced        = "fenced"
-	StatePromoted      = "promoted"
-	StateSwitched      = "switched"
+	StateUninitialized    = "uninitialized"
+	StateInitialized      = "initialized"
+	StateLagsOk           = "lags_ok"
+	StateFenced           = "fenced"
+	StateOffsetSyncPaused = "offset_sync_paused"
+	StateFenceVerified    = "fence_verified"
+	StatePromoted         = "promoted"
+	StateSwitched         = "switched"
 )
+
+// isKnownState reports whether s is a state value this binary understands.
+// Execute refuses unknown values so a corrupted state file — or one written
+// by a newer kcp — fails loudly instead of skipping every workflow step.
+func isKnownState(s string) bool {
+	switch s {
+	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
+		StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched:
+		return true
+	}
+	return false
+}
 
 // FSM Event constants
 const (
 	EventInitialize  = "initialize"
 	EventWaitForLags = "wait_for_lags"
 	EventFence       = "fence"
-	EventPromote     = "promote"
-	EventSwitch      = "switch"
+	// EventPauseOffsetSync pauses cluster-link consumer offset sync
+	// (--pause-consumer-offset-sync) immediately after fencing. Without the
+	// opt-in the transition still fires as a pass-through so the forward
+	// walk is identical either way.
+	EventPauseOffsetSync = "pause_offset_sync"
+	EventVerifyFence     = "verify_fence"
+	EventPromote         = "promote"
+	EventSwitch          = "switch"
+	// EventAbortFence rolls back to initialized when the pause_offset_sync
+	// step fails (from fenced) or the verify_fence step detects unrouted
+	// producers (from offset_sync_paused); the transition itself unfences
+	// the gateway and restores any paused sync config (see onAbortFence in
+	// orchestrator.go).
+	EventAbortFence = "abort_fence"
+	// EventExpireVerification demotes fence_verified to fenced at FSM
+	// bootstrap: the verification is a point-in-time attestation and never
+	// survives a restart, so a resume re-runs the verify_fence detection
+	// window. Fired only by NewMigrationOrchestrator; it has no action.
+	EventExpireVerification = "expire_verification"
+	// EventExpireFence demotes fenced and offset_sync_paused to lags_ok at FSM
+	// bootstrap: whether the live gateway still holds the fenced CR is equally
+	// a point-in-time fact. A crash or a partially-completed abort_fence
+	// rollback (initial CR applied, process gone before the rolled-back state
+	// reached disk) leaves the gateway unfenced while the state file still
+	// records a fenced-family state. Demoting makes the resume re-apply the
+	// fenced CR — a no-op rollout when the gateway never diverged — instead of
+	// verifying and promoting behind a fence that may not exist. Fired only by
+	// NewMigrationOrchestrator; it has no action.
+	EventExpireFence = "expire_fence"
 )
 
 // ----- migration configuration -----
@@ -63,6 +104,13 @@ type MigrationConfig struct {
 	// not yet restored — supports drift detection, idempotent resume, and remediation messaging.
 	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
 	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
+
+	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
+	// safety check that verifies source offsets are not still increasing before
+	// promoting mirror topics. A value of 0 skips the check. An increasing offset
+	// after fencing indicates a producer that bypassed the gateway and is writing
+	// directly to the source cluster.
+	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
 
 	// Gateway CR configuration
 	InitialCrName    string `json:"initial_cr_name"`
