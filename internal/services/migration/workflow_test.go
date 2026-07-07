@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -475,6 +476,13 @@ func TestWorkflow_PromoteTopics_AllAtZeroLag(t *testing.T) {
 			}
 			return resp, nil
 		},
+		// After promotion is accepted, the backend reports STOPPED.
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "topic-1", MirrorStatus: clusterlink.MirrorStatusStopped},
+				{MirrorTopicName: "topic-2", MirrorStatus: clusterlink.MirrorStatusStopped},
+			}, nil
+		},
 	}
 
 	// Both source and dest return identical offsets (zero lag)
@@ -525,6 +533,13 @@ func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
 			}
 			return resp, nil
 		},
+		// Once accepted, both topics report STOPPED.
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "topic-1", MirrorStatus: clusterlink.MirrorStatusStopped},
+				{MirrorTopicName: "topic-2", MirrorStatus: clusterlink.MirrorStatusStopped},
+			}, nil
+		},
 	}
 
 	offsetProvider := &mockOffsetProvider{
@@ -547,6 +562,204 @@ func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
 
 	finalCallCount := atomic.LoadInt64(&callCount)
 	assert.GreaterOrEqual(t, finalCallCount, int64(2), "expected at least 2 promote calls (initial + retry)")
+}
+
+// TestWorkflow_PromoteTopics_StuckPendingStoppedDoesNotSucceed reproduces the
+// customer-reported false-positive: promote returns error_code 0 (accepted),
+// but the mirror topic never leaves PENDING_STOPPED. PromoteTopics must NOT
+// report success on the enqueue acknowledgement alone — it must wait for the
+// terminal STOPPED status, so a topic stuck in PENDING_STOPPED keeps it polling
+// until the caller cancels.
+func TestWorkflow_PromoteTopics_StuckPendingStoppedDoesNotSucceed(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	var promoteCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promoteCalls, 1)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name, ErrorCode: 0})
+			}
+			return resp, nil
+		},
+		// Backend never finishes the async promotion: always PENDING_STOPPED.
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "topic-1", MirrorStatus: "PENDING_STOPPED"},
+			}, nil
+		},
+	}
+
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:              []string{"topic-1"},
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	err := wf.PromoteTopics(ctx, config, "key", "secret")
+	require.Error(t, err, "must not report success while topic is stuck in PENDING_STOPPED")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+}
+
+// TestWorkflow_PromoteTopics_WaitsForStoppedStatus verifies the happy path of
+// the async promotion: the topic is PENDING_STOPPED immediately after promote
+// and only later transitions to STOPPED. PromoteTopics must poll
+// ListMirrorTopics and only return once the terminal STOPPED status is observed.
+func TestWorkflow_PromoteTopics_WaitsForStoppedStatus(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	var listCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name, ErrorCode: 0})
+			}
+			return resp, nil
+		},
+		// PENDING_STOPPED for the first two polls, then STOPPED.
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			n := atomic.AddInt64(&listCalls, 1)
+			status := "PENDING_STOPPED"
+			if n >= 3 {
+				status = "STOPPED"
+			}
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "topic-1", MirrorStatus: status},
+			}, nil
+		},
+	}
+
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:              []string{"topic-1"},
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, atomic.LoadInt64(&listCalls), int64(3),
+		"expected PromoteTopics to poll mirror status until STOPPED was observed")
+}
+
+// TestWorkflow_PromoteTopics_BatchSizeProcessesSequentially verifies that when
+// promoteBatchSize is set, PromoteTopics (1) never submits more than the cap in
+// a single promote call, and (2) does not start the next batch until every
+// topic in the current batch has reached STOPPED — i.e. synchronous batches.
+func TestWorkflow_PromoteTopics_BatchSizeProcessesSequentially(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	const batchSize = 10
+	topics := make([]string, 25)
+	for i := range topics {
+		topics[i] = fmt.Sprintf("topic-%02d", i)
+	}
+
+	var mu sync.Mutex
+	var promoteCallSizes []int
+	inFlight := make(map[string]bool)  // promoted but not yet confirmed STOPPED
+	pollsSince := make(map[string]int) // polls observed since a topic was promoted
+
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			mu.Lock()
+			// A new batch must not begin while the previous batch is still
+			// draining to STOPPED.
+			if len(inFlight) != 0 {
+				t.Errorf("promoted a new batch of %d while %d topics still in flight", len(topicNames), len(inFlight))
+			}
+			promoteCallSizes = append(promoteCallSizes, len(topicNames))
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				inFlight[name] = true
+				pollsSince[name] = 0
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name, ErrorCode: 0})
+			}
+			mu.Unlock()
+			return resp, nil
+		},
+		// Each promoted topic reports PENDING_STOPPED on its first poll and
+		// STOPPED thereafter, so the workflow must poll at least twice per batch.
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make([]clusterlink.MirrorTopic, len(topics))
+			for i, name := range topics {
+				status := clusterlink.MirrorStatusActive
+				if _, promoted := pollsSince[name]; promoted {
+					pollsSince[name]++
+					if pollsSince[name] >= 2 {
+						status = clusterlink.MirrorStatusStopped
+						delete(inFlight, name)
+					} else {
+						// Transient wire value the backend reports before STOPPED;
+						// the workflow treats any non-STOPPED status as "not done".
+						status = "PENDING_STOPPED"
+					}
+				}
+				out[i] = clusterlink.MirrorTopic{MirrorTopicName: name, MirrorStatus: status}
+			}
+			return out, nil
+		},
+	}
+
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return map[int32]int64{0: 100}, nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
+	wf.promoteBatchSize = batchSize
+	config := &MigrationConfig{
+		Topics:              topics,
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err)
+
+	mu.Lock()
+	defer mu.Unlock()
+	assert.Equal(t, []int{10, 10, 5}, promoteCallSizes,
+		"expected 25 topics promoted in sequential batches of at most 10")
 }
 
 func TestWorkflow_PromoteTopics_MaxRetriesExceeded(t *testing.T) {
@@ -813,4 +1026,193 @@ func TestFormatLag64(t *testing.T) {
 			assert.Equal(t, tc.expected, got, "formatLag64(%d)", tc.input)
 		})
 	}
+}
+
+// ===========================================================================
+// Sweep-failure tolerance tests (maxConsecutiveSweepFailures)
+// ===========================================================================
+
+// zeroLagBatch builds a GetMany-shaped result with the same offset for every
+// topic, so source and destination compare at zero lag.
+func zeroLagBatch(topics []string, off int64) map[string]map[int32]int64 {
+	out := make(map[string]map[int32]int64, len(topics))
+	for _, topic := range topics {
+		out[topic] = map[int32]int64{0: off}
+	}
+	return out
+}
+
+func TestWorkflow_CheckLags_ToleratesTransientSweepFailures(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	// The source sweep fails twice (fewer than maxConsecutiveSweepFailures),
+	// then succeeds at zero lag.
+	var calls atomic.Int32
+	sourceOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			if calls.Add(1) <= 2 {
+				return nil, fmt.Errorf("leader election in progress")
+			}
+			return zeroLagBatch(topics, 1000), nil
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			return zeroLagBatch(topics, 1000), nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.lagPollInterval = time.Millisecond
+	config := &MigrationConfig{Topics: []string{"topic-1"}}
+
+	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	require.NoError(t, err, "two transient sweep failures must be ridden out")
+	assert.GreaterOrEqual(t, calls.Load(), int32(3), "expected the sweep to be retried on later ticks")
+}
+
+func TestWorkflow_CheckLags_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	var calls atomic.Int32
+	sourceOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			calls.Add(1)
+			return nil, fmt.Errorf("broker unreachable")
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			return zeroLagBatch(topics, 1000), nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.lagPollInterval = time.Millisecond
+	config := &MigrationConfig{Topics: []string{"topic-1"}}
+
+	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d consecutive", maxConsecutiveSweepFailures))
+	assert.Contains(t, err.Error(), "broker unreachable", "the underlying cause must be preserved")
+	assert.Equal(t, int32(maxConsecutiveSweepFailures), calls.Load(),
+		"the sweep must not be attempted again after the abort threshold")
+}
+
+func TestWorkflow_CheckLags_SweepFailureCounterResetsOnSuccess(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	// Scripted sequence: fail, fail, succeed-above-threshold (loop continues),
+	// fail, fail, succeed-at-zero-lag. Four total failures but never three in
+	// a row — only a counter that resets on success lets this pass.
+	var calls atomic.Int32
+	sourceOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			switch calls.Add(1) {
+			case 1, 2, 4, 5:
+				return nil, fmt.Errorf("transient sweep failure")
+			case 3:
+				return zeroLagBatch(topics, 5000), nil // lag 4000 → above threshold
+			default:
+				return zeroLagBatch(topics, 1000), nil // lag 0 → done
+			}
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			return zeroLagBatch(topics, 1000), nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.lagPollInterval = time.Millisecond
+	config := &MigrationConfig{Topics: []string{"topic-1"}}
+
+	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	require.NoError(t, err, "four non-consecutive failures must not abort")
+	assert.Equal(t, int32(6), calls.Load())
+}
+
+func TestWorkflow_PromoteTopics_ToleratesTransientSweepFailures(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	promoted := make(map[string]bool)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				promoted[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{
+					MirrorTopicName: name,
+					ErrorCode:       0,
+				})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "topic-1", MirrorStatus: clusterlink.MirrorStatusStopped},
+			}, nil
+		},
+	}
+
+	// The source sweep fails twice, then reports zero lag so promotion runs.
+	var calls atomic.Int32
+	sourceOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			if calls.Add(1) <= 2 {
+				return nil, fmt.Errorf("leader election in progress")
+			}
+			return zeroLagBatch(topics, 1000), nil
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			return zeroLagBatch(topics, 1000), nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{Topics: []string{"topic-1"}}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.NoError(t, err, "two transient sweep failures must be ridden out")
+	assert.True(t, promoted["topic-1"], "topic must still be promoted after tolerated failures")
+}
+
+func TestWorkflow_PromoteTopics_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T) {
+	gw := &mockGatewayService{}
+	cl := &mockClusterLinkService{}
+
+	var calls atomic.Int32
+	sourceOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			calls.Add(1)
+			return nil, fmt.Errorf("broker unreachable")
+		},
+	}
+	destOffset := &mockOffsetProvider{
+		getManyFn: func(topics []string) (map[string]map[int32]int64, error) {
+			return zeroLagBatch(topics, 1000), nil
+		},
+	}
+
+	wf := NewMigrationWorkflowWithOffsets(gw, cl, sourceOffset, destOffset)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{Topics: []string{"topic-1"}}
+
+	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), fmt.Sprintf("%d consecutive", maxConsecutiveSweepFailures))
+	assert.Contains(t, err.Error(), "broker unreachable", "the underlying cause must be preserved")
+	assert.Equal(t, int32(maxConsecutiveSweepFailures), calls.Load(),
+		"the sweep must not be attempted again after the abort threshold")
 }

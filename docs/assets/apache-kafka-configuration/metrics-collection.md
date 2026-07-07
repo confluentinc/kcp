@@ -149,7 +149,7 @@ empty results.
 
 When a single Prometheus instance scrapes multiple Kafka clusters, use
 `filter.labels` in `apache-kafka-credentials.yaml` to scope queries to a specific
-cluster. See the [`prometheus` field reference](credentials.md#prometheus--optional-for-historical-metrics)
+cluster. See the [`prometheus` field reference](credentials.md#prometheus-optional-for-historical-metrics)
 for details.
 
 ## Worked examples

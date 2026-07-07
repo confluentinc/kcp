@@ -41,6 +41,11 @@ type MigrationExecutorOpts struct {
 	// switch. A value of 0 means no deadline — the wait runs until the
 	// operator reports ready or the user cancels.
 	RolloutTimeout time.Duration
+	// PromoteBatchSize caps how many mirror topics are promoted per batch. A
+	// value of 0 means unlimited (all at once); >0 processes topics in
+	// synchronous batches of this size, waiting for each batch to reach
+	// STOPPED before promoting the next.
+	PromoteBatchSize int
 }
 
 type MigrationExecutor struct {
@@ -84,6 +89,7 @@ func (m *MigrationExecutor) Run() error {
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
 	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
+	workflow.SetPromoteBatchSize(m.opts.PromoteBatchSize)
 
 	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
 	persist := func() error {
