@@ -123,10 +123,10 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd.Flags().AddFlagSet(metricsFlags)
 
 	selfManagedConnectorsCmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Short)
+		fmt.Printf("%s\n\n", c.Short)
 
 		if c.Example != "" {
-			output.Printf("Examples:\n%s\n\n", c.Example)
+			fmt.Printf("Examples:\n%s\n\n", c.Example)
 		}
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, saslScramFlags, tlsFlags, metricsFlags}
@@ -135,11 +135,11 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				output.Printf("%s:\n%s\n", groupNames[i], usage)
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

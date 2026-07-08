@@ -92,7 +92,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd.Flags().AddFlagSet(glueFlags)
 
 	schemaRegistryCmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Short)
+		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, confluentFlags, glueFlags}
 		groupNames := []string{
@@ -104,12 +104,12 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				output.Printf("%s:\n%s\n", groupNames[i], usage)
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
-		output.Println("Glue authentication uses AWS default credentials (environment variables, shared credentials file, or IAM role).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("Glue authentication uses AWS default credentials (environment variables, shared credentials file, or IAM role).")
 
 		return nil
 	})

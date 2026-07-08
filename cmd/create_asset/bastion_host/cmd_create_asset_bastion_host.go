@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -72,7 +71,7 @@ The generated Terraform provisions an Amazon Linux 2023 EC2 instance with SSH ac
 	groups[optionalFlags] = "Optional Flags"
 
 	bastionHostCmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Short)
+		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
 		groupNames := []string{"Required Flags", "Optional Flags"}
@@ -80,12 +79,12 @@ The generated Terraform provisions an Amazon Linux 2023 EC2 instance with SSH ac
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				output.Printf("%s:\n", groupNames[i])
-				output.Printf("%s\n", usage)
+				fmt.Printf("%s:\n", groupNames[i])
+				fmt.Printf("%s\n", usage)
 			}
 		}
 
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

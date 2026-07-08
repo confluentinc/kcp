@@ -5,7 +5,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -86,7 +85,7 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 	groups[optionalFlags] = "Optional Flags"
 
 	aclsCmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Short)
+		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
 		groupNames := []string{"Required Flags", "Optional Flags"}
@@ -94,15 +93,15 @@ func NewMigrateIamAclsCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				output.Printf("%s:\n%s\n", groupNames[i], usage)
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
 				if groupNames[i] == "Required Flags" {
-					output.Printf("  (Provide either --role-arn OR --user-arn OR --state-file)\n")
-					output.Printf("  (If --state-file is provided, --cluster-id is also required)\n\n")
+					fmt.Printf("  (Provide either --role-arn OR --user-arn OR --state-file)\n")
+					fmt.Printf("  (If --state-file is provided, --cluster-id is also required)\n\n")
 				}
 			}
 		}
 
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

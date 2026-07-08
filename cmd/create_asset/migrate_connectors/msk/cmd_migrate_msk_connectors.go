@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -68,7 +67,7 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 	groups[optionalFlags] = "Optional Flags"
 
 	mskConnectorsCmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Short)
+		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
 		groupNames := []string{"Required Flags", "Optional Flags"}
@@ -76,11 +75,11 @@ func NewMigrateMskConnectorsCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				output.Printf("%s:\n%s\n", groupNames[i], usage)
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

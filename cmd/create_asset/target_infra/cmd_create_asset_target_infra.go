@@ -144,7 +144,7 @@ func NewTargetInfraCmd() *cobra.Command {
 	targetInfraCmd.MarkFlagsMutuallyExclusive("cluster-id", "cluster-type")
 
 	targetInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Long)
+		fmt.Printf("%s\n\n", c.Long)
 
 		flagOrder := []*pflag.FlagSet{stateFileFlags, manualConfigFlags, envFlags, clusterFlags, privateLinkFlags, outputFlags}
 		groupNames := []string{"State File (Optional)", "Manual Configuration (when not using state file)", "Target Environment", "Target Cluster", "Private Link", "Output"}
@@ -152,11 +152,11 @@ func NewTargetInfraCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				output.Printf("%s:\n%s\n", groupNames[i], usage)
+				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

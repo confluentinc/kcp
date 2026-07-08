@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -41,7 +40,7 @@ func NewReverseProxyCmd() *cobra.Command {
 	groups[requiredFlags] = "Required Flags"
 
 	reverseProxyCmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Short)
+		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags}
 		groupNames := []string{"Required Flags"}
@@ -49,12 +48,12 @@ func NewReverseProxyCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				output.Printf("%s:\n", groupNames[i])
-				output.Printf("%s\n", usage)
+				fmt.Printf("%s:\n", groupNames[i])
+				fmt.Printf("%s\n", usage)
 			}
 		}
 
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

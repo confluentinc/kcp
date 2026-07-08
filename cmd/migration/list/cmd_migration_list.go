@@ -3,7 +3,6 @@ package list
 import (
 	"fmt"
 
-	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -36,9 +35,9 @@ func NewMigrationListCmd() *cobra.Command {
 	cmd.Flags().AddFlagSet(optionalFlags)
 
 	cmd.SetUsageFunc(func(c *cobra.Command) error {
-		output.Printf("%s\n\n", c.Short)
-		output.Printf("Optional:\n%s\n", optionalFlags.FlagUsages())
-		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		fmt.Printf("%s\n\n", c.Short)
+		fmt.Printf("Optional:\n%s\n", optionalFlags.FlagUsages())
+		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 		return nil
 	})
 
