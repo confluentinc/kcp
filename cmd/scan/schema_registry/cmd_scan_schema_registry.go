@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	glue_service "github.com/confluentinc/kcp/internal/services/glue_schema_registry"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/schema_registry"
@@ -91,7 +92,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	schemaRegistryCmd.Flags().AddFlagSet(glueFlags)
 
 	schemaRegistryCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		output.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, confluentFlags, glueFlags}
 		groupNames := []string{
@@ -103,12 +104,12 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				output.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
-		fmt.Println("Glue authentication uses AWS default credentials (environment variables, shared credentials file, or IAM role).")
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Println("Glue authentication uses AWS default credentials (environment variables, shared credentials file, or IAM role).")
 
 		return nil
 	})
@@ -199,7 +200,7 @@ func runScanConfluentSchemaRegistry() error {
 		return fmt.Errorf("failed to scan schema registry: %v", err)
 	}
 
-	fmt.Printf("✅ Successfully scanned schema registry\n")
+	output.Printf("✅ Successfully scanned schema registry\n")
 
 	return nil
 }

@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
@@ -143,7 +144,7 @@ func NewTargetInfraCmd() *cobra.Command {
 	targetInfraCmd.MarkFlagsMutuallyExclusive("cluster-id", "cluster-type")
 
 	targetInfraCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Long)
+		output.Printf("%s\n\n", c.Long)
 
 		flagOrder := []*pflag.FlagSet{stateFileFlags, manualConfigFlags, envFlags, clusterFlags, privateLinkFlags, outputFlags}
 		groupNames := []string{"State File (Optional)", "Manual Configuration (when not using state file)", "Target Environment", "Target Cluster", "Private Link", "Output"}
@@ -151,11 +152,11 @@ func NewTargetInfraCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				output.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})
@@ -223,7 +224,7 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
-	fmt.Printf("🚀 Generating target infrastructure\n")
+	output.Printf("🚀 Generating target infrastructure\n")
 
 	// If state file is provided, extract vpc-id and region from it
 	if stateFile != "" {
@@ -288,7 +289,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write Terraform project: %w", err)
 	}
 
-	fmt.Printf("✅ Target infrastructure generated: %s\n", outputDir)
+	output.Printf("✅ Target infrastructure generated: %s\n", outputDir)
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -39,14 +40,14 @@ func NewGlueSchemaRegistryScanner(glueService GlueSchemaRegistryScannerService, 
 }
 
 func (s *GlueSchemaRegistryScanner) Run(ctx context.Context) error {
-	fmt.Printf("🚀 Starting Glue Schema Registry scanner\n")
+	output.Printf("🚀 Starting Glue Schema Registry scanner\n")
 
 	registryArn, err := s.GlueService.GetRegistryInfo(ctx, s.RegistryName)
 	if err != nil {
 		return fmt.Errorf("failed to get registry info: %v", err)
 	}
 
-	fmt.Printf("🔍 Fetching schemas from registry %q...\n", s.RegistryName)
+	output.Printf("🔍 Fetching schemas from registry %q...\n", s.RegistryName)
 
 	schemas, err := s.GlueService.GetAllSchemasWithVersions(ctx, s.RegistryName)
 	if err != nil {
@@ -73,6 +74,6 @@ func (s *GlueSchemaRegistryScanner) Run(ctx context.Context) error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
-	fmt.Printf("✅ Successfully scanned Glue Schema Registry %q (%d schemas, %d versions)\n", s.RegistryName, len(schemas), totalVersions)
+	output.Printf("✅ Successfully scanned Glue Schema Registry %q (%d schemas, %d versions)\n", s.RegistryName, len(schemas), totalVersions)
 	return nil
 }

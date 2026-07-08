@@ -21,6 +21,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/update"
 	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -57,6 +58,9 @@ var RootCmd = &cobra.Command{
 			SlogOpts: slog.HandlerOptions{
 				Level: consoleLevel,
 			},
+			// Drop mirrored narrative on the console — the output package
+			// already wrote it to the terminal; the mirror is for kcp.log only.
+			DropMirrored: true,
 		})
 
 		// Fan out to both handlers
@@ -74,17 +78,25 @@ var RootCmd = &cobra.Command{
 				color.RedString("└─────────────────────────────────────────────────────────────────────────────────────────────┘"))
 		}
 
-		fmt.Printf("%s %s %s %s\n",
-			color.CyanString("Executing kcp with build"),
-			color.GreenString("version=%s", build_info.Version),
-			color.YellowString("commit=%s", build_info.Commit),
-			color.BlueString("date=%s", build_info.Date))
+		emitBuildBanner()
 
 		if err := checkWritePermissions(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
 			os.Exit(1)
 		}
 	},
+}
+
+// emitBuildBanner prints the build-provenance line to the terminal and mirrors
+// it into kcp.log (see internal/output), so a shared support log records which
+// build produced it. Additive: the stdout bytes are unchanged from the previous
+// fmt.Printf.
+func emitBuildBanner() {
+	output.Printf("%s %s %s %s\n",
+		color.CyanString("Executing kcp with build"),
+		color.GreenString("version=%s", build_info.Version),
+		color.YellowString("commit=%s", build_info.Commit),
+		color.BlueString("date=%s", build_info.Date))
 }
 
 func init() {
@@ -109,11 +121,18 @@ func init() {
 
 type PrettyHandlerOptions struct {
 	SlogOpts slog.HandlerOptions
+	// DropMirrored, set on the console handler, discards records that carry
+	// output.MirrorMarkerKey. Mirrored narrative is already written to the
+	// terminal by the output package, so the console must not echo it again —
+	// in normal or --verbose mode. The file handler leaves this false so
+	// mirrored lines still reach kcp.log.
+	DropMirrored bool
 }
 
 type PrettyHandler struct {
 	slog.Handler
-	l *log.Logger
+	l            *log.Logger
+	dropMirrored bool
 }
 
 func (h *PrettyHandler) Handle(ctx context.Context, r slog.Record) error {
@@ -121,11 +140,22 @@ func (h *PrettyHandler) Handle(ctx context.Context, r slog.Record) error {
 	level := r.Level.String()
 	message := r.Message
 
+	mirrored := false
 	values := []string{}
 	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == output.MirrorMarkerKey {
+			// The marker is internal bookkeeping: never render it into the log
+			// line, and use it to decide whether the console should drop the record.
+			mirrored = true
+			return true
+		}
 		values = append(values, fmt.Sprintf("%s=%v", a.Key, a.Value.Any()))
 		return true
 	})
+
+	if mirrored && h.dropMirrored {
+		return nil
+	}
 
 	h.l.Printf("%s %s %s %s", time, level, message, strings.Join(values, " "))
 
@@ -137,8 +167,9 @@ func NewPrettyHandler(
 	opts PrettyHandlerOptions,
 ) *PrettyHandler {
 	h := &PrettyHandler{
-		Handler: slog.NewTextHandler(out, &opts.SlogOpts),
-		l:       log.New(out, "", 0),
+		Handler:      slog.NewTextHandler(out, &opts.SlogOpts),
+		l:            log.New(out, "", 0),
+		dropMirrored: opts.DropMirrored,
 	}
 
 	return h

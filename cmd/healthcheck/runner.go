@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/sources"
 	"github.com/confluentinc/kcp/internal/sources/msk"
@@ -94,22 +95,22 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 		// the operator immediate visible confirmation that the cluster
 		// was scanned and where the report landed. Same pattern as
 		// `scan clusters`.
-		fmt.Printf("   • %s — %d broker(s), %d user topic(s), %d internal topic(s), %d ACL(s)\n",
+		output.Printf("   • %s — %d broker(s), %d user topic(s), %d internal topic(s), %d ACL(s)\n",
 			c.Identifier.Name,
 			len(c.KafkaAdminInfo.DiscoveredBrokers),
 			userTopics,
 			internalTopics,
 			len(c.KafkaAdminInfo.Acls),
 		)
-		fmt.Printf("     Report: %s\n", path)
+		output.Printf("     Report: %s\n", path)
 	}
 
-	fmt.Printf("\n✅ Healthcheck completed successfully\n")
-	fmt.Printf("   Scanned %d cluster(s) (source: %s)\n", len(scanResult.Clusters), sourceType)
+	output.Printf("\n✅ Healthcheck completed successfully\n")
+	output.Printf("   Scanned %d cluster(s) (source: %s)\n", len(scanResult.Clusters), sourceType)
 	if len(reportPaths) == 1 {
-		fmt.Printf("   Report: %s\n\n", reportPaths[0])
+		output.Printf("   Report: %s\n\n", reportPaths[0])
 	} else {
-		fmt.Printf("   Reports written: %d\n\n", len(reportPaths))
+		output.Printf("   Reports written: %d\n\n", len(reportPaths))
 	}
 
 	return nil

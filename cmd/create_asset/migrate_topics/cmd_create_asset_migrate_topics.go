@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -85,7 +86,7 @@ func NewMigrateTopicsCmd() *cobra.Command {
 	groups[optionalFlags] = "Optional Flags"
 
 	migrationCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		output.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
 		groupNames := []string{"Required Flags", "Optional Flags"}
@@ -93,11 +94,11 @@ func NewMigrateTopicsCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				output.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

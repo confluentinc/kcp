@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
@@ -184,7 +185,7 @@ Type options:
 			`HasExistingInternetGateway` does not require new branching as it does not require new inputs from the user. Instead
 			it just uses a data source for the existing internet gateway instead of creating a new one.
 		*/
-		fmt.Println(`
+		output.Println(`
 Available Migration Types:
   Public MSK Endpoints:
     Type 1: Cluster Link [SASL/SCRAM] (MSK & Apache Kafka)
@@ -202,11 +203,11 @@ Refer to the kcp docs for more information on each migration type.
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				output.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

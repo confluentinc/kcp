@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
@@ -35,7 +36,7 @@ func NewMigrateTopicsAssetGenerator(opts MigrateTopicsOpts) *MigrateTopicsAssetG
 }
 
 func (mt *MigrateTopicsAssetGenerator) Run() error {
-	fmt.Printf("🚀 Generating Terraform files for migrate-topics (mode=%s)\n", mt.opts.Mode)
+	output.Printf("🚀 Generating Terraform files for migrate-topics (mode=%s)\n", mt.opts.Mode)
 
 	outputDir := mt.opts.OutputDir
 	if outputDir == "" {
@@ -72,9 +73,9 @@ func (mt *MigrateTopicsAssetGenerator) Run() error {
 		return fmt.Errorf("failed to write Terraform files: %w", err)
 	}
 
-	fmt.Printf("✅ migrate-topics Terraform files generated: %s (%d topics, mode=%s)\n", outputDir, len(mt.opts.Topics), mt.opts.Mode)
+	output.Printf("✅ migrate-topics Terraform files generated: %s (%d topics, mode=%s)\n", outputDir, len(mt.opts.Topics), mt.opts.Mode)
 	if mt.opts.Mode == hclrequests.MigrateTopicsModeNew {
-		fmt.Println(newModeCLINote)
+		output.Println(newModeCLINote)
 	}
 
 	return nil

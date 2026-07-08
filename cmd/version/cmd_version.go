@@ -1,9 +1,8 @@
 package version
 
 import (
-	"fmt"
-
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -14,9 +13,9 @@ func NewVersionCmd() *cobra.Command {
 		Long:    "Display version, commit, and build date information",
 		Example: "  kcp version",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("Version: %s\n", build_info.Version)
-			fmt.Printf("Commit:  %s\n", build_info.Commit)
-			fmt.Printf("Date:    %s\n", build_info.Date)
+			output.Printf("Version: %s\n", build_info.Version)
+			output.Printf("Commit:  %s\n", build_info.Commit)
+			output.Printf("Date:    %s\n", build_info.Date)
 		},
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	iamservice "github.com/confluentinc/kcp/internal/services/iam"
@@ -38,7 +39,7 @@ func NewIamAclsGenerator(opts MigrateIamAclsOpts) *IamAclsGenerator {
 }
 
 func (ig *IamAclsGenerator) Run() error {
-	fmt.Printf("🚀 Generating Terraform files for IAM ACLs\n")
+	output.Printf("🚀 Generating Terraform files for IAM ACLs\n")
 	ctx := context.Background()
 
 	iamClient, err := client.NewIAMClient()
@@ -72,7 +73,7 @@ func (ig *IamAclsGenerator) Run() error {
 	}
 
 	if len(allAclsByPrincipal) == 0 {
-		fmt.Printf("⚠️ No kafka-cluster permissions found in the specified principal's policies, nothing to convert.\n")
+		output.Printf("⚠️ No kafka-cluster permissions found in the specified principal's policies, nothing to convert.\n")
 		return nil
 	}
 
@@ -129,7 +130,7 @@ func (ig *IamAclsGenerator) Run() error {
 		totalAcls += len(acls)
 	}
 
-	fmt.Printf("✅ IAM ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(allAclsByPrincipal), totalAcls)
+	output.Printf("✅ IAM ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(allAclsByPrincipal), totalAcls)
 
 	return nil
 }

@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/fatih/color"
 )
@@ -31,8 +32,8 @@ func (ml *MigrationLister) Run() error {
 	migrations := ml.migrationState.Migrations
 
 	if len(migrations) == 0 {
-		fmt.Printf("\n%s No migrations found in %s\n\n", color.YellowString("ℹ"), ml.migrationStateFile)
-		fmt.Printf("Run %s to create a new migration.\n\n", color.CyanString("kcp migration init"))
+		output.Printf("\n%s No migrations found in %s\n\n", color.YellowString("ℹ"), ml.migrationStateFile)
+		output.Printf("Run %s to create a new migration.\n\n", color.CyanString("kcp migration init"))
 		return nil
 	}
 
@@ -46,9 +47,9 @@ func (ml *MigrationLister) Run() error {
 	}
 
 	// Print header
-	fmt.Printf("\n%s %s\n", color.CyanString("Migration State:"), color.WhiteString(ml.migrationStateFile))
-	fmt.Printf("%s %s\n\n", color.CyanString("Last Updated:"), color.WhiteString(lastUpdated))
-	fmt.Printf("%s\n\n", color.CyanString("Migrations (%d):", len(migrations)))
+	output.Printf("\n%s %s\n", color.CyanString("Migration State:"), color.WhiteString(ml.migrationStateFile))
+	output.Printf("%s %s\n\n", color.CyanString("Last Updated:"), color.WhiteString(lastUpdated))
+	output.Printf("%s\n\n", color.CyanString("Migrations (%d):", len(migrations)))
 
 	// Sort migrations by creation time (newest first)
 	// We'll use the migration ID timestamp if available, otherwise just reverse order
@@ -66,36 +67,36 @@ func (ml *MigrationLister) Run() error {
 
 func (ml *MigrationLister) displayMigration(index int, migration migration.MigrationConfig) {
 	// Index and Migration ID
-	fmt.Printf("%s %s %s\n",
+	output.Printf("%s %s %s\n",
 		color.HiBlackString("[%d]", index),
 		color.HiBlackString("Migration ID:"),
 		color.New(color.Bold, color.FgWhite).Sprint(migration.MigrationId))
 
 	// Status with color coding
 	statusColor := ml.getStatusColor(migration.CurrentState)
-	fmt.Printf("    %s %s\n",
+	output.Printf("    %s %s\n",
 		color.HiBlackString("Status:"),
 		statusColor.Sprint(migration.CurrentState))
 
 	// Gateway
-	fmt.Printf("    %s %s\n",
+	output.Printf("    %s %s\n",
 		color.HiBlackString("Gateway:"),
 		color.WhiteString("%s/%s", migration.K8sNamespace, migration.InitialCrName))
 
 	// Cluster Link
-	fmt.Printf("    %s %s\n",
+	output.Printf("    %s %s\n",
 		color.HiBlackString("Cluster Link:"),
 		color.WhiteString(migration.ClusterLinkName))
 
 	// Topics - display all topic names with word wrapping
 	ml.displayTopics(migration.Topics)
 
-	fmt.Println() // Blank line between migrations
+	output.Println() // Blank line between migrations
 }
 
 func (ml *MigrationLister) displayTopics(topics []string) {
 	if len(topics) == 0 {
-		fmt.Printf("    %s %s\n",
+		output.Printf("    %s %s\n",
 			color.HiBlackString("Topics:"),
 			color.HiBlackString("(none)"))
 		return
@@ -103,7 +104,7 @@ func (ml *MigrationLister) displayTopics(topics []string) {
 
 	// Display topic count and names
 	topicsLabel := fmt.Sprintf("Topics (%d):", len(topics))
-	fmt.Printf("    %s ", color.HiBlackString(topicsLabel))
+	output.Printf("    %s ", color.HiBlackString(topicsLabel))
 
 	// Join topics with commas
 	topicsStr := strings.Join(topics, ", ")
@@ -115,7 +116,7 @@ func (ml *MigrationLister) displayTopics(topics []string) {
 
 	// If it fits on one line, just print it
 	if len(topicsStr) <= remainingLength {
-		fmt.Printf("%s\n", color.WhiteString(topicsStr))
+		output.Printf("%s\n", color.WhiteString(topicsStr))
 		return
 	}
 
@@ -139,10 +140,10 @@ func (ml *MigrationLister) displayTopics(topics []string) {
 		if len(testLine) > maxLen && currentLine != "" {
 			// Print current line and start new one
 			if firstLine {
-				fmt.Printf("%s\n", color.WhiteString(currentLine+","))
+				output.Printf("%s\n", color.WhiteString(currentLine+","))
 				firstLine = false
 			} else {
-				fmt.Printf("%s%s\n", indent, color.WhiteString(currentLine+","))
+				output.Printf("%s%s\n", indent, color.WhiteString(currentLine+","))
 			}
 			currentLine = word
 		} else {
@@ -152,9 +153,9 @@ func (ml *MigrationLister) displayTopics(topics []string) {
 		// Last word
 		if i == len(words)-1 {
 			if firstLine {
-				fmt.Printf("%s\n", color.WhiteString(currentLine))
+				output.Printf("%s\n", color.WhiteString(currentLine))
 			} else {
-				fmt.Printf("%s%s\n", indent, color.WhiteString(currentLine))
+				output.Printf("%s%s\n", indent, color.WhiteString(currentLine))
 			}
 		}
 	}
