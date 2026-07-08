@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	kcpoutput "github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/plan"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
@@ -134,7 +135,7 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return fmt.Errorf("write plan.md: %w", err)
 		}
-		fmt.Println("wrote", path)
+		kcpoutput.Println("wrote", path)
 	}
 	if writeJSON {
 		data, err := plan.RenderJSON(p)
@@ -145,7 +146,7 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return fmt.Errorf("write plan.json: %w", err)
 		}
-		fmt.Println("wrote", path)
+		kcpoutput.Println("wrote", path)
 	}
 	return nil
 }

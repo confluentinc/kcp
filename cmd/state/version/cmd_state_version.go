@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -60,7 +61,9 @@ func renderStateMetadata(w io.Writer, path string, m stateMetadata) {
 	// stop, rather than printing a misleading "Schema version: unversioned (legacy)" row.
 	if !m.hasKCPMarkers() {
 		lines = append(lines, "  (no KCP metadata found — this does not look like a kcp-state.json file)")
-		_, _ = fmt.Fprintln(w, strings.Join(lines, "\n"))
+		out := strings.Join(lines, "\n")
+		_, _ = fmt.Fprintln(w, out)
+		output.Mirror(out)
 		return
 	}
 
@@ -91,7 +94,9 @@ func renderStateMetadata(w io.Writer, path string, m stateMetadata) {
 	if m.UpgradedFrom != "" {
 		row("Upgraded from", m.UpgradedFrom)
 	}
-	_, _ = fmt.Fprintln(w, strings.Join(lines, "\n"))
+	out := strings.Join(lines, "\n")
+	_, _ = fmt.Fprintln(w, out)
+	output.Mirror(out)
 }
 
 func NewStateVersionCmd() *cobra.Command {

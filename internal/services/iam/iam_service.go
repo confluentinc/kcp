@@ -10,6 +10,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/iam"
 	iamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
+	"github.com/confluentinc/kcp/internal/output"
 )
 
 type RolePolicies struct {
@@ -298,34 +299,34 @@ func parsePolicyDocument(encodedDocument string) (map[string]interface{}, error)
 }
 
 func PrintRolePolicies(policies *RolePolicies) {
-	fmt.Printf("IAM Role Policies for: %s\n", policies.RoleName)
-	fmt.Printf("Role ARN: %s\n\n", policies.RoleArn)
+	output.Printf("IAM Role Policies for: %s\n", policies.RoleName)
+	output.Printf("Role ARN: %s\n\n", policies.RoleArn)
 
 	// Print inline policies
 	if len(policies.InlinePolicies) > 0 {
-		fmt.Printf("Inline Policies (%d):\n", len(policies.InlinePolicies))
+		output.Printf("Inline Policies (%d):\n", len(policies.InlinePolicies))
 		for i, policy := range policies.InlinePolicies {
-			fmt.Printf("  %d. Policy Name: %s\n", i+1, policy.PolicyName)
+			output.Printf("  %d. Policy Name: %s\n", i+1, policy.PolicyName)
 			policyJSON, _ := json.MarshalIndent(policy.PolicyDocument, "     ", "  ")
-			fmt.Printf("     Policy Document:\n%s\n\n", string(policyJSON))
+			output.Printf("     Policy Document:\n%s\n\n", string(policyJSON))
 		}
 	} else {
-		fmt.Println("No inline policies found")
+		output.Println("No inline policies found")
 	}
 
 	// Print attached policies
 	if len(policies.AttachedPolicies) > 0 {
-		fmt.Printf("Attached Policies (%d):\n", len(policies.AttachedPolicies))
+		output.Printf("Attached Policies (%d):\n", len(policies.AttachedPolicies))
 		for i, policy := range policies.AttachedPolicies {
-			fmt.Printf("  %d. Policy Name: %s\n", i+1, policy.PolicyName)
-			fmt.Printf("     Policy ARN: %s\n", policy.PolicyArn)
+			output.Printf("  %d. Policy Name: %s\n", i+1, policy.PolicyName)
+			output.Printf("     Policy ARN: %s\n", policy.PolicyArn)
 			if policy.Description != "" {
-				fmt.Printf("     Description: %s\n", policy.Description)
+				output.Printf("     Description: %s\n", policy.Description)
 			}
 			policyJSON, _ := json.MarshalIndent(policy.PolicyDocument, "     ", "  ")
-			fmt.Printf("     Policy Document:\n%s\n\n", string(policyJSON))
+			output.Printf("     Policy Document:\n%s\n\n", string(policyJSON))
 		}
 	} else {
-		fmt.Println("No attached policies found")
+		output.Println("No attached policies found")
 	}
 }

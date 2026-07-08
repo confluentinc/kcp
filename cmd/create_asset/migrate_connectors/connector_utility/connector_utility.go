@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -60,7 +61,7 @@ func (cu *ConnectorUtility) Run() error {
 
 		connectorConfigs := cu.buildConnectorConfigs(cluster)
 		if len(connectorConfigs.Connectors) == 0 {
-			fmt.Printf("  ⏭️ Skipping: %s (no connectors found)\n", filename)
+			output.Printf("  ⏭️ Skipping: %s (no connectors found)\n", filename)
 			continue
 		}
 
@@ -81,18 +82,22 @@ func (cu *ConnectorUtility) Run() error {
 		}
 
 		totalConnectors += len(connectorConfigs.Connectors)
-		fmt.Printf("  ✅ Generated: %s (%d connector(s))\n", filename, len(connectorConfigs.Connectors))
+		output.Printf("  ✅ Generated: %s (%d connector(s))\n", filename, len(connectorConfigs.Connectors))
 	}
 
-	fmt.Printf("✅ Successfully generated connector config files for %d cluster(s) with %d total connector(s) in %s\n", len(cu.clustersByArn), totalConnectors, cu.outputDir)
+	output.Printf("✅ Successfully generated connector config files for %d cluster(s) with %d total connector(s) in %s\n", len(cu.clustersByArn), totalConnectors, cu.outputDir)
 
 	readmePath := filepath.Join(cu.outputDir, "README.md")
 	if err := cu.generateREADME(readmePath); err != nil {
 		return fmt.Errorf("failed to generate README: %w", err)
 	}
 
-	fmt.Println()
-	color.Green("See the README.md file in the output directory for next steps.")
+	output.Println()
+	// color.Green owns the (coloured) terminal write; mirror the plain text into
+	// kcp.log separately so the log records this closing narrative too.
+	nextSteps := "See the README.md file in the output directory for next steps."
+	color.Green(nextSteps)
+	output.Mirror(nextSteps)
 
 	return nil
 }

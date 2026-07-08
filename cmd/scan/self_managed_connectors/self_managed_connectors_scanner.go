@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/services/jmx"
 	prometheussvc "github.com/confluentinc/kcp/internal/services/prometheus"
@@ -133,17 +134,17 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	}
 
 	clusterName := utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
-	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", clusterName)
+	output.Printf("🚀 Starting self-managed connector scan for cluster %s\n", clusterName)
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
 		return fmt.Errorf("failed to list connectors: %v", err)
 	}
 
-	fmt.Printf("  🔍 Found %d connectors\n", len(connectorNames))
+	output.Printf("  🔍 Found %d connectors\n", len(connectorNames))
 
 	if len(connectorNames) == 0 {
-		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", clusterName)
+		output.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", clusterName)
 		return nil
 	}
 
@@ -159,7 +160,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		connectors = append(connectors, connector)
 	}
 
-	fmt.Printf("  ✅ Successfully retrieved connector details for %d connectors\n", len(connectors))
+	output.Printf("  ✅ Successfully retrieved connector details for %d connectors\n", len(connectors))
 	if totalRedacted > 0 {
 		// Counts only — never the redacted keys or values.
 		slog.Info("redacted sensitive connector config fields", "redacted_fields", totalRedacted, "connectors", len(connectors))
@@ -177,12 +178,12 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		metrics, err := s.collectConnectMetrics(context.Background())
 		if err != nil {
 			slog.Warn("Connect metrics collection failed; connectors persisted without metrics", "source", s.metricsSource, "error", err)
-			fmt.Printf("  ⚠️  Connect metrics collection failed; connectors persisted without metrics\n")
+			output.Printf("  ⚠️  Connect metrics collection failed; connectors persisted without metrics\n")
 		} else if err := s.updateStateWithConnectMetrics(metrics); err != nil {
 			slog.Warn("failed to attach Connect metrics to state; connectors persisted without metrics", "error", err)
-			fmt.Printf("  ⚠️  Could not attach Connect metrics; connectors persisted without metrics\n")
+			output.Printf("  ⚠️  Could not attach Connect metrics; connectors persisted without metrics\n")
 		} else {
-			fmt.Printf("  📊 Collected %d Connect metric data points\n", len(metrics.Metrics))
+			output.Printf("  📊 Collected %d Connect metric data points\n", len(metrics.Metrics))
 		}
 	}
 
@@ -190,7 +191,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
-	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", clusterName)
+	output.Printf("✅ Self-managed connector scan complete for cluster %s\n", clusterName)
 	return nil
 }
 
@@ -352,7 +353,7 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 	}
 
 	info.SetSelfManagedConnectors(connectors)
-	fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
+	output.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
 
 	return nil
 }

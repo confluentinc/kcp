@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/markdown"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
@@ -46,7 +47,7 @@ func NewCostReporter(reportService ReportService, markdownService markdown.Markd
 }
 
 func (r *CostReporter) Run() error {
-	fmt.Printf("🔍 Processing regions: %v (from %s to %s)\n", r.regions, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
+	output.Printf("🔍 Processing regions: %v (from %s to %s)\n", r.regions, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
 
 	processedState := r.reportService.ProcessState(*r.state)
 	regionCostData := []report.ProcessedRegionCosts{}

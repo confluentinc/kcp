@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
@@ -34,7 +35,7 @@ func NewMigrationInfraAssetGenerator(opts MigrationInfraOpts) *MigrationInfraAss
 }
 
 func (mi *MigrationInfraAssetGenerator) Run() error {
-	fmt.Printf("🚀 Generating migration infrastructure (type: %v)\n", mi.migrationType)
+	output.Printf("🚀 Generating migration infrastructure (type: %v)\n", mi.migrationType)
 
 	outputDir := mi.outputDir
 	if outputDir == "" {
@@ -56,6 +57,6 @@ func (mi *MigrationInfraAssetGenerator) Run() error {
 		return fmt.Errorf("failed to write Terraform project: %w", err)
 	}
 
-	fmt.Printf("✅ Migration infrastructure generated: %s\n", outputDir)
+	output.Printf("✅ Migration infrastructure generated: %s\n", outputDir)
 	return nil
 }

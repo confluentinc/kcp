@@ -120,6 +120,23 @@ The `internal/client/kafka_admin.go` package handles all auth types. SASL/SCRAM 
 
 Logs go to `kcp.log` via lumberjack (rotating) and stdout via a custom `slog` pretty handler. Default level is DEBUG.
 
+### Terminal output vs. logs — `slog` / `output` / `fmt`
+
+Three ways to emit text, each with a distinct destination. Pick by intent:
+
+| API | Terminal | `kcp.log` | Use for |
+| --- | --- | --- | --- |
+| `slog.*` (Info/Warn/Error/Debug) | Warn+ only (Debug+ with `--verbose`) | always (all levels) | **diagnostics** — structured, level-gated telemetry |
+| `output.*` (`internal/output`) | yes (colour preserved) | yes (ANSI-stripped mirror) | **user-facing action narrative** you want in the support log — scans, discoveries, files written, results, switchover steps |
+| `fmt.Print*` | yes | **no** | **terminal-only, deliberately unrecorded** (see below) |
+
+`fmt.Print*` is not "the leftover" — it has two legitimate roles:
+
+1. **Interactive prompts** — you're about to read stdin; a half-line prompt shouldn't be logged (e.g. `askForConfirmation`).
+2. **Usage / help / description text** (`SetUsageFunc`, `--help`) — static reference material, not a record of what the command *did*.
+
+**Critical: `output.*` is only valid inside `Run`/`RunE` (i.e. after `PersistentPreRun`).** The file + `DropMirrored` console handlers are installed in the root command's `PersistentPreRun`. `SetUsageFunc` (and anything cobra runs on the `--help`/flag-error path) fires *before* that, when only the default `slog` handler exists — so `output.*` there would leak the internal `__mirror` marker to the terminal and never reach `kcp.log`. Usage funcs therefore use `fmt.Print*`.
+
 ### Emoji standard (PR [#234](https://github.com/confluentinc/kcp/pull/234))
 
 Only these six emojis are allowed in log lines. One emoji per line, at the start of the message string:

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
@@ -357,7 +358,7 @@ func normaliseConnectURL(url string) string {
 	}
 
 	normalisedUrl := "http://" + url
-	fmt.Printf("ℹ️  Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
+	output.Printf("ℹ️  Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
 
 	return normalisedUrl
 }

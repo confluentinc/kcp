@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	glue_service "github.com/confluentinc/kcp/internal/services/glue_schema_registry"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/schema_registry"
@@ -199,7 +200,7 @@ func runScanConfluentSchemaRegistry() error {
 		return fmt.Errorf("failed to scan schema registry: %v", err)
 	}
 
-	fmt.Printf("✅ Successfully scanned schema registry\n")
+	output.Printf("✅ Successfully scanned schema registry\n")
 
 	return nil
 }

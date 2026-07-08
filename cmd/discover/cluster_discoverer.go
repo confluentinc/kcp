@@ -14,6 +14,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	kafkaconnecttypes "github.com/aws/aws-sdk-go-v2/service/kafkaconnect/types"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/services/metrics"
 	"github.com/confluentinc/kcp/internal/types"
@@ -70,7 +71,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 
 	var clusterMetric *types.ClusterMetrics
 	if skipMetrics {
-		fmt.Printf("  ⏭️  Skipping metrics discovery\n")
+		output.Printf("  ⏭️  Skipping metrics discovery\n")
 		clusterMetric = &types.ClusterMetrics{}
 	} else {
 		clusterMetric, err = cd.discoverMetrics(ctx, clusterArn, metricsGranularity)
@@ -161,7 +162,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		}
 		kafkaClientInfo.SetTopics(topics)
 	} else {
-		fmt.Printf("  ⏭️  Skipping topic discovery\n")
+		output.Printf("  ⏭️  Skipping topic discovery\n")
 	}
 
 	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
@@ -179,7 +180,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 // file or logs. All failures are non-fatal: a warning is logged and connector
 // discovery is skipped rather than aborting the wider discover run (R3).
 func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, awsClientInfo *types.AWSClientInformation) ([]types.ConnectorSummary, error) {
-	fmt.Printf("  🔍 Scanning for matching connectors\n")
+	output.Printf("  🔍 Scanning for matching connectors\n")
 	var matchingConnectors []types.ConnectorSummary
 
 	totalRedacted := 0
@@ -246,7 +247,7 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 			redactedConfig, redactedCount := redact.RedactStringMap(describeConnector.ConnectorConfiguration)
 			totalRedacted += redactedCount
 
-			fmt.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
+			output.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
 			matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
 				ConnectorArn:                     aws.ToString(connector.ConnectorArn),
 				ConnectorName:                    aws.ToString(connector.ConnectorName),
@@ -318,7 +319,7 @@ func bootstrapMatches(connectorBootstrap string, brokerAddresses []string) bool 
 }
 
 func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
-	fmt.Printf("  🔍 Describing cluster %s\n", clusterArn)
+	output.Printf("  🔍 Describing cluster %s\n", clusterArn)
 
 	cluster, err := cd.mskService.DescribeClusterV2(ctx, clusterArn)
 	if err != nil {
@@ -563,7 +564,7 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 }
 
 func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
-	fmt.Printf("  🔍 Scanning for topics\n")
+	output.Printf("  🔍 Scanning for topics\n")
 
 	topics, err := cd.mskService.GetTopicsWithConfigs(ctx, clusterArn)
 	if err != nil {

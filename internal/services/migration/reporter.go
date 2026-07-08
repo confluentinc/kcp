@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/fatih/color"
 )
 
@@ -25,16 +26,23 @@ func newReporter() *reporter {
 	return &reporter{out: os.Stdout, err: os.Stderr}
 }
 
-// printf writes to the progress stream. Write errors to a terminal are not
-// actionable, so they are intentionally discarded here (once) rather than at
-// every call site.
+// printf writes to the progress stream and mirrors a clean copy into kcp.log
+// (see internal/output). Write errors to a terminal are not actionable, so they
+// are intentionally discarded here (once) rather than at every call site. The
+// mirror is additive: the stream write is byte-identical to before, so the e2e
+// stdout pins and the stdout-capture unit tests are unaffected.
 func (r *reporter) printf(format string, a ...any) {
-	_, _ = fmt.Fprintf(r.out, format, a...)
+	s := fmt.Sprintf(format, a...)
+	_, _ = fmt.Fprint(r.out, s)
+	output.Mirror(s)
 }
 
-// errf writes to the remediation stream, discarding the unactionable error.
+// errf writes to the remediation stream and mirrors it into kcp.log, discarding
+// the unactionable stream error.
 func (r *reporter) errf(format string, a ...any) {
-	_, _ = fmt.Fprintf(r.err, format, a...)
+	s := fmt.Sprintf(format, a...)
+	_, _ = fmt.Fprint(r.err, s)
+	output.Mirror(s)
 }
 
 // section prints a blank line then a cyan banner announcing a major step. The

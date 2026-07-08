@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/markdown"
@@ -35,7 +36,7 @@ func NewKafkaAclsGenerator(opts MigrateKafkaAclsOpts) *KafkaAclsGenerator {
 }
 
 func (kg *KafkaAclsGenerator) Run() error {
-	fmt.Printf("🚀 Generating Terraform files for Kafka ACLs\n")
+	output.Printf("🚀 Generating Terraform files for Kafka ACLs\n")
 
 	outputDir := kg.opts.OutputDir
 	if outputDir == "" {
@@ -91,7 +92,7 @@ func (kg *KafkaAclsGenerator) Run() error {
 		totalAcls += len(acls)
 	}
 
-	fmt.Printf("✅ Kafka ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(aclsByPrincipal), totalAcls)
+	output.Printf("✅ Kafka ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(aclsByPrincipal), totalAcls)
 
 	return nil
 }

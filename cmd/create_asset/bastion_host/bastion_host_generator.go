@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
@@ -30,7 +31,7 @@ func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerat
 }
 
 func (bh *BastionHostAssetGenerator) Run() error {
-	fmt.Printf("🚀 Generating bastion host environment assets\n")
+	output.Printf("🚀 Generating bastion host environment assets\n")
 
 	outputDir := bh.opts.OutputDir
 	if outputDir == "" {
@@ -68,7 +69,7 @@ func (bh *BastionHostAssetGenerator) Run() error {
 	}
 	slog.Debug("wrote bastion-host-user-data.tpl")
 
-	fmt.Printf("✅ Bastion host environment assets generated successfully: %s\n", outputDir)
+	output.Printf("✅ Bastion host environment assets generated successfully: %s\n", outputDir)
 	return nil
 }
 

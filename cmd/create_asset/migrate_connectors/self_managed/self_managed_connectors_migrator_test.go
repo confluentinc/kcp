@@ -1,9 +1,11 @@
 package self_managed_connectors
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -744,4 +747,101 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig(t *testing.T) {
 
 	// We expect an error because it will try to reach the actual API
 	assert.Error(t, err)
+}
+
+// recordingHandler captures the slog records handed to it so tests can inspect
+// the mirror leg — the ANSI-stripped copy of terminal output that output.Printf
+// sends to kcp.log via slog.Default().
+type recordingHandler struct{ records []slog.Record }
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+// isMirrorRecord reports whether r is a mirror of terminal output (carries the
+// output package's suppression marker) rather than an ordinary slog line.
+func isMirrorRecord(r slog.Record) bool {
+	marked := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == output.MirrorMarkerKey {
+			marked = true
+		}
+		return true
+	})
+	return marked
+}
+
+// Abuse case (R5): the count-based "redacted sensitive fields" warning is
+// additively mirrored into kcp.log, and the mirror stays redacted — it carries
+// redact.Placeholder, never a raw secret, the connector name, or the field key.
+// A raw secret sitting in a sibling field proves the mirror (like stdout) never
+// emits config values at all: only the count and the placeholder.
+func TestSelfManagedConnectorMigrator_Run_MirrorsRedactedWarningStillRedacted(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	const rawSecret = "hunter2-RAW-DB-PASSWORD"
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewSelfManagedConnectorMigrator(MigrateSelfManagedConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.SelfManagedConnector{
+			{
+				Name: "pg-sink",
+				Config: map[string]any{
+					"connector.class":   "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"database.password": redact.Placeholder,
+					// A raw secret in a sibling field: neither stdout nor the mirror
+					// may ever emit it (the warning is count-only).
+					"extra.token": rawSecret,
+				},
+			},
+			{
+				Name: "clean-sink",
+				Config: map[string]any{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+					"tasks.max":       "3",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	h := &recordingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	defer slog.SetDefault(prev)
+
+	out := captureStdout(t, func() { require.NoError(t, migrator.Run()) })
+
+	// Terminal bytes unchanged (KTD2): the count-based redacted warning still
+	// names the placeholder on stdout and never carries the raw secret.
+	assert.Contains(t, out, "1 of 2")
+	assert.Contains(t, out, redact.Placeholder)
+	assert.NotContains(t, out, rawSecret, "stdout must never carry a raw secret")
+
+	// The mirror leg (kcp.log) must carry the same warning, still redacted, and
+	// must never carry a raw secret, the connector name, or the field key.
+	var mirroredWarning bool
+	for _, r := range h.records {
+		if !isMirrorRecord(r) {
+			continue
+		}
+		assert.NotContains(t, r.Message, rawSecret, "mirror must never carry a raw secret value")
+		assert.NotContains(t, r.Message, "database.password", "mirror must not carry the field key")
+		assert.NotContains(t, r.Message, "pg-sink", "mirror must not carry the connector name")
+		if strings.Contains(r.Message, "redacted sensitive fields") {
+			mirroredWarning = true
+			assert.Contains(t, r.Message, redact.Placeholder, "mirrored warning must stay redacted")
+		}
+	}
+	require.True(t, mirroredWarning, "the redacted warning must be mirrored into kcp.log")
 }
