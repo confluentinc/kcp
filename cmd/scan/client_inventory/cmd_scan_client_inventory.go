@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/services/s3"
 	"github.com/confluentinc/kcp/internal/types"
@@ -61,7 +62,7 @@ Each unique client is keyed by ` + "`clientID|topic|role|auth|principal`" + ` â€
 	groups[requiredFlags] = "Required Flags"
 
 	clientInventoryCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		output.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags}
 		groupNames := []string{"Required Flags"}
@@ -69,11 +70,11 @@ Each unique client is keyed by ` + "`clientID|topic|role|auth|principal`" + ` â€
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				output.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})

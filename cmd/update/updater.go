@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/creativeprojects/go-selfupdate"
 	"github.com/fatih/color"
 )
@@ -75,15 +76,15 @@ func (u *Updater) Run() error {
 
 	// Step 4: Check if already up to date
 	if latest.LessOrEqual(currentVersion) {
-		fmt.Printf("✅ Your installed version (%s) is already the latest available\n", currentVersion)
+		output.Printf("✅ Your installed version (%s) is already the latest available\n", currentVersion)
 		return nil
 	}
 
-	fmt.Printf("✅ New version available: %s\n", latest.Version())
+	output.Printf("✅ New version available: %s\n", latest.Version())
 
 	// Step 5: If --check-only flag is set, just report available update and exit
 	if u.opts.CheckOnly {
-		fmt.Printf("Update available from %s to %s. Run without --check-only to update.\n", currentVersion, latest.Version())
+		output.Printf("Update available from %s to %s. Run without --check-only to update.\n", currentVersion, latest.Version())
 		return nil
 	}
 
@@ -93,14 +94,14 @@ func (u *Updater) Run() error {
 		return nil
 	}
 
-	fmt.Printf("🚀 Updating from %s --> %s\n", currentVersion, latest.Version())
+	output.Printf("🚀 Updating from %s --> %s\n", currentVersion, latest.Version())
 
 	// Step 7: Download and install the latest version
 	if err := selfupdate.UpdateTo(context.Background(), latest.AssetURL, latest.AssetName, exePath); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
 
-	fmt.Printf("✅ Successfully updated kcp to %s\n", latest.Version())
+	output.Printf("✅ Successfully updated kcp to %s\n", latest.Version())
 
 	return nil
 }

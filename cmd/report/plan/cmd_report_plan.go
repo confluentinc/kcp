@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	kcpoutput "github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/plan"
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
@@ -64,16 +65,16 @@ func NewReportPlanCmd() *cobra.Command {
 	groups[optionalFlags] = "Optional Flags"
 
 	reportPlanCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		kcpoutput.Printf("%s\n\n", c.Short)
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
 		groupNames := []string{"Required Flags", "Optional Flags"}
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				kcpoutput.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		kcpoutput.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 		return nil
 	})
 
@@ -134,7 +135,7 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return fmt.Errorf("write plan.md: %w", err)
 		}
-		fmt.Println("wrote", path)
+		kcpoutput.Println("wrote", path)
 	}
 	if writeJSON {
 		data, err := plan.RenderJSON(p)
@@ -145,7 +146,7 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 		if err := os.WriteFile(path, data, 0o644); err != nil {
 			return fmt.Errorf("write plan.json: %w", err)
 		}
-		fmt.Println("wrote", path)
+		kcpoutput.Println("wrote", path)
 	}
 	return nil
 }

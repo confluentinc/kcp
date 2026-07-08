@@ -3,6 +3,7 @@ package upgrade
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/spf13/cobra"
 )
@@ -27,7 +28,9 @@ func NewStateUpgradeCmd() *cobra.Command {
 			if err := state.WriteToFile(stateFile); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "upgraded %s (schema_version stamped)\n", stateFile)
+			msg := fmt.Sprintf("upgraded %s (schema_version stamped)", stateFile)
+			_, _ = fmt.Fprintln(cmd.OutOrStdout(), msg)
+			output.Mirror(msg)
 			return nil
 		},
 	}

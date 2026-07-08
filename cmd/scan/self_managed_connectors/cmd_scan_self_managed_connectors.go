@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 
@@ -122,10 +123,10 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	selfManagedConnectorsCmd.Flags().AddFlagSet(metricsFlags)
 
 	selfManagedConnectorsCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		output.Printf("%s\n\n", c.Short)
 
 		if c.Example != "" {
-			fmt.Printf("Examples:\n%s\n\n", c.Example)
+			output.Printf("Examples:\n%s\n\n", c.Example)
 		}
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, saslScramFlags, tlsFlags, metricsFlags}
@@ -134,11 +135,11 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				output.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})
@@ -357,7 +358,7 @@ func normaliseConnectURL(url string) string {
 	}
 
 	normalisedUrl := "http://" + url
-	fmt.Printf("ℹ️  Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
+	output.Printf("ℹ️  Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
 
 	return normalisedUrl
 }

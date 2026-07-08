@@ -1,9 +1,11 @@
 package msk_connectors
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/redact"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
@@ -654,4 +657,73 @@ func TestMskConnectorMigrator_MultipleConnectors(t *testing.T) {
 		// Expected in this test setup
 		fmt.Printf("Expected error in test environment: %v\n", err)
 	}
+}
+
+// recordingHandler captures the slog records handed to it so tests can inspect
+// the mirror leg — the ANSI-stripped copy of terminal output that output.Printf
+// sends to kcp.log via slog.Default().
+type recordingHandler struct{ records []slog.Record }
+
+func (h *recordingHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *recordingHandler) Handle(_ context.Context, r slog.Record) error {
+	h.records = append(h.records, r.Clone())
+	return nil
+}
+func (h *recordingHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *recordingHandler) WithGroup(string) slog.Handler      { return h }
+
+func isMirrorRecord(r slog.Record) bool {
+	marked := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key == output.MirrorMarkerKey {
+			marked = true
+		}
+		return true
+	})
+	return marked
+}
+
+// Spot-check (R2/R4): the connector-migration progress narrative additively
+// reaches kcp.log — the same line printed to stdout also appears in a mirror
+// record — without changing the terminal bytes.
+func TestMskConnectorMigrator_Run_MirrorsProgressNarrative(t *testing.T) {
+	server := echoTranslateServer(t)
+	defer server.Close()
+
+	outDir := filepath.Join(t.TempDir(), "out")
+	migrator := NewMskConnectorMigrator(MigrateMskConnectorOpts{
+		EnvironmentId: "env-123",
+		ClusterId:     "lkc-123",
+		CcApiKey:      "test-key",
+		CcApiSecret:   "test-secret",
+		Connectors: []types.ConnectorSummary{
+			{
+				ConnectorName: "pg-sink",
+				ConnectorConfiguration: map[string]string{
+					"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",
+				},
+			},
+		},
+		OutputDir: outDir,
+	})
+	migrator.baseURL = server.URL
+
+	h := &recordingHandler{}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(h))
+	defer slog.SetDefault(prev)
+
+	out := captureStdout(t, func() { require.NoError(t, migrator.Run()) })
+
+	// Terminal bytes unchanged (KTD2).
+	assert.Contains(t, out, "Found 1 connector(s) to migrate")
+
+	// The same narrative must reach kcp.log via a mirror record.
+	var mirrored bool
+	for _, r := range h.records {
+		if isMirrorRecord(r) && strings.Contains(r.Message, "Found 1 connector(s) to migrate") {
+			mirrored = true
+		}
+	}
+	require.True(t, mirrored, "the progress narrative must be mirrored into kcp.log")
 }

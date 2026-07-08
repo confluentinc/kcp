@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -54,10 +55,10 @@ All flags can be provided via environment variables (uppercase, with underscores
 	cmd.Flags().AddFlagSet(optionalFlags)
 
 	cmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
-		fmt.Printf("Required:\n%s\n", requiredFlags.FlagUsages())
-		fmt.Printf("Optional:\n%s\n", optionalFlags.FlagUsages())
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Printf("%s\n\n", c.Short)
+		output.Printf("Required:\n%s\n", requiredFlags.FlagUsages())
+		output.Printf("Optional:\n%s\n", optionalFlags.FlagUsages())
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 		return nil
 	})
 

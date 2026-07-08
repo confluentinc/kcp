@@ -10,6 +10,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	jmx "github.com/confluentinc/kcp/internal/services/jmx"
 	prometheussvc "github.com/confluentinc/kcp/internal/services/prometheus"
@@ -227,7 +228,7 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	// matches this binary (build_info.DocsURL() resolves to /dev/ for
 	// development builds and /<version>/ for release builds).
 	if sourceType == "osk" {
-		fmt.Printf("\nℹ️  Apache Kafka credentials file format & metrics options: %sapache-kafka-configuration/\n", build_info.DocsURL())
+		output.Printf("\nℹ️  Apache Kafka credentials file format & metrics options: %sapache-kafka-configuration/\n", build_info.DocsURL())
 	}
 
 	// Perform scan
@@ -252,7 +253,7 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	if metricsSource != "" && sourceType == "osk" {
 		if err := collectMetrics(ctx, state, credentialsFile); err != nil {
 			slog.Warn("metrics collection failed", "error", err)
-			fmt.Printf("\n⚠️  Metrics collection failed: %v\n", err)
+			output.Printf("\n⚠️  Metrics collection failed: %v\n", err)
 		}
 	}
 
@@ -262,9 +263,9 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	}
 
 	slog.Info("scan completed successfully", "clusters", len(scanResult.Clusters), "state_file", stateFile)
-	fmt.Printf("\n✅ Scan completed successfully\n")
-	fmt.Printf("   Scanned %d cluster(s)\n", len(scanResult.Clusters))
-	fmt.Printf("   State file: %s\n\n", stateFile)
+	output.Printf("\n✅ Scan completed successfully\n")
+	output.Printf("   Scanned %d cluster(s)\n", len(scanResult.Clusters))
+	output.Printf("   State file: %s\n\n", stateFile)
 
 	return nil
 }
@@ -421,7 +422,7 @@ func collectMetrics(ctx context.Context, state *types.State, credentialsFilePath
 		}
 		oskCluster.ClusterMetrics = metrics
 
-		fmt.Printf("   ✅ Collected %d data points for cluster '%s'\n", len(metrics.Metrics), clusterCreds.ID)
+		output.Printf("   ✅ Collected %d data points for cluster '%s'\n", len(metrics.Metrics), clusterCreds.ID)
 	}
 
 	return nil
@@ -436,7 +437,7 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 	interval, _ := time.ParseDuration(metricsInterval)
 
 	slog.Info("collecting Jolokia metrics", "cluster", clusterCreds.ID, "duration", duration, "interval", interval)
-	fmt.Printf("\n📊 Collecting Jolokia metrics for cluster '%s' (duration: %s, interval: %s)...\n", clusterCreds.ID, duration, interval)
+	output.Printf("\n📊 Collecting Jolokia metrics for cluster '%s' (duration: %s, interval: %s)...\n", clusterCreds.ID, duration, interval)
 
 	var jolokiaOpts []client.JolokiaOption
 	if clusterCreds.Jolokia.Auth != nil {
@@ -458,7 +459,7 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 	queryRange, _ := utils.ParseDurationDays(metricsRange)
 
 	slog.Info("collecting Prometheus metrics", "cluster", clusterCreds.ID, "range", metricsRange)
-	fmt.Printf("\n📊 Collecting Prometheus metrics for cluster '%s' (range: %s)...\n", clusterCreds.ID, metricsRange)
+	output.Printf("\n📊 Collecting Prometheus metrics for cluster '%s' (range: %s)...\n", clusterCreds.ID, metricsRange)
 
 	var promOpts []client.PrometheusOption
 	if clusterCreds.Prometheus.Auth != nil {

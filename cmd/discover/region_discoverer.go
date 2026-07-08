@@ -11,6 +11,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -36,7 +37,7 @@ func NewRegionDiscoverer(mskService RegionDiscovererMSKService, costService Regi
 }
 
 func (rd *RegionDiscoverer) Discover(ctx context.Context, region string, skipCosts bool) (*types.DiscoveredRegion, error) {
-	fmt.Printf("🔍 Discovering region %s\n", region)
+	output.Printf("🔍 Discovering region %s\n", region)
 	discoveredRegion := types.DiscoveredRegion{
 		Name: region,
 	}
@@ -50,7 +51,7 @@ func (rd *RegionDiscoverer) Discover(ctx context.Context, region string, skipCos
 	discoveredRegion.Configurations = configurations
 
 	if skipCosts {
-		fmt.Printf("  ⏭️  Skipping cost discovery\n")
+		output.Printf("  ⏭️  Skipping cost discovery\n")
 		discoveredRegion.Costs = types.CostInformation{}
 	} else {
 		regionCosts, err := rd.discoverCosts(ctx, region)
@@ -97,7 +98,7 @@ func (rd *RegionDiscoverer) discoverCosts(ctx context.Context, region string) (*
 }
 
 func (rd *RegionDiscoverer) discoverClusterArns(ctx context.Context, maxResults int32) ([]string, error) {
-	fmt.Printf("  🔍 Listing clusters\n")
+	output.Printf("  🔍 Listing clusters\n")
 
 	clusters, err := rd.mskService.ListClusters(ctx, maxResults)
 	if err != nil {

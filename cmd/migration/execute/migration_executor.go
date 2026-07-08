@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
@@ -116,8 +117,15 @@ func (m *MigrationExecutor) Run() error {
 	// so a restore error does not roll back a successful switchover.
 	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, orchestrator.PersistState)
 
-	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
+	printMigrationComplete(config.MigrationId)
 	return nil
+}
+
+// printMigrationComplete emits the final completion line to the terminal and
+// mirrors it into kcp.log (see internal/output). Additive: the stdout bytes are
+// unchanged from the previous fmt.Printf.
+func printMigrationComplete(migrationID string) {
+	output.Printf("✅ Migration completed: %s\n", migrationID)
 }
 
 func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {

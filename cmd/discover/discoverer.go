@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/cost"
 	"github.com/confluentinc/kcp/internal/services/ec2"
 	"github.com/confluentinc/kcp/internal/services/markdown"
@@ -55,7 +56,7 @@ func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 }
 
 func (d *Discoverer) Run() error {
-	fmt.Printf("🚀 Starting discover\n")
+	output.Printf("🚀 Starting discover\n")
 
 	if err := d.discoverRegions(); err != nil {
 		slog.Error("failed to discover regions", "error", err)
@@ -152,7 +153,7 @@ func (d *Discoverer) discoverRegions() error {
 
 	for _, requested := range d.clusterArns {
 		if !matchedArns[requested] {
-			fmt.Printf("  ⚠️  Cluster ARN not found among discovered clusters: %s\n", requested)
+			output.Printf("  ⚠️  Cluster ARN not found among discovered clusters: %s\n", requested)
 		}
 	}
 
@@ -172,7 +173,7 @@ func (d *Discoverer) discoverRegions() error {
 	// report regions without clusters
 	if len(regionsWithoutClusters) > 0 {
 		for _, region := range regionsWithoutClusters {
-			fmt.Printf("  ⏭️  No clusters found in region %s\n", region)
+			output.Printf("  ⏭️  No clusters found in region %s\n", region)
 		}
 	}
 

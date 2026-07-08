@@ -10,6 +10,7 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
@@ -45,7 +46,7 @@ func NewMigrateSchemasAssetGenerator(opts MigrateSchemasOpts) *MigrateSchemasAss
 }
 
 func (ms *MigrateSchemasAssetGenerator) Run() error {
-	fmt.Printf("🚀 Generating migrate schemas assets\n")
+	output.Printf("🚀 Generating migrate schemas assets\n")
 
 	outputDir := "migrate_schemas"
 	if err := utils.ValidateOutputDir(outputDir); err != nil {
@@ -65,7 +66,7 @@ func (ms *MigrateSchemasAssetGenerator) Run() error {
 		return fmt.Errorf("failed to generate tfvars files: %w", err)
 	}
 
-	fmt.Printf("✅ Migrate schemas assets generated: %s\n", outputDir)
+	output.Printf("✅ Migrate schemas assets generated: %s\n", outputDir)
 
 	return nil
 }

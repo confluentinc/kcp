@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/glamour"
+	"github.com/confluentinc/kcp/internal/output"
 )
 
 // PrintOptions configures where and how to print the markdown
@@ -142,9 +143,14 @@ func (m *Markdown) WriteTo(w io.Writer) (int64, error) {
 	return int64(n), err
 }
 
-// WriteToTerminal writes the raw markdown content to stdout without glamour rendering
+// WriteToTerminal writes the raw markdown content to stdout without glamour
+// rendering, and mirrors the same content into kcp.log. The builder writes
+// (fmt.Fprintf(&m.content, ...)) target a buffer, not a terminal, so only this
+// os.Stdout write is mirrored — the terminal bytes are unchanged.
 func (m *Markdown) WriteToTerminal() (int64, error) {
-	return m.WriteTo(os.Stdout)
+	n, err := m.WriteTo(os.Stdout)
+	output.Mirror(m.content.String())
+	return n, err
 }
 
 // WriteToTerminalWithGlamour writes the rendered markdown content to stdout using glamour
@@ -165,6 +171,9 @@ func (m *Markdown) WriteToTerminalWithGlamour() (int64, error) {
 	}
 
 	n, err := os.Stdout.Write([]byte(out + "\n"))
+	// Mirror the rendered text into kcp.log; output.Mirror ANSI-strips it so the
+	// log stays plain even though the terminal keeps glamour's colour codes.
+	output.Mirror(out)
 	return int64(n), err
 }
 

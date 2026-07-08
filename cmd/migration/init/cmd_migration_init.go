@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/confluentinc/kcp/internal/output"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/google/uuid"
@@ -167,7 +168,7 @@ All flags can be provided via environment variables using uppercase names with u
 	groups[tlsFlags] = "TLS Flags"
 
 	migrationInitCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
+		output.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, saslScramFlags, saslPlainFlags, tlsFlags}
 		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "SASL/SCRAM Flags", "SASL/PLAIN Flags", "TLS Flags"}
@@ -175,11 +176,11 @@ All flags can be provided via environment variables using uppercase names with u
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
 			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
+				output.Printf("%s:\n%s\n", groupNames[i], usage)
 			}
 		}
 
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
+		output.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 
 		return nil
 	})
@@ -299,7 +300,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 
 	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
 	if skipValidate {
-		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
+		output.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
 		return nil
 	}
 
@@ -310,7 +311,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✅ Migration initialized: %s\n", config.MigrationId)
+	output.Printf("✅ Migration initialized: %s\n", config.MigrationId)
 	return nil
 }
 
