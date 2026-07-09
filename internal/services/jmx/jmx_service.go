@@ -169,7 +169,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 			}
 		}
 		if !found {
-			slog.Info("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
+			slog.Warn("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
 				"mbean", mb.MBean, "metric", mb.Name)
 		}
 	}
@@ -237,7 +237,7 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 	if err != nil {
 		return nil, err
 	}
-	slog.Info("JMX baseline sample collected", "elapsed", "0s")
+	slog.Debug("JMX baseline sample collected", "elapsed", "0s")
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -272,7 +272,7 @@ func (s *JMXService) CollectOverDuration(ctx context.Context, duration, interval
 			snapshots = append(snapshots, *snapshot)
 			prevSample = currSample
 
-			slog.Info("JMX snapshot collected",
+			slog.Debug("JMX snapshot collected",
 				"count", len(snapshots),
 				"elapsed", time.Since(startTime).Round(time.Second))
 		}

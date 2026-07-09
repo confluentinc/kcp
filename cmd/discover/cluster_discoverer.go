@@ -102,6 +102,15 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	}
 	awsClientInfo.MskClusterConfig = *cluster.ClusterInfo
 
+	// MSK Serverless does not support several AWS-API metadata scans (VPC
+	// connections, nodes, SCRAM secrets, compatible versions, networking) or the
+	// AWS topic APIs. Announce it once per cluster; the individual per-scan skips
+	// stay in kcp.log at Debug.
+	isServerless := cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless
+	if isServerless {
+		slog.Warn("⚠️ MSK Serverless cluster; skipping unsupported scans (VPC connections, nodes, SCRAM secrets, compatible versions, networking, topics)")
+	}
+
 	brokers, err := cd.getBootstrapBrokers(ctx, clusterArn)
 	if err != nil {
 		return nil, nil, err
@@ -144,8 +153,8 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	}
 	awsClientInfo.CompatibleVersions = *versions
 
-	if cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless {
-		slog.Warn("⚠️ Cluster networking not supported for MSK Serverless clusters, skipping networking scan")
+	if isServerless {
+		slog.Debug("⏭️ skipping networking scan for MSK Serverless cluster")
 	} else {
 		networking, err := cd.scanNetworkingInfo(ctx, cluster, nodes)
 		if err != nil {
@@ -154,14 +163,19 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 		awsClientInfo.ClusterNetworking = networking
 	}
 
-	if !skipTopics {
+	switch {
+	case skipTopics:
+		fmt.Printf("  ⏭️  Skipping topic discovery\n")
+	case isServerless:
+		// The AWS topic APIs are unsupported on serverless; the serverless notice
+		// above already covers this.
+		slog.Debug("⏭️ skipping topic discovery for MSK Serverless cluster", "clusterArn", clusterArn)
+	default:
 		topics, err := cd.discoverTopics(ctx, clusterArn)
 		if err != nil {
 			return nil, nil, err
 		}
 		kafkaClientInfo.SetTopics(topics)
-	} else {
-		fmt.Printf("  ⏭️  Skipping topic discovery\n")
 	}
 
 	connectors, err := cd.discoverMatchingConnectors(ctx, &awsClientInfo)
@@ -567,7 +581,9 @@ func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn stri
 
 	topics, err := cd.mskService.GetTopicsWithConfigs(ctx, clusterArn)
 	if err != nil {
-		slog.Error("❌ failed to list topics", "clusterArn", clusterArn, "error", err)
+		// Non-fatal: continue without topic details. Serverless is handled by the
+		// caller, so reaching here means a genuine provisioned-cluster failure.
+		slog.Warn("⚠️ failed to list topics; continuing without topic details", "error", err)
 	}
 
 	var topicDetails []types.TopicDetails

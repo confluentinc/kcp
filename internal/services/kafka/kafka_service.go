@@ -62,7 +62,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterType == kafkatypes.ClusterTypeServerless {
-		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
+		slog.Warn("⚠️ MSK Serverless cluster; skipping ACLs scan (Kafka Admin API unsupported on serverless)")
 		return kafkaAdminClientInformation, nil
 	}
 
@@ -110,7 +110,7 @@ func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 
 // describeKafkaCluster gets cluster metadata and returns the cluster ID along with logging information
 func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, error) {
-	slog.Info("🔍 describing kafka cluster", "clusterArn", ks.clusterArn)
+	slog.Info("🔍 describing kafka cluster")
 
 	clusterMetadata, err := ks.client.GetClusterKafkaMetadata()
 	if err != nil {
@@ -121,7 +121,7 @@ func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, er
 
 // scanKafkaAcls scans for Kafka ACLs in the cluster
 func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
-	slog.Info("🔍 scanning for kafka acls", "clusterArn", ks.clusterArn)
+	slog.Info("🔍 scanning for kafka acls")
 
 	acls, err := ks.client.ListAcls()
 	if err != nil {

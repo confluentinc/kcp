@@ -118,7 +118,24 @@ The `internal/client/kafka_admin.go` package handles all auth types. SASL/SCRAM 
 
 ## Logging
 
-Logs go to `kcp.log` via lumberjack (rotating) and stdout via a custom `slog` pretty handler. Default level is DEBUG.
+Logs go through a custom `slog` pretty handler that fans out to two legs:
+
+- **`kcp.log`** (lumberjack, rotating) — **everything at Debug+**, rendered structured (`time LEVEL message key=val`) for support.
+- **Console** — **Warn+** by default (`--verbose` → Debug+). WARN/ERROR colour the level; INFO/DEBUG stay off the default console (they surface only under `--verbose`) and render as clean narrative (no time/level prefix) when shown.
+
+### Output routing — pick by audience
+
+Commands own their **terminal** narrative with `fmt`/`color` (the indented `discover`/`scan` trees, migration reporter, banners, prompts); `slog` carries the **log** narrative. Because the default console is Warn+, `slog.Info` and `slog.Debug` are equally hidden from the terminal — level is a *log* severity dial, not a console-visibility one. Choose the mechanism by where the line must land:
+
+| I want it…                                                                  | Use                                                                      | Console?              | `kcp.log`? |
+| --------------------------------------------------------------------------- | ------------------------------------------------------------------------ | --------------------- | ---------- |
+| Terminal only (banners, end-of-run summaries, tables, interactive prompts)  | `fmt.Printf` / `color`                                                   | yes                   | **no**     |
+| Terminal narrative that must **also** be in the log                         | `fmt`/`color` **and** mirror via `logging.File()` (see migration reporter) | yes                 | yes        |
+| Log narrative (progress the log should record)                              | `slog.Info`                                                              | only with `--verbose` | yes        |
+| Log only (diagnostic detail — ARNs, address lists, raw timestamps, maps)    | `slog.Debug`                                                             | only with `--verbose` | yes        |
+| Terminal **and** log, as a problem                                          | `slog.Warn` / `slog.Error`                                               | yes (coloured level)  | yes        |
+
+**A command's `fmt` terminal narrative is not in `kcp.log`** unless you mirror it — that gap (the migration offset-sync trace was `fmt`-only) is why the file-only sink (`internal/logging`) and the reporter mirror exist. Even under `--verbose`, keep INFO messages clean: put noisy attrs (full ARNs, address lists, raw `time.Time`, maps like `tags=map[]`) on a paired `slog.Debug`.
 
 ### Emoji standard (PR [#234](https://github.com/confluentinc/kcp/pull/234))
 

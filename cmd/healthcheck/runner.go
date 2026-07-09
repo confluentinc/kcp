@@ -40,7 +40,7 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 	clusters := source.GetClusters()
 	slog.Info("clusters to healthcheck", "count", len(clusters), "source", sourceType)
 	for _, cluster := range clusters {
-		slog.Info("cluster", "name", cluster.Name, "id", cluster.UniqueID)
+		slog.Debug("cluster", "name", cluster.Name, "id", cluster.UniqueID)
 	}
 
 	// Reject --output with multiple clusters — there is no sensible way
@@ -144,7 +144,7 @@ func loadStateFile(path string) (*types.State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load state file %q: %w", path, err)
 	}
-	slog.Info("loaded existing state file", "file", path)
+	slog.Debug("loaded existing state file", "file", path)
 	return state, nil
 }
 

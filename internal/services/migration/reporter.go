@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 
+	"github.com/confluentinc/kcp/internal/logging"
 	"github.com/fatih/color"
 )
 
@@ -37,25 +39,47 @@ func (r *reporter) errf(format string, a ...any) {
 	_, _ = fmt.Fprintf(r.err, format, a...)
 }
 
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// mirror copies the plain (ANSI-stripped) narrative into kcp.log via the
+// file-only sink. It never reaches the console, so it cannot double the fmt
+// write it accompanies. Terminal formatting stays with the fmt/color call;
+// the log gets a clean, greppable, timestamped copy.
+func (r *reporter) mirror(msg string) {
+	logging.File().Info(ansiRE.ReplaceAllString(msg, ""))
+}
+
+// mirrorWarn is mirror at Warn level, for the in-flow caution helpers.
+func (r *reporter) mirrorWarn(msg string) {
+	logging.File().Warn(ansiRE.ReplaceAllString(msg, ""))
+}
+
 // section prints a blank line then a cyan banner announcing a major step. The
 // caller includes the leading emoji in msg (e.g. "🔍 Initializing migration...").
 func (r *reporter) section(msg string) {
 	r.printf("\n%s\n", color.CyanString(msg))
+	r.mirror(msg)
 }
 
 // success prints an indented green-✔ line. The text may embed its own colour.
 func (r *reporter) success(format string, a ...any) {
-	r.printf("   %s %s\n", color.GreenString("✔"), fmt.Sprintf(format, a...))
+	msg := fmt.Sprintf(format, a...)
+	r.printf("   %s %s\n", color.GreenString("✔"), msg)
+	r.mirror(msg)
 }
 
 // detail prints an indented ↳ progress line.
 func (r *reporter) detail(format string, a ...any) {
-	r.printf("   ↳ %s\n", fmt.Sprintf(format, a...))
+	msg := fmt.Sprintf(format, a...)
+	r.printf("   ↳ %s\n", msg)
+	r.mirror(msg)
 }
 
 // warn prints an indented yellow-⚠️ line to stdout (in-flow caution).
 func (r *reporter) warn(format string, a ...any) {
-	r.printf("   %s %s\n", color.YellowString("⚠️"), fmt.Sprintf(format, a...))
+	msg := fmt.Sprintf(format, a...)
+	r.printf("   %s %s\n", color.YellowString("⚠️"), msg)
+	r.mirrorWarn(msg)
 }
 
 // remediation prints a yellow-⚠️ soft-fail note to stderr. The body may contain
@@ -63,7 +87,9 @@ func (r *reporter) warn(format string, a ...any) {
 // line. Used by the offset-sync bookends, whose failures are surfaced as
 // operator guidance without aborting a successful migration.
 func (r *reporter) remediation(format string, a ...any) {
-	r.errf("%s %s\n", color.YellowString("⚠️"), fmt.Sprintf(format, a...))
+	msg := fmt.Sprintf(format, a...)
+	r.errf("%s %s\n", color.YellowString("⚠️"), msg)
+	r.mirrorWarn(msg)
 }
 
 // stepDone prints the per-step completion marker.
@@ -74,6 +100,7 @@ func (r *reporter) stepDone() {
 // complete prints the final green migration-complete banner (blank line first).
 func (r *reporter) complete(msg string) {
 	r.printf("\n%s\n", color.GreenString(msg))
+	r.mirror(msg)
 }
 
 // blank writes a single blank line.
@@ -86,4 +113,5 @@ func (r *reporter) blank() {
 // a semantic helper but should still route through the single output owner.
 func (r *reporter) line(s string) {
 	r.printf("%s\n", s)
+	r.mirror(s)
 }
