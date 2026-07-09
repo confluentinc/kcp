@@ -38,6 +38,7 @@ var (
 	insecureSkipTLSVerify           bool
 	rolloutTimeout                  time.Duration
 	detectUnroutedProducersDuration time.Duration
+	consumerOffsetSyncDrainDuration time.Duration
 	promoteBatchSize                int
 )
 
@@ -100,6 +101,7 @@ the migration state file and must be provided each time.`,
 	// from --help for now, so it is not presented as a supported option while the
 	// false-positive edge case is worked out.
 	_ = optionalFlags.MarkHidden("detect-unrouted-producers-duration")
+	optionalFlags.DurationVar(&consumerOffsetSyncDrainDuration, "consumer-offset-sync-drain-duration", 0, "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless the migration was initialised with --pause-consumer-offset-sync. 0 (the default) disables the wait.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -216,6 +218,10 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--detect-unrouted-producers-duration must be at least 10s (got %s). Use 0 to skip the check entirely", detectUnroutedProducersDuration)
 	}
 
+	if consumerOffsetSyncDrainDuration < 0 {
+		return fmt.Errorf("--consumer-offset-sync-drain-duration must not be negative (got %s). Use 0 to disable the drain", consumerOffsetSyncDrainDuration)
+	}
+
 	return nil
 }
 
@@ -234,6 +240,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 
 	// Apply runtime flags to config (not stored at init time)
 	config.DetectUnroutedProducersDuration = detectUnroutedProducersDuration
+	config.ConsumerOffsetSyncDrainDuration = consumerOffsetSyncDrainDuration
 
 	opts := parseMigrationExecutorOpts(*migrationState, *config)
 

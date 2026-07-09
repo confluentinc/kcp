@@ -23,6 +23,7 @@ func resetAuthFlags() {
 	useUnauthenticatedPlaintext = false
 	rolloutTimeout = 0
 	detectUnroutedProducersDuration = 0
+	consumerOffsetSyncDrainDuration = 0
 }
 
 func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
@@ -499,4 +500,80 @@ func TestMigrationExecute_PromoteBatchSize_BindFromEnvVar(t *testing.T) {
 
 	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, 25, opts.PromoteBatchSize, "PROMOTE_BATCH_SIZE env var should populate the flag")
+}
+
+// ===========================================================================
+// --consumer-offset-sync-drain-duration flag tests
+// ===========================================================================
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_DefaultIsZero(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+	}))
+
+	assert.Equal(t, time.Duration(0), consumerOffsetSyncDrainDuration,
+		"default --consumer-offset-sync-drain-duration should be 0 (no drain)")
+}
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_ExplicitValueParsed(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+		"--consumer-offset-sync-drain-duration", "45s",
+	}))
+
+	assert.Equal(t, 45*time.Second, consumerOffsetSyncDrainDuration)
+}
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_NegativeRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+		"--consumer-offset-sync-drain-duration", "-5s",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be negative")
+}
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("CONSUMER_OFFSET_SYNC_DRAIN_DURATION", "90s")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	assert.Equal(t, 90*time.Second, consumerOffsetSyncDrainDuration,
+		"CONSUMER_OFFSET_SYNC_DRAIN_DURATION env var should populate the flag")
 }
