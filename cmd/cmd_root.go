@@ -105,6 +105,7 @@ var RootCmd = &cobra.Command{
 		}
 
 		slog.Debug("build provenance",
+			"cmd", cmd.CommandPath(),
 			"version", build_info.Version,
 			"commit", build_info.Commit,
 			"date", build_info.Date,
