@@ -242,7 +242,7 @@ func backupIfMigrating(filePath string) error {
 	if err := os.WriteFile(bak, existing, 0600); err != nil {
 		return fmt.Errorf("failed to back up state file before migrating write: %w", err)
 	}
-	slog.Info("backed up state file before migrating write", "backup", bak)
+	slog.Debug("backed up state file before migrating write", "backup", bak)
 	return nil
 }
 

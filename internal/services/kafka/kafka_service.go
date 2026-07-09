@@ -110,7 +110,7 @@ func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 
 // describeKafkaCluster gets cluster metadata and returns the cluster ID along with logging information
 func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, error) {
-	slog.Info("🔍 describing kafka cluster", "clusterArn", ks.clusterArn)
+	slog.Info("🔍 describing kafka cluster")
 
 	clusterMetadata, err := ks.client.GetClusterKafkaMetadata()
 	if err != nil {
@@ -121,7 +121,7 @@ func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, er
 
 // scanKafkaAcls scans for Kafka ACLs in the cluster
 func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
-	slog.Info("🔍 scanning for kafka acls", "clusterArn", ks.clusterArn)
+	slog.Info("🔍 scanning for kafka acls")
 
 	acls, err := ks.client.ListAcls()
 	if err != nil {
