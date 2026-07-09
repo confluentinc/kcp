@@ -1212,6 +1212,28 @@ func TestNewStateFromBytes_ValidJSON(t *testing.T) {
 	}
 }
 
+func TestNewStateFromBytes_SchemaV1_AdditiveBackCompat(t *testing.T) {
+	// A released schema_version=1 file predates the additive connector_metrics field
+	// (schema_version 2). It must still load cleanly through the strict decoder: the
+	// missing field decodes to nil, and the UpgradedFrom breadcrumb records the source.
+	data := []byte(`{"schema_version":1,"kcp_build_info":{"version":"0.9.0"},` +
+		`"msk_sources":{"regions":[{"name":"us-east-1","clusters":[` +
+		`{"arn":"arn:aws:kafka:us-east-1:123456789012:cluster/demo/uuid"}]}]}}`)
+	state, err := NewStateFromBytes(data)
+	if err != nil {
+		t.Fatalf("v1 file must load into the current shape, got: %v", err)
+	}
+	if state.UpgradedFrom != "schema_version=1" {
+		t.Errorf("UpgradedFrom = %q, want schema_version=1", state.UpgradedFrom)
+	}
+	if len(state.MSKSources.Regions) != 1 || len(state.MSKSources.Regions[0].Clusters) != 1 {
+		t.Fatalf("expected 1 region / 1 cluster, got %#v", state.MSKSources.Regions)
+	}
+	if got := state.MSKSources.Regions[0].Clusters[0].AWSClientInformation.ConnectorMetrics; got != nil {
+		t.Errorf("connector_metrics should be nil for a pre-v2 file, got %#v", got)
+	}
+}
+
 func TestNewStateFromBytes_SchemaMismatch_WithVersion(t *testing.T) {
 	data := []byte(`{"kcp_build_info":{"version":"0.5.0"},"msk_sources":["unexpected","array"]}`)
 	_, err := NewStateFromBytes(data)
