@@ -96,6 +96,10 @@ the migration state file and must be provided each time.`,
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
 	optionalFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "[Experimental] Time to monitor source offsets after fencing to detect producers bypassing the gateway. 0 (the default) skips the check. Minimum 10s if non-zero. Note: traffic that is slow but legitimate can trip a false positive, so this check is only opt-in for now and not required in case this is hit.")
+	// Experimental / WIP: kept functional (parses and runs when set) but hidden
+	// from --help for now, so it is not presented as a supported option while the
+	// false-positive edge case is worked out.
+	_ = optionalFlags.MarkHidden("detect-unrouted-producers-duration")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
