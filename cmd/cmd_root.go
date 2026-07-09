@@ -92,8 +92,13 @@ var RootCmd = &cobra.Command{
 		// Detailed, structured build provenance for support diagnostics. Logged at
 		// Debug so it lands in kcp.log (file handler is Debug+) without doubling the
 		// coloured banner above on the console (Debug is below the console default).
-		// vcs_modified is "true" when the binary was built from a dirty working tree;
-		// empty when built without VCS stamping (e.g. from a tarball, not a git checkout).
+		//
+		// vcs_modified is Go's `vcs.modified` build stamp — did the working tree have
+		// uncommitted changes when the binary was built? It matters for support because
+		// the commit hash alone doesn't fully describe a dirty build:
+		//   "true"  — built from a dirty tree; commit + local edits, not reproducible.
+		//   "false" — built from a clean checkout; commit hash fully describes the binary.
+		//   ""      — no VCS stamp (built outside a git checkout, e.g. from a tarball).
 		var vcsModified string
 		if bi, ok := debug.ReadBuildInfo(); ok {
 			for _, s := range bi.Settings {
