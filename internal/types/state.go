@@ -96,6 +96,7 @@ func NewStateFromFile(stateFile string) (*State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read state file %s: %v", stateFile, err)
 	}
+	slog.Debug("🔍 loading state file", "path", stateFile, "bytes", len(data))
 	return NewStateFromBytes(data)
 }
 
@@ -135,8 +136,13 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		state.UpgradedFrom = fromLabel
 	}
 	if state.KcpBuildInfo.Version == "" {
-		slog.Warn("state file has no kcp_build_info.version, this may not be a valid KCP state file")
+		slog.Warn("⚠️ state file has no kcp_build_info.version, this may not be a valid KCP state file")
 	}
+	slog.Debug("loaded state file",
+		"schema_version", state.SchemaVersion,
+		"kcp_build_version", state.KcpBuildInfo.Version,
+		"upgraded_from", state.UpgradedFrom,
+	)
 	return &state, nil
 }
 
@@ -204,6 +210,7 @@ func (s *State) WriteToFile(filePath string) error {
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 
+	slog.Debug("wrote state file", "path", filePath, "schema_version", s.SchemaVersion, "bytes", len(data))
 	return nil
 }
 
@@ -242,7 +249,11 @@ func backupIfMigrating(filePath string) error {
 	if err := os.WriteFile(bak, existing, 0600); err != nil {
 		return fmt.Errorf("failed to back up state file before migrating write: %w", err)
 	}
-	slog.Debug("backed up state file before migrating write", "backup", bak)
+	slog.Debug("backed up state file before migrating write",
+		"backup", bak,
+		"from_schema_version", probe.SchemaVersion,
+		"to_schema_version", migrate.CurrentSchemaVersion,
+	)
 	return nil
 }
 
