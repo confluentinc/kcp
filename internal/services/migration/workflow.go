@@ -509,6 +509,26 @@ func (s *MigrationActions) PauseOffsetSync(
 		return fmt.Errorf("--pause-consumer-offset-sync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
 	}
 
+	// Optional drain window (--consumer-offset-sync-drain-duration): hold here
+	// with sync still enabled before disabling it. The fence has frozen the
+	// source consumer offsets — clients can no longer commit — so letting the
+	// cluster link run one or more further sync cycles propagates those final
+	// committed offsets to the destination, shrinking the set of messages that
+	// would otherwise be reprocessed after switchover. Best-effort: offset sync
+	// is asynchronous, so this reduces but does not guarantee zero duplicates. A
+	// ctx cancellation here leaves sync still enabled (nothing flipped) and
+	// cancels the transition, matching the drift-refusal path above. 0 (the
+	// default) skips the wait entirely — the prior immediate-disable behaviour.
+	if drain := config.ConsumerOffsetSyncDrainDuration; drain > 0 {
+		s.reporter.detail("Draining consumer offset sync for %s before pausing...", drain)
+		slog.Debug("draining consumer offset sync before disable", "duration", drain, "clusterLinkName", config.ClusterLinkName)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(drain):
+		}
+	}
+
 	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
 	err = s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
 		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
