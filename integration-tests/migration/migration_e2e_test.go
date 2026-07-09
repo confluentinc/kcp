@@ -35,6 +35,7 @@ const (
 	scenarioPauseSyncRestoresFilters = "pause-sync-restores-filters" // TestMigrationE2E_PauseOffsetSync_RestoresFilters
 	scenarioPauseSyncRogue           = "pause-sync-rogue"            // TestMigrationE2E_PauseOffsetSync_RogueProducerRollback
 	scenarioPauseSyncDrift           = "pause-sync-drift"            // TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence
+	scenarioPauseSyncDrain           = "pause-sync-drain"            // TestMigrationE2E_PauseOffsetSync_Drain
 	scenarioBatch                    = "batch"                       // TestMigrationE2E_PromoteBatchSize
 	scenarioRogueProducer            = "rogue-producer"              // TestMigrationE2E_RogueProducerDetection
 )
@@ -1050,6 +1051,140 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 			"the pause must fire after fencing, not as a pre-FSM bookend")
 
 		// And the live cluster link must be back to enable=true.
+		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
+			"final state must be restored to true")
+	})
+}
+
+// TestMigrationE2E_PauseOffsetSync_Drain verifies the
+// --consumer-offset-sync-drain-duration flag end-to-end: with
+// --pause-consumer-offset-sync set, execute holds after fencing (sync still
+// enabled) for the drain duration before disabling consumer.offset.sync.enable,
+// then completes the switchover and restores the config.
+//
+// Scope note: this proves the drain PATH runs against a real cluster link and
+// does not regress the offset-sync round-trip — it deliberately does NOT try to
+// prove a reduction in duplicate processing. That effect is timing/probabilistic
+// against the cluster link's asynchronous sync scheduler, which this harness
+// cannot observe deterministically (see the advisory-only config poller in
+// TestMigrationE2E_PauseOffsetSync_HappyPath). The deterministic evidence here
+// is the ordered stdout (fence → pause → drain → disable) plus a wall-clock
+// lower bound.
+//
+// Runs against the dedicated "pause-sync-drain" scenario provisioned by
+// setup.sh, so it is independent of the other pause-sync tests.
+func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
+	cfg := loadEnvConfig(t, scenarioPauseSyncDrain)
+
+	stateFile := "/workspace/migration-state-pause-sync-drain.json"
+
+	const drain = 15 * time.Second
+
+	// No leftover producer from a prior test.
+	stopProducer(t, cfg)
+
+	// Sanity: cluster link starts enabled.
+	require.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
+		"fixture must start with consumer.offset.sync.enable=true")
+
+	// Seed a committed consumer offset on the source so there is a real offset
+	// in play during the migration.
+	t.Run("seed_baseline", func(t *testing.T) {
+		startProducerOnSource(t, cfg, 10*time.Second)
+		time.Sleep(2 * time.Second)
+		startConsumerOnSource(t, cfg, 20)
+		stopProducer(t, cfg)
+	})
+
+	// Init with the pause flag (the drain is an execute-time flag).
+	t.Run("init_with_pause_flag", func(t *testing.T) {
+		initArgs := []string{
+			"migration", "init",
+			"--source-bootstrap", cfg.SourceBootstrap,
+			"--cluster-bootstrap", cfg.DestBootstrap,
+			"--cluster-id", cfg.DestClusterID,
+			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
+			"--cluster-link-name", cfg.ClusterLinkName,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--k8s-namespace", cfg.Namespace,
+			"--initial-cr-name", cfg.GatewayName,
+			"--fenced-cr-yaml", cfg.FencedCR,
+			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"--migration-state-file", stateFile,
+			"--use-unauthenticated-plaintext",
+			"--kube-path", cfg.KubePath,
+			"--insecure-skip-tls-verify",
+			"--pause-consumer-offset-sync",
+		}
+		stdout, stderr, err := runKCP(t, cfg, initArgs...)
+		t.Logf("init stdout:\n%s", stdout)
+		t.Logf("init stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration init failed")
+	})
+
+	var executeStdout string
+	var executeElapsed time.Duration
+	t.Run("execute_with_drain", func(t *testing.T) {
+		state := readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		migrationID := state.Migrations[0].MigrationID
+
+		executeArgs := []string{
+			"migration", "execute",
+			"--migration-id", migrationID,
+			"--migration-state-file", stateFile,
+			"--cluster-api-key", cfg.ClusterAPIKey,
+			"--cluster-api-secret", cfg.ClusterAPISecret,
+			"--lag-threshold", "0",
+			"--use-unauthenticated-plaintext",
+			"--insecure-skip-tls-verify",
+			"--detect-unrouted-producers-duration", "0",
+			"--consumer-offset-sync-drain-duration", drain.String(),
+		}
+
+		start := time.Now()
+		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
+		executeElapsed = time.Since(start)
+		executeStdout = stdout
+		t.Logf("execute stdout:\n%s", stdout)
+		t.Logf("execute stderr:\n%s", stderr)
+		require.NoError(t, err, "kcp migration execute failed")
+
+		state = readMigrationState(t, cfg, stateFile)
+		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, "switched", state.Migrations[0].CurrentState)
+		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped,
+			"marker must clear after successful restore")
+	})
+
+	// Deterministic evidence: the drain line prints unconditionally when the
+	// flag is set, and stdout order pins it between the pause stage and the
+	// actual disable — i.e. sync was still enabled while the drain held.
+	t.Run("drain_ran_between_fence_and_disable", func(t *testing.T) {
+		fenceIdx := strings.Index(executeStdout, "Fencing gateway")
+		pauseIdx := strings.Index(executeStdout, "Pausing consumer.offset.sync")
+		drainIdx := strings.Index(executeStdout, "Draining consumer offset sync")
+		disableIdx := strings.Index(executeStdout, "set to false")
+
+		require.NotEqual(t, -1, fenceIdx, "stdout must show the fence step")
+		require.NotEqual(t, -1, pauseIdx, "stdout must show the pause stage")
+		require.NotEqual(t, -1, drainIdx, "stdout must show the drain line — the flag had no effect")
+		require.NotEqual(t, -1, disableIdx, "stdout must show the disable success line")
+
+		assert.Less(t, fenceIdx, pauseIdx, "pause must fire after fencing")
+		assert.Less(t, pauseIdx, drainIdx, "drain must come after the pause stage header")
+		assert.Less(t, drainIdx, disableIdx, "drain must complete before sync is disabled")
+	})
+
+	// Lower-bound sanity check that the wait actually happened live. Other
+	// phases add time, so this only guards against the drain being skipped.
+	t.Run("execute_waited_at_least_the_drain", func(t *testing.T) {
+		assert.GreaterOrEqual(t, executeElapsed, drain,
+			"execute wall-clock (%s) must be at least the drain duration (%s)", executeElapsed, drain)
+	})
+
+	t.Run("config_restored_to_true", func(t *testing.T) {
 		assert.Equal(t, "true", getClusterLinkOffsetSyncEnable(t, cfg),
 			"final state must be restored to true")
 	})

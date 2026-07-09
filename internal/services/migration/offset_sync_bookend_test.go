@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/stretchr/testify/assert"
@@ -731,4 +732,71 @@ func TestBuildClusterLinkConfig_CarriesAllFields(t *testing.T) {
 	assert.Equal(t, "key", cl.APIKey)
 	assert.Equal(t, "secret", cl.APISecret)
 	assert.Equal(t, []string{"orders", "users"}, cl.Topics)
+}
+
+// ---------------------------------------------------------------------------
+// PauseOffsetSync drain window (--consumer-offset-sync-drain-duration): with a
+// positive drain the stage holds AFTER the drift check and BEFORE disabling
+// sync, so the link can propagate the final frozen offsets. A ctx cancellation
+// during the drain leaves sync still enabled (nothing flipped).
+// ---------------------------------------------------------------------------
+
+func TestPauseOffsetSync_Drain_WaitsBeforeDisabling(t *testing.T) {
+	mock, rec := newRecordingMock(t, "true", nil, nil)
+	const drain = 40 * time.Millisecond
+	cfg := &MigrationConfig{
+		ClusterLinkName:                 "link-1",
+		PauseConsumerOffsetSync:         true,
+		ConsumerOffsetSyncDrainDuration: drain,
+		CurrentState:                    StateFenced,
+	}
+
+	start := time.Now()
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	elapsed := time.Since(start)
+
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, elapsed, drain, "must hold for the full drain before disabling")
+	assert.Equal(t, 1, rec.listConfigs, "drift check still runs before the drain")
+	require.Len(t, rec.alterConfigs, 1, "sync must still be disabled after the drain")
+	assert.Equal(t, "false", rec.alterConfigs[0].Value)
+	assert.True(t, cfg.PauseConsumerOffsetSyncFlipped)
+}
+
+func TestPauseOffsetSync_Drain_ContextCancelledLeavesSyncEnabled(t *testing.T) {
+	mock, rec := newRecordingMock(t, "true", nil, nil)
+	cfg := &MigrationConfig{
+		ClusterLinkName:                 "link-1",
+		PauseConsumerOffsetSync:         true,
+		ConsumerOffsetSyncDrainDuration: time.Hour, // long enough that cancel wins
+		CurrentState:                    StateFenced,
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before the drain begins
+
+	err := pauseActions(mock).PauseOffsetSync(ctx, cfg, "k", "s", makePersist(rec, nil))
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, rec.listConfigs, "drift check runs before the drain")
+	assert.Len(t, rec.alterConfigs, 0, "sync must NOT be disabled when the drain is cancelled")
+	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped, "nothing flipped on cancellation")
+	assert.Equal(t, 0, rec.persist)
+}
+
+func TestPauseOffsetSync_Drain_ZeroDisablesImmediately(t *testing.T) {
+	mock, rec := newRecordingMock(t, "true", nil, nil)
+	cfg := &MigrationConfig{
+		ClusterLinkName:                 "link-1",
+		PauseConsumerOffsetSync:         true,
+		ConsumerOffsetSyncDrainDuration: 0, // no drain — prior behaviour
+		CurrentState:                    StateFenced,
+	}
+
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+
+	require.NoError(t, err)
+	require.Len(t, rec.alterConfigs, 1, "sync disabled without any drain")
+	assert.Equal(t, "false", rec.alterConfigs[0].Value)
+	assert.True(t, cfg.PauseConsumerOffsetSyncFlipped)
 }
