@@ -1,4 +1,4 @@
-package managed_connectors
+package msk_connectors
 
 import (
 	"os"
@@ -17,7 +17,7 @@ func writeTempState(t *testing.T, state *types.State) string {
 	return tmp.Name()
 }
 
-func TestParseScanManagedConnectorsOpts_Region(t *testing.T) {
+func TestParseScanMSKConnectorsOpts_Region(t *testing.T) {
 	path := writeTempState(t, &types.State{
 		MSKSources: &types.MSKSourcesState{
 			Regions: []types.DiscoveredRegion{{Name: "us-east-1"}},
@@ -28,13 +28,13 @@ func TestParseScanManagedConnectorsOpts_Region(t *testing.T) {
 	regions = []string{"us-east-1"}
 	clusterArns = nil
 
-	opts, err := parseScanManagedConnectorsOpts()
+	opts, err := parseScanMSKConnectorsOpts()
 	require.NoError(t, err)
 	assert.Equal(t, []string{"us-east-1"}, opts.Regions)
 	assert.Empty(t, opts.ClusterArns)
 }
 
-func TestParseScanManagedConnectorsOpts_ClusterArn_DerivesRegion(t *testing.T) {
+func TestParseScanMSKConnectorsOpts_ClusterArn_DerivesRegion(t *testing.T) {
 	arn := "arn:aws:kafka:eu-west-3:123456789012:cluster/c/abc-1"
 	path := writeTempState(t, &types.State{
 		MSKSources: &types.MSKSourcesState{
@@ -48,13 +48,13 @@ func TestParseScanManagedConnectorsOpts_ClusterArn_DerivesRegion(t *testing.T) {
 	regions = nil
 	clusterArns = []string{arn}
 
-	opts, err := parseScanManagedConnectorsOpts()
+	opts, err := parseScanMSKConnectorsOpts()
 	require.NoError(t, err)
 	assert.Equal(t, []string{arn}, opts.ClusterArns)
 	assert.Equal(t, []string{"eu-west-3"}, opts.Regions)
 }
 
-func TestParseScanManagedConnectorsOpts_ClusterArn_NotInState(t *testing.T) {
+func TestParseScanMSKConnectorsOpts_ClusterArn_NotInState(t *testing.T) {
 	arn := "arn:aws:kafka:eu-west-3:123456789012:cluster/c/abc-1"
 	path := writeTempState(t, &types.State{
 		MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{}},
@@ -64,29 +64,29 @@ func TestParseScanManagedConnectorsOpts_ClusterArn_NotInState(t *testing.T) {
 	regions = nil
 	clusterArns = []string{arn}
 
-	_, err := parseScanManagedConnectorsOpts()
+	_, err := parseScanMSKConnectorsOpts()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found in state file")
 }
 
-func TestParseScanManagedConnectorsOpts_BadArn(t *testing.T) {
+func TestParseScanMSKConnectorsOpts_BadArn(t *testing.T) {
 	path := writeTempState(t, &types.State{})
 
 	stateFile = path
 	regions = nil
 	clusterArns = []string{"not-an-arn"}
 
-	_, err := parseScanManagedConnectorsOpts()
+	_, err := parseScanMSKConnectorsOpts()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid cluster ARN")
 }
 
-func TestParseScanManagedConnectorsOpts_MissingStateFile(t *testing.T) {
+func TestParseScanMSKConnectorsOpts_MissingStateFile(t *testing.T) {
 	stateFile = "/nonexistent/state.json"
 	regions = []string{"us-east-1"}
 	clusterArns = nil
 
-	_, err := parseScanManagedConnectorsOpts()
+	_, err := parseScanMSKConnectorsOpts()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "state file does not exist")
 }
