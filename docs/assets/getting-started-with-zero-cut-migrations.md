@@ -243,14 +243,13 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 ### Step 4: `kcp migration execute`
 
-Performs the cutover in six automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never verifies or promotes behind a fence that an interrupted rollback may have already removed.
+Performs the cutover in five automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never promotes behind a fence that an interrupted rollback may have already removed.
 
 | Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | **Pre-flight**        | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                                                          | Normal traffic                                                          |
 | **Block**             | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                                                         | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
 | **Pause offset sync** | With `--pause-consumer-offset-sync`, pauses cluster-link consumer offset sync so destination consumer offsets freeze at their freshest values; skipped otherwise | Still retrying                                                          |
-| **Verify fence**      | Currently a pass-through — KCP proceeds straight to promotion. (An internal, experimental check that monitors source offsets for producers bypassing the gateway exists but is disabled by default while a false-positive edge case is worked out.) | Still retrying                                                          |
 | **Promote**           | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic, then confirms each reaches the terminal `STOPPED` state before proceeding | Still retrying; records buffered locally                                |
 | **Switch + unblock**  | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                                                                    | First retry succeeds; clients now on CC                                 |
 
