@@ -84,7 +84,7 @@ func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("⚠️ Compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
+			slog.Debug("⏭️ compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
 			return &kafka.GetCompatibleKafkaVersionsOutput{
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
@@ -131,7 +131,7 @@ func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn s
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This Region doesn't currently support VPC connectivity with Amazon MSK Serverless clusters") {
-				slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
+				slog.Debug("⏭️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 				return []kafkatypes.ClientVpcConnection{}, nil
 			}
 			return nil, fmt.Errorf("failed listing client vpc connections: %v", err)
@@ -181,7 +181,7 @@ func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string, maxResul
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
+				slog.Debug("⏭️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 				return []kafkatypes.NodeInfo{}, nil
 			}
 			return nil, fmt.Errorf("failed listing nodes: %v", err)
@@ -208,7 +208,7 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, m
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
+				slog.Debug("⏭️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 				return []string{}, nil
 			}
 			return nil, fmt.Errorf("failed listing secrets: %v", err)

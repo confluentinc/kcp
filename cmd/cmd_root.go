@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/confluentinc/kcp/cmd/create_asset"
@@ -50,8 +51,9 @@ var RootCmd = &cobra.Command{
 			},
 		})
 
-		// Console handler: Info+ by default (user-facing narrative), Debug+ with --verbose
-		consoleLevel := slog.LevelInfo
+		// Console handler: Warn+ by default (commands own their terminal narrative
+		// via fmt/color; slog carries log narrative), Debug+ with --verbose.
+		consoleLevel := slog.LevelWarn
 		if verbose {
 			consoleLevel = slog.LevelDebug
 		}
@@ -87,14 +89,27 @@ var RootCmd = &cobra.Command{
 			color.YellowString("commit=%s", build_info.Commit),
 			color.BlueString("date=%s", build_info.Date))
 
-		// Detailed, structured build provenance for support diagnostics.
-		// Logged at Debug so it lands in kcp.log (file handler is Debug+)
-		// without doubling the coloured banner above on the console (Info+).
+		// Detailed, structured build provenance for support diagnostics. Logged at
+		// Debug so it lands in kcp.log (file handler is Debug+) without doubling the
+		// coloured banner above on the console (Debug is below the console default).
+		// vcs_modified is "true" when the binary was built from a dirty working tree;
+		// empty when built without VCS stamping (e.g. from a tarball, not a git checkout).
+		var vcsModified string
+		if bi, ok := debug.ReadBuildInfo(); ok {
+			for _, s := range bi.Settings {
+				if s.Key == "vcs.modified" {
+					vcsModified = s.Value
+					break
+				}
+			}
+		}
+
 		slog.Debug("build provenance",
 			"version", build_info.Version,
 			"commit", build_info.Commit,
 			"date", build_info.Date,
 			"dev_build", build_info.IsDev(),
+			"vcs_modified", vcsModified,
 			"go", runtime.Version(),
 			"os", runtime.GOOS,
 			"arch", runtime.GOARCH,

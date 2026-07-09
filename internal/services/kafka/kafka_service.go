@@ -62,7 +62,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterType == kafkatypes.ClusterTypeServerless {
-		slog.Warn("⚠️ Serverless clusters do not support querying Kafka ACLs, skipping ACLs scan")
+		slog.Warn("⚠️ MSK Serverless cluster; skipping ACLs scan (Kafka Admin API unsupported on serverless)")
 		return kafkaAdminClientInformation, nil
 	}
 
