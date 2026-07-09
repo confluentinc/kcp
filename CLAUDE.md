@@ -118,7 +118,23 @@ The `internal/client/kafka_admin.go` package handles all auth types. SASL/SCRAM 
 
 ## Logging
 
-Logs go to `kcp.log` via lumberjack (rotating) and stdout via a custom `slog` pretty handler. Default level is DEBUG.
+Logs go through a custom `slog` pretty handler that fans out to two legs:
+
+- **`kcp.log`** (lumberjack, rotating) — **everything at Debug+**, rendered structured (`time LEVEL message key=val`) for support.
+- **Console** — **Info+** by default (`--verbose` → Debug+). INFO renders as clean narrative (no time/level prefix); WARN/ERROR colour the level.
+
+### Output routing — pick by audience, not just severity
+
+The console is Info+, so `slog` level doubles as the console audience dial. Choose the mechanism by where the line should land:
+
+| I want it…                                                                 | Use                    | Console?              | `kcp.log`? |
+| -------------------------------------------------------------------------- | ---------------------- | --------------------- | ---------- |
+| Terminal only (banners, end-of-run summaries, tables, interactive prompts) | `fmt.Printf` / `color` | yes                   | **no**     |
+| Terminal **and** log, as narrative                                         | `slog.Info`            | yes (clean)           | yes        |
+| Log only (diagnostic detail — ARNs, address lists, raw timestamps, maps)   | `slog.Debug`           | only with `--verbose` | yes        |
+| Log **and** terminal, as a problem                                         | `slog.Warn` / `slog.Error` | yes (coloured level) | yes    |
+
+Because the console is Info+, **every `slog.Info` is user-facing** — keep noisy attrs (full ARNs, address lists, raw `time.Time`, maps like `tags=map[]`) on a paired `slog.Debug`, never on an INFO line.
 
 ### Emoji standard (PR [#234](https://github.com/confluentinc/kcp/pull/234))
 
