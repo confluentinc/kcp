@@ -49,7 +49,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 
 This command resumes a migration from its current state, progressing through:
 lag checking, gateway fencing, pausing consumer offset sync (opt-in), fence
-verification, topic promotion, and gateway switchover.
+verification (opt-in), topic promotion, and gateway switchover.
 
 The migration must first be created with 'kcp migration init'. If execution is
 interrupted, re-running this command will resume from the last completed step.
@@ -87,7 +87,6 @@ the migration state file and must be provided each time.`,
 	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
-	requiredFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "Time to monitor source offsets after fencing to detect producers bypassing the gateway. Use 0 to skip. Minimum 10s if non-zero.")
 	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
@@ -96,6 +95,7 @@ the migration state file and must be provided each time.`,
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
+	optionalFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "[Experimental] Time to monitor source offsets after fencing to detect producers bypassing the gateway. 0 (the default) skips the check. Minimum 10s if non-zero. Note: traffic that is slow but legitimate can trip a false positive, so this check is only opt-in for now and not required in case this is hit.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -166,7 +166,6 @@ the migration state file and must be provided each time.`,
 	_ = migrationExecuteCmd.MarkFlagRequired("lag-threshold")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
 	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
-	_ = migrationExecuteCmd.MarkFlagRequired("detect-unrouted-producers-duration")
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
