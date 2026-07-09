@@ -100,7 +100,7 @@ func TestMergeConnectors_OverlapNewWins(t *testing.T) {
 		connectorSummary("conn-c", map[string]string{"tasks.max": "3"}),
 	}
 
-	merged := mergeConnectors(newConns, old)
+	merged := MergeConnectors(newConns, old)
 
 	require.Len(t, merged, 3)
 	byName := make(map[string]ConnectorSummary, len(merged))
@@ -115,11 +115,11 @@ func TestMergeConnectors_EdgeCases(t *testing.T) {
 	a := connectorSummary("conn-a", map[string]string{"tasks.max": "1"})
 
 	// old empty, new has → new returned
-	assert.ElementsMatch(t, []string{"conn-a"}, connectorNames(mergeConnectors([]ConnectorSummary{a}, nil)))
+	assert.ElementsMatch(t, []string{"conn-a"}, connectorNames(MergeConnectors([]ConnectorSummary{a}, nil)))
 	// new empty, old has → old preserved
-	assert.ElementsMatch(t, []string{"conn-a"}, connectorNames(mergeConnectors(nil, []ConnectorSummary{a})))
+	assert.ElementsMatch(t, []string{"conn-a"}, connectorNames(MergeConnectors(nil, []ConnectorSummary{a})))
 	// both empty → empty
-	assert.Empty(t, mergeConnectors(nil, nil))
+	assert.Empty(t, MergeConnectors(nil, nil))
 }
 
 func TestRefreshClusters_PreservesConnectorsOnDeniedRerun(t *testing.T) {
@@ -162,4 +162,40 @@ func TestUpsertCluster_PreservesConnectorsOnDeniedRerun(t *testing.T) {
 
 	require.Len(t, dr.Clusters, 1)
 	require.Len(t, dr.Clusters[0].AWSClientInformation.Connectors, 1, "UpsertCluster must preserve prior connectors on a denied re-run")
+}
+
+func TestMergeClusterPreservingAdminInfo_PreservesConnectorMetrics(t *testing.T) {
+	existing := DiscoveredCluster{
+		Arn: "arn:c",
+		AWSClientInformation: AWSClientInformation{
+			ConnectorMetrics: &ConnectClusterMetrics{
+				Metadata: ConnectMetricMetadata{MetricsSource: MetricBackendCloudWatch},
+			},
+		},
+	}
+	// New discovery/scan run produced no metrics.
+	newCluster := DiscoveredCluster{Arn: "arn:c"}
+
+	merged := mergeClusterPreservingAdminInfo(existing, newCluster)
+	if merged.AWSClientInformation.ConnectorMetrics == nil {
+		t.Fatal("expected prior ConnectorMetrics to be preserved when new is nil")
+	}
+	assert.Equal(t, MetricBackendCloudWatch, merged.AWSClientInformation.ConnectorMetrics.Metadata.MetricsSource)
+}
+
+func TestMergeClusterPreservingAdminInfo_NewConnectorMetricsWins(t *testing.T) {
+	existing := DiscoveredCluster{
+		Arn: "arn:c",
+		AWSClientInformation: AWSClientInformation{
+			ConnectorMetrics: &ConnectClusterMetrics{Metadata: ConnectMetricMetadata{Period: 60}},
+		},
+	}
+	newCluster := DiscoveredCluster{
+		Arn: "arn:c",
+		AWSClientInformation: AWSClientInformation{
+			ConnectorMetrics: &ConnectClusterMetrics{Metadata: ConnectMetricMetadata{Period: 300}},
+		},
+	}
+	merged := mergeClusterPreservingAdminInfo(existing, newCluster)
+	assert.Equal(t, int32(300), merged.AWSClientInformation.ConnectorMetrics.Metadata.Period)
 }

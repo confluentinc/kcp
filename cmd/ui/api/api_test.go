@@ -25,6 +25,7 @@ type mockReportService struct {
 	connectCalled         bool
 	lastConnectClusterID  string
 	lastConnectSourceType string
+	lastConnectKind       string
 
 	// clusterMetrics drives FilterClusterMetrics. clusterMetricsUnfiltered is returned
 	// for the handler's no-date-filter re-probe (both startTime and endTime nil) so a
@@ -57,10 +58,11 @@ func (m *mockReportService) FilterClusterMetrics(processedState report.Processed
 	return m.clusterMetrics, nil
 }
 
-func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, kind string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
 	m.connectCalled = true
 	m.lastConnectClusterID = clusterID
 	m.lastConnectSourceType = sourceType
+	m.lastConnectKind = kind
 	return m.connectMetrics, m.connectErr
 }
 
@@ -480,6 +482,60 @@ func TestHandleGetConnectMetrics_CollectedButOutOfRange_Returns200(t *testing.T)
 	}
 	if strings.Contains(rec.Body.String(), "scan self-managed-connectors") {
 		t.Errorf("must not show scan-guidance when metrics exist but fall outside the date range: %s", rec.Body.String())
+	}
+}
+
+// kind defaults to "self-managed" when the query param is omitted, and the
+// default hint (self-managed-connectors scan) is shown on the never-collected 404.
+func TestHandleGetConnectMetrics_KindDefaultsToSelfManaged(t *testing.T) {
+	mock := &mockReportService{connectErr: report.ErrNoConnectMetricsCollected}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka&sessionId=s1")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.lastConnectKind != "self-managed" {
+		t.Errorf("expected kind 'self-managed' passed to filter by default, got %q", mock.lastConnectKind)
+	}
+	if !strings.Contains(rec.Body.String(), "scan self-managed-connectors") {
+		t.Errorf("expected self-managed scan-guidance message, got: %s", rec.Body.String())
+	}
+}
+
+// kind=managed on a cluster with no managed metrics returns 404 with the
+// managed-specific hint (kcp scan msk-connectors --metrics cloudwatch), and
+// the "managed" kind is threaded through to the filter call.
+func TestHandleGetConnectMetrics_KindManaged_NoMetrics_Returns404WithManagedGuidance(t *testing.T) {
+	mock := &mockReportService{connectErr: report.ErrNoConnectMetricsCollected}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "msk", "?clusterId=some-arn&sessionId=s1&kind=managed")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for managed cluster with no metrics, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "kcp scan msk-connectors --metrics cloudwatch") {
+		t.Errorf("expected managed scan-guidance message, got: %s", rec.Body.String())
+	}
+	if mock.lastConnectKind != "managed" {
+		t.Errorf("expected kind 'managed' passed to filter, got %q", mock.lastConnectKind)
+	}
+}
+
+// An invalid kind is rejected with 400 and never reaches the filter.
+func TestHandleGetConnectMetrics_InvalidKind_Returns400(t *testing.T) {
+	mock := &mockReportService{}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "msk", "?clusterId=some-arn&sessionId=s1&kind=bogus")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid kind, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.connectCalled {
+		t.Error("filter must not be called for an invalid kind")
 	}
 }
 
