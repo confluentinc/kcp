@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/confluentinc/kcp/internal/build_info"
 )
@@ -33,6 +34,13 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 		return nil, "", fmt.Errorf("failed to inspect state file: %w", err)
 	}
 
+	slog.Debug("🔍 inspecting state file schema",
+		"detected_schema_version", schemaVersion,
+		"kcp_build_version", buildVersion,
+		"era", era,
+		"current_schema_version", CurrentSchemaVersion,
+	)
+
 	if schemaVersion > CurrentSchemaVersion {
 		// File-driven dev check: a dev-STAMPED file may carry a schema_version for an
 		// unreleased/local shape, so do not advise `kcp update` (spec §6.9). We inspect
@@ -49,6 +57,7 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 
 	// Current shape: pass through unchanged.
 	if schemaVersion == CurrentSchemaVersion {
+		slog.Debug("⏭️ state file already at current schema, no migration needed", "schema_version", schemaVersion)
 		return data, fmt.Sprintf("schema_version=%d", schemaVersion), nil
 	}
 	// Era C file without an explicit schema_version is the current shape. A pre-v0.4.0
@@ -59,6 +68,7 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 		if buildVersion != "" {
 			label = "kcp_build_info.version=" + buildVersion
 		}
+		slog.Debug("⏭️ state file has current-era shape without an explicit schema_version, treating as current", "label", label)
 		return data, label, nil
 	}
 
@@ -78,6 +88,7 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 	applied := false
 	for _, s := range steps {
 		if s.appliesWhen(era, buildVersion) {
+			slog.Debug("🔍 applying state schema migration step", "step", s.name, "era", era)
 			doc, err = s.transform(doc)
 			if err != nil {
 				return nil, "", fmt.Errorf("migration step %q failed: %w", s.name, err)
@@ -96,5 +107,6 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 	if buildVersion != "" {
 		label = "kcp_build_info.version=" + buildVersion
 	}
+	slog.Info("✅ migrated state file to current schema", "from", label, "to_schema_version", CurrentSchemaVersion)
 	return out, label, nil
 }

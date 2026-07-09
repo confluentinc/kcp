@@ -7,6 +7,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"runtime"
+	"runtime/debug"
 	"strings"
 
 	"github.com/confluentinc/kcp/cmd/create_asset"
@@ -21,6 +23,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/update"
 	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/logging"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -48,7 +51,8 @@ var RootCmd = &cobra.Command{
 			},
 		})
 
-		// Console handler: Warn+ by default, Debug+ with --verbose
+		// Console handler: Warn+ by default (commands own their terminal narrative
+		// via fmt/color; slog carries log narrative), Debug+ with --verbose.
 		consoleLevel := slog.LevelWarn
 		if verbose {
 			consoleLevel = slog.LevelDebug
@@ -57,11 +61,16 @@ var RootCmd = &cobra.Command{
 			SlogOpts: slog.HandlerOptions{
 				Level: consoleLevel,
 			},
+			Console: true,
 		})
 
 		// Fan out to both handlers
 		logger := slog.New(NewFanOutHandler(fileHandler, consoleHandler))
 		slog.SetDefault(logger)
+
+		// File-only mirror sink for components that own rich terminal output
+		// (e.g. the migration reporter) and must still be captured in kcp.log.
+		logging.SetFile(slog.New(fileHandler))
 
 		// --- End logging setup ---
 
@@ -79,6 +88,33 @@ var RootCmd = &cobra.Command{
 			color.GreenString("version=%s", build_info.Version),
 			color.YellowString("commit=%s", build_info.Commit),
 			color.BlueString("date=%s", build_info.Date))
+
+		// Detailed, structured build provenance for support diagnostics. Logged at
+		// Debug so it lands in kcp.log (file handler is Debug+) without doubling the
+		// coloured banner above on the console (Debug is below the console default).
+		// vcs_modified is "true" when the binary was built from a dirty working tree;
+		// empty when built without VCS stamping (e.g. from a tarball, not a git checkout).
+		var vcsModified string
+		if bi, ok := debug.ReadBuildInfo(); ok {
+			for _, s := range bi.Settings {
+				if s.Key == "vcs.modified" {
+					vcsModified = s.Value
+					break
+				}
+			}
+		}
+
+		slog.Debug("build provenance",
+			"cmd", cmd.CommandPath(),
+			"version", build_info.Version,
+			"commit", build_info.Commit,
+			"date", build_info.Date,
+			"dev_build", build_info.IsDev(),
+			"vcs_modified", vcsModified,
+			"go", runtime.Version(),
+			"os", runtime.GOOS,
+			"arch", runtime.GOARCH,
+		)
 
 		if err := checkWritePermissions(); err != nil {
 			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
@@ -109,27 +145,60 @@ func init() {
 
 type PrettyHandlerOptions struct {
 	SlogOpts slog.HandlerOptions
+
+	// Console renders INFO records as clean, human-facing narrative (no
+	// time/level prefix) and colours the level on WARN/ERROR. The file
+	// handler leaves this false so kcp.log keeps the full structured form.
+	Console bool
 }
 
 type PrettyHandler struct {
 	slog.Handler
-	l *log.Logger
+	l       *log.Logger
+	console bool
 }
 
 func (h *PrettyHandler) Handle(ctx context.Context, r slog.Record) error {
-	time := r.Time.Format("2006/01/02 15:04:05")
-	level := r.Level.String()
-	message := r.Message
-
 	values := []string{}
 	r.Attrs(func(a slog.Attr) bool {
 		values = append(values, fmt.Sprintf("%s=%v", a.Key, a.Value.Any()))
 		return true
 	})
 
-	h.l.Printf("%s %s %s %s", time, level, message, strings.Join(values, " "))
+	var parts []string
+	switch {
+	case h.console && r.Level == slog.LevelInfo:
+		// User-facing narrative: message + attrs only.
+		parts = append(parts, r.Message)
+	case h.console:
+		// Console WARN/ERROR (and DEBUG under --verbose): coloured level +
+		// message, no timestamp, so problems pop inline with the narrative.
+		parts = append(parts, colorizeLevel(r.Level), r.Message)
+	default:
+		// File: full structured line for support.
+		parts = append(parts,
+			r.Time.Format("2006/01/02 15:04:05"),
+			r.Level.String(),
+			r.Message,
+		)
+	}
+	parts = append(parts, values...)
+
+	h.l.Printf("%s", strings.Join(parts, " "))
 
 	return nil
+}
+
+func colorizeLevel(level slog.Level) string {
+	s := level.String()
+	switch {
+	case level >= slog.LevelError:
+		return color.RedString(s)
+	case level >= slog.LevelWarn:
+		return color.YellowString(s)
+	default:
+		return s
+	}
 }
 
 func NewPrettyHandler(
@@ -139,6 +208,7 @@ func NewPrettyHandler(
 	h := &PrettyHandler{
 		Handler: slog.NewTextHandler(out, &opts.SlogOpts),
 		l:       log.New(out, "", 0),
+		console: opts.Console,
 	}
 
 	return h

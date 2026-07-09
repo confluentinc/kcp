@@ -35,7 +35,7 @@ func (s *OSKSource) LoadCredentials(credentialsPath string) error {
 		return fmt.Errorf("failed to load Apache Kafka credentials: %v", errs)
 	}
 	s.credentials = creds
-	slog.Info("loaded Apache Kafka credentials", "clusters", len(creds.Clusters))
+	slog.Debug("loaded Apache Kafka credentials", "clusters", len(creds.Clusters))
 	return nil
 }
 
