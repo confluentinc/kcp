@@ -162,7 +162,12 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 		opts = append(opts, client.WithInsecureSkipVerify())
 	}
 
-	slog.Debug("connecting to source cluster")
+	slog.Debug("connecting to source cluster",
+		"brokers", len(brokerAddresses),
+		"auth_type", authType,
+		"region", region,
+		"insecure_skip_tls_verify", m.opts.InsecureSkipTLSVerify,
+	)
 	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to source cluster: %w", err)
@@ -173,8 +178,11 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 }
 
 func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
-	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
+	slog.Debug("connecting to destination cluster (Confluent Cloud)",
+		"brokers", len(ccBrokers),
+		"insecure_skip_tls_verify", m.opts.InsecureSkipTLSVerify,
+	)
 	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret)}
 	if m.opts.InsecureSkipTLSVerify {
 		destOpts = append(destOpts, client.WithInsecureSkipVerify())
