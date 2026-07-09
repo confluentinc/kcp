@@ -48,7 +48,10 @@ var RootCmd = &cobra.Command{
 			},
 		})
 
-		// Console handler: Warn+ by default, Debug+ with --verbose
+		// Console handler: Warn+ by default, Debug+ with --verbose.
+		// Bind it to the real os.Stdout *before* installCapture swaps the stream
+		// below, so slog console records go straight to the terminal and are
+		// never re-captured into kcp.log (the file handler already logs them).
 		consoleLevel := slog.LevelWarn
 		if verbose {
 			consoleLevel = slog.LevelDebug
@@ -65,6 +68,22 @@ var RootCmd = &cobra.Command{
 
 		// --- End logging setup ---
 
+		// Verify we can write to the cwd before redirecting the streams: if we
+		// can't, there is no kcp.log to mirror into and the error must reach the
+		// real stderr. Keep this ahead of installCapture so its os.Exit doesn't
+		// abandon an undrained mirror.
+		if err := checkWritePermissions(); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
+			os.Exit(1)
+		}
+
+		// From here on every byte written to the terminal is mirrored into
+		// kcp.log by default (see log_capture.go). Usage/help text is emitted
+		// before this point — cobra runs it without the root PersistentPreRun —
+		// so it is excluded automatically. FlushCapture (deferred in main)
+		// drains the mirror on exit.
+		installCapture(lumberjackLogger)
+
 		if build_info.IsDev() {
 			fmt.Printf("\n%s\n%s\n%s\n%s\n%s\n\n",
 				color.RedString("┌─────────────────────────────────────────────────────────────────────────────────────────────┐"),
@@ -79,11 +98,6 @@ var RootCmd = &cobra.Command{
 			color.GreenString("version=%s", build_info.Version),
 			color.YellowString("commit=%s", build_info.Commit),
 			color.BlueString("date=%s", build_info.Date))
-
-		if err := checkWritePermissions(); err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", color.RedString("Error: %v", err))
-			os.Exit(1)
-		}
 	},
 }
 
