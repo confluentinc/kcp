@@ -84,7 +84,7 @@ func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("⚠️ Compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
+			slog.Debug("⏭️ compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
 			return &kafka.GetCompatibleKafkaVersionsOutput{
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
@@ -131,7 +131,7 @@ func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn s
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This Region doesn't currently support VPC connectivity with Amazon MSK Serverless clusters") {
-				slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
+				slog.Debug("⏭️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 				return []kafkatypes.ClientVpcConnection{}, nil
 			}
 			return nil, fmt.Errorf("failed listing client vpc connections: %v", err)
@@ -181,7 +181,7 @@ func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string, maxResul
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
+				slog.Debug("⏭️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 				return []kafkatypes.NodeInfo{}, nil
 			}
 			return nil, fmt.Errorf("failed listing nodes: %v", err)
@@ -208,7 +208,7 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, m
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
+				slog.Debug("⏭️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 				return []string{}, nil
 			}
 			return nil, fmt.Errorf("failed listing secrets: %v", err)
@@ -288,7 +288,7 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 }
 
 func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.TopicInfo, error) {
-	slog.Info("🔍 listing topics", "clusterArn", clusterArn)
+	slog.Info("🔍 listing topics")
 
 	var topics []kafkatypes.TopicInfo
 	var nextToken *string
@@ -329,7 +329,7 @@ func (ms *MSKService) DescribeTopic(ctx context.Context, clusterArn string, topi
 }
 
 func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
-	slog.Info("scanning topics via AWS API", "clusterArn", clusterArn)
+	slog.Info("scanning topics via AWS API")
 
 	// NOTE: No definitive `maxResults` limit in the docs. However, upping to something like a 1000 doesn't speed up the process of listing topics. Moreover, the MSK console
 	// populates the topics at 100 topic intervals which to me hints at that being the limit.
@@ -381,7 +381,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 
 			current := progressCount.Add(1)
 			if current%250 == 0 {
-				slog.Info("🔍 describing topics", "processed", current, "total", len(topicList))
+				slog.Debug("🔍 describing topics", "processed", current, "total", len(topicList))
 			}
 		}(topicName)
 	}
@@ -397,7 +397,10 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 	}
 
 	if len(failedTopics) > 0 {
-		slog.Info("retrying failed topics", "count", len(failedTopics))
+		// Log narrative, not a console warning: the first-pass failures are
+		// typically transient (429 rate-limiting) and usually recover on retry.
+		// A genuine, unrecoverable failure surfaces below at Error.
+		slog.Info("🔍 retrying failed topics", "count", len(failedTopics))
 		for _, name := range failedTopics {
 			topicDesc, err := ms.DescribeTopic(ctx, clusterArn, name)
 			if err != nil {

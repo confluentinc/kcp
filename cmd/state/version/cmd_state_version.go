@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strconv"
 	"strings"
@@ -114,6 +115,12 @@ func NewStateVersionCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("%s: %w", stateFile, err)
 			}
+			slog.Debug("🔍 inspected state file metadata",
+				"path", stateFile,
+				"has_kcp_markers", meta.hasKCPMarkers(),
+				"schema_version", meta.SchemaVersion,
+				"kcp_build_version", meta.KcpBuildInfo.Version,
+			)
 			renderStateMetadata(cmd.OutOrStdout(), stateFile, meta)
 			return nil
 		},

@@ -279,7 +279,13 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error, params ExecutionParams) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
-	if step.Event != EventPauseOffsetSync && !errors.Is(stepErr, ErrUnroutedProducers) {
+	// A compensating rollback fires only for a pause_offset_sync failure or a
+	// verify_fence unrouted-producers detection; every other step failure just
+	// leaves the FSM at its last good state. Record which branch was taken — the
+	// propagated error names the failing step, but not the rollback decision.
+	willRollback := step.Event == EventPauseOffsetSync || errors.Is(stepErr, ErrUnroutedProducers)
+	slog.Debug("handling migration step failure", "step", step.Event, "will_rollback", willRollback)
+	if !willRollback {
 		return stepFailure
 	}
 
@@ -309,10 +315,14 @@ func (o *MigrationOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.
 	slog.Debug("FSM: before event", "event", e.Event, "src", e.Src, "dst", e.Dst)
 }
 
-// afterEventCallback is called after any event transition
+// afterEventCallback is called after any event transition. This is the
+// migration's diagnostic backbone: every committed state change — forward step,
+// abort_fence rollback, or bootstrap expire_* demotion — lands here as a single
+// Info line, so kcp.log carries the full state timeline of a run. Deep FSM
+// mechanics stay on the before/enter/leave Debug callbacks.
 func (o *MigrationOrchestrator) afterEventCallback(ctx context.Context, e *fsm.Event) {
-	slog.Debug("FSM: after event", "event", e.Event, "src", e.Src, "dst", e.Dst)
 	o.config.CurrentState = e.Dst
+	slog.Info("migration state advanced", "event", e.Event, "from", e.Src, "to", e.Dst, "migration_id", o.config.MigrationId)
 }
 
 // PersistState saves the current migration config to the state file. It is the
@@ -324,6 +334,7 @@ func (o *MigrationOrchestrator) PersistState() error {
 	if err := o.saveState(); err != nil {
 		return fmt.Errorf("failed to persist state after transition to %s: %w", o.config.CurrentState, err)
 	}
+	slog.Debug("persisted migration state", "migration_id", o.config.MigrationId, "state", o.config.CurrentState, "path", o.stateFilePath)
 	return nil
 }
 

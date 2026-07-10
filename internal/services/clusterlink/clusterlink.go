@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"time"
 )
 
 // httpStatusError is returned by doRequest/doPostRequest when the server
@@ -314,11 +315,14 @@ func (s *ConfluentCloudService) doRequest(ctx context.Context, config Config, pa
 	}
 	req.Header.Set("Authorization", basicAuthHeader(config))
 
+	start := time.Now()
 	res, err := s.httpClient.Do(req)
 	if err != nil {
+		slog.Debug("🔍 confluent cloud request failed", "method", http.MethodGet, "path", path, "ms", time.Since(start).Milliseconds(), "error", err)
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer func() { _ = res.Body.Close() }()
+	slog.Debug("🔍 confluent cloud request", "method", http.MethodGet, "path", path, "status", res.StatusCode, "ms", time.Since(start).Milliseconds())
 
 	if res.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(res.Body)
@@ -351,11 +355,14 @@ func (s *ConfluentCloudService) doPostRequest(ctx context.Context, config Config
 	req.Header.Set("Authorization", basicAuthHeader(config))
 	req.Header.Set("Content-Type", "application/json")
 
+	start := time.Now()
 	res, err := s.httpClient.Do(req)
 	if err != nil {
+		slog.Debug("🔍 confluent cloud request failed", "method", http.MethodPost, "path", path, "ms", time.Since(start).Milliseconds(), "error", err)
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer func() { _ = res.Body.Close() }()
+	slog.Debug("🔍 confluent cloud request", "method", http.MethodPost, "path", path, "status", res.StatusCode, "ms", time.Since(start).Milliseconds())
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)
@@ -392,14 +399,17 @@ func (s *ConfluentCloudService) doPutRequest(ctx context.Context, config Config,
 	req.Header.Set("Authorization", basicAuthHeader(config))
 	req.Header.Set("Content-Type", "application/json")
 
+	start := time.Now()
 	res, err := s.httpClient.Do(req)
 	if err != nil {
+		slog.Debug("🔍 confluent cloud request failed", "method", http.MethodPut, "path", path, "ms", time.Since(start).Milliseconds(), "error", err)
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()
 	}()
+	slog.Debug("🔍 confluent cloud request", "method", http.MethodPut, "path", path, "status", res.StatusCode, "ms", time.Since(start).Milliseconds())
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)
@@ -417,14 +427,17 @@ func (s *ConfluentCloudService) doDeleteRequest(ctx context.Context, config Conf
 	}
 	req.Header.Set("Authorization", basicAuthHeader(config))
 
+	start := time.Now()
 	res, err := s.httpClient.Do(req)
 	if err != nil {
+		slog.Debug("🔍 confluent cloud request failed", "method", http.MethodDelete, "path", path, "ms", time.Since(start).Milliseconds(), "error", err)
 		return fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer func() {
 		_, _ = io.Copy(io.Discard, res.Body)
 		_ = res.Body.Close()
 	}()
+	slog.Debug("🔍 confluent cloud request", "method", http.MethodDelete, "path", path, "status", res.StatusCode, "ms", time.Since(start).Milliseconds())
 
 	if res.StatusCode != http.StatusOK && res.StatusCode != http.StatusNoContent {
 		body, _ := io.ReadAll(res.Body)
