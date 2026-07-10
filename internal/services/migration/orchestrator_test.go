@@ -1,4 +1,4 @@
-package cutover
+package migration
 
 import (
 	"context"
@@ -26,15 +26,15 @@ type orchestratorOverrides struct {
 // newHappyPathOrchestrator builds an orchestrator where every workflow step succeeds.
 // The returned config starts at the given initialState.
 // Optional overrides allow customizing mock behavior before construction.
-func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*CutoverOrchestrator, *CutoverConfig, string) {
+func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig, string) {
 	t.Helper()
 
 	if len(topics) == 0 {
 		topics = []string{"topic-a", "topic-b"}
 	}
 
-	config := &CutoverConfig{
-		CutoverId:           "test-cutover-1",
+	config := &MigrationConfig{
+		MigrationId:         "test-migration-1",
 		CurrentState:        initialState,
 		KubeConfigPath:      "/fake/kubeconfig",
 		SourceBootstrap:     "source:9092",
@@ -150,27 +150,27 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		},
 	}
 
-	workflow := NewCutoverWorkflowWithOffsets(gw, cl, srcOffset, dstOffset)
+	workflow := NewMigrationWorkflowWithOffsets(gw, cl, srcOffset, dstOffset)
 	workflow.lagPollInterval = time.Millisecond
 	workflow.promotePollInterval = time.Millisecond
 
 	stateDir := t.TempDir()
-	stateFilePath := filepath.Join(stateDir, "cutover-state.json")
+	stateFilePath := filepath.Join(stateDir, "migration-state.json")
 
-	cutoverState := NewCutoverState()
+	migrationState := NewMigrationState()
 
-	orch := NewCutoverOrchestrator(config, workflow, cutoverState, stateFilePath)
+	orch := NewMigrationOrchestrator(config, workflow, migrationState, stateFilePath)
 
 	return orch, config, stateFilePath
 }
 
-// loadPersistedCutover reads the state file and returns the cutover config by ID.
-func loadPersistedCutover(t *testing.T, stateFilePath, cutoverID string) *CutoverConfig {
+// loadPersistedMigration reads the state file and returns the migration config by ID.
+func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *MigrationConfig {
 	t.Helper()
-	state, err := NewCutoverStateFromFile(stateFilePath)
+	state, err := NewMigrationStateFromFile(stateFilePath)
 	require.NoError(t, err, "failed to load state file")
-	m, err := state.GetCutoverById(cutoverID)
-	require.NoError(t, err, "cutover %q not found in state file", cutoverID)
+	m, err := state.GetMigrationById(migrationID)
+	require.NoError(t, err, "migration %q not found in state file", migrationID)
 	return m
 }
 
@@ -184,7 +184,7 @@ func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 
 	assert.Equal(t, StateInitialized, config.CurrentState)
 
-	persisted := loadPersistedCutover(t, stateFilePath, config.CutoverId)
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateInitialized, persisted.CurrentState)
 }
 
@@ -196,7 +196,7 @@ func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
 
-	persisted := loadPersistedCutover(t, stateFilePath, config.CutoverId)
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
 }
 
@@ -218,7 +218,7 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 
 			assert.Equal(t, StateSwitched, config.CurrentState)
 
-			persisted := loadPersistedCutover(t, stateFilePath, config.CutoverId)
+			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 			assert.Equal(t, StateSwitched, persisted.CurrentState)
 
 			// For initialized and later states, init step should be skipped
@@ -250,15 +250,15 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 
 	// State file should not have been written (persistState is called after fsm.Event,
 	// and fsm.Event returns error when the callback cancels)
-	_, loadErr := NewCutoverStateFromFile(stateFilePath)
+	_, loadErr := NewMigrationStateFromFile(stateFilePath)
 	if loadErr == nil {
-		// If file exists, verify the cutover is NOT at initialized
-		state, _ := NewCutoverStateFromFile(stateFilePath)
+		// If file exists, verify the migration is NOT at initialized
+		state, _ := NewMigrationStateFromFile(stateFilePath)
 		if state != nil {
-			m, getErr := state.GetCutoverById(config.CutoverId)
+			m, getErr := state.GetMigrationById(config.MigrationId)
 			if getErr == nil {
 				assert.NotEqual(t, StateInitialized, m.CurrentState,
-					"state file should NOT contain cutover at initialized state after init failure")
+					"state file should NOT contain migration at initialized state after init failure")
 			}
 		}
 	}
@@ -281,7 +281,7 @@ func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	// Init (uninitialized -> initialized) succeeded and was persisted.
 	// CheckLags (initialized -> lags_ok) succeeded and was persisted.
 	// Fence (lags_ok -> fenced) failed, so the last persisted state should be lags_ok.
-	persisted := loadPersistedCutover(t, stateFilePath, config.CutoverId)
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateLagsOk, persisted.CurrentState)
 }
 
@@ -302,14 +302,14 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 
 	// No state file should have been written for this run since no transition succeeded.
 	// (We started at fenced and the first attempted transition fenced->promoted failed.)
-	_, loadErr := NewCutoverStateFromFile(stateFilePath)
+	_, loadErr := NewMigrationStateFromFile(stateFilePath)
 	if loadErr == nil {
-		state, _ := NewCutoverStateFromFile(stateFilePath)
+		state, _ := NewMigrationStateFromFile(stateFilePath)
 		if state != nil {
-			m, getErr := state.GetCutoverById(config.CutoverId)
+			m, getErr := state.GetMigrationById(config.MigrationId)
 			if getErr == nil {
 				assert.NotEqual(t, StatePromoted, m.CurrentState,
-					"state file should NOT contain cutover at promoted state after promote failure")
+					"state file should NOT contain migration at promoted state after promote failure")
 			}
 		}
 	}

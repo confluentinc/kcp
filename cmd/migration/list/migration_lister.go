@@ -6,38 +6,38 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/services/cutover"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/fatih/color"
 )
 
-type CutoverListerOpts struct {
-	CutoverStateFile string
-	CutoverState     cutover.CutoverState
+type MigrationListerOpts struct {
+	MigrationStateFile string
+	MigrationState     migration.MigrationState
 }
 
-type CutoverLister struct {
-	cutoverStateFile string
-	cutoverState     cutover.CutoverState
+type MigrationLister struct {
+	migrationStateFile string
+	migrationState     migration.MigrationState
 }
 
-func NewCutoverLister(opts CutoverListerOpts) *CutoverLister {
-	return &CutoverLister{
-		cutoverStateFile: opts.CutoverStateFile,
-		cutoverState:     opts.CutoverState,
+func NewMigrationLister(opts MigrationListerOpts) *MigrationLister {
+	return &MigrationLister{
+		migrationStateFile: opts.MigrationStateFile,
+		migrationState:     opts.MigrationState,
 	}
 }
 
-func (ml *CutoverLister) Run() error {
-	cutovers := ml.cutoverState.Cutovers
+func (ml *MigrationLister) Run() error {
+	migrations := ml.migrationState.Migrations
 
-	if len(cutovers) == 0 {
-		fmt.Printf("\n%s No cutovers found in %s\n\n", color.YellowString("ℹ"), ml.cutoverStateFile)
-		fmt.Printf("Run %s to create a new cutover.\n\n", color.CyanString("kcp cutover init"))
+	if len(migrations) == 0 {
+		fmt.Printf("\n%s No migrations found in %s\n\n", color.YellowString("ℹ"), ml.migrationStateFile)
+		fmt.Printf("Run %s to create a new migration.\n\n", color.CyanString("kcp migration init"))
 		return nil
 	}
 
 	// Get file info for last updated timestamp
-	fileInfo, err := os.Stat(ml.cutoverStateFile)
+	fileInfo, err := os.Stat(ml.migrationStateFile)
 	var lastUpdated string
 	if err == nil {
 		lastUpdated = fileInfo.ModTime().Format("2006-01-02 15:04:05")
@@ -46,30 +46,30 @@ func (ml *CutoverLister) Run() error {
 	}
 
 	// Print header
-	fmt.Printf("\n%s %s\n", color.CyanString("Cutover State:"), color.WhiteString(ml.cutoverStateFile))
+	fmt.Printf("\n%s %s\n", color.CyanString("Migration State:"), color.WhiteString(ml.migrationStateFile))
 	fmt.Printf("%s %s\n\n", color.CyanString("Last Updated:"), color.WhiteString(lastUpdated))
-	fmt.Printf("%s\n\n", color.CyanString("Cutovers (%d):", len(cutovers)))
+	fmt.Printf("%s\n\n", color.CyanString("Migrations (%d):", len(migrations)))
 
-	// Sort cutovers by creation time (newest first)
-	// We'll use the cutover ID timestamp if available, otherwise just reverse order
-	sortedCutovers := make([]cutover.CutoverConfig, len(cutovers))
-	copy(sortedCutovers, cutovers)
-	slices.Reverse(sortedCutovers)
+	// Sort migrations by creation time (newest first)
+	// We'll use the migration ID timestamp if available, otherwise just reverse order
+	sortedMigrations := make([]migration.MigrationConfig, len(migrations))
+	copy(sortedMigrations, migrations)
+	slices.Reverse(sortedMigrations)
 
-	// Display each cutover
-	for idx, cfg := range sortedCutovers {
-		ml.displayCutover(idx+1, cfg)
+	// Display each migration
+	for idx, cfg := range sortedMigrations {
+		ml.displayMigration(idx+1, cfg)
 	}
 
 	return nil
 }
 
-func (ml *CutoverLister) displayCutover(index int, cfg cutover.CutoverConfig) {
-	// Index and Cutover ID
+func (ml *MigrationLister) displayMigration(index int, cfg migration.MigrationConfig) {
+	// Index and Migration ID
 	fmt.Printf("%s %s %s\n",
 		color.HiBlackString("[%d]", index),
-		color.HiBlackString("Cutover ID:"),
-		color.New(color.Bold, color.FgWhite).Sprint(cfg.CutoverId))
+		color.HiBlackString("Migration ID:"),
+		color.New(color.Bold, color.FgWhite).Sprint(cfg.MigrationId))
 
 	// Status with color coding
 	statusColor := ml.getStatusColor(cfg.CurrentState)
@@ -90,10 +90,10 @@ func (ml *CutoverLister) displayCutover(index int, cfg cutover.CutoverConfig) {
 	// Topics - display all topic names with word wrapping
 	ml.displayTopics(cfg.Topics)
 
-	fmt.Println() // Blank line between cutovers
+	fmt.Println() // Blank line between migrations
 }
 
-func (ml *CutoverLister) displayTopics(topics []string) {
+func (ml *MigrationLister) displayTopics(topics []string) {
 	if len(topics) == 0 {
 		fmt.Printf("    %s %s\n",
 			color.HiBlackString("Topics:"),
@@ -160,7 +160,7 @@ func (ml *CutoverLister) displayTopics(topics []string) {
 	}
 }
 
-func (ml *CutoverLister) getStatusColor(state string) *color.Color {
+func (ml *MigrationLister) getStatusColor(state string) *color.Color {
 	switch state {
 	case "uninitialized":
 		return color.New(color.FgYellow)

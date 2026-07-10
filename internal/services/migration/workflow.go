@@ -1,4 +1,4 @@
-package cutover
+package migration
 
 import (
 	"context"
@@ -14,7 +14,7 @@ import (
 	"github.com/fatih/color"
 )
 
-type CutoverWorkflow struct {
+type MigrationWorkflow struct {
 	gatewayService      gateway.Service
 	clusterLinkService  clusterlink.Service
 	sourceOffset        offset.Provider
@@ -32,11 +32,11 @@ type CutoverWorkflow struct {
 	rolloutTimeout time.Duration
 }
 
-func NewCutoverWorkflow(
+func NewMigrationWorkflow(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-) *CutoverWorkflow {
-	return &CutoverWorkflow{
+) *MigrationWorkflow {
+	return &MigrationWorkflow{
 		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		lagPollInterval:     2 * time.Second,
@@ -44,13 +44,13 @@ func NewCutoverWorkflow(
 	}
 }
 
-func NewCutoverWorkflowWithOffsets(
+func NewMigrationWorkflowWithOffsets(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
 	sourceOffset offset.Provider,
 	destinationOffset offset.Provider,
-) *CutoverWorkflow {
-	return &CutoverWorkflow{
+) *MigrationWorkflow {
+	return &MigrationWorkflow{
 		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		sourceOffset:        sourceOffset,
@@ -62,7 +62,7 @@ func NewCutoverWorkflowWithOffsets(
 
 // SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
 // A value of 0 means no deadline.
-func (s *CutoverWorkflow) SetRolloutTimeout(d time.Duration) {
+func (s *MigrationWorkflow) SetRolloutTimeout(d time.Duration) {
 	s.rolloutTimeout = d
 }
 
@@ -70,16 +70,16 @@ func (s *CutoverWorkflow) SetRolloutTimeout(d time.Duration) {
 // PromoteTopics. A value of 0 (the default) means unlimited — all zero-lag
 // topics are promoted at once. When set (>0), each batch is promoted and fully
 // confirmed STOPPED before the next batch is submitted.
-func (s *CutoverWorkflow) SetPromoteBatchSize(n int) {
+func (s *MigrationWorkflow) SetPromoteBatchSize(n int) {
 	s.promoteBatchSize = n
 }
 
-func (s *CutoverWorkflow) Initialize(
+func (s *MigrationWorkflow) Initialize(
 	ctx context.Context,
-	config *CutoverConfig,
+	config *MigrationConfig,
 	clusterApiKey, clusterApiSecret string,
 ) error {
-	slog.Debug("initializing cutover", "cutoverId", config.CutoverId)
+	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
 	// Fetch the initial CR YAML from k8s
 	initialCrYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName)
@@ -163,7 +163,7 @@ func (s *CutoverWorkflow) Initialize(
 	// bookend has flipped consumer.offset.sync.enable=false. If Initialize
 	// were ever called after DisableOffsetSync ran (today blocked at the CLI
 	// by --skip-validate / --pause-consumer-offset-sync mutual exclusion in
-	// cmd/cutover/init), `configs` would reflect the post-disable live
+	// cmd/migration/init), `configs` would reflect the post-disable live
 	// state and clobber the snapshot RestoreOffsetSync needs to diff against
 	// — silently leaving the cluster link disabled. Keep the existing
 	// snapshot in that case.
@@ -171,14 +171,14 @@ func (s *CutoverWorkflow) Initialize(
 		config.ClusterLinkConfigs = configs
 	}
 
-	slog.Debug("cutover initialized successfully")
+	slog.Debug("migration initialized successfully")
 	return nil
 }
 
 // CheckLags polls source and destination offsets until lag is below threshold
-func (s *CutoverWorkflow) CheckLags(
+func (s *MigrationWorkflow) CheckLags(
 	ctx context.Context,
-	config *CutoverConfig,
+	config *MigrationConfig,
 	lagThreshold int64,
 	clusterApiKey, clusterApiSecret string,
 ) error {
@@ -286,7 +286,7 @@ func formatLag64(n int64) string {
 // generation. The wait runs without a deadline by default — the operator
 // drives convergence and the user can Ctrl-C if a rollout wedges. An optional
 // per-workflow rolloutTimeout caps the wait when set (via SetRolloutTimeout).
-func (s *CutoverWorkflow) FenceGateway(ctx context.Context, config *CutoverConfig) error {
+func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
@@ -308,7 +308,7 @@ func (s *CutoverWorkflow) FenceGateway(ctx context.Context, config *CutoverConfi
 }
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
-func (s *CutoverWorkflow) PromoteTopics(ctx context.Context, config *CutoverConfig, clusterApiKey, clusterApiSecret string) error {
+func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -492,7 +492,7 @@ func (s *CutoverWorkflow) PromoteTopics(ctx context.Context, config *CutoverConf
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent
 // Cloud and waits for the operator to report the gateway as Ready. The wait
 // uses the same no-deadline-by-default behavior as FenceGateway.
-func (s *CutoverWorkflow) SwitchGateway(ctx context.Context, config *CutoverConfig) error {
+func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {

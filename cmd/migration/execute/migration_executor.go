@@ -9,16 +9,16 @@ import (
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type CutoverExecutorOpts struct {
-	CutoverStateFile      string
-	CutoverState          cutover.CutoverState
-	CutoverConfig         cutover.CutoverConfig
+type MigrationExecutorOpts struct {
+	MigrationStateFile    string
+	MigrationState        migration.MigrationState
+	MigrationConfig       migration.MigrationConfig
 	LagThreshold          int64
 	ClusterApiKey         string
 	ClusterApiSecret      string
@@ -47,18 +47,18 @@ type CutoverExecutorOpts struct {
 	PromoteBatchSize int
 }
 
-type CutoverExecutor struct {
-	opts CutoverExecutorOpts
+type MigrationExecutor struct {
+	opts MigrationExecutorOpts
 }
 
-func NewCutoverExecutor(opts CutoverExecutorOpts) *CutoverExecutor {
-	return &CutoverExecutor{
+func NewMigrationExecutor(opts MigrationExecutorOpts) *MigrationExecutor {
+	return &MigrationExecutor{
 		opts: opts,
 	}
 }
 
-func (m *CutoverExecutor) Run() error {
-	config := m.opts.CutoverConfig
+func (m *MigrationExecutor) Run() error {
+	config := m.opts.MigrationConfig
 	ctx := context.Background()
 
 	// Create source Kafka client (MSK)
@@ -77,46 +77,46 @@ func (m *CutoverExecutor) Run() error {
 
 	// REST client for the destination cluster-link API: trusts a private CA
 	// (--cluster-rest-ca-cert) and/or skips verification, else system roots (CC public CA).
-	httpClient, err := cutover.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
+	httpClient, err := migration.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
 	if err != nil {
 		return fmt.Errorf("building destination REST client: %w", err)
 	}
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
-	workflow := cutover.NewCutoverWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
+	workflow := migration.NewMigrationWorkflowWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 	workflow.SetRolloutTimeout(m.opts.RolloutTimeout)
 	workflow.SetPromoteBatchSize(m.opts.PromoteBatchSize)
 
-	clusterLinkConfig := cutover.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
+	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
 	persist := func() error {
-		m.opts.CutoverState.UpsertCutover(config)
-		return m.opts.CutoverState.WriteToFile(m.opts.CutoverStateFile)
+		m.opts.MigrationState.UpsertMigration(config)
+		return m.opts.MigrationState.WriteToFile(m.opts.MigrationStateFile)
 	}
 
 	// Pre-execute bookend: disable consumer.offset.sync.enable if the
 	// operator opted in at init time. Idempotent and safe on resume.
-	if err := cutover.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
+	if err := migration.DisableOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist); err != nil {
 		return err
 	}
 
-	orchestrator := cutover.NewCutoverOrchestrator(
+	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
 		workflow,
-		&m.opts.CutoverState,
-		m.opts.CutoverStateFile,
+		&m.opts.MigrationState,
+		m.opts.MigrationStateFile,
 	)
 
 	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
-		cutover.WarnIfPausedOnExecuteFailure(&config, err)
-		return fmt.Errorf("failed to execute cutover: %w", err)
+		migration.WarnIfPausedOnExecuteFailure(&config, err)
+		return fmt.Errorf("failed to execute migration: %w", err)
 	}
 
 	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
 	// so a restore error does not roll back a successful switchover.
-	cutover.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
+	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, persist)
 
-	fmt.Printf("✅ Cutover completed: %s\n", config.CutoverId)
+	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
 	return nil
 }
 
@@ -125,7 +125,7 @@ func (m *CutoverExecutor) Run() error {
 // and is applied to EVERY TLS-fronted auth method — SASL/SCRAM and SASL/PLAIN over
 // TLS (SASL_SSL), one-way unauthenticated TLS, and mTLS — not only the mTLS path.
 // For SASL/PLAIN, supplying it selects SASL_SSL over cleartext SASL_PLAINTEXT.
-func sourceClusterAuth(opts CutoverExecutorOpts) types.ClusterAuth {
+func sourceClusterAuth(opts MigrationExecutorOpts) types.ClusterAuth {
 	clusterAuth := types.ClusterAuth{}
 	switch opts.AuthType {
 	case types.AuthTypeSASLSCRAM:
@@ -160,7 +160,7 @@ func sourceClusterAuth(opts CutoverExecutorOpts) types.ClusterAuth {
 	return clusterAuth
 }
 
-func (m *CutoverExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
+func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Service, error) {
 	authType := m.opts.AuthType
 	brokerAddresses := strings.Split(m.opts.SourceBootstrap, ",")
 
@@ -186,7 +186,7 @@ func (m *CutoverExecutor) createSourceOffset(_ context.Context) (*offset.Service
 	return offset.NewOffsetService(sourceClient), nil
 }
 
-func (m *CutoverExecutor) createDestinationOffset() (*offset.Service, error) {
+func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 	slog.Debug("connecting to destination cluster (Confluent Cloud)")
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
 	// Confluent Cloud: SASL/PLAIN over TLS (SASL_SSL), public CA (no ca_cert).

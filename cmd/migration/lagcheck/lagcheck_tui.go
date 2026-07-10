@@ -1,4 +1,4 @@
-package lag
+package lagcheck
 
 import (
 	"context"

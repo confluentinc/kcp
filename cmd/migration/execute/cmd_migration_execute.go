@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/confluentinc/kcp/internal/services/cutover"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -12,8 +12,8 @@ import (
 )
 
 var (
-	cutoverStateFile            string
-	cutoverId                   string
+	migrationStateFile          string
+	migrationId                 string
 	lagThreshold                int64
 	clusterApiKey               string
 	clusterApiSecret            string
@@ -41,51 +41,51 @@ var (
 	promoteBatchSize      int
 )
 
-func NewCutoverExecuteCmd() *cobra.Command {
-	cutoverExecuteCmd := &cobra.Command{
+func NewMigrationExecuteCmd() *cobra.Command {
+	migrationExecuteCmd := &cobra.Command{
 		Use:   "execute",
-		Short: "Execute an initialized cutover",
-		Long: `Execute an initialized cutover through its remaining workflow steps.
+		Short: "Execute an initialized migration",
+		Long: `Execute an initialized migration through its remaining workflow steps.
 
-This command resumes a cutover from its current state, progressing through:
+This command resumes a migration from its current state, progressing through:
 lag checking, gateway fencing, topic promotion, and gateway switchover.
 
-The cutover must first be created with 'kcp cutover init'. If execution is
+The migration must first be created with 'kcp migration init'. If execution is
 interrupted, re-running this command will resume from the last completed step.
 
 Credentials (cluster-api-key, cluster-api-secret) are intentionally not stored in
-the cutover state file and must be provided each time.`,
+the migration state file and must be provided each time.`,
 		Example: `  # MSK source with IAM auth
-  kcp cutover execute \
-      --cutover-id cutover-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  kcp migration execute \
+      --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
       --lag-threshold 0 \
       --cluster-api-key ABCDEFGHIJKLMNOP \
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-sasl-iam --aws-region us-east-1
 
   # Apache Kafka source with TLS
-  kcp cutover execute \
-      --cutover-id cutover-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
+  kcp migration execute \
+      --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
       --lag-threshold 0 \
       --cluster-api-key ABCDEFGHIJKLMNOP \
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-tls --tls-ca-cert ca.pem --tls-client-cert client.pem --tls-client-key client.key`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunCutoverExecute,
-		RunE:          runCutoverExecute,
+		PreRunE:       preRunMigrationExecute,
+		RunE:          runMigrationExecute,
 	}
 
 	groups := map[*pflag.FlagSet]string{}
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&cutoverStateFile, "cutover-state-file", "cutover-state.json", "Path to the cutover state file.")
-	requiredFlags.StringVar(&cutoverId, "cutover-id", "", "ID of the cutover to execute (from 'kcp cutover list').")
-	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with cutover.")
+	requiredFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "Path to the migration state file.")
+	requiredFlags.StringVar(&migrationId, "migration-id", "", "ID of the migration to execute (from 'kcp migration list').")
+	requiredFlags.Int64Var(&lagThreshold, "lag-threshold", 0, "Total topic replication lag threshold (sum of all partition lags) before proceeding with migration.")
 	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
 	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
-	cutoverExecuteCmd.Flags().AddFlagSet(requiredFlags)
+	migrationExecuteCmd.Flags().AddFlagSet(requiredFlags)
 	groups[requiredFlags] = "Required Flags"
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
@@ -94,7 +94,7 @@ the cutover state file and must be provided each time.`,
 	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
-	cutoverExecuteCmd.Flags().AddFlagSet(optionalFlags)
+	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
 	// Authentication flags.
@@ -106,7 +106,7 @@ the cutover state file and must be provided each time.`,
 	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source MSK cluster.")
 	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source MSK cluster.")
-	cutoverExecuteCmd.Flags().AddFlagSet(authFlags)
+	migrationExecuteCmd.Flags().AddFlagSet(authFlags)
 	groups[authFlags] = "Source Cluster Authentication Flags"
 
 	// SASL/SCRAM credential flags.
@@ -115,7 +115,7 @@ the cutover state file and must be provided each time.`,
 	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
 	saslScramFlags.StringVar(&saslScramMechanism, "sasl-scram-mechanism", "SHA512", "SASL/SCRAM mechanism (SHA256 or SHA512). Defaults to SHA512 for MSK compatibility.")
-	cutoverExecuteCmd.Flags().AddFlagSet(saslScramFlags)
+	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
 	// SASL/PLAIN credential flags.
@@ -123,14 +123,14 @@ the cutover state file and must be provided each time.`,
 	saslPlainFlags.SortFlags = false
 	saslPlainFlags.StringVar(&saslPlainUsername, "sasl-plain-username", "", "SASL/PLAIN username for the source cluster.")
 	saslPlainFlags.StringVar(&saslPlainPassword, "sasl-plain-password", "", "SASL/PLAIN password for the source cluster.")
-	cutoverExecuteCmd.Flags().AddFlagSet(saslPlainFlags)
+	migrationExecuteCmd.Flags().AddFlagSet(saslPlainFlags)
 	groups[saslPlainFlags] = "SASL/PLAIN Flags"
 
 	// IAM credential flags.
 	iamFlags := pflag.NewFlagSet("iam", pflag.ExitOnError)
 	iamFlags.SortFlags = false
 	iamFlags.StringVar(&awsRegion, "aws-region", "", "AWS region of the source MSK cluster (e.g. us-east-1).")
-	cutoverExecuteCmd.Flags().AddFlagSet(iamFlags)
+	migrationExecuteCmd.Flags().AddFlagSet(iamFlags)
 	groups[iamFlags] = "IAM Flags"
 
 	// TLS credential flags.
@@ -139,10 +139,10 @@ the cutover state file and must be provided each time.`,
 	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the CA certificate that verifies the source broker's TLS server certificate. Applies to any TLS-fronted source auth method (SASL/SCRAM, SASL/PLAIN over TLS, TLS/mTLS, unauthenticated-TLS); supply it only for a private/internal CA.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
-	cutoverExecuteCmd.Flags().AddFlagSet(tlsFlags)
+	migrationExecuteCmd.Flags().AddFlagSet(tlsFlags)
 	groups[tlsFlags] = "TLS Flags"
 
-	cutoverExecuteCmd.SetUsageFunc(func(c *cobra.Command) error {
+	migrationExecuteCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
 
 		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, iamFlags, saslScramFlags, saslPlainFlags, tlsFlags}
@@ -160,25 +160,25 @@ the cutover state file and must be provided each time.`,
 		return nil
 	})
 
-	_ = cutoverExecuteCmd.MarkFlagRequired("cutover-id")
-	_ = cutoverExecuteCmd.MarkFlagRequired("lag-threshold")
-	_ = cutoverExecuteCmd.MarkFlagRequired("cluster-api-key")
-	_ = cutoverExecuteCmd.MarkFlagRequired("cluster-api-secret")
-	cutoverExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
-	cutoverExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	_ = migrationExecuteCmd.MarkFlagRequired("migration-id")
+	_ = migrationExecuteCmd.MarkFlagRequired("lag-threshold")
+	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-key")
+	_ = migrationExecuteCmd.MarkFlagRequired("cluster-api-secret")
+	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
+	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
 	// If any credential in a pair is set, the whole pair must be set.
-	cutoverExecuteCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
-	cutoverExecuteCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
+	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
+	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
 	// The mTLS client identity is a pair; --tls-ca-cert is deliberately NOT
 	// grouped in, so it can be supplied on its own to trust a private CA on the
 	// SASL/SCRAM, SASL/PLAIN-over-TLS, and unauthenticated-TLS source paths.
-	cutoverExecuteCmd.MarkFlagsRequiredTogether("tls-client-cert", "tls-client-key")
+	migrationExecuteCmd.MarkFlagsRequiredTogether("tls-client-cert", "tls-client-key")
 
-	return cutoverExecuteCmd
+	return migrationExecuteCmd
 }
 
-func preRunCutoverExecute(cmd *cobra.Command, args []string) error {
+func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
 	}
@@ -213,23 +213,23 @@ func preRunCutoverExecute(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runCutoverExecute(cmd *cobra.Command, args []string) error {
-	// Load cutover state (following established pattern)
-	state, err := cutover.NewCutoverStateFromFile(cutoverStateFile)
+func runMigrationExecute(cmd *cobra.Command, args []string) error {
+	// Load migration state (following established pattern)
+	state, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
-		return fmt.Errorf("failed to load cutover state file %q: %w\nRun 'kcp cutover init' to create a new cutover first", cutoverStateFile, err)
+		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init' to create a new migration first", migrationStateFile, err)
 	}
 
-	// Get CutoverConfig by ID with two-level error handling
-	config, err := state.GetCutoverById(cutoverId)
+	// Get MigrationConfig by ID with two-level error handling
+	config, err := state.GetMigrationById(migrationId)
 	if err != nil {
-		return fmt.Errorf("cutover '%s' not found in %s\nRun 'kcp cutover list' to see available cutovers", cutoverId, cutoverStateFile)
+		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", migrationId, migrationStateFile)
 	}
 
-	opts := parseCutoverExecutorOpts(*state, *config)
+	opts := parseMigrationExecutorOpts(*state, *config)
 
-	cutoverExecutor := NewCutoverExecutor(opts)
-	if err := cutoverExecutor.Run(); err != nil {
+	migrationExecutor := NewMigrationExecutor(opts)
+	if err := migrationExecutor.Run(); err != nil {
 		return err
 	}
 
@@ -255,11 +255,11 @@ func resolveAuthType() types.AuthType {
 	}
 }
 
-func parseCutoverExecutorOpts(state cutover.CutoverState, config cutover.CutoverConfig) CutoverExecutorOpts {
-	return CutoverExecutorOpts{
-		CutoverStateFile:      cutoverStateFile,
-		CutoverState:          state,
-		CutoverConfig:         config,
+func parseMigrationExecutorOpts(state migration.MigrationState, config migration.MigrationConfig) MigrationExecutorOpts {
+	return MigrationExecutorOpts{
+		MigrationStateFile:    migrationStateFile,
+		MigrationState:        state,
+		MigrationConfig:       config,
 		LagThreshold:          lagThreshold,
 		ClusterApiKey:         clusterApiKey,
 		ClusterApiSecret:      clusterApiSecret,

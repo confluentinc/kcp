@@ -1,4 +1,4 @@
-package cutover
+package migration
 
 import (
 	"context"
@@ -57,7 +57,7 @@ func makePersist(rec *callRecorder, persistErr error) func() error {
 
 func TestDisableOffsetSync_FlagOff_NoOp(t *testing.T) {
 	mock, rec := newRecordingMock(t, "true", nil, nil)
-	cfg := &CutoverConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false}
+	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false}
 
 	err := DisableOffsetSync(context.Background(), mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
 	require.NoError(t, err)
@@ -67,9 +67,9 @@ func TestDisableOffsetSync_FlagOff_NoOp(t *testing.T) {
 }
 
 func TestDisableOffsetSync_AlreadySwitched_NoOp(t *testing.T) {
-	// R10: re-running execute on a finished cutover must not call any APIs.
+	// R10: re-running execute on a finished migration must not call any APIs.
 	mock, rec := newRecordingMock(t, "true", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 		CurrentState:            StateSwitched,
@@ -84,7 +84,7 @@ func TestDisableOffsetSync_AlreadySwitched_NoOp(t *testing.T) {
 func TestDisableOffsetSync_AlreadyFlipped_Resume(t *testing.T) {
 	// AE3 resume: a prior run flipped the config but failed before switchover.
 	mock, rec := newRecordingMock(t, "false", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSync:        true,
 		PauseConsumerOffsetSyncFlipped: true,
@@ -100,7 +100,7 @@ func TestDisableOffsetSync_AlreadyFlipped_Resume(t *testing.T) {
 
 func TestDisableOffsetSync_HappyPath_FlipsAndPersists(t *testing.T) {
 	mock, rec := newRecordingMock(t, "true", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 		CurrentState:            StateUninitialized,
@@ -120,7 +120,7 @@ func TestDisableOffsetSync_HappyPath_FlipsAndPersists(t *testing.T) {
 func TestDisableOffsetSync_DriftDetected_RefusesOnFalse(t *testing.T) {
 	// AE4: cluster link drifted (init recorded true, but live is false).
 	mock, rec := newRecordingMock(t, "false", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-drifty",
 		PauseConsumerOffsetSync: true,
 	}
@@ -137,7 +137,7 @@ func TestDisableOffsetSync_DriftDetected_RefusesOnFalse(t *testing.T) {
 
 func TestDisableOffsetSync_DriftDetected_RefusesOnAbsentKey(t *testing.T) {
 	mock, rec := newRecordingMock(t, "<missing>", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-keyless",
 		PauseConsumerOffsetSync: true,
 	}
@@ -151,7 +151,7 @@ func TestDisableOffsetSync_DriftDetected_RefusesOnAbsentKey(t *testing.T) {
 func TestDisableOffsetSync_AlterFails_NoMutation(t *testing.T) {
 	// R12: AlterConfigs failure must not leave the state file marker set.
 	mock, rec := newRecordingMock(t, "true", nil, fmt.Errorf("500 internal"))
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 	}
@@ -166,7 +166,7 @@ func TestDisableOffsetSync_AlterFails_NoMutation(t *testing.T) {
 func TestDisableOffsetSync_AlterSucceeds_PersistFails_Surfaces(t *testing.T) {
 	// Edge case from plan: cluster link IS flipped but state file write fails.
 	mock, rec := newRecordingMock(t, "true", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 	}
@@ -182,7 +182,7 @@ func TestDisableOffsetSync_AlterSucceeds_PersistFails_Surfaces(t *testing.T) {
 
 func TestDisableOffsetSync_ListConfigsFails_Surfaces(t *testing.T) {
 	mock, rec := newRecordingMock(t, "", fmt.Errorf("network error"), nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 	}
@@ -201,7 +201,7 @@ func TestDisableOffsetSync_ListConfigsFails_Surfaces(t *testing.T) {
 
 func TestRestoreOffsetSync_NotFlipped_NoOp(t *testing.T) {
 	mock, rec := newRecordingMock(t, "", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: false,
 	}
@@ -271,7 +271,7 @@ func TestRestoreOffsetSync_HappyPath_ClearsMarker(t *testing.T) {
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSync:        true,
 		PauseConsumerOffsetSyncFlipped: true,
@@ -303,7 +303,7 @@ func TestRestoreOffsetSync_HappyPath_MultipleSyncKeysRestoredSorted(t *testing.T
 		"consumer.offset.sync.ms":       "1000",
 		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             snapshot,
@@ -331,7 +331,7 @@ func TestRestoreOffsetSync_PrefixScope_OnlyConsumerOffsetKeys(t *testing.T) {
 		"bootstrap.servers":           "broker:9092",
 		"consumer.offset.sync.enable": "true",
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             snapshot,
@@ -359,7 +359,7 @@ func TestRestoreOffsetSync_EmptyDiff_NoAlterCall_ClearsMarker(t *testing.T) {
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             snapshot,
@@ -387,7 +387,7 @@ func TestRestoreOffsetSync_OperatorChangedPostDisable_Preserved(t *testing.T) {
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             snapshot,
@@ -414,7 +414,7 @@ func TestRestoreOffsetSync_OperatorChangedPreDisable_Overwritten(t *testing.T) {
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             snapshot,
@@ -429,7 +429,7 @@ func TestRestoreOffsetSync_OperatorChangedPreDisable_Overwritten(t *testing.T) {
 func TestRestoreOffsetSync_LegacyFallback_NilClusterLinkConfigs(t *testing.T) {
 	// AE3: ClusterLinkConfigs is nil → single SET, no ListConfigs.
 	mock, rec := newRecordingMock(t, "", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 	}
@@ -445,7 +445,7 @@ func TestRestoreOffsetSync_LegacyFallback_NilClusterLinkConfigs(t *testing.T) {
 func TestRestoreOffsetSync_LegacyFallback_EmptyClusterLinkConfigs(t *testing.T) {
 	// Empty (non-nil) map behaves the same as nil.
 	mock, rec := newRecordingMock(t, "", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             map[string]string{},
@@ -460,7 +460,7 @@ func TestRestoreOffsetSync_LegacyFallback_EmptyClusterLinkConfigs(t *testing.T) 
 
 func TestRestoreOffsetSync_ListConfigsFails_SoftFailKeepsMarker(t *testing.T) {
 	mock, rec := newDiffMock(nil, fmt.Errorf("network error"), nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             map[string]string{"consumer.offset.sync.enable": "true"},
@@ -491,7 +491,7 @@ func TestRestoreOffsetSync_AlterFailsMultiKey_RemediationNamesAllKeys(t *testing
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-soft",
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             snapshot,
@@ -514,7 +514,7 @@ func TestRestoreOffsetSync_AlterFailsMultiKey_RemediationNamesAllKeys(t *testing
 func TestRestoreOffsetSync_AlterFails_SoftFailKeepsMarker(t *testing.T) {
 	// R13: restore failure is soft. Marker stays true so re-run knows.
 	mock, rec := newRecordingMock(t, "", nil, fmt.Errorf("503 unavailable"))
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-soft",
 		ClusterId:                      "lkc-soft",
 		PauseConsumerOffsetSyncFlipped: true,
@@ -531,7 +531,7 @@ func TestRestoreOffsetSync_AlterFails_SoftFailKeepsMarker(t *testing.T) {
 
 func TestRestoreOffsetSync_AlterSucceedsPersistFails_StillCorrects(t *testing.T) {
 	mock, rec := newRecordingMock(t, "", nil, nil)
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 	}
@@ -542,7 +542,7 @@ func TestRestoreOffsetSync_AlterSucceedsPersistFails_StillCorrects(t *testing.T)
 }
 
 // TestRestoreOffsetSync_ParentCtxCancelled_StillRestores verifies the
-// soft-fail semantic survives parent-ctx cancellation. The cutover may
+// soft-fail semantic survives parent-ctx cancellation. The migration may
 // complete successfully and only then have its ctx cancelled (signal arriving
 // between Execute returning and the bookend running, future caller that
 // cancels on completion, etc.). RestoreOffsetSync must use a fresh ctx so the
@@ -557,7 +557,7 @@ func TestRestoreOffsetSync_ParentCtxCancelled_StillRestores(t *testing.T) {
 			return nil
 		},
 	}
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterLinkName:                "link-1",
 		PauseConsumerOffsetSyncFlipped: true,
 		CurrentState:                   StateSwitched,
@@ -578,7 +578,7 @@ func TestRestoreOffsetSync_ParentCtxCancelled_StillRestores(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildClusterLinkConfig_CarriesAllFields(t *testing.T) {
-	cfg := &CutoverConfig{
+	cfg := &MigrationConfig{
 		ClusterRestEndpoint: "https://pkc.us-east-1.aws.confluent.cloud:443",
 		ClusterId:           "lkc-abc",
 		ClusterLinkName:     "link-xyz",

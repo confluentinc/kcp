@@ -1,4 +1,4 @@
-package cutover
+package migration
 
 import (
 	"context"

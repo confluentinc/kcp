@@ -5,54 +5,54 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/cutover"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migration"
 )
 
-type CutoverInitializerOpts struct {
-	CutoverStateFile      string
-	CutoverState          cutover.CutoverState
-	CutoverConfig         cutover.CutoverConfig
+type MigrationInitializerOpts struct {
+	MigrationStateFile    string
+	MigrationState        migration.MigrationState
+	MigrationConfig       migration.MigrationConfig
 	ClusterApiKey         string
 	ClusterApiSecret      string
 	ClusterRestCACert     string
 	InsecureSkipTLSVerify bool
 }
 
-type CutoverInitializer struct {
-	opts CutoverInitializerOpts
+type MigrationInitializer struct {
+	opts MigrationInitializerOpts
 }
 
-func NewCutoverInitializer(opts CutoverInitializerOpts) *CutoverInitializer {
-	return &CutoverInitializer{
+func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitializer {
+	return &MigrationInitializer{
 		opts: opts,
 	}
 }
 
-func (m *CutoverInitializer) Run() error {
-	config := m.opts.CutoverConfig
+func (m *MigrationInitializer) Run() error {
+	config := m.opts.MigrationConfig
 
 	// REST client for the destination cluster-link API: trusts a private CA
 	// (--cluster-rest-ca-cert) and/or skips verification, else system roots (CC public CA).
-	httpClient, err := cutover.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
+	httpClient, err := migration.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
 	if err != nil {
 		return fmt.Errorf("building destination REST client: %w", err)
 	}
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
-	workflow := cutover.NewCutoverWorkflow(gatewayService, clusterLinkService)
+	workflow := migration.NewMigrationWorkflow(gatewayService, clusterLinkService)
 
-	orchestrator := cutover.NewCutoverOrchestrator(
+	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
 		workflow,
-		&m.opts.CutoverState,
-		m.opts.CutoverStateFile,
+		&m.opts.MigrationState,
+		m.opts.MigrationStateFile,
 	)
 
 	ctx := context.Background()
 	if err := orchestrator.Initialize(ctx, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
-		return fmt.Errorf("failed to initialize cutover: %w", err)
+		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 
 	return nil

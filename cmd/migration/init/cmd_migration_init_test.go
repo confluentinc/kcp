@@ -16,10 +16,10 @@ func resetAuthFlags() {
 	useUnauthenticatedPlaintext = false
 }
 
-func TestCutoverInit_NoAuthFlag_ReturnsError(t *testing.T) {
+func TestMigrationInit_NoAuthFlag_ReturnsError(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewCutoverInitCmd()
+	cmd := NewMigrationInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -39,10 +39,10 @@ func TestCutoverInit_NoAuthFlag_ReturnsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "at least one of the flags")
 }
 
-func TestCutoverInit_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
+func TestMigrationInit_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewCutoverInitCmd()
+	cmd := NewMigrationInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -63,10 +63,10 @@ func TestCutoverInit_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 	assert.Contains(t, err.Error(), "sasl-plain-username")
 }
 
-func TestCutoverInit_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing.T) {
+func TestMigrationInit_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewCutoverInitCmd()
+	cmd := NewMigrationInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -90,10 +90,10 @@ func TestCutoverInit_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing
 	assert.NotContains(t, err.Error(), "at least one of the flags")
 }
 
-func TestCutoverInit_WithAuthFlag_PassesValidation(t *testing.T) {
+func TestMigrationInit_WithAuthFlag_PassesValidation(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewCutoverInitCmd()
+	cmd := NewMigrationInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -118,10 +118,10 @@ func TestCutoverInit_WithAuthFlag_PassesValidation(t *testing.T) {
 // Regression guard: --tls-ca-cert must be usable on a non-mTLS source method
 // (here SASL/SCRAM) without the mTLS client cert/key — it is no longer grouped
 // with them. Fails later (missing YAML files), not on flag grouping.
-func TestCutoverInit_SaslScramWithCACertOnly_PassesValidation(t *testing.T) {
+func TestMigrationInit_SaslScramWithCACertOnly_PassesValidation(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewCutoverInitCmd()
+	cmd := NewMigrationInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",
@@ -145,26 +145,26 @@ func TestCutoverInit_SaslScramWithCACertOnly_PassesValidation(t *testing.T) {
 	assert.NotContains(t, err.Error(), "if any flags in the group", "--tls-ca-cert must not require the mTLS client cert/key")
 }
 
-func TestCutoverInit_PauseOffsetSyncFlag_Registered(t *testing.T) {
+func TestMigrationInit_PauseOffsetSyncFlag_Registered(t *testing.T) {
 	resetAuthFlags()
 
-	cmd := NewCutoverInitCmd()
+	cmd := NewMigrationInitCmd()
 	flag := cmd.Flags().Lookup("pause-consumer-offset-sync")
 	require.NotNil(t, flag, "--pause-consumer-offset-sync flag must be registered")
 	assert.Equal(t, "false", flag.DefValue, "default must be false (opt-in)")
 }
 
-// TestCutoverInit_PauseOffsetSync_SkipValidate_MutuallyExclusive verifies that
+// TestMigrationInit_PauseOffsetSync_SkipValidate_MutuallyExclusive verifies that
 // --pause-consumer-offset-sync and --skip-validate cannot be combined. The
 // restore bookend needs the init-time snapshot captured by the validation path;
 // without it, restore has nothing to diff against and would silently leave the
 // cluster link disabled after switchover.
-func TestCutoverInit_PauseOffsetSync_SkipValidate_MutuallyExclusive(t *testing.T) {
+func TestMigrationInit_PauseOffsetSync_SkipValidate_MutuallyExclusive(t *testing.T) {
 	resetAuthFlags()
 	pauseConsumerOffsetSync = false
 	skipValidate = false
 
-	cmd := NewCutoverInitCmd()
+	cmd := NewMigrationInitCmd()
 	cmd.SetArgs([]string{
 		"--source-bootstrap", "broker:9092",
 		"--cluster-bootstrap", "pkc-abc.confluent.cloud:9092",

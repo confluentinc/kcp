@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/cmd/create_asset"
-	"github.com/confluentinc/kcp/cmd/cutover"
 	"github.com/confluentinc/kcp/cmd/discover"
 	"github.com/confluentinc/kcp/cmd/docs"
 	"github.com/confluentinc/kcp/cmd/healthcheck"
@@ -102,8 +101,7 @@ func init() {
 		discover.NewDiscoverCmd(),
 		healthcheck.NewHealthcheckCmd(),
 		migrate.NewMigrateCmd(),
-		cutover.NewCutoverCmd(),
-		migration.NewMigrationCmd(), // hidden deprecation stub → points to `kcp cutover`
+		migration.NewMigrationCmd(),
 		state.NewStateCmd(),
 		version.NewVersionCmd(),
 		update.NewUpdateCmd(),
