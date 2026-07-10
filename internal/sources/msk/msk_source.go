@@ -35,7 +35,7 @@ func (s *MSKSource) LoadCredentials(credentialsPath string) error {
 		return fmt.Errorf("failed to load MSK credentials: %v", errs)
 	}
 	s.credentials = creds
-	slog.Info("loaded MSK credentials", "regions", len(creds.Regions))
+	slog.Debug("loaded MSK credentials", "regions", len(creds.Regions))
 	return nil
 }
 
@@ -79,7 +79,7 @@ func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 		for _, clusterAuth := range regionAuth.Clusters {
 			clusterResult, err := s.scanCluster(regionAuth.Name, clusterAuth, opts)
 			if err != nil {
-				slog.Info("skipping cluster", "cluster", clusterAuth.Name, "error", err)
+				slog.Warn("skipping cluster", "cluster", clusterAuth.Name, "error", err)
 				continue
 			}
 			result.Clusters = append(result.Clusters, *clusterResult)
@@ -101,7 +101,8 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 		return nil, fmt.Errorf("failed to determine auth type for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
 	}
 
-	slog.Info(fmt.Sprintf("starting broker scan for %s using %s authentication", clusterAuth.Arn, authType))
+	slog.Info(fmt.Sprintf("starting broker scan using %s authentication", authType))
+	slog.Debug("starting broker scan", "clusterArn", clusterAuth.Arn, "authType", authType)
 
 	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
 	if err != nil {
@@ -135,7 +136,8 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 		kafkaAdminInfo.SaslMechanism = types.NormalizeSaslMechanism(clusterAuth.AuthMethod.SASLScram.Mechanism)
 	}
 
-	slog.Info(fmt.Sprintf("broker scan complete for %s", clusterAuth.Arn))
+	slog.Info("broker scan complete")
+	slog.Debug("broker scan complete", "clusterArn", clusterAuth.Arn)
 
 	return &sources.ClusterScanResult{
 		Identifier: sources.ClusterIdentifier{
