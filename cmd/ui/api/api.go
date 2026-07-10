@@ -26,7 +26,7 @@ type ReportService interface {
 	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
 	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, kind string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -310,6 +310,17 @@ func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 		})
 	}
 
+	kind := c.QueryParam("kind")
+	if kind == "" {
+		kind = "self-managed"
+	}
+	if kind != "self-managed" && kind != "managed" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid kind",
+			"message": fmt.Sprintf("kind %q is not supported (must be 'self-managed' or 'managed')", kind),
+		})
+	}
+
 	startTime, endTime, err := parseDateRange(c)
 	if err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
@@ -320,16 +331,20 @@ func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 
 	processedState := ui.reportService.ProcessState(*state)
 
-	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, startTime, endTime)
+	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, kind, startTime, endTime)
 	if err != nil {
 		// "Never collected" is the only case that warrants the scan-guidance hint.
 		// A cluster that HAS metrics but whose selected date range excludes them all
 		// is not an error — it falls through to a normal (empty) 200 below, so the
 		// user sees an empty chart rather than a misleading "run a scan" message.
 		if errors.Is(err, report.ErrNoConnectMetricsCollected) {
+			hint := "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics"
+			if kind == "managed" {
+				hint = "Run 'kcp scan msk-connectors --metrics cloudwatch' to collect MSK Connect metrics"
+			}
 			return c.JSON(http.StatusNotFound, map[string]any{
 				"error":   "No Connect metrics available for this cluster",
-				"message": "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics",
+				"message": hint,
 			})
 		}
 		return c.JSON(http.StatusNotFound, map[string]any{

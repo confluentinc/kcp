@@ -28,9 +28,10 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 
 | Command                                                 | MSK Provisioned/Express | MSK Serverless                         | Apache Kafka                |
 | :------------------------------------------------------ | :---------------------- | :------------------------------------- | :-------------------------- |
-| `kcp discover`                                          | Yes                     | Limited                                | No                          |
+| `kcp discover`                                          | Yes                     | Limited (some resources not discoverable for Serverless) | No                          |
 | `kcp scan client-inventory`                             | Yes                     | No                                     | No                          |
 | `kcp scan clusters`                                     | Yes                     | No                                     | Yes                         |
+| `kcp scan msk-connectors`                           | Yes (optional `--metrics cloudwatch` pulls per-connector CloudWatch metrics) | Limited (only if MSK Connect connectors target the cluster) | No                          |
 | `kcp scan schema-registry`                              | Yes                     | Yes                                    | Yes                         |
 | `kcp create-asset bastion-host`                         | N/A                     | N/A                                    | N/A                         |
 | `kcp create-asset migrate-acls iam`                     | Yes                     | Limited (manual IAM user/role mapping) | No                          |
