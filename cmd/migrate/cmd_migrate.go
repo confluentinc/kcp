@@ -10,6 +10,7 @@ func NewMigrateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "migrate",
 		Short:         "Migrate Kafka resources directly to Confluent Cloud or Confluent Platform",
+		Hidden:        true, // in-development direct-API feature; kept in the binary but not user-facing (cascades to --help and gen-docs)
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 	}
