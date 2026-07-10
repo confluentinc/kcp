@@ -112,6 +112,18 @@ type MigrationConfig struct {
 	// directly to the source cluster.
 	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
 
+	// ConsumerOffsetSyncDrainDuration is how long the pause_offset_sync stage
+	// waits after fencing before disabling the cluster link's
+	// consumer.offset.sync.enable. The fence freezes source consumer offsets
+	// (clients can no longer commit), so holding here lets the link run one or
+	// more further sync cycles and propagate those final committed offsets to
+	// the destination, minimising messages reprocessed after switchover. Only
+	// has effect when PauseConsumerOffsetSync is set. Best-effort: offset sync
+	// is asynchronous, so this reduces but does not eliminate duplicate
+	// processing. A value of 0 (the default) skips the wait — the link is
+	// disabled immediately after fencing, the prior behaviour.
+	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
+
 	// Gateway CR configuration
 	InitialCrName    string `json:"initial_cr_name"`
 	K8sNamespace     string `json:"k8s_namespace"`

@@ -1,8 +1,10 @@
 package jmx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -296,6 +298,13 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	}))
 	defer server.Close()
 
+	// Capture slog output to assert the controller-missing caveat is logged once
+	// per scan, not once per poll (collectRawSample runs on every tick).
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
 	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
@@ -310,6 +319,11 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	// GlobalPartitionCount should NOT be in the aggregates (controller MBean unavailable)
 	_, hasGlobal := result.Aggregates["GlobalPartitionCount"]
 	assert.False(t, hasGlobal, "GlobalPartitionCount should be omitted when controller MBean is not available")
+
+	// The caveat must be deduped to a single line even though the controller
+	// MBean is polled on every sample across the scan.
+	warnCount := strings.Count(logBuf.String(), "Controller MBean not available")
+	assert.Equal(t, 1, warnCount, "controller-missing caveat should be logged once per scan, not per poll")
 
 	// But query info should still include it (shows what was attempted)
 	queryNames := make(map[string]bool)

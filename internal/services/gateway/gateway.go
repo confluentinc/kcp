@@ -105,13 +105,14 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 		return nil, fmt.Errorf("failed to marshal to YAML: %w", err)
 	}
 
+	slog.Debug("fetched gateway CR", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlBytes))
 	return yamlBytes, nil
 }
 
 // ValidateGatewayCRs validates that the initial, fenced, and switchover gateway CRs are consistent
 func (s *K8sService) ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error {
 	// TODO: implement cross-CR validation
-	slog.Warn("gateway CR validation not yet implemented, skipping")
+	slog.Warn("⚠️ gateway CR validation not yet implemented, skipping")
 	return nil
 }
 
@@ -179,6 +180,8 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 	obj.SetName(gatewayName)
 	obj.SetNamespace(namespace)
 
+	slog.Debug("🔍 applying gateway CR (server-side apply)", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlData))
+	start := time.Now()
 	_, err = dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Apply(ctx, gatewayName, &obj, metav1.ApplyOptions{
 			FieldManager: "kcp-migration",
@@ -188,6 +191,7 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 		return fmt.Errorf("failed to apply gateway YAML: %w", err)
 	}
 
+	slog.Debug("applied gateway CR", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
 	return nil
 }
 
