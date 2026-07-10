@@ -53,7 +53,7 @@ func (sr *SchemaRegistryService) GetAllSubjectsWithVersions() ([]types.Subject, 
 	}
 
 	for _, subjectName := range subjectNames {
-		slog.Info("🔍 scanning subject", "subject", subjectName)
+		slog.Info("scanning subject", "subject", subjectName)
 
 		// 1. Get latest schema first - most critical, fail fast if unavailable
 		latest, err := sr.client.GetLatestSchemaMetadata(subjectName)

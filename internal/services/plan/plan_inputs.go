@@ -8,7 +8,7 @@ package plan
 // (`EnforceSchemasAtTheBroker`, `RequiresHighThroughputRESTProduceAPI`,
 // `Requires9995SLAWithinSingleZone`) are wrong-click sensitive — a
 // misfired `true` quietly raises the monthly cost. The renderer
-// surfaces a ⚠ cost callout on the Dedicated verdict when any of them
+// surfaces a cost callout on the Dedicated verdict when any of them
 // is the reason.
 type PlanInputs struct {
 	// Sizing overrides (defaults live in plan-config.yaml).
