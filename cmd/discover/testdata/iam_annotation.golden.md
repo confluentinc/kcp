@@ -64,15 +64,6 @@ The following policy covers a full run. If you pass `--skip-topics`, `--skip-cos
         "ec2:DescribeSubnets"
       ],
       "Resource": "*"
-    },
-    {
-      "Sid": "MSKConnectScanPermissions",
-      "Effect": "Allow",
-      "Action": [
-        "kafkaconnect:DescribeConnector",
-        "kafkaconnect:ListConnectors"
-      ],
-      "Resource": "*"
     }
   ]
 }
