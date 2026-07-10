@@ -151,3 +151,5 @@ The ban covers every surface:
 Express status and severity as text tokens, not emoji — e.g. the plan report uses `[HIGH]` / `[MED]` / `[LOW]` (see `internal/services/plan/oq_registry.go`) and the migration reporter uses `[OK]` / `[FAIL]` / `[WARN]` for step status.
 
 Non-pictographic structural glyphs are **not** emojis and stay allowed where they aid terminal layout: tree arrows (`→`, `↳`), box-drawing and sparkline characters, and math symbols (`≤`, `≥`). If in doubt, prefer plain ASCII.
+
+**Enforcement:** `cmd/lint-emoji` scans all Go source for emoji and fails on any hit; it is wired into `make lint`, the pre-commit hook, and the CI static-analysis job. It flags pictographic runes only and deliberately never flags the allowed structural glyphs above (the exact allow/ban set is pinned by `cmd/lint-emoji/main_test.go`). The frontend, docs, and vendored/generated/local-only trees are outside its surface.

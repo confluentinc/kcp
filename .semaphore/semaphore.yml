@@ -184,6 +184,8 @@ blocks:
       jobs:
         - name: 'golangci-lint'
           commands:
+            # Fail fast if any Go source contains an emoji (kcp output is plain text).
+            - go run ./cmd/lint-emoji
             - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.3/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.3
             - git fetch origin main
             - golangci-lint run --config .golangci.yml ./...
