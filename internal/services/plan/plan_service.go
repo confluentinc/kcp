@@ -526,7 +526,7 @@ func sortedKnownClusterOverrideNames(clusters []report.ProcessedCluster, inputs 
 	return names
 }
 
-// detectUnknownClusterOverrides surfaces 🟡 OQs for keys under
+// detectUnknownClusterOverrides surfaces [MED] OQs for keys under
 // `clusters:` in plan-inputs.yaml that don't match any scanned
 // cluster. Without this, a typo'd cluster name (e.g. `clusters[trust]`
 // against a fleet with no `trust` cluster) silently produces no

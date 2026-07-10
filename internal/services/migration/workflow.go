@@ -202,14 +202,13 @@ func (s *MigrationActions) CheckLags(
 	}
 
 	s.reporter.blank()
-	s.reporter.line(fmt.Sprintf("%s Checking replication lag across %s (threshold: %s)",
-		color.CyanString("⏳"),
+	s.reporter.line(fmt.Sprintf("Checking replication lag across %s (threshold: %s)",
 		color.CyanString("%d topics", len(config.Topics)),
 		color.YellowString("%d", lagThreshold)))
 	s.reporter.blank()
 
 	if len(config.Topics) == 0 {
-		s.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("✔")))
+		s.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("[OK]")))
 		return nil
 	}
 
@@ -235,7 +234,7 @@ func (s *MigrationActions) CheckLags(
 			if sweepFailures >= maxConsecutiveSweepFailures {
 				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+			slog.Warn("offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
 			// Deliberately not ticker.C: a slow failing sweep can outlast the
 			// tick interval, leaving a tick buffered in the ticker's channel —
@@ -261,7 +260,7 @@ func (s *MigrationActions) CheckLags(
 		if allBelowThreshold {
 			s.reporter.blank()
 			s.reporter.line(fmt.Sprintf("%s All topic lags below threshold (%d)",
-				color.GreenString("✔"),
+				color.GreenString("[OK]"),
 				lagThreshold))
 			return nil
 		}
@@ -479,19 +478,19 @@ func (s *MigrationActions) PauseOffsetSync(
 	persist func() error,
 ) error {
 	if !config.PauseConsumerOffsetSync {
-		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
+		slog.Debug("consumer offset sync pause not requested, skipping")
 		s.reporter.detail("Offset-sync pause not requested — skipping")
 		return nil
 	}
 	if config.PauseConsumerOffsetSyncFlipped {
-		slog.Info("⏭️ consumer.offset.sync.enable already flipped, skipping pause", "migrationId", config.MigrationId)
+		slog.Info("consumer.offset.sync.enable already flipped, skipping pause", "migrationId", config.MigrationId)
 		s.reporter.detail("consumer.offset.sync already paused — skipping")
 		return nil
 	}
 
 	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
 
-	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
+	s.reporter.section("Pausing consumer.offset.sync on cluster link...")
 
 	// Per-call deadlines derived from the parent ctx so signal cancellation
 	// still propagates, but a hung REST endpoint cannot block indefinitely.
@@ -577,7 +576,7 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 // orchestrator triggers only for ErrUnroutedProducers.
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
-		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
+		slog.Debug("unrouted producer detection disabled, skipping")
 		s.reporter.detail("Detection disabled (--detect-unrouted-producers-duration=0) — skipping check")
 		return nil
 	}
@@ -696,7 +695,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 			if sweepFailures >= maxConsecutiveSweepFailures {
 				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+			slog.Warn("offset sweep failed, retrying on next tick",
 				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
 			select {
 			case <-ctx.Done():
@@ -762,7 +761,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 			if topic.ErrorCode != 0 {
 				retryCount[topic.MirrorTopicName]++
 				s.reporter.line(fmt.Sprintf("   %s Topic %s promotion error (attempt %d/%d): %s",
-					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
+					color.RedString("[FAIL]"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
 				slog.Warn("topic promotion error",
 					"topic", topic.MirrorTopicName,
 					"errorCode", topic.ErrorCode,

@@ -60,7 +60,7 @@ func (cu *ConnectorUtility) Run() error {
 
 		connectorConfigs := cu.buildConnectorConfigs(cluster)
 		if len(connectorConfigs.Connectors) == 0 {
-			fmt.Printf("  ⏭️ Skipping: %s (no connectors found)\n", filename)
+			fmt.Printf("  Skipping: %s (no connectors found)\n", filename)
 			continue
 		}
 
@@ -81,10 +81,10 @@ func (cu *ConnectorUtility) Run() error {
 		}
 
 		totalConnectors += len(connectorConfigs.Connectors)
-		fmt.Printf("  ✅ Generated: %s (%d connector(s))\n", filename, len(connectorConfigs.Connectors))
+		fmt.Printf("  Generated: %s (%d connector(s))\n", filename, len(connectorConfigs.Connectors))
 	}
 
-	fmt.Printf("✅ Successfully generated connector config files for %d cluster(s) with %d total connector(s) in %s\n", len(cu.clustersByArn), totalConnectors, cu.outputDir)
+	fmt.Printf("Successfully generated connector config files for %d cluster(s) with %d total connector(s) in %s\n", len(cu.clustersByArn), totalConnectors, cu.outputDir)
 
 	readmePath := filepath.Join(cu.outputDir, "README.md")
 	if err := cu.generateREADME(readmePath); err != nil {

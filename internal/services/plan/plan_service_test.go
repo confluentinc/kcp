@@ -597,7 +597,7 @@ func TestPlanServiceBuild_PerClusterTargetAuthOverride(t *testing.T) {
 
 // detectStaleStateOQ fires only when the source state file is older
 // than the configured threshold. Threshold-1 day is silent; threshold
-// + 1 day surfaces a 🟡 OQ with the day delta in the title.
+// + 1 day surfaces a [MED] OQ with the day delta in the title.
 func TestDetectStaleStateOQ_HonorsThreshold(t *testing.T) {
 	gen := time.Date(2026, 5, 20, 12, 0, 0, 0, time.UTC)
 	// Boundary: exactly threshold-days old → silent.
@@ -669,7 +669,7 @@ func TestAmbiguousGatewayIntent_IgnoresIAMPrereqWhenNoIAM(t *testing.T) {
 }
 
 // promoteSeverity flips gateway_intent_unconfirmed and
-// gateway_prereqs_pending from 🟢 to 🔴 — and rewrites the title — when
+// gateway_prereqs_pending from [LOW] to [HIGH] — and rewrites the title — when
 // auth_target_gateway_incompatible is present in the same Plan. Without
 // the sibling the base severity + original title pass through.
 func TestPromoteSeverity_SiblingTriggersBlockerForGatewayOQs(t *testing.T) {
@@ -679,29 +679,29 @@ func TestPromoteSeverity_SiblingTriggersBlockerForGatewayOQs(t *testing.T) {
 	for _, id := range []string{"gateway_intent_unconfirmed", "gateway_prereqs_pending"} {
 		meta := oqMetaFor(id)
 		sev, title := promoteSeverity(meta, "original title", siblings)
-		assert.Equal(t, "🔴", sev, id+" must promote to 🔴 when auth sibling fires")
+		assert.Equal(t, "[HIGH]", sev, id+" must promote to [HIGH] when auth sibling fires")
 		assert.NotEqual(t, "original title", title, id+" must rewrite its title when promoted")
 
 		sev, title = promoteSeverity(meta, "original title", emptySiblings)
-		assert.Equal(t, "🟢", sev, id+" must stay 🟢 without the sibling")
+		assert.Equal(t, "[LOW]", sev, id+" must stay [LOW] without the sibling")
 		assert.Equal(t, "original title", title, id+" must keep original title without promotion")
 	}
 }
 
 // severityLegend renders only the severities present in this Plan —
-// no 🔴 entry when nothing surfaces as blocker, etc.
+// no [HIGH] entry when nothing surfaces as blocker, etc.
 func TestSeverityLegend_OnlyPresent(t *testing.T) {
 	assert.Empty(t, severityLegend(map[string]bool{}))
 
-	yellowOnly := severityLegend(map[string]bool{"🟡": true})
-	assert.Contains(t, yellowOnly, "🟡")
-	assert.NotContains(t, yellowOnly, "🔴")
-	assert.NotContains(t, yellowOnly, "🟢")
+	yellowOnly := severityLegend(map[string]bool{"[MED]": true})
+	assert.Contains(t, yellowOnly, "[MED]")
+	assert.NotContains(t, yellowOnly, "[HIGH]")
+	assert.NotContains(t, yellowOnly, "[LOW]")
 
-	all := severityLegend(map[string]bool{"🔴": true, "🟡": true, "🟢": true})
-	assert.Contains(t, all, "🔴")
-	assert.Contains(t, all, "🟡")
-	assert.Contains(t, all, "🟢")
+	all := severityLegend(map[string]bool{"[HIGH]": true, "[MED]": true, "[LOW]": true})
+	assert.Contains(t, all, "[HIGH]")
+	assert.Contains(t, all, "[MED]")
+	assert.Contains(t, all, "[LOW]")
 }
 
 // attachAuth gives a fixture cluster a SCRAM (or other) source auth so

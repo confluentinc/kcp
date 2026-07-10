@@ -21,7 +21,7 @@ func NewStateUpgradeCmd() *cobra.Command {
 		SilenceUsage:  true, // a load/runtime error is not a usage error — don't dump the flags
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			slog.Info("🚀 upgrading state file to current schema", "path", stateFile)
+			slog.Info("upgrading state file to current schema", "path", stateFile)
 			state, err := types.NewStateFromFile(stateFile)
 			if err != nil {
 				return err
@@ -29,7 +29,7 @@ func NewStateUpgradeCmd() *cobra.Command {
 			if err := state.WriteToFile(stateFile); err != nil {
 				return err
 			}
-			slog.Info("✅ upgraded state file", "path", stateFile)
+			slog.Info("upgraded state file", "path", stateFile)
 			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "upgraded %s (schema_version stamped)\n", stateFile)
 			return nil
 		},

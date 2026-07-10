@@ -215,6 +215,19 @@ skip self-update and show the dev docs). Check what you're running with:
 kcp version
 ```
 
+## Code conventions
+
+### No emojis
+
+kcp output is plain text — **do not use emojis anywhere**: log lines, terminal
+output, banners, interactive prompts, error strings, generated reports or
+Terraform, and code comments. Express status and severity as text (for example
+`[HIGH]`/`[MED]`/`[LOW]` and `[OK]`/`[FAIL]`), never as emoji.
+
+Non-pictographic structural glyphs are not emojis and may be used where they
+aid terminal layout: tree arrows (`→`, `↳`), box-drawing and sparkline
+characters, and math symbols (`≤`, `≥`). When in doubt, prefer plain ASCII.
+
 ## Pull requests
 
 Please fill out the [pull request template](.github/pull_request_template.md),
