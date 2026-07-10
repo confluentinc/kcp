@@ -845,8 +845,9 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply must precede wait")
 }
 
-func TestWorkflow_FenceGateway_DoesNotCallUIDDiffingMethods(t *testing.T) {
+func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *testing.T) {
 	var unwantedCall string
+	waitReadyCalled := false
 	gw := &mockGatewayService{
 		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
 			unwantedCall = "GetGatewayPodUIDs"
@@ -859,15 +860,63 @@ func TestWorkflow_FenceGateway_DoesNotCallUIDDiffingMethods(t *testing.T) {
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
 			return nil
 		},
-		// waitForGatewayReadyFn defaults to nil → returns nil success
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			waitReadyCalled = true
+			return nil
+		},
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
+	// DetectUnroutedProducersDuration unset (0) → detection disabled: the fence
+	// keeps the lightweight readiness-only wait and never touches pod UIDs.
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Empty(t, unwantedCall, "FenceGateway must not use UID-diffing methods, but called: %s", unwantedCall)
+	assert.Empty(t, unwantedCall, "with detection disabled, FenceGateway must not use UID-diffing methods, but called: %s", unwantedCall)
+	assert.True(t, waitReadyCalled, "with detection disabled, FenceGateway must wait via WaitForGatewayReady")
+}
+
+func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T) {
+	var callOrder []string
+	waitReadyCalled := false
+	oldUIDs := map[k8stypes.UID]struct{}{"old-pod": {}}
+	var passedUIDs map[k8stypes.UID]struct{}
+	gw := &mockGatewayService{
+		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
+			callOrder = append(callOrder, "getUIDs")
+			return oldUIDs, nil
+		},
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			callOrder = append(callOrder, "apply")
+			return nil
+		},
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+			callOrder = append(callOrder, "waitPods")
+			passedUIDs = initialPodUIDs
+			if onProgress != nil {
+				onProgress(gateway.PodRolloutProgress{InitialPodCount: 1, NewPodsReady: 1, OldPodsRemaining: 0, RolloutDetected: true})
+			}
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			waitReadyCalled = true
+			return nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	wf := NewMigrationActions(gw, cl)
+	// Detection enabled: capture the pre-fence pod set, then wait for those old
+	// pods to actually terminate so no unfenced pod is still serving traffic
+	// when detection's first offset snapshot is taken.
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced"), DetectUnroutedProducersDuration: 10 * time.Second}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"getUIDs", "apply", "waitPods"}, callOrder,
+		"with detection enabled, FenceGateway must capture pod UIDs before apply, then wait for pod rollout")
+	assert.False(t, waitReadyCalled, "with detection enabled, FenceGateway must not use the readiness-only wait")
+	assert.Equal(t, oldUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
 }
 
 func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {

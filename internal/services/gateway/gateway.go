@@ -303,12 +303,16 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		return nil
 	}
 
-	// Phase 2: Wait for all pods to be completely replaced
+	// Phase 2: Wait for all pods to be completely replaced. A timeout of 0
+	// means no deadline — poll until the old pods are gone or ctx is cancelled.
+	// This matches WaitForGatewayReady, whose caller (FenceGateway) passes the
+	// same rolloutTimeout, which defaults to 0.
 	slog.Debug("rollout detected, waiting for complete pod replacement")
 
+	noDeadline := timeout <= 0
 	deadline := time.Now().Add(timeout)
 
-	for time.Now().Before(deadline) {
+	for noDeadline || time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -325,9 +329,28 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		newPodsReady := countNewReadyPods(pods.Items, initialPodUIDs)
 		oldPodsRemaining := countOldPods(pods.Items, initialPodUIDs)
 
+		// Completion gates on two independent signals:
+		//   1. every pod captured before the patch is gone (oldPodsRemaining == 0)
+		//      — the guarantee WaitForGatewayReady cannot give, since the old
+		//      unfenced pod must actually stop serving; and
+		//   2. the Deployment reports a complete rollout — the right number of
+		//      new pods are Ready and steady.
+		// We deliberately do NOT require newPodsReady to reach the pod count
+		// captured before the patch: if that capture raced an in-flight rollout
+		// (a surge left 2 pods where the desired count is 1), the captured count
+		// is inflated and newPodsReady can never reach it — deadlocking the wait.
+		// deploymentRolloutComplete reads the Deployment's own desired/ready
+		// replica counts, which are immune to that race.
+		dep, err := resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
+		if err != nil {
+			return err
+		}
+		rolloutComplete := deploymentRolloutComplete(dep)
+
 		slog.Debug("pod rollout progress",
-			"newPodsReady", fmt.Sprintf("%d/%d", newPodsReady, initialPodCount),
-			"oldPodsRemaining", oldPodsRemaining)
+			"newPodsReady", newPodsReady,
+			"oldPodsRemaining", oldPodsRemaining,
+			"deploymentRolloutComplete", rolloutComplete)
 
 		if onProgress != nil {
 			onProgress(PodRolloutProgress{
@@ -338,9 +361,8 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 			})
 		}
 
-		// Check completion: all old pods gone, all new pods ready, correct count
-		if oldPodsRemaining == 0 && newPodsReady == initialPodCount && len(pods.Items) == initialPodCount {
-			slog.Debug("all gateway pods replaced and ready", "podCount", initialPodCount)
+		if oldPodsRemaining == 0 && rolloutComplete {
+			slog.Debug("all old gateway pods gone and deployment rollout complete")
 			return nil
 		}
 

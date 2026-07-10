@@ -1548,7 +1548,12 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 
 		require.NoError(t, err,
 			"execute must not fail when the only producer is legitimate, gateway-routed traffic")
-		assert.NotContains(t, combined, "unrouted producer",
+		// Assert on the detection-failure message, not the substring "unrouted
+		// producer": the normal "Checking for unrouted producers..." phase banner
+		// and the "no unrouted producers detected" success line both contain it,
+		// so only the failure path's "bypassing the gateway" phrase is a reliable
+		// signal that a producer was wrongly flagged.
+		assert.NotContains(t, combined, "bypassing the gateway",
 			"a legitimate gateway-routed producer must never be reported as unrouted")
 		assert.Contains(t, combined, "Source offsets stable",
 			"detection should pass when no producer bypasses the gateway")
