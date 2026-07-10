@@ -101,6 +101,13 @@ type JMXService struct {
 	clients    []*client.JolokiaClient
 	metrics    MetricDefinitions
 	entityName string // "broker" or "worker" — used in query info descriptions
+
+	// warnedControllerMissing dedupes the "controller MBean not available" caveat
+	// (keyed by MBean) to once per scan. collectRawSample runs on every poll for the
+	// whole scan duration and a missing controller MBean is a persistent config state,
+	// so warning per-poll would flood the console (this caveat is Warn+). Safe without
+	// a mutex: collectRawSample is called sequentially from CollectOverDuration.
+	warnedControllerMissing map[string]bool
 }
 
 // NewJMXService creates a new JMX service with Jolokia clients for each endpoint.
@@ -110,7 +117,12 @@ func NewJMXService(endpoints []string, defs MetricDefinitions, entityName string
 	for i, endpoint := range endpoints {
 		clients[i] = client.NewJolokiaClient(endpoint, opts...)
 	}
-	return &JMXService{clients: clients, metrics: defs, entityName: entityName}
+	return &JMXService{
+		clients:                 clients,
+		metrics:                 defs,
+		entityName:              entityName,
+		warnedControllerMissing: make(map[string]bool),
+	}
 }
 
 // collectRawSample reads raw counter and gauge values from all brokers.
@@ -168,9 +180,10 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 				}
 			}
 		}
-		if !found {
+		if !found && !s.warnedControllerMissing[mb.MBean] {
 			slog.Warn("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
 				"mbean", mb.MBean, "metric", mb.Name)
+			s.warnedControllerMissing[mb.MBean] = true
 		}
 	}
 

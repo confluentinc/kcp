@@ -397,7 +397,10 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 	}
 
 	if len(failedTopics) > 0 {
-		slog.Warn("retrying failed topics", "count", len(failedTopics))
+		// Log narrative, not a console warning: the first-pass failures are
+		// typically transient (429 rate-limiting) and usually recover on retry.
+		// A genuine, unrecoverable failure surfaces below at Error.
+		slog.Info("🔍 retrying failed topics", "count", len(failedTopics))
 		for _, name := range failedTopics {
 			topicDesc, err := ms.DescribeTopic(ctx, clusterArn, name)
 			if err != nil {

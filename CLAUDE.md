@@ -121,7 +121,7 @@ The `internal/client/kafka_admin.go` package handles all auth types. SASL/SCRAM 
 Logs go through a custom `slog` pretty handler that fans out to two legs:
 
 - **`kcp.log`** (lumberjack, rotating) — **everything at Debug+**, rendered structured (`time LEVEL message key=val`) for support.
-- **Console** — **Warn+** by default (`--verbose` → Debug+). WARN/ERROR colour the level; INFO/DEBUG stay off the default console (they surface only under `--verbose`) and render as clean narrative (no time/level prefix) when shown.
+- **Console** — **Warn+** by default (`--verbose` → Debug+). WARN/ERROR colour the level; INFO renders as clean narrative (no time/level prefix); DEBUG (only under `--verbose`) keeps an uncoloured `DEBUG` prefix so diagnostics stay distinct from narrative. INFO/DEBUG stay off the default console (they surface only under `--verbose`); nothing on the console carries a timestamp.
 
 ### Output routing — pick by audience
 

@@ -167,8 +167,10 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	case skipTopics:
 		fmt.Printf("  ⏭️  Skipping topic discovery\n")
 	case isServerless:
-		// The AWS topic APIs are unsupported on serverless; the serverless notice
-		// above already covers this.
+		// The AWS topic APIs are unsupported on serverless, so we skip discovery
+		// entirely (the serverless notice above already covers this). Unlike the
+		// default path we never call SetTopics here, so Topics stays nil and
+		// serializes as "topics": null; all consumers nil-guard it.
 		slog.Debug("⏭️ skipping topic discovery for MSK Serverless cluster", "clusterArn", clusterArn)
 	default:
 		topics, err := cd.discoverTopics(ctx, clusterArn)
