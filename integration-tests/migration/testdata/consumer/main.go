@@ -1,4 +1,4 @@
-// Minimal sarama consumer for the cutover e2e tests.
+// Minimal sarama consumer for the migration e2e tests.
 //
 // Joins --group, reads up to --max-messages from --topic, commits offsets,
 // and exits. Plaintext unauthenticated.

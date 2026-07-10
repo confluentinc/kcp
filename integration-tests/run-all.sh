@@ -3,8 +3,8 @@
 # them (like `go test` does per-package, but aggregated across suites that each
 # need their own docker/Minikube environment).
 #
-#   bash integration-tests/run-all.sh              # all suites incl. cutover (Minikube)
-#   bash integration-tests/run-all.sh --no-cutover # skip the heavy Minikube suite
+#   bash integration-tests/run-all.sh              # all suites incl. migration (Minikube)
+#   bash integration-tests/run-all.sh --no-migration # skip the heavy Minikube suite
 #
 # Each suite: bring its env up, run `go test -json` (tee to a per-suite log), tear
 # the env down, record the suite's exit code. At the end, aggregate every per-test
@@ -12,7 +12,7 @@
 # and print per-suite + grand totals. Exits non-zero if any test failed or any
 # suite errored (e.g. a build failure that emits no test event).
 #
-# Requires: go, jq, docker; minikube+kubectl for the cutover suite.
+# Requires: go, jq, docker; minikube+kubectl for the migration suite.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -42,8 +42,8 @@ fi
 
 rm -rf "$LOG"; mkdir -p "$LOG"
 
-WITH_CUTOVER=1
-[[ "${1:-}" == "--no-cutover" ]] && WITH_CUTOVER=0
+WITH_MIGRATION=1
+[[ "${1:-}" == "--no-migration" ]] && WITH_MIGRATION=0
 
 # Build once up front (each Make target also builds, but the binary must exist for
 # the exec'd `./kcp` in the scan suites).
@@ -86,9 +86,9 @@ run_suite schema-registry integration-tests/schema-registry integration \
   "bash integration-tests/schema-registry/setup.sh" "bash integration-tests/schema-registry/teardown.sh"
 run_suite connect-scan    integration-tests/connect-scan    integration \
   "bash integration-tests/connect-scan/setup.sh" "bash integration-tests/connect-scan/teardown.sh"
-if [[ "$WITH_CUTOVER" == "1" ]]; then
-  run_suite cutover integration-tests/cutover e2e \
-    "bash integration-tests/cutover/testdata/setup.sh" "bash integration-tests/cutover/testdata/teardown.sh"
+if [[ "$WITH_MIGRATION" == "1" ]]; then
+  run_suite migration integration-tests/migration e2e \
+    "bash integration-tests/migration/testdata/setup.sh" "bash integration-tests/migration/testdata/teardown.sh"
 fi
 
 # ── Aggregate ────────────────────────────────────────────────────────────────

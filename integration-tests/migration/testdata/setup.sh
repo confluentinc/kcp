@@ -169,7 +169,7 @@ wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup
 # Naming convention:
 #   topic    : e2e-test-topic-<scenario>
 #   link     : e2e-link-<scenario>
-#   gateway  : cutover-gateway-<scenario>
+#   gateway  : migration-gateway-<scenario>
 SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters" "batch")
 TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
@@ -203,7 +203,7 @@ topic_names_csv() {
 render_scenario() {
   local template="$1"
   local scenario="$2"
-  local gateway="cutover-gateway-${scenario}"
+  local gateway="migration-gateway-${scenario}"
   local link="e2e-link-${scenario}"
   local topic="e2e-test-topic-${scenario}"
   local out="${RENDERED_DIR}/$(basename "${template}" .yaml)-${scenario}.yaml"
@@ -270,7 +270,7 @@ done
 echo "Waiting for gateway pods..."
 gateway_pids=()
 for scenario in "${SCENARIOS[@]}"; do
-  wait_for_pods "app=cutover-gateway-${scenario}" &
+  wait_for_pods "app=migration-gateway-${scenario}" &
   gateway_pids+=("$!")
 done
 for pid in "${gateway_pids[@]}"; do
@@ -331,7 +331,7 @@ for scenario in "${SCENARIOS[@]}"; do
 done
 
 # --- Render fenced/switchover CRs for runner-pod copy ---
-# Not applied to the cluster — kcp cutover init/execute apply them as part
+# Not applied to the cluster — kcp migration init/execute apply them as part
 # of the FSM. We just need rendered copies on disk to ship into the pod.
 for scenario in "${SCENARIOS[@]}"; do
   render_scenario "${TEMPLATES_DIR}/gateway-fenced.yaml" "${scenario}" >/dev/null
@@ -351,9 +351,9 @@ echo "Building kcp binary for Linux..."
 CGO_ENABLED=0 GOOS=linux go build -ldflags "-X github.com/confluentinc/kcp/internal/build_info.Version=0.0.0-localdev -X github.com/confluentinc/kcp/internal/build_info.Commit=unknown -X github.com/confluentinc/kcp/internal/build_info.Date=unknown" -o "${SCRIPT_DIR}/.kcp-linux" "${REPO_ROOT}"
 
 echo "Building e2e producer/consumer/setconfig binaries for Linux..."
-CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.producer-linux" "${REPO_ROOT}/integration-tests/cutover/testdata/producer"
-CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.consumer-linux" "${REPO_ROOT}/integration-tests/cutover/testdata/consumer"
-CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.setconfig-linux" "${REPO_ROOT}/integration-tests/cutover/testdata/setconfig"
+CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.producer-linux" "${REPO_ROOT}/integration-tests/migration/testdata/producer"
+CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.consumer-linux" "${REPO_ROOT}/integration-tests/migration/testdata/consumer"
+CGO_ENABLED=0 GOOS=linux go build -o "${SCRIPT_DIR}/.setconfig-linux" "${REPO_ROOT}/integration-tests/migration/testdata/setconfig"
 
 echo "Deploying kcp runner pod..."
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/kcp-runner.yaml"
@@ -428,7 +428,7 @@ ENV_FILE="${SCRIPT_DIR}/.env"
     echo "KCP_E2E_${upper}_CLUSTER_LINK_NAME=e2e-link-${scenario}"
     echo "KCP_E2E_${upper}_TOPIC_NAME=e2e-test-topic-${scenario}"
     echo "KCP_E2E_${upper}_TOPIC_NAMES=$(topic_names_csv "${scenario}")"
-    echo "KCP_E2E_${upper}_GATEWAY_NAME=cutover-gateway-${scenario}"
+    echo "KCP_E2E_${upper}_GATEWAY_NAME=migration-gateway-${scenario}"
     echo "KCP_E2E_${upper}_FENCED_CR=/workspace/gateway-fenced-${scenario}.yaml"
     echo "KCP_E2E_${upper}_SWITCHOVER_CR=/workspace/gateway-switchover-${scenario}.yaml"
   done
@@ -441,4 +441,4 @@ echo ""
 echo "Dest Cluster ID: ${DEST_CLUSTER_ID}"
 echo "kcp runner pod:  ${KCP_POD}"
 echo ""
-echo "Run tests with: make test-cutover"
+echo "Run tests with: make test-migration"
