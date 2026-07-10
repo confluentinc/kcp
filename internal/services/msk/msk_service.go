@@ -289,6 +289,7 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 
 func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.TopicInfo, error) {
 	slog.Info("🔍 listing topics")
+	slog.Debug("🔍 listing topics", "clusterArn", clusterArn)
 
 	var topics []kafkatypes.TopicInfo
 	var nextToken *string
@@ -330,6 +331,7 @@ func (ms *MSKService) DescribeTopic(ctx context.Context, clusterArn string, topi
 
 func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
 	slog.Info("scanning topics via AWS API")
+	slog.Debug("scanning topics via AWS API", "clusterArn", clusterArn)
 
 	// NOTE: No definitive `maxResults` limit in the docs. However, upping to something like a 1000 doesn't speed up the process of listing topics. Moreover, the MSK console
 	// populates the topics at 100 topic intervals which to me hints at that being the limit.

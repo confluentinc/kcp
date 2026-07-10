@@ -1,8 +1,11 @@
 package discover
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -169,4 +172,38 @@ func TestClusterDiscoverer_NilClusterInfoInDiscoverMetrics(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "nil ClusterInfo")
+}
+
+// TestDiscoverTopics_LogsClusterArnOnFailure proves the non-fatal topic-listing
+// failure keeps cluster attribution in kcp.log: the surviving WARN stays clean,
+// but a paired DEBUG line records which clusterArn failed, so a support engineer
+// reading a multi-cluster run can still tell which cluster the failure belongs to.
+func TestDiscoverTopics_LogsClusterArnOnFailure(t *testing.T) {
+	const testArn = "arn:aws:kafka:us-east-1:123456789012:cluster/prod/xyz-9"
+
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prev)
+
+	msk, ec2svc, metrics := defaultStubs()
+	msk.getTopicsWithConfigsFn = func(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
+		return nil, errors.New("broker unreachable")
+	}
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
+
+	// discoverTopics is non-fatal: it logs and returns a nil error.
+	_, err := cd.discoverTopics(context.Background(), testArn)
+	require.NoError(t, err)
+
+	out := logBuf.String()
+	found := false
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "level=DEBUG") && strings.Contains(line, "clusterArn="+testArn) {
+			found = true
+			break
+		}
+	}
+	assert.True(t, found,
+		"discoverTopics must record clusterArn on a DEBUG line when topic listing fails; got:\n%s", out)
 }

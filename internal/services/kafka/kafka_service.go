@@ -79,7 +79,8 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 // scanClusterTopics scans for topics in the Kafka cluster
 func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
-	slog.Info("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
+	slog.Info("🔍 scanning for cluster topics")
+	slog.Debug("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
 
 	topics, err := ks.client.ListTopicsWithConfigs()
 	if err != nil {
@@ -111,6 +112,7 @@ func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 // describeKafkaCluster gets cluster metadata and returns the cluster ID along with logging information
 func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, error) {
 	slog.Info("🔍 describing kafka cluster")
+	slog.Debug("🔍 describing kafka cluster", "clusterArn", ks.clusterArn)
 
 	clusterMetadata, err := ks.client.GetClusterKafkaMetadata()
 	if err != nil {
@@ -122,6 +124,7 @@ func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, er
 // scanKafkaAcls scans for Kafka ACLs in the cluster
 func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
 	slog.Info("🔍 scanning for kafka acls")
+	slog.Debug("🔍 scanning for kafka acls", "clusterArn", ks.clusterArn)
 
 	acls, err := ks.client.ListAcls()
 	if err != nil {

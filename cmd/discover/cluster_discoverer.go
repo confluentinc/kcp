@@ -586,6 +586,7 @@ func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn stri
 		// Non-fatal: continue without topic details. Serverless is handled by the
 		// caller, so reaching here means a genuine provisioned-cluster failure.
 		slog.Warn("⚠️ failed to list topics; continuing without topic details", "error", err)
+		slog.Debug("failed to list topics", "clusterArn", clusterArn, "error", err)
 	}
 
 	var topicDetails []types.TopicDetails
