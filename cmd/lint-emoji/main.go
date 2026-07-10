@@ -7,74 +7,113 @@
 // user-facing kcp subcommand — invoke via `make lint` or, directly,
 // `go run ./cmd/lint-emoji [path ...]` (defaults to the current directory).
 //
-// It flags pictographic emoji only. The non-pictographic structural glyphs that
-// kcp is allowed to use for terminal layout are deliberately NOT flagged: tree
-// arrows (Arrows block, U+2190..U+21FF), box-drawing (U+2500..U+257F), block and
-// sparkline elements (U+2580..U+259F), and math operators (U+2200..U+22FF, e.g.
-// the less/greater-than-or-equal signs). None of those blocks appear in the
-// emoji range table below.
+// What counts as an emoji is the Unicode Extended_Pictographic property (UTS #51,
+// the canonical "is this an emoji" definition), generated into emoji_table.go from
+// the upstream emoji-data.txt — see ./gen. Using the official property means the
+// checker covers every emoji block, including ones Unicode adds later, rather than
+// a hand-curated list that silently develops gaps. A small extraBanned set adds the
+// few code points kcp also forbids that Unicode does not classify as
+// Extended_Pictographic (emoji-presentation and keycap marks, regional-indicator
+// flags, and the check/cross dingbats kcp used as status markers).
+//
+// A tiny allow-list (allowedPictographic) carves back the structural glyphs kcp is
+// permitted to use even though Unicode classifies them as pictographic. The other
+// structural glyphs kcp uses for terminal layout — tree arrows (→ ↳), box-drawing,
+// block/sparkline elements, math operators (≤ ≥), and the ● bullet — are already
+// outside Extended_Pictographic and so are never flagged.
 //
 // The frontend (React/TypeScript), docs, and vendored/generated/local-only trees
 // are outside the lint surface — same spirit as .golangci.yml's exclusions.
 package main
 
+//go:generate go run ./gen
+
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
-// emojiRanges lists the inclusive rune ranges treated as emoji. They cover the
-// astral emoji planes plus the BMP symbol and dingbat blocks that hold the
-// glyphs the project removed (magnifier, warning sign, check/cross marks,
-// information source, coloured circles/squares). The ranges are chosen so they
-// never overlap the structural glyphs kcp is allowed to use — arrows, box
-// drawing, block/sparkline elements, and math operators all live in U+2190..
-// U+259F and U+2200..U+22FF, none of which is listed here.
-var emojiRanges = [...][2]rune{
-	{0x1F000, 0x1FAFF}, // astral emoji: emoticons, transport, symbols and pictographs (+Extended-A/B), regional-indicator flags, playing cards
-	{0x2600, 0x27BF},   // Miscellaneous Symbols (U+2600..U+26FF) + Dingbats (U+2700..U+27BF): warning sign, check/cross marks, etc.
-	{0x2B00, 0x2BFF},   // Miscellaneous Symbols and Arrows: emoji-style stars/arrows/squares
-	{0x2139, 0x2139},   // information source (Letterlike Symbols)
-	{0x20E3, 0x20E3},   // combining enclosing keycap (keycap emoji)
-	{0xFE0F, 0xFE0F},   // emoji-presentation variation selector (turns a neutral base glyph into an emoji)
+// allowedPictographic lists Extended_Pictographic code points that kcp is
+// nonetheless permitted to use as structural glyphs. Today that is only the black
+// small square (U+25AA), used as a markdown bullet in the cost report. Every other
+// structural glyph kcp uses (arrows, box-drawing, block/sparkline, math, the ●
+// bullet U+25CF) is already outside Extended_Pictographic, so no carve-out needed.
+var allowedPictographic = map[rune]bool{
+	0x25AA: true, // BLACK SMALL SQUARE — markdown bullet in the cost report
 }
 
-// isEmoji reports whether r falls in one of the emoji ranges.
+// extraBanned lists code points kcp forbids that Unicode does NOT classify as
+// Extended_Pictographic, so the generated emoji table alone would miss them. This
+// keeps the emoji check a strict superset of what kcp bans:
+//   - 20E3 / FE0F: keycap combiner and emoji-presentation variation selector.
+//     Neither has a legitimate use in plain-text source; flagging FE0F also catches
+//     keycap emoji (e.g. 1 U+FE0F U+20E3) whose base is plain ASCII, outside EP.
+//   - 2713 / 2717 / 2718: the check-mark and ballot-x dingbats kcp used as status
+//     markers and replaced with [OK] / [FAIL]. Unicode treats these as text
+//     dingbats, not emoji, so they are outside Extended_Pictographic.
+//   - 1F1E6..1F1FF: regional-indicator symbols, i.e. flag emoji. Unicode classifies
+//     these as Emoji_Component, not Extended_Pictographic.
+var extraBanned = &unicode.RangeTable{
+	R16: []unicode.Range16{
+		{0x20E3, 0x20E3, 1},
+		{0x2713, 0x2713, 1},
+		{0x2717, 0x2718, 1},
+		{0xFE0F, 0xFE0F, 1},
+	},
+	R32: []unicode.Range32{
+		{0x1F1E6, 0x1F1FF, 1},
+	},
+}
+
+// isEmoji reports whether r is an emoji (or emoji-only component) that kcp must not
+// use: any Extended_Pictographic code point or extraBanned entry, minus the
+// structural glyphs carved back by allowedPictographic.
 func isEmoji(r rune) bool {
-	for _, rg := range emojiRanges {
-		if r >= rg[0] && r <= rg[1] {
-			return true
-		}
+	if allowedPictographic[r] {
+		return false
 	}
-	return false
+	return unicode.Is(extendedPictographic, r) || unicode.Is(extraBanned, r)
 }
 
-// skipDir reports whether a directory is outside the lint surface, given its
-// repo-relative slash path and base name. Hidden directories (.git, .venv-docs,
-// .cache, .worktrees, .idea, ...) are always skipped, along with the frontend,
-// docs, and vendored/generated/local-only trees.
+// skipDir reports whether a directory is outside the lint surface, given its path
+// relative to the current scan root (slash-separated) and its base name. Hidden
+// directories (.git, .venv-docs, ...) and the vendored/generated trees that
+// legitimately nest anywhere are skipped by base name; the frontend, docs site,
+// and local-only working dirs are anchored to their path so a nested Go package
+// that merely shares the name (e.g. cmd/docs) is still linted.
 func skipDir(rel, name string) bool {
-	if rel == "cmd/ui/frontend" || strings.HasSuffix(rel, "/cmd/ui/frontend") {
-		return true // React/TypeScript frontend — excluded, same as .golangci.yml
-	}
 	if name != "." && strings.HasPrefix(name, ".") {
-		return true // hidden directories
+		return true // hidden directories, anywhere
 	}
 	switch name {
-	case "vendor", "node_modules", "dist", "site", "docs", "scratch", "local":
+	case "vendor", "node_modules", "dist":
+		return true // vendored/generated trees, which legitimately nest anywhere
+	}
+	// The React/TypeScript frontend — excluded like .golangci.yml. Matched on the
+	// path (not base name) so an unrelated dir named "frontend" is unaffected.
+	if rel == "cmd/ui/frontend" || strings.HasSuffix(rel, "/cmd/ui/frontend") {
+		return true
+	}
+	// Top-level-only trees: a direct child of the scan root named one of these is
+	// the docs site or a local-only working dir. Anchoring to rel (not base name)
+	// keeps real Go packages such as cmd/docs in scope.
+	switch rel {
+	case "docs", "site", "scratch", "local":
 		return true
 	}
 	return false
 }
 
-// checkFile scans a single file for emoji, printing "file:line:col: ..." for
-// each and returning the count. Column is a 1-based rune position within the
-// line, so an editor jump lands on (or just before) the offending glyph.
-func checkFile(path string) (int, error) {
+// checkFile scans a single file for emoji, writing "file:line:col: ..." to out for
+// each and returning the count. Column is a 1-based rune position within the line,
+// so an editor jump lands on (or just before) the offending glyph.
+func checkFile(path string, out io.Writer) (int, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return 0, err
@@ -93,15 +132,16 @@ func checkFile(path string) (int, error) {
 		}
 		col++
 		if isEmoji(r) {
-			_, _ = fmt.Printf("%s:%d:%d: emoji U+%04X is not allowed in kcp source\n", path, line, col, r)
+			_, _ = fmt.Fprintf(out, "%s:%d:%d: emoji U+%04X is not allowed in kcp source\n", path, line, col, r)
 			count++
 		}
 	}
 	return count, nil
 }
 
-func main() {
-	roots := os.Args[1:]
+// run walks the given roots (defaulting to "."), reports every emoji it finds to
+// stdout, and returns the process exit code: 0 clean, 1 emoji found, 2 walk error.
+func run(roots []string, stdout, stderr io.Writer) int {
 	if len(roots) == 0 {
 		roots = []string{"."}
 	}
@@ -112,7 +152,11 @@ func main() {
 			if err != nil {
 				return err
 			}
-			rel := filepath.ToSlash(path)
+			rel, rerr := filepath.Rel(root, path)
+			if rerr != nil {
+				rel = path
+			}
+			rel = filepath.ToSlash(rel)
 			if d.IsDir() {
 				if skipDir(rel, d.Name()) {
 					return fs.SkipDir
@@ -123,19 +167,24 @@ func main() {
 				return nil
 			}
 			filesScanned++
-			n, err := checkFile(path)
+			n, err := checkFile(path, stdout)
 			violations += n
 			return err
 		})
 		if err != nil {
-			_, _ = fmt.Fprintf(os.Stderr, "lint-emoji: %v\n", err)
-			os.Exit(2)
+			_, _ = fmt.Fprintf(stderr, "lint-emoji: %v\n", err)
+			return 2
 		}
 	}
 
 	if violations > 0 {
-		_, _ = fmt.Fprintf(os.Stderr, "\nlint-emoji: found %d emoji in Go source; kcp output must be plain text (see CLAUDE.md \"No emojis\")\n", violations)
-		os.Exit(1)
+		_, _ = fmt.Fprintf(stderr, "\nlint-emoji: found %d emoji in Go source; kcp output must be plain text (see CLAUDE.md \"No emojis\")\n", violations)
+		return 1
 	}
-	_, _ = fmt.Printf("lint-emoji: no emoji found (%d Go files scanned)\n", filesScanned)
+	_, _ = fmt.Fprintf(stdout, "lint-emoji: no emoji found (%d Go files scanned)\n", filesScanned)
+	return 0
+}
+
+func main() {
+	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
