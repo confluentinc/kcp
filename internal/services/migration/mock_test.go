@@ -12,13 +12,14 @@ import (
 
 // mockGatewayService implements gateway.Service using function fields for test control.
 type mockGatewayService struct {
-	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
-	validateGatewayCRsFn  func(initial, fenced, switchover []byte) error
-	checkPermissionsFn    func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
-	getGatewayPodUIDsFn   func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
-	waitForGatewayPodsFn  func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	getGatewayYAMLFn                   func(ctx context.Context, namespace, name string) ([]byte, error)
+	validateGatewayCRsFn               func(initial, fenced, switchover []byte) error
+	checkPermissionsFn                 func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	applyGatewayYAMLFn                 func(ctx context.Context, namespace, name string, yaml []byte) error
+	waitForGatewayObservedGenerationFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	getGatewayPodUIDsFn                func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
+	waitForGatewayPodsFn               func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	waitForGatewayReadyFn              func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 }
 
 func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -47,6 +48,13 @@ func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, na
 		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml)
 	}
 	return fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
+}
+
+func (m *mockGatewayService) WaitForGatewayObservedGeneration(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
+	if m.waitForGatewayObservedGenerationFn != nil {
+		return m.waitForGatewayObservedGenerationFn(ctx, namespace, name, pollInterval, timeout)
+	}
+	return nil
 }
 
 func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {

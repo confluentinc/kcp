@@ -388,6 +388,16 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// With detection on, wait until the old unfenced pods are gone, not just
 	// until the new pod is Ready — see the comment above.
 	if detecting {
+		// Guard the pod-rollout wait: first block until the operator has
+		// observed the fenced CR. Otherwise a slow operator reconcile could let
+		// WaitForGatewayPods' detection window expire before the rollout even
+		// starts — concluding "no restart required" while the old, still-
+		// unfenced pod is live and reopening the false positive. A no-op
+		// re-apply (resume of an already-fenced gateway) returns immediately.
+		s.reporter.detail("Waiting for gateway reconcile...")
+		if err := s.gatewayService.WaitForGatewayObservedGeneration(ctx, config.K8sNamespace, config.InitialCrName, 2*time.Second, s.rolloutTimeout); err != nil {
+			return fmt.Errorf("failed waiting for gateway reconcile: %w", err)
+		}
 		if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, oldPodUIDs, 5*time.Second, s.rolloutTimeout, s.printPodRolloutProgress); err != nil {
 			return fmt.Errorf("failed waiting for gateway pod rollout: %w", err)
 		}

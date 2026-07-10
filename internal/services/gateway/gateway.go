@@ -34,6 +34,7 @@ type Service interface {
 	ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
+	WaitForGatewayObservedGeneration(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
 	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
@@ -188,6 +189,83 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 	}
 
 	return nil
+}
+
+// WaitForGatewayObservedGeneration blocks until the CFK operator has observed
+// the current Gateway CR spec — status.observedGeneration >= metadata.generation
+// — or ctx is cancelled. timeout == 0 means no deadline (consistent with the
+// other gateway waits).
+//
+// This is the guard that makes a downstream "no rollout detected" trustworthy
+// when unrouted-producer detection is enabled. Applying the fenced CR bumps the
+// Gateway's metadata.generation; until the operator reconciles it (and, for a
+// real spec change, begins the pod rollout) observedGeneration lags. Without
+// this wait, WaitForGatewayPods' detection window could expire before the
+// operator even starts the rollout, concluding "no restart required" while the
+// old, still-unfenced pod is live — the exact false positive the fence-drain
+// exists to close. A no-op apply (e.g. a resume re-applying an already-fenced
+// CR) does not bump generation, so observedGeneration already satisfies the
+// check and this returns immediately.
+func (s *K8sService) WaitForGatewayObservedGeneration(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build config: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	return waitForGatewayObservedGeneration(ctx, dynamicClient, namespace, gatewayName, pollInterval, timeout)
+}
+
+// waitForGatewayObservedGeneration is the inner orchestration used by
+// WaitForGatewayObservedGeneration. Split from the method so unit tests can
+// inject a fake dynamic client.
+func waitForGatewayObservedGeneration(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
+	gatewayGVR := schema.GroupVersionResource{
+		Group:    GatewayGroup,
+		Version:  GatewayVersion,
+		Resource: GatewayResourcePlural,
+	}
+
+	noDeadline := timeout <= 0
+	deadline := time.Now().Add(timeout)
+
+	for noDeadline || time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		gw, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get gateway for reconcile check: %w", err)
+		}
+
+		generation := gw.GetGeneration()
+		// Before the operator writes any status, observedGeneration is absent
+		// (found == false) — treat that as not-yet-reconciled and keep waiting.
+		observed, found, err := unstructured.NestedInt64(gw.Object, "status", "observedGeneration")
+		if err != nil {
+			return fmt.Errorf("failed to read gateway status.observedGeneration: %w", err)
+		}
+		if found && observed >= generation {
+			slog.Debug("gateway reconciled by operator", "gateway", gatewayName, "generation", generation, "observedGeneration", observed)
+			return nil
+		}
+		slog.Debug("waiting for gateway reconcile", "gateway", gatewayName, "generation", generation, "observedGeneration", observed, "statusPresent", found)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+
+	return fmt.Errorf("timed out waiting for gateway %q to be observed by the operator (timeout: %s)", gatewayName, timeout)
 }
 
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.

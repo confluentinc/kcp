@@ -857,6 +857,10 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 			unwantedCall = "WaitForGatewayPods"
 			return nil
 		},
+		waitForGatewayObservedGenerationFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			unwantedCall = "WaitForGatewayObservedGeneration"
+			return nil
+		},
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
 			return nil
 		},
@@ -868,7 +872,8 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	// DetectUnroutedProducersDuration unset (0) → detection disabled: the fence
-	// keeps the lightweight readiness-only wait and never touches pod UIDs.
+	// keeps the lightweight readiness-only wait, never touches pod UIDs, and
+	// does not wait on operator reconcile.
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
@@ -891,6 +896,10 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			callOrder = append(callOrder, "apply")
 			return nil
 		},
+		waitForGatewayObservedGenerationFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			callOrder = append(callOrder, "reconcile")
+			return nil
+		},
 		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "waitPods")
 			passedUIDs = initialPodUIDs
@@ -906,15 +915,16 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	// Detection enabled: capture the pre-fence pod set, then wait for those old
-	// pods to actually terminate so no unfenced pod is still serving traffic
-	// when detection's first offset snapshot is taken.
+	// Detection enabled: capture the pre-fence pod set, wait for the operator to
+	// observe the fenced CR (so "no rollout detected" downstream is trustworthy),
+	// then wait for those old pods to actually terminate so no unfenced pod is
+	// still serving traffic when detection's first offset snapshot is taken.
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced"), DetectUnroutedProducersDuration: 10 * time.Second}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"getUIDs", "apply", "waitPods"}, callOrder,
-		"with detection enabled, FenceGateway must capture pod UIDs before apply, then wait for pod rollout")
+	assert.Equal(t, []string{"getUIDs", "apply", "reconcile", "waitPods"}, callOrder,
+		"with detection enabled, FenceGateway must capture pod UIDs before apply, wait for operator reconcile, then wait for pod rollout")
 	assert.False(t, waitReadyCalled, "with detection enabled, FenceGateway must not use the readiness-only wait")
 	assert.Equal(t, oldUIDs, passedUIDs, "the pre-apply pod UIDs must be passed to WaitForGatewayPods")
 }
