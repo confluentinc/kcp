@@ -244,6 +244,12 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}
 
+	return waitForGatewayPods(ctx, clientset, namespace, gatewayName, initialPodUIDs, pollInterval, timeout, onProgress)
+}
+
+// waitForGatewayPods is the inner orchestration used by WaitForGatewayPods.
+// Split from the method so unit tests can inject a fake clientset.
+func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
 	// Confluent CFK labels gateway pods with app=<gateway-crd-name>
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
 
@@ -251,8 +257,8 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 	initialPodCount := len(initialPodUIDs)
 	slog.Debug("waiting for gateway pod rollout", "namespace", namespace, "gateway", gatewayName, "initialPodCount", initialPodCount)
 
-	// Phase 1: Wait for rollout to start (10 second detection window)
-	changeDetectionDeadline := time.Now().Add(10 * time.Second)
+	// Phase 1: Wait for rollout to start (detection window)
+	changeDetectionDeadline := time.Now().Add(gatewayReadinessDetectionWindow)
 	rolloutDetected := false
 
 	for time.Now().Before(changeDetectionDeadline) {
@@ -291,7 +297,7 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 	}
 
 	if !rolloutDetected {
-		slog.Debug("no rollout detected within 10 seconds, assuming config change did not require pod restart")
+		slog.Debug("no rollout detected within detection window, assuming config change did not require pod restart")
 		if onProgress != nil {
 			onProgress(PodRolloutProgress{
 				InitialPodCount:  initialPodCount,

@@ -12,8 +12,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	kubernetesfake "k8s.io/client-go/kubernetes/fake"
 	ktesting "k8s.io/client-go/testing"
@@ -386,6 +388,103 @@ func TestWaitForGatewayReady_ProgressElapsedIsMonotonic(t *testing.T) {
 }
 
 // ===========================================================================
+// waitForGatewayPods — pod-drain completion
+// ===========================================================================
+
+// TestWaitForGatewayPods_SurgeCapture_CompletesOnDeploymentComplete guards the
+// deadlock fix: if the pre-patch UID capture raced an in-flight rollout and
+// grabbed 2 pods where the desired count is 1, newPodsReady can never reach the
+// captured count. Completion must instead come from the old pods being gone and
+// the Deployment reporting a finished rollout.
+func TestWaitForGatewayPods_SurgeCapture_CompletesOnDeploymentComplete(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	// Captured 2 old UIDs during a surge; steady state is a single replica.
+	initialUIDs := map[types.UID]struct{}{"old-1": {}, "old-2": {}}
+	// Current cluster: old pods gone, one new ready pod, Deployment complete at 1.
+	cs := newFakeClientset(
+		newGatewayPod("gw-new", ns, gw, "new-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	var last PodRolloutProgress
+	onProgress := func(p PodRolloutProgress) { last = p }
+
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 5*time.Millisecond, 2*time.Second, onProgress)
+	require.NoError(t, err, "must complete via deploymentRolloutComplete despite newPodsReady (1) < captured count (2)")
+
+	assert.Equal(t, 0, last.OldPodsRemaining)
+	assert.Equal(t, 1, last.NewPodsReady)
+	assert.Equal(t, 2, last.InitialPodCount, "captured (inflated) count is reported but not used as the completion target")
+}
+
+// TestWaitForGatewayPods_OldPodStillServing_DoesNotComplete ensures we do not
+// return while a captured old pod is still present — the whole point of the
+// pod-drain wait over a plain readiness check.
+func TestWaitForGatewayPods_OldPodStillServing_DoesNotComplete(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	// Surge in progress: old pod still there + a new ready pod; Deployment not settled.
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		newGatewayPod("gw-new", ns, gw, "new-1", true),
+		newGatewayDeployment(gw, ns, 2,
+			withObservedGeneration(2),
+			withReplicas(2),
+			withUpdatedReplicas(1),
+			withAvailableReplicas(1),
+			withReadyReplicas(1),
+		),
+	)
+
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 5*time.Millisecond, 150*time.Millisecond, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out", "must keep waiting while an old pod is still present")
+}
+
+// TestWaitForGatewayPods_NoRollout_ReturnsNoOp covers the Phase-1 no-op path:
+// when the apply triggers no pod change, the wait returns without a rollout.
+func TestWaitForGatewayPods_NoRollout_ReturnsNoOp(t *testing.T) {
+	shortenDetectionWindow(t, 40*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	// Only the captured pod exists and it is ready → no rollout is detected.
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		completeGatewayDeployment(gw, ns, 1),
+	)
+
+	var last PodRolloutProgress
+	var got bool
+	onProgress := func(p PodRolloutProgress) { last = p; got = true }
+
+	err := waitForGatewayPods(context.Background(), cs, ns, gw, initialUIDs, 5*time.Millisecond, 2*time.Second, onProgress)
+	require.NoError(t, err)
+	require.True(t, got, "no-op should still fire onProgress once")
+	assert.False(t, last.RolloutDetected, "no pod change means no rollout detected")
+}
+
+// TestWaitForGatewayPods_ContextCancelled_Propagates ensures cancellation
+// during the wait surfaces ctx.Err().
+func TestWaitForGatewayPods_ContextCancelled_Propagates(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	initialUIDs := map[types.UID]struct{}{"old-1": {}}
+	// Old pod lingers so the wait would otherwise never complete.
+	cs := newFakeClientset(
+		newGatewayPod("gw-old", ns, gw, "old-1", true),
+		newGatewayPod("gw-new", ns, gw, "new-1", true),
+		newGatewayDeployment(gw, ns, 2,
+			withObservedGeneration(2), withReplicas(2), withUpdatedReplicas(1), withAvailableReplicas(1), withReadyReplicas(1),
+		),
+	)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() { time.Sleep(30 * time.Millisecond); cancel() }()
+	err := waitForGatewayPods(ctx, cs, ns, gw, initialUIDs, 5*time.Millisecond, 0, nil)
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+}
+
+// ===========================================================================
 // Helpers
 // ===========================================================================
 
@@ -459,4 +558,37 @@ func updateDeployment(cs kubernetes.Interface, dep *appsv1.Deployment) {
 	if err != nil {
 		panic(fmt.Sprintf("updateDeployment: %v", err))
 	}
+}
+
+// newGatewayPod builds a gateway pod labelled app=<gatewayName> with the given
+// UID. A ready pod is Running with a PodReady=True condition (what isPodReady
+// requires); a non-ready pod is Pending.
+func newGatewayPod(name, namespace, gatewayName, uid string, ready bool) *corev1.Pod {
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: namespace,
+			UID:       types.UID(uid),
+			Labels:    map[string]string{"app": gatewayName},
+		},
+	}
+	if ready {
+		pod.Status.Phase = corev1.PodRunning
+		pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	} else {
+		pod.Status.Phase = corev1.PodPending
+	}
+	return pod
+}
+
+// completeGatewayDeployment builds a Deployment reporting a finished rollout at
+// the given replica count.
+func completeGatewayDeployment(name, namespace string, replicas int32) *appsv1.Deployment {
+	return newGatewayDeployment(name, namespace, 1,
+		withObservedGeneration(1),
+		withReplicas(replicas),
+		withUpdatedReplicas(replicas),
+		withAvailableReplicas(replicas),
+		withReadyReplicas(replicas),
+	)
 }
