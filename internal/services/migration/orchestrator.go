@@ -57,12 +57,12 @@ var canonicalWorkflow = []WorkflowStep{
 // absent: a fixed "Pausing..." banner would mislead on the pass-through path,
 // so PauseOffsetSync owns its own banner-or-skip-line output.
 var stepHeaders = map[string]string{
-	EventInitialize:  "🔍 Initializing migration...",
-	EventWaitForLags: "⏳ Checking replication lags...",
-	EventFence:       "🚧 Fencing gateway...",
-	EventVerifyFence: "🔍 Checking for unrouted producers...",
-	EventPromote:     "📤 Promoting mirror topics...",
-	EventSwitch:      "🔄 Switching gateway to Confluent Cloud...",
+	EventInitialize:  "Initializing migration...",
+	EventWaitForLags: "Checking replication lags...",
+	EventFence:       "Fencing gateway...",
+	EventVerifyFence: "Checking for unrouted producers...",
+	EventPromote:     "Promoting mirror topics...",
+	EventSwitch:      "Switching gateway to Confluent Cloud...",
 }
 
 // ExecutionParams holds the per-run runtime parameters a transition may need.
@@ -182,7 +182,7 @@ func NewMigrationOrchestrator(
 	// guard keeps the FSM honest if that ever changes.
 	if orchestrator.fsm.Is(StateFenceVerified) {
 		if err := orchestrator.fsm.Event(context.Background(), EventExpireVerification); err != nil {
-			slog.Error("❌ failed to expire fence verification at bootstrap", "error", err)
+			slog.Error("failed to expire fence verification at bootstrap", "error", err)
 		}
 	}
 
@@ -195,7 +195,7 @@ func NewMigrationOrchestrator(
 	// never diverged — instead of promoting behind a fence that may not exist.
 	if orchestrator.fsm.Is(StateFenced) || orchestrator.fsm.Is(StateOffsetSyncPaused) {
 		if err := orchestrator.fsm.Event(context.Background(), EventExpireFence); err != nil {
-			slog.Error("❌ failed to expire fence posture at bootstrap", "error", err)
+			slog.Error("failed to expire fence posture at bootstrap", "error", err)
 		}
 	}
 
@@ -247,7 +247,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		o.reporter.stepDone()
 	}
 
-	o.reporter.complete("✅ Migration complete!")
+	o.reporter.complete("Migration complete!")
 	return nil
 }
 
@@ -290,13 +290,13 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	}
 
 	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
-		slog.Error("❌ failed to roll back to initialized", "error", err)
+		slog.Error("failed to roll back to initialized", "error", err)
 		return stepFailure
 	}
 
 	persistErr := o.PersistState()
 	if persistErr != nil {
-		slog.Error("❌ failed to persist state after abort_fence transition", "error", persistErr)
+		slog.Error("failed to persist state after abort_fence transition", "error", persistErr)
 	}
 
 	// Restore the paused sync config even when the persist failed: cluster
@@ -422,7 +422,7 @@ func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) 
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
-		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
+		slog.Error("failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}

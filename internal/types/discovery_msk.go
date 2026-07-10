@@ -125,7 +125,7 @@ type AWSClientInformation struct {
 func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
 	var brokerList string
 	var visibility string
-	slog.Info("🔍 parsing broker addresses", "authType", authType)
+	slog.Info("parsing broker addresses", "authType", authType)
 
 	switch authType {
 	case AuthTypeIAM:
@@ -174,7 +174,7 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
 	}
 
-	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType)
+	slog.Info("found broker addresses", "visibility", visibility, "authType", authType)
 	slog.Debug("found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
 
 	// Split by comma and trim whitespace from each address, filter out empty strings
@@ -192,7 +192,7 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 // Returns all bootstrap brokers for a given auth type.
 func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthType) ([]string, error) {
 	var brokerList []string
-	slog.Info("🔍 parsing broker addresses", "authType", authType)
+	slog.Info("parsing broker addresses", "authType", authType)
 
 	switch authType {
 	case AuthTypeIAM:
@@ -212,7 +212,7 @@ func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthTy
 		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
 	}
 
-	slog.Info("🔍 found broker addresses", "authType", authType)
+	slog.Info("found broker addresses", "authType", authType)
 	slog.Debug("found broker addresses", "authType", authType, "addresses", brokerList)
 
 	rawAddresses := strings.Split(strings.Join(brokerList, ","), ",")
