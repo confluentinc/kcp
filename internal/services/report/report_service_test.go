@@ -1213,7 +1213,7 @@ func TestFilterConnectMetrics_Managed_MSK(t *testing.T) {
 
 func TestFilterConnectMetrics_Managed_ExistingClusterNilMetrics_SignalsNeverCollected(t *testing.T) {
 	// The MSK cluster exists (present in state by ARN) but ConnectorMetrics was
-	// never populated (e.g. scanned without --metrics cloudwatch). This must
+	// never populated (e.g. scanned without --metrics-granularity). This must
 	// return the never-collected sentinel, not a not-found error, so the API
 	// layer shows the "run a scan" hint.
 	rs := &ReportService{}

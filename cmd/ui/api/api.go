@@ -340,7 +340,7 @@ func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 		if errors.Is(err, report.ErrNoConnectMetricsCollected) {
 			hint := "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics"
 			if kind == "managed" {
-				hint = "Run 'kcp scan msk-connectors --metrics cloudwatch' to collect MSK Connect metrics"
+				hint = "Run 'kcp scan msk-connectors --metrics-granularity 1d' to collect MSK Connect metrics"
 			}
 			return c.JSON(http.StatusNotFound, map[string]any{
 				"error":   "No Connect metrics available for this cluster",

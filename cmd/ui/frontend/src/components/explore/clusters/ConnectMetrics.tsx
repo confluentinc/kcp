@@ -67,7 +67,7 @@ export const ConnectMetrics = ({
   const heading = kind === 'managed' ? 'Connector Metrics' : 'Connect Cluster Metrics'
   const scanCommandHint =
     kind === 'managed'
-      ? 'kcp scan msk-connectors --metrics cloudwatch'
+      ? 'kcp scan msk-connectors --metrics-granularity 1d'
       : 'kcp scan self-managed-connectors --metrics jolokia'
 
   const processedData = useMetricsDataProcessor(metricsResponse)

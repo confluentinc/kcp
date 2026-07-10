@@ -505,7 +505,7 @@ func TestHandleGetConnectMetrics_KindDefaultsToSelfManaged(t *testing.T) {
 }
 
 // kind=managed on a cluster with no managed metrics returns 404 with the
-// managed-specific hint (kcp scan msk-connectors --metrics cloudwatch), and
+// managed-specific hint (kcp scan msk-connectors --metrics-granularity 1d), and
 // the "managed" kind is threaded through to the filter call.
 func TestHandleGetConnectMetrics_KindManaged_NoMetrics_Returns404WithManagedGuidance(t *testing.T) {
 	mock := &mockReportService{connectErr: report.ErrNoConnectMetricsCollected}
@@ -516,7 +516,7 @@ func TestHandleGetConnectMetrics_KindManaged_NoMetrics_Returns404WithManagedGuid
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for managed cluster with no metrics, got %d (body: %s)", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "kcp scan msk-connectors --metrics cloudwatch") {
+	if !strings.Contains(rec.Body.String(), "kcp scan msk-connectors --metrics-granularity 1d") {
 		t.Errorf("expected managed scan-guidance message, got: %s", rec.Body.String())
 	}
 	if mock.lastConnectKind != "managed" {
