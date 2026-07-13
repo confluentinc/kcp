@@ -34,6 +34,24 @@ func TestParseScanMSKConnectorsOpts_Region(t *testing.T) {
 	assert.Empty(t, opts.ClusterArns)
 }
 
+func TestParseScanMSKConnectorsOpts_Region_NotInState(t *testing.T) {
+	// A --region that was never discovered must be rejected, not silently scanned
+	// as 0 clusters (the bug from PR review).
+	path := writeTempState(t, &types.State{
+		MSKSources: &types.MSKSourcesState{
+			Regions: []types.DiscoveredRegion{{Name: "us-east-1"}},
+		},
+	})
+
+	stateFile = path
+	regions = []string{"us-east"} // typo / never discovered
+	clusterArns = nil
+
+	_, err := parseScanMSKConnectorsOpts()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "region 'us-east' was not found in the state file")
+}
+
 func TestParseScanMSKConnectorsOpts_ClusterArn_DerivesRegion(t *testing.T) {
 	arn := "arn:aws:kafka:eu-west-3:123456789012:cluster/c/abc-1"
 	path := writeTempState(t, &types.State{

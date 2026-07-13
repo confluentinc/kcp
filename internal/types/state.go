@@ -386,6 +386,21 @@ func (s *State) GetClusterByArn(clusterArn string) (*DiscoveredCluster, error) {
 	return nil, fmt.Errorf("cluster with ARN %s not found in state file", clusterArn)
 }
 
+// GetRegion looks up a discovered MSK region by name. It returns an error naming the
+// region if it is not present in the state file, so callers can reject a --region that
+// was never discovered rather than silently doing nothing.
+func (s *State) GetRegion(name string) (*DiscoveredRegion, error) {
+	if s.MSKSources != nil {
+		for i := range s.MSKSources.Regions {
+			if s.MSKSources.Regions[i].Name == name {
+				return &s.MSKSources.Regions[i], nil
+			}
+		}
+	}
+
+	return nil, fmt.Errorf("region '%s' was not found in the state file", name)
+}
+
 // GetOSKClusterByID looks up an OSK cluster by the user-provided ID from credentials
 func (s *State) GetOSKClusterByID(id string) (*OSKDiscoveredCluster, error) {
 	if s.OSKSources == nil {

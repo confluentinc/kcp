@@ -969,6 +969,47 @@ func TestGetOSKClusterByID_Found(t *testing.T) {
 	}
 }
 
+func TestGetRegion_Found(t *testing.T) {
+	state := &State{
+		MSKSources: &MSKSourcesState{
+			Regions: []DiscoveredRegion{{Name: "us-east-1"}, {Name: "eu-west-3"}},
+		},
+	}
+
+	region, err := state.GetRegion("eu-west-3")
+	if err != nil {
+		t.Fatalf("GetRegion() error = %v, want nil", err)
+	}
+	if region.Name != "eu-west-3" {
+		t.Errorf("GetRegion() Name = %q, want %q", region.Name, "eu-west-3")
+	}
+}
+
+func TestGetRegion_NotFound(t *testing.T) {
+	state := &State{
+		MSKSources: &MSKSourcesState{
+			Regions: []DiscoveredRegion{{Name: "us-east-1"}},
+		},
+	}
+
+	_, err := state.GetRegion("us-east")
+	if err == nil {
+		t.Fatal("GetRegion() error = nil, want error")
+	}
+	if !strings.Contains(err.Error(), "region 'us-east' was not found in the state file") {
+		t.Errorf("GetRegion() error = %v, want it to name the missing region", err)
+	}
+}
+
+func TestGetRegion_NilMSKSources(t *testing.T) {
+	state := &State{}
+
+	_, err := state.GetRegion("us-east-1")
+	if err == nil {
+		t.Error("GetRegion() error = nil, want error when MSKSources is nil")
+	}
+}
+
 func TestGetOSKClusterByID_NotFound(t *testing.T) {
 	state := &State{
 		OSKSources: &OSKSourcesState{

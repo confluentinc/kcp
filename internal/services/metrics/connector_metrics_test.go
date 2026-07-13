@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -98,4 +99,59 @@ func TestCollectConnectorMetrics_NoConnectorsReturnsEmpty(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Empty(t, got.Results)
+}
+
+// echoGetMetricData records how many queries each request carried and returns one
+// complete result per input query (echoing its Id), so a caller that batches its
+// query slice can be checked for both the per-request cap and result stitching.
+type echoGetMetricData struct {
+	queriesPerRequest []int
+}
+
+func (e *echoGetMetricData) GetMetricData(ctx context.Context, in *cloudwatch.GetMetricDataInput, _ ...func(*cloudwatch.Options)) (*cloudwatch.GetMetricDataOutput, error) {
+	e.queriesPerRequest = append(e.queriesPerRequest, len(in.MetricDataQueries))
+	results := make([]cloudwatchtypes.MetricDataResult, 0, len(in.MetricDataQueries))
+	for _, q := range in.MetricDataQueries {
+		results = append(results, cloudwatchtypes.MetricDataResult{
+			Id:         q.Id,
+			Label:      q.Label,
+			Timestamps: []time.Time{aws.ToTime(in.StartTime)},
+			Values:     []float64{1},
+			StatusCode: cloudwatchtypes.StatusCodeComplete,
+		})
+	}
+	return &cloudwatch.GetMetricDataOutput{MetricDataResults: results}, nil
+}
+
+func TestCollectConnectorMetrics_BatchesQueriesUnderCloudWatchCap(t *testing.T) {
+	// 72 connectors x 7 metrics = 504 queries, which exceeds CloudWatch's 500-query
+	// per-request cap. Collection must split into batches of <=500 and stitch results.
+	connectors := make([]string, 72)
+	for i := range connectors {
+		connectors[i] = fmt.Sprintf("conn-%02d", i)
+	}
+	totalQueries := len(connectors) * len(connectorMetricStats)
+	require.Greater(t, totalQueries, maxQueriesPerRequest) // guards the premise
+
+	spy := &echoGetMetricData{}
+	ms := &MetricService{client: spy}
+	ts := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tw := types.CloudWatchTimeWindow{StartTime: ts, EndTime: ts.Add(time.Hour), Period: 300}
+
+	got, err := ms.CollectConnectorMetrics(context.Background(), connectors, tw, "us-east-1")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	// No single request may exceed the cap, and every query must have been sent.
+	require.NotEmpty(t, spy.queriesPerRequest)
+	sent := 0
+	for _, n := range spy.queriesPerRequest {
+		assert.LessOrEqual(t, n, maxQueriesPerRequest, "a request exceeded the CloudWatch query cap")
+		sent += n
+	}
+	assert.Equal(t, totalQueries, sent, "every query must be sent across batches")
+
+	// Results from all batches are stitched together — one per query.
+	assert.Len(t, got.Results, totalQueries)
+	assert.Len(t, got.QueryInfo, totalQueries)
 }

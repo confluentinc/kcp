@@ -93,15 +93,29 @@ func (ms *MetricService) CollectConnectorMetrics(ctx context.Context, connectorN
 	// jolokia/prometheus curl (parity with the broker-metrics path).
 	populateConnectorCLICommands(infos, queries, tw.StartTime, tw.EndTime, region)
 
-	// seriesEstimate: one series per query (no fan-out), so the count of queries.
-	out, err := ms.executeChunkedQuery(ctx, queries, tw.StartTime, tw.EndTime, tw.Period, len(queries), "connector-metrics")
-	if err != nil {
-		return nil, fmt.Errorf("failed to fetch connector metrics: %v", err)
+	// One direct MetricStat query per (connector, metric) means the query count grows
+	// with connector count and can exceed CloudWatch's 500-query-per-request cap
+	// (>71 connectors * 7 metrics). Batch the query slice into <=500-query chunks and
+	// stitch the results; time-window chunking still happens within each batch. Each
+	// query carries a unique Id/Label, so concatenating results across batches is safe.
+	var results []cloudwatchtypes.MetricDataResult
+	for start := 0; start < len(queries); start += maxQueriesPerRequest {
+		end := start + maxQueriesPerRequest
+		if end > len(queries) {
+			end = len(queries)
+		}
+		batch := queries[start:end]
+		// seriesEstimate: one series per query (no fan-out), so the count of queries.
+		out, err := ms.executeChunkedQuery(ctx, batch, tw.StartTime, tw.EndTime, tw.Period, len(batch), "connector-metrics")
+		if err != nil {
+			return nil, fmt.Errorf("failed to fetch connector metrics: %v", err)
+		}
+		results = append(results, out.MetricDataResults...)
 	}
 
 	return &types.ClusterMetrics{
 		MetricMetadata: meta,
-		Results:        out.MetricDataResults,
+		Results:        results,
 		QueryInfo:      infos,
 	}, nil
 }

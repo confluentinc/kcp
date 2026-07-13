@@ -108,7 +108,7 @@ func preRunScanMSKConnectors(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if len(clusterArns) > 0 {
-		if _, err := regionsFromClusterArns(clusterArns); err != nil {
+		if _, err := utils.RegionsFromClusterArns(clusterArns); err != nil {
 			return err
 		}
 	}
@@ -134,25 +134,6 @@ func runScanMSKConnectors(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// regionsFromClusterArns returns the distinct AWS regions parsed from the given
-// MSK cluster ARNs, preserving first-seen order. Returns an error if any ARN is
-// malformed. (Mirrors the helper in cmd/discover.)
-func regionsFromClusterArns(arns []string) ([]string, error) {
-	seen := map[string]bool{}
-	out := []string{}
-	for _, arn := range arns {
-		region, err := utils.ExtractRegionFromArn(arn)
-		if err != nil {
-			return nil, fmt.Errorf("invalid cluster ARN %q: %w", arn, err)
-		}
-		if !seen[region] {
-			seen[region] = true
-			out = append(out, region)
-		}
-	}
-	return out, nil
-}
-
 func parseScanMSKConnectorsOpts() (*MSKConnectorsScannerOpts, error) {
 	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
 		return nil, fmt.Errorf("state file does not exist: %s", stateFile)
@@ -165,7 +146,7 @@ func parseScanMSKConnectorsOpts() (*MSKConnectorsScannerOpts, error) {
 
 	effectiveRegions := regions
 	if len(clusterArns) > 0 {
-		derived, err := regionsFromClusterArns(clusterArns)
+		derived, err := utils.RegionsFromClusterArns(clusterArns)
 		if err != nil {
 			return nil, err
 		}
@@ -175,6 +156,14 @@ func parseScanMSKConnectorsOpts() (*MSKConnectorsScannerOpts, error) {
 		for _, arn := range clusterArns {
 			if _, err := state.GetClusterByArn(arn); err != nil {
 				return nil, fmt.Errorf("cluster not found in state file: %v", err)
+			}
+		}
+	} else {
+		// Each requested region must already exist in state; otherwise the scan would
+		// silently succeed with 0 clusters (there is nothing in state to match against).
+		for _, region := range regions {
+			if _, err := state.GetRegion(region); err != nil {
+				return nil, err
 			}
 		}
 	}
