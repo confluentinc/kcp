@@ -162,7 +162,7 @@ func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConf
 }
 
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
-	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
+	slog.Debug("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
 	// MSK presents Amazon's public CA, so no custom CA pool — just honor skip-verify.
 	config.Net.TLS.Config = utils.TLSClientConfig(nil, insecureSkipVerify)
@@ -186,7 +186,7 @@ func tlsConfigWithCA(caCertFile string, insecureSkipVerify bool) (*tls.Config, e
 }
 
 func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string, caCertFile string, insecureSkipTLSVerify bool) error {
-	slog.Info("configuring SASL/SCRAM authentication", "mechanism", mechanism, "insecure_skip_tls_verify", insecureSkipTLSVerify)
+	slog.Debug("configuring SASL/SCRAM authentication", "mechanism", mechanism, "insecure_skip_tls_verify", insecureSkipTLSVerify)
 	if insecureSkipTLSVerify {
 		slog.Warn("TLS certificate verification is disabled - this should only be used in test environments with self-signed certificates")
 	}
@@ -221,7 +221,7 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 }
 
 func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string, withTLSEncryption bool, caCertFile string, insecureSkipVerify bool) error {
-	slog.Info("configuring SASL/PLAIN authentication", "enableTlsEncryption", withTLSEncryption)
+	slog.Debug("configuring SASL/PLAIN authentication", "enableTlsEncryption", withTLSEncryption)
 	if !withTLSEncryption {
 		slog.Warn("SASL/PLAIN without TLS: credentials will be transmitted in cleartext over the network")
 	}
@@ -241,7 +241,7 @@ func configureSASLTypePlainAuthentication(config *sarama.Config, username string
 }
 
 func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool, caCertFile string, insecureSkipVerify bool) error {
-	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
+	slog.Debug("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
 	config.Net.TLS.Enable = withTLSEncryption
 	tlsCfg, err := tlsConfigWithCA(caCertFile, insecureSkipVerify)
 	if err != nil {

@@ -22,6 +22,8 @@ func resetAuthFlags() {
 	useUnauthenticatedTLS = false
 	useUnauthenticatedPlaintext = false
 	rolloutTimeout = 0
+	detectUnroutedProducersDuration = 0
+	consumerOffsetSyncDrainDuration = 0
 }
 
 func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
@@ -33,6 +35,7 @@ func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
 		"--lag-threshold", "1",
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -50,6 +53,7 @@ func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
 		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -69,6 +73,7 @@ func TestMigrationExecute_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
 		"--cluster-api-key", "key",
 		"--cluster-api-secret", "secret",
 		"--use-sasl-plain",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -88,6 +93,7 @@ func TestMigrationExecute_WithSaslPlainFlagAndCredentials_PassesValidation(t *te
 		"--use-sasl-plain",
 		"--sasl-plain-username", "user",
 		"--sasl-plain-password", "pass",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -107,6 +113,7 @@ func TestMigrationExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
 		"--cluster-api-secret", "secret",
 		"--use-unauthenticated-tls",
 		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -234,6 +241,7 @@ func TestMigrationExecute_SaslScramMechanism_InvalidValueRejected(t *testing.T) 
 		"--sasl-scram-username", "user",
 		"--sasl-scram-password", "pass",
 		"--sasl-scram-mechanism", "MD5",
+		"--detect-unrouted-producers-duration", "0",
 	})
 
 	err := cmd.Execute()
@@ -343,6 +351,133 @@ func TestMigrationExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
 }
 
 // ===========================================================================
+// --detect-unrouted-producers-duration flag tests
+// ===========================================================================
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_ZeroSkipsCheck(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+	})
+
+	err := cmd.Execute()
+	// Should fail on missing state file, not on duration validation
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration state file")
+}
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_ValidDuration(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "10s",
+	})
+
+	err := cmd.Execute()
+	// Should fail on missing state file, not on duration validation
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration state file")
+}
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_BelowMinimumRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "5s",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be at least 10s")
+}
+
+// The check is opt-in: omitting --detect-unrouted-producers-duration must not
+// error on a missing required flag. It defaults to 0 (skip), so execution
+// proceeds until it fails on the missing state file instead.
+func TestMigrationExecute_DetectUnroutedProducersDuration_OptionalDefaultsToSkip(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration intentionally omitted
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "detect-unrouted-producers-duration",
+		"omitting the flag must not fail flag-required validation")
+	assert.Contains(t, err.Error(), "migration state file")
+	assert.Equal(t, time.Duration(0), detectUnroutedProducersDuration,
+		"default --detect-unrouted-producers-duration should be 0 (skip the check)")
+}
+
+func TestMigrationExecute_DetectUnroutedProducersDuration_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "15s")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration omitted: env must supply it.
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	assert.Equal(t, 15*time.Second, detectUnroutedProducersDuration,
+		"DETECT_UNROUTED_PRODUCERS_DURATION env var should populate the flag")
+}
+
+// TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected
+// pins that an env-provided value still flows through the <10s validation — the
+// bind happens in preRunE ahead of the check, so a below-minimum env value must
+// be rejected exactly as a below-minimum flag value is.
+func TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "5s")
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		// --detect-unrouted-producers-duration omitted: env supplies 5s.
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must be at least 10s")
+}
+
+// ===========================================================================
 // --promote-batch-size flag tests
 // ===========================================================================
 
@@ -411,4 +546,80 @@ func TestMigrationExecute_PromoteBatchSize_BindFromEnvVar(t *testing.T) {
 
 	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
 	assert.Equal(t, 25, opts.PromoteBatchSize, "PROMOTE_BATCH_SIZE env var should populate the flag")
+}
+
+// ===========================================================================
+// --consumer-offset-sync-drain-duration flag tests
+// ===========================================================================
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_DefaultIsZero(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+	}))
+
+	assert.Equal(t, time.Duration(0), consumerOffsetSyncDrainDuration,
+		"default --consumer-offset-sync-drain-duration should be 0 (no drain)")
+}
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_ExplicitValueParsed(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+		"--consumer-offset-sync-drain-duration", "45s",
+	}))
+
+	assert.Equal(t, 45*time.Second, consumerOffsetSyncDrainDuration)
+}
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_NegativeRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test-migration",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+		"--consumer-offset-sync-drain-duration", "-5s",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be negative")
+}
+
+func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("CONSUMER_OFFSET_SYNC_DRAIN_DURATION", "90s")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--detect-unrouted-producers-duration", "0",
+	}))
+	require.NoError(t, utils.BindEnvToFlags(cmd))
+
+	assert.Equal(t, 90*time.Second, consumerOffsetSyncDrainDuration,
+		"CONSUMER_OFFSET_SYNC_DRAIN_DURATION env var should populate the flag")
 }

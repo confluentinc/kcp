@@ -220,7 +220,7 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 	clusters := source.GetClusters()
 	slog.Info("clusters to scan", "count", len(clusters), "source", sourceType)
 	for _, cluster := range clusters {
-		slog.Info("cluster", "name", cluster.Name, "id", cluster.UniqueID)
+		slog.Debug("cluster", "name", cluster.Name, "id", cluster.UniqueID)
 	}
 
 	// Apache Kafka-specific docs pointer — link to the version of the docs that
@@ -275,7 +275,7 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 // avoid silently discarding an existing state file.
 func loadOrCreateState(stateFilePath string) (*types.State, error) {
 	if _, err := os.Stat(stateFilePath); os.IsNotExist(err) {
-		slog.Info("creating new state file", "file", stateFilePath)
+		slog.Debug("creating new state file", "file", stateFilePath)
 		state := types.NewStateFrom(nil)
 		state.SchemaRegistries = &types.SchemaRegistriesState{}
 		return state, nil
@@ -285,7 +285,7 @@ func loadOrCreateState(stateFilePath string) (*types.State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to load state file: %w", err)
 	}
-	slog.Info("loaded existing state file", "file", stateFilePath)
+	slog.Debug("loaded existing state file", "file", stateFilePath)
 	return state, nil
 }
 
@@ -329,7 +329,7 @@ func mergeMSKResults(state *types.State, result *sources.ScanResult) error {
 		}
 	}
 
-	slog.Info("merged MSK scan results", "clusters_scanned", len(result.Clusters))
+	slog.Debug("merged MSK scan results", "clusters_scanned", len(result.Clusters))
 	return nil
 }
 
@@ -388,7 +388,7 @@ func mergeOSKResults(state *types.State, result *sources.ScanResult) error {
 	// Append new clusters after all in-place updates are done
 	state.OSKSources.Clusters = append(state.OSKSources.Clusters, newClusters...)
 
-	slog.Info("merged Apache Kafka scan results", "clusters", len(result.Clusters))
+	slog.Debug("merged Apache Kafka scan results", "clusters", len(result.Clusters))
 	return nil
 }
 

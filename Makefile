@@ -109,7 +109,7 @@ test-integration-no-migration: ## Run all integration suites except the heavy mi
 test-migration: test-migration-setup ## Run full migration E2E lifecycle (setup, test, teardown)
 	@trap 'echo ""; echo "Tearing down migration E2E infrastructure..."; bash integration-tests/migration/testdata/teardown.sh' EXIT; \
 	echo "Running migration E2E tests..."; \
-	go test -v -tags=e2e -timeout 15m ./integration-tests/migration/...
+	go test -v -tags=e2e -timeout 40m ./integration-tests/migration/...
 
 test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
 	@bash integration-tests/migration/testdata/setup.sh

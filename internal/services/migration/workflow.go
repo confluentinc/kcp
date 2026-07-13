@@ -2,19 +2,31 @@ package migration
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
+	"github.com/goccy/go-yaml"
 )
 
-type MigrationWorkflow struct {
+// maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
+// before CheckLags/PromoteTopics abort. A failed sweep is tolerated by
+// waiting for the loop's next tick (the tick interval is the backoff — no
+// separate schedule), so transient disruptions like leader elections and
+// rolling broker restarts ride out across ~3 ticks (+ GetMany's internal
+// refresh-and-retry per sweep) while a persistent failure still surfaces
+// within seconds. The counter resets on any successful sweep.
+const maxConsecutiveSweepFailures = 3
+
+type MigrationActions struct {
 	gatewayService      gateway.Service
 	clusterLinkService  clusterlink.Service
 	sourceOffset        offset.Provider
@@ -30,39 +42,42 @@ type MigrationWorkflow struct {
 	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
 	// wait runs until the operator reports ready or the user cancels.
 	rolloutTimeout time.Duration
+	reporter       *reporter // user-facing terminal output
 }
 
-func NewMigrationWorkflow(
+func NewMigrationActions(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
-) *MigrationWorkflow {
-	return &MigrationWorkflow{
+) *MigrationActions {
+	return &MigrationActions{
 		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
+		reporter:            newReporter(),
 	}
 }
 
-func NewMigrationWorkflowWithOffsets(
+func NewMigrationActionsWithOffsets(
 	gatewayService gateway.Service,
 	clusterLinkService clusterlink.Service,
 	sourceOffset offset.Provider,
 	destinationOffset offset.Provider,
-) *MigrationWorkflow {
-	return &MigrationWorkflow{
+) *MigrationActions {
+	return &MigrationActions{
 		gatewayService:      gatewayService,
 		clusterLinkService:  clusterLinkService,
 		sourceOffset:        sourceOffset,
 		destinationOffset:   destinationOffset,
 		lagPollInterval:     2 * time.Second,
 		promotePollInterval: 5 * time.Second,
+		reporter:            newReporter(),
 	}
 }
 
 // SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
 // A value of 0 means no deadline.
-func (s *MigrationWorkflow) SetRolloutTimeout(d time.Duration) {
+func (s *MigrationActions) SetRolloutTimeout(d time.Duration) {
 	s.rolloutTimeout = d
 }
 
@@ -70,11 +85,11 @@ func (s *MigrationWorkflow) SetRolloutTimeout(d time.Duration) {
 // PromoteTopics. A value of 0 (the default) means unlimited — all zero-lag
 // topics are promoted at once. When set (>0), each batch is promoted and fully
 // confirmed STOPPED before the next batch is submitted.
-func (s *MigrationWorkflow) SetPromoteBatchSize(n int) {
+func (s *MigrationActions) SetPromoteBatchSize(n int) {
 	s.promoteBatchSize = n
 }
 
-func (s *MigrationWorkflow) Initialize(
+func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
 	clusterApiKey, clusterApiSecret string,
@@ -93,7 +108,7 @@ func (s *MigrationWorkflow) Initialize(
 		return fmt.Errorf("gateway CR validation failed: %w", err)
 	}
 	slog.Debug("gateway CRs validated")
-	fmt.Printf("   %s Gateway CRs validated\n", color.GreenString("✔"))
+	s.reporter.success("Gateway CRs validated")
 
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
@@ -127,7 +142,7 @@ func (s *MigrationWorkflow) Initialize(
 		config.Topics = clusterLinkTopics
 	}
 	slog.Debug("cluster link validated", "activeTopicCount", len(clusterLinkTopics))
-	fmt.Printf("   %s Cluster link validated (%d mirror topics active)\n", color.GreenString("✔"), len(clusterLinkTopics))
+	s.reporter.success("Cluster link validated (%d mirror topics active)", len(clusterLinkTopics))
 
 	// Get cluster link configs
 	configs, err := s.clusterLinkService.ListConfigs(ctx, clusterLinkConfig)
@@ -153,7 +168,7 @@ func (s *MigrationWorkflow) Initialize(
 		case observed != "true":
 			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
 		}
-		fmt.Printf("   %s Cluster link %s=true (pause-on-execute intent recorded)\n", color.GreenString("✔"), offsetSyncEnableKey)
+		s.reporter.success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
 	}
 
 	// Update config with discovered data
@@ -176,7 +191,7 @@ func (s *MigrationWorkflow) Initialize(
 }
 
 // CheckLags polls source and destination offsets until lag is below threshold
-func (s *MigrationWorkflow) CheckLags(
+func (s *MigrationActions) CheckLags(
 	ctx context.Context,
 	config *MigrationConfig,
 	lagThreshold int64,
@@ -186,13 +201,15 @@ func (s *MigrationWorkflow) CheckLags(
 		return fmt.Errorf("source and destination offset services are required")
 	}
 
-	fmt.Printf("\n%s Checking replication lag across %s (threshold: %s)\n\n",
+	s.reporter.blank()
+	s.reporter.line(fmt.Sprintf("%s Checking replication lag across %s (threshold: %s)",
 		color.CyanString("⏳"),
 		color.CyanString("%d topics", len(config.Topics)),
-		color.YellowString("%d", lagThreshold))
+		color.YellowString("%d", lagThreshold)))
+	s.reporter.blank()
 
 	if len(config.Topics) == 0 {
-		fmt.Printf("%s No topics to check\n", color.GreenString("✔"))
+		s.reporter.line(fmt.Sprintf("%s No topics to check", color.GreenString("✔")))
 		return nil
 	}
 
@@ -200,6 +217,7 @@ func (s *MigrationWorkflow) CheckLags(
 	defer ticker.Stop()
 
 	startTime := time.Now()
+	sweepFailures := 0
 
 	for {
 		select {
@@ -211,17 +229,29 @@ func (s *MigrationWorkflow) CheckLags(
 		allBelowThreshold := true
 		topicTotalLags := make(map[string]int64)
 
-		for _, topic := range config.Topics {
-			sourceOffsets, err := s.sourceOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
+		sourceOffsets, destinationOffsets, err := s.fetchSourceAndDestinationOffsets(ctx, config.Topics)
+		if err != nil {
+			sweepFailures++
+			if sweepFailures >= maxConsecutiveSweepFailures {
+				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
 			}
-			destinationOffsets, err := s.destinationOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get destination offsets for %s: %w", topic, err)
+			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
+			// Deliberately not ticker.C: a slow failing sweep can outlast the
+			// tick interval, leaving a tick buffered in the ticker's channel —
+			// receiving that would retry immediately with zero backoff. A fresh
+			// timer guarantees a full interval's pause between failed sweeps.
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(s.lagPollInterval):
 			}
+			continue
+		}
+		sweepFailures = 0
 
-			lag := offset.ComputeTotalLag(sourceOffsets, destinationOffsets)
+		for _, topic := range config.Topics {
+			lag := offset.ComputeTotalLag(sourceOffsets[topic], destinationOffsets[topic])
 			if lag > lagThreshold {
 				allBelowThreshold = false
 				topicTotalLags[topic] = lag
@@ -229,9 +259,10 @@ func (s *MigrationWorkflow) CheckLags(
 		}
 
 		if allBelowThreshold {
-			fmt.Printf("\n%s All topic lags below threshold (%d)\n",
+			s.reporter.blank()
+			s.reporter.line(fmt.Sprintf("%s All topic lags below threshold (%d)",
 				color.GreenString("✔"),
-				lagThreshold)
+				lagThreshold))
 			return nil
 		}
 
@@ -243,19 +274,19 @@ func (s *MigrationWorkflow) CheckLags(
 
 		elapsed := time.Since(startTime)
 
-		fmt.Printf("   %s Waiting for lag to clear  %s  %s\n",
+		s.reporter.line(fmt.Sprintf("   %s Waiting for lag to clear  %s  %s",
 			color.YellowString("↳"),
 			color.YellowString("%d/%d topics behind", len(topicTotalLags), len(config.Topics)),
-			color.CyanString("elapsed %s", elapsed.Round(time.Second)))
+			color.CyanString("elapsed %s", elapsed.Round(time.Second))))
 
 		for _, topic := range lagTopics {
-			fmt.Printf("   %s %s  %s %s\n",
+			s.reporter.line(fmt.Sprintf("   %s %s  %s %s",
 				color.YellowString("↳"),
 				color.WhiteString(topic),
 				color.CyanString("lag:"),
-				color.YellowString(formatLag64(topicTotalLags[topic])))
+				color.YellowString(formatLag64(topicTotalLags[topic]))))
 		}
-		fmt.Printf("\n")
+		s.reporter.blank()
 
 		select {
 		case <-ctx.Done():
@@ -263,6 +294,39 @@ func (s *MigrationWorkflow) CheckLags(
 		case <-ticker.C:
 		}
 	}
+}
+
+// fetchSourceAndDestinationOffsets sweeps both clusters' offsets for the
+// given topics concurrently — the clusters are independent, so a poll tick
+// pays the slower of the two sweeps rather than their sum.
+func (s *MigrationActions) fetchSourceAndDestinationOffsets(ctx context.Context, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
+	var (
+		wg                 sync.WaitGroup
+		source, dest       map[string]map[int32]int64
+		sourceErr, destErr error
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		source, sourceErr = s.sourceOffset.GetMany(ctx, topics)
+	}()
+	go func() {
+		defer wg.Done()
+		dest, destErr = s.destinationOffset.GetMany(ctx, topics)
+	}()
+	wg.Wait()
+
+	var errs []error
+	if sourceErr != nil {
+		errs = append(errs, fmt.Errorf("failed to get source offsets: %w", sourceErr))
+	}
+	if destErr != nil {
+		errs = append(errs, fmt.Errorf("failed to get destination offsets: %w", destErr))
+	}
+	if len(errs) > 0 {
+		return nil, nil, errors.Join(errs...)
+	}
+	return source, dest, nil
 }
 
 // formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655")
@@ -286,29 +350,251 @@ func formatLag64(n int64) string {
 // generation. The wait runs without a deadline by default — the operator
 // drives convergence and the user can Ctrl-C if a rollout wedges. An optional
 // per-workflow rolloutTimeout caps the wait when set (via SetRolloutTimeout).
-func (s *MigrationWorkflow) FenceGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
-	fmt.Printf("   %s Fenced gateway CR applied\n", color.GreenString("✔"))
+	s.reporter.success("Fenced gateway CR applied")
 
-	fmt.Printf("   ↳ Waiting for gateway readiness...\n")
+	s.reporter.detail("Waiting for gateway readiness...")
 	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
 
-	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, printGatewayReadinessProgress); err != nil {
+	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
 		return fmt.Errorf("failed waiting for gateway readiness: %w", err)
 	}
 
 	slog.Debug("gateway fenced and ready")
-	fmt.Printf("   %s Gateway fenced and ready\n", color.GreenString("✔"))
+	s.reporter.success("Gateway fenced and ready")
+	return nil
+}
+
+// unfenceGateway reapplies the initial gateway CR to restore normal traffic,
+// then waits for the operator to report the gateway Ready at the restored
+// spec — the same convergence check FenceGateway uses. Without the wait we
+// would report traffic restored while pods are still cycling, and miss
+// rollout failures entirely. The initial CR YAML fetched from k8s contains
+// server-managed metadata (managedFields, resourceVersion, status) that
+// breaks server-side apply, so we strip it before applying.
+func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
+	// Parse the initial CR, strip server metadata, re-marshal
+	var obj map[string]interface{}
+	if err := yaml.Unmarshal(config.InitialCrYAML, &obj); err != nil {
+		return fmt.Errorf("failed to parse initial CR YAML: %w", err)
+	}
+
+	// Remove server-managed fields that break re-apply
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		delete(metadata, "managedFields")
+		delete(metadata, "resourceVersion")
+		delete(metadata, "uid")
+		delete(metadata, "creationTimestamp")
+		delete(metadata, "generation")
+	}
+	delete(obj, "status")
+
+	cleanYAML, err := yaml.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
+	}
+
+	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML); err != nil {
+		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
+	}
+	slog.Debug("initial gateway CR applied")
+	s.reporter.success("Initial gateway CR applied")
+
+	s.reporter.detail("Waiting for gateway readiness...")
+	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
+
+	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
+		return fmt.Errorf("failed waiting for gateway readiness after unfence: %w", err)
+	}
+	return nil
+}
+
+// detectUnroutedProducers takes two source offset snapshots separated by the
+// given duration. If any partition's offset increases between snapshots, it
+// means a producer is writing directly to the source cluster (bypassing the
+// fenced gateway) and the migration should not proceed.
+func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
+	// Snapshot 1 — one batched sweep across all topics.
+	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
+	snapshot1, err := s.sourceOffset.GetMany(ctx, topics)
+	if err != nil {
+		return fmt.Errorf("failed to get source offsets: %w", err)
+	}
+
+	// Wait, then snapshot 2
+	s.reporter.detail("Monitoring source offsets for %s...", duration)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(duration):
+	}
+
+	slog.Debug("taking second source offset snapshot")
+	snapshot2, err := s.sourceOffset.GetMany(ctx, topics)
+	if err != nil {
+		return fmt.Errorf("failed to get source offsets: %w", err)
+	}
+
+	var violations []string
+	for _, topic := range topics {
+		for p, o2 := range snapshot2[topic] {
+			// A partition absent from the first snapshot (e.g. created during
+			// the window) starts at offset 0, so any data on it was written
+			// after fencing — the zero-value baseline flags it.
+			o1 := snapshot1[topic][p]
+			if o2 > o1 {
+				delta := o2 - o1
+				rate := float64(delta) / duration.Seconds()
+				violations = append(violations, fmt.Sprintf(
+					"topic %s partition %d: offset %d → %d (+%d, ~%.0f msg/s)",
+					topic, p, o1, o2, delta, rate))
+			}
+		}
+	}
+
+	if len(violations) > 0 {
+		sort.Strings(violations)
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
+			ErrUnroutedProducers, strings.Join(violations, "\n  "))
+	}
+
+	return nil
+}
+
+// PauseOffsetSync runs the pause_offset_sync stage: with the operator's
+// --pause-consumer-offset-sync opt-in it pauses cluster-link consumer offset
+// sync immediately after fencing; otherwise it passes through so the FSM
+// still records offset_sync_paused. The already-flipped guard makes resumes
+// (and legacy state files whose pause ran pre-FSM) idempotent.
+func (s *MigrationActions) PauseOffsetSync(
+	ctx context.Context,
+	config *MigrationConfig,
+	clusterApiKey, clusterApiSecret string,
+	persist func() error,
+) error {
+	if !config.PauseConsumerOffsetSync {
+		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
+		s.reporter.detail("Offset-sync pause not requested — skipping")
+		return nil
+	}
+	if config.PauseConsumerOffsetSyncFlipped {
+		slog.Info("⏭️ consumer.offset.sync.enable already flipped, skipping pause", "migrationId", config.MigrationId)
+		s.reporter.detail("consumer.offset.sync already paused — skipping")
+		return nil
+	}
+
+	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+
+	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
+
+	// Per-call deadlines derived from the parent ctx so signal cancellation
+	// still propagates, but a hung REST endpoint cannot block indefinitely.
+	listCtx, listCancel := context.WithTimeout(ctx, bookendCallTimeout)
+	currentConfigs, err := s.clusterLinkService.ListConfigs(listCtx, clCfg)
+	listCancel()
+	if err != nil {
+		return fmt.Errorf("failed to query cluster link %q for drift detection: %w", config.ClusterLinkName, err)
+	}
+	observed, present := currentConfigs[offsetSyncEnableKey]
+	switch {
+	case !present:
+		return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
+	case observed != "true":
+		return fmt.Errorf("--pause-consumer-offset-sync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
+	}
+
+	// Optional drain window (--consumer-offset-sync-drain-duration): hold here
+	// with sync still enabled before disabling it. The fence has frozen the
+	// source consumer offsets — clients can no longer commit — so letting the
+	// cluster link run one or more further sync cycles propagates those final
+	// committed offsets to the destination, shrinking the set of messages that
+	// would otherwise be reprocessed after switchover. Best-effort: offset sync
+	// is asynchronous, so this reduces but does not guarantee zero duplicates. A
+	// ctx cancellation here leaves sync still enabled (nothing flipped) and
+	// cancels the transition, matching the drift-refusal path above. 0 (the
+	// default) skips the wait entirely — the prior immediate-disable behaviour.
+	if drain := config.ConsumerOffsetSyncDrainDuration; drain > 0 {
+		s.reporter.detail("Draining consumer offset sync for %s before pausing...", drain)
+		slog.Debug("draining consumer offset sync before disable", "duration", drain, "clusterLinkName", config.ClusterLinkName)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(drain):
+		}
+	}
+
+	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
+	err = s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
+		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
+	})
+	alterCancel()
+	if err != nil {
+		return fmt.Errorf("failed to disable %s on cluster link %q: %w", offsetSyncEnableKey, config.ClusterLinkName, err)
+	}
+
+	// Inline persist: the marker's crash window (AlterConfigs done, marker not
+	// yet on disk) stays as small as the pre-FSM bookend kept it — the FSM's
+	// own post-transition persist would widen it.
+	config.PauseConsumerOffsetSyncFlipped = true
+	if err := persist(); err != nil {
+		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
+	}
+
+	s.reporter.success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
+	return nil
+}
+
+// restoreOffsetSyncAfterRollback restores the consumer.offset.* config the
+// pause flipped, as the second half of the abort_fence rollback. Soft-fail:
+// the unfence already succeeded and a restore error must not undo it — the
+// flipped marker stays set so the restore remains owed. No-op when nothing
+// was flipped (e.g. the pause failed before its AlterConfigs, or a drift
+// refusal), which also keeps externally-set config untouched.
+func (s *MigrationActions) restoreOffsetSyncAfterRollback(
+	config *MigrationConfig,
+	clusterApiKey, clusterApiSecret string,
+	persist func() error,
+) {
+	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+	restoreOffsetSync(s.clusterLinkService, clCfg, config, persist, "Gateway unfenced but")
+}
+
+// VerifyFence verifies the fence held: source offsets must be stable, because
+// an increasing offset after fencing indicates a producer bypassing the
+// gateway. When detection is disabled (DetectUnroutedProducersDuration == 0)
+// the step succeeds immediately so the FSM still records fence_verified.
+//
+// detectUnroutedProducers wraps ErrUnroutedProducers only for a real
+// detection; a network/fetch error propagates as-is. Either way we just
+// return it — restoring traffic (unfencing the gateway) is the state
+// machine's job on the abort_fence rollback transition, which the
+// orchestrator triggers only for ErrUnroutedProducers.
+func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
+	if config.DetectUnroutedProducersDuration <= 0 {
+		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
+		s.reporter.detail("Detection disabled (--detect-unrouted-producers-duration=0) — skipping check")
+		return nil
+	}
+
+	if s.sourceOffset == nil {
+		return fmt.Errorf("source offset service is required for unrouted producer detection")
+	}
+
+	if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
+		return err
+	}
+	s.reporter.success("Source offsets stable — no unrouted producers detected")
 	return nil
 }
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
-func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -337,6 +623,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 	for _, topic := range config.Topics {
 		remaining[topic] = true
 	}
+	sweepFailures := 0
 
 	for {
 		select {
@@ -360,7 +647,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 			for topic := range awaitingStop {
 				status := statusByTopic[topic]
 				if status == clusterlink.MirrorStatusStopped {
-					fmt.Printf("   %s %s stopped\n", color.GreenString("✔"), topic)
+					s.reporter.success("%s stopped", topic)
 					slog.Debug("mirror topic promotion confirmed stopped", "topic", topic)
 					delete(awaitingStop, topic)
 					delete(remaining, topic)
@@ -379,7 +666,7 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 		// In batch mode, don't start a new batch until the current one has
 		// fully drained to STOPPED — this makes each batch synchronous.
 		if s.promoteBatchSize > 0 && len(awaitingStop) > 0 {
-			fmt.Printf("   ↳ Waiting for current batch of %d topic(s) to reach STOPPED...\n",
+			s.reporter.detail("Waiting for current batch of %d topic(s) to reach STOPPED...",
 				len(awaitingStop))
 			slog.Debug("batch in flight, waiting for STOPPED before next batch",
 				"awaitingStop", len(awaitingStop), "pollInterval", s.promotePollInterval)
@@ -394,26 +681,39 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 		// Find topics at zero lag that still need a promote request. Topics
 		// already accepted (awaiting STOPPED confirmation) are skipped so we
 		// don't re-promote them.
-		var topicsToPromote []string
+		candidates := make([]string, 0, len(remaining))
 		for topic := range remaining {
 			if awaitingStop[topic] {
 				continue
 			}
-			sourceOffsets, err := s.sourceOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get source offsets for %s: %w", topic, err)
-			}
-			destinationOffsets, err := s.destinationOffset.Get(topic)
-			if err != nil {
-				return fmt.Errorf("failed to get destination offsets for %s: %w", topic, err)
-			}
+			candidates = append(candidates, topic)
+		}
+		sort.Strings(candidates)
 
-			lag := offset.ComputeTotalLag(sourceOffsets, destinationOffsets)
+		sourceOffsets, destinationOffsets, err := s.fetchSourceAndDestinationOffsets(ctx, candidates)
+		if err != nil {
+			sweepFailures++
+			if sweepFailures >= maxConsecutiveSweepFailures {
+				return fmt.Errorf("offset sweep failed %d consecutive times: %w", sweepFailures, err)
+			}
+			slog.Warn("⚠️ offset sweep failed, retrying on next tick",
+				"attempt", sweepFailures, "maxAttempts", maxConsecutiveSweepFailures, "error", err)
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(s.promotePollInterval):
+			}
+			continue
+		}
+		sweepFailures = 0
+
+		var topicsToPromote []string
+		for _, topic := range candidates {
+			lag := offset.ComputeTotalLag(sourceOffsets[topic], destinationOffsets[topic])
 			if lag == 0 {
 				topicsToPromote = append(topicsToPromote, topic)
 			}
 		}
-		sort.Strings(topicsToPromote)
 
 		// Cap the batch when a promote batch size is configured.
 		if s.promoteBatchSize > 0 && len(topicsToPromote) > s.promoteBatchSize {
@@ -422,12 +722,12 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 
 		if len(topicsToPromote) == 0 {
 			if len(awaitingStop) > 0 {
-				fmt.Printf("   ↳ Waiting for %d promoted topic(s) to reach STOPPED...\n",
+				s.reporter.detail("Waiting for %d promoted topic(s) to reach STOPPED...",
 					len(awaitingStop))
 				slog.Debug("waiting for accepted promotions to reach STOPPED",
 					"awaitingStop", len(awaitingStop), "pollInterval", s.promotePollInterval)
 			} else {
-				fmt.Printf("   ↳ Waiting for lag to reach zero (%d topics remaining)...\n",
+				s.reporter.detail("Waiting for lag to reach zero (%d topics remaining)...",
 					len(remaining))
 				slog.Debug("no topics at zero lag yet, waiting",
 					"remaining", len(remaining), "pollInterval", s.promotePollInterval)
@@ -441,17 +741,16 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 		}
 
 		// Promote topics confirmed at zero lag
-		fmt.Printf("   %s %s confirmed at zero lag\n",
-			color.GreenString("✔"),
+		s.reporter.success("%s confirmed at zero lag",
 			color.WhiteString("%d/%d topics", len(topicsToPromote), len(remaining)))
 		for _, topic := range topicsToPromote {
-			fmt.Printf("   %s %s  %s %s\n",
+			s.reporter.line(fmt.Sprintf("   %s %s  %s %s",
 				color.GreenString("↳"),
 				color.WhiteString(topic),
 				color.CyanString("lag:"),
-				color.GreenString("0"))
+				color.GreenString("0")))
 		}
-		fmt.Printf("   ↳ Promoting %d mirror topics...\n", len(topicsToPromote))
+		s.reporter.detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
@@ -462,8 +761,8 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 		for _, topic := range promoteResponse.Data {
 			if topic.ErrorCode != 0 {
 				retryCount[topic.MirrorTopicName]++
-				fmt.Printf("   %s Topic %s promotion error (attempt %d/%d): %s\n",
-					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage)
+				s.reporter.line(fmt.Sprintf("   %s Topic %s promotion error (attempt %d/%d): %s",
+					color.RedString("✗"), topic.MirrorTopicName, retryCount[topic.MirrorTopicName], maxPromoteRetries, topic.ErrorMessage))
 				slog.Warn("topic promotion error",
 					"topic", topic.MirrorTopicName,
 					"errorCode", topic.ErrorCode,
@@ -474,7 +773,8 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 						topic.MirrorTopicName, maxPromoteRetries, topic.ErrorMessage)
 				}
 			} else {
-				fmt.Printf("   %s %s promotion accepted (awaiting STOPPED)\n", color.GreenString("↳"), topic.MirrorTopicName)
+				s.reporter.line(fmt.Sprintf("   %s %s promotion accepted (awaiting STOPPED)",
+					color.GreenString("↳"), topic.MirrorTopicName))
 				slog.Debug("topic promotion accepted, awaiting stopped confirmation", "topic", topic.MirrorTopicName)
 				awaitingStop[topic.MirrorTopicName] = true
 			}
@@ -492,24 +792,24 @@ func (s *MigrationWorkflow) PromoteTopics(ctx context.Context, config *Migration
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent
 // Cloud and waits for the operator to report the gateway as Ready. The wait
 // uses the same no-deadline-by-default behavior as FenceGateway.
-func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
+func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	slog.Debug("switchover gateway CR applied")
-	fmt.Printf("   %s Switchover gateway CR applied\n", color.GreenString("✔"))
+	s.reporter.success("Switchover gateway CR applied")
 
-	fmt.Printf("   ↳ Waiting for gateway readiness...\n")
+	s.reporter.detail("Waiting for gateway readiness...")
 	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
 
-	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, printGatewayReadinessProgress); err != nil {
+	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
 		return fmt.Errorf("failed waiting for gateway readiness: %w", err)
 	}
 
 	slog.Debug("gateway switchover complete")
-	fmt.Printf("   %s Gateway switchover complete\n", color.GreenString("✔"))
+	s.reporter.success("Gateway switchover complete")
 	return nil
 }
 
@@ -518,16 +818,15 @@ func (s *MigrationWorkflow) SwitchGateway(ctx context.Context, config *Migration
 // A no-op signal (RolloutDetected=false) is preserved from the previous
 // implementation so users see "no pod restart required" when an apply did not
 // trigger a rollout.
-func printGatewayReadinessProgress(p gateway.GatewayReadinessProgress) {
+func (s *MigrationActions) printGatewayReadinessProgress(p gateway.GatewayReadinessProgress) {
 	if !p.RolloutDetected {
-		fmt.Printf("   %s No pod restart required\n", color.GreenString("✔"))
+		s.reporter.success("No pod restart required")
 		return
 	}
 	if p.InitialPodCount > 0 {
-		fmt.Printf("   ↳ %d/%d pods ready (elapsed %s)\n",
-			p.PodsReady, p.InitialPodCount, formatElapsed(p.Elapsed))
+		s.reporter.detail("%d/%d pods ready (elapsed %s)", p.PodsReady, p.InitialPodCount, formatElapsed(p.Elapsed))
 	} else {
-		fmt.Printf("   ↳ gateway reconciling (elapsed %s)\n", formatElapsed(p.Elapsed))
+		s.reporter.detail("gateway reconciling (elapsed %s)", formatElapsed(p.Elapsed))
 	}
 }
 

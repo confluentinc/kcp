@@ -170,6 +170,10 @@ func (ml *MigrationLister) getStatusColor(state string) *color.Color {
 		return color.New(color.FgCyan)
 	case "fenced":
 		return color.New(color.FgYellow)
+	case "offset_sync_paused":
+		return color.New(color.FgYellow)
+	case "fence_verified":
+		return color.New(color.FgYellow)
 	case "promoted":
 		return color.New(color.FgGreen)
 	case "switched":

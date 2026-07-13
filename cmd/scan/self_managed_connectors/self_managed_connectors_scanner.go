@@ -117,6 +117,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 
 	clusterName := utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
 	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", clusterName)
+	slog.Info("🔍 scanning self-managed connectors", "cluster", clusterName)
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
@@ -124,9 +125,11 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	}
 
 	fmt.Printf("  🔍 Found %d connectors\n", len(connectorNames))
+	slog.Info("🔍 found connectors", "count", len(connectorNames))
 
 	if len(connectorNames) == 0 {
 		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", clusterName)
+		slog.Info("⏭️ no connectors found; skipping", "cluster", clusterName)
 		return nil
 	}
 
@@ -174,6 +177,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	}
 
 	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", clusterName)
+	slog.Info("✅ self-managed connector scan complete", "cluster", clusterName, "connectors", len(connectors))
 	return nil
 }
 
@@ -183,6 +187,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 // present) is captured as ConnectHost for per-host grouping in the UI. Returns
 // the connector, the number of redacted fields, and any error.
 func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.SelfManagedConnector, int, error) {
+	slog.Debug("🔍 fetching connector details", "connector", name)
 	connector := types.SelfManagedConnector{
 		Name: name,
 	}
