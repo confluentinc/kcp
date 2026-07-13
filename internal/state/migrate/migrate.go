@@ -11,9 +11,14 @@ import (
 )
 
 // CurrentSchemaVersion is the schema_version this build reads and writes.
-// Bump in lockstep with any breaking change to the kcp-state.json shape, and
-// add the matching upcaster to steps (see internal/state/migrate/steps.go).
-const CurrentSchemaVersion = 1
+// Bump in lockstep with any change to the kcp-state.json shape.
+//
+// v2 added the additive, omitempty connector_metrics field to each MSK cluster's
+// aws_client_information. Because the era-C shape has only ever grown by additive
+// omitempty fields, an older era-C file is already a structurally-valid current
+// file and needs no transform — see the era-C passthrough in Upgrade. A future
+// NON-additive shape change must add a real upcaster to steps (see steps.go).
+const CurrentSchemaVersion = 2
 
 // ErrNewerSchema means the file was written by a newer (released) KCP than this build can model.
 var ErrNewerSchema = errors.New("state file schema is newer than this KCP build supports")
@@ -60,10 +65,19 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 		slog.Debug("⏭️ state file already at current schema, no migration needed", "schema_version", schemaVersion)
 		return data, fmt.Sprintf("schema_version=%d", schemaVersion), nil
 	}
-	// Era C file without an explicit schema_version is the current shape. A pre-v0.4.0
-	// region-scan file or unrelated JSON also lands here (era defaults to C, spec N5):
-	// it passes through unchanged and fails later at the strict decode, like any foreign file.
-	if schemaVersion == 0 && era == "C" {
+	// Older era-C file. Era C's shape has only ever grown by additive, omitempty fields
+	// (e.g. schema_version 2 added connector_metrics), so any era-C file below the current
+	// version is already a structurally-valid current file: pass it through unchanged and
+	// let the strict decode validate. This covers an explicitly-stamped older version
+	// (schema_version 1) as well as an era-C file with NO explicit schema_version (v0.8.0+,
+	// schema_version 0). A pre-v0.4.0 region-scan file or unrelated JSON also lands here
+	// (era defaults to C, spec N5): it passes through and fails later at the strict decode,
+	// like any foreign file. A future NON-additive era-C change must add a real upcaster to
+	// steps instead of relying on this passthrough.
+	if era == "C" && schemaVersion < CurrentSchemaVersion {
+		if schemaVersion > 0 {
+			return data, fmt.Sprintf("schema_version=%d", schemaVersion), nil
+		}
 		label := "era=C"
 		if buildVersion != "" {
 			label = "kcp_build_info.version=" + buildVersion

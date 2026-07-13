@@ -1,6 +1,7 @@
 package report
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -1062,7 +1063,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	}
 
 	t.Run("returns Connect metrics for existing OSK cluster", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", nil, nil)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 3)
@@ -1075,7 +1076,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	})
 
 	t.Run("returns Connect metrics for existing MSK cluster", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", nil, nil)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", "self-managed", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 2)
@@ -1085,20 +1086,20 @@ func TestFilterConnectMetrics(t *testing.T) {
 	t.Run("filters by date range", func(t *testing.T) {
 		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", &start, &end)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 2) // only Jan 1 metrics
 	})
 
 	t.Run("cluster not found returns error", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", "osk", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", "osk", "self-managed", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("cluster without self-managed connectors signals never-collected", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", "osk", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", "osk", "self-managed", nil, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
@@ -1110,7 +1111,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 		// 200, so the user sees an empty chart rather than a "run a scan" message.
 		start := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 		end := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", &start, &end)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Empty(t, result.Metrics)
@@ -1118,7 +1119,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	})
 
 	t.Run("case-insensitive cluster ID match", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", "osk", nil, nil)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", "osk", "self-managed", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 3)
@@ -1127,20 +1128,20 @@ func TestFilterConnectMetrics(t *testing.T) {
 	// Abuse case: cross-source-type bleed. A cluster identifier that exists under one
 	// source type must never resolve when queried under the other source type.
 	t.Run("OSK cluster id requested as msk does not bleed", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "msk", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "msk", "self-managed", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("MSK cluster arn requested as osk does not bleed", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "osk", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "osk", "self-managed", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
 	// Abuse case: an unknown source type is rejected, not silently defaulted to a source.
 	t.Run("unknown source type returns error", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "bogus", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "bogus", "self-managed", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "source type")
 	})
@@ -1148,7 +1149,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	// MSK-branch coverage symmetric to the OSK cases above: not-found, no-connectors,
 	// and date filtering must each be exercised through the MSK lookup path.
 	t.Run("MSK cluster not found returns error", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "arn:aws:kafka:us-east-1:000000000000:cluster/nope/zzz", "msk", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "arn:aws:kafka:us-east-1:000000000000:cluster/nope/zzz", "msk", "self-managed", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
@@ -1170,7 +1171,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 				},
 			},
 		}
-		_, err := rs.FilterConnectMetrics(stateMSKNoConnect, arn, "msk", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateMSKNoConnect, arn, "msk", "self-managed", nil, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
@@ -1178,9 +1179,108 @@ func TestFilterConnectMetrics(t *testing.T) {
 	t.Run("filters by date range on the MSK path", func(t *testing.T) {
 		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
-		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", &start, &end)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", "self-managed", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 1) // only the Jan 1 MSK metric
 	})
+}
+
+func TestFilterConnectMetrics_Managed_MSK(t *testing.T) {
+	rs := &ReportService{}
+	arn := "arn:aws:kafka:us-east-1:000000000000:cluster/c/uuid"
+	val := 2.0
+	state := types.State{MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{{
+		Name: "us-east-1",
+		Clusters: []types.DiscoveredCluster{{
+			Arn: arn,
+			AWSClientInformation: types.AWSClientInformation{
+				ConnectorMetrics: &types.ConnectClusterMetrics{
+					Metadata: types.ConnectMetricMetadata{MetricsSource: types.MetricBackendCloudWatch},
+					Metrics:  []types.ProcessedMetric{{Label: "BytesInPerSec (x)", Value: &val, Start: "2026-01-01T00:00:00Z", End: "2026-01-01T00:04:59Z"}},
+				},
+			},
+		}},
+	}}}}
+	ps := rs.ProcessState(state)
+
+	got, err := rs.FilterConnectMetrics(ps, arn, "msk", "managed", nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, types.MetricBackendCloudWatch, got.Metadata.MetricsSource)
+	require.Len(t, got.Metrics, 1)
+}
+
+func TestFilterConnectMetrics_Managed_ExistingClusterNilMetrics_SignalsNeverCollected(t *testing.T) {
+	// The MSK cluster exists (present in state by ARN) but ConnectorMetrics was
+	// never populated (e.g. scanned without --metrics-granularity). This must
+	// return the never-collected sentinel, not a not-found error, so the API
+	// layer shows the "run a scan" hint.
+	rs := &ReportService{}
+	arn := "arn:aws:kafka:us-east-1:000000000000:cluster/c/uuid"
+	state := types.State{MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{{
+		Name: "us-east-1",
+		Clusters: []types.DiscoveredCluster{{
+			Arn:                  arn,
+			AWSClientInformation: types.AWSClientInformation{ConnectorMetrics: nil},
+		}},
+	}}}}
+	ps := rs.ProcessState(state)
+
+	_, err := rs.FilterConnectMetrics(ps, arn, "msk", "managed", nil, nil)
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrNoConnectMetricsCollected))
+}
+
+func TestFilterConnectMetrics_Managed_NonexistentCluster_ReturnsNotFound(t *testing.T) {
+	// A nonexistent MSK ARN must return a plain not-found error, distinct from
+	// the never-collected sentinel, so the "run a scan" hint isn't shown for a
+	// cluster that was never discovered in the first place.
+	rs := &ReportService{}
+	state := types.State{MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{{
+		Name: "us-east-1",
+		Clusters: []types.DiscoveredCluster{{
+			Arn: "arn:aws:kafka:us-east-1:000000000000:cluster/other/uuid",
+			AWSClientInformation: types.AWSClientInformation{
+				ConnectorMetrics: &types.ConnectClusterMetrics{},
+			},
+		}},
+	}}}}
+	ps := rs.ProcessState(state)
+
+	_, err := rs.FilterConnectMetrics(ps, "arn:aws:kafka:us-east-1:000000000000:cluster/nonexistent/uuid", "msk", "managed", nil, nil)
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrNoConnectMetricsCollected))
+	assert.Contains(t, err.Error(), "not found")
+}
+
+func TestFilterConnectMetrics_Managed_OSKIsError(t *testing.T) {
+	rs := &ReportService{}
+	state := types.State{OSKSources: &types.OSKSourcesState{Clusters: []types.OSKDiscoveredCluster{{ID: "osk-1"}}}}
+	ps := rs.ProcessState(state)
+	_, err := rs.FilterConnectMetrics(ps, "osk-1", "osk", "managed", nil, nil)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "managed")
+}
+
+func TestFilterConnectMetrics_SelfManaged_DefaultUnchanged(t *testing.T) {
+	// Existing self-managed behavior still works when kind == "self-managed".
+	rs := &ReportService{}
+	arn := "arn:aws:kafka:us-east-1:000000000000:cluster/c/uuid"
+	val := 1.0
+	state := types.State{MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{{
+		Name: "us-east-1",
+		Clusters: []types.DiscoveredCluster{{
+			Arn: arn,
+			KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+				SelfManagedConnectors: &types.SelfManagedConnectors{
+					Metrics: &types.ConnectClusterMetrics{Metrics: []types.ProcessedMetric{{Label: "task-count", Value: &val}}},
+				},
+			},
+		}},
+	}}}}
+	ps := rs.ProcessState(state)
+	got, err := rs.FilterConnectMetrics(ps, arn, "msk", "self-managed", nil, nil)
+	require.NoError(t, err)
+	require.Len(t, got.Metrics, 1)
 }

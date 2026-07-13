@@ -348,6 +348,28 @@ export interface SelfManagedConnectors {
 }
 
 /**
+ * MSK-managed Connect metrics (CloudWatch-sourced). Mirrors the shape of
+ * SelfManagedConnectors.metrics but lives under aws_client_information since
+ * it describes AWS-managed MSK Connect rather than a self-managed cluster.
+ */
+export interface ConnectClusterMetrics {
+  metadata?: {
+    start_date?: string
+    end_date?: string
+    period?: number
+    metrics_source?: string
+  }
+  results?: Array<{
+    start: string
+    end: string
+    label: string
+    value: number | null
+  }>
+  aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
+  query_info?: import('@/types/api/metrics').MetricQueryInfo[]
+}
+
+/**
  * Kafka Admin Client Information
  */
 export interface KafkaAdminInfo {

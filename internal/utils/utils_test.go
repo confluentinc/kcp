@@ -164,6 +164,29 @@ func TestExtractRegionFromArn(t *testing.T) {
 	}
 }
 
+func TestRegionsFromClusterArns(t *testing.T) {
+	t.Run("distinct regions preserving first-seen order", func(t *testing.T) {
+		got, err := RegionsFromClusterArns([]string{
+			"arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+			"arn:aws:kafka:eu-west-1:111:cluster/b/uuid",
+			"arn:aws:kafka:us-east-1:111:cluster/c/uuid",
+		})
+		assert.NoError(t, err)
+		assert.Equal(t, []string{"us-east-1", "eu-west-1"}, got)
+	})
+
+	t.Run("empty input returns empty slice", func(t *testing.T) {
+		got, err := RegionsFromClusterArns(nil)
+		assert.NoError(t, err)
+		assert.Empty(t, got)
+	})
+
+	t.Run("malformed ARN errors", func(t *testing.T) {
+		_, err := RegionsFromClusterArns([]string{"not-an-arn"})
+		assert.Error(t, err)
+	})
+}
+
 func TestExtractClusterNameFromS3Uri(t *testing.T) {
 	tests := []struct {
 		name           string
