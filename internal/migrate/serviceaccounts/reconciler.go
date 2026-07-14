@@ -1,0 +1,202 @@
+// Package serviceaccounts (this file) reconciles spec.serviceAccounts: for
+// every distinct source principal referenced by the surviving ACLs, it
+// resolves a target Confluent Cloud identity id — via an explicit mapping
+// override, an auto-created service account, or (unmappable principals)
+// a warned skip. This is the PROVISION stage of ACL migration; it must run,
+// and succeed, before the acls reconciler, which needs every principal
+// already resolved to a CC identity id.
+package serviceaccounts
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sort"
+
+	"github.com/confluentinc/kcp/internal/services/reconcile"
+)
+
+// Config configures the serviceAccounts reconciler.
+type Config struct {
+	// AutoCreate, when true, finds-or-creates a service account (named via
+	// DeriveDisplayName) for every principal that has no Mapping override and
+	// isn't a warn-and-skip principal (User:* / User:ANONYMOUS).
+	AutoCreate bool
+	// Mapping overrides principal resolution: source principal -> a
+	// pre-existing CC identity id (the bare "sa-"/"u-"/"pool-" id, without a
+	// "User:" prefix). A present-but-empty value is treated as unmapped —
+	// this lets a manifest record "no mapping" for a principal explicitly
+	// (e.g. documenting that ANONYMOUS was deliberately left to warn-and-skip)
+	// without the value being mistaken for a real override.
+	Mapping map[string]string
+	// Principals is the set of distinct source principals referenced by the
+	// surviving (filtered, normalized) ACLs.
+	Principals []string
+	// Client talks to the Confluent Cloud IAM v2 service-accounts API.
+	Client CCClient
+}
+
+// Reconciler implements reconcile.Reconciler for spec.serviceAccounts.
+type Reconciler struct {
+	cfg      Config
+	resolved map[string]string
+}
+
+// New creates a Reconciler from cfg.
+func New(cfg Config) *Reconciler {
+	return &Reconciler{cfg: cfg}
+}
+
+func (r *Reconciler) Name() string { return "serviceAccounts" }
+
+// CheckPreconditions is a no-op: CCClient (Task 4) is a thin REST wrapper
+// with no dedicated reachability probe of its own — the first real call
+// (FindByDisplayName, made from Plan) surfaces any connectivity problem.
+func (r *Reconciler) CheckPreconditions(ctx context.Context) error {
+	return nil
+}
+
+// ResolvedMap returns the source-principal -> "User:<id>" map. It is
+// populated by Apply; before Apply runs it is empty (but non-nil).
+func (r *Reconciler) ResolvedMap() map[string]string {
+	if r.resolved == nil {
+		return map[string]string{}
+	}
+	return r.resolved
+}
+
+// provision is the payload for one principal's plan step. displayName and
+// description are set only for ActionCreate steps (findOrCreate needs them).
+// resolvedID is already known for mapped and found-existing principals — it
+// lets Apply populate ResolvedMap for those without any further client call;
+// it is empty for ActionCreate steps, filled in once the create completes.
+type provision struct {
+	principal   string
+	displayName string
+	description string
+	resolvedID  string
+}
+
+// descriptionFor returns the audit/collision-check description recorded on
+// every auto-created service account (design §6).
+func descriptionFor(principal string) string {
+	return "kcp:source-principal=" + principal
+}
+
+// Plan resolves every principal in cfg.Principals to a CC identity, in one of
+// four ways (design §6):
+//   - an explicit Mapping entry wins, used verbatim, no client call;
+//   - "User:*" / "User:ANONYMOUS" (unless mapped) warn-and-skip — no step;
+//   - AutoCreate finds-or-creates a service account named
+//     DeriveDisplayName(principal); a found account's description must match
+//     the expected "kcp:source-principal=<principal>" or it's a naming
+//     collision (hard error);
+//   - otherwise (no mapping, AutoCreate disabled) it's a config gap
+//     (hard error listing every such principal).
+func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
+	principals := append([]string(nil), r.cfg.Principals...)
+	sort.Strings(principals)
+
+	var steps []reconcile.Step[provision]
+	var errs []error
+
+	for _, p := range principals {
+		summary := fmt.Sprintf("service account for principal %q", p)
+
+		if id, ok := r.cfg.Mapping[p]; ok && id != "" {
+			steps = append(steps, reconcile.Step[provision]{
+				Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary,
+					Detail: fmt.Sprintf("mapped to User:%s", id)},
+				Payload: provision{principal: p, resolvedID: id},
+			})
+			continue
+		}
+
+		if p == "User:*" || p == "User:ANONYMOUS" {
+			slog.Warn("⚠️ source principal has no Confluent Cloud equivalent; its ACLs will be skipped", "principal", p)
+			continue
+		}
+
+		if !r.cfg.AutoCreate {
+			errs = append(errs, fmt.Errorf("no service-account mapping for principal %q", p))
+			continue
+		}
+
+		displayName := DeriveDisplayName(p)
+		description := descriptionFor(p)
+		found, err := r.cfg.Client.FindByDisplayName(ctx, displayName)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("looking up service account %q for principal %q: %w", displayName, p, err))
+			continue
+		}
+		if found == nil {
+			steps = append(steps, reconcile.Step[provision]{
+				Change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
+					Detail: fmt.Sprintf("display name %q", displayName)},
+				Payload: provision{principal: p, displayName: displayName, description: description},
+			})
+			continue
+		}
+		if found.Description != description {
+			// Collision backstop (design §6): a service account already owns this
+			// derived display name, but for a DIFFERENT source principal (a freak
+			// same-base+same-hash8 collision, or a name that pre-existed for an
+			// unrelated reason). Reusing it would silently misattribute ACLs, so
+			// this must fail loud rather than proceed.
+			errs = append(errs, fmt.Errorf(
+				"service account %q already exists but its description %q does not match the expected %q for principal %q (naming collision)",
+				displayName, found.Description, description, p))
+			continue
+		}
+		steps = append(steps, reconcile.Step[provision]{
+			Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary,
+				Detail: fmt.Sprintf("existing service account %s", found.ID)},
+			Payload: provision{principal: p, displayName: displayName, description: description, resolvedID: found.ID},
+		})
+	}
+
+	if len(errs) > 0 {
+		return nil, errors.Join(errs...)
+	}
+
+	sort.Slice(steps, func(i, j int) bool { return steps[i].Change.Summary < steps[j].Change.Summary })
+	return reconcile.StepPlan[provision]{Steps: steps}, nil
+}
+
+// Apply creates each planned service account, continuing past per-principal
+// failures (collected in Outcome.Failed), and populates ResolvedMap for every
+// principal in the plan: mapped and already-existing principals resolve
+// immediately from the plan's payload; newly created ones resolve as each
+// create completes.
+func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Outcome, error) {
+	r.resolved = map[string]string{}
+
+	sp, ok := p.(reconcile.StepPlan[provision])
+	if !ok {
+		return reconcile.Outcome{}, fmt.Errorf("unexpected plan type %T", p)
+	}
+	for _, s := range sp.Steps {
+		if s.Payload.resolvedID != "" {
+			r.resolved[s.Payload.principal] = "User:" + s.Payload.resolvedID
+		}
+	}
+
+	return reconcile.ApplyContinueOnError(ctx, p, "service account(s)", r.findOrCreate)
+}
+
+// findOrCreate creates the service account for pr and records the resulting
+// id in ResolvedMap. It is the create func handed to
+// reconcile.ApplyContinueOnError, which only invokes it for ActionCreate
+// steps — principals already resolved in Plan (mapped or pre-existing) never
+// reach here. cfg.Client.Create tolerates a concurrent 409 (falls back to the
+// existing account), so a create that lost a race against another run still
+// resolves correctly.
+func (r *Reconciler) findOrCreate(ctx context.Context, pr provision) error {
+	sa, err := r.cfg.Client.Create(ctx, pr.displayName, pr.description)
+	if err != nil {
+		return fmt.Errorf("creating service account %q for principal %q: %w", pr.displayName, pr.principal, err)
+	}
+	r.resolved[pr.principal] = "User:" + sa.ID
+	return nil
+}
