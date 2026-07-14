@@ -1,6 +1,7 @@
 package serviceaccounts
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -32,4 +33,36 @@ func TestDeriveDisplayName(t *testing.T) {
 	long := DeriveDisplayName("User:" + strings.Repeat("a", 80))
 	require.LessOrEqual(t, len(long), 64)
 	require.Regexp(t, `-[0-9a-f]{8}$`, long)
+}
+
+// TestDeriveDisplayName_EmptyOrAllSymbolBase covers principals that sanitize
+// to an empty base (no alphanumeric characters at all). Previously these
+// produced a name starting with "-", violating the display_name contract.
+func TestDeriveDisplayName_EmptyOrAllSymbolBase(t *testing.T) {
+	validSuffix := regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*[0-9a-f]$`)
+	inputs := []string{
+		"User:",
+		"User:====",
+		"User:,,,,",
+		"User:----",
+		"User:@@@@",
+	}
+	for _, in := range inputs {
+		got := DeriveDisplayName(in)
+		require.Regexp(t, validSuffix, got, in)
+		require.LessOrEqual(t, len(got), 64, in)
+		// deterministic
+		require.Equal(t, got, DeriveDisplayName(in), in)
+	}
+}
+
+// TestDeriveDisplayName_CollisionSafety_FullPrincipalHash proves hash8 is
+// derived from the full principal, not just the truncated base. Two distinct
+// ~84-char principals sharing an identical first-80-char prefix truncate to
+// the same 55-char sanitized base; the derived names must still differ.
+func TestDeriveDisplayName_CollisionSafety_FullPrincipalHash(t *testing.T) {
+	prefix := "User:" + strings.Repeat("a", 80)
+	a := DeriveDisplayName(prefix + "ALPHA")
+	b := DeriveDisplayName(prefix + "BETA")
+	require.NotEqual(t, a, b)
 }
