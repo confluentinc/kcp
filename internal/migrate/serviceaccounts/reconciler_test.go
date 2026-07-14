@@ -2,6 +2,7 @@ package serviceaccounts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -13,11 +14,18 @@ import (
 // keyed by display name, matching the real API's unique-display_name
 // contract (decision §6).
 type fakeClient struct {
-	existing  map[string]*ServiceAccount // by display name
-	created   map[string]string          // display name -> generated id
-	findErr   map[string]error
+	existing map[string]*ServiceAccount // by display name
+	created  map[string]string          // display name -> generated id
+	findErr  map[string]error
+	// createErr, keyed by display name, makes Create fail outright for that
+	// name (simulating a non-409 error from the real client).
 	createErr map[string]error
-	nextID    int
+	// createOverride, keyed by display name, makes Create return this exact
+	// account instead of synthesizing one from name/description — used to
+	// script the 409-fallback returning a DIFFERENT principal's existing
+	// account (a same-run name collision Plan's FindByDisplayName never saw).
+	createOverride map[string]*ServiceAccount
+	nextID         int
 }
 
 func newFakeClient() *fakeClient {
@@ -40,6 +48,9 @@ func (f *fakeClient) FindByDisplayName(ctx context.Context, name string) (*Servi
 func (f *fakeClient) Create(ctx context.Context, name, description string) (*ServiceAccount, error) {
 	if err := f.createErr[name]; err != nil {
 		return nil, err
+	}
+	if sa, ok := f.createOverride[name]; ok {
+		return sa, nil
 	}
 	f.nextID++
 	id := fmt.Sprintf("sa-%d", f.nextID)
@@ -80,4 +91,58 @@ func TestReconciler_AutoCreateFalseUnmapped_Errors(t *testing.T) {
 	r := New(Config{AutoCreate: false, Principals: []string{"User:app"}, Client: newFakeClient()})
 	_, err := r.Plan(context.Background())
 	require.ErrorContains(t, err, "no service-account mapping for principal \"User:app\"")
+}
+
+// TestReconciler_FindTimeCollision_HardErrors covers the collision backstop
+// when a service account with the derived display name already exists at
+// plan time but its description belongs to a different principal.
+func TestReconciler_FindTimeCollision_HardErrors(t *testing.T) {
+	fc := newFakeClient()
+	fc.existing["app"] = &ServiceAccount{ID: "sa-existing", DisplayName: "app", Description: "kcp:source-principal=User:other"}
+	r := New(Config{AutoCreate: true, Principals: []string{"User:app"}, Client: fc})
+
+	_, err := r.Plan(context.Background())
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "naming collision")
+	require.ErrorContains(t, err, `"app"`)
+	require.ErrorContains(t, err, "kcp:source-principal=User:other")
+}
+
+// TestReconciler_FindLookupError_HardErrors covers a FindByDisplayName
+// failure during resolution being surfaced as a hard error rather than
+// silently skipped.
+func TestReconciler_FindLookupError_HardErrors(t *testing.T) {
+	fc := newFakeClient()
+	fc.findErr = map[string]error{"app": errors.New("connection refused")}
+	r := New(Config{AutoCreate: true, Principals: []string{"User:app"}, Client: fc})
+
+	_, err := r.Plan(context.Background())
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "looking up service account")
+	require.ErrorContains(t, err, "connection refused")
+}
+
+// TestReconciler_CreatePathCollision_HardErrors covers the create-path
+// collision backstop: Create's 409-fallback resolves "app" to an account
+// that already exists for a DIFFERENT principal (a same-run name collision
+// that never existed at plan time, so Plan's FindByDisplayName check didn't
+// catch it). Apply must hard-error rather than silently attribute this
+// principal's ACLs to the other principal's account.
+func TestReconciler_CreatePathCollision_HardErrors(t *testing.T) {
+	fc := newFakeClient()
+	fc.createOverride = map[string]*ServiceAccount{
+		"app": {ID: "sa-other", DisplayName: "app", Description: "kcp:source-principal=User:other"},
+	}
+	r := New(Config{AutoCreate: true, Principals: []string{"User:app"}, Client: fc})
+	plan := mustPlan(t, r)
+
+	outcome, err := r.Apply(context.Background(), plan)
+
+	require.Error(t, err)
+	require.Len(t, outcome.Failed, 1)
+	require.Contains(t, outcome.Failed[0].Detail, "name collision")
+	require.Contains(t, outcome.Failed[0].Detail, "kcp:source-principal=User:other")
+	require.NotContains(t, r.ResolvedMap(), "User:app")
 }

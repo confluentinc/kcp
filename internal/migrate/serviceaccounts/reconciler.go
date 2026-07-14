@@ -160,7 +160,9 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		return nil, errors.Join(errs...)
 	}
 
-	sort.Slice(steps, func(i, j int) bool { return steps[i].Change.Summary < steps[j].Change.Summary })
+	// steps are already in Summary order: principals is sorted above, each
+	// step's Summary embeds its principal verbatim, and Principals holds
+	// distinct values, so no re-sort is needed here.
 	return reconcile.StepPlan[provision]{Steps: steps}, nil
 }
 
@@ -191,11 +193,21 @@ func (r *Reconciler) Apply(ctx context.Context, p reconcile.Plan) (reconcile.Out
 // steps — principals already resolved in Plan (mapped or pre-existing) never
 // reach here. cfg.Client.Create tolerates a concurrent 409 (falls back to the
 // existing account), so a create that lost a race against another run still
-// resolves correctly.
+// resolves correctly — but that fallback can just as easily return a
+// DIFFERENT principal's existing account (a same-run name collision that
+// Plan's FindByDisplayName check never saw, since the account didn't exist
+// yet at plan time). The description check below re-applies the same
+// collision backstop as Plan (§6) to that returned account, so the hole
+// can't silently misattribute one principal's ACLs to another's account.
 func (r *Reconciler) findOrCreate(ctx context.Context, pr provision) error {
 	sa, err := r.cfg.Client.Create(ctx, pr.displayName, pr.description)
 	if err != nil {
 		return fmt.Errorf("creating service account %q for principal %q: %w", pr.displayName, pr.principal, err)
+	}
+	if sa.Description != pr.description {
+		return fmt.Errorf(
+			"service-account name collision: %q resolved to an account described %q, expected %q for principal %q",
+			pr.displayName, sa.Description, pr.description, pr.principal)
 	}
 	r.resolved[pr.principal] = "User:" + sa.ID
 	return nil
