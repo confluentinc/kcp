@@ -538,6 +538,12 @@ func TestValidate_ServiceAccountsCCOnly(t *testing.T) {
 	require.True(t, errorContains(m.Validate(), "spec.serviceAccounts: only valid when spec.target.type is confluent-cloud"))
 }
 
+func TestValidate_ACLsCCOnly(t *testing.T) {
+	m := baseCPTargetManifest(t)
+	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	require.True(t, errorContains(m.Validate(), "spec.acls: only valid when spec.target.type is confluent-cloud"))
+}
+
 func TestValidate_MappingPrefix(t *testing.T) {
 	m := baseCCTargetManifest(t)
 	m.Spec.ServiceAccounts = &ServiceAccounts{Mapping: map[string]string{"User:x": "svc-1"}}

@@ -407,7 +407,7 @@ func printACLDiagnostics(out io.Writer, diags []macls.Diagnostic) {
 	for _, d := range diags {
 		switch d.Level {
 		case "warn", "error":
-			_, _ = fmt.Fprintln(out, warn.Sprintf("⚠️  %s", d.Message))
+			_, _ = fmt.Fprintln(out, warn.Sprintf("⚠️ %s", d.Message))
 		default:
 			_, _ = fmt.Fprintf(out, "  %s\n", d.Message)
 		}

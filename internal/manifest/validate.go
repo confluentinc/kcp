@@ -244,6 +244,9 @@ func (m *Migration) Validate() []error {
 		}
 	}
 	if a := m.Spec.ACLs; a != nil {
+		if m.Spec.Target.Type != TargetConfluentCloud {
+			add("spec.acls: only valid when spec.target.type is %s", TargetConfluentCloud)
+		}
 		errs = append(errs, validateSelection("spec.acls.include", a.Include)...)
 		errs = append(errs, validateGlobs("spec.acls.include", a.Include)...)
 		errs = append(errs, validateGlobs("spec.acls.exclude", a.Exclude)...)
