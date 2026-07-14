@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -158,6 +158,12 @@ test-migrate-cloud: build ## Run the live MSK→CC cloud tests (env-gated; needs
 
 test-migrate-cloud-report: build ## Run the live cloud tests and write migrate-cloud-report.md (gitignored)
 	cd integration-tests/migrate && KCP_MATRIX_REPORT=migrate-cloud-report.md go test -tags integration -run Cloud -v ./...
+
+test-migrate-acls: build-frontend ## Run the hermetic native-ACL migration tests (unit + reconciler; CI, no creds, no docker)
+	go test $(GOTEST_FLAGS) ./internal/migrate/acls/... ./internal/migrate/serviceaccounts/...
+
+test-migrate-acls-live: build ## Run the live native-ACL + SA-naming integration matrix (env-gated; needs CC_*/MSK_* creds; no docker)
+	cd integration-tests/migrate && go test -tags integration -run ACLsLive -v ./...
 
 # ==============================================================================
 # State-file backward-compat archive (real generated kcp-state.json fixtures)
