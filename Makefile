@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-run test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -103,6 +103,9 @@ test-go-coverage-ui: build-frontend ## Run Go tests with coverage and open HTML 
 test-migration: test-migration-setup ## Run full migration E2E lifecycle (setup, test, teardown)
 	@trap 'echo ""; echo "Tearing down migration E2E infrastructure..."; bash integration-tests/migration/testdata/teardown.sh' EXIT; \
 	echo "Running migration E2E tests..."; \
+	go test -v -tags=e2e -timeout 40m ./integration-tests/migration/...
+
+test-migration-run: ## Run migration E2E tests against already-provisioned infra (no setup/teardown; CI pairs this with test-migration-setup)
 	go test -v -tags=e2e -timeout 40m ./integration-tests/migration/...
 
 test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E

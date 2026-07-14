@@ -132,7 +132,9 @@ blocks:
             - make test-schema-registry
 
   - name: 'integration: migration e2e'
-    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
+    # Only needs the Go module cache — the e2e suite drives `kcp migration`, not
+    # the UI, so it uses a stub frontend dist instead of the yarn build.
+    dependencies: ['resolve go dependencies']
     task:
       agent:
         machine:
@@ -150,12 +152,30 @@ blocks:
       jobs:
         - name: 'migration e2e'
           commands:
-            - cache restore frontend-dependencies
+            - export IMAGE_CACHE_DIR="$HOME/.cache/confluent-images"
             - cache restore go-mod-cache
             - cache restore go-build-cache
-            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            # Stub dist — the e2e suite exercises `kcp migration` (never the UI),
+            # so a single index.html satisfies the frontend go:embed and skips the
+            # full yarn install + vite build. Same trick as the 'docs build' block.
+            - mkdir -p cmd/ui/frontend/dist && echo '<!doctype html>' > cmd/ui/frontend/dist/index.html
+            # Warm the Confluent container-image cache; setup.sh loads it into the
+            # Minikube node right after `minikube start`.
+            - cache restore confluent-images
             - make test-migration-setup
-            - make test-migration
+            # Tests only. Using `make test-migration` here would re-run setup (its
+            # Make prereq) and teardown (its EXIT trap) on top of the explicit
+            # setup above and the epilogue teardown below — doubling both.
+            - make test-migration-run
+            # Persist the node's Confluent images for the next run (main only;
+            # best-effort so a cache-store failure never fails the pipeline).
+            - >-
+              if [ "$SEMAPHORE_GIT_WORKING_BRANCH" = "main" ] && [ -s "$IMAGE_CACHE_DIR/images.list" ]; then
+                eval "$(minikube docker-env --profile kcp-e2e)";
+                docker save $(cat "$IMAGE_CACHE_DIR/images.list") -o "$IMAGE_CACHE_DIR/confluent-images.tar" || true;
+                cache delete confluent-images || true;
+                cache store confluent-images "$IMAGE_CACHE_DIR" || true;
+              fi
       epilogue:
         always:
           commands:

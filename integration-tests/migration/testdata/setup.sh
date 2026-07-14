@@ -13,6 +13,17 @@ INIT_CONTAINER_TAG="${INIT_CONTAINER_TAG:-3.2.1}"
 GATEWAY_TAG="${GATEWAY_TAG:-1.2.0-1-ubi9}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
+# Confluent images pulled by kubelet inside the Minikube node. Single source of
+# truth for the background pre-pull and the optional CI image cache (see
+# IMAGE_CACHE_DIR below).
+CONFLUENT_IMAGES=(
+  "docker.io/confluentinc/confluent-operator:${CFK_CHART_VERSION}"
+  "docker.io/confluentinc/cp-server:${CP_SERVER_TAG}"
+  "docker.io/confluentinc/confluent-init-container:${INIT_CONTAINER_TAG}"
+  "docker.io/confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}"
+  "docker.io/alpine:3.20"
+)
+
 # wait_for_pods waits until at least one pod matching the label exists, then
 # waits for all matching pods to be Ready, printing status every 15s.
 wait_for_pods() {
@@ -66,6 +77,22 @@ KUBECONFIG_PATH="${HOME}/.kube/config"
 
 echo "Minikube is running."
 
+# --- CI image cache (optional; no-op locally) ---
+# When IMAGE_CACHE_DIR is set (CI), record the image list so the CI save step can
+# re-tarball exactly these images without duplicating tags, and load any
+# previously cached tarball into the node's Docker daemon. kubelet then finds the
+# images locally (IfNotPresent) and the background pre-pull below only refreshes
+# manifests instead of re-downloading layers. Every step is best-effort — a cache
+# miss or corrupt tarball just falls back to a normal registry pull.
+if [ -n "${IMAGE_CACHE_DIR:-}" ]; then
+  mkdir -p "${IMAGE_CACHE_DIR}"
+  printf '%s\n' "${CONFLUENT_IMAGES[@]}" > "${IMAGE_CACHE_DIR}/images.list"
+  if [ -f "${IMAGE_CACHE_DIR}/confluent-images.tar" ]; then
+    echo "Loading cached Confluent images into the node..."
+    docker load -i "${IMAGE_CACHE_DIR}/confluent-images.tar" || true
+  fi
+fi
+
 # --- Docker Hub auth (avoids rate limiting for pre-pulls and kubelet pulls) ---
 if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
   echo "Authenticating Docker Hub in minikube..."
@@ -74,11 +101,9 @@ fi
 
 # --- Pre-pull images in background (speeds up later helm install / kubectl apply) ---
 echo "Pre-pulling container images in background..."
-docker pull "docker.io/confluentinc/confluent-operator:${CFK_CHART_VERSION}" &>/dev/null &
-docker pull "docker.io/confluentinc/cp-server:${CP_SERVER_TAG}" &>/dev/null &
-docker pull "docker.io/confluentinc/confluent-init-container:${INIT_CONTAINER_TAG}" &>/dev/null &
-docker pull "docker.io/confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" &>/dev/null &
-docker pull "docker.io/alpine:3.20" &>/dev/null &
+for image in "${CONFLUENT_IMAGES[@]}"; do
+  docker pull "${image}" &>/dev/null &
+done
 echo "  (images pulling in background)"
 
 # --- Namespace ---
