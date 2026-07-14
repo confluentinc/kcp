@@ -252,6 +252,36 @@ func (c aclTargetClients) findSA(t *testing.T, displayName string) *msa.ServiceA
 	return sa
 }
 
+// tryFindSA is the cleanup-safe counterpart to findSA: on a read error it
+// logs and reports failure via ok=false instead of asserting, so a single
+// transient CC read error during a DEFERRED cleanup call never aborts the
+// rest of that call (e.g. skips the SA delete) via t.FailNow()/Goexit(). Only
+// call this from teardown/defer/t.Cleanup paths — assertions on the main
+// (non-cleanup) path must keep using findSA.
+func (c aclTargetClients) tryFindSA(t *testing.T, displayName string) (sa *msa.ServiceAccount, ok bool) {
+	t.Helper()
+	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc).FindByDisplayName(context.Background(), displayName)
+	if err != nil {
+		t.Logf("cleanup: find service account %q failed, continuing: %v", displayName, err)
+		return nil, false
+	}
+	return sa, true
+}
+
+// tryListACLs is the cleanup-safe counterpart to listACLs: on a read error it
+// logs and reports failure via ok=false instead of asserting, for the same
+// reason as tryFindSA above. Only call this from teardown/defer/t.Cleanup
+// paths — assertions on the main (non-cleanup) path must keep using listACLs.
+func (c aclTargetClients) tryListACLs(t *testing.T) (acls []types.Acls, ok bool) {
+	t.Helper()
+	acls, err := macls.NewACLClient(c.restEndpoint, c.clusterID, c.hc).List(context.Background())
+	if err != nil {
+		t.Logf("cleanup: list CC acls failed, continuing: %v", err)
+		return nil, false
+	}
+	return acls, true
+}
+
 func (c aclTargetClients) createSA(t *testing.T, displayName, description string) *msa.ServiceAccount {
 	t.Helper()
 	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc).Create(context.Background(), displayName, description)
@@ -264,16 +294,28 @@ func (c aclTargetClients) createSA(t *testing.T, displayName, description string
 // error) if no service account with displayName exists — safe to call
 // unconditionally from a defer at the top of a test, before the run that
 // might create it.
+//
+// Every read here goes through the try* (log-and-continue) variants, never
+// require.NoError: this whole function runs from a defer, so a transient CC
+// read error must never trip t.FailNow()/runtime.Goexit() and abort the rest
+// of this cleanup call (e.g. skip the service-account delete) — that would
+// leave residue on the shared live CC cluster, contradicting this file's
+// "cleanup always completes" invariant (see the file header). If the SA
+// lookup itself fails we don't know the SA id and so can't compute its
+// principal to target ACL deletes either, but a listACLs failure must not
+// stop us from still deleting the service account below.
 func (c aclTargetClients) cleanupSAAndItsACLs(t *testing.T, displayName string) {
 	t.Helper()
-	sa := c.findSA(t, displayName)
-	if sa == nil {
+	sa, ok := c.tryFindSA(t, displayName)
+	if !ok || sa == nil {
 		return
 	}
 	principal := "User:" + sa.ID
-	for _, a := range aclsForPrincipal(c.listACLs(t), principal) {
-		if err := deleteCCACL(context.Background(), c.hc, c.restEndpoint, c.clusterID, a); err != nil {
-			t.Logf("cleanup: delete CC acl %+v: %v", a, err)
+	if acls, ok := c.tryListACLs(t); ok {
+		for _, a := range aclsForPrincipal(acls, principal) {
+			if err := deleteCCACL(context.Background(), c.hc, c.restEndpoint, c.clusterID, a); err != nil {
+				t.Logf("cleanup: delete CC acl %+v: %v", a, err)
+			}
 		}
 	}
 	if err := deleteCCServiceAccount(context.Background(), c.hc, sa.ID); err != nil {
@@ -805,8 +847,13 @@ func TestACLsLive_MappingOverride(t *testing.T) {
 	defer deleteNativeACL(t, admin, sarama.AclResourceTopic, anonResource, sarama.AclPatternLiteral, anonPrincipal, "*", sarama.AclOperationRead, sarama.AclPermissionAllow)
 
 	defer func() {
-		for _, a := range aclsForPrincipal(cc.listACLs(t), "User:"+preexisting.ID) {
-			_ = deleteCCACL(context.Background(), cc.hc, cc.restEndpoint, cc.clusterID, a)
+		// tryListACLs, not listACLs: this runs from a defer, so a transient
+		// read error here must not abort the rest of teardown (see
+		// cleanupSAAndItsACLs' doc comment above for why).
+		if acls, ok := cc.tryListACLs(t); ok {
+			for _, a := range aclsForPrincipal(acls, "User:"+preexisting.ID) {
+				_ = deleteCCACL(context.Background(), cc.hc, cc.restEndpoint, cc.clusterID, a)
+			}
 		}
 	}()
 
@@ -860,8 +907,15 @@ func TestACLsLive_MappingFormats_UAndPoolPrefixesAccepted(t *testing.T) {
 	dummyU := "u-" + base
 	dummyPool := "pool-" + base
 	defer func() {
+		// tryListACLs, not listACLs: this runs from a defer, so a transient
+		// read error here must not abort the rest of teardown (see
+		// cleanupSAAndItsACLs' doc comment above for why).
+		acls, ok := cc.tryListACLs(t)
+		if !ok {
+			return
+		}
 		for _, id := range []string{dummyU, dummyPool} {
-			for _, a := range aclsForPrincipal(cc.listACLs(t), "User:"+id) {
+			for _, a := range aclsForPrincipal(acls, "User:"+id) {
 				_ = deleteCCACL(context.Background(), cc.hc, cc.restEndpoint, cc.clusterID, a)
 			}
 		}
