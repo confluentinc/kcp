@@ -17,25 +17,12 @@ type aclLister interface {
 	ListAcls() ([]sarama.ResourceAcls, error)
 }
 
-// resourcePatternTypeStrings maps sarama's AclResourcePatternType to the
-// screaming-case form Confluent Cloud's ACL surfaces use (LITERAL/PREFIXED).
-// This intentionally diverges from sarama's own titlecase String() (and from
-// the scanKafkaAcls report path, which keeps that titlecase form for human
-// display) because this reader feeds the CC-bound migration write path.
-var resourcePatternTypeStrings = map[sarama.AclResourcePatternType]string{
-	sarama.AclPatternUnknown:  "UNKNOWN",
-	sarama.AclPatternAny:      "ANY",
-	sarama.AclPatternMatch:    "MATCH",
-	sarama.AclPatternLiteral:  "LITERAL",
-	sarama.AclPatternPrefixed: "PREFIXED",
-}
-
 // ReadNativeACLs lists ACLs via the Kafka Admin API and flattens sarama's
-// nested ResourceAcls into the flat types.Acls tuple. ResourceType,
-// Operation, and PermissionType mirror the exact string forms scanKafkaAcls
-// already produces (internal/services/kafka/kafka_service.go), via sarama's
-// enum String() methods. ResourcePatternType is normalized to the
-// screaming-case LITERAL/PREFIXED form Confluent Cloud expects.
+// nested ResourceAcls into the flat types.Acls tuple. All four enum fields
+// (ResourceType, ResourcePatternType, Operation, PermissionType) mirror the
+// exact titlecase string forms scanKafkaAcls already produces
+// (internal/services/kafka/kafka_service.go), via sarama's enum String()
+// methods. CC-uppercase conversion happens later in the ACL client, not here.
 func ReadNativeACLs(adm aclLister) ([]types.Acls, error) {
 	resourceAcls, err := adm.ListAcls()
 	if err != nil {
@@ -45,17 +32,14 @@ func ReadNativeACLs(adm aclLister) ([]types.Acls, error) {
 	var flattenedAcls []types.Acls
 	for _, resourceAcl := range resourceAcls {
 		resourceType := resourceAcl.ResourceType
-		patternType, ok := resourcePatternTypeStrings[resourceAcl.ResourcePatternType]
-		if !ok {
-			patternType = resourcePatternTypeStrings[sarama.AclPatternUnknown]
-		}
+		patternType := resourceAcl.ResourcePatternType
 		for _, acl := range resourceAcl.Acls {
 			operation := acl.Operation
 			permissionType := acl.PermissionType
 			flattenedAcls = append(flattenedAcls, types.Acls{
 				ResourceType:        resourceType.String(),
 				ResourceName:        resourceAcl.ResourceName,
-				ResourcePatternType: patternType,
+				ResourcePatternType: patternType.String(),
 				Principal:           acl.Principal,
 				Host:                acl.Host,
 				Operation:           operation.String(),

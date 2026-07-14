@@ -24,7 +24,7 @@ func TestReadNativeACLs_Flatten(t *testing.T) {
 	}}}
 	got, err := ReadNativeACLs(adm)
 	require.NoError(t, err)
-	require.Equal(t, types.Acls{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "LITERAL", Principal: "User:app", Host: "*", Operation: "Read", PermissionType: "Allow"}, got[0])
+	require.Equal(t, types.Acls{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Read", PermissionType: "Allow"}, got[0])
 }
 
 func TestAllowEveryone_AbsentDefaultsTrue(t *testing.T) {
