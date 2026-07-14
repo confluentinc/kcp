@@ -138,7 +138,11 @@ blocks:
     task:
       agent:
         machine:
-          type: s1-prod-ubuntu24-04-amd64-2
+          # amd64-3 (c6a.4xlarge, 16 vCPU / 32 GB) so the 9 scenarios can run
+          # in parallel (t.Parallel) with headroom; the extra RAM is the real
+          # lever (the suite is wait-bound). ~cost-neutral per run vs -2 given
+          # the wall-clock roughly halves.
+          type: s1-prod-ubuntu24-04-amd64-3
       prologue:
         commands:
           # Minikube is not pre-installed on Semaphore agents
