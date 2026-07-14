@@ -535,19 +535,31 @@ func baseCPTargetManifest(t *testing.T) *Migration {
 func TestValidate_ServiceAccountsCCOnly(t *testing.T) {
 	m := baseCPTargetManifest(t)
 	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
-	require.True(t, errorContains(m.Validate(), "spec.serviceAccounts: only valid when spec.target.type is confluent-cloud"))
+	require.True(t, errorContains(m.Validate(), `spec.serviceAccounts: only valid when spec.target.type is "confluent-cloud"`))
 }
 
 func TestValidate_ACLsCCOnly(t *testing.T) {
 	m := baseCPTargetManifest(t)
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
-	require.True(t, errorContains(m.Validate(), "spec.acls: only valid when spec.target.type is confluent-cloud"))
+	require.True(t, errorContains(m.Validate(), `spec.acls: only valid when spec.target.type is "confluent-cloud"`))
 }
 
 func TestValidate_MappingPrefix(t *testing.T) {
 	m := baseCCTargetManifest(t)
 	m.Spec.ServiceAccounts = &ServiceAccounts{Mapping: map[string]string{"User:x": "svc-1"}}
 	require.True(t, errorContains(m.Validate(), `mapping value "svc-1" must be a User:sa-/u-/pool- id`))
+}
+
+// TestValidate_MappingPrefix_AcceptedValues confirms every documented
+// accepted mapping-value shape (bare sa-/u-/pool- ids and the User:sa- form)
+// passes validation with no error — the positive counterpart to
+// TestValidate_MappingPrefix's negative (rejected) case.
+func TestValidate_MappingPrefix_AcceptedValues(t *testing.T) {
+	for _, v := range []string{"sa-1", "u-1", "pool-1", "User:sa-1"} {
+		m := baseCCTargetManifest(t)
+		m.Spec.ServiceAccounts = &ServiceAccounts{Mapping: map[string]string{"User:x": v}}
+		require.Empty(t, m.Validate(), "mapping value %q should be accepted", v)
+	}
 }
 
 func TestValidate_ACLsOnlyManifestAccepted(t *testing.T) {

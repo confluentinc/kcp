@@ -421,21 +421,28 @@ func printACLDiagnostics(out io.Writer, diags []macls.Diagnostic) {
 // comes from the cluster's config-revision server.properties. That read is not
 // wired here: the config-revision ARN is not carried in the manifest (spec.source
 // holds type/bootstrapServers/credentials only), so acls.AllowEveryoneIfNoACLFound
-// has no server.properties to evaluate in this task. The policy field and its
-// enforcement are in place for when that read lands; until then this is a no-op
-// gated on the source being MSK.
-func checkUnprotectedTopics(_ io.Writer, m *manifest.Migration) error {
-	if m.Spec.Source.Type != manifest.SourceMSK {
+// has no server.properties to evaluate in this task.
+//
+// Because detection is not implemented, this function must not pretend the
+// policy is enforced: it always surfaces a terminal warning that world-open
+// detection is unverified for MSK sources, and when the operator explicitly
+// asked for a hard stop (policy=fail) it fails closed — refusing to proceed —
+// rather than silently honoring a safety control it cannot actually check.
+func checkUnprotectedTopics(out io.Writer, m *manifest.Migration) error {
+	if m.Spec.Source.Type != manifest.SourceMSK || m.Spec.ACLs == nil {
 		return nil
 	}
 	policy := m.Spec.ACLs.UnprotectedTopicPolicy
 	if policy == "" {
 		policy = manifest.UnprotectedTopicPolicyWarn
 	}
-	// Live read of allow.everyone.if.no.acl.found deferred (see doc comment).
-	// Once wired: if AllowEveryoneIfNoACLFound(serverProps) and topics lack
-	// ACLs → warn (policy=warn) or return an error (policy=fail) before apply.
-	_ = policy
+
+	warn := color.New(color.FgYellow)
+	_, _ = fmt.Fprintln(out, warn.Sprintf("⚠️ world-open-topic detection (allow.everyone.if.no.acl.found) is not yet enforced for MSK sources — verify this setting manually on the source before relying on this migration for authorization completeness"))
+
+	if policy == manifest.UnprotectedTopicPolicyFail {
+		return fmt.Errorf("spec.acls.unprotectedTopicPolicy: %q requested, but world-open-topic detection (allow.everyone.if.no.acl.found) is not yet implemented — the requested hard stop cannot be honored; verify the source setting manually, then adjust the policy to proceed", manifest.UnprotectedTopicPolicyFail)
+	}
 	return nil
 }
 

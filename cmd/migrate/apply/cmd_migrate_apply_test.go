@@ -612,6 +612,87 @@ func TestApply_ACLs_Apply_CreatesSAThenRewrittenACL(t *testing.T) {
 	require.Contains(t, out, "1 created")
 }
 
+// runACLApplyMSK is like runACLApply but uses an MSK source and an optional
+// spec.acls.unprotectedTopicPolicy, to exercise checkUnprotectedTopics.
+func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy string) (stdout, stderr string, err error) {
+	t.Helper()
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("api_key: k\napi_secret: s\n"), 0600))
+	sourceCreds := filepath.Join(dir, "source.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
+	policyLine := ""
+	if policy != "" {
+		policyLine = "    unprotectedTopicPolicy: " + policy + "\n"
+	}
+	mf := filepath.Join(dir, "migration.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: msk\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+clusterID+"\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+tgt.srv.URL+"\n"+
+			"  serviceAccounts:\n    autoCreate: true\n"+
+			"  acls:\n    include: [\"*\"]\n"+policyLine), 0600))
+
+	oldReader := newSourceReader
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
+	oldLister := newSourceACLLister
+	newSourceACLLister = func(types.KafkaSourceConn) (sourceACLLister, error) {
+		return fakeACLSourceAdmin{acls: oneReadACL("User:app")}, nil
+	}
+	oldBase := ccIAMBaseURL
+	ccIAMBaseURL = tgt.srv.URL
+	t.Cleanup(func() {
+		newSourceReader = oldReader
+		newSourceACLLister = oldLister
+		ccIAMBaseURL = oldBase
+	})
+
+	cmd := NewMigrateApplyCmd()
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"-f", mf})
+	err = cmd.Execute()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// unprotectedTopicPolicy: fail on an MSK source must fail closed: world-open
+// detection is not implemented, so the requested hard stop cannot be honored,
+// and apply must refuse rather than silently proceeding. No SA/ACL mutation
+// should happen.
+func TestApply_ACLs_UnprotectedTopicPolicyFail_MSK_ReturnsError(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-fail")
+	out, _, err := runACLApplyMSK(t, tgt, "lkc-acl-fail", manifest.UnprotectedTopicPolicyFail)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not yet implemented")
+	require.Contains(t, out, "⚠️")
+	require.Contains(t, out, "not yet enforced")
+	require.Equal(t, int64(0), tgt.saPosts, "fail-closed must not create service accounts")
+	require.Equal(t, int64(0), tgt.aclPosts, "fail-closed must not create ACLs")
+}
+
+// unprotectedTopicPolicy: warn (and the default/unset case) on an MSK source
+// must still emit the unenforced-detection caveat, but proceed with apply.
+func TestApply_ACLs_UnprotectedTopicPolicyWarn_MSK_ProceedsWithWarning(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-warn")
+	out, errOut, err := runACLApplyMSK(t, tgt, "lkc-acl-warn", manifest.UnprotectedTopicPolicyWarn)
+	require.NoError(t, err, "stderr: %s", errOut)
+	require.Contains(t, out, "⚠️")
+	require.Contains(t, out, "not yet enforced")
+	require.Equal(t, int64(1), tgt.saPosts)
+	require.Equal(t, int64(1), tgt.aclPosts)
+}
+
+func TestApply_ACLs_UnprotectedTopicPolicyUnset_MSK_ProceedsWithWarning(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-unset")
+	out, errOut, err := runACLApplyMSK(t, tgt, "lkc-acl-unset", "")
+	require.NoError(t, err, "stderr: %s", errOut)
+	require.Contains(t, out, "⚠️")
+	require.Contains(t, out, "not yet enforced")
+	require.Equal(t, int64(1), tgt.saPosts)
+	require.Equal(t, int64(1), tgt.aclPosts)
+}
+
 func TestEnsureMSKScramMechanism(t *testing.T) {
 	scram := func(mech string) types.KafkaSourceConn {
 		return types.KafkaSourceConn{AuthMethod: types.AuthMethodConfig{

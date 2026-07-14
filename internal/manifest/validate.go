@@ -234,7 +234,7 @@ func (m *Migration) Validate() []error {
 
 	if sa := m.Spec.ServiceAccounts; sa != nil {
 		if m.Spec.Target.Type != TargetConfluentCloud {
-			add("spec.serviceAccounts: only valid when spec.target.type is %s", TargetConfluentCloud)
+			add("spec.serviceAccounts: only valid when spec.target.type is %q", TargetConfluentCloud)
 		}
 		for src, id := range sa.Mapping {
 			v := strings.TrimPrefix(id, "User:")
@@ -245,7 +245,7 @@ func (m *Migration) Validate() []error {
 	}
 	if a := m.Spec.ACLs; a != nil {
 		if m.Spec.Target.Type != TargetConfluentCloud {
-			add("spec.acls: only valid when spec.target.type is %s", TargetConfluentCloud)
+			add("spec.acls: only valid when spec.target.type is %q", TargetConfluentCloud)
 		}
 		errs = append(errs, validateSelection("spec.acls.include", a.Include)...)
 		errs = append(errs, validateGlobs("spec.acls.include", a.Include)...)

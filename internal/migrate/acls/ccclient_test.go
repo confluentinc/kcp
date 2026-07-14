@@ -47,6 +47,31 @@ func TestACLClient_Create_PostsCCWireShape(t *testing.T) {
 	require.Equal(t, "ALLOW", gotBody["permission"])
 }
 
+// TestACLClient_Create_UnknownOperation_ReturnsError confirms the highest-risk
+// mapping path (canonical -> CC wire enum) fails loud on an out-of-map value
+// instead of silently posting a zero-value operation.
+func TestACLClient_Create_UnknownOperation_ReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("Create must not call the CC API when enum conversion fails")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer srv.Close()
+
+	client := NewACLClient(srv.URL, "lkc-123", srv.Client())
+
+	err := client.Create(context.Background(), types.Acls{
+		ResourceType:        "Topic",
+		ResourceName:        "orders",
+		ResourcePatternType: "Literal",
+		Principal:           "User:sa-abc123",
+		Host:                "*",
+		Operation:           "BogusOp",
+		PermissionType:      "Allow",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "BogusOp")
+}
+
 func TestACLClient_List_ParsesCCResponseToCanonical(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		require.Equal(t, "/kafka/v3/clusters/lkc-123/acls", r.URL.Path)

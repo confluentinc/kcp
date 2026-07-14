@@ -167,7 +167,9 @@ type ACLs struct {
 	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
 	// UnprotectedTopicPolicy governs what happens when the source has
 	// allow.everyone.if.no.acl.found=true (source topics without ACLs are
-	// world-open): "warn" (default when empty) or "fail".
+	// world-open): "warn" (default when empty) or "fail". Not yet enforced
+	// (detection pending): apply always emits a caveat that this cannot be
+	// checked yet, and "fail" errors out rather than silently proceeding.
 	UnprotectedTopicPolicy string `yaml:"unprotectedTopicPolicy,omitempty" json:"unprotectedTopicPolicy,omitempty"`
 }
 
