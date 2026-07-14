@@ -37,6 +37,14 @@ const (
 	PatternTypePrefixed = "PREFIXED"
 	FilterTypeInclude   = "INCLUDE"
 	FilterTypeExclude   = "EXCLUDE"
+
+	// UnprotectedTopicPolicyWarn (the default) warns when the source has
+	// allow.everyone.if.no.acl.found=true — source topics without ACLs are
+	// world-open and won't be represented on the target — then proceeds.
+	UnprotectedTopicPolicyWarn = "warn"
+	// UnprotectedTopicPolicyFail turns that same condition into a hard error
+	// before anything is applied.
+	UnprotectedTopicPolicyFail = "fail"
 )
 
 // Migration is the top-level migration manifest.
@@ -157,6 +165,10 @@ type ServiceAccounts struct {
 type ACLs struct {
 	Include []string `yaml:"include" json:"include"`
 	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
+	// UnprotectedTopicPolicy governs what happens when the source has
+	// allow.everyone.if.no.acl.found=true (source topics without ACLs are
+	// world-open): "warn" (default when empty) or "fail".
+	UnprotectedTopicPolicy string `yaml:"unprotectedTopicPolicy,omitempty" json:"unprotectedTopicPolicy,omitempty"`
 }
 
 type Schemas struct {

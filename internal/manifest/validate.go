@@ -245,6 +245,13 @@ func (m *Migration) Validate() []error {
 	}
 	if a := m.Spec.ACLs; a != nil {
 		errs = append(errs, validateSelection("spec.acls.include", a.Include)...)
+		errs = append(errs, validateGlobs("spec.acls.include", a.Include)...)
+		errs = append(errs, validateGlobs("spec.acls.exclude", a.Exclude)...)
+		if a.UnprotectedTopicPolicy != "" {
+			if err := validateEnum("spec.acls.unprotectedTopicPolicy", a.UnprotectedTopicPolicy, UnprotectedTopicPolicyWarn, UnprotectedTopicPolicyFail); err != nil {
+				errs = append(errs, err)
+			}
+		}
 	}
 	if s := m.Spec.Schemas; s != nil {
 		errs = append(errs, validateSelection("spec.schemas.include", s.Include)...)

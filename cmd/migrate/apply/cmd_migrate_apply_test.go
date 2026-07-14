@@ -10,8 +10,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
 	"github.com/confluentinc/kcp/internal/types"
@@ -457,6 +459,157 @@ func TestResolveLinkConfigs_DefaultsApplied(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "p.", got["cluster.link.prefix"])
 	require.Equal(t, "true", got["consumer.offset.sync.enable"])
+}
+
+// fakeACLSourceAdmin is a sourceACLLister double returning a fixed native ACL
+// set, so the ACL pipeline reads a real principal without a live connection.
+type fakeACLSourceAdmin struct{ acls []sarama.ResourceAcls }
+
+func (f fakeACLSourceAdmin) ListAcls() ([]sarama.ResourceAcls, error) { return f.acls, nil }
+func (f fakeACLSourceAdmin) Close() error                             { return nil }
+
+// oneReadACL is a single native ACL: User:app, Allow Read on topic "orders",
+// host "*". Its sarama enums stringify to the canonical titlecase forms
+// ReadNativeACLs/NormalizeForCC expect.
+func oneReadACL(principal string) []sarama.ResourceAcls {
+	return []sarama.ResourceAcls{{
+		Resource: sarama.Resource{
+			ResourceType:        sarama.AclResourceTopic,
+			ResourceName:        "orders",
+			ResourcePatternType: sarama.AclPatternLiteral,
+		},
+		Acls: []*sarama.Acl{{
+			Principal:      principal,
+			Host:           "*",
+			Operation:      sarama.AclOperationRead,
+			PermissionType: sarama.AclPermissionAllow,
+		}},
+	}}
+}
+
+// aclCaptureTarget is a stub Confluent Cloud target serving the IAM v2
+// service-accounts API and the Kafka REST v3 ACL API, capturing POST counts
+// and the ACL create body.
+type aclCaptureTarget struct {
+	srv         *httptest.Server
+	saPosts     int64
+	aclPosts    int64
+	lastACLBody map[string]any
+	createdSAID string
+}
+
+func startACLCaptureTarget(t *testing.T, clusterID string) *aclCaptureTarget {
+	t.Helper()
+	c := &aclCaptureTarget{createdSAID: "sa-created1"}
+	mux := http.NewServeMux()
+
+	// IAM v2 service accounts: GET (find by display_name → none) / POST (create).
+	mux.HandleFunc("/iam/v2/service-accounts", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			atomic.AddInt64(&c.saPosts, 1)
+			var body struct {
+				DisplayName string `json:"display_name"`
+				Description string `json:"description"`
+			}
+			b, _ := io.ReadAll(r.Body)
+			_ = json.Unmarshal(b, &body)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"id":"` + c.createdSAID + `","display_name":"` + body.DisplayName + `","description":"` + body.Description + `"}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`)) // no existing account → plan a create
+	})
+
+	// Kafka REST v3 ACLs: GET (list → none) / POST (create).
+	mux.HandleFunc("/kafka/v3/clusters/"+clusterID+"/acls", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			atomic.AddInt64(&c.aclPosts, 1)
+			b, _ := io.ReadAll(r.Body)
+			var body map[string]any
+			_ = json.Unmarshal(b, &body)
+			c.lastACLBody = body
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[]}`))
+	})
+
+	c.srv = httptest.NewServer(mux)
+	t.Cleanup(c.srv.Close)
+	return c
+}
+
+// runACLApply writes a CC-target manifest with serviceAccounts.autoCreate and
+// acls.include ["*"], stubs the source ACL read + IAM base URL, and runs apply.
+func runACLApply(t *testing.T, tgt *aclCaptureTarget, clusterID string, dryRun bool) (stdout, stderr string, err error) {
+	t.Helper()
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("api_key: k\napi_secret: s\n"), 0600))
+	sourceCreds := filepath.Join(dir, "source.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
+	mf := filepath.Join(dir, "migration.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+clusterID+"\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+tgt.srv.URL+"\n"+
+			"  serviceAccounts:\n    autoCreate: true\n"+
+			"  acls:\n    include: [\"*\"]\n"), 0600))
+
+	oldReader := newSourceReader
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
+	oldLister := newSourceACLLister
+	newSourceACLLister = func(types.KafkaSourceConn) (sourceACLLister, error) {
+		return fakeACLSourceAdmin{acls: oneReadACL("User:app")}, nil
+	}
+	oldBase := ccIAMBaseURL
+	ccIAMBaseURL = tgt.srv.URL
+	t.Cleanup(func() {
+		newSourceReader = oldReader
+		newSourceACLLister = oldLister
+		ccIAMBaseURL = oldBase
+	})
+
+	cmd := NewMigrateApplyCmd()
+	var outBuf, errBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	args := []string{"-f", mf}
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
+	cmd.SetArgs(args)
+	err = cmd.Execute()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// Dry-run: the plan lists the service account + ACL and mutates nothing.
+func TestApply_ACLs_DryRun_PlansNoMutation(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl1")
+	out, errOut, err := runACLApply(t, tgt, "lkc-acl1", true)
+	require.NoError(t, err, "stderr: %s", errOut)
+	require.Contains(t, out, "== serviceAccounts (Planned) ==")
+	require.Contains(t, out, `service account for principal "User:app"`)
+	require.Contains(t, out, "== acls (Planned) ==")
+	require.Contains(t, out, `ACL for`)
+	require.Contains(t, out, "orders")
+	require.Equal(t, int64(0), tgt.saPosts, "dry-run must not create service accounts")
+	require.Equal(t, int64(0), tgt.aclPosts, "dry-run must not create ACLs")
+}
+
+// Apply: a service account is created, then an ACL with the principal rewritten
+// to the created User:sa- identity.
+func TestApply_ACLs_Apply_CreatesSAThenRewrittenACL(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl1")
+	out, errOut, err := runACLApply(t, tgt, "lkc-acl1", false)
+	require.NoError(t, err, "stderr: %s", errOut)
+
+	require.Equal(t, int64(1), tgt.saPosts, "expected one service-account create")
+	require.Equal(t, int64(1), tgt.aclPosts, "expected one ACL create")
+	require.NotNil(t, tgt.lastACLBody)
+	require.Equal(t, "User:"+tgt.createdSAID, tgt.lastACLBody["principal"], "ACL principal must be rewritten to the created service account")
+	require.Equal(t, "orders", tgt.lastACLBody["resource_name"])
+	require.Contains(t, out, "1 created")
 }
 
 func TestEnsureMSKScramMechanism(t *testing.T) {

@@ -21,12 +21,15 @@ type Config struct {
 	// Desired is the normalized ACL set to reconcile onto the target, with
 	// principals still in SOURCE form (e.g. "User:app1").
 	Desired []types.Acls
-	// PrincipalMap resolves a source principal to its target Confluent Cloud
-	// identity (e.g. "User:app1" -> "User:sa-abc123") — the serviceAccounts
-	// reconciler's ResolvedMap. A desired ACL whose principal has no entry
-	// here was warn-skipped upstream (e.g. "User:*" / "User:ANONYMOUS") and
-	// is skipped here too: no create, no error.
-	PrincipalMap map[string]string
+	// ResolvedPrincipals is a getter for the source-principal -> target
+	// Confluent Cloud identity map (e.g. "User:app1" -> "User:sa-abc123") — the
+	// serviceAccounts reconciler's ResolvedMap. It is called at the TOP of Plan
+	// (not at construction) so it observes whatever the serviceAccounts
+	// reconciler has resolved by then: real ids once its Apply has run (apply
+	// mode), or its Plan-time placeholders (dry-run). A desired ACL whose
+	// principal has no entry was warn-skipped upstream (e.g. "User:*" /
+	// "User:ANONYMOUS") and is skipped here too: no create, no error.
+	ResolvedPrincipals func() map[string]string
 	// Client talks to the Confluent Cloud Kafka REST v3 ACL API, entirely in
 	// canonical types.Acls form.
 	Client ACLClient
@@ -66,6 +69,15 @@ func summaryFor(a types.Acls) string {
 // target but are not in the desired set are never represented here — this
 // reconciler is strictly additive and can only grow the target's ACL set.
 func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
+	// Resolve principals lazily: in apply mode the serviceAccounts reconciler's
+	// Apply has already populated real ids by now; in dry-run it has only
+	// placeholders. Reading at the top of Plan (not at construction) is what
+	// makes that late-binding work.
+	principalMap := map[string]string{}
+	if r.cfg.ResolvedPrincipals != nil {
+		principalMap = r.cfg.ResolvedPrincipals()
+	}
+
 	existing, err := r.cfg.Client.List(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("listing target acls: %w", err)
@@ -77,7 +89,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 
 	steps := make([]step, 0, len(r.cfg.Desired))
 	for _, a := range r.cfg.Desired {
-		mapped, ok := r.cfg.PrincipalMap[a.Principal]
+		mapped, ok := principalMap[a.Principal]
 		if !ok {
 			slog.Debug("⏭️ skipping ACL: source principal has no resolved target identity", "principal", a.Principal)
 			continue

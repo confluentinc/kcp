@@ -87,6 +87,31 @@ func TestReconciler_AutoCreateAndMappingAndSkip(t *testing.T) {
 	require.NotContains(t, m, "User:ANONYMOUS")                                  // skipped (unmapped)
 }
 
+// TestReconciler_Plan_PopulatesResolvedMap verifies that Plan (not just Apply)
+// populates ResolvedMap: mapped and already-existing principals resolve to
+// their real "User:sa-<id>", a to-be-created principal resolves to a
+// placeholder, and skipped principals (User:* / User:ANONYMOUS) stay out. This
+// is what lets the acls reconciler render a meaningful dry-run preview.
+func TestReconciler_Plan_PopulatesResolvedMap(t *testing.T) {
+	fc := newFakeClient()
+	fc.existing["legacy"] = &ServiceAccount{ID: "sa-legacy", DisplayName: "legacy", Description: descriptionFor("User:legacy")}
+	r := New(Config{
+		AutoCreate: true,
+		Mapping:    map[string]string{"User:mapped": "sa-mapped"},
+		Principals: []string{"User:new-app", "User:mapped", "User:legacy", "User:*"},
+		Client:     fc,
+	})
+
+	_, err := r.Plan(context.Background())
+	require.NoError(t, err)
+
+	m := r.ResolvedMap()
+	require.Equal(t, "User:sa-mapped", m["User:mapped"])                                   // mapping, real id at Plan time
+	require.Equal(t, "User:sa-legacy", m["User:legacy"])                                   // existing, real id at Plan time
+	require.Equal(t, placeholderFor(DeriveDisplayName("User:new-app")), m["User:new-app"]) // to-be-created placeholder
+	require.NotContains(t, m, "User:*")                                                    // skipped, absent
+}
+
 func TestReconciler_AutoCreateFalseUnmapped_Errors(t *testing.T) {
 	r := New(Config{AutoCreate: false, Principals: []string{"User:app"}, Client: newFakeClient()})
 	_, err := r.Plan(context.Background())

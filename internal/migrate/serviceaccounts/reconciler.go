@@ -57,8 +57,12 @@ func (r *Reconciler) CheckPreconditions(ctx context.Context) error {
 	return nil
 }
 
-// ResolvedMap returns the source-principal -> "User:<id>" map. It is
-// populated by Apply; before Apply runs it is empty (but non-nil).
+// ResolvedMap returns the live source-principal -> "User:<id>" map. Plan
+// populates it (real ids for mapped/existing principals, placeholders for
+// to-be-created ones); Apply overwrites the placeholders with real ids. It is
+// safe to pass as the acls reconciler's ResolvedPrincipals getter: the
+// returned map reflects whatever has resolved by the time it is called. Before
+// Plan runs it is empty (but non-nil).
 func (r *Reconciler) ResolvedMap() map[string]string {
 	if r.resolved == nil {
 		return map[string]string{}
@@ -84,6 +88,15 @@ func descriptionFor(principal string) string {
 	return "kcp:source-principal=" + principal
 }
 
+// placeholderFor is the resolved-map value recorded at Plan time for a
+// principal whose service account would be CREATED (its real id is not known
+// until Apply runs). It lets the acls reconciler produce a meaningful dry-run
+// preview ("would create ACL for <principal>") instead of silently skipping
+// the principal; Apply overwrites it with the real "User:sa-<id>".
+func placeholderFor(displayName string) string {
+	return "User:sa-(pending:" + displayName + ")"
+}
+
 // Plan resolves every principal in cfg.Principals to a CC identity, in one of
 // four ways (design §6):
 //   - an explicit Mapping entry wins, used verbatim, no client call;
@@ -98,6 +111,14 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	principals := append([]string(nil), r.cfg.Principals...)
 	sort.Strings(principals)
 
+	// Populate the resolved map during Plan (as well as Apply): mapped and
+	// already-existing principals get their real "User:sa-<id>"; principals
+	// that would be auto-created get a deterministic placeholder (overwritten
+	// with the real id by Apply). Skipped principals (User:* / User:ANONYMOUS)
+	// stay OUT of the map. This lets the acls reconciler's Plan see meaningful
+	// entries in dry-run, where Apply never runs.
+	r.resolved = map[string]string{}
+
 	var steps []reconcile.Step[provision]
 	var errs []error
 
@@ -105,6 +126,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		summary := fmt.Sprintf("service account for principal %q", p)
 
 		if id, ok := r.cfg.Mapping[p]; ok && id != "" {
+			r.resolved[p] = "User:" + id
 			steps = append(steps, reconcile.Step[provision]{
 				Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary,
 					Detail: fmt.Sprintf("mapped to User:%s", id)},
@@ -131,6 +153,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 			continue
 		}
 		if found == nil {
+			r.resolved[p] = placeholderFor(displayName)
 			steps = append(steps, reconcile.Step[provision]{
 				Change: reconcile.Change{Action: reconcile.ActionCreate, Summary: summary,
 					Detail: fmt.Sprintf("display name %q", displayName)},
@@ -149,6 +172,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 				displayName, found.Description, description, p))
 			continue
 		}
+		r.resolved[p] = "User:" + found.ID
 		steps = append(steps, reconcile.Step[provision]{
 			Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary,
 				Detail: fmt.Sprintf("existing service account %s", found.ID)},

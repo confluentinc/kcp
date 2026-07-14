@@ -52,9 +52,9 @@ func acl(principal string) types.Acls {
 func TestReconciler_Plan_CreatesWhenAbsent(t *testing.T) {
 	client := &fakeACLClient{}
 	r := New(Config{
-		Desired:      []types.Acls{acl("User:app1")},
-		PrincipalMap: map[string]string{"User:app1": "User:sa-abc123"},
-		Client:       client,
+		Desired:            []types.Acls{acl("User:app1")},
+		ResolvedPrincipals: func() map[string]string { return map[string]string{"User:app1": "User:sa-abc123"} },
+		Client:             client,
 	})
 
 	plan, err := r.Plan(context.Background())
@@ -75,9 +75,9 @@ func TestReconciler_Plan_PresentWhenAlreadyExists(t *testing.T) {
 	existing := acl("User:sa-abc123")
 	client := &fakeACLClient{existing: []types.Acls{existing}}
 	r := New(Config{
-		Desired:      []types.Acls{acl("User:app1")},
-		PrincipalMap: map[string]string{"User:app1": "User:sa-abc123"},
-		Client:       client,
+		Desired:            []types.Acls{acl("User:app1")},
+		ResolvedPrincipals: func() map[string]string { return map[string]string{"User:app1": "User:sa-abc123"} },
+		Client:             client,
 	})
 
 	plan, err := r.Plan(context.Background())
@@ -96,9 +96,9 @@ func TestReconciler_Plan_PresentWhenAlreadyExists(t *testing.T) {
 func TestReconciler_Reapply_SecondPlanIsEmpty(t *testing.T) {
 	client := &fakeACLClient{}
 	cfg := Config{
-		Desired:      []types.Acls{acl("User:app1")},
-		PrincipalMap: map[string]string{"User:app1": "User:sa-abc123"},
-		Client:       client,
+		Desired:            []types.Acls{acl("User:app1")},
+		ResolvedPrincipals: func() map[string]string { return map[string]string{"User:app1": "User:sa-abc123"} },
+		Client:             client,
 	}
 	r := New(cfg)
 
@@ -121,9 +121,9 @@ func TestReconciler_Reapply_SecondPlanIsEmpty(t *testing.T) {
 func TestReconciler_Plan_SkipsPrincipalNotInMap(t *testing.T) {
 	client := &fakeACLClient{}
 	r := New(Config{
-		Desired:      []types.Acls{acl("User:*")}, // warn-skipped upstream: absent from PrincipalMap
-		PrincipalMap: map[string]string{},
-		Client:       client,
+		Desired:            []types.Acls{acl("User:*")}, // warn-skipped upstream: absent from PrincipalMap
+		ResolvedPrincipals: func() map[string]string { return map[string]string{} },
+		Client:             client,
 	})
 
 	plan, err := r.Plan(context.Background())
@@ -141,9 +141,9 @@ func TestReconciler_ExtraTargetACL_IsNeverDeleted(t *testing.T) {
 	extra := acl("User:sa-other")
 	client := &fakeACLClient{existing: []types.Acls{extra}}
 	r := New(Config{
-		Desired:      []types.Acls{acl("User:app1")},
-		PrincipalMap: map[string]string{"User:app1": "User:sa-abc123"},
-		Client:       client,
+		Desired:            []types.Acls{acl("User:app1")},
+		ResolvedPrincipals: func() map[string]string { return map[string]string{"User:app1": "User:sa-abc123"} },
+		Client:             client,
 	})
 
 	plan, err := r.Plan(context.Background())

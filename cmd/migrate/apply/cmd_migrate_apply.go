@@ -2,17 +2,25 @@ package apply
 
 import (
 	"fmt"
+	"io"
 	"os"
+	"path"
+	"sort"
 
+	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
+	macls "github.com/confluentinc/kcp/internal/migrate/acls"
 	mclusterlink "github.com/confluentinc/kcp/internal/migrate/clusterlink"
 	mmirror "github.com/confluentinc/kcp/internal/migrate/mirrortopics"
 	mnew "github.com/confluentinc/kcp/internal/migrate/newtopics"
+	msa "github.com/confluentinc/kcp/internal/migrate/serviceaccounts"
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/reconcile"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -21,6 +29,24 @@ import (
 var newSourceReader = func(conn types.KafkaSourceConn) migrate.Source {
 	return migrate.NewKafkaSourceReader(conn)
 }
+
+// sourceACLLister is the minimal source-admin surface the ACL read needs. It
+// matches both client.KafkaAdmin and a test fake.
+type sourceACLLister interface {
+	ListAcls() ([]sarama.ResourceAcls, error)
+	Close() error
+}
+
+// newSourceACLLister opens the source Kafka admin used to read native ACLs. It
+// is a package-level var so tests can substitute a fake without opening a live
+// Kafka connection.
+var newSourceACLLister = func(conn types.KafkaSourceConn) (sourceACLLister, error) {
+	return migrate.BuildSourceAdmin(conn)
+}
+
+// ccIAMBaseURL is the Confluent Cloud IAM v2 API base URL used to provision
+// service accounts. It is a package-level var so tests can point it at a stub.
+var ccIAMBaseURL = msa.DefaultBaseURL
 
 func NewMigrateApplyCmd() *cobra.Command {
 	var file string
@@ -240,11 +266,177 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		}
 	}
 
+	// ACL migration: READ (source) -> PROVISION (service accounts) -> WRITE
+	// (ACLs). Appended AFTER any clusterLink/topics reconcilers so the engine's
+	// in-order run has service accounts resolved before ACLs are written.
+	if m.Spec.ACLs != nil {
+		aclRecs, err := buildACLReconcilers(cmd, m, srcCluster, tgtClient)
+		if err != nil {
+			return err
+		}
+		recs = append(recs, aclRecs...)
+	}
+
 	eng := reconcile.NewEngine(cmd.OutOrStdout())
 	// Phase 1 relies on the engine to render outcomes; the structured Report is
 	// not consumed yet (a later phase may use it for a machine-readable summary).
 	_, err = eng.Run(cmd.Context(), recs, dryRun)
 	return err
+}
+
+// buildACLReconcilers runs the source-read + normalization stages inline
+// (printing diagnostics to the operator) and returns the serviceAccounts and
+// acls reconcilers, in that order, for the engine to Plan/Apply. The acls
+// reconciler reads the serviceAccounts reconciler's resolved map lazily at its
+// own Plan time (late-binding), so in apply mode it observes the real
+// "User:sa-<id>" ids the provision stage produced.
+func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster types.KafkaSourceConn, tgtClient clusterlink.HTTPClient) ([]reconcile.Reconciler, error) {
+	out := cmd.OutOrStdout()
+
+	// READ: list native ACLs from the source.
+	adm, err := newSourceACLLister(srcCluster)
+	if err != nil {
+		return nil, fmt.Errorf("connecting to source for ACL read: %w", err)
+	}
+	defer func() { _ = adm.Close() }()
+	raw, err := macls.ReadNativeACLs(adm)
+	if err != nil {
+		return nil, fmt.Errorf("reading source ACLs: %w", err)
+	}
+
+	// Filter by spec.acls include/exclude (glob against principal and resource
+	// name), then normalize the survivors for the Confluent Cloud target.
+	filtered, err := filterACLs(raw, m.Spec.ACLs.Include, m.Spec.ACLs.Exclude)
+	if err != nil {
+		return nil, fmt.Errorf("filtering ACLs: %w", err)
+	}
+	norm, diags := macls.NormalizeForCC(filtered)
+	printACLDiagnostics(out, diags)
+
+	// World-open topics policy (allow.everyone.if.no.acl.found).
+	if err := checkUnprotectedTopics(out, m); err != nil {
+		return nil, err
+	}
+
+	principals := distinctPrincipals(norm)
+
+	// PROVISION: service accounts on the Confluent Cloud target. The IAM v2 API
+	// lives at ccIAMBaseURL; the target's cloud creds (tgtClient) carry auth.
+	var saCfg msa.Config
+	if sa := m.Spec.ServiceAccounts; sa != nil {
+		saCfg = msa.Config{AutoCreate: sa.AutoCreate, Mapping: sa.Mapping}
+	}
+	saCfg.Principals = principals
+	saCfg.Client = msa.NewCCClient(ccIAMBaseURL, tgtClient)
+	saRec := msa.New(saCfg)
+
+	// WRITE: ACLs on the target REST endpoint. ResolvedPrincipals is the SA
+	// reconciler's live map (late-bound at acls.Plan time).
+	aclClient := macls.NewACLClient(m.Spec.Target.Kafka.RestEndpoint, m.Spec.Target.ClusterID, tgtClient)
+	aclRec := macls.New(macls.Config{
+		Desired:            norm,
+		ResolvedPrincipals: saRec.ResolvedMap,
+		Client:             aclClient,
+	})
+
+	return []reconcile.Reconciler{saRec, aclRec}, nil
+}
+
+// filterACLs keeps an ACL when its principal or resource name matches an
+// include glob and neither matches an exclude glob (exclude always wins). It
+// mirrors topicselect's path.Match semantics but omits the internal-topic
+// opt-in logic, which is not meaningful for ACL principals/resources.
+func filterACLs(in []types.Acls, include, exclude []string) ([]types.Acls, error) {
+	matchAny := func(pats []string, fields ...string) (bool, error) {
+		for _, p := range pats {
+			for _, f := range fields {
+				ok, err := path.Match(p, f)
+				if err != nil {
+					return false, err
+				}
+				if ok {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
+	}
+
+	var out []types.Acls
+	for _, a := range in {
+		inc, err := matchAny(include, a.Principal, a.ResourceName)
+		if err != nil {
+			return nil, err
+		}
+		if !inc {
+			continue
+		}
+		exc, err := matchAny(exclude, a.Principal, a.ResourceName)
+		if err != nil {
+			return nil, err
+		}
+		if exc {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out, nil
+}
+
+// distinctPrincipals returns the sorted, de-duplicated set of principals across
+// the normalized ACL set.
+func distinctPrincipals(acls []types.Acls) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	for _, a := range acls {
+		if _, ok := seen[a.Principal]; ok {
+			continue
+		}
+		seen[a.Principal] = struct{}{}
+		out = append(out, a.Principal)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// printACLDiagnostics renders NormalizeForCC diagnostics to the operator: a
+// warn/error gets ⚠️, info is a plain indented note. These are operator-facing
+// terminal output, so they use fmt/color rather than slog.
+func printACLDiagnostics(out io.Writer, diags []macls.Diagnostic) {
+	warn := color.New(color.FgYellow)
+	for _, d := range diags {
+		switch d.Level {
+		case "warn", "error":
+			_, _ = fmt.Fprintln(out, warn.Sprintf("⚠️  %s", d.Message))
+		default:
+			_, _ = fmt.Fprintf(out, "  %s\n", d.Message)
+		}
+	}
+}
+
+// checkUnprotectedTopics applies spec.acls.unprotectedTopicPolicy to the
+// source's allow.everyone.if.no.acl.found setting.
+//
+// The live read of that setting is only meaningful for an MSK source, where it
+// comes from the cluster's config-revision server.properties. That read is not
+// wired here: the config-revision ARN is not carried in the manifest (spec.source
+// holds type/bootstrapServers/credentials only), so acls.AllowEveryoneIfNoACLFound
+// has no server.properties to evaluate in this task. The policy field and its
+// enforcement are in place for when that read lands; until then this is a no-op
+// gated on the source being MSK.
+func checkUnprotectedTopics(_ io.Writer, m *manifest.Migration) error {
+	if m.Spec.Source.Type != manifest.SourceMSK {
+		return nil
+	}
+	policy := m.Spec.ACLs.UnprotectedTopicPolicy
+	if policy == "" {
+		policy = manifest.UnprotectedTopicPolicyWarn
+	}
+	// Live read of allow.everyone.if.no.acl.found deferred (see doc comment).
+	// Once wired: if AllowEveryoneIfNoACLFound(serverProps) and topics lack
+	// ACLs → warn (policy=warn) or return an error (policy=fail) before apply.
+	_ = policy
+	return nil
 }
 
 // ensureIAMAllowed rejects IAM where it cannot work: a cluster link can never

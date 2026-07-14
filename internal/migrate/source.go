@@ -16,6 +16,13 @@ import (
 // package-level var so tests can substitute a mock admin.
 var buildSourceAdmin = buildKafkaSourceAdmin
 
+// BuildSourceAdmin opens a Kafka admin connection to the source cluster for a
+// one-off read (e.g. native ACL listing via acls.ReadNativeACLs) that lives
+// outside the KafkaSourceReader lifecycle. The caller owns Close().
+func BuildSourceAdmin(conn types.KafkaSourceConn) (client.KafkaAdmin, error) {
+	return buildSourceAdmin(conn)
+}
+
 // buildKafkaSourceAdmin builds a Kafka admin for a migrate source connection,
 // dispatching auth through the shared client.AdminOptionForAuth mapper. For IAM
 // the region comes from AuthMethod.IAM.Region (SigV4). InsecureSkipTLSVerify is
