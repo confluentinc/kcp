@@ -5,6 +5,9 @@
 BINARY_NAME := kcp
 MAIN_PATH := .
 GOTEST_FLAGS ?= -v
+# Extra flags for the migration e2e run. -parallel caps concurrent scenarios;
+# lower it (e.g. -parallel 3) as the bounded-parallelism toggle if the node saturates.
+MIGRATION_GOTEST_FLAGS ?= -parallel 9
 
 COMMIT := $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 DATE := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
@@ -106,7 +109,7 @@ test-migration: test-migration-setup ## Run full migration E2E lifecycle (setup,
 	go test -v -tags=e2e -timeout 40m ./integration-tests/migration/...
 
 test-migration-run: ## Run migration E2E tests against already-provisioned infra (no setup/teardown; CI pairs this with test-migration-setup)
-	go test -v -tags=e2e -timeout 40m ./integration-tests/migration/...
+	go test -v -tags=e2e -timeout 40m $(MIGRATION_GOTEST_FLAGS) ./integration-tests/migration/...
 
 test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
 	@bash integration-tests/migration/testdata/setup.sh

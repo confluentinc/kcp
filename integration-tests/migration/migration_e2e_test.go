@@ -147,11 +147,20 @@ func runKCP(t *testing.T, cfg envConfig, args ...string) (string, string, error)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
+	// Run kcp from a per-scenario working directory so its cwd-relative
+	// kcp.log lands in scenarioWorkdir(cfg.Scenario) instead of a shared
+	// /workspace/kcp.log — required for parallel scenarios not to contaminate
+	// each other's logs. The literal "kcp" token after the script supplies $0
+	// so the real kcp args map to "$@" ($1..$n); `mkdir -p` creates the dir on
+	// the emptyDir /workspace volume. cfg.Scenario is a controlled constant.
+	workdir := scenarioWorkdir(cfg.Scenario)
 	kubectlArgs := []string{
 		"--context", cfg.KubeContext,
 		"-n", cfg.Namespace,
 		"exec", cfg.KCPPod, "--",
-		"/workspace/kcp",
+		"sh", "-c",
+		fmt.Sprintf("mkdir -p %s && cd %s && exec /workspace/kcp \"$@\"", workdir, workdir),
+		"kcp",
 	}
 	kubectlArgs = append(kubectlArgs, args...)
 
@@ -516,7 +525,6 @@ func readPodFileLinesFrom(t *testing.T, cfg envConfig, podPath string, startLine
 // the scenario-resolved cfg.TopicName.
 const (
 	e2eProducerLog    = "producer"
-	e2eConsumerGroup  = "kcp-e2e-consumer-group"
 	e2eProducerBinary = "/workspace/producer"
 	e2eConsumerBinary = "/workspace/consumer"
 )
@@ -530,7 +538,7 @@ func startConsumerOnSource(t *testing.T, cfg envConfig, maxMessages int) {
 		e2eConsumerBinary,
 		"--bootstrap", cfg.SourceBootstrap,
 		"--topic", cfg.TopicName,
-		"--group", e2eConsumerGroup,
+		"--group", consumerGroupID(cfg.Scenario),
 		"--max-messages", fmt.Sprintf("%d", maxMessages),
 		"--timeout", "90s",
 	)
@@ -548,15 +556,19 @@ func startProducerOnSource(t *testing.T, cfg envConfig, duration time.Duration) 
 		"--topic", cfg.TopicName,
 		"--duration", duration.String(),
 		"--rate", "10",
+		"--client-id", producerClientID(cfg.Scenario),
 	)
 }
 
 func stopProducer(t *testing.T, cfg envConfig) {
 	t.Helper()
-	killInPod(t, cfg, e2eProducerBinary)
+	// Scope the kill to THIS scenario's producer (matched via its unique
+	// --client-id in the argv), so a parallel scenario's stop can't kill it.
+	killInPod(t, cfg, producerKillPattern(cfg.Scenario))
 }
 
 func TestMigrationE2E(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioBaseline)
 
 	// Set up K8s clients for assertions (runs on host, uses host kubeconfig)
@@ -764,12 +776,15 @@ func TestMigrationE2E(t *testing.T) {
 //
 // Runs against the dedicated "batch" scenario provisioned by setup.sh.
 func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioBatch)
 	require.GreaterOrEqual(t, len(cfg.TopicNames), 2,
 		"batch scenario must provision multiple topics (got %v)", cfg.TopicNames)
 
 	stateFile := "/workspace/migration-state-batch.json"
-	const logPath = "/workspace/kcp.log"
+	// Scenario-scoped kcp.log (matches runKCP's per-scenario workdir) so
+	// concurrent scenarios' kcp runs don't inflate the line counts asserted below.
+	logPath := scenarioWorkdir(cfg.Scenario) + "/kcp.log"
 
 	// --- Step 1: init ---
 	t.Run("init", func(t *testing.T) {
@@ -890,6 +905,7 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 // topic, cluster link, and gateway CR provisioned by setup.sh — so it is
 // independent of TestMigrationE2E.
 func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioPauseSyncHappy)
 
 	stateFile := "/workspace/migration-state-pause-sync-happy.json"
@@ -1074,6 +1090,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 // Runs against the dedicated "pause-sync-drain" scenario provisioned by
 // setup.sh, so it is independent of the other pause-sync tests.
 func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioPauseSyncDrain)
 
 	stateFile := "/workspace/migration-state-pause-sync-drain.json"
@@ -1198,6 +1215,7 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 // its own cluster link so flipping offset-sync to "false" does not leak
 // into other tests.
 func TestMigrationE2E_PauseOffsetSync_InitRefuses(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioPauseSyncRefuses)
 
 	setClusterLinkConfig(t, cfg, "consumer.offset.sync.enable", "false")
@@ -1259,6 +1277,7 @@ func TestMigrationE2E_PauseOffsetSync_InitRefuses(t *testing.T) {
 // dedicated source topic, cluster link, and gateway CR provisioned by
 // setup.sh — so it is independent of the other migration tests.
 func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioPauseSyncRestoresFilters)
 
 	stateFile := "/workspace/migration-state-pause-sync-restores-filters.json"
@@ -1370,6 +1389,7 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 // Phase B: with the rogue producer stopped, re-running execute re-verifies
 // the fence (source offsets stable) and completes the migration to switched.
 func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioRogueProducer)
 
 	kubeConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
@@ -1601,6 +1621,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 // Runs against the "pause-sync-rogue" scenario — its own dedicated source
 // topic, cluster link, and gateway CR provisioned by setup.sh.
 func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioPauseSyncRogue)
 
 	kubeConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(
@@ -1788,6 +1809,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 // topic, cluster link, and gateway CR provisioned by setup.sh — so flipping
 // offset-sync to "false" does not leak into other tests.
 func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
+	t.Parallel()
 	cfg := loadEnvConfig(t, scenarioPauseSyncDrift)
 
 	kubeConfig, err := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(

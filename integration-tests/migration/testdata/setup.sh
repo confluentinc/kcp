@@ -64,8 +64,8 @@ else
   minikube start \
     --profile "${PROFILE}" \
     --driver=docker \
-    --cpus=4 \
-    --memory=8192 \
+    --cpus="${MINIKUBE_CPUS:-12}" \
+    --memory="${MINIKUBE_MEMORY:-24576}" \
     --disk-size=20g \
     --kubernetes-version=v1.30.0
 fi
