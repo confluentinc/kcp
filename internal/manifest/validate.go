@@ -232,6 +232,17 @@ func (m *Migration) Validate() []error {
 		}
 	}
 
+	if sa := m.Spec.ServiceAccounts; sa != nil {
+		if m.Spec.Target.Type != TargetConfluentCloud {
+			add("spec.serviceAccounts: only valid when spec.target.type is %s", TargetConfluentCloud)
+		}
+		for src, id := range sa.Mapping {
+			v := strings.TrimPrefix(id, "User:")
+			if !strings.HasPrefix(v, "sa-") && !strings.HasPrefix(v, "u-") && !strings.HasPrefix(v, "pool-") {
+				add("spec.serviceAccounts.mapping value %q must be a User:sa-/u-/pool- id (source %q)", id, src)
+			}
+		}
+	}
 	if a := m.Spec.ACLs; a != nil {
 		errs = append(errs, validateSelection("spec.acls.include", a.Include)...)
 	}

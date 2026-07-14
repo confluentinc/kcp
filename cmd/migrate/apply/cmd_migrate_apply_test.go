@@ -362,7 +362,7 @@ func TestApply_NothingToApply(t *testing.T) {
 		"  target:\n    type: confluent-platform\n    credentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n"
 	_, _, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1"}, false)
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "spec.clusterLink and/or spec.topics is required")
+	require.Contains(t, err.Error(), "spec.clusterLink, spec.topics and/or spec.acls is required")
 }
 
 // runWithSourceCreds writes a manifest with the given source.type and a source

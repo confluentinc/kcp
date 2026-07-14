@@ -509,6 +509,48 @@ func TestValidate_SourceMSK_Valid(t *testing.T) {
 	require.Empty(t, m.Validate())
 }
 
+// baseCCTargetManifest returns a valid Confluent Cloud target manifest with a
+// mirror-mode cluster link and topics set, so callers can add/remove
+// sections (e.g. to test acls-only manifests) while the rest stays valid.
+func baseCCTargetManifest(t *testing.T) *Migration {
+	t.Helper()
+	m := validCCWithDestinationLink(t)
+	m.Spec.Topics = &Topics{Mode: TopicModeMirror, Include: []string{"*"}}
+	return m
+}
+
+// baseCPTargetManifest mirrors baseCCTargetManifest but for target type
+// confluent-platform.
+func baseCPTargetManifest(t *testing.T) *Migration {
+	t.Helper()
+	m := baseCCTargetManifest(t)
+	m.Spec.Target = Target{
+		Type:        TargetConfluentPlatform,
+		Credentials: "./t.yaml",
+		Kafka:       &TargetKafka{RestEndpoint: "https://broker:8090"},
+	}
+	return m
+}
+
+func TestValidate_ServiceAccountsCCOnly(t *testing.T) {
+	m := baseCPTargetManifest(t)
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
+	require.True(t, errorContains(m.Validate(), "spec.serviceAccounts: only valid when spec.target.type is confluent-cloud"))
+}
+
+func TestValidate_MappingPrefix(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.ServiceAccounts = &ServiceAccounts{Mapping: map[string]string{"User:x": "svc-1"}}
+	require.True(t, errorContains(m.Validate(), `mapping value "svc-1" must be a User:sa-/u-/pool- id`))
+}
+
+func TestValidate_ACLsOnlyManifestAccepted(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.ClusterLink, m.Spec.Topics = nil, nil
+	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	require.Empty(t, m.Validate())
+}
+
 func TestValidate_SourceMSK_CannotSourceInitiate(t *testing.T) {
 	m := validCC()
 	m.Spec.Source.Type = SourceMSK

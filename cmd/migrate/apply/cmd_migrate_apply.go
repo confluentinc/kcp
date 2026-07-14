@@ -58,9 +58,9 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		return fmt.Errorf("manifest is invalid: %d problem(s) found", len(errs))
 	}
 
-	// Phase 1 supports cluster-link and/or topics sections.
-	if m.Spec.ClusterLink == nil && m.Spec.Topics == nil {
-		return fmt.Errorf("nothing to apply: spec.clusterLink and/or spec.topics is required in this phase")
+	// Phase 1 supports cluster-link, topics, and/or acls sections.
+	if m.Spec.ClusterLink == nil && m.Spec.Topics == nil && m.Spec.ACLs == nil {
+		return fmt.Errorf("nothing to apply: spec.clusterLink, spec.topics and/or spec.acls is required in this phase")
 	}
 
 	// --- source cluster id reader (spec.source → D1) ---
