@@ -121,6 +121,24 @@
           ],
           "additionalProperties": false
         },
+        "serviceAccounts": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "autoCreate": {
+              "type": "boolean"
+            },
+            "mapping": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
         "clusterLink": {
           "type": [
             "null",
@@ -344,12 +362,6 @@
                 "array"
               ],
               "items": {
-                "type": "string"
-              }
-            },
-            "principalMapping": {
-              "type": "object",
-              "additionalProperties": {
                 "type": "string"
               }
             }

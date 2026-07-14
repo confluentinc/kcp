@@ -52,13 +52,14 @@ type Metadata struct {
 }
 
 type Spec struct {
-	Source      Source       `yaml:"source" json:"source"`
-	Target      Target       `yaml:"target" json:"target"`
-	ClusterLink *ClusterLink `yaml:"clusterLink,omitempty" json:"clusterLink,omitempty"`
-	Topics      *Topics      `yaml:"topics,omitempty" json:"topics,omitempty"`
-	ACLs        *ACLs        `yaml:"acls,omitempty" json:"acls,omitempty"`
-	Schemas     *Schemas     `yaml:"schemas,omitempty" json:"schemas,omitempty"`
-	Connectors  *Connectors  `yaml:"connectors,omitempty" json:"connectors,omitempty"`
+	Source          Source           `yaml:"source" json:"source"`
+	Target          Target           `yaml:"target" json:"target"`
+	ServiceAccounts *ServiceAccounts `yaml:"serviceAccounts,omitempty" json:"serviceAccounts,omitempty"`
+	ClusterLink     *ClusterLink     `yaml:"clusterLink,omitempty" json:"clusterLink,omitempty"`
+	Topics          *Topics          `yaml:"topics,omitempty" json:"topics,omitempty"`
+	ACLs            *ACLs            `yaml:"acls,omitempty" json:"acls,omitempty"`
+	Schemas         *Schemas         `yaml:"schemas,omitempty" json:"schemas,omitempty"`
+	Connectors      *Connectors      `yaml:"connectors,omitempty" json:"connectors,omitempty"`
 }
 
 type Source struct {
@@ -143,12 +144,19 @@ type Topics struct {
 	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
 }
 
+// ServiceAccounts (CC-target only) governs identity resolution for ACL principals:
+// autoCreate provisions a CC service account per discovered principal; mapping
+// overrides specific source principals onto pre-existing sa-/u-/pool- ids.
+type ServiceAccounts struct {
+	AutoCreate bool              `yaml:"autoCreate,omitempty" json:"autoCreate,omitempty"`
+	Mapping    map[string]string `yaml:"mapping,omitempty" json:"mapping,omitempty"`
+}
+
 // ACLs, Schemas, and Connectors are provisional ("stub") sections for this
 // phase: their shape may change when their per-resource designs land.
 type ACLs struct {
-	Include          []string          `yaml:"include" json:"include"`
-	Exclude          []string          `yaml:"exclude,omitempty" json:"exclude,omitempty"`
-	PrincipalMapping map[string]string `yaml:"principalMapping,omitempty" json:"principalMapping,omitempty"`
+	Include []string `yaml:"include" json:"include"`
+	Exclude []string `yaml:"exclude,omitempty" json:"exclude,omitempty"`
 }
 
 type Schemas struct {
