@@ -114,7 +114,7 @@ func TestNormalizeForCC(t *testing.T) {
 			},
 			wantOut: nil,
 			wantDiags: []Diagnostic{
-				{Level: "warn", Message: `dropped Allow Group ACL for principal "User:app": operation "Write" is not valid for resource type Group on Confluent Cloud`},
+				{Level: "warn", Message: `dropped Allow Group ACL for principal "User:app" on Group "consumer-1": operation "Write" is not valid for resource type Group on Confluent Cloud`},
 			},
 		},
 		{
@@ -149,13 +149,13 @@ func TestNormalizeForCC(t *testing.T) {
 			},
 		},
 		{
-			name: "Read on TransactionalId is CC-invalid: dropped with warn diagnostic",
+			name: "Read on TransactionalID is CC-invalid: dropped with warn diagnostic",
 			in: []types.Acls{
-				{ResourceType: "TransactionalId", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Read", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Read", PermissionType: "Allow"},
 			},
 			wantOut: nil,
 			wantDiags: []Diagnostic{
-				{Level: "warn", Message: `dropped Allow TransactionalId ACL for principal "User:app": operation "Read" is not valid for resource type TransactionalId on Confluent Cloud`},
+				{Level: "warn", Message: `dropped Allow TransactionalID ACL for principal "User:app" on TransactionalID "txn-1": operation "Read" is not valid for resource type TransactionalID on Confluent Cloud`},
 			},
 		},
 		{
@@ -163,28 +163,49 @@ func TestNormalizeForCC(t *testing.T) {
 			// operation-implication de-dup rule (Write ALLOW implies
 			// Describe redundant on the SAME resource+principal+host)
 			// doesn't interfere — this case isolates the validity rule only.
-			name: "TransactionalId allows Describe and Write individually unchanged",
+			name: "TransactionalID allows Describe and Write individually unchanged",
 			in: []types.Acls{
-				{ResourceType: "TransactionalId", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Describe", PermissionType: "Allow"},
-				{ResourceType: "TransactionalId", ResourceName: "txn-2", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Describe", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-2", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
 			},
 			wantOut: []types.Acls{
-				{ResourceType: "TransactionalId", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Describe", PermissionType: "Allow"},
-				{ResourceType: "TransactionalId", ResourceName: "txn-2", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Describe", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-2", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
 			},
 			wantDiags: nil,
 		},
 		{
-			name: "redundant allow Describe dropped on TransactionalId too when allow Write exists on the same resource+principal+host",
+			name: "redundant allow Describe dropped on TransactionalID too when allow Write exists on the same resource+principal+host",
 			in: []types.Acls{
-				{ResourceType: "TransactionalId", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Describe", PermissionType: "Allow"},
-				{ResourceType: "TransactionalId", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Describe", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
 			},
 			wantOut: []types.Acls{
-				{ResourceType: "TransactionalId", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-1", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
 			},
 			wantDiags: []Diagnostic{
-				{Level: "info", Message: `dropped redundant Allow Describe ACL for principal "User:app" on TransactionalId "txn-1": implied by an existing Allow Read/Write/Alter/Delete`},
+				{Level: "info", Message: `dropped redundant Allow Describe ACL for principal "User:app" on TransactionalID "txn-1": implied by an existing Allow Read/Write/Alter/Delete`},
+			},
+		},
+		{
+			// Regression test for a bug where ccValidOperations was keyed on
+			// "TransactionalId" (lowercase d) instead of sarama's
+			// AclResourceType.String() form "TransactionalID" (capital I and
+			// D) — the casing ReadNativeACLs (read.go) and scanKafkaAcls
+			// actually produce. The mismatched key made this validity rule
+			// silently inert for every native-ACL TransactionalID ACL: an
+			// invalid op like Read passed straight through, un-dropped and
+			// un-warned.
+			name: "regression: Read on TransactionalID (sarama casing) is dropped with warn, Write passes through",
+			in: []types.Acls{
+				{ResourceType: "TransactionalID", ResourceName: "txn-regression", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Read", PermissionType: "Allow"},
+				{ResourceType: "TransactionalID", ResourceName: "txn-regression-2", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
+			},
+			wantOut: []types.Acls{
+				{ResourceType: "TransactionalID", ResourceName: "txn-regression-2", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Write", PermissionType: "Allow"},
+			},
+			wantDiags: []Diagnostic{
+				{Level: "warn", Message: `dropped Allow TransactionalID ACL for principal "User:app" on TransactionalID "txn-regression": operation "Read" is not valid for resource type TransactionalID on Confluent Cloud`},
 			},
 		},
 		{

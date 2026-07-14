@@ -65,17 +65,21 @@ func isBrokerPrincipal(principal string) bool {
 // ACL API accepts for a resource type that is NOT already fully open.
 // Absence from this map (Topic, Cluster) means "standard operation set,
 // unrestricted" (design §5 rule 5: "Cluster/Topic: allow the standard
-// ops"). Group and TransactionalId are restricted.
+// ops"). Group and TransactionalID are restricted.
+//
+// Keyed on "TransactionalID" (capital I and D) to match sarama's
+// AclResourceType.String() — the form produced by both ReadNativeACLs
+// (read.go) and scanKafkaAcls (internal/services/kafka/kafka_service.go).
 var ccValidOperations = map[string]map[string]bool{
 	"Group":           {"Read": true, "Describe": true, "Delete": true},
-	"TransactionalId": {"Describe": true, "Write": true},
+	"TransactionalID": {"Describe": true, "Write": true},
 }
 
 // NormalizeForCC transforms a canonical MSK-sourced ACL set into a
 // Confluent-Cloud-ready set, applying the target-aware rules from design §5:
 //
 //  1. Drop-list — ClusterAction, DelegationToken, MSK broker principals.
-//  2. CC operation×resource validity — Group/TransactionalId only accept a
+//  2. CC operation×resource validity — Group/TransactionalID only accept a
 //     restricted operation set; an invalid combo is dropped.
 //  3. Host normalization — any non-"*" host is forced to "*" (CC has no
 //     host scoping); the lost host is reported.
@@ -115,8 +119,8 @@ func NormalizeForCC(in []types.Acls) (out []types.Acls, diags []Diagnostic) {
 	for _, a := range stage1 {
 		if valid, restricted := ccValidOperations[a.ResourceType]; restricted && !valid[a.Operation] {
 			diags = append(diags, Diagnostic{Level: "warn", Message: fmt.Sprintf(
-				"dropped %s %s ACL for principal %q: operation %q is not valid for resource type %s on Confluent Cloud",
-				a.PermissionType, a.ResourceType, a.Principal, a.Operation, a.ResourceType)})
+				"dropped %s %s ACL for principal %q on %s %q: operation %q is not valid for resource type %s on Confluent Cloud",
+				a.PermissionType, a.ResourceType, a.Principal, a.ResourceType, a.ResourceName, a.Operation, a.ResourceType)})
 			continue
 		}
 		stage2 = append(stage2, a)
