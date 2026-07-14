@@ -91,7 +91,10 @@ func (c *ccClient) Create(ctx context.Context, name, description string) (*Servi
 	if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusConflict {
 		existing, findErr := c.FindByDisplayName(ctx, name)
 		if findErr != nil {
-			return nil, fmt.Errorf("failed to create service account %q: %w", name, err)
+			return nil, fmt.Errorf("looking up existing service account %q after 409 conflict: %w", name, findErr)
+		}
+		if existing == nil {
+			return nil, fmt.Errorf("service account %q reported as already in use (409) but was not found on lookup", name)
 		}
 		return existing, nil
 	}
