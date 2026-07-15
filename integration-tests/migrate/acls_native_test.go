@@ -47,6 +47,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -338,12 +339,12 @@ func (c aclTargetClients) cleanupSAAndItsACLs(t *testing.T, displayName string) 
 	principal := "User:" + sa.ID
 	if acls, ok := c.tryListACLs(t); ok {
 		for _, a := range aclsForPrincipal(acls, principal) {
-			if err := deleteCCACL(context.Background(), c.hc, c.restEndpoint, c.clusterID, a); err != nil {
+			if err := deleteCCACL(context.Background(), c.hc, c.auth, c.restEndpoint, c.clusterID, a); err != nil {
 				t.Logf("cleanup: delete CC acl %+v: %v", a, err)
 			}
 		}
 	}
-	if err := deleteCCServiceAccount(context.Background(), c.saHC, sa.ID); err != nil {
+	if err := deleteCCServiceAccount(context.Background(), c.saHC, c.saAuth, sa.ID); err != nil {
 		t.Logf("cleanup: delete CC service account %s (%s): %v", sa.ID, displayName, err)
 	}
 }
@@ -368,6 +369,25 @@ func aclsForResourceName(all []types.Acls, resourceName string) []types.Acls {
 	return out
 }
 
+// aclsForResourceNames scopes a raw CC ACL read-back to only the given
+// resource names — the run-scoping half of Fix 1 (see runACLScenario's call
+// site): filtering out everything the CURRENT scenario didn't itself seed
+// keeps the oracle diff immune to residue other/earlier runs left on the
+// shared live CC cluster under a reused literal resource name.
+func aclsForResourceNames(all []types.Acls, resourceNames []string) []types.Acls {
+	set := make(map[string]bool, len(resourceNames))
+	for _, n := range resourceNames {
+		set[n] = true
+	}
+	var out []types.Acls
+	for _, a := range all {
+		if set[a.ResourceName] {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
 // Teardown-only wire-enum maps for the Kafka REST v3 ACL delete-by-filter
 // call. Deliberately duplicated (not imported) from internal/migrate/acls'
 // private tables: the product's ACLClient (Task 8/9) has no Delete method by
@@ -385,8 +405,13 @@ var (
 )
 
 // deleteCCACL removes one ACL from the CC target via the Kafka REST v3 bulk
-// delete-by-filter endpoint (DELETE .../acls?resource_type=...&...).
-func deleteCCACL(ctx context.Context, hc clusterlink.HTTPClient, restEndpoint, clusterID string, a types.Acls) error {
+// delete-by-filter endpoint (DELETE .../acls?resource_type=...&...). auth is
+// applied to the outgoing request exactly like the product's own clients do
+// (hc carries transport only, never an Authorization header — see
+// aclTargetClients' doc comment above) — pass the CLUSTER creds authenticator
+// (c.auth/cc.auth), matching the client that legitimately talks to Kafka REST
+// v3 ACLs.
+func deleteCCACL(ctx context.Context, hc clusterlink.HTTPClient, auth clusterlink.Authenticator, restEndpoint, clusterID string, a types.Acls) error {
 	q := url.Values{}
 	q.Set("resource_type", teardownResourceTypeWire[a.ResourceType])
 	q.Set("resource_name", a.ResourceName)
@@ -400,6 +425,7 @@ func deleteCCACL(ctx context.Context, hc clusterlink.HTTPClient, restEndpoint, c
 	if err != nil {
 		return err
 	}
+	auth.Apply(req)
 	res, err := hc.Do(req)
 	if err != nil {
 		return err
@@ -414,12 +440,20 @@ func deleteCCACL(ctx context.Context, hc clusterlink.HTTPClient, restEndpoint, c
 
 // deleteCCServiceAccount removes one CC service account via IAM v2
 // (msa.CCClient likewise has no Delete method — additive-only by design).
-func deleteCCServiceAccount(ctx context.Context, hc clusterlink.HTTPClient, id string) error {
+// auth is applied to the outgoing request (see deleteCCACL's doc comment for
+// why that's required at all): IAM v2 rejects a Kafka cluster API key, so
+// EVERY call site here must pass the CLOUD/Global creds authenticator
+// (c.saAuth/cc.saAuth) paired with the same-creds saHC — never the cluster
+// creds — or the delete 401s with "make sure you're using a Cloud or Global
+// API Key, and not a Cluster API Key" (design §9.9/teardown must always
+// complete: this is the fix for exactly that failure).
+func deleteCCServiceAccount(ctx context.Context, hc clusterlink.HTTPClient, auth clusterlink.Authenticator, id string) error {
 	u := msa.DefaultBaseURL + "/iam/v2/service-accounts/" + url.PathEscape(id)
 	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, u, nil)
 	if err != nil {
 		return err
 	}
+	auth.Apply(req)
 	res, err := hc.Do(req)
 	if err != nil {
 		return err
@@ -554,11 +588,35 @@ type nativeACL struct {
 // principal-shape scenarios control the exact shape (DN-like, email-like,
 // >64 chars, ...) while native-ACL scenarios leave it empty (a plain,
 // always-verbatim token).
+//
+// expectDropped marks a scenario whose EVERY seeded ACL is expected to be
+// dropped by NormalizeForCC (expectSeedIdx is therefore empty). When every
+// ACL for a principal is dropped, there is no surviving ACL to author a CC
+// ACL from, and so — correctly — no principal is ever resolved and no
+// service account gets created for it. runACLScenario branches on this field
+// to assert that absence, instead of (wrongly) expecting a service account to
+// exist for a principal whose only ACL was, by design, thrown away.
 type aclScenario struct {
 	name            string
 	principalSuffix string
 	seed            []nativeACL
 	expectSeedIdx   []int
+	expectDropped   bool
+}
+
+// seedResourceNames returns the distinct resource names s's seed entries
+// target, in seed order. runACLScenario uses this to scope its CC ACL
+// read-back to exactly the resources THIS scenario touched (Fix 1).
+func (s aclScenario) seedResourceNames() []string {
+	seen := make(map[string]bool, len(s.seed))
+	var out []string
+	for _, sd := range s.seed {
+		if !seen[sd.ResourceName] {
+			seen[sd.ResourceName] = true
+			out = append(out, sd.ResourceName)
+		}
+	}
+	return out
 }
 
 // nativeMatrixScenarios covers design §9.2: resource types (Topic, Group,
@@ -626,6 +684,7 @@ var nativeMatrixScenarios = []aclScenario{
 			{ResourceType: sarama.AclResourceGroup, ResourceName: "kcpacl-group2", PatternType: sarama.AclPatternLiteral, Operation: sarama.AclOperationWrite, Permission: sarama.AclPermissionAllow, Host: "*"},
 		},
 		// Write is not in Group's CC-valid set {Read, Describe, Delete}: dropped.
+		expectDropped: true,
 	},
 	{
 		name: "transactionalid_write_allow_valid",
@@ -640,6 +699,7 @@ var nativeMatrixScenarios = []aclScenario{
 			{ResourceType: sarama.AclResourceTransactionalID, ResourceName: "kcpacl-txn2", PatternType: sarama.AclPatternLiteral, Operation: sarama.AclOperationRead, Permission: sarama.AclPermissionAllow, Host: "*"},
 		},
 		// Read is not in TransactionalID's CC-valid set {Describe, Write}: dropped.
+		expectDropped: true,
 	},
 	{
 		name: "cluster_clusteraction_droplist_dropped",
@@ -647,6 +707,7 @@ var nativeMatrixScenarios = []aclScenario{
 			{ResourceType: sarama.AclResourceCluster, ResourceName: "kafka-cluster", PatternType: sarama.AclPatternLiteral, Operation: sarama.AclOperationClusterAction, Permission: sarama.AclPermissionAllow, Host: "*"},
 		},
 		// ClusterAction is drop-list (design §5 rule 4): inter-broker only.
+		expectDropped: true,
 	},
 }
 
@@ -718,6 +779,24 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 	out, err := runKCP(t, mf)
 	require.NoError(t, err, out)
 
+	if s.expectDropped {
+		// Every seeded ACL is expected to be dropped by NormalizeForCC: no
+		// surviving ACL means no principal is ever resolved, so (b) no
+		// service account must exist for it. (a) — no CC ACL was created for
+		// it — follows from (b) by construction (the reconciler always
+		// resolves/creates the service account BEFORE it can author an ACL
+		// under that principal's id; TestACLsLive_DryRunThenApplyThenIdempotent
+		// already proves that 1:1 create-count invariant), so we deliberately
+		// do NOT additionally re-scan the CC ACL list by resource name here:
+		// on this shared live cluster a resource name like "kafka-cluster" is
+		// exactly the kind of unscoped, not-this-run key that picks up
+		// "extra elements" left by other principals/runs — the same failure
+		// mode Fix 1 (below) removes from the create-and-verify path.
+		require.Nil(t, cc.findSA(t, displayName),
+			"scenario %q: every seeded ACL is expected to be dropped, so no service account should exist for principal %q", s.name, principal)
+		return
+	}
+
 	sa := cc.findSA(t, displayName)
 	require.NotNil(t, sa, "expected a service account named %q for principal %q", displayName, principal)
 	require.Equal(t, oracleDescriptionFor(principal), sa.Description)
@@ -728,7 +807,19 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 		sd := s.seed[idx]
 		expected = append(expected, canonicalACL(sd.ResourceType, sd.ResourceName, sd.PatternType, resolved, "*", sd.Operation, sd.Permission))
 	}
-	actual := aclsForPrincipal(cc.listACLs(t), resolved)
+	// Scope the read-back to THIS run's own resources before diffing against
+	// the oracle: several scenarios in nativeMatrixScenarios/
+	// principalMatrixScenarios reuse the same literal resource name (e.g.
+	// "kcpacl-topicA") across rows, and the shared live CC cluster
+	// accumulates ACLs from other/earlier runs (see the file header's
+	// teardown-always-completes invariant, and the fix for the SA-delete 401
+	// above) — an unscoped list would let those show up as "extra elements"
+	// against this scenario's oracle. Restricting to the resource name(s)
+	// THIS scenario actually seeded, on top of the exact-principal filter
+	// below (resolved is this run's freshly created service account, never
+	// reused), makes the comparison immune to that residue.
+	scoped := aclsForResourceNames(cc.listACLs(t), s.seedResourceNames())
+	actual := aclsForPrincipal(scoped, resolved)
 	require.ElementsMatch(t, expected, actual, "CC ACL set for principal %q (scenario %q)", principal, s.name)
 }
 
@@ -788,7 +879,13 @@ func TestACLsLive_NativeMatrix_BrokerPrincipalDropped(t *testing.T) {
 
 	token := uniqueACLToken()
 	principal := "User:CN=b-1." + token + ".kafka.us-east-1.amazonaws.com"
-	resourceName := "kcpacl-broker-topic"
+	// resourceName carries the token too (not a bare literal): the read-back
+	// assertion below scopes by exact resourceName alone (no principal to
+	// filter by, since the ACL is expected to be dropped entirely) — Fix 1's
+	// same shared-cluster-residue concern applies here, so the resource name
+	// itself must be run-unique or a static name could accumulate an
+	// unrelated ACL from another run and fail this test's require.Empty.
+	resourceName := "kcpacl-broker-topic-" + token
 
 	seedNativeACL(t, admin, sarama.AclResourceTopic, resourceName, sarama.AclPatternLiteral, principal, "*", sarama.AclOperationRead, sarama.AclPermissionAllow)
 	defer deleteNativeACL(t, admin, sarama.AclResourceTopic, resourceName, sarama.AclPatternLiteral, principal, "*", sarama.AclOperationRead, sarama.AclPermissionAllow)
@@ -927,7 +1024,7 @@ func TestACLsLive_MappingOverride(t *testing.T) {
 	anonPrincipal := "User:ANONYMOUS"
 
 	preexisting := cc.createSA(t, "kcpacl-preexisting-"+base, "kcpacl-test:preexisting")
-	defer func() { _ = deleteCCServiceAccount(context.Background(), cc.saHC, preexisting.ID) }()
+	defer func() { _ = deleteCCServiceAccount(context.Background(), cc.saHC, cc.saAuth, preexisting.ID) }()
 
 	normalResource := "kcpacl-mapping-normal-" + base
 	anonResource := "kcpacl-mapping-anon-" + base
@@ -942,7 +1039,7 @@ func TestACLsLive_MappingOverride(t *testing.T) {
 		// cleanupSAAndItsACLs' doc comment above for why).
 		if acls, ok := cc.tryListACLs(t); ok {
 			for _, a := range aclsForPrincipal(acls, "User:"+preexisting.ID) {
-				_ = deleteCCACL(context.Background(), cc.hc, cc.restEndpoint, cc.clusterID, a)
+				_ = deleteCCACL(context.Background(), cc.hc, cc.auth, cc.restEndpoint, cc.clusterID, a)
 			}
 		}
 	}()
@@ -1018,7 +1115,7 @@ func TestACLsLive_MappingFormats_UAndPoolPrefixesAccepted(t *testing.T) {
 		}
 		for _, id := range []string{dummyU, dummyPool} {
 			for _, a := range aclsForPrincipal(acls, "User:"+id) {
-				_ = deleteCCACL(context.Background(), cc.hc, cc.restEndpoint, cc.clusterID, a)
+				_ = deleteCCACL(context.Background(), cc.hc, cc.auth, cc.restEndpoint, cc.clusterID, a)
 			}
 		}
 	}()
@@ -1139,4 +1236,155 @@ func TestACLsLive_DryRunThenApplyThenIdempotent(t *testing.T) {
 	// State on CC must be exactly the same after the idempotent re-run: no
 	// duplicate service account, no duplicate ACL.
 	require.ElementsMatch(t, expected, aclsForPrincipal(cc.listACLs(t), "User:"+sa.ID))
+}
+
+// ---------------------------------------------------------------------------
+// Opt-in residue sweep (shared-cluster hygiene, not a scenario/oracle test).
+//
+// Every scenario in this file tears down exactly what it created, but a long
+// enough history of a broken teardown path (the SA-delete-via-cluster-key 401
+// this file's fix above addresses) has left the shared live MSK cluster and
+// CC target with accumulated orphans: uniqueACLToken()'s "kcpacl" prefix is
+// the ONLY marker they all share. TestACLsLive_SweepResidue is a manually
+// invoked, best-effort cleanup pass over exactly that prefix — never part of
+// the normal suite (see the KCP_ACL_SWEEP gate below).
+// ---------------------------------------------------------------------------
+
+// listAllServiceAccounts lists every CC IAM v2 service account, paginating via
+// the standard CC "metadata.next" full-URL cursor. There is no List method on
+// msa.CCClient (find-by-name and create are all the product needs), so this
+// talks to the wire API directly, mirroring deleteCCServiceAccount above.
+func listAllServiceAccounts(ctx context.Context, hc clusterlink.HTTPClient, auth clusterlink.Authenticator) ([]msa.ServiceAccount, error) {
+	var all []msa.ServiceAccount
+	next := msa.DefaultBaseURL + "/iam/v2/service-accounts?page_size=100"
+	for next != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return nil, err
+		}
+		auth.Apply(req)
+		res, err := hc.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return nil, fmt.Errorf("unexpected status %d listing CC service accounts: %s", res.StatusCode, body)
+		}
+		var page struct {
+			Data     []msa.ServiceAccount `json:"data"`
+			Metadata struct {
+				Next string `json:"next"`
+			} `json:"metadata"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("unmarshalling CC service account list page: %w", err)
+		}
+		all = append(all, page.Data...)
+		next = page.Metadata.Next
+	}
+	return all, nil
+}
+
+// TestACLsLive_SweepResidue deletes every leftover CC service account, CC
+// ACL, and MSK native ACL whose name/resource/principal starts with
+// "kcpacl" — the shared prefix every uniqueACLToken() carries (see its doc
+// comment above). It is idempotent and log-and-continue throughout, so a
+// partial failure on one item never aborts the sweep of the rest, and
+// reports how many of each kind it deleted via t.Logf.
+//
+// Gating: this test SKIPS unless KCP_ACL_SWEEP=1 is set, IN ADDITION to the
+// normal loadCloudConfig/requireCloudKeys cloud-creds gate every other test
+// in this file already needs — so it never runs as part of `make
+// test-migrate-acls-live` (or any other invocation of this suite) unless
+// that env var is explicitly set. It is meant to be run by hand, once, to
+// clean up accumulated orphans.
+func TestACLsLive_SweepResidue(t *testing.T) {
+	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
+	if os.Getenv("KCP_ACL_SWEEP") != "1" {
+		t.Skip("opt-in only: set KCP_ACL_SWEEP=1 to sweep kcpacl-prefixed residue off the shared cluster (never runs as part of the normal suite)")
+	}
+
+	dir := t.TempDir()
+	target, _, _ := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
+
+	// 1. CC service accounts whose display_name starts with "kcpacl".
+	sas, err := listAllServiceAccounts(context.Background(), cc.saHC, cc.saAuth)
+	require.NoError(t, err)
+	saDeleted := 0
+	saMatched := 0
+	for _, sa := range sas {
+		if !strings.HasPrefix(sa.DisplayName, "kcpacl") {
+			continue
+		}
+		saMatched++
+		if err := deleteCCServiceAccount(context.Background(), cc.saHC, cc.saAuth, sa.ID); err != nil {
+			t.Logf("sweep: delete CC service account %s (%s): %v", sa.ID, sa.DisplayName, err)
+			continue
+		}
+		saDeleted++
+	}
+	t.Logf("sweep: deleted %d/%d kcpacl-prefixed CC service account(s) (of %d total)", saDeleted, saMatched, len(sas))
+
+	// 2. CC ACLs whose resource_name starts with "kcpacl".
+	aclDeleted, aclMatched := 0, 0
+	if acls, ok := cc.tryListACLs(t); ok {
+		for _, a := range acls {
+			if !strings.HasPrefix(a.ResourceName, "kcpacl") {
+				continue
+			}
+			aclMatched++
+			if err := deleteCCACL(context.Background(), cc.hc, cc.auth, cc.restEndpoint, cc.clusterID, a); err != nil {
+				t.Logf("sweep: delete CC acl %+v: %v", a, err)
+				continue
+			}
+			aclDeleted++
+		}
+	}
+	t.Logf("sweep: deleted %d/%d kcpacl-prefixed CC acl(s)", aclDeleted, aclMatched)
+
+	// 3. MSK native ACLs whose principal OR resource-name starts with "kcpacl".
+	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
+	defer func() { _ = admin.Close() }()
+	resourceAcls, err := admin.ListAcls(sarama.AclFilter{
+		ResourceType:              sarama.AclResourceAny,
+		ResourcePatternTypeFilter: sarama.AclPatternAny,
+		Operation:                 sarama.AclOperationAny,
+		PermissionType:            sarama.AclPermissionAny,
+	})
+	require.NoError(t, err)
+	mskDeleted, mskMatched, mskSeen := 0, 0, 0
+	for _, ra := range resourceAcls {
+		ra := ra
+		for _, a := range ra.Acls {
+			mskSeen++
+			principalName := strings.TrimPrefix(a.Principal, "User:")
+			if !strings.HasPrefix(principalName, "kcpacl") && !strings.HasPrefix(ra.ResourceName, "kcpacl") {
+				continue
+			}
+			mskMatched++
+			filter := sarama.AclFilter{
+				ResourceType:              ra.ResourceType,
+				ResourceName:              &ra.ResourceName,
+				ResourcePatternTypeFilter: ra.ResourcePatternType,
+				Principal:                 &a.Principal,
+				Host:                      &a.Host,
+				Operation:                 a.Operation,
+				PermissionType:            a.PermissionType,
+			}
+			if _, err := admin.DeleteACL(filter, false); err != nil {
+				t.Logf("sweep: delete MSK acl %s %s on %s %q for %s: %v", a.PermissionType.String(), a.Operation.String(), ra.ResourceType.String(), ra.ResourceName, a.Principal, err)
+				continue
+			}
+			mskDeleted++
+		}
+	}
+	t.Logf("sweep: deleted %d/%d kcpacl-matching MSK native acl(s) (of %d scanned)", mskDeleted, mskMatched, mskSeen)
 }
