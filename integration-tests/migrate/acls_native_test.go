@@ -219,24 +219,48 @@ func canonicalACL(rt sarama.AclResourceType, resourceName string, pt sarama.AclR
 // ---------------------------------------------------------------------------
 
 // aclTargetClients bundles the CC target's REST endpoints for this file's
-// read-back and teardown calls. Built from the SAME target-creds.yaml (and so
-// the same auth) buildACLReconcilers gives the product's own clients
-// (cmd/migrate/apply/cmd_migrate_apply.go) — proving the two indepedently
-// observe the same target state, not sharing any translation logic.
+// read-back and teardown calls. hc/auth (the ACL client's creds) are built
+// from the SAME target-creds.yaml (and so the same auth) buildACLReconcilers
+// gives the product's own ACL client (cmd/migrate/apply/cmd_migrate_apply.go)
+// — proving the two independently observe the same target state, not sharing
+// any translation logic. saHC/saAuth (the service-account helper client's
+// creds) are DIFFERENT: IAM v2 (api.confluent.cloud/iam/v2/...) rejects a
+// Kafka cluster API key with "invalid API key: make sure you're using a Cloud
+// or Global API Key, and not a Cluster API Key", so they are built from the
+// separate Cloud/Global creds file, mirroring buildACLReconcilers' own
+// cluster-vs-cloud client split.
 type aclTargetClients struct {
 	hc           clusterlink.HTTPClient
 	auth         clusterlink.Authenticator
+	saHC         clusterlink.HTTPClient
+	saAuth       clusterlink.Authenticator
 	restEndpoint string
 	clusterID    string
 }
 
-func newACLTargetClients(t *testing.T, cfg cloudConfig, targetCredsPath string) aclTargetClients {
+// newACLTargetClients builds an aclTargetClients. targetCredsPath is always
+// the CLUSTER creds file (Kafka REST v3 ACLs accept a cluster key).
+// cloudCredsPath is the separate Cloud/Global creds file for the
+// service-account helper client (findSA/tryFindSA/createSA and the SA delete
+// in cleanupSAAndItsACLs); pass "" when the caller never exercises those
+// helpers (mirrors buildACLReconcilers' harmless cluster-creds fallback for
+// manifests that never call IAM v2) — saHC/saAuth then fall back to the
+// cluster creds, which is safe only because they go unused in that case.
+func newACLTargetClients(t *testing.T, cfg cloudConfig, targetCredsPath, cloudCredsPath string) aclTargetClients {
 	t.Helper()
 	creds, err := targets.LoadCredentials(targetCredsPath)
 	require.NoError(t, err)
 	hc, err := creds.HTTPClient()
 	require.NoError(t, err)
-	return aclTargetClients{hc: hc, auth: creds.Authenticator(), restEndpoint: cfg.ccRestEndpoint, clusterID: cfg.ccClusterID}
+	saHC, saAuth := hc, creds.Authenticator()
+	if cloudCredsPath != "" {
+		cloudCreds, err := targets.LoadCredentials(cloudCredsPath)
+		require.NoError(t, err)
+		cloudHC, err := cloudCreds.HTTPClient()
+		require.NoError(t, err)
+		saHC, saAuth = cloudHC, cloudCreds.Authenticator()
+	}
+	return aclTargetClients{hc: hc, auth: creds.Authenticator(), saHC: saHC, saAuth: saAuth, restEndpoint: cfg.ccRestEndpoint, clusterID: cfg.ccClusterID}
 }
 
 func (c aclTargetClients) listACLs(t *testing.T) []types.Acls {
@@ -248,7 +272,7 @@ func (c aclTargetClients) listACLs(t *testing.T) []types.Acls {
 
 func (c aclTargetClients) findSA(t *testing.T, displayName string) *msa.ServiceAccount {
 	t.Helper()
-	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc, c.auth).FindByDisplayName(context.Background(), displayName)
+	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.saHC, c.saAuth).FindByDisplayName(context.Background(), displayName)
 	require.NoError(t, err)
 	return sa
 }
@@ -261,7 +285,7 @@ func (c aclTargetClients) findSA(t *testing.T, displayName string) *msa.ServiceA
 // (non-cleanup) path must keep using findSA.
 func (c aclTargetClients) tryFindSA(t *testing.T, displayName string) (sa *msa.ServiceAccount, ok bool) {
 	t.Helper()
-	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc, c.auth).FindByDisplayName(context.Background(), displayName)
+	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.saHC, c.saAuth).FindByDisplayName(context.Background(), displayName)
 	if err != nil {
 		t.Logf("cleanup: find service account %q failed, continuing: %v", displayName, err)
 		return nil, false
@@ -285,7 +309,7 @@ func (c aclTargetClients) tryListACLs(t *testing.T) (acls []types.Acls, ok bool)
 
 func (c aclTargetClients) createSA(t *testing.T, displayName, description string) *msa.ServiceAccount {
 	t.Helper()
-	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc, c.auth).Create(context.Background(), displayName, description)
+	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.saHC, c.saAuth).Create(context.Background(), displayName, description)
 	require.NoError(t, err)
 	return sa
 }
@@ -319,7 +343,7 @@ func (c aclTargetClients) cleanupSAAndItsACLs(t *testing.T, displayName string) 
 			}
 		}
 	}
-	if err := deleteCCServiceAccount(context.Background(), c.hc, sa.ID); err != nil {
+	if err := deleteCCServiceAccount(context.Background(), c.saHC, sa.ID); err != nil {
 		t.Logf("cleanup: delete CC service account %s (%s): %v", sa.ID, displayName, err)
 	}
 }
@@ -716,7 +740,7 @@ func TestACLsLive_NativeMatrix(t *testing.T) {
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
 	cloudCreds := writeCloudCredsFile(t, dir, cfg)
-	cc := newACLTargetClients(t, cfg, target)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
 
 	for _, s := range nativeMatrixScenarios {
 		s := s
@@ -734,7 +758,7 @@ func TestACLsLive_PrincipalMatrix(t *testing.T) {
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
 	cloudCreds := writeCloudCredsFile(t, dir, cfg)
-	cc := newACLTargetClients(t, cfg, target)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
 
 	for _, s := range principalMatrixScenarios {
 		s := s
@@ -760,7 +784,7 @@ func TestACLsLive_NativeMatrix_BrokerPrincipalDropped(t *testing.T) {
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
 	cloudCreds := writeCloudCredsFile(t, dir, cfg)
-	cc := newACLTargetClients(t, cfg, target)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
 
 	token := uniqueACLToken()
 	principal := "User:CN=b-1." + token + ".kafka.us-east-1.amazonaws.com"
@@ -792,7 +816,7 @@ func TestACLsLive_PrincipalMatrix_CollisionPair(t *testing.T) {
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
 	cloudCreds := writeCloudCredsFile(t, dir, cfg)
-	cc := newACLTargetClients(t, cfg, target)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
 
 	base := uniqueACLToken()
 	longCommon := strings.Repeat("z", 60)
@@ -847,7 +871,7 @@ func TestACLsLive_PrincipalMatrix_WildcardAndAnonymousSkip(t *testing.T) {
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
 	cloudCreds := writeCloudCredsFile(t, dir, cfg)
-	cc := newACLTargetClients(t, cfg, target)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
 
 	starResource := "kcpacl-skip-star-" + uniqueACLToken()
 	anonResource := "kcpacl-skip-anon-" + uniqueACLToken()
@@ -860,7 +884,16 @@ func TestACLsLive_PrincipalMatrix_WildcardAndAnonymousSkip(t *testing.T) {
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-skip"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
 		autoCreate: true,
 		cloudCreds: cloudCreds,
-		include:    []string{"User:*", "User:ANONYMOUS"},
+		// Scoped by resourceName, NOT by principal: "User:*" as an include
+		// glob (filterACLs/path.Match semantics) matches EVERY principal
+		// starting with "User:" — i.e. virtually every native ACL on the
+		// shared live MSK cluster, not just this test's own literal "User:*"
+		// principal. That unscoped sweep is what let a run of this suite
+		// report far more ACLs migrated than the scenario count. starResource
+		// and anonResource are exact literal matches (no glob metacharacters)
+		// unique to this run, so include only ever selects this test's own
+		// two seeded ACLs.
+		include: []string{starResource, anonResource},
 	})
 	out, err := runKCP(t, mf)
 	require.NoError(t, err, out)
@@ -876,18 +909,25 @@ func TestACLsLive_PrincipalMatrix_WildcardAndAnonymousSkip(t *testing.T) {
 // mapping can still override the skip").
 func TestACLsLive_MappingOverride(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	// This test creates and tears down a service account via the SA helper
+	// client (createSA/deleteCCServiceAccount below), which talks to IAM v2
+	// and so needs the Cloud/Global key, same as requireCloudKeys' doc
+	// explains for autoCreate tests — even though this manifest itself uses
+	// mapping, not autoCreate.
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
-	cc := newACLTargetClients(t, cfg, target)
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
 
 	base := uniqueACLToken()
 	normalPrincipal := "User:" + base + "-app"
 	anonPrincipal := "User:ANONYMOUS"
 
 	preexisting := cc.createSA(t, "kcpacl-preexisting-"+base, "kcpacl-test:preexisting")
-	defer func() { _ = deleteCCServiceAccount(context.Background(), cc.hc, preexisting.ID) }()
+	defer func() { _ = deleteCCServiceAccount(context.Background(), cc.saHC, preexisting.ID) }()
 
 	normalResource := "kcpacl-mapping-normal-" + base
 	anonResource := "kcpacl-mapping-anon-" + base
@@ -913,7 +953,15 @@ func TestACLsLive_MappingOverride(t *testing.T) {
 			normalPrincipal: preexisting.ID,
 			anonPrincipal:   preexisting.ID,
 		},
-		include: []string{"User:" + base + "*", "User:ANONYMOUS"},
+		// anonResource (a run-unique literal, no glob metacharacters), not the
+		// literal "User:ANONYMOUS" principal itself: unlike normalPrincipal
+		// (already scoped via base), "User:ANONYMOUS" is a fixed Kafka
+		// literal shared by every run of this suite (and any pre-existing
+		// ANONYMOUS ACLs on the shared live cluster), so including it by
+		// principal would sweep in ACLs this test never seeded. Scoping by
+		// this run's resourceName instead keeps the include set to exactly
+		// this test's own two seeded ACLs.
+		include: []string{"User:" + base + "*", anonResource},
 	})
 	out, err := runKCP(t, mf)
 	require.NoError(t, err, out)
@@ -942,7 +990,11 @@ func TestACLsLive_MappingFormats_UAndPoolPrefixesAccepted(t *testing.T) {
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
-	cc := newACLTargetClients(t, cfg, target)
+	// No cloud creds path: this test's mapping values (u-/pool- ids) are never
+	// looked up or created via the service-account helper client, only
+	// asserted against via the cluster-creds ACL client, so saHC/saAuth
+	// harmlessly fall back to the cluster creds (see newACLTargetClients).
+	cc := newACLTargetClients(t, cfg, target, "")
 
 	base := uniqueACLToken()
 	uPrincipal := "User:" + base + "-u"
@@ -1048,7 +1100,7 @@ func TestACLsLive_DryRunThenApplyThenIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
 	cloudCreds := writeCloudCredsFile(t, dir, cfg)
-	cc := newACLTargetClients(t, cfg, target)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
 
 	base := uniqueACLToken()
 	principal := "User:" + base + "-app"
