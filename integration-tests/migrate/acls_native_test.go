@@ -225,6 +225,7 @@ func canonicalACL(rt sarama.AclResourceType, resourceName string, pt sarama.AclR
 // observe the same target state, not sharing any translation logic.
 type aclTargetClients struct {
 	hc           clusterlink.HTTPClient
+	auth         clusterlink.Authenticator
 	restEndpoint string
 	clusterID    string
 }
@@ -235,19 +236,19 @@ func newACLTargetClients(t *testing.T, cfg cloudConfig, targetCredsPath string) 
 	require.NoError(t, err)
 	hc, err := creds.HTTPClient()
 	require.NoError(t, err)
-	return aclTargetClients{hc: hc, restEndpoint: cfg.ccRestEndpoint, clusterID: cfg.ccClusterID}
+	return aclTargetClients{hc: hc, auth: creds.Authenticator(), restEndpoint: cfg.ccRestEndpoint, clusterID: cfg.ccClusterID}
 }
 
 func (c aclTargetClients) listACLs(t *testing.T) []types.Acls {
 	t.Helper()
-	acls, err := macls.NewACLClient(c.restEndpoint, c.clusterID, c.hc).List(context.Background())
+	acls, err := macls.NewACLClient(c.restEndpoint, c.clusterID, c.hc, c.auth).List(context.Background())
 	require.NoError(t, err)
 	return acls
 }
 
 func (c aclTargetClients) findSA(t *testing.T, displayName string) *msa.ServiceAccount {
 	t.Helper()
-	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc).FindByDisplayName(context.Background(), displayName)
+	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc, c.auth).FindByDisplayName(context.Background(), displayName)
 	require.NoError(t, err)
 	return sa
 }
@@ -260,7 +261,7 @@ func (c aclTargetClients) findSA(t *testing.T, displayName string) *msa.ServiceA
 // (non-cleanup) path must keep using findSA.
 func (c aclTargetClients) tryFindSA(t *testing.T, displayName string) (sa *msa.ServiceAccount, ok bool) {
 	t.Helper()
-	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc).FindByDisplayName(context.Background(), displayName)
+	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc, c.auth).FindByDisplayName(context.Background(), displayName)
 	if err != nil {
 		t.Logf("cleanup: find service account %q failed, continuing: %v", displayName, err)
 		return nil, false
@@ -274,7 +275,7 @@ func (c aclTargetClients) tryFindSA(t *testing.T, displayName string) (sa *msa.S
 // paths — assertions on the main (non-cleanup) path must keep using listACLs.
 func (c aclTargetClients) tryListACLs(t *testing.T) (acls []types.Acls, ok bool) {
 	t.Helper()
-	acls, err := macls.NewACLClient(c.restEndpoint, c.clusterID, c.hc).List(context.Background())
+	acls, err := macls.NewACLClient(c.restEndpoint, c.clusterID, c.hc, c.auth).List(context.Background())
 	if err != nil {
 		t.Logf("cleanup: list CC acls failed, continuing: %v", err)
 		return nil, false
@@ -284,7 +285,7 @@ func (c aclTargetClients) tryListACLs(t *testing.T) (acls []types.Acls, ok bool)
 
 func (c aclTargetClients) createSA(t *testing.T, displayName, description string) *msa.ServiceAccount {
 	t.Helper()
-	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc).Create(context.Background(), displayName, description)
+	sa, err := msa.NewCCClient(msa.DefaultBaseURL, c.hc, c.auth).Create(context.Background(), displayName, description)
 	require.NoError(t, err)
 	return sa
 }

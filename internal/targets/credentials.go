@@ -126,6 +126,15 @@ func (c Credentials) authenticator() clusterlink.Authenticator {
 	}
 }
 
+// Authenticator returns the request Authenticator for the configured auth
+// block. It is the exported form of authenticator, for callers outside this
+// package (e.g. migrate clients) that need to apply auth themselves on top of
+// an HTTPClient built from these same credentials — HTTPClient carries only
+// the TLS transport, never an Authorization header.
+func (c Credentials) Authenticator() clusterlink.Authenticator {
+	return c.authenticator()
+}
+
 // HTTPClient builds the HTTP client for these credentials. Always returns a
 // fresh client cloned from the default transport (never http.DefaultClient) with
 // TLS trust sourced from the active auth block. basic and bearer support

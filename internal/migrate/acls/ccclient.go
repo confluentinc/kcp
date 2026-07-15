@@ -34,14 +34,16 @@ type aclClient struct {
 	restEndpoint string
 	clusterID    string
 	hc           clusterlink.HTTPClient
+	auth         clusterlink.Authenticator
 }
 
-// NewACLClient builds an ACLClient. hc supplies both transport and auth —
-// the injected client (e.g. an *http.Client wrapping basic/API-key auth, or
-// srv.Client() in tests) already carries credentials; this client adds none
-// of its own, matching clusterlink's HTTPClient convention.
-func NewACLClient(restEndpoint, clusterID string, hc clusterlink.HTTPClient) *aclClient {
-	return &aclClient{restEndpoint: restEndpoint, clusterID: clusterID, hc: hc}
+// NewACLClient builds an ACLClient. hc supplies the transport only (e.g. an
+// *http.Client with TLS trust configured, or srv.Client() in tests) — it
+// carries no auth of its own; auth is applied to every outgoing request,
+// mirroring how internal/services/clusterlink applies config.authenticator()
+// per request rather than baking auth into the transport.
+func NewACLClient(restEndpoint, clusterID string, hc clusterlink.HTTPClient, auth clusterlink.Authenticator) *aclClient {
+	return &aclClient{restEndpoint: restEndpoint, clusterID: clusterID, hc: hc, auth: auth}
 }
 
 func (c *aclClient) path() string {
@@ -181,6 +183,7 @@ func (c *aclClient) List(ctx context.Context) ([]types.Acls, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
+	c.auth.Apply(req)
 
 	res, err := c.hc.Do(req)
 	if err != nil {
@@ -232,6 +235,7 @@ func (c *aclClient) Create(ctx context.Context, a types.Acls) error {
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	c.auth.Apply(req)
 	req.Header.Set("Content-Type", "application/json")
 
 	res, err := c.hc.Do(req)

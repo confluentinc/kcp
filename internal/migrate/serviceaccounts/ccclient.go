@@ -44,14 +44,16 @@ type CCClient interface {
 type ccClient struct {
 	base string
 	hc   clusterlink.HTTPClient
+	auth clusterlink.Authenticator
 }
 
 // NewCCClient creates a CCClient. base is the Confluent Cloud API base URL
-// (e.g. https://api.confluent.cloud); hc is an HTTP client with the Cloud API
-// key auth already applied to every request it issues (this client does not
-// add any auth header itself).
-func NewCCClient(base string, hc clusterlink.HTTPClient) *ccClient {
-	return &ccClient{base: base, hc: hc}
+// (e.g. https://api.confluent.cloud); hc is the HTTP client (transport only —
+// it carries no auth of its own); auth is applied to every outgoing request,
+// mirroring how internal/services/clusterlink applies config.authenticator()
+// per request rather than baking auth into the transport.
+func NewCCClient(base string, hc clusterlink.HTTPClient, auth clusterlink.Authenticator) *ccClient {
+	return &ccClient{base: base, hc: hc, auth: auth}
 }
 
 // FindByDisplayName implements CCClient.
@@ -133,6 +135,7 @@ func (c *ccClient) doRequest(ctx context.Context, method, path string, body, res
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+	c.auth.Apply(req)
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

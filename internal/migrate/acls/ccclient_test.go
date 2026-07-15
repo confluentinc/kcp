@@ -8,15 +8,35 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/require"
 )
+
+// testAuth is the BasicAuth used across this file's tests, so every handler
+// can assert the exact Authorization header value the client is expected to
+// send (regression guard: NewACLClient must apply auth per request, since
+// srv.Client() carries no auth of its own).
+var testAuth = clusterlink.BasicAuth{Username: "k", Password: "s"}
+
+// wantAuthHeader is the literal Authorization header value testAuth.Apply
+// produces, computed independently of clusterlink's own base64 encoding so
+// the assertion doesn't just restate the implementation.
+const wantAuthHeader = "Basic azpz" // base64("k:s")
+
+func requireAuthHeader(t *testing.T, r *http.Request) {
+	t.Helper()
+	got := r.Header.Get("Authorization")
+	require.NotEmpty(t, got, "request must carry an Authorization header")
+	require.Equal(t, wantAuthHeader, got)
+}
 
 func TestACLClient_Create_PostsCCWireShape(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
 		gotPath = r.URL.Path
 		b, _ := io.ReadAll(r.Body)
 		_ = json.Unmarshal(b, &gotBody)
@@ -24,7 +44,7 @@ func TestACLClient_Create_PostsCCWireShape(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewACLClient(srv.URL, "lkc-123", srv.Client())
+	client := NewACLClient(srv.URL, "lkc-123", srv.Client(), testAuth)
 
 	err := client.Create(context.Background(), types.Acls{
 		ResourceType:        "Topic",
@@ -57,7 +77,7 @@ func TestACLClient_Create_UnknownOperation_ReturnsError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewACLClient(srv.URL, "lkc-123", srv.Client())
+	client := NewACLClient(srv.URL, "lkc-123", srv.Client(), testAuth)
 
 	err := client.Create(context.Background(), types.Acls{
 		ResourceType:        "Topic",
@@ -74,6 +94,7 @@ func TestACLClient_Create_UnknownOperation_ReturnsError(t *testing.T) {
 
 func TestACLClient_List_ParsesCCResponseToCanonical(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
 		require.Equal(t, "/kafka/v3/clusters/lkc-123/acls", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":[
@@ -83,7 +104,7 @@ func TestACLClient_List_ParsesCCResponseToCanonical(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client := NewACLClient(srv.URL, "lkc-123", srv.Client())
+	client := NewACLClient(srv.URL, "lkc-123", srv.Client(), testAuth)
 
 	got, err := client.List(context.Background())
 	require.NoError(t, err)

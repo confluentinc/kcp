@@ -270,7 +270,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	// (ACLs). Appended AFTER any clusterLink/topics reconcilers so the engine's
 	// in-order run has service accounts resolved before ACLs are written.
 	if m.Spec.ACLs != nil {
-		aclRecs, err := buildACLReconcilers(cmd, m, srcCluster, tgtClient)
+		aclRecs, err := buildACLReconcilers(cmd, m, srcCluster, tgtClient, tgtCreds)
 		if err != nil {
 			return err
 		}
@@ -290,7 +290,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 // reconciler reads the serviceAccounts reconciler's resolved map lazily at its
 // own Plan time (late-binding), so in apply mode it observes the real
 // "User:sa-<id>" ids the provision stage produced.
-func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster types.KafkaSourceConn, tgtClient clusterlink.HTTPClient) ([]reconcile.Reconciler, error) {
+func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster types.KafkaSourceConn, tgtClient clusterlink.HTTPClient, tgtCreds *targets.Credentials) ([]reconcile.Reconciler, error) {
 	out := cmd.OutOrStdout()
 
 	// READ: list native ACLs from the source.
@@ -321,18 +321,20 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	principals := distinctPrincipals(norm)
 
 	// PROVISION: service accounts on the Confluent Cloud target. The IAM v2 API
-	// lives at ccIAMBaseURL; the target's cloud creds (tgtClient) carry auth.
+	// lives at ccIAMBaseURL; tgtClient is transport-only, so the target's
+	// cloud auth (tgtCreds.Authenticator()) is applied per request by the
+	// client itself, same as clusterlink's config.authenticator().Apply(req).
 	var saCfg msa.Config
 	if sa := m.Spec.ServiceAccounts; sa != nil {
 		saCfg = msa.Config{AutoCreate: sa.AutoCreate, Mapping: sa.Mapping}
 	}
 	saCfg.Principals = principals
-	saCfg.Client = msa.NewCCClient(ccIAMBaseURL, tgtClient)
+	saCfg.Client = msa.NewCCClient(ccIAMBaseURL, tgtClient, tgtCreds.Authenticator())
 	saRec := msa.New(saCfg)
 
 	// WRITE: ACLs on the target REST endpoint. ResolvedPrincipals is the SA
 	// reconciler's live map (late-bound at acls.Plan time).
-	aclClient := macls.NewACLClient(m.Spec.Target.Kafka.RestEndpoint, m.Spec.Target.ClusterID, tgtClient)
+	aclClient := macls.NewACLClient(m.Spec.Target.Kafka.RestEndpoint, m.Spec.Target.ClusterID, tgtClient, tgtCreds.Authenticator())
 	aclRec := macls.New(macls.Config{
 		Desired:            norm,
 		ResolvedPrincipals: saRec.ResolvedMap,

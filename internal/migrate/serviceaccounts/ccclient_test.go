@@ -8,12 +8,32 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/stretchr/testify/require"
 )
+
+// testAuth is the BasicAuth used across this file's tests, so every handler
+// can assert the exact Authorization header value the client is expected to
+// send (regression guard: NewCCClient must apply auth per request, since
+// srv.Client() carries no auth of its own).
+var testAuth = clusterlink.BasicAuth{Username: "k", Password: "s"}
+
+// wantAuthHeader is the literal Authorization header value testAuth.Apply
+// produces, computed independently of clusterlink's own base64 encoding so
+// the assertion doesn't just restate the implementation.
+const wantAuthHeader = "Basic azpz" // base64("k:s")
+
+func requireAuthHeader(t *testing.T, r *http.Request) {
+	t.Helper()
+	got := r.Header.Get("Authorization")
+	require.NotEmpty(t, got, "request must carry an Authorization header")
+	require.Equal(t, wantAuthHeader, got)
+}
 
 func TestCCClient_FindAndCreate(t *testing.T) {
 	var created bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
 		switch {
 		case r.Method == "GET" && r.URL.Query().Get("display_name") == "app-consumer" && !created:
 			_, _ = io.WriteString(w, `{"data":[]}`)
@@ -26,7 +46,7 @@ func TestCCClient_FindAndCreate(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	c := NewCCClient(srv.URL, srv.Client())
+	c := NewCCClient(srv.URL, srv.Client(), testAuth)
 	got, err := c.FindByDisplayName(context.Background(), "app-consumer")
 	require.NoError(t, err)
 	require.Nil(t, got)
@@ -40,6 +60,7 @@ func TestCCClient_FindAndCreate(t *testing.T) {
 // account. Create should return that account with no error.
 func TestCCClient_Create_409ThenFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
 		switch {
 		case r.Method == "POST":
 			w.WriteHeader(http.StatusConflict)
@@ -52,7 +73,7 @@ func TestCCClient_Create_409ThenFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewCCClient(srv.URL, srv.Client())
+	c := NewCCClient(srv.URL, srv.Client(), testAuth)
 	sa, err := c.Create(context.Background(), "app-consumer", "kcp:source-principal=User:app-consumer")
 	require.NoError(t, err)
 	require.NotNil(t, sa)
@@ -65,6 +86,7 @@ func TestCCClient_Create_409ThenFound(t *testing.T) {
 // explicit error rather than (nil, nil), which would read as success.
 func TestCCClient_Create_409ThenNotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
 		switch {
 		case r.Method == "POST":
 			w.WriteHeader(http.StatusConflict)
@@ -77,7 +99,7 @@ func TestCCClient_Create_409ThenNotFound(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewCCClient(srv.URL, srv.Client())
+	c := NewCCClient(srv.URL, srv.Client(), testAuth)
 	sa, err := c.Create(context.Background(), "app-consumer", "kcp:source-principal=User:app-consumer")
 	require.Error(t, err)
 	require.Nil(t, sa)
@@ -89,6 +111,7 @@ func TestCCClient_Create_409ThenNotFound(t *testing.T) {
 // must surface the lookup error, not the stale original 409 error.
 func TestCCClient_Create_409ThenFindErrors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
 		switch {
 		case r.Method == "POST":
 			w.WriteHeader(http.StatusConflict)
@@ -102,7 +125,7 @@ func TestCCClient_Create_409ThenFindErrors(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c := NewCCClient(srv.URL, srv.Client())
+	c := NewCCClient(srv.URL, srv.Client(), testAuth)
 	sa, err := c.Create(context.Background(), "app-consumer", "kcp:source-principal=User:app-consumer")
 	require.Error(t, err)
 	require.Nil(t, sa)
