@@ -16,14 +16,20 @@ import (
 // cloudConfig is read from the environment; the live cloud suite skips entirely
 // when any required value is absent, so `make test-migrate` (docker) is unaffected.
 type cloudConfig struct {
-	ccRestEndpoint    string
-	ccClusterID       string
-	ccKey, ccSecret   string
-	mskScramBootstrap string
-	mskScramUser      string
-	mskScramPass      string
-	mskIAMBootstrap   string
-	mskRegion         string
+	ccRestEndpoint  string
+	ccClusterID     string
+	ccKey, ccSecret string
+	// ccCloudKey/ccCloudSecret are the CC Cloud/Global API key (distinct from the
+	// Kafka cluster key ccKey/ccSecret) used only by the serviceAccounts
+	// reconciler's IAM v2 calls. They are loaded but NOT part of the required
+	// gate below — only service-account auto-create tests need them, and they
+	// skip via requireCloudKeys when these are unset.
+	ccCloudKey, ccCloudSecret string
+	mskScramBootstrap         string
+	mskScramUser              string
+	mskScramPass              string
+	mskIAMBootstrap           string
+	mskRegion                 string
 }
 
 // loadCloudConfig reads cloud creds from env and SKIPS the test when any are absent.
@@ -34,6 +40,8 @@ func loadCloudConfig(t *testing.T) cloudConfig {
 		ccClusterID:       os.Getenv("CC_CLUSTER_ID"),
 		ccKey:             os.Getenv("CC_KEY"),
 		ccSecret:          os.Getenv("CC_SECRET"),
+		ccCloudKey:        os.Getenv("CC_CLOUD_KEY"),
+		ccCloudSecret:     os.Getenv("CC_CLOUD_SECRET"),
 		mskScramBootstrap: os.Getenv("MSK_SCRAM_BOOTSTRAP"),
 		mskScramUser:      os.Getenv("MSK_SCRAM_USER"),
 		mskScramPass:      os.Getenv("MSK_SCRAM_PASS"),
@@ -164,7 +172,7 @@ func writeCloudManifest(t *testing.T, dir, name string, sourceBootstrap []string
 	yamlList := func(ss []string) string { return "[\"" + strings.Join(ss, "\",\"") + "\"]" }
 	b := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: " + name + "\nspec:\n" +
 		"  source:\n    type: msk\n    bootstrapServers: " + yamlList(sourceBootstrap) + "\n    credentials: " + sourceRead + "\n" +
-		"  target:\n    type: confluent-cloud\n    clusterId: " + cfg.ccClusterID + "\n    credentials: " + target + "\n    kafka:\n      restEndpoint: " + cfg.ccRestEndpoint + "\n" +
+		"  target:\n    type: confluent-cloud\n    clusterId: " + cfg.ccClusterID + "\n    clusterCredentials: " + target + "\n    kafka:\n      restEndpoint: " + cfg.ccRestEndpoint + "\n" +
 		"  clusterLink:\n    name: " + name + "\n    source:\n      bootstrapServers: " + yamlList(splitCSV(cfg.mskScramBootstrap)) + "\n      credentials: " + linkSource + "\n"
 	if include != nil {
 		b += "  topics:\n    mode: mirror\n    include: " + yamlList(include) + "\n"

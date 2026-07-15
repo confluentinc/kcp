@@ -57,7 +57,7 @@ func writeNewManifest(t *testing.T, dir string, o newManifestOpts) string {
 	b.WriteString("apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n")
 	b.WriteString("metadata:\n  name: mcl-new-" + o.name + "\n")
 	b.WriteString("spec:\n  source:\n    type: apache-kafka\n    bootstrapServers: [\"" + srcDataBootstrap + "\"]\n    credentials: " + srcCreds + "\n")
-	b.WriteString("  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n")
+	b.WriteString("  target:\n    type: confluent-platform\n    clusterCredentials: " + targetCreds + "\n")
 	b.WriteString("    kafka:\n      restEndpoint: " + restDest.baseURL + "\n")
 	b.WriteString("  topics:\n    mode: new\n")
 	b.WriteString("    include: [" + quoteList(o.include) + "]\n")

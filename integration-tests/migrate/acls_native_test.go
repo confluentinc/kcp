@@ -413,6 +413,32 @@ func deleteCCServiceAccount(ctx context.Context, hc clusterlink.HTTPClient, id s
 // section — spec.acls alone satisfies runApply's "something to apply" gate).
 // ---------------------------------------------------------------------------
 
+// requireCloudKeys skips the calling test cleanly when the CC Cloud/Global API
+// key env vars are unset. Service-account auto-create (spec.serviceAccounts.
+// autoCreate) drives the IAM v2 API, which — unlike the /kafka/v3 REST surface —
+// rejects a Kafka cluster API key, so those tests need a separate Cloud/Global
+// key. Mapping/validation-only tests never call IAM v2 and so don't call this.
+func requireCloudKeys(t *testing.T, cfg cloudConfig) {
+	t.Helper()
+	if cfg.ccCloudKey == "" || cfg.ccCloudSecret == "" {
+		t.Skip("cloud suite: CC_CLOUD_KEY/CC_CLOUD_SECRET not set; skipping service-account auto-create tests")
+	}
+}
+
+// writeCloudCredsFile writes the CC Cloud/Global API key creds file (api_key/
+// api_secret) used by spec.target.cloudCredentials and returns its path. It is
+// a DIFFERENT file from writeCloudCreds' cc.yaml (the Kafka cluster key), since
+// the two key types are distinct on Confluent Cloud.
+func writeCloudCredsFile(t *testing.T, dir string, cfg cloudConfig) string {
+	t.Helper()
+	q := func(s string) string {
+		return `"` + strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(s) + `"`
+	}
+	p := filepath.Join(dir, "cc-cloud.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("api_key: "+q(cfg.ccCloudKey)+"\napi_secret: "+q(cfg.ccCloudSecret)+"\n"), 0600))
+	return p
+}
+
 // aclManifestOpts configures spec.serviceAccounts + spec.acls for one
 // scenario's manifest.
 type aclManifestOpts struct {
@@ -420,6 +446,11 @@ type aclManifestOpts struct {
 	mapping    map[string]string
 	include    []string
 	exclude    []string
+	// cloudCreds, when non-empty, is written as spec.target.cloudCredentials
+	// (the CC Cloud/Global API key file). autoCreate manifests must set it —
+	// IAM v2 rejects the Kafka cluster key; mapping/validation-only manifests
+	// leave it empty.
+	cloudCreds string
 }
 
 // writeACLManifest writes a source-read-only (no cluster link) MSK→CC
@@ -449,7 +480,11 @@ func writeACLManifest(t *testing.T, dir, name string, cfg cloudConfig, sourceBoo
 	var b strings.Builder
 	b.WriteString("apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: " + name + "\nspec:\n")
 	b.WriteString("  source:\n    type: msk\n    bootstrapServers: " + yamlList(sourceBootstrap) + "\n    credentials: " + sourceCreds + "\n")
-	b.WriteString("  target:\n    type: confluent-cloud\n    clusterId: " + cfg.ccClusterID + "\n    credentials: " + targetCreds + "\n    kafka:\n      restEndpoint: " + cfg.ccRestEndpoint + "\n")
+	b.WriteString("  target:\n    type: confluent-cloud\n    clusterId: " + cfg.ccClusterID + "\n    clusterCredentials: " + targetCreds + "\n")
+	if opts.cloudCreds != "" {
+		b.WriteString("    cloudCredentials: " + opts.cloudCreds + "\n")
+	}
+	b.WriteString("    kafka:\n      restEndpoint: " + cfg.ccRestEndpoint + "\n")
 	b.WriteString(fmt.Sprintf("  serviceAccounts:\n    autoCreate: %v\n", opts.autoCreate))
 	if len(opts.mapping) > 0 {
 		b.WriteString("    mapping:\n")
@@ -636,7 +671,7 @@ var principalMatrixScenarios = []aclScenario{
 // the resulting CC state (service account + ACL set) exactly matches s's
 // hand-declared expectation. Teardown is deferred immediately (before the
 // run), so it always executes.
-func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sarama.ClusterAdmin, dir, target, sourceRead string, s aclScenario) {
+func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sarama.ClusterAdmin, dir, target, cloudCreds, sourceRead string, s aclScenario) {
 	t.Helper()
 	base := uniqueACLToken()
 	principal := "User:" + base + s.principalSuffix
@@ -652,6 +687,7 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-"+s.name), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
 		autoCreate: true,
+		cloudCreds: cloudCreds,
 		include:    []string{"User:" + base + "*"},
 	})
 
@@ -674,32 +710,36 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 
 func TestACLsLive_NativeMatrix(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
 	cc := newACLTargetClients(t, cfg, target)
 
 	for _, s := range nativeMatrixScenarios {
 		s := s
 		t.Run(s.name, func(t *testing.T) {
-			runACLScenario(t, cfg, cc, admin, dir, target, sourceRead, s)
+			runACLScenario(t, cfg, cc, admin, dir, target, cloudCreds, sourceRead, s)
 		})
 	}
 }
 
 func TestACLsLive_PrincipalMatrix(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
 	cc := newACLTargetClients(t, cfg, target)
 
 	for _, s := range principalMatrixScenarios {
 		s := s
 		t.Run(s.name, func(t *testing.T) {
-			runACLScenario(t, cfg, cc, admin, dir, target, sourceRead, s)
+			runACLScenario(t, cfg, cc, admin, dir, target, cloudCreds, sourceRead, s)
 		})
 	}
 }
@@ -714,10 +754,12 @@ func TestACLsLive_PrincipalMatrix(t *testing.T) {
 // setup rather than the generic principalSuffix-after-token shape.
 func TestACLsLive_NativeMatrix_BrokerPrincipalDropped(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
 	cc := newACLTargetClients(t, cfg, target)
 
 	token := uniqueACLToken()
@@ -729,6 +771,7 @@ func TestACLsLive_NativeMatrix_BrokerPrincipalDropped(t *testing.T) {
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-broker"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
 		autoCreate: true,
+		cloudCreds: cloudCreds,
 		include:    []string{"*" + token + "*"},
 	})
 	out, err := runKCP(t, mf)
@@ -743,10 +786,12 @@ func TestACLsLive_NativeMatrix_BrokerPrincipalDropped(t *testing.T) {
 // hash8 suffixes) — never merged.
 func TestACLsLive_PrincipalMatrix_CollisionPair(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
 	cc := newACLTargetClients(t, cfg, target)
 
 	base := uniqueACLToken()
@@ -772,6 +817,7 @@ func TestACLsLive_PrincipalMatrix_CollisionPair(t *testing.T) {
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-collision"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
 		autoCreate: true,
+		cloudCreds: cloudCreds,
 		include:    []string{"User:" + base + "*"},
 	})
 	out, err := runKCP(t, mf)
@@ -795,10 +841,12 @@ func TestACLsLive_PrincipalMatrix_CollisionPair(t *testing.T) {
 // each seeded ACL's resourceName, which the teardown filter matches exactly.
 func TestACLsLive_PrincipalMatrix_WildcardAndAnonymousSkip(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
 	cc := newACLTargetClients(t, cfg, target)
 
 	starResource := "kcpacl-skip-star-" + uniqueACLToken()
@@ -811,6 +859,7 @@ func TestACLsLive_PrincipalMatrix_WildcardAndAnonymousSkip(t *testing.T) {
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-skip"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
 		autoCreate: true,
+		cloudCreds: cloudCreds,
 		include:    []string{"User:*", "User:ANONYMOUS"},
 	})
 	out, err := runKCP(t, mf)
@@ -993,10 +1042,12 @@ func TestACLsLive_AutoCreateFalse_UnmappedPrincipal_HardError(t *testing.T) {
 // ACL, and a second apply is a full no-op (idempotent).
 func TestACLsLive_DryRunThenApplyThenIdempotent(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
 	cc := newACLTargetClients(t, cfg, target)
 
 	base := uniqueACLToken()
@@ -1010,6 +1061,7 @@ func TestACLsLive_DryRunThenApplyThenIdempotent(t *testing.T) {
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-dryrun"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
 		autoCreate: true,
+		cloudCreds: cloudCreds,
 		include:    []string{"User:" + base + "*"},
 	})
 

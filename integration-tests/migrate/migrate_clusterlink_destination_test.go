@@ -49,7 +49,7 @@ func writeDestManifest(t *testing.T, dir string, c destCase) (manifestPath, link
 		"    credentials: " + srcCreds + "\n" +
 		"  target:\n" +
 		"    type: confluent-platform\n" +
-		"    credentials: " + targetCreds + "\n" +
+		"    clusterCredentials: " + targetCreds + "\n" +
 		"    kafka:\n" +
 		"      restEndpoint: " + c.target.baseURL + "\n" +
 		"  clusterLink:\n" +
@@ -172,7 +172,7 @@ func TestMigrateApply_ClusterLink_ConfigAndDrift(t *testing.T) {
 		return "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n" +
 			"metadata:\n  name: mcl-" + link + "\n" +
 			"spec:\n  source:\n    type: apache-kafka\n    bootstrapServers: [\"localhost:19092\"]\n    credentials: " + srcCreds + "\n" +
-			"  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n" +
+			"  target:\n    type: confluent-platform\n    clusterCredentials: " + targetCreds + "\n" +
 			"    kafka:\n      restEndpoint: " + restDest.baseURL + "\n" +
 			"  clusterLink:\n    name: " + link + "\n    mode: destination\n" +
 			"    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: " + linkCreds + "\n" +

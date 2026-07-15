@@ -81,7 +81,7 @@ func writeNewModeCloudManifest(t *testing.T, dir, name string, cfg cloudConfig, 
 	yamlList := func(ss []string) string { return "[\"" + strings.Join(ss, "\",\"") + "\"]" }
 	b := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: " + name + "\nspec:\n" +
 		"  source:\n    type: msk\n    bootstrapServers: " + yamlList(sourceBootstrap) + "\n    credentials: " + sourceRead + "\n" +
-		"  target:\n    type: confluent-cloud\n    clusterId: " + cfg.ccClusterID + "\n    credentials: " + target + "\n    kafka:\n      restEndpoint: " + cfg.ccRestEndpoint + "\n" +
+		"  target:\n    type: confluent-cloud\n    clusterId: " + cfg.ccClusterID + "\n    clusterCredentials: " + target + "\n    kafka:\n      restEndpoint: " + cfg.ccRestEndpoint + "\n" +
 		"  topics:\n    mode: new\n    include: " + yamlList(include) + "\n"
 	mf := filepath.Join(dir, name+".yaml")
 	require.NoError(t, os.WriteFile(mf, []byte(b), 0600))

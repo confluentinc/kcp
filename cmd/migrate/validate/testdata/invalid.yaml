@@ -8,4 +8,4 @@ spec:
     credentials: ./source-creds.yaml
   target:
     type: confluent-cloud
-    credentials: ./target-creds.yaml
+    clusterCredentials: ./target-creds.yaml

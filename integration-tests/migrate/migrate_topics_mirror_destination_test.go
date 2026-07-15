@@ -64,7 +64,7 @@ func writeMirrorManifest(t *testing.T, dir string, o mirrorManifestOpts) string 
 	b.WriteString("apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n")
 	b.WriteString("metadata:\n  name: mcl-" + o.link + "\n")
 	b.WriteString("spec:\n  source:\n    type: apache-kafka\n    bootstrapServers: [\"" + srcDataBootstrap + "\"]\n    credentials: " + srcCreds + "\n")
-	b.WriteString("  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n")
+	b.WriteString("  target:\n    type: confluent-platform\n    clusterCredentials: " + targetCreds + "\n")
 	b.WriteString("    kafka:\n      restEndpoint: " + restDest.baseURL + "\n")
 	b.WriteString("  clusterLink:\n    name: " + o.link + "\n    mode: destination\n")
 	b.WriteString("    source:\n      bootstrapServers: [\"" + srcDockerBootstrap + "\"]\n      credentials: " + linkCreds + "\n")

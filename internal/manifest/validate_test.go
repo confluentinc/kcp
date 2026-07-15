@@ -36,7 +36,7 @@ func validCC() *Migration {
 		Metadata:   Metadata{Name: "m"},
 		Spec: Spec{
 			Source: Source{Type: SourceApacheKafka, BootstrapServers: []string{"b:9092"}, Credentials: "./s.yaml"},
-			Target: Target{Type: TargetConfluentCloud, ClusterID: "lkc-1", Credentials: "./t.yaml", Kafka: &TargetKafka{RestEndpoint: "https://pkc-x.confluent.cloud:443"}},
+			Target: Target{Type: TargetConfluentCloud, ClusterID: "lkc-1", ClusterCredentials: "./t.yaml", Kafka: &TargetKafka{RestEndpoint: "https://pkc-x.confluent.cloud:443"}},
 		},
 	}
 }
@@ -102,7 +102,7 @@ func TestValidate_TargetCCRequiresCluster(t *testing.T) {
 
 func TestValidate_TargetCPRequiresRestEndpoint(t *testing.T) {
 	m := validCC()
-	m.Spec.Target = Target{Type: TargetConfluentPlatform, Credentials: "./t.yaml"}
+	m.Spec.Target = Target{Type: TargetConfluentPlatform, ClusterCredentials: "./t.yaml"}
 	require.True(t, errorContains(m.Validate(), "spec.target.kafka.restEndpoint"))
 }
 
@@ -126,8 +126,45 @@ func TestValidate_TargetTypeEmpty(t *testing.T) {
 
 func TestValidate_TargetCredentials(t *testing.T) {
 	m := validCC()
-	m.Spec.Target.Credentials = ""
-	require.True(t, errorContains(m.Validate(), "spec.target.credentials"))
+	m.Spec.Target.ClusterCredentials = ""
+	require.True(t, errorContains(m.Validate(), "spec.target.clusterCredentials"))
+}
+
+// TestValidate_CloudCredentialsCConly rejects cloudCredentials on a
+// confluent-platform target (it is the CC IAM v2 Cloud/Global key).
+func TestValidate_CloudCredentialsCConly(t *testing.T) {
+	m := baseCPTargetManifest(t)
+	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	require.True(t, errorContains(m.Validate(), `spec.target.cloudCredentials: only valid when spec.target.type is "confluent-cloud"`))
+}
+
+// TestValidate_CloudCredentialsRequiredForAutoCreate requires cloudCredentials
+// when serviceAccounts.autoCreate is true (auto-create calls IAM v2).
+func TestValidate_CloudCredentialsRequiredForAutoCreate(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
+	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	require.True(t, errorContains(m.Validate(), "spec.target.cloudCredentials: required when spec.serviceAccounts.autoCreate is true"))
+}
+
+// TestValidate_CloudCredentialsForAutoCreate_Valid confirms a CC target with
+// autoCreate and cloudCredentials set validates clean.
+func TestValidate_CloudCredentialsForAutoCreate_Valid(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
+	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	require.Empty(t, m.Validate())
+}
+
+// TestValidate_CloudCredentialsNotRequiredForMappingOnly confirms a mapping-only
+// serviceAccounts block (autoCreate:false) validates without cloudCredentials —
+// no IAM v2 call is made.
+func TestValidate_CloudCredentialsNotRequiredForMappingOnly(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: false, Mapping: map[string]string{"User:x": "sa-1"}}
+	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	require.Empty(t, m.Validate())
 }
 
 func TestValidate_TopicsModeUnsupported(t *testing.T) {
@@ -219,10 +256,10 @@ func TestValidate_CCTargetRequiresRestEndpoint(t *testing.T) {
 func TestValidate_CPTargetRejectsCluster(t *testing.T) {
 	m := validCC()
 	m.Spec.Target = Target{
-		Type:        TargetConfluentPlatform,
-		Credentials: "./t.yaml",
-		Kafka:       &TargetKafka{RestEndpoint: "https://broker:8090"},
-		ClusterID:   "lkc-1",
+		Type:               TargetConfluentPlatform,
+		ClusterCredentials: "./t.yaml",
+		Kafka:              &TargetKafka{RestEndpoint: "https://broker:8090"},
+		ClusterID:          "lkc-1",
 	}
 	require.True(t, errorContains(m.Validate(), "spec.target.clusterId"))
 }
@@ -525,9 +562,9 @@ func baseCPTargetManifest(t *testing.T) *Migration {
 	t.Helper()
 	m := baseCCTargetManifest(t)
 	m.Spec.Target = Target{
-		Type:        TargetConfluentPlatform,
-		Credentials: "./t.yaml",
-		Kafka:       &TargetKafka{RestEndpoint: "https://broker:8090"},
+		Type:               TargetConfluentPlatform,
+		ClusterCredentials: "./t.yaml",
+		Kafka:              &TargetKafka{RestEndpoint: "https://broker:8090"},
 	}
 	return m
 }

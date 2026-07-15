@@ -63,7 +63,10 @@
                 "confluent-platform"
               ]
             },
-            "credentials": {
+            "clusterCredentials": {
+              "type": "string"
+            },
+            "cloudCredentials": {
               "type": "string"
             },
             "clusterId": {
@@ -117,7 +120,7 @@
           },
           "required": [
             "type",
-            "credentials"
+            "clusterCredentials"
           ],
           "additionalProperties": false
         },

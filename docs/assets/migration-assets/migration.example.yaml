@@ -14,7 +14,8 @@ spec:
   target:
     type: confluent-cloud                  # or: confluent-platform
     clusterId: lkc-xxxxx
-    credentials: ./target-creds.yaml
+    clusterCredentials: ./target-creds.yaml  # Kafka cluster API key — /kafka/v3 REST (cluster link, topics, ACLs)
+    # cloudCredentials: ./cloud-creds.yaml   # CC Cloud/Global API key — required only for serviceAccounts.autoCreate (IAM v2)
     kafka:
       restEndpoint: https://pkc-1n6m13.us-east-1.aws.confluent.cloud:443
 

@@ -65,7 +65,7 @@ func run(t *testing.T, srvURL string, dryRun bool) (stdout, stderr string, err e
 	require.NoError(t, os.WriteFile(mf, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
 			"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
-			"  target:\n    type: confluent-platform\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+srvURL+"\n"+
+			"  target:\n    type: confluent-platform\n    clusterCredentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+srvURL+"\n"+
 			"  clusterLink:\n    name: src-to-dest\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"), 0600))
 
 	old := newSourceReader
@@ -170,7 +170,7 @@ func TestApply_SourceInitiated_CreatesBothSides(t *testing.T) {
 	require.NoError(t, os.WriteFile(mf, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
 			"  source:\n    type: confluent-platform\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
-			"  target:\n    type: confluent-platform\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+destSrv.URL+"\n"+
+			"  target:\n    type: confluent-platform\n    clusterCredentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+destSrv.URL+"\n"+
 			"  clusterLink:\n    name: src-to-dest\n    mode: source\n"+
 			"    destination:\n      bootstrapServers: [\"dest:29092\"]\n      credentials: "+destCreds+"\n"+
 			"    sourceRest:\n      endpoint: "+srcSrv.URL+"\n      credentials: "+srcRestCreds+"\n"), 0600))
@@ -329,7 +329,7 @@ func TestApply_TopicsMirror_AppendsAfterClusterLink(t *testing.T) {
 	defer srv.Close()
 	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
 		"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: ${SOURCE_CREDS}\n" +
-		"  target:\n    type: confluent-platform\n    credentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n" +
+		"  target:\n    type: confluent-platform\n    clusterCredentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n" +
 		"  clusterLink:\n    name: src-to-dest\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: ${SOURCE_CREDS}\n" +
 		"  topics:\n    mode: mirror\n    include: [\"orders\"]\n"
 	out, errOut, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1", topics: []string{"orders"}}, false)
@@ -346,7 +346,7 @@ func TestApply_TopicsNew_NoClusterLink(t *testing.T) {
 	defer srv.Close()
 	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
 		"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: ${SOURCE_CREDS}\n" +
-		"  target:\n    type: confluent-platform\n    credentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n" +
+		"  target:\n    type: confluent-platform\n    clusterCredentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n" +
 		"  topics:\n    mode: new\n    include: [\"orders\"]\n"
 	out, errOut, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1", topics: []string{"orders"}}, false)
 	require.NoError(t, err, "stderr: %s", errOut)
@@ -361,7 +361,7 @@ func TestApply_NothingToApply(t *testing.T) {
 	defer srv.Close()
 	spec := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n" +
 		"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: ${SOURCE_CREDS}\n" +
-		"  target:\n    type: confluent-platform\n    credentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n"
+		"  target:\n    type: confluent-platform\n    clusterCredentials: ${TARGET_CREDS}\n    kafka:\n      restEndpoint: ${SRV}\n"
 	_, _, err := runManifest(t, srv.URL, spec, topicSource{id: "src-1"}, false)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "spec.clusterLink, spec.topics and/or spec.acls is required")
@@ -381,7 +381,7 @@ func runWithSourceCreds(t *testing.T, sourceType, sourceCredsBody string) error 
 	require.NoError(t, os.WriteFile(mf, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
 			"  source:\n    type: "+sourceType+"\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
-			"  target:\n    type: confluent-platform\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: http://127.0.0.1:1\n"+
+			"  target:\n    type: confluent-platform\n    clusterCredentials: "+targetCreds+"\n    kafka:\n      restEndpoint: http://127.0.0.1:1\n"+
 			"  clusterLink:\n    name: src-to-dest\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"), 0600))
 
 	old := newSourceReader
@@ -437,7 +437,7 @@ func TestApply_ConfluentCloudTarget_CreatesLinkOnLkcPath(t *testing.T) {
 	require.NoError(t, os.WriteFile(mf, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
 			"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
-			"  target:\n    type: confluent-cloud\n    clusterId: "+lkc+"\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+srv.URL+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+lkc+"\n    clusterCredentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+srv.URL+"\n"+
 			"  clusterLink:\n    name: src-to-cc\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"), 0600))
 
 	old := newSourceReader
@@ -546,13 +546,17 @@ func runACLApply(t *testing.T, tgt *aclCaptureTarget, clusterID string, dryRun b
 	dir := t.TempDir()
 	targetCreds := filepath.Join(dir, "target.yaml")
 	require.NoError(t, os.WriteFile(targetCreds, []byte("api_key: k\napi_secret: s\n"), 0600))
+	// cloudCredentials is required when serviceAccounts.autoCreate is set (IAM v2
+	// needs a Cloud/Global API key); the stub target ignores the auth, so any key works.
+	cloudCreds := filepath.Join(dir, "cloud.yaml")
+	require.NoError(t, os.WriteFile(cloudCreds, []byte("api_key: ck\napi_secret: cs\n"), 0600))
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
 	mf := filepath.Join(dir, "migration.yaml")
 	require.NoError(t, os.WriteFile(mf, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
 			"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
-			"  target:\n    type: confluent-cloud\n    clusterId: "+clusterID+"\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+tgt.srv.URL+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+clusterID+"\n    clusterCredentials: "+targetCreds+"\n    cloudCredentials: "+cloudCreds+"\n    kafka:\n      restEndpoint: "+tgt.srv.URL+"\n"+
 			"  serviceAccounts:\n    autoCreate: true\n"+
 			"  acls:\n    include: [\"*\"]\n"), 0600))
 
@@ -619,6 +623,10 @@ func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy strin
 	dir := t.TempDir()
 	targetCreds := filepath.Join(dir, "target.yaml")
 	require.NoError(t, os.WriteFile(targetCreds, []byte("api_key: k\napi_secret: s\n"), 0600))
+	// cloudCredentials is required when serviceAccounts.autoCreate is set (IAM v2
+	// needs a Cloud/Global API key); the stub target ignores the auth, so any key works.
+	cloudCreds := filepath.Join(dir, "cloud.yaml")
+	require.NoError(t, os.WriteFile(cloudCreds, []byte("api_key: ck\napi_secret: cs\n"), 0600))
 	sourceCreds := filepath.Join(dir, "source.yaml")
 	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
 	policyLine := ""
@@ -629,7 +637,7 @@ func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy strin
 	require.NoError(t, os.WriteFile(mf, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
 			"  source:\n    type: msk\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
-			"  target:\n    type: confluent-cloud\n    clusterId: "+clusterID+"\n    credentials: "+targetCreds+"\n    kafka:\n      restEndpoint: "+tgt.srv.URL+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+clusterID+"\n    clusterCredentials: "+targetCreds+"\n    cloudCredentials: "+cloudCreds+"\n    kafka:\n      restEndpoint: "+tgt.srv.URL+"\n"+
 			"  serviceAccounts:\n    autoCreate: true\n"+
 			"  acls:\n    include: [\"*\"]\n"+policyLine), 0600))
 

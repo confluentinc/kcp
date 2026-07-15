@@ -77,12 +77,21 @@ type Source struct {
 }
 
 type Target struct {
-	Type           string       `yaml:"type" json:"type"`
-	Credentials    string       `yaml:"credentials" json:"credentials"`
-	ClusterID      string       `yaml:"clusterId,omitempty" json:"clusterId,omitempty"`
-	Kafka          *TargetKafka `yaml:"kafka,omitempty" json:"kafka,omitempty"`
-	SchemaRegistry *Endpoint    `yaml:"schemaRegistry,omitempty" json:"schemaRegistry,omitempty"`
-	Connect        *Endpoint    `yaml:"connect,omitempty" json:"connect,omitempty"`
+	Type string `yaml:"type" json:"type"`
+	// ClusterCredentials is the Kafka cluster / REST-v3 credential (Kafka
+	// cluster API key on Confluent Cloud) used for the /kafka/v3 REST surface:
+	// cluster links, topics, and ACLs.
+	ClusterCredentials string `yaml:"clusterCredentials" json:"clusterCredentials"`
+	// CloudCredentials is the Confluent Cloud Cloud/Global API key credential
+	// used ONLY by the serviceAccounts reconciler (IAM v2 / api.confluent.cloud).
+	// CC-target-only: the IAM v2 service-account API rejects a Kafka cluster API
+	// key, so this must be a distinct Cloud/Global key. Required only when
+	// serviceAccounts.autoCreate provisions accounts via IAM v2.
+	CloudCredentials string       `yaml:"cloudCredentials,omitempty" json:"cloudCredentials,omitempty"`
+	ClusterID        string       `yaml:"clusterId,omitempty" json:"clusterId,omitempty"`
+	Kafka            *TargetKafka `yaml:"kafka,omitempty" json:"kafka,omitempty"`
+	SchemaRegistry   *Endpoint    `yaml:"schemaRegistry,omitempty" json:"schemaRegistry,omitempty"`
+	Connect          *Endpoint    `yaml:"connect,omitempty" json:"connect,omitempty"`
 }
 
 type TargetKafka struct {

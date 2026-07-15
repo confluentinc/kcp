@@ -23,7 +23,7 @@ spec:
   target:
     type: confluent-cloud
     clusterId: lkc-xxxxx
-    credentials: ../../credentials/rest-api-key.yaml       # REST creds (target Admin API)
+    clusterCredentials: ../../credentials/rest-api-key.yaml # REST creds (target Admin API)
     kafka:
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
 

@@ -106,7 +106,11 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	src := newSourceReader(srcCluster)
 
 	// --- destination target ---
-	tgtCreds, err := targets.LoadCredentials(m.Spec.Target.Credentials)
+	// The cluster credential drives the /kafka/v3 REST surface (cluster link,
+	// topics, ACLs). The serviceAccounts reconciler needs a DIFFERENT credential
+	// (spec.target.cloudCredentials, the CC Cloud/Global API key) loaded in
+	// buildACLReconcilers, because IAM v2 rejects a Kafka cluster API key.
+	tgtCreds, err := targets.LoadCredentials(m.Spec.Target.ClusterCredentials)
 	if err != nil {
 		return err
 	}
@@ -321,15 +325,31 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	principals := distinctPrincipals(norm)
 
 	// PROVISION: service accounts on the Confluent Cloud target. The IAM v2 API
-	// lives at ccIAMBaseURL; tgtClient is transport-only, so the target's
-	// cloud auth (tgtCreds.Authenticator()) is applied per request by the
-	// client itself, same as clusterlink's config.authenticator().Apply(req).
+	// (ccIAMBaseURL / api.confluent.cloud) requires a Cloud/Global API key —
+	// distinct from the Kafka cluster API key the ACL client uses — so the SA
+	// client is built from spec.target.cloudCredentials, not the cluster
+	// credential. Cloud creds are loaded ONLY when serviceAccounts.autoCreate is
+	// set (the only path that calls IAM v2); a mapping-only manifest resolves
+	// principals with no client call, so it keeps the cluster client as a
+	// harmless fallback and never requires cloudCredentials.
 	var saCfg msa.Config
 	if sa := m.Spec.ServiceAccounts; sa != nil {
 		saCfg = msa.Config{AutoCreate: sa.AutoCreate, Mapping: sa.Mapping}
 	}
 	saCfg.Principals = principals
-	saCfg.Client = msa.NewCCClient(ccIAMBaseURL, tgtClient, tgtCreds.Authenticator())
+	saClient, saAuth := tgtClient, tgtCreds.Authenticator()
+	if sa := m.Spec.ServiceAccounts; sa != nil && sa.AutoCreate {
+		cloudCreds, err := targets.LoadCredentials(m.Spec.Target.CloudCredentials)
+		if err != nil {
+			return nil, fmt.Errorf("loading spec.target.cloudCredentials: %w", err)
+		}
+		cloudClient, err := cloudCreds.HTTPClient()
+		if err != nil {
+			return nil, fmt.Errorf("building cloud HTTP client: %w", err)
+		}
+		saClient, saAuth = cloudClient, cloudCreds.Authenticator()
+	}
+	saCfg.Client = msa.NewCCClient(ccIAMBaseURL, saClient, saAuth)
 	saRec := msa.New(saCfg)
 
 	// WRITE: ACLs on the target REST endpoint. ResolvedPrincipals is the SA

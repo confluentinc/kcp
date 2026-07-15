@@ -63,7 +63,7 @@ spec:
   target:
     type: confluent-cloud
     clusterId: lkc-1
-    credentials: ./t.yaml
+    clusterCredentials: ./t.yaml
   clusterLink:
     name: l
     source:

@@ -59,7 +59,7 @@ func TestMigrateApply_D1_SASLSSL_CACert(t *testing.T) {
 			"    credentials: " + srcCredsPath + "\n" +
 			"  target:\n" +
 			"    type: confluent-platform\n" +
-			"    credentials: " + targetCredsPath + "\n" +
+			"    clusterCredentials: " + targetCredsPath + "\n" +
 			"    kafka:\n" +
 			"      restEndpoint: " + restDest.baseURL + "\n" +
 			"  clusterLink:\n" +
@@ -123,7 +123,7 @@ func TestMigrateApply_D1_SASLSSL_CACert(t *testing.T) {
 			"    credentials: " + srcCredsPath + "\n" +
 			"  target:\n" +
 			"    type: confluent-platform\n" +
-			"    credentials: " + targetCredsPath + "\n" +
+			"    clusterCredentials: " + targetCredsPath + "\n" +
 			"    kafka:\n" +
 			"      restEndpoint: " + restDest.baseURL + "\n" +
 			"  clusterLink:\n" +

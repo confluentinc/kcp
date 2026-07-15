@@ -80,7 +80,7 @@ func writeSourceMirrorManifest(t *testing.T, dir, link, prefix string, include [
 	b.WriteString("apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\n")
 	b.WriteString("metadata:\n  name: mcl-" + link + "\n")
 	b.WriteString("spec:\n  source:\n    type: confluent-platform\n    bootstrapServers: [\"" + migSrcDataBootstrap + "\"]\n    credentials: " + srcCreds + "\n")
-	b.WriteString("  target:\n    type: confluent-platform\n    credentials: " + targetCreds + "\n")
+	b.WriteString("  target:\n    type: confluent-platform\n    clusterCredentials: " + targetCreds + "\n")
 	b.WriteString("    kafka:\n      restEndpoint: " + restSource.baseURL + "\n")
 	b.WriteString("  clusterLink:\n    name: " + link + "\n    mode: source\n")
 	b.WriteString("    sourceRest:\n      endpoint: " + restDestBasic.baseURL + "\n      credentials: " + srcRestCreds + "\n")

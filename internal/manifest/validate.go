@@ -140,8 +140,17 @@ func (m *Migration) Validate() []error {
 	default:
 		add("spec.target.type: unsupported value %q (supported: %s, %s)", m.Spec.Target.Type, TargetConfluentCloud, TargetConfluentPlatform)
 	}
-	if blank(m.Spec.Target.Credentials) {
-		add("spec.target.credentials: must not be empty")
+	if blank(m.Spec.Target.ClusterCredentials) {
+		add("spec.target.clusterCredentials: must not be empty")
+	}
+	// cloudCredentials is the CC Cloud/Global API key, used only by the
+	// serviceAccounts reconciler (IAM v2). It is confluent-cloud-only, and
+	// required precisely when serviceAccounts.autoCreate provisions accounts.
+	if !blank(m.Spec.Target.CloudCredentials) && m.Spec.Target.Type != TargetConfluentCloud {
+		add("spec.target.cloudCredentials: only valid when spec.target.type is %q", TargetConfluentCloud)
+	}
+	if sa := m.Spec.ServiceAccounts; sa != nil && sa.AutoCreate && blank(m.Spec.Target.CloudCredentials) {
+		add("spec.target.cloudCredentials: required when spec.serviceAccounts.autoCreate is true (service-account auto-create calls the Confluent Cloud IAM v2 API, which needs a Cloud/Global API key)")
 	}
 
 	if t := m.Spec.Topics; t != nil {

@@ -67,7 +67,7 @@ func writeSourceManifest(t *testing.T, dir string, c sourceCase) (manifestPath, 
 		"    credentials: " + srcCreds + "\n" +
 		"  target:\n" +
 		"    type: confluent-platform\n" +
-		"    credentials: " + targetCreds + "\n" +
+		"    clusterCredentials: " + targetCreds + "\n" +
 		"    kafka:\n" +
 		"      restEndpoint: " + c.migrationDestREST.baseURL + "\n" +
 		"  clusterLink:\n" +

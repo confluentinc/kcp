@@ -41,6 +41,10 @@ credentials}` pair:
   `spec.clusterLink.destination`) — `bootstrapServers` + `credentials`.
 - **REST slots** (`spec.target` + `spec.target.kafka.restEndpoint`,
   `spec.clusterLink.sourceRest`) — `endpoint`/`restEndpoint` + `credentials`.
+  On `spec.target` this Kafka cluster / REST-v3 credential is
+  `clusterCredentials` (cluster link, topics, ACLs); a Confluent Cloud target
+  also takes `cloudCredentials` — a distinct Cloud/Global API key — when
+  `spec.serviceAccounts.autoCreate` provisions accounts via IAM v2.
 
 Which credential family each slot uses, and every supported auth method, is in the
 [credential catalog](credentials/README.md).

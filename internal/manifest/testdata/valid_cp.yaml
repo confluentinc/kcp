@@ -9,7 +9,7 @@ spec:
     credentials: ./source-creds.yaml
   target:
     type: confluent-platform
-    credentials: ./target-creds.yaml
+    clusterCredentials: ./target-creds.yaml
     kafka:
       restEndpoint: https://broker1:8090
     schemaRegistry:

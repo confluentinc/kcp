@@ -49,7 +49,7 @@ func TestGenerate_OptionalFieldsNotRequired(t *testing.T) {
 	spec := props(t, doc)["spec"].(map[string]any)
 	require.ElementsMatch(t, []any{"source", "target"}, spec["required"])
 	tgt := props(t, spec)["target"].(map[string]any)
-	require.ElementsMatch(t, []any{"type", "credentials"}, tgt["required"])
+	require.ElementsMatch(t, []any{"type", "clusterCredentials"}, tgt["required"])
 }
 
 func TestGenerate_AllRequiredSets(t *testing.T) {
@@ -67,7 +67,7 @@ func TestGenerate_AllRequiredSets(t *testing.T) {
 	require.ElementsMatch(t, []any{"name"}, requiredOf(p["metadata"].(map[string]any)))
 	require.ElementsMatch(t, []any{"source", "target"}, requiredOf(p["spec"].(map[string]any)))
 	require.ElementsMatch(t, []any{"type", "bootstrapServers", "credentials"}, requiredOf(spec["source"].(map[string]any)))
-	require.ElementsMatch(t, []any{"type", "credentials"}, requiredOf(spec["target"].(map[string]any)))
+	require.ElementsMatch(t, []any{"type", "clusterCredentials"}, requiredOf(spec["target"].(map[string]any)))
 	require.ElementsMatch(t, []any{"restEndpoint"}, requiredOf(target["kafka"].(map[string]any)))
 	require.ElementsMatch(t, []any{"mode", "include"}, requiredOf(spec["topics"].(map[string]any)))
 	// clusterLink.mode is optional (validator defaults empty → "destination"), so
