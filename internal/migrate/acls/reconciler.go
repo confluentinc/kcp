@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
@@ -30,6 +31,19 @@ type Config struct {
 	// principal has no entry was warn-skipped upstream (e.g. "User:*" /
 	// "User:ANONYMOUS") and is skipped here too: no create, no error.
 	ResolvedPrincipals func() map[string]string
+	// NumericToResourceID maps a Confluent Cloud service account's internal
+	// NUMERIC id (as a string, e.g. "1267635") to its "sa-" resource id (e.g.
+	// "sa-abc123"). It is used to NORMALIZE existing-ACL principals before
+	// diffing: Confluent Cloud accepts an ACL created with principal
+	// "User:sa-abc123" but returns it on read-back as the numeric id
+	// ("User:1267635"), so without this rewrite the desired set (which uses
+	// "User:sa-...") never matches an existing ACL and every ACL is re-created
+	// on each apply (an idempotency/drift bug). Empty or nil disables
+	// normalization (existing principals are diffed verbatim — the prior
+	// behavior). A principal whose numeric id is absent from this map (another
+	// org's service accounts/users) is left unchanged: this reconciler is
+	// strictly additive and never touches ACLs it did not author.
+	NumericToResourceID map[string]string
 	// Client talks to the Confluent Cloud Kafka REST v3 ACL API, entirely in
 	// canonical types.Acls form.
 	Client ACLClient
@@ -84,6 +98,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	}
 	existingSet := make(map[types.Acls]struct{}, len(existing))
 	for _, a := range existing {
+		a.Principal = r.normalizeExistingPrincipal(a.Principal)
 		existingSet[a] = struct{}{}
 	}
 
@@ -109,6 +124,27 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	sort.Slice(steps, func(i, j int) bool { return steps[i].Change.Summary < steps[j].Change.Summary })
 
 	return reconcile.StepPlan[types.Acls]{Steps: steps}, nil
+}
+
+// normalizeExistingPrincipal rewrites a read-back "User:<numeric>" principal
+// to "User:sa-..." when <numeric> is a known service-account numeric id (see
+// Config.NumericToResourceID for why Confluent Cloud reports sa- principals as
+// numeric ids). Any principal that is not of the "User:<numeric>" shape, or
+// whose numeric id is absent from the map, is returned unchanged — the map is
+// empty in dry-run and for non-Confluent-Cloud targets, in which case this is a
+// no-op (prior behavior).
+func (r *Reconciler) normalizeExistingPrincipal(principal string) string {
+	if len(r.cfg.NumericToResourceID) == 0 {
+		return principal
+	}
+	numeric, ok := strings.CutPrefix(principal, "User:")
+	if !ok {
+		return principal
+	}
+	if resourceID, ok := r.cfg.NumericToResourceID[numeric]; ok {
+		return "User:" + resourceID
+	}
+	return principal
 }
 
 // Apply creates each missing ACL, continuing past per-ACL failures (collected

@@ -338,6 +338,7 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	}
 	saCfg.Principals = principals
 	saClient, saAuth := tgtClient, tgtCreds.Authenticator()
+	cloudCredsAvailable := false
 	if sa := m.Spec.ServiceAccounts; sa != nil && sa.AutoCreate {
 		cloudCreds, err := targets.LoadCredentials(m.Spec.Target.CloudCredentials)
 		if err != nil {
@@ -348,17 +349,39 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 			return nil, fmt.Errorf("building cloud HTTP client: %w", err)
 		}
 		saClient, saAuth = cloudClient, cloudCreds.Authenticator()
+		cloudCredsAvailable = true
 	}
-	saCfg.Client = msa.NewCCClient(ccIAMBaseURL, saClient, saAuth)
+	saCC := msa.NewCCClient(ccIAMBaseURL, saClient, saAuth)
+	saCfg.Client = saCC
 	saRec := msa.New(saCfg)
 
+	// Build the numeric-id -> "sa-" resource-id map for a Confluent Cloud
+	// target. Confluent Cloud accepts an ACL created with principal
+	// "User:sa-abc123" but returns it on read-back as the service account's
+	// internal numeric id ("User:1267635"); the acls reconciler uses this map to
+	// normalize read-back principals before diffing, without which it never
+	// detects an existing ACL as present and re-creates every ACL on each apply.
+	// The legacy /service_accounts endpoint (like IAM v2) rejects a Kafka cluster
+	// key, so this is only built when the Cloud/Global creds are in hand (the
+	// autoCreate path). A mapping-only or non-Confluent-Cloud run leaves the map
+	// empty, which disables normalization (prior behavior).
+	var numericToResourceID map[string]string
+	if m.Spec.Target.Type == manifest.TargetConfluentCloud && cloudCredsAvailable {
+		numericToResourceID, err = saCC.NumericToResourceID(cmd.Context())
+		if err != nil {
+			return nil, fmt.Errorf("mapping service-account numeric ids: %w", err)
+		}
+	}
+
 	// WRITE: ACLs on the target REST endpoint. ResolvedPrincipals is the SA
-	// reconciler's live map (late-bound at acls.Plan time).
+	// reconciler's live map (late-bound at acls.Plan time); NumericToResourceID
+	// normalizes read-back principals so present-detection is idempotent.
 	aclClient := macls.NewACLClient(m.Spec.Target.Kafka.RestEndpoint, m.Spec.Target.ClusterID, tgtClient, tgtCreds.Authenticator())
 	aclRec := macls.New(macls.Config{
-		Desired:            norm,
-		ResolvedPrincipals: saRec.ResolvedMap,
-		Client:             aclClient,
+		Desired:             norm,
+		ResolvedPrincipals:  saRec.ResolvedMap,
+		NumericToResourceID: numericToResourceID,
+		Client:              aclClient,
 	})
 
 	return []reconcile.Reconciler{saRec, aclRec}, nil

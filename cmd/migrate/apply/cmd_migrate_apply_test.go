@@ -520,6 +520,14 @@ func startACLCaptureTarget(t *testing.T, clusterID string) *aclCaptureTarget {
 		_, _ = w.Write([]byte(`{"data":[]}`)) // no existing account → plan a create
 	})
 
+	// Legacy /service_accounts (numeric-id -> "sa-" resource-id map): the acls
+	// reconciler uses this to normalize read-back principals. Return the SA this
+	// stub "creates" so NumericToResourceID has a realistic entry (the product
+	// calls this whenever the CC target's cloud creds are in hand).
+	mux.HandleFunc("/service_accounts", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"users":[{"id":100200300,"resource_id":"` + c.createdSAID + `","service_account":true}],"page_info":{"next_page_token":""}}`))
+	})
+
 	// Kafka REST v3 ACLs: GET (list → none) / POST (create).
 	mux.HandleFunc("/kafka/v3/clusters/"+clusterID+"/acls", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodPost {

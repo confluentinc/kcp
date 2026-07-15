@@ -56,6 +56,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -237,6 +238,13 @@ type aclTargetClients struct {
 	saAuth       clusterlink.Authenticator
 	restEndpoint string
 	clusterID    string
+	// hasCloud reports whether saHC/saAuth are the real Cloud/Global creds (a
+	// cloudCredsPath was supplied), rather than the cluster-creds fallback. The
+	// legacy /service_accounts endpoint numericToResourceID reads rejects a
+	// Kafka cluster key, so read-back principal normalization is only attempted
+	// when this is true; a mapping/validation-only test (cloudCredsPath == "")
+	// never needs it and must not 401 against that endpoint.
+	hasCloud bool
 }
 
 // newACLTargetClients builds an aclTargetClients. targetCredsPath is always
@@ -261,13 +269,103 @@ func newACLTargetClients(t *testing.T, cfg cloudConfig, targetCredsPath, cloudCr
 		require.NoError(t, err)
 		saHC, saAuth = cloudHC, cloudCreds.Authenticator()
 	}
-	return aclTargetClients{hc: hc, auth: creds.Authenticator(), saHC: saHC, saAuth: saAuth, restEndpoint: cfg.ccRestEndpoint, clusterID: cfg.ccClusterID}
+	return aclTargetClients{hc: hc, auth: creds.Authenticator(), saHC: saHC, saAuth: saAuth, restEndpoint: cfg.ccRestEndpoint, clusterID: cfg.ccClusterID, hasCloud: cloudCredsPath != ""}
+}
+
+// numericToResourceID builds the harness's OWN, INDEPENDENT numeric-id ->
+// "sa-" resource-id map by reading the CC LEGACY /service_accounts endpoint
+// directly (the only endpoint that exposes a service account's internal numeric
+// id). It deliberately does NOT call the product's
+// serviceaccounts.CCClient.NumericToResourceID, keeping this oracle independent
+// of the code under test (file header §9.6): Confluent Cloud accepts an ACL
+// created with principal "User:sa-..." but returns it on read-back as that
+// service account's numeric id (e.g. User:1267635), so the harness applies the
+// SAME numeric->sa- rewrite before diffing a read-back ACL set against a
+// "User:sa-..." oracle. Uses the Cloud/Global creds (saHC/saAuth) — the legacy
+// endpoint, like IAM v2, rejects a Kafka cluster key.
+func (c aclTargetClients) numericToResourceID(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	next := msa.DefaultBaseURL + "/service_accounts?page_size=100"
+	for next != "" {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
+		if err != nil {
+			return nil, err
+		}
+		c.saAuth.Apply(req)
+		res, err := c.saHC.Do(req)
+		if err != nil {
+			return nil, err
+		}
+		body, err := io.ReadAll(res.Body)
+		_ = res.Body.Close()
+		if err != nil {
+			return nil, err
+		}
+		if res.StatusCode < 200 || res.StatusCode >= 300 {
+			return nil, fmt.Errorf("unexpected status %d reading legacy CC service accounts: %s", res.StatusCode, body)
+		}
+		var page struct {
+			Users []struct {
+				ID             int64  `json:"id"`
+				ResourceID     string `json:"resource_id"`
+				ServiceAccount bool   `json:"service_account"`
+			} `json:"users"`
+			PageInfo struct {
+				NextPageToken string `json:"next_page_token"`
+			} `json:"page_info"`
+		}
+		if err := json.Unmarshal(body, &page); err != nil {
+			return nil, fmt.Errorf("unmarshalling legacy CC service account page: %w", err)
+		}
+		for _, u := range page.Users {
+			if !u.ServiceAccount || u.ResourceID == "" {
+				continue
+			}
+			out[strconv.FormatInt(u.ID, 10)] = u.ResourceID
+		}
+		if page.PageInfo.NextPageToken == "" {
+			break
+		}
+		next = msa.DefaultBaseURL + "/service_accounts?page_size=100&page_token=" + url.QueryEscape(page.PageInfo.NextPageToken)
+	}
+	return out, nil
+}
+
+// normalizeReadBackPrincipals rewrites every "User:<numeric>" principal in acls
+// to "User:<sa->" using m (numeric-id -> "sa-" resource-id). Principals not of
+// that shape, or whose numeric id is absent from m, are left unchanged. Returns
+// a new slice; the input is not mutated. This is the harness counterpart to the
+// product's acls.Reconciler.normalizeExistingPrincipal, written independently.
+func normalizeReadBackPrincipals(acls []types.Acls, m map[string]string) []types.Acls {
+	if len(m) == 0 {
+		return acls
+	}
+	out := make([]types.Acls, len(acls))
+	for i, a := range acls {
+		if numeric, ok := strings.CutPrefix(a.Principal, "User:"); ok {
+			if sa, ok := m[numeric]; ok {
+				a.Principal = "User:" + sa
+			}
+		}
+		out[i] = a
+	}
+	return out
 }
 
 func (c aclTargetClients) listACLs(t *testing.T) []types.Acls {
 	t.Helper()
 	acls, err := macls.NewACLClient(c.restEndpoint, c.clusterID, c.hc, c.auth).List(context.Background())
 	require.NoError(t, err)
+	// Normalize read-back principals CC reports as "User:<numeric>" back to
+	// "User:sa-..." so the oracle can diff against a "User:sa-..." expectation
+	// (see numericToResourceID). Only when Cloud/Global creds are in hand; a
+	// mapping/validation-only test (hasCloud == false) never needs it and must
+	// not call the legacy endpoint with a cluster key.
+	if c.hasCloud {
+		m, err := c.numericToResourceID(context.Background())
+		require.NoError(t, err)
+		acls = normalizeReadBackPrincipals(acls, m)
+	}
 	return acls
 }
 
@@ -304,6 +402,16 @@ func (c aclTargetClients) tryListACLs(t *testing.T) (acls []types.Acls, ok bool)
 	if err != nil {
 		t.Logf("cleanup: list CC acls failed, continuing: %v", err)
 		return nil, false
+	}
+	// Best-effort normalization (see listACLs): a numeric-map read failure in a
+	// teardown/defer path must not abort cleanup — fall back to the raw (numeric)
+	// principals rather than failing.
+	if c.hasCloud {
+		if m, err := c.numericToResourceID(context.Background()); err != nil {
+			t.Logf("cleanup: map CC service-account numeric ids failed, continuing without normalization: %v", err)
+		} else {
+			acls = normalizeReadBackPrincipals(acls, m)
+		}
 	}
 	return acls, true
 }

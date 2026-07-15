@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 )
@@ -18,6 +19,13 @@ import (
 const DefaultBaseURL = "https://api.confluent.cloud"
 
 const serviceAccountsPath = "/iam/v2/service-accounts"
+
+// legacyServiceAccountsPath is the Confluent Cloud LEGACY service-accounts
+// endpoint. Unlike serviceAccountsPath it is NOT under /iam/v2 — it lives at
+// the API root — and it is the only endpoint that exposes a service account's
+// internal NUMERIC id alongside its "sa-" resource_id. It takes the same
+// Cloud/Global-key auth as IAM v2 (a Kafka cluster key is rejected).
+const legacyServiceAccountsPath = "/service_accounts"
 
 // ServiceAccount represents a Confluent Cloud IAM v2 service account.
 type ServiceAccount struct {
@@ -102,6 +110,55 @@ func (c *ccClient) Create(ctx context.Context, name, description string) (*Servi
 	}
 
 	return nil, fmt.Errorf("failed to create service account %q: %w", name, err)
+}
+
+// NumericToResourceID returns a map of a service account's internal NUMERIC id
+// (as a string, e.g. "1267635") to its "sa-" resource id (e.g. "sa-abc123"),
+// for every service account in the org. It reads the LEGACY /service_accounts
+// endpoint (legacyServiceAccountsPath) — the only endpoint that exposes the
+// numeric id — applying the same per-request Authenticator every other call on
+// this client uses.
+//
+// This exists because Confluent Cloud accepts an ACL created with principal
+// "User:sa-abc123" but returns it on read-back as the service account's numeric
+// id (e.g. "User:1267635"). Callers use this map to rewrite a read-back
+// "User:<numeric>" principal back to "User:sa-..." before diffing against the
+// desired ACL set; without it, present-detection never matches and every ACL is
+// re-created on each apply (an idempotency/drift bug).
+//
+// Only entries with service_account:true and a non-empty resource_id are
+// included; other identities (human users, etc.) are left out.
+func (c *ccClient) NumericToResourceID(ctx context.Context) (map[string]string, error) {
+	out := map[string]string{}
+	// The legacy endpoint paginates via page_info.next_page_token; follow the
+	// cursor until it is empty. A typical org returns a single page.
+	path := legacyServiceAccountsPath + "?page_size=100"
+	for {
+		var response struct {
+			Users []struct {
+				ID             int64  `json:"id"`
+				ResourceID     string `json:"resource_id"`
+				ServiceAccount bool   `json:"service_account"`
+			} `json:"users"`
+			PageInfo struct {
+				NextPageToken string `json:"next_page_token"`
+			} `json:"page_info"`
+		}
+		if err := c.doRequest(ctx, http.MethodGet, path, nil, &response); err != nil {
+			return nil, fmt.Errorf("failed to list legacy service accounts: %w", err)
+		}
+		for _, u := range response.Users {
+			if !u.ServiceAccount || u.ResourceID == "" {
+				continue
+			}
+			out[strconv.FormatInt(u.ID, 10)] = u.ResourceID
+		}
+		if response.PageInfo.NextPageToken == "" {
+			break
+		}
+		path = legacyServiceAccountsPath + "?page_size=100&page_token=" + url.QueryEscape(response.PageInfo.NextPageToken)
+	}
+	return out, nil
 }
 
 // httpStatusError is returned by doRequest when the server responds with a
