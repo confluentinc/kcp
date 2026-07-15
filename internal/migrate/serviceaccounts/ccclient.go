@@ -130,10 +130,19 @@ func (c *ccClient) Create(ctx context.Context, name, description string) (*Servi
 // included; other identities (human users, etc.) are left out.
 func (c *ccClient) NumericToResourceID(ctx context.Context) (map[string]string, error) {
 	out := map[string]string{}
-	// The legacy endpoint paginates via page_info.next_page_token; follow the
-	// cursor until it is empty. A typical org returns a single page.
-	path := legacyServiceAccountsPath + "?page_size=100"
-	for {
+	const pageSize = 100
+	// The legacy endpoint paginates via page_info.page_token (NOT
+	// page_info.next_page_token, which this endpoint always returns empty);
+	// follow the cursor until it is empty. A typical org returns a single
+	// page. maxPages bounds the loop against a misbehaving/looping server
+	// (e.g. an endpoint that keeps echoing a non-empty token) rather than
+	// spinning forever.
+	const maxPages = 10000
+	path := legacyServiceAccountsPath + "?page_size=" + strconv.Itoa(pageSize)
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("legacy service accounts pagination exceeded %d pages without exhausting page_token", maxPages)
+		}
 		var response struct {
 			Users []struct {
 				ID             int64  `json:"id"`
@@ -141,11 +150,14 @@ func (c *ccClient) NumericToResourceID(ctx context.Context) (map[string]string, 
 				ServiceAccount bool   `json:"service_account"`
 			} `json:"users"`
 			PageInfo struct {
-				NextPageToken string `json:"next_page_token"`
+				PageToken string `json:"page_token"`
 			} `json:"page_info"`
 		}
 		if err := c.doRequest(ctx, http.MethodGet, path, nil, &response); err != nil {
 			return nil, fmt.Errorf("failed to list legacy service accounts: %w", err)
+		}
+		if len(response.Users) == 0 {
+			break
 		}
 		for _, u := range response.Users {
 			if !u.ServiceAccount || u.ResourceID == "" {
@@ -153,10 +165,10 @@ func (c *ccClient) NumericToResourceID(ctx context.Context) (map[string]string, 
 			}
 			out[strconv.FormatInt(u.ID, 10)] = u.ResourceID
 		}
-		if response.PageInfo.NextPageToken == "" {
+		if response.PageInfo.PageToken == "" {
 			break
 		}
-		path = legacyServiceAccountsPath + "?page_size=100&page_token=" + url.QueryEscape(response.PageInfo.NextPageToken)
+		path = legacyServiceAccountsPath + "?page_size=" + strconv.Itoa(pageSize) + "&page_token=" + url.QueryEscape(response.PageInfo.PageToken)
 	}
 	return out, nil
 }

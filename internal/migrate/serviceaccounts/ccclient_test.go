@@ -84,7 +84,11 @@ func TestCCClient_Create_409ThenFound(t *testing.T) {
 // it must hit the ROOT /service_accounts path (not /iam/v2/...), apply the
 // per-request auth, return only service_account:true entries (with a non-empty
 // resource_id) keyed by their numeric id as a string, and follow the
-// page_info.next_page_token cursor across pages.
+// page_info.page_token cursor across pages (NOT page_info.next_page_token,
+// which this endpoint always returns empty — this is a regression test for
+// that exact bug: reading the wrong field silently truncates the result to
+// page 1, which is why this test asserts BOTH pages' entries end up in the
+// returned map).
 func TestCCClient_NumericToResourceID(t *testing.T) {
 	var calls int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -95,16 +99,18 @@ func TestCCClient_NumericToResourceID(t *testing.T) {
 		switch r.URL.Query().Get("page_token") {
 		case "":
 			// First page: one service account, one human user (dropped), and a
-			// next-page cursor.
+			// next-page cursor advertised via page_info.page_token. Also sets
+			// next_page_token (always empty on the real endpoint) to prove the
+			// client ignores it rather than terminating early.
 			_, _ = io.WriteString(w, `{"users":[
 				{"id":1267635,"resource_id":"sa-21d32o","service_account":true},
 				{"id":42,"resource_id":"","service_account":false}
-			],"page_info":{"next_page_token":"tok2"}}`)
+			],"page_info":{"next_page_token":"","page_token":"tok2"}}`)
 		case "tok2":
 			// Second (final) page: another service account, empty cursor.
 			_, _ = io.WriteString(w, `{"users":[
 				{"id":9988776,"resource_id":"sa-other1","service_account":true}
-			],"page_info":{"next_page_token":""}}`)
+			],"page_info":{"next_page_token":"","page_token":""}}`)
 		default:
 			t.Fatalf("unexpected page_token: %q", r.URL.Query().Get("page_token"))
 		}
@@ -114,11 +120,11 @@ func TestCCClient_NumericToResourceID(t *testing.T) {
 	c := NewCCClient(srv.URL, srv.Client(), testAuth)
 	got, err := c.NumericToResourceID(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 2, calls, "must follow the next_page_token cursor across both pages")
+	require.Equal(t, 2, calls, "must follow the page_token cursor across both pages")
 	require.Equal(t, map[string]string{
 		"1267635": "sa-21d32o",
 		"9988776": "sa-other1",
-	}, got, "only service_account:true entries, keyed by numeric id as a string")
+	}, got, "only service_account:true entries, keyed by numeric id as a string, from BOTH pages")
 }
 
 // TestCCClient_NumericToResourceID_Error surfaces a non-2xx from the legacy

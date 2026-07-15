@@ -16,12 +16,12 @@
 // under `make test-go`, `make test-migrate` (the docker matrix), or any CI
 // run without live creds.
 //
-// The oracle (design §9.6 — avoid tautology): every scenario's expected
-// outcome is either (a) a literal, hand-decided classification — "this
+// The expected result (design §9.6 — avoid tautology): every scenario's
+// expected outcome is either (a) a literal, hand-decided classification — "this
 // specific seeded tuple is created verbatim" / "dropped entirely" / "host
 // normalized to *" — reasoned from the design doc, not from calling
 // NormalizeForCC and checking it against itself; or (b) for the
-// principal-shape/SA-naming matrix, computed by oracleDeriveDisplayName
+// principal-shape/SA-naming matrix, computed by expectedDisplayName
 // below, a SEPARATE re-implementation of design §6's naming rule written
 // directly from the design text. Neither path calls into
 // internal/migrate/acls' NormalizeForCC or internal/migrate/serviceaccounts'
@@ -70,7 +70,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Independent oracle: SA display-name derivation (design §6 / §9.4 / §9.6).
+// Independently-computed expected result: SA display-name derivation
+// (design §6 / §9.4 / §9.6).
 //
 // This is a SEPARATE re-implementation of the naming rule, transcribed
 // directly from the design document's prose — it does NOT call
@@ -85,49 +86,49 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	oracleValidNameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._:-]*[A-Za-z0-9])?$`)
-	oracleDisallowed  = regexp.MustCompile(`[^A-Za-z0-9._:-]`)
-	oracleEdgeTrim    = regexp.MustCompile(`^[^A-Za-z0-9]+|[^A-Za-z0-9]+$`)
+	expectedValidNameRe = regexp.MustCompile(`^[A-Za-z0-9]([A-Za-z0-9._:-]*[A-Za-z0-9])?$`)
+	expectedDisallowed  = regexp.MustCompile(`[^A-Za-z0-9._:-]`)
+	expectedEdgeTrim    = regexp.MustCompile(`^[^A-Za-z0-9]+|[^A-Za-z0-9]+$`)
 )
 
-// oracleIsValidCCName reports whether s (already stripped of "User:") is a
+// expectedIsValidCCName reports whether s (already stripped of "User:") is a
 // valid Confluent Cloud service-account display_name verbatim: starts and
 // ends alphanumeric, interior chars restricted to [A-Za-z0-9._:-], length <=
 // 64.
-func oracleIsValidCCName(s string) bool {
-	return s != "" && len(s) <= 64 && oracleValidNameRe.MatchString(s)
+func expectedIsValidCCName(s string) bool {
+	return s != "" && len(s) <= 64 && expectedValidNameRe.MatchString(s)
 }
 
-// oracleHash8 is the independent 8-hex-char (32-bit) suffix: sha256 of the
+// expectedHash8 is the independent 8-hex-char (32-bit) suffix: sha256 of the
 // FULL principal string exactly as passed in (i.e. including its "User:"
 // prefix, per design §6's "computed over the FULL original principal").
-func oracleHash8(principal string) string {
+func expectedHash8(principal string) string {
 	sum := sha256.Sum256([]byte(principal))
 	return hex.EncodeToString(sum[:])[:8]
 }
 
-// oracleDeriveDisplayName computes the expected CC service-account
+// expectedDisplayName computes the expected CC service-account
 // display_name for a source principal per design §6's check-then-hash rule.
-func oracleDeriveDisplayName(principal string) string {
+func expectedDisplayName(principal string) string {
 	name := strings.TrimPrefix(principal, "User:")
-	if oracleIsValidCCName(name) {
+	if expectedIsValidCCName(name) {
 		return name
 	}
 	const maxLen = 64
-	base := oracleEdgeTrim.ReplaceAllString(oracleDisallowed.ReplaceAllString(name, "-"), "")
+	base := expectedEdgeTrim.ReplaceAllString(expectedDisallowed.ReplaceAllString(name, "-"), "")
 	if len(base) > maxLen-9 { // 9 = "-" + 8 hex
 		base = strings.TrimRight(base[:maxLen-9], "._:-")
 	}
 	if base == "" {
 		base = "sa"
 	}
-	return base + "-" + oracleHash8(principal)
+	return base + "-" + expectedHash8(principal)
 }
 
-// oracleDescriptionFor is the audit/collision-check description every
+// expectedDescriptionFor is the audit/collision-check description every
 // auto-created service account must carry (design §6), written here as a
 // literal rather than imported from serviceaccounts.descriptionFor.
-func oracleDescriptionFor(principal string) string {
+func expectedDescriptionFor(principal string) string {
 	return "kcp:source-principal=" + principal
 }
 
@@ -276,17 +277,26 @@ func newACLTargetClients(t *testing.T, cfg cloudConfig, targetCredsPath, cloudCr
 // "sa-" resource-id map by reading the CC LEGACY /service_accounts endpoint
 // directly (the only endpoint that exposes a service account's internal numeric
 // id). It deliberately does NOT call the product's
-// serviceaccounts.CCClient.NumericToResourceID, keeping this oracle independent
-// of the code under test (file header §9.6): Confluent Cloud accepts an ACL
-// created with principal "User:sa-..." but returns it on read-back as that
-// service account's numeric id (e.g. User:1267635), so the harness applies the
-// SAME numeric->sa- rewrite before diffing a read-back ACL set against a
-// "User:sa-..." oracle. Uses the Cloud/Global creds (saHC/saAuth) — the legacy
-// endpoint, like IAM v2, rejects a Kafka cluster key.
+// serviceaccounts.CCClient.NumericToResourceID, keeping this expected-result
+// computation independent of the code under test (file header §9.6):
+// Confluent Cloud accepts an ACL created with principal "User:sa-..." but
+// returns it on read-back as that service account's numeric id (e.g.
+// User:1267635), so the harness applies the SAME numeric->sa- rewrite before
+// diffing a read-back ACL set against a "User:sa-..." expectation. Uses the
+// Cloud/Global creds (saHC/saAuth) — the legacy endpoint, like IAM v2, rejects
+// a Kafka cluster key.
 func (c aclTargetClients) numericToResourceID(ctx context.Context) (map[string]string, error) {
 	out := map[string]string{}
+	// The legacy endpoint paginates via page_info.page_token (NOT
+	// page_info.next_page_token, which this endpoint always returns empty);
+	// follow the cursor until it is empty. maxPages bounds the loop against a
+	// misbehaving/looping server rather than spinning forever.
+	const maxPages = 10000
 	next := msa.DefaultBaseURL + "/service_accounts?page_size=100"
-	for next != "" {
+	for page := 0; next != ""; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("legacy service accounts pagination exceeded %d pages without exhausting page_token", maxPages)
+		}
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, next, nil)
 		if err != nil {
 			return nil, err
@@ -304,29 +314,32 @@ func (c aclTargetClients) numericToResourceID(ctx context.Context) (map[string]s
 		if res.StatusCode < 200 || res.StatusCode >= 300 {
 			return nil, fmt.Errorf("unexpected status %d reading legacy CC service accounts: %s", res.StatusCode, body)
 		}
-		var page struct {
+		var respPage struct {
 			Users []struct {
 				ID             int64  `json:"id"`
 				ResourceID     string `json:"resource_id"`
 				ServiceAccount bool   `json:"service_account"`
 			} `json:"users"`
 			PageInfo struct {
-				NextPageToken string `json:"next_page_token"`
+				PageToken string `json:"page_token"`
 			} `json:"page_info"`
 		}
-		if err := json.Unmarshal(body, &page); err != nil {
+		if err := json.Unmarshal(body, &respPage); err != nil {
 			return nil, fmt.Errorf("unmarshalling legacy CC service account page: %w", err)
 		}
-		for _, u := range page.Users {
+		if len(respPage.Users) == 0 {
+			break
+		}
+		for _, u := range respPage.Users {
 			if !u.ServiceAccount || u.ResourceID == "" {
 				continue
 			}
 			out[strconv.FormatInt(u.ID, 10)] = u.ResourceID
 		}
-		if page.PageInfo.NextPageToken == "" {
+		if respPage.PageInfo.PageToken == "" {
 			break
 		}
-		next = msa.DefaultBaseURL + "/service_accounts?page_size=100&page_token=" + url.QueryEscape(page.PageInfo.NextPageToken)
+		next = msa.DefaultBaseURL + "/service_accounts?page_size=100&page_token=" + url.QueryEscape(respPage.PageInfo.PageToken)
 	}
 	return out, nil
 }
@@ -357,8 +370,8 @@ func (c aclTargetClients) listACLs(t *testing.T) []types.Acls {
 	acls, err := macls.NewACLClient(c.restEndpoint, c.clusterID, c.hc, c.auth).List(context.Background())
 	require.NoError(t, err)
 	// Normalize read-back principals CC reports as "User:<numeric>" back to
-	// "User:sa-..." so the oracle can diff against a "User:sa-..." expectation
-	// (see numericToResourceID). Only when Cloud/Global creds are in hand; a
+	// "User:sa-..." so the diff can compare against a "User:sa-..." expected
+	// result (see numericToResourceID). Only when Cloud/Global creds are in hand; a
 	// mapping/validation-only test (hasCloud == false) never needs it and must
 	// not call the legacy endpoint with a cluster key.
 	if c.hasCloud {
@@ -480,8 +493,8 @@ func aclsForResourceName(all []types.Acls, resourceName string) []types.Acls {
 // aclsForResourceNames scopes a raw CC ACL read-back to only the given
 // resource names — the run-scoping half of Fix 1 (see runACLScenario's call
 // site): filtering out everything the CURRENT scenario didn't itself seed
-// keeps the oracle diff immune to residue other/earlier runs left on the
-// shared live CC cluster under a reused literal resource name.
+// keeps the expected-vs-actual diff immune to residue other/earlier runs left
+// on the shared live CC cluster under a reused literal resource name.
 func aclsForResourceNames(all []types.Acls, resourceNames []string) []types.Acls {
 	set := make(map[string]bool, len(resourceNames))
 	for _, n := range resourceNames {
@@ -875,7 +888,7 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 		defer deleteNativeACL(t, admin, sd.ResourceType, sd.ResourceName, sd.PatternType, principal, sd.Host, sd.Operation, sd.Permission)
 	}
 
-	displayName := oracleDeriveDisplayName(principal)
+	displayName := expectedDisplayName(principal)
 	defer cc.cleanupSAAndItsACLs(t, displayName)
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-"+s.name), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
@@ -907,7 +920,7 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 
 	sa := cc.findSA(t, displayName)
 	require.NotNil(t, sa, "expected a service account named %q for principal %q", displayName, principal)
-	require.Equal(t, oracleDescriptionFor(principal), sa.Description)
+	require.Equal(t, expectedDescriptionFor(principal), sa.Description)
 
 	resolved := "User:" + sa.ID
 	var expected []types.Acls
@@ -916,13 +929,13 @@ func runACLScenario(t *testing.T, cfg cloudConfig, cc aclTargetClients, admin sa
 		expected = append(expected, canonicalACL(sd.ResourceType, sd.ResourceName, sd.PatternType, resolved, "*", sd.Operation, sd.Permission))
 	}
 	// Scope the read-back to THIS run's own resources before diffing against
-	// the oracle: several scenarios in nativeMatrixScenarios/
+	// the expected result: several scenarios in nativeMatrixScenarios/
 	// principalMatrixScenarios reuse the same literal resource name (e.g.
 	// "kcpacl-topicA") across rows, and the shared live CC cluster
 	// accumulates ACLs from other/earlier runs (see the file header's
 	// teardown-always-completes invariant, and the fix for the SA-delete 401
 	// above) — an unscoped list would let those show up as "extra elements"
-	// against this scenario's oracle. Restricting to the resource name(s)
+	// against this scenario's expected result. Restricting to the resource name(s)
 	// THIS scenario actually seeded, on top of the exact-principal filter
 	// below (resolved is this run's freshly created service account, never
 	// reused), makes the comparison immune to that residue.
@@ -1028,8 +1041,8 @@ func TestACLsLive_PrincipalMatrix_CollisionPair(t *testing.T) {
 	principalA := "User:" + base + "-CN=" + longCommon + "-alpha"
 	principalB := "User:" + base + "-CN=" + longCommon + "-beta"
 
-	nameA := oracleDeriveDisplayName(principalA)
-	nameB := oracleDeriveDisplayName(principalB)
+	nameA := expectedDisplayName(principalA)
+	nameB := expectedDisplayName(principalB)
 	require.Len(t, nameA, 64)
 	require.Len(t, nameB, 64)
 	require.Equal(t, nameA[:55], nameB[:55], "test setup: expected both derived names to share an identical truncated base (the collision this scenario is meant to exercise)")
@@ -1057,8 +1070,8 @@ func TestACLsLive_PrincipalMatrix_CollisionPair(t *testing.T) {
 	require.NotNil(t, saA)
 	require.NotNil(t, saB)
 	require.NotEqual(t, saA.ID, saB.ID, "distinct principals must never resolve to the same service account")
-	require.Equal(t, oracleDescriptionFor(principalA), saA.Description)
-	require.Equal(t, oracleDescriptionFor(principalB), saB.Description)
+	require.Equal(t, expectedDescriptionFor(principalA), saA.Description)
+	require.Equal(t, expectedDescriptionFor(principalB), saB.Description)
 }
 
 // TestACLsLive_PrincipalMatrix_WildcardAndAnonymousSkip covers the
@@ -1313,7 +1326,7 @@ func TestACLsLive_DryRunThenApplyThenIdempotent(t *testing.T) {
 	seedNativeACL(t, admin, sarama.AclResourceTopic, resource, sarama.AclPatternLiteral, principal, "*", sarama.AclOperationRead, sarama.AclPermissionAllow)
 	defer deleteNativeACL(t, admin, sarama.AclResourceTopic, resource, sarama.AclPatternLiteral, principal, "*", sarama.AclOperationRead, sarama.AclPermissionAllow)
 
-	displayName := oracleDeriveDisplayName(principal)
+	displayName := expectedDisplayName(principal)
 	defer cc.cleanupSAAndItsACLs(t, displayName)
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-dryrun"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
@@ -1347,7 +1360,7 @@ func TestACLsLive_DryRunThenApplyThenIdempotent(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Opt-in residue sweep (shared-cluster hygiene, not a scenario/oracle test).
+// Opt-in residue sweep (shared-cluster hygiene, not a scenario/expected-result test).
 //
 // Every scenario in this file tears down exactly what it created, but a long
 // enough history of a broken teardown path (the SA-delete-via-cluster-key 401
