@@ -424,13 +424,12 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 	var sourceCallCount int64
 
 	overrides := orchestratorOverrides{
+		// With detection enabled the fence rollout waits via WaitForGatewayPods
+		// (the builder's default, which succeeds), so WaitForGatewayReady is
+		// reached only by the unfence rollout — fail it to exercise the
+		// "unfence never converges" path.
 		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
-			n := atomic.AddInt64(&waitCallCount, 1)
-			if n == 1 {
-				// First wait is the fence rollout — succeed
-				return nil
-			}
-			// Second wait is the unfence rollout — fail
+			atomic.AddInt64(&waitCallCount, 1)
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
@@ -453,8 +452,8 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
-	assert.Equal(t, int64(2), atomic.LoadInt64(&waitCallCount),
-		"gateway readiness should be awaited for both the fence and the unfence rollout")
+	assert.Equal(t, int64(1), atomic.LoadInt64(&waitCallCount),
+		"the unfence rollout readiness should be awaited exactly once (the fence rollout waits via WaitForGatewayPods when detection is enabled)")
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateOffsetSyncPaused, persisted.CurrentState,
