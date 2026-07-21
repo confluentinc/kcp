@@ -32,13 +32,13 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
             <div className="text-2xl font-bold text-foreground">
               {kafkaAdminInfo.topics.summary.topics}
             </div>
-            <div className="text-sm text-muted-foreground">Total Topics</div>
+            <div className="text-sm text-muted-foreground">Total Non-Internal Topics</div>
           </div>
           <div className="bg-secondary rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-foreground">
               {kafkaAdminInfo.topics.summary.total_partitions}
             </div>
-            <div className="text-sm text-muted-foreground">Total Partitions</div>
+            <div className="text-sm text-muted-foreground">Total Non-Internal Partitions</div>
           </div>
           <div className="bg-secondary rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-foreground">
@@ -73,7 +73,7 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
                   Replication Factor
                 </th>
                 <th className="text-center py-3 font-medium text-foreground">
-                  Type
+                  Cleanup Policy
                 </th>
                 <th className="text-center py-3 font-medium text-foreground">
                   Retention (ms)
