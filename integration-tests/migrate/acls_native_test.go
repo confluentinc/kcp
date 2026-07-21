@@ -354,9 +354,13 @@ type aclManifestOpts struct {
 	mapping    map[string]string
 	include    []string
 	exclude    []string
-	// cloudCreds, when non-empty, is written as spec.target.cloudCredentials.
-	// autoCreate manifests must set it (IAM v2 rejects the Kafka cluster key);
-	// mapping/validation-only manifests leave it empty.
+	// cloudCreds, when non-empty, is written verbatim as
+	// spec.target.cloudCredentials. Any acls→confluent-cloud manifest requires
+	// it (validation now demands cloudCredentials for spec.acls on a CC target,
+	// because the acls reconciler needs the Cloud/Global key to reconcile CC's
+	// numeric ACL principals for idempotency), so writeACLManifest ALWAYS emits
+	// a cloudCredentials line — falling back to a freshly written Cloud/Global
+	// creds file (from cfg) when the caller leaves this empty.
 	cloudCreds string
 }
 
@@ -387,9 +391,14 @@ func writeACLManifest(t *testing.T, dir, name string, cfg cloudConfig, sourceBoo
 	b.WriteString("apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: " + name + "\nspec:\n")
 	b.WriteString("  source:\n    type: msk\n    bootstrapServers: " + yamlList(sourceBootstrap) + "\n    credentials: " + sourceCreds + "\n")
 	b.WriteString("  target:\n    type: confluent-cloud\n    clusterId: " + cfg.ccClusterID + "\n    clusterCredentials: " + targetCreds + "\n")
-	if opts.cloudCreds != "" {
-		b.WriteString("    cloudCredentials: " + opts.cloudCreds + "\n")
+	// Any acls→CC manifest requires cloudCredentials (see aclManifestOpts): emit
+	// it unconditionally, falling back to a freshly written Cloud/Global creds
+	// file when the caller didn't pass one.
+	cloudCreds := opts.cloudCreds
+	if cloudCreds == "" {
+		cloudCreds = writeCloudCredsFile(t, dir, cfg)
 	}
+	b.WriteString("    cloudCredentials: " + cloudCreds + "\n")
 	b.WriteString("    kafka:\n      restEndpoint: " + cfg.ccRestEndpoint + "\n")
 	b.WriteString(fmt.Sprintf("  serviceAccounts:\n    autoCreate: %v\n", opts.autoCreate))
 	if len(opts.mapping) > 0 {
@@ -931,9 +940,10 @@ func TestACLsLive_PrincipalMatrix_WildcardAndAnonymousSkip(t *testing.T) {
 // sa- (design §6/§12 decision 3).
 func TestACLsLive_MappingOverride(t *testing.T) {
 	cfg := loadCloudConfig(t)
-	// Creating/tearing down the pre-existing SA uses the SA helper client (IAM
-	// v2), so this needs the Cloud/Global key even though the manifest itself
-	// uses mapping, not autoCreate.
+	// Needs the Cloud/Global key on two counts even though the manifest uses
+	// mapping, not autoCreate: creating/tearing down the pre-existing SA uses the
+	// SA helper client (IAM v2), and the apply itself now builds the numeric ACL
+	// principal map (for idempotency) via the Cloud/Global key.
 	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
@@ -970,6 +980,7 @@ func TestACLsLive_MappingOverride(t *testing.T) {
 
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-mapping"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
 		autoCreate: false, // mapping-only: resolution works with no autoCreate
+		cloudCreds: cloudCreds,
 		mapping: map[string]string{
 			normalPrincipal: preexisting.ID,
 			anonPrincipal:   preexisting.ID,
@@ -980,7 +991,9 @@ func TestACLsLive_MappingOverride(t *testing.T) {
 	})
 	out, err := runKCP(t, mf)
 	require.NoError(t, err, out)
-	require.Contains(t, out, "serviceAccounts: 0 created, 0 unchanged, 0 drift, 0 failed", out)
+	// Both source principals map to the SAME pre-existing service account, so
+	// the reconciler reports one "unchanged" line per principal (2), none created.
+	require.Contains(t, out, "serviceAccounts: 0 created, 2 unchanged, 0 drift, 0 failed", out)
 	require.Contains(t, out, "acls: 2 created, 0 unchanged, 0 drift, 0 failed", out)
 
 	// Both ACLs landed, each host-normalized, and both under the SAME resolved
@@ -1009,13 +1022,17 @@ func TestACLsLive_MappingOverride(t *testing.T) {
 // question) — only that KCP does not reject the id on its own account.
 func TestACLsLive_MappingFormats_UAndPoolPrefixesAccepted(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	// The manifest carries cloudCredentials (validation requires it for spec.acls
+	// on a CC target, and apply builds the numeric-principal map via the
+	// Cloud/Global key), so this needs the cloud key.
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
-	// No cloud creds: the mapping values (u-/pool- ids) are never looked up or
-	// created via the SA client, only asserted against via the cluster-creds ACL
-	// client, so saHC/saAuth harmlessly fall back to the cluster creds.
+	// The test's OWN read-back client never touches the SA/IAM v2 surface (its
+	// mapping values are only asserted via the cluster-creds ACL client), so
+	// saHC/saAuth harmlessly fall back to the cluster creds here.
 	cc := newACLTargetClients(t, cfg, target, "")
 
 	token := uniqueACLToken()
@@ -1062,6 +1079,10 @@ func TestACLsLive_MappingFormats_UAndPoolPrefixesAccepted(t *testing.T) {
 // mapping-value prefix is rejected at manifest validation, before any live call.
 func TestACLsLive_MappingInvalidPrefix_ValidationError(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	// The manifest carries valid cloudCredentials so the new "cloudCredentials
+	// required for spec.acls on a CC target" rule doesn't mask the intended
+	// invalid-mapping-prefix validation error.
+	requireCloudKeys(t, cfg)
 	dir := t.TempDir()
 	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
 	mf := writeACLManifest(t, dir, uniqueLinkName("kcpacl-badmap"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, aclManifestOpts{
@@ -1081,6 +1102,10 @@ func TestACLsLive_MappingInvalidPrefix_ValidationError(t *testing.T) {
 // discovered, and only fails, once ReadNativeACLs has listed it from the source.
 func TestACLsLive_AutoCreateFalse_UnmappedPrincipal_HardError(t *testing.T) {
 	cfg := loadCloudConfig(t)
+	// The manifest carries valid cloudCredentials (required for spec.acls on a CC
+	// target) so validation passes and the run reaches the intended runtime
+	// hard-error on the unmapped principal, not a validation error.
+	requireCloudKeys(t, cfg)
 	admin := newMSKIAMAdmin(t, splitCSV(cfg.mskIAMBootstrap), cfg.mskRegion)
 	defer func() { _ = admin.Close() }()
 	dir := t.TempDir()
