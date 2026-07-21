@@ -15,7 +15,7 @@ var updateSchemaGolden = false // flip to true locally to regenerate, then back
 // walkSchema returns sorted "path:jsontag" lines for every json-tagged field
 // reachable from t, so any add/remove/rename/re-parent shows up as a diff.
 func walkSchema(t reflect.Type, prefix string, seen map[reflect.Type]bool, out *[]string) {
-	for t.Kind() == reflect.Ptr || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
+	for t.Kind() == reflect.Pointer || t.Kind() == reflect.Slice || t.Kind() == reflect.Array {
 		t = t.Elem()
 	}
 	if t.Kind() == reflect.Map {
