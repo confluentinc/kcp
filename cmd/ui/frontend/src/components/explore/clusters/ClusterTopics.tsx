@@ -1,4 +1,4 @@
-import { formatRetentionTime } from '@/lib/utils'
+import { formatRetentionTime, parseCleanupPolicies } from '@/lib/utils'
 import type { KafkaAdminInfo, Topic } from '@/types'
 
 interface ClusterTopicsProps {
@@ -100,15 +100,22 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
                     {topic.replication_factor}
                   </td>
                   <td className="py-3 text-center">
-                    <span
-                      className={`px-2 py-1 text-xs rounded ${
-                        topic.configurations['cleanup.policy'] === 'compact'
-                          ? 'bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent'
-                          : 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200'
-                      }`}
-                    >
-                      {topic.configurations['cleanup.policy'] === 'compact' ? 'Compact' : 'Delete'}
-                    </span>
+                    <div className="flex items-center justify-center gap-1">
+                      {parseCleanupPolicies(topic.configurations['cleanup.policy']).includes(
+                        'compact'
+                      ) && (
+                        <span className="px-2 py-1 text-xs rounded bg-blue-100 text-blue-800 dark:bg-accent/20 dark:text-accent">
+                          Compact
+                        </span>
+                      )}
+                      {parseCleanupPolicies(topic.configurations['cleanup.policy']).includes(
+                        'delete'
+                      ) && (
+                        <span className="px-2 py-1 text-xs rounded bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                          Delete
+                        </span>
+                      )}
+                    </div>
                   </td>
                   <td className="py-3 text-center text-foreground">
                     <div className="relative group">
