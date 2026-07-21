@@ -11,6 +11,7 @@ spec:
     type: confluent-cloud
     clusterId: lkc-xxxxx
     clusterCredentials: ./target-creds.yaml
+    cloudCredentials: ./cloud-creds.yaml
     kafka:
       restEndpoint: https://pkc-1n6m13.us-east-1.aws.confluent.cloud:443
   clusterLink:

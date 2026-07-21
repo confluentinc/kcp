@@ -139,12 +139,14 @@ func TestValidate_CloudCredentialsCConly(t *testing.T) {
 }
 
 // TestValidate_CloudCredentialsRequiredForAutoCreate requires cloudCredentials
-// when serviceAccounts.autoCreate is true (auto-create calls IAM v2).
+// when serviceAccounts.autoCreate is true — a subset of the broader "spec.acls
+// on a confluent-cloud target requires cloudCredentials" rule (auto-create also
+// calls IAM v2).
 func TestValidate_CloudCredentialsRequiredForAutoCreate(t *testing.T) {
 	m := baseCCTargetManifest(t)
 	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
-	require.True(t, errorContains(m.Validate(), "spec.target.cloudCredentials: required when spec.serviceAccounts.autoCreate is true"))
+	require.True(t, errorContains(m.Validate(), "spec.target.cloudCredentials: required for spec.acls on a confluent-cloud target"))
 }
 
 // TestValidate_CloudCredentialsForAutoCreate_Valid confirms a CC target with
@@ -157,11 +159,23 @@ func TestValidate_CloudCredentialsForAutoCreate_Valid(t *testing.T) {
 	require.Empty(t, m.Validate())
 }
 
-// TestValidate_CloudCredentialsNotRequiredForMappingOnly confirms a mapping-only
-// serviceAccounts block (autoCreate:false) validates without cloudCredentials —
-// no IAM v2 call is made.
-func TestValidate_CloudCredentialsNotRequiredForMappingOnly(t *testing.T) {
+// TestValidate_CloudCredentialsRequiredForMappingOnlyACLs confirms a mapping-only
+// serviceAccounts block (autoCreate:false) STILL requires cloudCredentials once
+// spec.acls is present on a confluent-cloud target: Confluent Cloud returns
+// numeric ACL principals for mapped accounts too, so the acls reconciler needs
+// the Cloud/Global key to build its numeric map and stay idempotent.
+func TestValidate_CloudCredentialsRequiredForMappingOnlyACLs(t *testing.T) {
 	m := baseCCTargetManifest(t)
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: false, Mapping: map[string]string{"User:x": "sa-1"}}
+	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	require.True(t, errorContains(m.Validate(), "spec.target.cloudCredentials: required for spec.acls on a confluent-cloud target"))
+}
+
+// TestValidate_CloudCredentialsForMappingOnlyACLs_Valid confirms the same
+// mapping-only acls manifest validates clean once cloudCredentials is set.
+func TestValidate_CloudCredentialsForMappingOnlyACLs_Valid(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.Target.CloudCredentials = "./cloud.yaml"
 	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: false, Mapping: map[string]string{"User:x": "sa-1"}}
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
 	require.Empty(t, m.Validate())
@@ -603,6 +617,9 @@ func TestValidate_ACLsOnlyManifestAccepted(t *testing.T) {
 	m := baseCCTargetManifest(t)
 	m.Spec.ClusterLink, m.Spec.Topics = nil, nil
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	// spec.acls on a confluent-cloud target requires the Cloud/Global key (for
+	// the acls reconciler's numeric-principal map).
+	m.Spec.Target.CloudCredentials = "./cloud.yaml"
 	require.Empty(t, m.Validate())
 }
 

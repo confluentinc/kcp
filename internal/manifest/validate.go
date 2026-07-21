@@ -143,14 +143,18 @@ func (m *Migration) Validate() []error {
 	if blank(m.Spec.Target.ClusterCredentials) {
 		add("spec.target.clusterCredentials: must not be empty")
 	}
-	// cloudCredentials is the CC Cloud/Global API key, used only by the
-	// serviceAccounts reconciler (IAM v2). It is confluent-cloud-only, and
-	// required precisely when serviceAccounts.autoCreate provisions accounts.
+	// cloudCredentials is the CC Cloud/Global API key (distinct from the Kafka
+	// cluster key). It is confluent-cloud-only, and required whenever spec.acls
+	// is present on a confluent-cloud target: the acls reconciler uses it to map
+	// Confluent Cloud's numeric read-back principals back to "sa-" ids so
+	// re-apply stays idempotent — needed whether service accounts are
+	// auto-created or mapped to pre-existing ids (serviceAccounts.autoCreate is a
+	// subset of this, as auto-create also calls the IAM v2 API).
 	if !blank(m.Spec.Target.CloudCredentials) && m.Spec.Target.Type != TargetConfluentCloud {
 		add("spec.target.cloudCredentials: only valid when spec.target.type is %q", TargetConfluentCloud)
 	}
-	if sa := m.Spec.ServiceAccounts; sa != nil && sa.AutoCreate && blank(m.Spec.Target.CloudCredentials) {
-		add("spec.target.cloudCredentials: required when spec.serviceAccounts.autoCreate is true (service-account auto-create calls the Confluent Cloud IAM v2 API, which needs a Cloud/Global API key)")
+	if m.Spec.ACLs != nil && m.Spec.Target.Type == TargetConfluentCloud && blank(m.Spec.Target.CloudCredentials) {
+		add("spec.target.cloudCredentials: required for spec.acls on a confluent-cloud target (used to reconcile Confluent Cloud's numeric ACL principals for idempotency)")
 	}
 
 	if t := m.Spec.Topics; t != nil {

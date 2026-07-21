@@ -325,13 +325,16 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	principals := distinctPrincipals(norm)
 
 	// PROVISION: service accounts on the Confluent Cloud target. The IAM v2 API
-	// (ccIAMBaseURL / api.confluent.cloud) requires a Cloud/Global API key —
-	// distinct from the Kafka cluster API key the ACL client uses — so the SA
-	// client is built from spec.target.cloudCredentials, not the cluster
-	// credential. Cloud creds are loaded ONLY when serviceAccounts.autoCreate is
-	// set (the only path that calls IAM v2); a mapping-only manifest resolves
-	// principals with no client call, so it keeps the cluster client as a
-	// harmless fallback and never requires cloudCredentials.
+	// (ccIAMBaseURL / api.confluent.cloud) and the legacy /service_accounts list
+	// both require a Cloud/Global API key — distinct from the Kafka cluster API
+	// key the ACL client uses — so the SA client is built from
+	// spec.target.cloudCredentials, not the cluster credential. For a
+	// Confluent Cloud target the Cloud/Global creds are loaded for EVERY
+	// spec.acls run (this function's entry condition), because they serve two
+	// purposes: serviceAccounts.autoCreate provisions accounts via IAM v2, and —
+	// regardless of autoCreate — the acls reconciler needs the numeric-id map
+	// (built below) to stay idempotent. A non-Confluent-Cloud target keeps the
+	// cluster client as a harmless fallback and never loads cloud creds.
 	var saCfg msa.Config
 	if sa := m.Spec.ServiceAccounts; sa != nil {
 		saCfg = msa.Config{AutoCreate: sa.AutoCreate, Mapping: sa.Mapping}
@@ -339,7 +342,7 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	saCfg.Principals = principals
 	saClient, saAuth := tgtClient, tgtCreds.Authenticator()
 	cloudCredsAvailable := false
-	if sa := m.Spec.ServiceAccounts; sa != nil && sa.AutoCreate {
+	if m.Spec.Target.Type == manifest.TargetConfluentCloud {
 		cloudCreds, err := targets.LoadCredentials(m.Spec.Target.CloudCredentials)
 		if err != nil {
 			return nil, fmt.Errorf("loading spec.target.cloudCredentials: %w", err)
@@ -361,12 +364,15 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	// internal numeric id ("User:1267635"); the acls reconciler uses this map to
 	// normalize read-back principals before diffing, without which it never
 	// detects an existing ACL as present and re-creates every ACL on each apply.
-	// The legacy /service_accounts endpoint (like IAM v2) rejects a Kafka cluster
-	// key, so this is only built when the Cloud/Global creds are in hand (the
-	// autoCreate path). A mapping-only or non-Confluent-Cloud run leaves the map
-	// empty, which disables normalization (prior behavior).
+	// Confluent Cloud returns the numeric form for ANY ACL it stores — whether
+	// the account was auto-created OR mapped to a pre-existing "sa-" id — so
+	// idempotency ALWAYS needs this map for a Confluent Cloud target, which is
+	// why the Cloud/Global creds are loaded above for every spec.acls run (not
+	// only the autoCreate path). The legacy /service_accounts endpoint rejects a
+	// Kafka cluster key, hence those creds. A non-Confluent-Cloud target leaves
+	// the map empty, which disables normalization (not needed there).
 	var numericToResourceID map[string]string
-	if m.Spec.Target.Type == manifest.TargetConfluentCloud && cloudCredsAvailable {
+	if cloudCredsAvailable {
 		numericToResourceID, err = saCC.NumericToResourceID(cmd.Context())
 		if err != nil {
 			return nil, fmt.Errorf("mapping service-account numeric ids: %w", err)
