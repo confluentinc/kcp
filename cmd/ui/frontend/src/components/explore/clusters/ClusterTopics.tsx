@@ -50,7 +50,7 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
             <div className="text-2xl font-bold text-foreground">
               {kafkaAdminInfo.topics.summary.compact_topics}
             </div>
-            <div className="text-sm text-muted-foreground">Compact Topics</div>
+            <div className="text-sm text-muted-foreground">Compact Non-Internal Topics</div>
           </div>
         </div>
       </div>
