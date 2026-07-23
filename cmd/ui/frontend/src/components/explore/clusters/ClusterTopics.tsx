@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { Tabs } from '@/components/common/Tabs'
 import { formatRetentionTime, parseCleanupPolicies } from '@/lib/utils'
 import type { KafkaAdminInfo, Topic } from '@/types'
 
@@ -5,7 +7,16 @@ interface ClusterTopicsProps {
   kafkaAdminInfo?: KafkaAdminInfo
 }
 
+type TopicScope = 'non-internal' | 'internal'
+
+const TOPIC_SCOPE_TABS = [
+  { id: 'non-internal', label: 'Non-Internal' },
+  { id: 'internal', label: 'Internal' },
+]
+
 export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
+  const [topicScope, setTopicScope] = useState<TopicScope>('non-internal')
+
   if (!kafkaAdminInfo?.topics?.details) {
     return (
       <div className="bg-card rounded-lg border border-border p-6 transition-colors">
@@ -19,39 +30,52 @@ export const ClusterTopics = ({ kafkaAdminInfo }: ClusterTopicsProps) => {
     )
   }
 
+  const summary = kafkaAdminInfo.topics.summary
+
+  // topics/total_partitions/compact_topics/compact_partitions only ever count
+  // non-internal (not "__"-prefixed) topics, despite the plain names — the
+  // internal counterparts are separate fields (internal_topics/
+  // total_internal_partitions/etc). Scoped here by tab so only one set of 4
+  // stats shows at a time, each labeled unambiguously either way.
+  const scopedStats =
+    topicScope === 'non-internal'
+      ? [
+          { value: summary.topics, label: 'Total Non-Internal Topics' },
+          { value: summary.compact_topics, label: 'Compact Non-Internal Topics' },
+          { value: summary.total_partitions, label: 'Total Non-Internal Partitions' },
+          { value: summary.compact_partitions, label: 'Compact Non-Internal Partitions' },
+        ]
+      : [
+          { value: summary.internal_topics, label: 'Internal Topics' },
+          { value: summary.compact_internal_topics, label: 'Compact Internal Topics' },
+          { value: summary.total_internal_partitions, label: 'Internal Partitions' },
+          { value: summary.compact_internal_partitions, label: 'Compact Internal Partitions' },
+        ]
+
   return (
     <div className="space-y-6">
       {/* Topic Summary */}
-      <div className="bg-card rounded-lg border border-border p-6 transition-colors">
-        <h3 className="text-xl font-semibold text-foreground mb-4">
+      <div className="bg-card rounded-lg border border-border transition-colors overflow-hidden">
+        <h3 className="text-xl font-semibold text-foreground px-6 pt-6">
           Topics Overview
         </h3>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="bg-secondary rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-foreground">
-              {kafkaAdminInfo.topics.summary.topics}
+        <Tabs
+          tabs={TOPIC_SCOPE_TABS}
+          activeId={topicScope}
+          onChange={(id) => setTopicScope(id as TopicScope)}
+        />
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-6">
+          {scopedStats.map((stat) => (
+            <div
+              key={stat.label}
+              className="bg-secondary rounded-lg p-4 transition-colors"
+            >
+              <div className="text-2xl font-bold text-foreground">{stat.value}</div>
+              <div className="text-sm text-muted-foreground">{stat.label}</div>
             </div>
-            <div className="text-sm text-muted-foreground">Total Non-Internal Topics</div>
-          </div>
-          <div className="bg-secondary rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-foreground">
-              {kafkaAdminInfo.topics.summary.total_partitions}
-            </div>
-            <div className="text-sm text-muted-foreground">Total Non-Internal Partitions</div>
-          </div>
-          <div className="bg-secondary rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-foreground">
-              {kafkaAdminInfo.topics.summary.internal_topics}
-            </div>
-            <div className="text-sm text-muted-foreground">Internal Topics</div>
-          </div>
-          <div className="bg-secondary rounded-lg p-4 transition-colors">
-            <div className="text-2xl font-bold text-foreground">
-              {kafkaAdminInfo.topics.summary.compact_topics}
-            </div>
-            <div className="text-sm text-muted-foreground">Compact Non-Internal Topics</div>
-          </div>
+          ))}
         </div>
       </div>
 
