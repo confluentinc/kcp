@@ -13,14 +13,14 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 
 ## Legend
 
-| Marker       | Meaning                                                                                              |
-| :----------- | :--------------------------------------------------------------------------------------------------- |
-| **Yes**      | Fully supported.                                                                                     |
-| **Limited**  | Partial support — see the inline note on the row for what's missing.                                 |
-| **No**       | Not supported.                                                                                       |
-| **Coming**   | Planned for an upcoming release.                                                                     |
+| Marker       | Meaning                                                                                                       |
+| :----------- | :------------------------------------------------------------------------------------------------------------ |
+| **Yes**      | Fully supported.                                                                                              |
+| **Limited**  | Partial support — see the inline note on the row for what's missing.                                          |
+| **No**       | Not supported.                                                                                                |
+| **Coming**   | Planned for an upcoming release.                                                                              |
 | **AWS only** | Supported when the Apache Kafka source is hosted on AWS; the generated infrastructure assumes AWS networking. |
-| **N/A**      | Command is source-agnostic; the source type does not apply.                                          |
+| **N/A**      | Command is source-agnostic; the source type does not apply.                                                   |
 
 ## Compatibility matrix
 
@@ -30,7 +30,9 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 | :------------------------------------------------------ | :---------------------- | :------------------------------------- | :-------------------------- |
 | `kcp discover`                                          | Yes                     | Limited                                | No                          |
 | `kcp scan client-inventory`                             | Yes                     | No                                     | No                          |
-| `kcp scan clusters`                                     | Yes                     | No                                     | Yes                         |
+| `kcp scan clusters`                                     | Yes                     | Yes                                    | Yes                         |
+| `kcp scan connect-topics`                               | Yes                     | Yes                                    | Yes                         |
+| `kcp scan self-managed-connectors`                      | Yes                     | Yes                                    | Yes                         |
 | `kcp scan schema-registry`                              | Yes                     | Yes                                    | Yes                         |
 | `kcp create-asset bastion-host`                         | N/A                     | N/A                                    | N/A                         |
 | `kcp create-asset migrate-acls iam`                     | Yes                     | Limited (manual IAM user/role mapping) | No                          |
@@ -66,13 +68,13 @@ The declaration is **required** on these three commands (there is no default). I
 
 **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking, so the linking-based paths are refused before any Terraform is generated when `--cc-type government` is declared:
 
-| Path                                            | `commercial` (Standard) | `government` (Government)              |
-| :---------------------------------------------- | :---------------------- | :-------------------------------------------- |
-| `migration-infra` (all `--type` values)         | Supported       | Refused — relies on Cluster Linking           |
-| `migrate-topics --mode mirror`                  | Supported       | Refused — use `--mode new` instead            |
-| `migrate-topics --mode new`                     | Supported       | Supported                                     |
-| `migrate-schemas --url` (Schema Exporter)       | Supported       | Refused — use `--glue-registry` instead       |
-| `migrate-schemas --glue-registry`               | Supported       | Supported                                     |
+| Path                                    | `commercial` (Standard) | `government` (Government)                                             |
+| :-------------------------------------- | :---------------------- | :-------------------------------------------------------------------- |
+| `migration-infra` (all `--type` values) | Supported               | Refused — relies on Cluster Linking                                   |
+| `migrate-topics --mode mirror`          | Supported               | Partial — use `--mode new` instead                                    |
+| `migrate-topics --mode new`             | Supported               | Supported                                                             |
+| `migrate-schemas --url`                 | Supported               | Partial - relies on Schema Exporter for Confluent SR source migration |
+| `migrate-schemas --glue-registry`       | Supported               | Supported                                                             |
 
 ---
 
