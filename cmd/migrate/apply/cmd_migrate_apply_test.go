@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -626,7 +627,7 @@ func TestApply_ACLs_Apply_CreatesSAThenRewrittenACL(t *testing.T) {
 
 // runACLApplyMSK is like runACLApply but uses an MSK source and an optional
 // spec.acls.unprotectedTopicPolicy, to exercise checkUnprotectedTopics.
-func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy string) (stdout, stderr string, err error) {
+func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy string) (stdout, stderr, logs string, err error) {
 	t.Helper()
 	dir := t.TempDir()
 	targetCreds := filepath.Join(dir, "target.yaml")
@@ -664,12 +665,20 @@ func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy strin
 	})
 
 	cmd := NewMigrateApplyCmd()
-	var outBuf, errBuf bytes.Buffer
+	var outBuf, errBuf, logBuf bytes.Buffer
 	cmd.SetOut(&outBuf)
 	cmd.SetErr(&errBuf)
 	cmd.SetArgs([]string{"-f", mf})
+
+	// The command's diagnostics (world-open caveat, drops) now go through slog,
+	// not cmd stdout. Capture the default logger into logBuf for the duration of
+	// this run so tests can assert the caveat surfaced at WARN.
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
 	err = cmd.Execute()
-	return outBuf.String(), errBuf.String(), err
+	return outBuf.String(), errBuf.String(), logBuf.String(), err
 }
 
 // unprotectedTopicPolicy: fail on an MSK source must fail closed: world-open
@@ -678,11 +687,11 @@ func runACLApplyMSK(t *testing.T, tgt *aclCaptureTarget, clusterID, policy strin
 // should happen.
 func TestApply_ACLs_UnprotectedTopicPolicyFail_MSK_ReturnsError(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-fail")
-	out, _, err := runACLApplyMSK(t, tgt, "lkc-acl-fail", manifest.UnprotectedTopicPolicyFail)
+	_, _, logs, err := runACLApplyMSK(t, tgt, "lkc-acl-fail", manifest.UnprotectedTopicPolicyFail)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not yet implemented")
-	require.Contains(t, out, "⚠️")
-	require.Contains(t, out, "not yet enforced")
+	require.Contains(t, logs, "WARN") // caveat surfaced via slog.Warn
+	require.Contains(t, logs, "not yet enforced")
 	require.Equal(t, int64(0), tgt.saPosts, "fail-closed must not create service accounts")
 	require.Equal(t, int64(0), tgt.aclPosts, "fail-closed must not create ACLs")
 }
@@ -691,20 +700,20 @@ func TestApply_ACLs_UnprotectedTopicPolicyFail_MSK_ReturnsError(t *testing.T) {
 // must still emit the unenforced-detection caveat, but proceed with apply.
 func TestApply_ACLs_UnprotectedTopicPolicyWarn_MSK_ProceedsWithWarning(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-warn")
-	out, errOut, err := runACLApplyMSK(t, tgt, "lkc-acl-warn", manifest.UnprotectedTopicPolicyWarn)
-	require.NoError(t, err, "stderr: %s", errOut)
-	require.Contains(t, out, "⚠️")
-	require.Contains(t, out, "not yet enforced")
+	_, _, logs, err := runACLApplyMSK(t, tgt, "lkc-acl-warn", manifest.UnprotectedTopicPolicyWarn)
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, logs, "WARN")
+	require.Contains(t, logs, "not yet enforced")
 	require.Equal(t, int64(1), tgt.saPosts)
 	require.Equal(t, int64(1), tgt.aclPosts)
 }
 
 func TestApply_ACLs_UnprotectedTopicPolicyUnset_MSK_ProceedsWithWarning(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-unset")
-	out, errOut, err := runACLApplyMSK(t, tgt, "lkc-acl-unset", "")
-	require.NoError(t, err, "stderr: %s", errOut)
-	require.Contains(t, out, "⚠️")
-	require.Contains(t, out, "not yet enforced")
+	_, _, logs, err := runACLApplyMSK(t, tgt, "lkc-acl-unset", "")
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, logs, "WARN")
+	require.Contains(t, logs, "not yet enforced")
 	require.Equal(t, int64(1), tgt.saPosts)
 	require.Equal(t, int64(1), tgt.aclPosts)
 }

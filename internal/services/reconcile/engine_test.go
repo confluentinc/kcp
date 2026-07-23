@@ -48,7 +48,7 @@ func TestEngine_DryRun_DoesNotApply(t *testing.T) {
 	var out bytes.Buffer
 	eng := NewEngine(&out)
 
-	report, err := eng.Run(context.Background(), []Reconciler{f}, true)
+	report, err := eng.Run(context.Background(), [][]Reconciler{{f}}, true)
 
 	require.NoError(t, err)
 	require.False(t, f.applyCalled, "dry-run must not call Apply")
@@ -65,7 +65,7 @@ func TestEngine_Apply_CallsApplyAndReports(t *testing.T) {
 		applyOut: Outcome{Created: []Change{created}},
 	}
 	var out bytes.Buffer
-	report, err := NewEngine(&out).Run(context.Background(), []Reconciler{f}, false)
+	report, err := NewEngine(&out).Run(context.Background(), [][]Reconciler{{f}}, false)
 
 	require.NoError(t, err)
 	require.True(t, f.applyCalled)
@@ -74,7 +74,7 @@ func TestEngine_Apply_CallsApplyAndReports(t *testing.T) {
 
 func TestEngine_PreconditionFailure_AbortsBeforePlan(t *testing.T) {
 	f := &fakeReconciler{name: "clusterLink", precondErr: errors.New("target unreachable")}
-	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(), []Reconciler{f}, false)
+	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(), [][]Reconciler{{f}}, false)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "target unreachable")
@@ -83,7 +83,7 @@ func TestEngine_PreconditionFailure_AbortsBeforePlan(t *testing.T) {
 
 func TestEngine_PlanError_Propagates(t *testing.T) {
 	f := &fakeReconciler{name: "clusterLink", planErr: errors.New("read failed")}
-	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(), []Reconciler{f}, false)
+	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(), [][]Reconciler{{f}}, false)
 	require.ErrorContains(t, err, "read failed")
 }
 
@@ -93,7 +93,7 @@ func TestEngine_ApplyError_Propagates(t *testing.T) {
 		plan:     simplePlan(Change{Action: ActionCreate, Summary: "link"}),
 		applyErr: errors.New("API 503"),
 	}
-	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(), []Reconciler{f}, false)
+	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(), [][]Reconciler{{f}}, false)
 	require.ErrorContains(t, err, "API 503")
 	require.ErrorContains(t, err, "clusterLink")
 }
@@ -107,7 +107,7 @@ func TestEngine_Apply_RendersOutcomeEvenOnError(t *testing.T) {
 		applyErr: errors.New("1 of 2 topics failed"),
 	}
 	var out bytes.Buffer
-	report, err := NewEngine(&out).Run(context.Background(), []Reconciler{f}, false)
+	report, err := NewEngine(&out).Run(context.Background(), [][]Reconciler{{f}}, false)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "1 of 2 topics failed")
@@ -115,6 +115,62 @@ func TestEngine_Apply_RendersOutcomeEvenOnError(t *testing.T) {
 	require.Len(t, report.Outcomes["newTopics"].Failed, 1)
 	require.Contains(t, out.String(), "1 failed")
 	require.Contains(t, out.String(), "topic b")
+}
+
+// A failure in one track must NOT skip an independent track: the second track's
+// reconciler still applies, and the run returns the first track's error.
+func TestEngine_IndependentTracks_OneFailsOthersRun(t *testing.T) {
+	failing := &fakeReconciler{
+		name:     "mirrorTopics",
+		plan:     simplePlan(Change{Action: ActionCreate, Summary: "mirror x"}),
+		applyErr: errors.New("92 of 154 mirror topic(s) failed to create"),
+	}
+	independent := &fakeReconciler{
+		name: "acls",
+		plan: simplePlan(Change{Action: ActionCreate, Summary: `acl for "sa-1"`}),
+	}
+	report, err := NewEngine(&bytes.Buffer{}).Run(context.Background(),
+		[][]Reconciler{{failing}, {independent}}, false)
+
+	require.True(t, failing.applyCalled)
+	require.True(t, independent.applyCalled, "independent track must run despite the other track failing")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "92 of 154")
+	require.Contains(t, report.Outcomes, "acls", "the independent track's outcome is recorded")
+}
+
+// Within a track, a failure fail-fasts: the earlier reconciler's failure skips
+// its dependents (the later members of the same track).
+func TestEngine_WithinTrack_FailureSkipsDependents(t *testing.T) {
+	first := &fakeReconciler{
+		name:     "serviceAccounts",
+		plan:     simplePlan(Change{Action: ActionCreate, Summary: "sa x"}),
+		applyErr: errors.New("service account create failed"),
+	}
+	dependent := &fakeReconciler{
+		name: "acls",
+		plan: simplePlan(Change{Action: ActionCreate, Summary: "acl x"}),
+	}
+	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(),
+		[][]Reconciler{{first, dependent}}, false)
+
+	require.True(t, first.applyCalled)
+	require.False(t, dependent.applyCalled, "a dependent reconciler must be skipped when its predecessor in the track fails")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "service account create failed")
+}
+
+// When multiple independent tracks fail, the errors are joined so the command
+// exits non-zero with all of them.
+func TestEngine_MultipleTrackFailures_JoinedError(t *testing.T) {
+	a := &fakeReconciler{name: "mirrorTopics", plan: simplePlan(Change{Action: ActionCreate, Summary: "x"}), applyErr: errors.New("mirror boom")}
+	b := &fakeReconciler{name: "acls", plan: simplePlan(Change{Action: ActionCreate, Summary: "y"}), applyErr: errors.New("acl boom")}
+	_, err := NewEngine(&bytes.Buffer{}).Run(context.Background(),
+		[][]Reconciler{{a}, {b}}, false)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "mirror boom")
+	require.Contains(t, err.Error(), "acl boom")
 }
 
 func TestAction_String(t *testing.T) {

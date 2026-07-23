@@ -2,7 +2,7 @@ package apply
 
 import (
 	"fmt"
-	"io"
+	"log/slog"
 	"os"
 	"path"
 	"sort"
@@ -20,7 +20,6 @@ import (
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
-	"github.com/fatih/color"
 	"github.com/spf13/cobra"
 )
 
@@ -270,21 +269,32 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 		}
 	}
 
+	// Group reconcilers into independent dependency TRACKS (see engine.Run):
+	//   - clusterLink → topics: mirror topics depend on the link (one chain).
+	//   - serviceAccounts → acls: acls depend on the resolved service accounts.
+	// The two tracks are independent, so a partial failure in one (e.g. some
+	// mirror topics 403 because the link's source creds lack ACLs) must NOT skip
+	// the other — the ACL migration still runs. Within a track it stays fail-fast.
+	var tracks [][]reconcile.Reconciler
+	if len(recs) > 0 {
+		tracks = append(tracks, recs) // clusterLink + topics
+	}
+
 	// ACL migration: READ (source) -> PROVISION (service accounts) -> WRITE
-	// (ACLs). Appended AFTER any clusterLink/topics reconcilers so the engine's
-	// in-order run has service accounts resolved before ACLs are written.
+	// (ACLs), in that order so service accounts are resolved before ACLs are
+	// written. Its own track — independent of clusterLink/topics.
 	if m.Spec.ACLs != nil {
 		aclRecs, err := buildACLReconcilers(cmd, m, srcCluster, tgtClient, tgtCreds)
 		if err != nil {
 			return err
 		}
-		recs = append(recs, aclRecs...)
+		tracks = append(tracks, aclRecs)
 	}
 
 	eng := reconcile.NewEngine(cmd.OutOrStdout())
 	// Phase 1 relies on the engine to render outcomes; the structured Report is
 	// not consumed yet (a later phase may use it for a machine-readable summary).
-	_, err = eng.Run(cmd.Context(), recs, dryRun)
+	_, err = eng.Run(cmd.Context(), tracks, dryRun)
 	return err
 }
 
@@ -295,8 +305,6 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 // own Plan time (late-binding), so in apply mode it observes the real
 // "User:sa-<id>" ids the provision stage produced.
 func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster types.KafkaSourceConn, tgtClient clusterlink.HTTPClient, tgtCreds *targets.Credentials) ([]reconcile.Reconciler, error) {
-	out := cmd.OutOrStdout()
-
 	// READ: list native ACLs from the source.
 	adm, err := newSourceACLLister(srcCluster)
 	if err != nil {
@@ -315,10 +323,10 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 		return nil, fmt.Errorf("filtering ACLs: %w", err)
 	}
 	norm, diags := macls.NormalizeForCC(filtered)
-	printACLDiagnostics(out, diags)
+	logACLDiagnostics(diags)
 
 	// World-open topics policy (allow.everyone.if.no.acl.found).
-	if err := checkUnprotectedTopics(out, m); err != nil {
+	if err := checkUnprotectedTopics(m); err != nil {
 		return nil, err
 	}
 
@@ -450,17 +458,19 @@ func distinctPrincipals(acls []types.Acls) []string {
 	return out
 }
 
-// printACLDiagnostics renders NormalizeForCC diagnostics to the operator: a
-// warn/error gets ⚠️, info is a plain indented note. These are operator-facing
-// terminal output, so they use fmt/color rather than slog.
-func printACLDiagnostics(out io.Writer, diags []macls.Diagnostic) {
-	warn := color.New(color.FgYellow)
+// logACLDiagnostics emits NormalizeForCC diagnostics through slog (the standard
+// two-leg model, PR #382 / CLAUDE.md) rather than bespoke fmt output, so they
+// render identically to the rest of the command: warn/error surface on the
+// console (coloured level) and in kcp.log; info (benign drops — drop-list,
+// dedup) go to kcp.log and only reach the console under --verbose. Per the
+// project emoji standard, warnings lead with ⚠️ and skip/drop notes with ⏭️.
+func logACLDiagnostics(diags []macls.Diagnostic) {
 	for _, d := range diags {
 		switch d.Level {
 		case "warn", "error":
-			_, _ = fmt.Fprintln(out, warn.Sprintf("⚠️ %s", d.Message))
+			slog.Warn("⚠️ " + d.Message)
 		default:
-			_, _ = fmt.Fprintf(out, "  %s\n", d.Message)
+			slog.Info("⏭️ " + d.Message)
 		}
 	}
 }
@@ -479,7 +489,7 @@ func printACLDiagnostics(out io.Writer, diags []macls.Diagnostic) {
 // detection is unverified for MSK sources, and when the operator explicitly
 // asked for a hard stop (policy=fail) it fails closed — refusing to proceed —
 // rather than silently honoring a safety control it cannot actually check.
-func checkUnprotectedTopics(out io.Writer, m *manifest.Migration) error {
+func checkUnprotectedTopics(m *manifest.Migration) error {
 	if m.Spec.Source.Type != manifest.SourceMSK || m.Spec.ACLs == nil {
 		return nil
 	}
@@ -488,8 +498,7 @@ func checkUnprotectedTopics(out io.Writer, m *manifest.Migration) error {
 		policy = manifest.UnprotectedTopicPolicyWarn
 	}
 
-	warn := color.New(color.FgYellow)
-	_, _ = fmt.Fprintln(out, warn.Sprintf("⚠️ world-open-topic detection (allow.everyone.if.no.acl.found) is not yet enforced for MSK sources — verify this setting manually on the source before relying on this migration for authorization completeness"))
+	slog.Warn("⚠️ world-open-topic detection (allow.everyone.if.no.acl.found) is not yet enforced for MSK sources — verify this setting manually on the source before relying on this migration for authorization completeness")
 
 	if policy == manifest.UnprotectedTopicPolicyFail {
 		return fmt.Errorf("spec.acls.unprotectedTopicPolicy: %q requested, but world-open-topic detection (allow.everyone.if.no.acl.found) is not yet implemented — the requested hard stop cannot be honored; verify the source setting manually, then adjust the policy to proceed", manifest.UnprotectedTopicPolicyFail)

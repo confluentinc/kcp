@@ -72,7 +72,7 @@ func TestIntegration_Ordering_ResolvedPrincipalFlowsIntoCreatedACL(t *testing.T)
 	saRec, aclRec := buildPipeline(saClient, aclClient, []types.Acls{acl("User:app1")}, []string{"User:app1"})
 
 	engine := reconcile.NewEngine(&bytes.Buffer{})
-	_, err := engine.Run(context.Background(), []reconcile.Reconciler{saRec, aclRec}, false)
+	_, err := engine.Run(context.Background(), [][]reconcile.Reconciler{{saRec, aclRec}}, false)
 	require.NoError(t, err)
 
 	require.Len(t, aclClient.created, 1)
@@ -91,13 +91,13 @@ func TestIntegration_Idempotent_SecondRunCreatesNothing(t *testing.T) {
 
 	engine := reconcile.NewEngine(&bytes.Buffer{})
 	saRec, aclRec := buildPipeline(saClient, aclClient, desired, principals)
-	_, err := engine.Run(context.Background(), []reconcile.Reconciler{saRec, aclRec}, false)
+	_, err := engine.Run(context.Background(), [][]reconcile.Reconciler{{saRec, aclRec}}, false)
 	require.NoError(t, err)
 
 	// A fresh pair of reconcilers over the same, now-mutated fake clients, as
 	// a second real invocation of `kcp migrate apply` would see them.
 	saRec2, aclRec2 := buildPipeline(saClient, aclClient, desired, principals)
-	report, err := engine.Run(context.Background(), []reconcile.Reconciler{saRec2, aclRec2}, false)
+	report, err := engine.Run(context.Background(), [][]reconcile.Reconciler{{saRec2, aclRec2}}, false)
 	require.NoError(t, err)
 
 	for name, outcome := range report.Outcomes {
@@ -118,7 +118,7 @@ func TestIntegration_Additive_PreSeededExtraACLNeverTouched(t *testing.T) {
 	saRec, aclRec := buildPipeline(saClient, aclClient, []types.Acls{acl("User:app1")}, []string{"User:app1"})
 
 	engine := reconcile.NewEngine(&bytes.Buffer{})
-	_, err := engine.Run(context.Background(), []reconcile.Reconciler{saRec, aclRec}, false)
+	_, err := engine.Run(context.Background(), [][]reconcile.Reconciler{{saRec, aclRec}}, false)
 	require.NoError(t, err)
 
 	found := false
@@ -144,7 +144,7 @@ func TestIntegration_DryRun_MutatesNothingButRendersMeaningfulPlan(t *testing.T)
 
 	var out bytes.Buffer
 	engine := reconcile.NewEngine(&out)
-	report, err := engine.Run(context.Background(), []reconcile.Reconciler{saRec, aclRec}, true)
+	report, err := engine.Run(context.Background(), [][]reconcile.Reconciler{{saRec, aclRec}}, true)
 	require.NoError(t, err)
 	require.True(t, report.DryRun)
 

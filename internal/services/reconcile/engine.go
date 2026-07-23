@@ -2,6 +2,7 @@ package reconcile
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -31,20 +32,44 @@ var (
 	cReason    = color.New(color.Faint)
 )
 
-// Run executes the §8.4 loop for each reconciler. With dryRun=true it previews
-// the plan (per-reconciler) and never calls Apply; otherwise it applies and
-// renders the outcome.
-func (e *Engine) Run(ctx context.Context, rs []Reconciler, dryRun bool) (Report, error) {
+// Run executes the reconcilers grouped into dependency TRACKS. Each track is an
+// ordered chain whose later members depend on earlier ones (e.g. clusterLink →
+// topics, or serviceAccounts → acls). Tracks are INDEPENDENT of one another.
+//
+// Within a track: fail-fast — the first reconciler that errors stops that track,
+// skipping its remaining (dependent) members. Across tracks: independent — a
+// failure in one track never skips another; every track is attempted. After all
+// tracks run, if any failed, Run returns their joined error (so the command still
+// exits non-zero) while the Report carries the outcomes of everything that ran.
+//
+// With dryRun=true it previews each plan (per-reconciler) and never calls Apply.
+func (e *Engine) Run(ctx context.Context, tracks [][]Reconciler, dryRun bool) (Report, error) {
 	report := Report{DryRun: dryRun, Outcomes: map[string]Outcome{}}
 
-	for _, r := range rs {
+	var errs []error
+	for _, track := range tracks {
+		if err := e.runTrack(ctx, track, dryRun, &report); err != nil {
+			errs = append(errs, err) // independent: record and continue to the next track
+		}
+	}
+	if len(errs) > 0 {
+		return report, errors.Join(errs...)
+	}
+	return report, nil
+}
+
+// runTrack runs one dependency chain fail-fast: the first reconciler that errors
+// (precondition, plan, or apply) stops the track — its remaining members, which
+// depend on it, are skipped — and the error is returned.
+func (e *Engine) runTrack(ctx context.Context, track []Reconciler, dryRun bool, report *Report) error {
+	for _, r := range track {
 		if err := r.CheckPreconditions(ctx); err != nil {
-			return report, fmt.Errorf("%s: precondition failed: %w", r.Name(), err)
+			return fmt.Errorf("%s: precondition failed: %w", r.Name(), err)
 		}
 
 		plan, err := r.Plan(ctx)
 		if err != nil {
-			return report, fmt.Errorf("%s: planning failed: %w", r.Name(), err)
+			return fmt.Errorf("%s: planning failed: %w", r.Name(), err)
 		}
 
 		if dryRun {
@@ -56,11 +81,10 @@ func (e *Engine) Run(ctx context.Context, rs []Reconciler, dryRun bool) (Report,
 		report.Outcomes[r.Name()] = out
 		e.renderOutcome(r.Name(), out)
 		if err != nil {
-			return report, fmt.Errorf("%s: apply failed: %w", r.Name(), err)
+			return fmt.Errorf("%s: apply failed: %w", r.Name(), err)
 		}
 	}
-
-	return report, nil
+	return nil
 }
 
 // renderPlan previews a plan (dry-run): future-tense actions, nothing applied.
