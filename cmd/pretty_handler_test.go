@@ -35,8 +35,8 @@ func TestPrettyHandlerConsoleRender(t *testing.T) {
 
 	// --- console leg ---
 	console := render(true, func(l *slog.Logger) {
-		l.Info("🚀 Starting discover")
-		l.Info("✅ found clusters", "count", 3)
+		l.Info("Starting discover")
+		l.Info("found clusters", "count", 3)
 		l.Warn("could not fetch costs", "region", "us-east-1")
 		l.Error("describe cluster failed", "arn", "arn:aws:kafka:us-east-1:...")
 	})
@@ -45,7 +45,7 @@ func TestPrettyHandlerConsoleRender(t *testing.T) {
 	if tsRE.MatchString(console) {
 		t.Errorf("console leg should carry no timestamps:\n%s", console)
 	}
-	if !strings.Contains(console, "✅ found clusters count=3") {
+	if !strings.Contains(console, "found clusters count=3") {
 		t.Errorf("console INFO should be clean narrative with attrs:\n%s", console)
 	}
 	if !strings.Contains(console, color.YellowString("WARN")) {
@@ -57,14 +57,14 @@ func TestPrettyHandlerConsoleRender(t *testing.T) {
 
 	// --- file leg ---
 	file := render(false, func(l *slog.Logger) {
-		l.Info("✅ found clusters", "count", 3)
+		l.Info("found clusters", "count", 3)
 	})
 	t.Logf("file leg:\n%s", file)
 
 	if !tsRE.MatchString(file) {
 		t.Errorf("file leg should carry a timestamp:\n%s", file)
 	}
-	if !strings.Contains(file, "INFO ✅ found clusters count=3") {
+	if !strings.Contains(file, "INFO found clusters count=3") {
 		t.Errorf("file leg should stay fully structured:\n%s", file)
 	}
 }
@@ -84,7 +84,7 @@ func TestPrettyHandlerConsoleDebugRender(t *testing.T) {
 		SlogOpts: slog.HandlerOptions{Level: slog.LevelDebug},
 		Console:  true,
 	}))
-	log.Debug("🔍 confluent cloud request", "method", "POST", "ms", 210)
+	log.Debug("confluent cloud request", "method", "POST", "ms", 210)
 	out := buf.String()
 	t.Logf("console debug leg:\n%s", out)
 
@@ -94,7 +94,7 @@ func TestPrettyHandlerConsoleDebugRender(t *testing.T) {
 	}
 	// Exact prefix+message+attrs: the DEBUG token sits immediately before the
 	// message with no ANSI escape between them, proving it is uncoloured.
-	if !strings.Contains(out, "DEBUG 🔍 confluent cloud request method=POST ms=210") {
+	if !strings.Contains(out, "DEBUG confluent cloud request method=POST ms=210") {
 		t.Errorf("console DEBUG should keep an uncoloured level prefix + message + attrs:\n%s", out)
 	}
 	if strings.Contains(out, color.YellowString("DEBUG")) || strings.Contains(out, color.RedString("DEBUG")) {

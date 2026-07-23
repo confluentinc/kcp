@@ -114,12 +114,12 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		}
 	}
 
-	fmt.Printf("🔍 Found %d connector(s) to migrate\n", len(mc.Connectors))
+	fmt.Printf("Found %d connector(s) to migrate\n", len(mc.Connectors))
 
 	// Warn (count only — never names or field keys) when generated assets will
 	// carry redaction placeholders the operator must replace before applying.
 	if redacted := countRedactedConnectors(mc.Connectors); redacted > 0 {
-		fmt.Printf("⚠️  %d of %d connector(s) contain redacted sensitive fields (%s) — replace with real values in the generated Terraform before applying\n", redacted, len(mc.Connectors), redact.Placeholder)
+		fmt.Printf("%d of %d connector(s) contain redacted sensitive fields (%s) — replace with real values in the generated Terraform before applying\n", redacted, len(mc.Connectors), redact.Placeholder)
 	}
 
 	// Write shared Terraform infrastructure files (providers.tf, variables.tf)
@@ -173,7 +173,7 @@ func (mc *SelfManagedConnectorMigrator) Run() error {
 		slog.Debug(fmt.Sprintf("generated: %s", filename))
 	}
 
-	fmt.Printf("✅ Successfully generated connector files for %d connectors in %s\n", len(mc.Connectors), mc.OutputDir)
+	fmt.Printf("Successfully generated connector files for %d connectors in %s\n", len(mc.Connectors), mc.OutputDir)
 
 	return nil
 }
