@@ -132,6 +132,24 @@ func ExtractRegionFromArn(arn string) (string, error) {
 	return region, nil
 }
 
+// RegionsFromClusterArns returns the distinct AWS regions parsed from the given MSK
+// cluster ARNs, preserving first-seen order. Returns an error if any ARN is malformed.
+func RegionsFromClusterArns(clusterArns []string) ([]string, error) {
+	seen := map[string]bool{}
+	regions := []string{}
+	for _, arn := range clusterArns {
+		region, err := ExtractRegionFromArn(arn)
+		if err != nil {
+			return nil, fmt.Errorf("invalid cluster ARN %q: %w", arn, err)
+		}
+		if !seen[region] {
+			seen[region] = true
+			regions = append(regions, region)
+		}
+	}
+	return regions, nil
+}
+
 func ExtractClusterNameFromS3Uri(s3Uri string) (string, error) {
 	u, err := url.Parse(s3Uri)
 	if err != nil {
