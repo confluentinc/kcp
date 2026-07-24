@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/reconcile"
 )
@@ -35,6 +36,17 @@ type Config struct {
 	Principals []string
 	// Client talks to the Confluent Cloud IAM v2 service-accounts API.
 	Client CCClient
+	// ExistingSAIDs, when non-nil, enables existence validation of Mapping
+	// targets and holds the set of "sa-" resource ids that actually exist on the
+	// Confluent Cloud target (the values of the fetched service-account list).
+	// The command populates it ONLY for a Confluent Cloud target — so a non-nil
+	// set is the signal to validate mapped ids at all; a nil set (non-CC target)
+	// keeps the historical "trust the mapping verbatim" behaviour. When
+	// validating: a mapped "sa-" id absent from this set is a hard error; a "u-"
+	// id is verified one-off via Client.UserExists; a "pool-" id cannot be
+	// point-looked-up (pools nest under two provider families) so it is accepted
+	// with a "not verified" warning.
+	ExistingSAIDs map[string]bool
 }
 
 // Reconciler implements reconcile.Reconciler for spec.serviceAccounts.
@@ -88,6 +100,66 @@ func descriptionFor(principal string) string {
 	return "kcp:source-principal=" + principal
 }
 
+// mappingTargetMissing reports whether a serviceAccounts.mapping target id does
+// NOT exist on the Confluent Cloud target, so a typo'd or stale mapping fails
+// loud instead of silently creating orphaned ACLs (Confluent Cloud's ACL API
+// accepts a principal for a non-existent identity). Validation only runs when
+// cfg.ExistingSAIDs is non-nil (a Confluent Cloud target, where the command has
+// fetched the service-account set); otherwise it returns (false, nil) — the
+// historical trust-verbatim behaviour. Per id prefix:
+//   - "sa-": present iff in ExistingSAIDs (free — already fetched).
+//   - "u-":  a one-off point lookup via Client.UserExists.
+//   - "pool-" (and anything else): cannot be cheaply point-looked-up (identity
+//     pools nest under two provider families), so it is accepted with a
+//     "not verified" warning rather than a hard check.
+func (r *Reconciler) mappingTargetMissing(ctx context.Context, id string) (bool, error) {
+	if r.cfg.ExistingSAIDs == nil {
+		return false, nil
+	}
+	switch {
+	case strings.HasPrefix(id, "sa-"):
+		return !r.cfg.ExistingSAIDs[id], nil
+	case strings.HasPrefix(id, "u-"):
+		exists, err := r.cfg.Client.UserExists(ctx, id)
+		if err != nil {
+			return false, err
+		}
+		return !exists, nil
+	default:
+		slog.Warn("⚠️ mapping target existence not verified; using it as-is (Confluent Cloud identity pools cannot be looked up by id)", "id", id)
+		return false, nil
+	}
+}
+
+// resolutionError formats the principal-resolution problems an operator must fix
+// as one structured block: a one-line summary (so the engine's "planning
+// failed:" prefix reads as a sentence rather than gluing the first problem onto
+// that line), then indented sections for the unmapped principals, the mapping
+// targets that don't exist on the target, and — for context — what did resolve.
+// Continuation lines are indented to stand apart from the console's "ERROR"
+// margin. All slices arrive already sorted (Plan sorts principals before the
+// resolution loop).
+func resolutionError(gaps, badMappings, resolved []string) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d ACL principal(s) could not be resolved to a Confluent Cloud identity\n", len(gaps)+len(badMappings))
+	if len(gaps) > 0 {
+		b.WriteString("      add a serviceAccounts.mapping entry for each unmapped principal (User:<name>: sa-...), or set serviceAccounts.autoCreate: true to create them automatically\n")
+	}
+	section := func(label string, items []string) {
+		if len(items) == 0 {
+			return
+		}
+		fmt.Fprintf(&b, "\n      %s (%d):\n", label, len(items))
+		for _, it := range items {
+			fmt.Fprintf(&b, "        - %s\n", it)
+		}
+	}
+	section("unmapped", gaps)
+	section("mapping target not found in Confluent Cloud", badMappings)
+	section("already resolved", resolved)
+	return errors.New(strings.TrimRight(b.String(), "\n"))
+}
+
 // placeholderFor is the resolved-map value recorded at Plan time for a
 // principal whose service account would be CREATED (its real id is not known
 // until Apply runs). It lets the acls reconciler produce a meaningful dry-run
@@ -121,12 +193,31 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 
 	var steps []reconcile.Step[provision]
 	var errs []error
+	// The three resolution problems an operator must fix, plus what resolved, are
+	// collected separately so they can be presented in one readable block (below)
+	// instead of a flat list of only the failures:
+	//   gaps        — no mapping while autoCreate is off
+	//   badMappings — a mapping target that does not exist on the CC target
+	//   resolved    — principals that DID resolve (via mapping), shown for context
+	var gaps []string
+	var badMappings []string
+	var resolved []string
 
 	for _, p := range principals {
 		summary := fmt.Sprintf("service account for principal %q", p)
 
 		if id, ok := r.cfg.Mapping[p]; ok && id != "" {
+			missing, err := r.mappingTargetMissing(ctx, id)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("validating mapping %q -> %q: %w", p, id, err))
+				continue
+			}
+			if missing {
+				badMappings = append(badMappings, fmt.Sprintf("%s -> %s", p, id))
+				continue
+			}
 			r.resolved[p] = "User:" + id
+			resolved = append(resolved, fmt.Sprintf("%s -> %s", p, id))
 			steps = append(steps, reconcile.Step[provision]{
 				Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: summary,
 					Detail: fmt.Sprintf("mapped to User:%s", id)},
@@ -141,7 +232,7 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		}
 
 		if !r.cfg.AutoCreate {
-			errs = append(errs, fmt.Errorf("no service-account mapping for principal %q", p))
+			gaps = append(gaps, p)
 			continue
 		}
 
@@ -180,6 +271,16 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 		})
 	}
 
+	// Resolution problems (unmapped gaps and/or mapping targets that don't exist
+	// on the CC target) are presented as one structured block — a summary line
+	// the engine's "planning failed:" prefix reads cleanly into, then the
+	// problems and what resolved as indented lists — rather than one error per
+	// principal (which errors.Join would glue onto the prefix line, one bare line
+	// each). Genuine per-principal errors (client lookup / naming collision) stay
+	// joined as-is.
+	if len(gaps) > 0 || len(badMappings) > 0 {
+		errs = append(errs, resolutionError(gaps, badMappings, resolved))
+	}
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}

@@ -45,6 +45,12 @@ func (f *fakeSAClient) Create(ctx context.Context, name, description string) (*s
 	return sa, nil
 }
 
+// UserExists satisfies the CCClient interface; these hermetic tests use
+// AutoCreate with no mapping, so mapped-id validation never calls it.
+func (f *fakeSAClient) UserExists(ctx context.Context, id string) (bool, error) {
+	return true, nil
+}
+
 // buildPipeline wires a fresh serviceAccounts + acls reconciler pair over the
 // given (possibly already-mutated, for a second run) fake clients — mirroring
 // exactly how cmd/migrate/apply builds the same two reconcilers.

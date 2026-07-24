@@ -1068,7 +1068,7 @@ func TestACLsLive_MappingFormats_UAndPoolPrefixesAccepted(t *testing.T) {
 	out, err := runKCP(t, mf)
 	if err != nil {
 		require.NotContains(t, out, "must be a User:sa-/u-/pool- id", "u-/pool- prefixes must pass KCP's own mapping validation")
-		require.NotContains(t, out, "no service-account mapping for principal", "a mapped principal must never hit the unmapped-principal error path")
+		require.NotContains(t, out, "have no Confluent Cloud service account", "a mapped principal must never hit the unmapped-principal error path")
 		t.Logf("apply failed past KCP's own validation and resolution (an upstream CC rejection of the non-existent mapped id is the open, unverified-live question this test surfaces): %v\n%s", err, out)
 		return
 	}
@@ -1123,7 +1123,7 @@ func TestACLsLive_AutoCreateFalse_UnmappedPrincipal_HardError(t *testing.T) {
 	})
 	out, err := runKCP(t, mf)
 	require.Error(t, err, out)
-	require.Contains(t, out, "no service-account mapping for principal")
+	require.Contains(t, out, "have no Confluent Cloud service account")
 	require.Contains(t, out, principal)
 }
 

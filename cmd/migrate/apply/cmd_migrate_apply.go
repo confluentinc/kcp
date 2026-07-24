@@ -364,7 +364,6 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	}
 	saCC := msa.NewCCClient(ccIAMBaseURL, saClient, saAuth)
 	saCfg.Client = saCC
-	saRec := msa.New(saCfg)
 
 	// Build the numeric-id -> "sa-" resource-id map for a Confluent Cloud
 	// target. Confluent Cloud accepts an ACL created with principal
@@ -385,7 +384,18 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 		if err != nil {
 			return nil, fmt.Errorf("mapping service-account numeric ids: %w", err)
 		}
+		// The same fetched service-account set doubles as the existence guard for
+		// serviceAccounts.mapping targets: its values are exactly the "sa-" ids
+		// that exist on the target. A non-nil set switches on mapped-id validation
+		// in the reconciler (Confluent Cloud only) so a typo'd/stale mapping fails
+		// loud instead of creating orphaned ACLs Confluent Cloud won't reject.
+		existingSAIDs := make(map[string]bool, len(numericToResourceID))
+		for _, resourceID := range numericToResourceID {
+			existingSAIDs[resourceID] = true
+		}
+		saCfg.ExistingSAIDs = existingSAIDs
 	}
+	saRec := msa.New(saCfg)
 
 	// WRITE: ACLs on the target REST endpoint. ResolvedPrincipals is the SA
 	// reconciler's live map (late-bound at acls.Plan time); NumericToResourceID

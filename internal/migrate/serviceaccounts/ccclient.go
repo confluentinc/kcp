@@ -20,6 +20,11 @@ const DefaultBaseURL = "https://api.confluent.cloud"
 
 const serviceAccountsPath = "/iam/v2/service-accounts"
 
+// usersPath is the Confluent Cloud IAM v2 users collection. A single user is
+// addressed by appending "/{id}" (e.g. /iam/v2/users/u-123456) for a point
+// existence lookup.
+const usersPath = "/iam/v2/users"
+
 // legacyServiceAccountsPath is the Confluent Cloud LEGACY service-accounts
 // endpoint. Unlike serviceAccountsPath it is NOT under /iam/v2 — it lives at
 // the API root — and it is the only endpoint that exposes a service account's
@@ -46,6 +51,14 @@ type CCClient interface {
 	// exists (API returns 409), Create falls back to FindByDisplayName and
 	// returns the existing account instead of erroring.
 	Create(ctx context.Context, name, description string) (*ServiceAccount, error)
+
+	// UserExists reports whether a Confluent Cloud USER account with the given
+	// resource id (e.g. "u-123456") exists. It is a point lookup
+	// (GET /iam/v2/users/{id}): a 404 means the user does not exist (false, nil);
+	// any other error is a lookup failure. It exists so a serviceAccounts.mapping
+	// entry that targets a "u-" principal can be existence-checked, the same way
+	// "sa-" mappings are checked against the fetched service-account set.
+	UserExists(ctx context.Context, id string) (bool, error)
 }
 
 // ccClient implements CCClient against the Confluent Cloud IAM v2 REST API.
@@ -171,6 +184,23 @@ func (c *ccClient) NumericToResourceID(ctx context.Context) (map[string]string, 
 		path = legacyServiceAccountsPath + "?page_size=" + strconv.Itoa(pageSize) + "&page_token=" + url.QueryEscape(response.PageInfo.PageToken)
 	}
 	return out, nil
+}
+
+// UserExists implements CCClient. It performs a point GET on
+// /iam/v2/users/{id}: a 2xx means the user exists, a 404 means it does not
+// (false, nil), and any other status/transport error is returned as a lookup
+// failure. Unlike service accounts there is no cheap org-wide id set to check
+// membership against, so a mapped "u-" principal is verified one id at a time.
+func (c *ccClient) UserExists(ctx context.Context, id string) (bool, error) {
+	err := c.doRequest(ctx, http.MethodGet, usersPath+"/"+url.PathEscape(id), nil, nil)
+	if err == nil {
+		return true, nil
+	}
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) && statusErr.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	return false, fmt.Errorf("looking up user %q: %w", id, err)
 }
 
 // httpStatusError is returned by doRequest when the server responds with a
