@@ -62,13 +62,16 @@ uninstall: ## Uninstall from /usr/local/bin (requires sudo)
 # Code Quality
 # ==============================================================================
 
-.PHONY: fmt lint pre-commit-install
+.PHONY: fmt lint lint-emoji pre-commit-install
 
 fmt: ## Format Go code
 	gofmt -s -w .
 
-lint: ## Run Go linters (golangci-lint)
+lint: lint-emoji ## Run Go linters (emoji check + golangci-lint)
 	golangci-lint run --config .golangci.yml ./...
+
+lint-emoji: ## Fail if any Go source contains an emoji (kcp output is plain text)
+	go run ./cmd/lint-emoji
 
 pre-commit-install: ## Install git pre-commit hooks
 	git config --local core.hooksPath .githooks

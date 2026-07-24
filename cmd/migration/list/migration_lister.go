@@ -31,7 +31,7 @@ func (ml *MigrationLister) Run() error {
 	migrations := ml.migrationState.Migrations
 
 	if len(migrations) == 0 {
-		fmt.Printf("\n%s No migrations found in %s\n\n", color.YellowString("ℹ"), ml.migrationStateFile)
+		fmt.Printf("\nNo migrations found in %s\n\n", ml.migrationStateFile)
 		fmt.Printf("Run %s to create a new migration.\n\n", color.CyanString("kcp migration init"))
 		return nil
 	}

@@ -55,7 +55,7 @@ func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 }
 
 func (d *Discoverer) Run() error {
-	fmt.Printf("🚀 Starting discover\n")
+	fmt.Printf("Starting discover\n")
 
 	if err := d.discoverRegions(); err != nil {
 		slog.Error("failed to discover regions", "error", err)
@@ -152,7 +152,7 @@ func (d *Discoverer) discoverRegions() error {
 
 	for _, requested := range d.clusterArns {
 		if !matchedArns[requested] {
-			fmt.Printf("  ⚠️  Cluster ARN not found among discovered clusters: %s\n", requested)
+			fmt.Printf("  Cluster ARN not found among discovered clusters: %s\n", requested)
 		}
 	}
 
@@ -172,7 +172,7 @@ func (d *Discoverer) discoverRegions() error {
 	// report regions without clusters
 	if len(regionsWithoutClusters) > 0 {
 		for _, region := range regionsWithoutClusters {
-			fmt.Printf("  ⏭️  No clusters found in region %s\n", region)
+			fmt.Printf("  No clusters found in region %s\n", region)
 		}
 	}
 

@@ -10,7 +10,7 @@ import (
 // Evidence carries the concrete values that fired the rule so the rendered
 // plan can show "sized 14 eCKU > PNI cap 32" rather than "rule fired".
 // CustomerDeclared marks rules whose only signal is a `plan-inputs.yaml`
-// flag — renderer surfaces a ⚠ cost callout for those.
+// flag — renderer surfaces a cost callout for those.
 type hardLimit struct {
 	id               string
 	description      string

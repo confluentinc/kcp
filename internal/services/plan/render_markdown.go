@@ -145,14 +145,14 @@ func severityLegend(present map[string]bool) string {
 		return ""
 	}
 	parts := []string{}
-	if present["🔴"] {
-		parts = append(parts, "🔴 blocker (fix before cutover)")
+	if present["[HIGH]"] {
+		parts = append(parts, "[HIGH] blocker (fix before cutover)")
 	}
-	if present["🟡"] {
-		parts = append(parts, "🟡 affects accuracy (fix before relying on the plan)")
+	if present["[MED]"] {
+		parts = append(parts, "[MED] affects accuracy (fix before relying on the plan)")
 	}
-	if present["🟢"] {
-		parts = append(parts, "🟢 preference (pick one)")
+	if present["[LOW]"] {
+		parts = append(parts, "[LOW] preference (pick one)")
 	}
 	if len(parts) == 0 {
 		return ""
@@ -437,7 +437,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *Plan, cfg *PlanConfig, section 
 	stateDerivedDedicatedCount := countStateDerivedDedicated(p.ClusterTypeDecision)
 	hoistStateDerivedBanner := stateDerivedDedicatedCount >= 2
 	if hoistStateDerivedBanner {
-		fmt.Fprintf(b, "> ℹ **Cost direction (fleet):** %d clusters land on Dedicated because of state-derived hard-limit rules — i.e. the cluster as scanned hit a cap that Enterprise can't carry. The escalation isn't recoverable by editing `plan-inputs.yaml`; confirm with your Confluent account team that the scanned capacity reflects each cluster's actual workload before committing. Dedicated has a higher monthly cost than Enterprise.\n\n",
+		fmt.Fprintf(b, "> **Cost direction (fleet):** %d clusters land on Dedicated because of state-derived hard-limit rules — i.e. the cluster as scanned hit a cap that Enterprise can't carry. The escalation isn't recoverable by editing `plan-inputs.yaml`; confirm with your Confluent account team that the scanned capacity reflects each cluster's actual workload before committing. Dedicated has a higher monthly cost than Enterprise.\n\n",
 			stateDerivedDedicatedCount)
 	}
 	// First pass: compute each cluster's rationale prose + per-cluster
@@ -511,7 +511,7 @@ func writeSizingAndDecisions(b *bytes.Buffer, p *Plan, cfg *PlanConfig, section 
 			writeCostCallout(&extras, perClusterTriggers, calloutPerCluster)
 		}
 		if !hoistStateDerivedBanner && ct.Verdict == ClusterTypeDedicated && len(customerDeclaredTriggers) == 0 && len(ct.Triggers) > 0 {
-			extras.WriteString("  - ℹ **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.\n")
+			extras.WriteString("  - **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.\n")
 		}
 		if ct.Verdict == ClusterTypeDedicated && ct.Topology == TopologySingleZone && !szIsGlobal(globalCustomerTriggers) {
 			writeSZTradeoff(&extras, cfg, calloutPerCluster)
@@ -793,9 +793,9 @@ func writeCostCallout(b *bytes.Buffer, triggers []HardLimitTrigger, scope callou
 	labels := formatCustomerTriggerLabels(triggers)
 	switch scope {
 	case calloutGlobal:
-		fmt.Fprintf(b, "> ⚠ **Cost callout (applies to every cluster below):** "+costCalloutBody+"\n\n", labels)
+		fmt.Fprintf(b, "> **Cost callout (applies to every cluster below):** "+costCalloutBody+"\n\n", labels)
 	case calloutPerCluster:
-		fmt.Fprintf(b, "  - ⚠ **Cost callout:** "+costCalloutBody+"\n", labels)
+		fmt.Fprintf(b, "  - **Cost callout:** "+costCalloutBody+"\n", labels)
 	}
 }
 
@@ -806,9 +806,9 @@ func writeSZTradeoff(b *bytes.Buffer, cfg *PlanConfig, scope calloutScope) {
 	mzFloor := cfg.PlanInputDefaults.SLAFloorECKU["99.99"]
 	switch scope {
 	case calloutGlobal:
-		fmt.Fprintf(b, "> ℹ "+szTradeoffBody+"\n\n", mzFloor)
+		fmt.Fprintf(b, "> "+szTradeoffBody+"\n\n", mzFloor)
 	case calloutPerCluster:
-		fmt.Fprintf(b, "  - ℹ "+szTradeoffBody+"\n", mzFloor)
+		fmt.Fprintf(b, "  - "+szTradeoffBody+"\n", mzFloor)
 	}
 }
 
@@ -1059,7 +1059,7 @@ func cutoverGatewayLabel(m GatewayMediated, status RecommendationStatus) string 
 	}
 }
 
-// recommendationStatusMarker returns the inline ℹ note shown beneath
+// recommendationStatusMarker returns the inline note shown beneath
 // the Gateway mediation line for unresolved-decision paths, or empty
 // for the canonical / customer-choice paths (those don't need a callout).
 // "Awaiting" framing, not "Degraded" — plain Cluster Linking is a fully
@@ -1068,9 +1068,9 @@ func cutoverGatewayLabel(m GatewayMediated, status RecommendationStatus) string 
 func recommendationStatusMarker(status RecommendationStatus) string {
 	switch status {
 	case RecommendationDegradedAwaitingOQ:
-		return "ℹ **Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose."
+		return "**Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose."
 	case RecommendationDegradedPrereqsPending:
-		return "ℹ **Awaiting gateway prereqs** — gateway path requested but one or more prereqs are still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
+		return "**Awaiting gateway prereqs** — gateway path requested but one or more prereqs are still at `not_started`. See **Actions Needed** for the list. Plain Cluster Linking applies in the meantime."
 	default:
 		return ""
 	}
@@ -1168,13 +1168,13 @@ func writeCutoverOverrides(b *bytes.Buffer, overrides []ClusterCutoverOverride) 
 func prereqStatusLabel(s PrereqStatus) string {
 	switch s {
 	case PrereqMet:
-		return "✅ met"
+		return "met"
 	case PrereqInProgress:
-		return "🚧 in progress"
+		return "in progress"
 	case PrereqBlocked:
-		return "⛔ not started"
+		return "not started"
 	case PrereqUnconfirmed:
-		return "❓ unconfirmed"
+		return "unconfirmed"
 	default:
 		return string(s)
 	}
@@ -1297,11 +1297,11 @@ func writeAuthMappingProvenance(b *bytes.Buffer, auths []AuthDecision) {
 func gatewayCompatibleLabel(compatible, transparent bool) string {
 	switch {
 	case compatible && transparent:
-		return "✅ yes (transparent swap)"
+		return "yes (transparent swap)"
 	case compatible:
-		return "✅ yes (auth-swap mode)"
+		return "yes (auth-swap mode)"
 	default:
-		return "❌ no"
+		return "no"
 	}
 }
 
@@ -1335,7 +1335,7 @@ func writeSchema(b *bytes.Buffer, dec *SchemaDecision, inputs PlanInputsResolved
 	// The eligibility table renders only when the customer's strategy
 	// actually engages Schema Linking. Suppress on the `no_schemas`
 	// strategy even if a Confluent SR was scanned — the table would
-	// otherwise show all-❔ unknown to a reader who explicitly said
+	// otherwise show an all-unknown table to a reader who explicitly said
 	// they're not migrating schemas. The mismatch OQ carries the
 	// reconciliation prompt. Normalize "" → unknown here so the
 	// comparison matches decideSchema's own normalization (schema.go).
@@ -1437,13 +1437,13 @@ func schemaStrategyDeclaredLabel(strategy string, dec *SchemaDecision) string {
 		strategy = SchemaStrategyUnknown
 	}
 	if strategy == SchemaStrategyNoSchemas && dec.Source != SchemaSourceNone {
-		return fmt.Sprintf("`%s` ⚠ (scan found a Schema Registry)", strategy)
+		return fmt.Sprintf("`%s` (scan found a Schema Registry)", strategy)
 	}
 	if strategy == SchemaStrategyMigrateExistingSchemaRegistry && dec.Source == SchemaSourceNone {
-		return fmt.Sprintf("`%s` ⚠ (scan found no Schema Registry — re-scan or correct the strategy)", strategy)
+		return fmt.Sprintf("`%s` (scan found no Schema Registry — re-scan or correct the strategy)", strategy)
 	}
 	if !knownSchemaStrategy(strategy) && strategy != SchemaStrategyUnknown {
-		return fmt.Sprintf("`%s` ⚠ (unrecognised value — see Actions Needed)", strategy)
+		return fmt.Sprintf("`%s` (unrecognised value — see Actions Needed)", strategy)
 	}
 	return fmt.Sprintf("`%s`", strategy)
 }
@@ -1495,10 +1495,10 @@ func writeGluePathCommand(b *bytes.Buffer, glueNames []string) {
 
 // writeSchemaLinkingEligibility renders the three-row eligibility
 // table for the Confluent SR path. Verdict comes first so the
-// reader's eye lands on ✅/❌/❔ before the constraint text — at a
+// reader's eye lands on the verdict before the constraint text — at a
 // glance you see whether to read further or fix YAML.
 func writeSchemaLinkingEligibility(b *bytes.Buffer, dec *SchemaDecision, cfg *PlanConfig) {
-	b.WriteString("\n**Schema Linking eligibility (Confluent SR path):** all three rows must be **✅ yes** for the Schema Linking path to apply. Any **❌ no** falls to `defer_to_account_team`; any **❔ unknown** keeps the path at `unknown` until you declare the missing input.\n\n")
+	b.WriteString("\n**Schema Linking eligibility (Confluent SR path):** all three rows must be **yes** for the Schema Linking path to apply. Any **no** falls to `defer_to_account_team`; any **unknown** keeps the path at `unknown` until you declare the missing input.\n\n")
 	b.WriteString("| Verdict | Constraint | Input |\n")
 	b.WriteString("|---|---|---|\n")
 	fmt.Fprintf(b, "| %s | Source CP version ≥ %s | `plan-inputs.confluent_sr_cp_version` |\n",
@@ -1513,12 +1513,12 @@ func writeSchemaLinkingEligibility(b *bytes.Buffer, dec *SchemaDecision, cfg *Pl
 // = unknown, *true = yes, *false = no).
 func eligibilityCell(flag *bool) string {
 	if flag == nil {
-		return "❔ unknown"
+		return "unknown"
 	}
 	if *flag {
-		return "✅ yes"
+		return "yes"
 	}
-	return "❌ no"
+	return "no"
 }
 
 // quoteAll wraps each string in backticks for inline code rendering.
@@ -1557,7 +1557,7 @@ func writeRedFlags(b *bytes.Buffer, rf *RedFlagsSection, section int) {
 	if len(triggered) > 0 {
 		b.WriteString("### Triggered\n\n")
 		for _, r := range triggered {
-			fmt.Fprintf(b, "- 🔴 **%s**\n", r.Title)
+			fmt.Fprintf(b, "- **%s**\n", r.Title)
 			if r.Evidence != "" {
 				fmt.Fprintf(b, "  - _Evidence:_ %s\n", r.Evidence)
 			}
@@ -1567,7 +1567,7 @@ func writeRedFlags(b *bytes.Buffer, rf *RedFlagsSection, section int) {
 	if len(unknown) > 0 {
 		b.WriteString("### Not scanned (declare in `plan-inputs.yaml` or re-run the scanner)\n\n")
 		for _, r := range unknown {
-			fmt.Fprintf(b, "- ❔ **%s**\n", r.Title)
+			fmt.Fprintf(b, "- **%s**\n", r.Title)
 			if r.Evidence != "" {
 				fmt.Fprintf(b, "  - _Evidence:_ %s\n", r.Evidence)
 			}

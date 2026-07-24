@@ -137,22 +137,19 @@ Commands own their **terminal** narrative with `fmt`/`color` (the indented `disc
 
 **A command's `fmt` terminal narrative is not in `kcp.log`** unless you mirror it — that gap (the migration offset-sync trace was `fmt`-only) is why the file-only sink (`internal/logging`) and the reporter mirror exist. Even under `--verbose`, keep INFO messages clean: put noisy attrs (full ARNs, address lists, raw `time.Time`, maps like `tags=map[]`) on a paired `slog.Debug`.
 
-### Emoji standard (PR [#234](https://github.com/confluentinc/kcp/pull/234))
+### No emojis
 
-Only these six emojis are allowed in log lines. One emoji per line, at the start of the message string:
+kcp output is plain text — **do not use emojis anywhere**. This is a strict, project-wide rule (it reverses the former six-emoji standard, PR [#234](https://github.com/confluentinc/kcp/pull/234)).
 
-| Emoji | Meaning                | Use when                                                         | Levels                    |
-| ----- | ---------------------- | ---------------------------------------------------------------- | ------------------------- |
-| ✅    | Success / complete     | Operation finished, file written, scan complete                  | `slog.Info`               |
-| ❌    | Failure                | Operation failed (NEVER in `fmt.Errorf`)                         | `slog.Error`, `slog.Warn` |
-| ⚠️    | Warning / caveat       | Non-fatal issue, limitation, missing optional data               | `slog.Warn`               |
-| 🔍    | In progress / scanning | Starting a scan, search, discovery, or processing step           | `slog.Info`               |
-| ⏭️    | Skipped                | Item or step intentionally skipped                               | `slog.Info`, `slog.Debug` |
-| 🚀    | Starting               | Major process or command beginning (top-level entry points only) | `slog.Info`               |
+The ban covers every surface:
 
-Rules:
+- Log lines (`slog.Info` / `Debug` / `Warn` / `Error`).
+- Terminal narrative (`fmt.Printf` / `color`), banners, and interactive prompts.
+- Error strings (`fmt.Errorf`) — errors are data, not user-facing output.
+- Generated artifacts (plan/cost reports, Terraform) and code comments.
 
-1. **No emojis in `fmt.Errorf()`** — errors are data, not user-facing output.
-2. **No emojis in interactive prompts** (`fmt.Print` for user input).
-3. `slog.Debug` lines: emojis optional; if used, only ⏭️ or 🔍.
-4. Adding a new emoji is a project-wide decision — extend the table here, don't ad-hoc.
+Express status and severity as text tokens, not emoji — e.g. the plan report uses `[HIGH]` / `[MED]` / `[LOW]` (see `internal/services/plan/oq_registry.go`) and the migration reporter uses `[OK]` / `[FAIL]` / `[WARN]` for step status.
+
+Non-pictographic structural glyphs are **not** emojis and stay allowed where they aid terminal layout: tree arrows (`→`, `↳`), box-drawing and sparkline characters, and math symbols (`≤`, `≥`). If in doubt, prefer plain ASCII.
+
+**Enforcement:** `cmd/lint-emoji` scans all Go source for emoji and fails on any hit; it is wired into `make lint`, the pre-commit hook, and the CI static-analysis job. It flags pictographic runes only and deliberately never flags the allowed structural glyphs above (the exact allow/ban set is pinned by `cmd/lint-emoji/main_test.go`). The frontend, docs, and vendored/generated/local-only trees are outside its surface.

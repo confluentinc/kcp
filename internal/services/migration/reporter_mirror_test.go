@@ -26,12 +26,12 @@ func TestReporterMirrorsToFileOnly(t *testing.T) {
 	var out, errOut bytes.Buffer
 	r := &reporter{out: &out, err: &errOut}
 
-	r.section("🔍 Initializing migration...")
+	r.section("Initializing migration...")
 	r.success("migrated topic %s", "orders")
 	r.detail("waiting for STOPPED")
 	r.warn("offset lag high")
 	r.remediation("run recover to restore")
-	r.complete("✅ Migration complete")
+	r.complete("Migration complete")
 	r.line(color.GreenString("promotion table row"))
 
 	term := out.String()
@@ -48,11 +48,11 @@ func TestReporterMirrorsToFileOnly(t *testing.T) {
 	if strings.Contains(file, "\x1b[") {
 		t.Errorf("file mirror must strip ANSI:\n%s", file)
 	}
-	if strings.Contains(file, "↳") || strings.Contains(file, "✔") {
-		t.Errorf("terminal-only glyphs (↳/✔) must not leak into the log:\n%s", file)
+	if strings.Contains(file, "↳") || strings.Contains(file, "[OK]") {
+		t.Errorf("terminal-only decorations (↳/[OK]) must not leak into the log:\n%s", file)
 	}
 	for _, want := range []string{
-		"🔍 Initializing migration...",
+		"Initializing migration...",
 		"migrated topic orders",
 		"waiting for STOPPED",
 		"Migration complete",

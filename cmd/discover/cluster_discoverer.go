@@ -70,7 +70,7 @@ func (cd *ClusterDiscoverer) Discover(ctx context.Context, clusterArn, region st
 
 	var clusterMetric *types.ClusterMetrics
 	if skipMetrics {
-		fmt.Printf("  ⏭️  Skipping metrics discovery\n")
+		fmt.Printf("  Skipping metrics discovery\n")
 		clusterMetric = &types.ClusterMetrics{}
 	} else {
 		clusterMetric, err = cd.discoverMetrics(ctx, clusterArn, metricsGranularity)
@@ -108,7 +108,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	// stay in kcp.log at Debug.
 	isServerless := cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless
 	if isServerless {
-		slog.Warn("⚠️ MSK Serverless cluster; skipping unsupported scans (VPC connections, nodes, SCRAM secrets, compatible versions, networking, topics)")
+		slog.Warn("MSK Serverless cluster; skipping unsupported scans (VPC connections, nodes, SCRAM secrets, compatible versions, networking, topics)")
 	}
 
 	brokers, err := cd.getBootstrapBrokers(ctx, clusterArn)
@@ -154,7 +154,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	awsClientInfo.CompatibleVersions = *versions
 
 	if isServerless {
-		slog.Debug("⏭️ skipping networking scan for MSK Serverless cluster")
+		slog.Debug("skipping networking scan for MSK Serverless cluster")
 	} else {
 		networking, err := cd.scanNetworkingInfo(ctx, cluster, nodes)
 		if err != nil {
@@ -165,13 +165,13 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 
 	switch {
 	case skipTopics:
-		fmt.Printf("  ⏭️  Skipping topic discovery\n")
+		fmt.Printf("  Skipping topic discovery\n")
 	case isServerless:
 		// The AWS topic APIs are unsupported on serverless, so we skip discovery
 		// entirely (the serverless notice above already covers this). Unlike the
 		// default path we never call SetTopics here, so Topics stays nil and
 		// serializes as "topics": null; all consumers nil-guard it.
-		slog.Debug("⏭️ skipping topic discovery for MSK Serverless cluster", "clusterArn", clusterArn)
+		slog.Debug("skipping topic discovery for MSK Serverless cluster", "clusterArn", clusterArn)
 	default:
 		topics, err := cd.discoverTopics(ctx, clusterArn)
 		if err != nil {
@@ -195,7 +195,7 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 // file or logs. All failures are non-fatal: a warning is logged and connector
 // discovery is skipped rather than aborting the wider discover run (R3).
 func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, awsClientInfo *types.AWSClientInformation) ([]types.ConnectorSummary, error) {
-	fmt.Printf("  🔍 Scanning for matching connectors\n")
+	fmt.Printf("  Scanning for matching connectors\n")
 	var matchingConnectors []types.ConnectorSummary
 
 	totalRedacted := 0
@@ -262,7 +262,7 @@ func (cd *ClusterDiscoverer) discoverMatchingConnectors(ctx context.Context, aws
 			redactedConfig, redactedCount := redact.RedactStringMap(describeConnector.ConnectorConfiguration)
 			totalRedacted += redactedCount
 
-			fmt.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
+			fmt.Printf("    Found connector %s\n", aws.ToString(connector.ConnectorName))
 			matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
 				ConnectorArn:                     aws.ToString(connector.ConnectorArn),
 				ConnectorName:                    aws.ToString(connector.ConnectorName),
@@ -334,7 +334,7 @@ func bootstrapMatches(connectorBootstrap string, brokerAddresses []string) bool 
 }
 
 func (cd *ClusterDiscoverer) describeCluster(ctx context.Context, clusterArn string) (*kafka.DescribeClusterV2Output, error) {
-	fmt.Printf("  🔍 Describing cluster %s\n", clusterArn)
+	fmt.Printf("  Describing cluster %s\n", clusterArn)
 
 	cluster, err := cd.mskService.DescribeClusterV2(ctx, clusterArn)
 	if err != nil {
@@ -361,7 +361,7 @@ func (cd *ClusterDiscoverer) scanClusterVpcConnections(ctx context.Context, clus
 	if err != nil {
 		// Check if it's an MSK Serverless VPC connectivity error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This Region doesn't currently support VPC connectivity with Amazon MSK Serverless clusters") {
-			slog.Warn("⚠️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
+			slog.Warn("VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 			return []kafkatypes.ClientVpcConnection{}, nil
 		}
 		return nil, fmt.Errorf("failed listing client vpc connections: %v", err)
@@ -386,7 +386,7 @@ func (cd *ClusterDiscoverer) scanClusterNodes(ctx context.Context, clusterArn st
 	if err != nil {
 		// Check if it's an MSK Serverless error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("⚠️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
+			slog.Warn("Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 			return []kafkatypes.NodeInfo{}, nil
 		}
 		return nil, fmt.Errorf("failed listing nodes: %v", err)
@@ -402,7 +402,7 @@ func (cd *ClusterDiscoverer) scanClusterScramSecrets(ctx context.Context, cluste
 	if err != nil {
 		// Check if it's an MSK Serverless error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("⚠️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
+			slog.Warn("Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 			return []string{}, nil
 		}
 		return nil, fmt.Errorf("failed listing secrets: %v", err)
@@ -434,7 +434,7 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 	if err != nil {
 		// Check if it's an MSK Serverless error - this should be handled gracefully
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Warn("⚠️ Compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
+			slog.Warn("Compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
 			return &kafka.GetCompatibleKafkaVersionsOutput{
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
@@ -579,13 +579,13 @@ func (cd *ClusterDiscoverer) discoverMetrics(ctx context.Context, clusterArn str
 }
 
 func (cd *ClusterDiscoverer) discoverTopics(ctx context.Context, clusterArn string) ([]types.TopicDetails, error) {
-	fmt.Printf("  🔍 Scanning for topics\n")
+	fmt.Printf("  Scanning for topics\n")
 
 	topics, err := cd.mskService.GetTopicsWithConfigs(ctx, clusterArn)
 	if err != nil {
 		// Non-fatal: continue without topic details. Serverless is handled by the
 		// caller, so reaching here means a genuine provisioned-cluster failure.
-		slog.Warn("⚠️ failed to list topics; continuing without topic details", "error", err)
+		slog.Warn("failed to list topics; continuing without topic details", "error", err)
 		slog.Debug("failed to list topics", "clusterArn", clusterArn, "error", err)
 	}
 

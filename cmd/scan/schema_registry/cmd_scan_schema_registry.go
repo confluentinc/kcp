@@ -199,7 +199,7 @@ func runScanConfluentSchemaRegistry() error {
 		return fmt.Errorf("failed to scan schema registry: %v", err)
 	}
 
-	fmt.Printf("✅ Successfully scanned schema registry\n")
+	fmt.Printf("Successfully scanned schema registry\n")
 
 	return nil
 }

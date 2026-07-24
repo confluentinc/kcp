@@ -143,7 +143,7 @@ func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) 
 }
 
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
-	slog.Debug("🔍 configuring SASL/OAuth (IAM) authentication")
+	slog.Debug("configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
 	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 	config.Net.SASL.Enable = true
@@ -200,7 +200,7 @@ func configureSASLTypePlainAuthentication(config *sarama.Config, username string
 }
 
 func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool, insecureSkipVerify bool) {
-	slog.Debug("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
+	slog.Debug("enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
 	config.Net.TLS.Enable = withTLSEncryption
 	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 }
@@ -307,7 +307,7 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 	var describeConfigsResources []*sarama.ConfigResource
 
 	if len(metadataResp.Topics) == 0 && len(metadataResp.Brokers) > 0 {
-		slog.Warn("⚠️ no topics found in metadata response, this cluster may have no user topics or the client may lack permissions")
+		slog.Warn("no topics found in metadata response, this cluster may have no user topics or the client may lack permissions")
 	}
 
 	for _, topic := range metadataResp.Topics {

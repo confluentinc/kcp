@@ -84,7 +84,7 @@ func (ms *MSKService) GetCompatibleKafkaVersions(ctx context.Context, clusterArn
 	})
 	if err != nil {
 		if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-			slog.Debug("⏭️ compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
+			slog.Debug("compatible versions not supported for MSK Serverless clusters, skipping compatible versions scan")
 			return &kafka.GetCompatibleKafkaVersionsOutput{
 				CompatibleKafkaVersions: []kafkatypes.CompatibleKafkaVersion{},
 			}, nil
@@ -131,7 +131,7 @@ func (ms *MSKService) ListClientVpcConnections(ctx context.Context, clusterArn s
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This Region doesn't currently support VPC connectivity with Amazon MSK Serverless clusters") {
-				slog.Debug("⏭️ VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
+				slog.Debug("VPC connectivity not supported for MSK Serverless clusters in this region, skipping VPC connections scan")
 				return []kafkatypes.ClientVpcConnection{}, nil
 			}
 			return nil, fmt.Errorf("failed listing client vpc connections: %v", err)
@@ -181,7 +181,7 @@ func (ms *MSKService) ListNodes(ctx context.Context, clusterArn string, maxResul
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Debug("⏭️ Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
+				slog.Debug("Node listing not supported for MSK Serverless clusters, skipping Nodes scan")
 				return []kafkatypes.NodeInfo{}, nil
 			}
 			return nil, fmt.Errorf("failed listing nodes: %v", err)
@@ -208,7 +208,7 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, m
 		})
 		if err != nil {
 			if strings.Contains(err.Error(), "This operation cannot be performed on serverless clusters.") {
-				slog.Debug("⏭️ Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
+				slog.Debug("Scram secret listing not supported for MSK Serverless clusters, skipping scram secrets scan")
 				return []string{}, nil
 			}
 			return nil, fmt.Errorf("failed listing secrets: %v", err)
@@ -224,7 +224,7 @@ func (ms *MSKService) ListScramSecrets(ctx context.Context, clusterArn string, m
 }
 
 func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kafkatypes.Cluster, error) {
-	slog.Info("🔍 scanning for MSK clusters", "region", ms.client.Options().Region)
+	slog.Info("scanning for MSK clusters", "region", ms.client.Options().Region)
 
 	var nextToken *string
 
@@ -247,7 +247,7 @@ func (ms *MSKService) ListClusters(ctx context.Context, maxResults int32) ([]kaf
 		nextToken = listClustersOutput.NextToken
 	}
 
-	slog.Info("✅ found clusters", "count", len(clusterInfoList))
+	slog.Info("found clusters", "count", len(clusterInfoList))
 
 	return clusterInfoList, nil
 }
@@ -282,14 +282,14 @@ func (ms *MSKService) GetConfigurations(ctx context.Context, maxResults int32) (
 		nextToken = output.NextToken
 	}
 
-	slog.Info("✅ found configurations", "count", len(configurations))
+	slog.Info("found configurations", "count", len(configurations))
 
 	return configurations, nil
 }
 
 func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResults int32) ([]kafkatypes.TopicInfo, error) {
-	slog.Info("🔍 listing topics")
-	slog.Debug("🔍 listing topics", "clusterArn", clusterArn)
+	slog.Info("listing topics")
+	slog.Debug("listing topics", "clusterArn", clusterArn)
 
 	var topics []kafkatypes.TopicInfo
 	var nextToken *string
@@ -313,7 +313,7 @@ func (ms *MSKService) ListTopics(ctx context.Context, clusterArn string, maxResu
 		nextToken = output.NextToken
 	}
 
-	slog.Info("✅ found topics", "count", len(topics))
+	slog.Info("found topics", "count", len(topics))
 	return topics, nil
 }
 
@@ -383,7 +383,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 
 			current := progressCount.Add(1)
 			if current%250 == 0 {
-				slog.Debug("🔍 describing topics", "processed", current, "total", len(topicList))
+				slog.Debug("describing topics", "processed", current, "total", len(topicList))
 			}
 		}(topicName)
 	}
@@ -402,7 +402,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 		// Log narrative, not a console warning: the first-pass failures are
 		// typically transient (429 rate-limiting) and usually recover on retry.
 		// A genuine, unrecoverable failure surfaces below at Error.
-		slog.Info("🔍 retrying failed topics", "count", len(failedTopics))
+		slog.Info("retrying failed topics", "count", len(failedTopics))
 		for _, name := range failedTopics {
 			topicDesc, err := ms.DescribeTopic(ctx, clusterArn, name)
 			if err != nil {
@@ -413,7 +413,7 @@ func (ms *MSKService) GetTopicsWithConfigs(ctx context.Context, clusterArn strin
 		}
 	}
 
-	slog.Info("✅ discovered topics", "count", len(topicDetails))
+	slog.Info("discovered topics", "count", len(topicDetails))
 	return topicDetails, nil
 }
 

@@ -133,20 +133,20 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	}
 
 	clusterName := utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID)
-	fmt.Printf("🚀 Starting self-managed connector scan for cluster %s\n", clusterName)
-	slog.Info("🔍 scanning self-managed connectors", "cluster", clusterName)
+	fmt.Printf("Starting self-managed connector scan for cluster %s\n", clusterName)
+	slog.Info("scanning self-managed connectors", "cluster", clusterName)
 
 	connectorNames, err := s.client.ListConnectors()
 	if err != nil {
 		return fmt.Errorf("failed to list connectors: %v", err)
 	}
 
-	fmt.Printf("  🔍 Found %d connectors\n", len(connectorNames))
-	slog.Info("🔍 found connectors", "count", len(connectorNames))
+	fmt.Printf("  Found %d connectors\n", len(connectorNames))
+	slog.Info("found connectors", "count", len(connectorNames))
 
 	if len(connectorNames) == 0 {
-		fmt.Printf("  ⏭️  No connectors found for cluster %s, skipping\n", clusterName)
-		slog.Info("⏭️ no connectors found; skipping", "cluster", clusterName)
+		fmt.Printf("  No connectors found for cluster %s, skipping\n", clusterName)
+		slog.Info("no connectors found; skipping", "cluster", clusterName)
 		return nil
 	}
 
@@ -155,14 +155,14 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 	for _, name := range connectorNames {
 		connector, redactedCount, err := s.getConnectorDetails(name)
 		if err != nil {
-			slog.Warn(fmt.Sprintf("⚠️ failed to get connector details for connector %s: %v", name, err))
+			slog.Warn(fmt.Sprintf("failed to get connector details for connector %s: %v", name, err))
 			continue
 		}
 		totalRedacted += redactedCount
 		connectors = append(connectors, connector)
 	}
 
-	fmt.Printf("  ✅ Successfully retrieved connector details for %d connectors\n", len(connectors))
+	fmt.Printf("  Successfully retrieved connector details for %d connectors\n", len(connectors))
 	if totalRedacted > 0 {
 		// Counts only — never the redacted keys or values.
 		slog.Info("redacted sensitive connector config fields", "redacted_fields", totalRedacted, "connectors", len(connectors))
@@ -180,12 +180,12 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		metrics, err := s.collectConnectMetrics(context.Background())
 		if err != nil {
 			slog.Warn("Connect metrics collection failed; connectors persisted without metrics", "source", s.metricsSource, "error", err)
-			fmt.Printf("  ⚠️  Connect metrics collection failed; connectors persisted without metrics\n")
+			fmt.Printf("  Connect metrics collection failed; connectors persisted without metrics\n")
 		} else if err := s.updateStateWithConnectMetrics(metrics); err != nil {
 			slog.Warn("failed to attach Connect metrics to state; connectors persisted without metrics", "error", err)
-			fmt.Printf("  ⚠️  Could not attach Connect metrics; connectors persisted without metrics\n")
+			fmt.Printf("  Could not attach Connect metrics; connectors persisted without metrics\n")
 		} else {
-			fmt.Printf("  📊 Collected %d Connect metric data points\n", len(metrics.Metrics))
+			fmt.Printf("  Collected %d Connect metric data points\n", len(metrics.Metrics))
 		}
 	}
 
@@ -193,8 +193,8 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
-	fmt.Printf("✅ Self-managed connector scan complete for cluster %s\n", clusterName)
-	slog.Info("✅ self-managed connector scan complete", "cluster", clusterName, "connectors", len(connectors))
+	fmt.Printf("Self-managed connector scan complete for cluster %s\n", clusterName)
+	slog.Info("self-managed connector scan complete", "cluster", clusterName, "connectors", len(connectors))
 	return nil
 }
 
@@ -204,7 +204,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 // present) is captured as ConnectHost for per-host grouping in the UI. Returns
 // the connector, the number of redacted fields, and any error.
 func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.SelfManagedConnector, int, error) {
-	slog.Debug("🔍 fetching connector details", "connector", name)
+	slog.Debug("fetching connector details", "connector", name)
 	connector := types.SelfManagedConnector{
 		Name: name,
 	}
@@ -218,7 +218,7 @@ func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.S
 
 	status, err := s.client.GetConnectorStatus(name)
 	if err != nil {
-		slog.Warn(fmt.Sprintf("⚠️ failed to get connector status for connector %s: %v", name, err))
+		slog.Warn(fmt.Sprintf("failed to get connector status for connector %s: %v", name, err))
 	} else {
 		if connectorStatus, ok := status["connector"].(map[string]any); ok {
 			if stateStr, ok := connectorStatus["state"].(string); ok {
@@ -357,7 +357,7 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 	}
 
 	info.SetSelfManagedConnectors(connectors)
-	fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
+	fmt.Printf("Updated cluster %s with self-managed connector information\n", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
 
 	return nil
 }

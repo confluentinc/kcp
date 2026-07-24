@@ -46,7 +46,7 @@ func NewCostReporter(reportService ReportService, markdownService markdown.Markd
 }
 
 func (r *CostReporter) Run() error {
-	fmt.Printf("🔍 Processing regions: %v (from %s to %s)\n", r.regions, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
+	fmt.Printf("Processing regions: %v (from %s to %s)\n", r.regions, r.startDate.Format("2006-01-02"), r.endDate.Format("2006-01-02"))
 
 	processedState := r.reportService.ProcessState(*r.state)
 	regionCostData := []report.ProcessedRegionCosts{}

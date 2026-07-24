@@ -38,7 +38,7 @@ func NewSchemaRegistryScanner(schemaRegistryService SchemaRegistryScannerService
 }
 
 func (srs *SchemaRegistryScanner) Run() error {
-	fmt.Printf("🚀 Starting schema registry scanner\n")
+	fmt.Printf("Starting schema registry scanner\n")
 
 	defaultCompatibility, err := srs.SchemaRegistryService.GetDefaultCompatibility()
 	if err != nil {

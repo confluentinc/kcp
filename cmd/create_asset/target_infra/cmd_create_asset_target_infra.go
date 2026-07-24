@@ -223,7 +223,7 @@ func preRunCreateTargetInfra(cmd *cobra.Command, args []string) error {
 }
 
 func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
-	fmt.Printf("🚀 Generating target infrastructure\n")
+	fmt.Printf("Generating target infrastructure\n")
 
 	// If state file is provided, extract vpc-id and region from it
 	if stateFile != "" {
@@ -288,7 +288,7 @@ func runCreateTargetInfra(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to write Terraform project: %w", err)
 	}
 
-	fmt.Printf("✅ Target infrastructure generated: %s\n", outputDir)
+	fmt.Printf("Target infrastructure generated: %s\n", outputDir)
 	return nil
 }
 

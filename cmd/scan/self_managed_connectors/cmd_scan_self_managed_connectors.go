@@ -357,7 +357,7 @@ func normaliseConnectURL(url string) string {
 	}
 
 	normalisedUrl := "http://" + url
-	fmt.Printf("ℹ️  Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
+	fmt.Printf("Adding protocol scheme 'http://' to provided Connect URL: %s\n", normalisedUrl)
 
 	return normalisedUrl
 }

@@ -49,7 +49,7 @@ plan_input_defaults:
 
   # Customer-declared hard requirements (all default false). A wrong `true`
   # flips Enterprise → Dedicated (higher monthly cost); the renderer surfaces
-  # a ⚠ cost callout on the verdict when one of these is the trigger.
+  # a [WARN] cost callout on the verdict when one of these is the trigger.
   enforce_schemas_at_the_broker: false
   requires_high_throughput_rest_produce_api: false
   requires_99_95_sla_within_a_single_zone: false
@@ -131,7 +131,7 @@ auth_mapping:
 # genuinely different operating envelope (older state files acceptable,
 # different PNI/PrivateLink breakeven, etc.).
 thresholds:
-  # Emit a 🟡 state-file-stale OQ when the source state.json is older
+  # Emit a [MED] state-file-stale OQ when the source state.json is older
   # than this many days. Conservative default: 7. Anything younger is
   # silent; anything older surfaces a re-discover prompt.
   stale_state_days: 7

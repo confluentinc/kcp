@@ -18,11 +18,15 @@ type oqMeta struct {
 	// items within it.)
 	Priority int
 
-	// Severity is the 🔴 / 🟡 / 🟢 prefix when no promotion applies.
-	// Classes:
-	//   🔴 blocker — fix before cutover
-	//   🟡 affects accuracy — fix before relying on the plan
-	//   🟢 preference — pick one
+	// Severity is the [HIGH] / [MED] / [LOW] label prefix when no
+	// promotion applies. Classes:
+	//   [HIGH] blocker — fix before cutover
+	//   [MED]  affects accuracy — fix before relying on the plan
+	//   [LOW]  preference — pick one
+	//
+	// These are provisional text tokens (chosen to replace the previous
+	// emoji prefixes) — reword them here and in render_markdown.go's
+	// severityLegend together if the report vocabulary changes.
 	Severity string
 
 	// PromoteWhen lists sibling OQ IDs that, when also present on
@@ -36,9 +40,9 @@ type oqMeta struct {
 
 	// PromotedTitle replaces the OQ's rendered title when promoted.
 	// Empty falls back to the OQ's natural Title field — but for
-	// "preference"-shaped titles being promoted to blocker (a 🟢→🔴
+	// "preference"-shaped titles being promoted to blocker (a [LOW]→[HIGH]
 	// promotion), keeping the original title creates a contradictory
-	// signal ("pick" + 🔴), so promotion entries should always
+	// signal ("pick" + [HIGH]), so promotion entries should always
 	// supply a replacement.
 	PromotedTitle string
 }
@@ -67,138 +71,138 @@ var oqRegistry = map[string]oqMeta{
 	// Networking
 	"networking_privatelink_over_cap": {
 		Priority: 310,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 
 	// Cutover
 	"downtime_tolerance_requires_gateway": {
 		Priority: 410,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"downtime_tolerance_unknown": {
 		Priority: 420,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"sub_pattern_unknown": {
 		Priority: 425,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"gateway_prereqs_pending": {
 		Priority:         430,
-		Severity:         "🟢",
+		Severity:         "[LOW]",
 		PromoteWhen:      []string{"auth_target_gateway_incompatible"},
-		PromotedSeverity: "🔴",
+		PromotedSeverity: "[HIGH]",
 		PromotedTitle:    "Gateway prereqs — moot until the auth conflict above is resolved",
 	},
 	"gateway_intent_unconfirmed": {
 		Priority:         440,
-		Severity:         "🟢",
+		Severity:         "[LOW]",
 		PromoteWhen:      []string{"auth_target_gateway_incompatible"},
-		PromotedSeverity: "🔴",
+		PromotedSeverity: "[HIGH]",
 		PromotedTitle:    "Gateway intent — moot until the auth conflict above is resolved",
 	},
 
 	// Auth
 	"target_auth_method_unknown": {
 		Priority: 510,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"auth_target_gateway_incompatible": {
 		Priority: 520,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"auth_posture_unknown": {
 		Priority: 530,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 
 	// Schema migration
 	"schema_strategy_invalid": {
 		Priority: 610,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"schema_linking_ineligible": {
 		Priority: 620,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"schema_strategy_unknown": {
 		Priority: 630,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"schema_linking_eligibility_unknown": {
 		Priority: 640,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"schema_state_strategy_mismatch": {
 		Priority: 650,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 
 	// Tiered Storage
 	"tiered_consumer_history_invalid": {
 		Priority: 710,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"tiered_historical_strategy_invalid": {
 		Priority: 720,
-		Severity: "🔴",
+		Severity: "[HIGH]",
 	},
 	"tiered_strategy_undeclared": {
 		Priority: 730,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 
 	// Cost reconciliation
 	"cost_data_not_collected": {
 		Priority: 810,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 
 	// Cross-cutting fleet / state-file signals
 	"state_file_stale": {
 		Priority: 910,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"missing_p95_metrics": {
 		Priority: 920,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"broker_inventory_empty": {
 		Priority: 930,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"topic_inventory_empty": {
 		Priority: 940,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"acls_not_scanned": {
 		Priority: 950,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"cluster_override_unknown_cluster": {
 		Priority: 960,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"osk_source_unsupported": {
 		Priority: 970,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 	"cluster_type_unrecognised": {
 		Priority: 980,
-		Severity: "🟡",
+		Severity: "[MED]",
 	},
 }
 
 // oqMetaFor returns the registry entry for an OQ ID, or a sentinel
-// (Priority: priorityUnknown, Severity: 🟡) when the ID is unknown.
-// 🟡 is the safe default for accuracy-class signals; an unknown ID
-// indicates a missed registry entry — surfacing it as 🟡 keeps it
+// (Priority: priorityUnknown, Severity: [MED]) when the ID is unknown.
+// [MED] is the safe default for accuracy-class signals; an unknown ID
+// indicates a missed registry entry — surfacing it as [MED] keeps it
 // visible without falsely claiming blocker status.
 func oqMetaFor(id string) oqMeta {
 	if m, ok := oqRegistry[id]; ok {
 		return m
 	}
-	return oqMeta{Priority: priorityUnknown, Severity: "🟡"}
+	return oqMeta{Priority: priorityUnknown, Severity: "[MED]"}
 }
 
 // promoteSeverity applies the sibling-aware promotion rule: if any

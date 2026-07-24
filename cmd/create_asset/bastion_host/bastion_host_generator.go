@@ -30,7 +30,7 @@ func NewBastionHostAssetGenerator(opts BastionHostOpts) *BastionHostAssetGenerat
 }
 
 func (bh *BastionHostAssetGenerator) Run() error {
-	fmt.Printf("🚀 Generating bastion host environment assets\n")
+	fmt.Printf("Generating bastion host environment assets\n")
 
 	outputDir := bh.opts.OutputDir
 	if outputDir == "" {
@@ -68,7 +68,7 @@ func (bh *BastionHostAssetGenerator) Run() error {
 	}
 	slog.Debug("wrote bastion-host-user-data.tpl")
 
-	fmt.Printf("✅ Bastion host environment assets generated successfully: %s\n", outputDir)
+	fmt.Printf("Bastion host environment assets generated successfully: %s\n", outputDir)
 	return nil
 }
 
