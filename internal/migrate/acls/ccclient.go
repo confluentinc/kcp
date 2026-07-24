@@ -86,6 +86,13 @@ var operationToWire = map[string]string{
 	"DescribeConfigs": "DESCRIBE_CONFIGS",
 	"AlterConfigs":    "ALTER_CONFIGS",
 	"IdempotentWrite": "IDEMPOTENT_WRITE",
+	// "All" (sarama's AclOperationAll.String()) is a common MSK grant
+	// (`kafka-acls --operation All`) that survives normalization on Topic/Cluster
+	// (Group/TransactionalID restrict it); CC REST v3 accepts "ALL". Without this
+	// entry it reached the client as an opaque "unknown ACL operation" failure.
+	// ("Any" is a filter-only operation DescribeAcls never returns as a stored
+	// binding, so it is deliberately not mapped.)
+	"All": "ALL",
 }
 
 var patternTypeToWire = map[string]string{

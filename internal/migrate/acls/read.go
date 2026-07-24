@@ -26,7 +26,7 @@ type aclLister interface {
 func ReadNativeACLs(adm aclLister) ([]types.Acls, error) {
 	resourceAcls, err := adm.ListAcls()
 	if err != nil {
-		return nil, fmt.Errorf("failed to list acls: %v", err)
+		return nil, fmt.Errorf("failed to list acls: %w", err)
 	}
 
 	var flattenedAcls []types.Acls

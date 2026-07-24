@@ -25,11 +25,13 @@ type Config struct {
 	// isn't a warn-and-skip principal (User:* / User:ANONYMOUS).
 	AutoCreate bool
 	// Mapping overrides principal resolution: source principal -> a
-	// pre-existing CC identity id (the bare "sa-"/"u-"/"pool-" id, without a
-	// "User:" prefix). A present-but-empty value is treated as unmapped —
-	// this lets a manifest record "no mapping" for a principal explicitly
-	// (e.g. documenting that ANONYMOUS was deliberately left to warn-and-skip)
-	// without the value being mistaken for a real override.
+	// pre-existing CC identity id ("sa-"/"u-"/"pool-"). The value may be bare
+	// ("sa-abc") or "User:"-prefixed ("User:sa-abc"); a leading "User:" is
+	// trimmed before use, matching what manifest validation accepts. A
+	// present-but-empty value is treated as unmapped — this lets a manifest
+	// record "no mapping" for a principal explicitly (e.g. documenting that
+	// ANONYMOUS was deliberately left to warn-and-skip) without the value being
+	// mistaken for a real override.
 	Mapping map[string]string
 	// Principals is the set of distinct source principals referenced by the
 	// surviving (filtered, normalized) ACLs.
@@ -206,7 +208,13 @@ func (r *Reconciler) Plan(ctx context.Context) (reconcile.Plan, error) {
 	for _, p := range principals {
 		summary := fmt.Sprintf("service account for principal %q", p)
 
-		if id, ok := r.cfg.Mapping[p]; ok && id != "" {
+		if raw, ok := r.cfg.Mapping[p]; ok && raw != "" {
+			// A mapping value may be written bare ("sa-abc") or "User:"-prefixed
+			// ("User:sa-abc") — manifest validation accepts both. Normalize to the
+			// bare id here so (1) the existence check below sees the sa-/u-/pool-
+			// prefix instead of falling through to the unverified default, and
+			// (2) the resolved principal is "User:sa-abc", not "User:User:sa-abc".
+			id := strings.TrimPrefix(raw, "User:")
 			missing, err := r.mappingTargetMissing(ctx, id)
 			if err != nil {
 				errs = append(errs, fmt.Errorf("validating mapping %q -> %q: %w", p, id, err))

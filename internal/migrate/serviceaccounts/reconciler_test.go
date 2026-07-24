@@ -238,6 +238,35 @@ func TestReconciler_MappedPool_NotVerified_Resolves(t *testing.T) {
 	require.Equal(t, "User:pool-xyz", r.ResolvedMap()["User:a"])
 }
 
+// TestReconciler_MappedValueUserPrefixed_NormalizedAndValidated proves a
+// "User:"-prefixed mapping value (a form manifest validation explicitly
+// accepts) resolves to a SINGLE-prefixed principal and is existence-checked —
+// not double-prefixed ("User:User:sa-1") with the check silently skipped.
+func TestReconciler_MappedValueUserPrefixed_NormalizedAndValidated(t *testing.T) {
+	// exists → resolves to exactly "User:sa-1"
+	r := New(Config{
+		Mapping:       map[string]string{"User:a": "User:sa-1"},
+		Principals:    []string{"User:a"},
+		Client:        newFakeClient(),
+		ExistingSAIDs: map[string]bool{"sa-1": true},
+	})
+	_, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, "User:sa-1", r.ResolvedMap()["User:a"]) // not "User:User:sa-1"
+
+	// missing → the existence check now runs on the User:-prefixed form (bare id
+	// extracted) and fails, instead of being skipped as an unrecognized prefix.
+	r2 := New(Config{
+		Mapping:       map[string]string{"User:a": "User:sa-ghost"},
+		Principals:    []string{"User:a"},
+		Client:        newFakeClient(),
+		ExistingSAIDs: map[string]bool{"sa-1": true},
+	})
+	_, err = r2.Plan(context.Background())
+	require.ErrorContains(t, err, "mapping target not found in Confluent Cloud")
+	require.ErrorContains(t, err, "User:a -> sa-ghost")
+}
+
 // TestReconciler_NilExistingSAIDs_SkipsValidation proves the historical
 // trust-verbatim behaviour is preserved for a non-Confluent-Cloud target: with
 // a nil ExistingSAIDs set, a mapping to a non-existent "sa-" id is used as-is.

@@ -70,6 +70,26 @@ func TestNormalizeForCC(t *testing.T) {
 			},
 		},
 		{
+			name: "All operation on Topic survives (unrestricted resource)",
+			in: []types.Acls{
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "All", PermissionType: "Allow"},
+			},
+			wantOut: []types.Acls{
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "All", PermissionType: "Allow"},
+			},
+			wantDiags: nil,
+		},
+		{
+			name: "All operation on Group dropped (restricted resource)",
+			in: []types.Acls{
+				{ResourceType: "Group", ResourceName: "cg", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "All", PermissionType: "Allow"},
+			},
+			wantOut: nil,
+			wantDiags: []Diagnostic{
+				{Level: "warn", Message: `dropped Allow Group ACL for principal "User:app" on Group "cg": operation "All" is not valid for resource type Group on Confluent Cloud`},
+			},
+		},
+		{
 			name: "redundant allow Describe dropped when allow Read exists on same resource+principal+host",
 			in: []types.Acls{
 				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:app", Host: "*", Operation: "Describe", PermissionType: "Allow"},

@@ -162,6 +162,7 @@ func TestEnumMapping_RoundTrip(t *testing.T) {
 		"DescribeConfigs": "DESCRIBE_CONFIGS",
 		"AlterConfigs":    "ALTER_CONFIGS",
 		"IdempotentWrite": "IDEMPOTENT_WRITE",
+		"All":             "ALL",
 	}
 	for canonical, wire := range operations {
 		got, ok := operationToWire[canonical]
