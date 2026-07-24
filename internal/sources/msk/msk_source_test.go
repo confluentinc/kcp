@@ -54,6 +54,44 @@ func TestMSKSource_Scan_ErrorWhenStateNotProvided(t *testing.T) {
 	assert.Contains(t, err.Error(), "state is required")
 }
 
+func TestMSKSource_GetKafkaAdminForCluster_BeforeLoad(t *testing.T) {
+	source := msk.NewMSKSource()
+	admin, err := source.GetKafkaAdminForCluster("arn:aws:kafka:us-east-1:123:cluster/x/y", nil)
+	require.Error(t, err)
+	assert.Nil(t, admin)
+	assert.Contains(t, err.Error(), "credentials not loaded")
+}
+
+func TestMSKSource_GetKafkaAdminForCluster_ErrorWhenStateNil(t *testing.T) {
+	source := msk.NewMSKSource()
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "msk-credentials.yaml")
+	require.NoError(t, os.WriteFile(credFile, []byte("regions: []\n"), 0644))
+	require.NoError(t, source.LoadCredentials(credFile))
+
+	admin, err := source.GetKafkaAdminForCluster("arn:aws:kafka:us-east-1:123:cluster/x/y", nil)
+	require.Error(t, err)
+	assert.Nil(t, admin)
+	assert.Contains(t, err.Error(), "state is required")
+}
+
+func TestMSKSource_GetKafkaAdminForCluster_UnknownClusterArn(t *testing.T) {
+	source := msk.NewMSKSource()
+	tmpDir := t.TempDir()
+	credFile := filepath.Join(tmpDir, "msk-credentials.yaml")
+	require.NoError(t, os.WriteFile(credFile, []byte("regions: []\n"), 0644))
+	require.NoError(t, source.LoadCredentials(credFile))
+
+	state := &types.State{
+		MSKSources: &types.MSKSourcesState{Regions: []types.DiscoveredRegion{}},
+	}
+
+	admin, err := source.GetKafkaAdminForCluster("arn:aws:kafka:us-east-1:123:cluster/missing/y", state)
+	require.Error(t, err)
+	assert.Nil(t, admin)
+	assert.Contains(t, err.Error(), "not found in MSK credentials")
+}
+
 func TestMSKSource_Scan_EmptyResultWhenNoRegions(t *testing.T) {
 	source := msk.NewMSKSource()
 

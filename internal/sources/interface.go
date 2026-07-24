@@ -3,6 +3,7 @@ package sources
 import (
 	"context"
 
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -19,6 +20,13 @@ type Source interface {
 
 	// GetClusters returns the list of clusters available to scan
 	GetClusters() []ClusterIdentifier
+
+	// GetKafkaAdminForCluster returns a Kafka admin client for a single cluster
+	// identified by clusterID. The state argument is consulted only by the MSK
+	// implementation (broker addresses come from prior `kcp discover` output);
+	// OSK implementations may ignore it. Callers are responsible for closing
+	// the returned admin.
+	GetKafkaAdminForCluster(clusterID string, state *types.State) (client.KafkaAdmin, error)
 }
 
 // ClusterIdentifier uniquely identifies a cluster within a source

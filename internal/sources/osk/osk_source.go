@@ -56,6 +56,33 @@ func (s *OSKSource) GetClusters() []sources.ClusterIdentifier {
 	return clusters
 }
 
+// GetKafkaAdminForCluster returns a Kafka admin client for a single OSK cluster
+// identified by clusterID. The state argument is ignored — OSK credentials and
+// broker addresses are fully resolved from the credentials file.
+func (s *OSKSource) GetKafkaAdminForCluster(clusterID string, _ *types.State) (client.KafkaAdmin, error) {
+	if s.credentials == nil {
+		return nil, fmt.Errorf("credentials not loaded")
+	}
+
+	var clusterCreds *types.OSKClusterAuth
+	for i := range s.credentials.Clusters {
+		if s.credentials.Clusters[i].ID == clusterID {
+			clusterCreds = &s.credentials.Clusters[i]
+			break
+		}
+	}
+	if clusterCreds == nil {
+		return nil, fmt.Errorf("cluster %q not found in OSK credentials", clusterID)
+	}
+
+	authType, err := clusterCreds.GetSelectedAuthType()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine auth type for cluster %s: %w", clusterID, err)
+	}
+
+	return s.createKafkaAdmin(*clusterCreds, authType)
+}
+
 // Scan performs scanning of all OSK clusters
 func (s *OSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*sources.ScanResult, error) {
 	if s.credentials == nil {

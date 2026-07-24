@@ -17,6 +17,7 @@ type MockKafkaAdmin struct {
 	GetClusterKafkaMetadataFunc func() (*client.ClusterKafkaMetadata, error)
 	DescribeConfigFunc          func() ([]sarama.ConfigEntry, error)
 	ListAclsFunc                func() ([]sarama.ResourceAcls, error)
+	BrokerConfigFunc            func() ([]string, *sarama.Config)
 	CloseFunc                   func() error
 }
 
@@ -34,6 +35,13 @@ func (m *MockKafkaAdmin) DescribeConfig() ([]sarama.ConfigEntry, error) {
 
 func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
 	return m.ListAclsFunc()
+}
+
+func (m *MockKafkaAdmin) BrokerConfig() ([]string, *sarama.Config) {
+	if m.BrokerConfigFunc == nil {
+		return nil, nil
+	}
+	return m.BrokerConfigFunc()
 }
 
 func (m *MockKafkaAdmin) Close() error {

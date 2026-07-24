@@ -724,6 +724,27 @@ func TestKafkaAdminInterface(t *testing.T) {
 	var _ KafkaAdmin = (*KafkaAdminClient)(nil)
 }
 
+func TestKafkaAdminClient_BrokerConfig(t *testing.T) {
+	cfg := sarama.NewConfig()
+	cfg.ClientID = "test-client"
+	brokers := []string{"broker1:9092", "broker2:9092"}
+
+	c := &KafkaAdminClient{
+		saramaConfig:    cfg,
+		brokerAddresses: brokers,
+	}
+
+	gotBrokers, gotCfg := c.BrokerConfig()
+	assert.Equal(t, brokers, gotBrokers)
+	require.NotNil(t, gotCfg)
+	assert.Equal(t, "test-client", gotCfg.ClientID)
+
+	// Defensive copy: mutating the returned config does not affect the admin's
+	// internal config.
+	gotCfg.ClientID = "mutated"
+	assert.Equal(t, "test-client", c.saramaConfig.ClientID)
+}
+
 func TestClusterKafkaMetadata_Structure(t *testing.T) {
 	// Test the ClusterKafkaMetadata structure
 	metadata := &ClusterKafkaMetadata{

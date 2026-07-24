@@ -58,6 +58,60 @@ func (s *MSKSource) GetClusters() []sources.ClusterIdentifier {
 	return clusters
 }
 
+// GetKafkaAdminForCluster returns a Kafka admin client for a single MSK cluster
+// identified by clusterArn. State must be non-nil — broker addresses come from
+// prior `kcp discover` output.
+func (s *MSKSource) GetKafkaAdminForCluster(clusterArn string, state *types.State) (client.KafkaAdmin, error) {
+	if s.credentials == nil {
+		return nil, fmt.Errorf("credentials not loaded")
+	}
+	if state == nil {
+		return nil, fmt.Errorf("state is required for MSK; run 'kcp discover' first")
+	}
+
+	var region string
+	var clusterAuth *types.ClusterAuth
+	for i := range s.credentials.Regions {
+		for j := range s.credentials.Regions[i].Clusters {
+			if s.credentials.Regions[i].Clusters[j].Arn == clusterArn {
+				region = s.credentials.Regions[i].Name
+				clusterAuth = &s.credentials.Regions[i].Clusters[j]
+				break
+			}
+		}
+		if clusterAuth != nil {
+			break
+		}
+	}
+	if clusterAuth == nil {
+		return nil, fmt.Errorf("cluster %q not found in MSK credentials", clusterArn)
+	}
+
+	discoveredCluster, err := s.findClusterInState(state, region, clusterArn)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get cluster from discovery state: %w", err)
+	}
+
+	authType, err := clusterAuth.GetSelectedAuthType()
+	if err != nil {
+		return nil, fmt.Errorf("failed to determine auth type for cluster %s: %w", clusterArn, err)
+	}
+
+	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get broker addresses for cluster %s in region %s: %w", clusterArn, region, err)
+	}
+
+	clientBrokerEncryptionInTransit := utils.GetClientBrokerEncryptionInTransit(discoveredCluster.AWSClientInformation.MskClusterConfig)
+	kafkaVersion := utils.GetKafkaVersion(discoveredCluster.AWSClientInformation)
+
+	kafkaAdmin, err := createKafkaAdmin(authType, brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, *clusterAuth)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Kafka admin: %w", err)
+	}
+	return *kafkaAdmin, nil
+}
+
 // Scan performs scanning of all MSK clusters.
 // opts.State must be non-nil — it contains broker addresses populated by kcp discover.
 func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*sources.ScanResult, error) {

@@ -5,7 +5,11 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 echo "Tearing down OSK scan broker..."
-docker compose -f "$SCRIPT_DIR/docker-compose.yml" down -v 2>/dev/null || true
+# --profile connect ensures profile-gated services (kafka-connect) are torn
+# down too. Without it, `docker compose down` only stops services with no
+# profile assigned, leaving the Connect container behind when run-connect.sh
+# fails partway through.
+docker compose -f "$SCRIPT_DIR/docker-compose.yml" --profile connect down -v 2>/dev/null || true
 
 # Clean up artifacts
 rm -rf "$SCRIPT_DIR/certs"
