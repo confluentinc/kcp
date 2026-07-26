@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/twmb/franz-go/pkg/kmsg"
+	"github.com/twmb/franz-go/pkg/kmsg/v2"
 )
 
 // TestDecodeOffsetCommitKey round-trips the on-disk __consumer_offsets key formats
