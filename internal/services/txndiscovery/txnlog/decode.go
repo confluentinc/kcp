@@ -174,11 +174,20 @@ func (r *reader) fail() {
 
 // need reports whether n more bytes are available, latching the truncation error
 // when they are not. Every sized read goes through it.
+//
+// The comparison is written as `n > len(r.b)-r.pos` rather than the more obvious
+// `r.pos+n > len(r.b)` because n is broker-supplied and, in the flexible encoding,
+// arrives from a uvarint rather than an int16 — so it reaches 2^63-1, `r.pos+n`
+// overflows to a NEGATIVE number, and the obvious form reads that as "in bounds"
+// and lets the caller slice with a negative index. Subtraction cannot overflow
+// here: pos never exceeds len(b), which holds because every site that advances pos
+// is gated by this function (the sole exception, uvarint, advances by however much
+// binary.Uvarint consumed from r.b[r.pos:], which is bounded by the same length).
 func (r *reader) need(n int) bool {
 	if r.err != nil {
 		return false
 	}
-	if n < 0 || r.pos+n > len(r.b) {
+	if n < 0 || n > len(r.b)-r.pos {
 		r.fail()
 		return false
 	}

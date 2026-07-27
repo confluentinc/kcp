@@ -2,6 +2,7 @@ package txnlog
 
 import (
 	"encoding/binary"
+	"math"
 	"runtime"
 	"testing"
 
@@ -384,6 +385,57 @@ func TestDecodeValue_ArrayCountLargerThanBufferIsRejectedBeforeAllocating(t *tes
 			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(allocBudget),
 				"decoding a %d-byte record allocated more than %d bytes, so the count was trusted before it was checked",
 				len(b), allocBudget)
+		})
+	}
+}
+
+func TestDecodeValue_UvarintLengthNearMaxInt64DoesNotOverflowTheBoundsGuard(t *testing.T) {
+	// The bounds guard used to test `pos + n > len(b)`. In the classic encoding n comes
+	// from an int16 and cannot exceed 32767, so the sum never overflows — which is why
+	// every existing truncation test passes. In the FLEXIBLE encoding n comes from a
+	// uvarint and can be up to 2^63-1, so `pos + n` wraps to a negative number, the
+	// guard reads it as "in bounds", and the slice that follows panics:
+	//
+	//	panic: runtime error: slice bounds out of range [:-9223372036854775783]
+	//
+	// The package's stated invariant is that malformed broker input yields a counted
+	// error, never a panic. Nothing in kcp recovers, and this decodes on a reader
+	// goroutine, so a ~30-byte malformed record kills a multi-hour observation window
+	// with no YAML, no stats and an unclosed audit log.
+	tests := map[string][]byte{
+		// compactStr: n := int(uvarint) - 1, straight into need(n) and then a slice.
+		"compact string length": concat(
+			be16(1),   // version 1 = flexible
+			be64(1),   // producerId
+			be16(0),   // producerEpoch
+			be32(0),   // timeoutMs
+			[]byte{1}, // status = Ongoing
+			uvar(2),   // compact array: one topic entry
+			uvar(math.MaxInt64),
+		),
+		// skipTaggedFields: need(size) passes, `pos += size` drives pos negative, and
+		// the NEXT read panics rather than this one — the corruption outlives the field.
+		"tagged field size": concat(
+			be16(1),   // version 1 = flexible
+			be64(1),   // producerId
+			be16(0),   // producerEpoch
+			be32(0),   // timeoutMs
+			[]byte{1}, // status = Ongoing
+			uvar(2),   // compact array: one topic entry
+			cstr("t"), // topic
+			uvar(0),   // partition ids: null compact array
+			uvar(1),   // tagged fields: one entry
+			uvar(0),   // tag number
+			uvar(math.MaxInt64),
+		),
+	}
+
+	for name, b := range tests {
+		t.Run(name, func(t *testing.T) {
+			var decodeErr error
+			require.NotPanics(t, func() { _, decodeErr = DecodeValue(b) },
+				"a %d-byte malformed record panicked instead of erroring", len(b))
+			require.Error(t, decodeErr)
 		})
 	}
 }
