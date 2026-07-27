@@ -158,6 +158,8 @@ func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<-
 		Source:           SourceTxnStateLog,
 		ObservedAt:       time.Now(),
 	}
+	// A consumer that has stopped draining must not pin the reader open, or shutdown
+	// deadlocks behind an unread send and the command never writes its artifacts.
 	select {
 	case out <- obs:
 		return true

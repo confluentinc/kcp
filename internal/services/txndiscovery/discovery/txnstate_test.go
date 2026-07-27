@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -320,4 +321,33 @@ func TestTxnStateReader_IgnoresBatchesFromAnotherTopic(t *testing.T) {
 	assert.Equal(t, int64(1), st.RecordsSeen, "a foreign topic's records are not this reader's to count")
 	assert.Equal(t, int64(0), st.KeyDecodeErrors)
 	assert.Equal(t, int64(0), st.ValueDecodeErrors, "a foreign record must not fire the format-drift alarm")
+}
+
+func TestTxnStateReader_CancelledContextStopsTheReaderRatherThanBlockingOnAnUnreadSend(t *testing.T) {
+	// At shutdown the orchestrator stops draining observations before every source has
+	// finished. A reader that blocked on the send would pin the whole run open and the
+	// command would hang instead of writing its artifacts. The send must lose to
+	// cancellation.
+	r := NewTxnStateReader(DefaultTxnStateTopic, NewTxnCatalog())
+
+	in := make(chan tail.Batch, 1)
+	in <- stateBatch(tail.Record{Key: txnKey("app"), Value: txnValue(1, 1, "a")})
+	// Deliberately NOT closed: Run must return because the context ended, not because
+	// its input ran out.
+
+	// Unbuffered and never read, so the send can only complete via cancellation.
+	out := make(chan Observation)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- r.Run(ctx, in, out) }()
+
+	select {
+	case err := <-done:
+		assert.NoError(t, err, "cancellation is an ordinary shutdown, not a run failure")
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run blocked on an unread send after its context was cancelled")
+	}
 }
