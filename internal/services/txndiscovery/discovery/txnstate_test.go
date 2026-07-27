@@ -150,3 +150,25 @@ func TestTxnStateReader_CompletedTransactionRegistersInTheCatalogButProducesNoOb
 	assert.Equal(t, int64(1), st.Committed)
 	assert.Equal(t, int64(1), st.Empty)
 }
+
+func TestTxnStateReader_TombstoneIsCountedAndProducesNoObservation(t *testing.T) {
+	// Compaction writes a null value to retire a transactional id. There is nothing to
+	// decode, so it must be counted as a tombstone and skipped — NOT routed into the
+	// value decoder, which would report a truncated record and fire the format-drift
+	// alarm on a completely routine event.
+	r := NewTxnStateReader(DefaultTxnStateTopic, NewTxnCatalog())
+
+	got := runReader(t, r, stateBatch(tail.Record{
+		Offset: 19,
+		Key:    txnKey("payments-app-0"),
+		Value:  nil,
+	}))
+
+	assert.Empty(t, got)
+
+	st := r.Stats()
+	assert.Equal(t, int64(1), st.RecordsSeen)
+	assert.Equal(t, int64(1), st.Tombstones)
+	assert.Equal(t, int64(0), st.ValueDecodeErrors)
+	assert.Equal(t, int64(0), st.Footprints)
+}

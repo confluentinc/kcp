@@ -19,6 +19,9 @@ type TxnStateStats struct {
 	Empty       int64
 	Committed   int64
 	Aborted     int64
+	Tombstones  int64
+
+	ValueDecodeErrors int64
 }
 
 // TxnStateReader decodes __transaction_state records into Observations.
@@ -31,6 +34,7 @@ type TxnStateReader struct {
 	empty       atomic.Int64
 	committed   atomic.Int64
 	aborted     atomic.Int64
+	tombstones  atomic.Int64
 }
 
 // NewTxnStateReader builds a reader over the named transaction-state topic.
@@ -46,6 +50,7 @@ func (r *TxnStateReader) Stats() TxnStateStats {
 		Empty:       r.empty.Load(),
 		Committed:   r.committed.Load(),
 		Aborted:     r.aborted.Load(),
+		Tombstones:  r.tombstones.Load(),
 	}
 }
 
@@ -65,6 +70,14 @@ func (r *TxnStateReader) Run(ctx context.Context, in <-chan tail.Batch, out chan
 // when ctx ended while sending, signalling the caller to stop.
 func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<- Observation) bool {
 	r.recordsSeen.Add(1)
+
+	// A null value is compaction retiring a transactional id, not corruption. It is
+	// checked before the decoder so a routine tombstone cannot register as a value
+	// decode error and fire the format-drift alarm.
+	if len(rec.Value) == 0 {
+		r.tombstones.Add(1)
+		return true
+	}
 
 	key, err := txnlog.DecodeKey(rec.Key)
 	if err != nil {
