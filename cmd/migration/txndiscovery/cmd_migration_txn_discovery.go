@@ -63,8 +63,65 @@ var (
 // NewMigrationTxnDiscoveryCmd builds the `kcp migration txn-discovery` command.
 func NewMigrationTxnDiscoveryCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:           "txn-discovery",
-		Short:         "Discover which topics are coupled by Kafka transactions and must migrate together",
+		Use:   "txn-discovery",
+		Short: "Discover which topics are coupled by Kafka transactions and must migrate together",
+		Long: `Observe a source cluster for a window and reconstruct which topics are coupled by transactions.
+
+Topics written inside one transaction must migrate together: move one without
+the others and an in-flight transaction spans two clusters, which no cluster
+link can reconcile.
+
+The command reads ` + "`__transaction_state`" + ` from the beginning as its source of truth,
+reconstructing each transaction's produced footprint. Two optional phases then
+recover the topics those transactions CONSUMED, which the footprint never names:
+consumer-group enrichment correlates by the Kafka Streams naming convention, and
+the consumer-offsets tail correlates by record-batch producer id, which needs no
+naming assumption. Both are on by default and each can be turned off.
+
+Nothing is written to the cluster and no message payloads are read — only the
+keys and values of internal metadata topics.
+
+Requires READ on the transaction-state topic, and optionally READ on the
+consumer-offsets log and DESCRIBE on consumer groups. Preflight fails fast when
+the transaction-state topic cannot be read, so managed offerings that do not
+expose it (Confluent Cloud, MSK Serverless) are rejected rather than silently
+producing an empty result.
+
+The terminal summary reports counts only. Topic names and transactional ids
+identify customer business structure, so they live in the artifacts:
+
+  txn-discovery.yaml         the groups, one entry per set of coupled topics
+  txn-discovery-audit.jsonl  a live JSONL trace of every grouping decision, so
+                             "which transaction coupled these two topics?" can
+                             be answered after the run
+  --stats-out                keep-up metrics and per-transaction footprints
+
+All three are written 0600. The command never deletes them; remove them when the
+engagement ends.
+
+Nothing in kcp reads txn-discovery.yaml — it is for a human to review.
+
+Credentials come from the flags below or their uppercase, underscored
+environment equivalents. Prefer the environment: a value passed by flag is
+visible in the process list.`,
+		Example: `  # MSK with IAM, observing for ten minutes
+  kcp migration txn-discovery \
+      --source-bootstrap b-1.cluster.kafka.us-east-1.amazonaws.com:9098 \
+      --use-sasl-iam --aws-region us-east-1 \
+      --duration 10m
+
+  # Apache Kafka with SASL/SCRAM, password from the environment
+  export SASL_SCRAM_PASSWORD=...
+  kcp migration txn-discovery \
+      --source-bootstrap broker1:9096,broker2:9096 \
+      --use-sasl-scram --sasl-scram-username kcp-reader --sasl-scram-mechanism SHA256 \
+      --out ./engagement/txn-discovery.yaml
+
+  # See what would be produced without writing anything
+  kcp migration txn-discovery \
+      --source-bootstrap broker1:9092 \
+      --use-unauthenticated-plaintext \
+      --duration 2m --dry-run`,
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
@@ -131,6 +188,31 @@ func NewMigrationTxnDiscoveryCmd() *cobra.Command {
 	outputFlags.BoolVar(&noAuditLog, "no-audit-log", false, "Do not write the audit trail. It is the only artifact that answers why two topics were grouped, so disabling it is rarely what you want.")
 	outputFlags.BoolVar(&dryRun, "dry-run", false, "Observe and print the summary but write no files. Does not suppress kcp.log.")
 	cmd.Flags().AddFlagSet(outputFlags)
+
+	groups := []struct {
+		name  string
+		flags *pflag.FlagSet
+	}{
+		{"Required Flags", requiredFlags},
+		{"Observation Flags", observationFlags},
+		{"Output Flags", outputFlags},
+		{"Source Cluster Authentication Flags", authFlags},
+		{"IAM Flags", iamFlags},
+		{"SASL/SCRAM Flags", saslScramFlags},
+		{"SASL/PLAIN Flags", saslPlainFlags},
+		{"TLS Flags", tlsFlags},
+	}
+	cmd.SetUsageFunc(func(c *cobra.Command) error {
+		w := c.OutOrStdout()
+		_, _ = fmt.Fprintf(w, "%s\n\n", c.Short)
+		for _, g := range groups {
+			if usage := g.flags.FlagUsages(); usage != "" {
+				_, _ = fmt.Fprintf(w, "%s:\n%s\n", g.name, usage)
+			}
+		}
+		_, _ = fmt.Fprintln(w, "All flags can be provided via environment variables (uppercase, with underscores).")
+		return nil
+	})
 
 	_ = cmd.MarkFlagRequired("source-bootstrap")
 	cmd.MarkFlagsMutuallyExclusive(authFlagNames...)

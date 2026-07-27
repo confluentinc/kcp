@@ -1,6 +1,7 @@
 package txndiscovery
 
 import (
+	"bytes"
 	"context"
 	"strings"
 	"testing"
@@ -127,6 +128,44 @@ func TestTxnDiscovery_TheCommandRunsWithTheParsedOptions(t *testing.T) {
 	assert.Equal(t, "/tmp/engagement/"+DefaultAuditBasename, got.AuditLogPath)
 	assert.True(t, got.Verbose, "the root --verbose gates the detailed keep-up block")
 	assert.NotNil(t, got.Stdout)
+}
+
+// R1/R4: --help renders the flags in named groups, as every other migration
+// subcommand does. Sixty-odd ungrouped flags in alphabetical order is not a
+// usable help page.
+func TestTxnDiscovery_Help_RendersGroupedFlags(t *testing.T) {
+	resetFlags()
+	cmd := NewMigrationTxnDiscoveryCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Usage())
+	help := out.String()
+
+	for _, group := range []string{
+		"Required Flags",
+		"Observation Flags",
+		"Output Flags",
+		"Source Cluster Authentication Flags",
+		"IAM Flags",
+		"SASL/SCRAM Flags",
+		"SASL/PLAIN Flags",
+		"TLS Flags",
+	} {
+		assert.Contains(t, help, group+":")
+	}
+
+	// Every declared flag appears under some group, so adding one to the
+	// command without adding it to a group cannot leave it undocumented.
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if f.Name == "help" {
+			return
+		}
+		assert.Contains(t, help, "--"+f.Name, "flag is missing from the grouped usage")
+	})
+
+	assert.Contains(t, help, "environment variables", "the environment-variable path is the documented one for credentials")
 }
 
 // R2: the auth flags mirror `kcp migration execute` — mutually exclusive, one required.
