@@ -309,14 +309,26 @@ func arnRestypeToResourceType(restype string) (resourceType string, known bool) 
 // "kafka-cluster:*" action should expand to for one statement-resource (fix
 // 3 over the reference, which cross-products every AclMap entry against
 // every resource regardless of type). matchAll is true when the resource ARN
-// itself is wildcarded (bare "*", contains ":*", or its restype segment is
-// "*") — in which case every AclMap entry is eligible, matching the
-// unrestricted "kafka-cluster:*" grant on the whole cluster. Otherwise only
-// entries whose ResourceType equals the returned resourceType are eligible;
-// an ARN whose restype AWS itself doesn't recognize as one of
-// topic/group/transactional-id/cluster denotes no AclMap entries at all.
+// itself is wildcarded (bare "*", its RESOURCE PORTION — via
+// arnResourcePortion, i.e. everything after the last colon — is itself "*",
+// or its restype segment is "*") — in which case every AclMap entry is
+// eligible, matching the unrestricted "kafka-cluster:*" grant on the whole
+// cluster. Otherwise only entries whose ResourceType equals the returned
+// resourceType are eligible; an ARN whose restype AWS itself doesn't
+// recognize as one of topic/group/transactional-id/cluster denotes no
+// AclMap entries at all.
+//
+// Deliberately NOT decided by "does the ARN contain the substring ':*'":
+// that substring also matches a wildcarded REGION or ACCOUNT segment (e.g.
+// "arn:aws:kafka:*:111122223333:topic/mymsk/abc-5/orders", a region-portable
+// policy naming ONE topic on THIS cluster) — using it as the test would
+// silently expand a single-topic grant to every resource type/name
+// (over-migration; see Finding 1 / task-7).
 func arnDenotedResourceType(resourceArn string) (resourceType string, matchAll bool) {
-	if resourceArn == "*" || strings.Contains(resourceArn, ":*") {
+	if resourceArn == "*" {
+		return "", true
+	}
+	if portion, ok := arnResourcePortion(resourceArn); ok && portion == "*" {
 		return "", true
 	}
 
@@ -362,8 +374,20 @@ func resourceNameAndPattern(resourceArn string, mapping types.ACLMapping) (resou
 // function (they were three copy-pasted bodies differing only in the ARN
 // marker they split on), with output casing canonicalized to
 // "Literal"/"Prefixed" for determineResourceNameAndPattern.
+//
+// The all-resources wildcard is decided by the ARN's RESOURCE PORTION alone
+// (arnResourcePortion — everything after the last colon), not by "does the
+// ARN contain the substring ':*'": that substring also matches a wildcarded
+// REGION or ACCOUNT segment (e.g.
+// "arn:aws:kafka:*:111122223333:topic/mymsk/abc-5/orders", a region-portable
+// policy naming ONE topic on THIS cluster), which must fall through to the
+// marker-based parse below and resolve to "orders", not collapse to "*"
+// (Finding 1 / task-7 — silent over-migration).
 func parseResourceNameAndPattern(arn, resourceType string) (string, string) {
-	if arn == "*" || strings.Contains(arn, ":*") {
+	if arn == "*" {
+		return "*", "Literal"
+	}
+	if portion, ok := arnResourcePortion(arn); ok && portion == "*" {
 		return "*", "Literal"
 	}
 

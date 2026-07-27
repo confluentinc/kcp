@@ -122,6 +122,33 @@ func TestTranslateStatements(t *testing.T) {
 			doc:  stmt("Allow", "kafka-cluster:DeleteGroup", "arn:aws:kafka:us-east-1:111122223333:group/mymsk/abc-5/svc-*"),
 			want: []types.Acls{{ResourceType: "Group", ResourceName: "svc-", ResourcePatternType: "Prefixed", Principal: "User:AppRole", Host: "*", Operation: "Delete", PermissionType: "Allow"}},
 		},
+		{
+			// Region-wildcard over-migration bug (Finding 1): a region-portable
+			// ARN naming ONE specific topic on THIS cluster contains the
+			// substring ":*" purely from the wildcarded region segment
+			// ("kafka:*:"), not from the resource portion. The resource name
+			// must still resolve to "orders", NOT collapse to "*".
+			name: "region-wildcarded ARN naming a specific topic resolves to that topic, not \"*\"",
+			doc:  stmt("Allow", "kafka-cluster:ReadData", "arn:aws:kafka:*:111122223333:topic/mymsk/abc-5/orders"),
+			want: []types.Acls{{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"}},
+		},
+		{
+			// Same region-wildcarded specific-topic ARN, but via "kafka-cluster:*"
+			// expansion: must expand only to Topic-typed ops for resourceName
+			// "orders" — NOT every AclMap resource type, and NOT resourceName "*".
+			name: "region-wildcarded ARN naming a specific topic + kafka-cluster:* expands only to Topic ops on that topic",
+			doc:  stmt("Allow", "kafka-cluster:*", "arn:aws:kafka:*:111122223333:topic/mymsk/abc-5/orders"),
+			want: []types.Acls{
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Alter", PermissionType: "Allow"},
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "AlterConfigs", PermissionType: "Allow"},
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Create", PermissionType: "Allow"},
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Delete", PermissionType: "Allow"},
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Describe", PermissionType: "Allow"},
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "DescribeConfigs", PermissionType: "Allow"},
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Write", PermissionType: "Allow"},
+			},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
