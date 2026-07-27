@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -373,4 +374,62 @@ func TestCorrelationSucceedsWhereTheStreamsNamingHeuristicFails(t *testing.T) {
 	require.Len(t, got, 1, "the producer-id join must recover what naming cannot")
 	assert.Equal(t, txnID, got[0].TxnID)
 	assert.Equal(t, []string{"raw.events"}, got[0].Topics)
+}
+
+func TestARecoveredInputFoldsIntoTheProducedGroupWithItsProducerIDIntact(t *testing.T) {
+	// End of the pipeline this source feeds. A transaction's own footprint names
+	// only what it PRODUCED, so "billing.out" alone looks like a topic that can
+	// migrate on its own — when moving it without "raw.events" breaks
+	// exactly-once at cutover. The recovered input has to reach the same group.
+	//
+	// The producer id is the load-bearing detail. The __transaction_state
+	// reader's first sighting of a transaction is routinely an Empty record with
+	// no usable producer id, and the naming-based enrichment phase never has
+	// one, so this source is often the ONLY observation carrying a real id. The
+	// accumulator refuses to let a zero overwrite a positive one; this asserts
+	// that this source supplies the positive one in the first place.
+	const txnID = "billing-writer-7"
+	const pid int64 = 990001
+
+	cat := NewTxnCatalog()
+	cat.Observe(txnID, pid)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+	tl.HandleBatch(commitBatch(pid, commitKey("svc-ingest-consumer", "raw.events", 0)))
+
+	acc := NewAccumulator()
+	acc.Add(Observation{
+		TxnID:            txnID,
+		ProducerID:       0, // an early Empty state record carries no real id yet
+		Topics:           []string{"billing.out", "__consumer_offsets"},
+		ReadProcessWrite: true,
+		Source:           SourceTxnStateLog,
+		ObservedAt:       time.Now(),
+	})
+	for _, obs := range flush(t, tl) {
+		acc.Add(obs)
+	}
+	acc.Add(Observation{
+		TxnID:      txnID,
+		ProducerID: 0, // the naming-based phase never has one
+		Topics:     []string{"raw.events"},
+		Source:     SourceConsumerGroups,
+		ObservedAt: time.Now(),
+	})
+
+	snap := acc.Snapshot()
+	require.Len(t, snap, 1)
+	assert.Equal(t, pid, snap[0].ProducerID,
+		"the only real producer id came from this source and must survive the zero-id guard")
+	assert.Equal(t, []string{"__consumer_offsets", "billing.out", "raw.events"}, snap[0].Topics)
+	assert.True(t, snap[0].ReadProcessWrite)
+
+	res := grouping.Build([]grouping.Transaction{{
+		ID:               snap[0].TxnID,
+		Topics:           snap[0].Topics,
+		ReadProcessWrite: snap[0].ReadProcessWrite,
+	}}, grouping.Options{})
+
+	require.Len(t, res.Groups, 1, "the recovered input must not be a separate group")
+	assert.Equal(t, []string{"billing.out", "raw.events"}, res.Groups[0].Topics)
+	assert.True(t, res.Groups[0].ReadProcessWrite)
 }
