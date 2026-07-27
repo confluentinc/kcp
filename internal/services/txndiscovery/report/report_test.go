@@ -140,6 +140,21 @@ func TestSummaryLeaksNoTopicNameOrTransactionalID(t *testing.T) {
 	}
 }
 
+func TestSummaryRendersAZeroStateWhenNoGroupsWereFound(t *testing.T) {
+	out := render(t, Run{
+		Duration:      time.Minute,
+		Interval:      10 * time.Second,
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		TxnState:      discovery.TxnStateStats{RecordsSeen: 4},
+		Result:        grouping.Result{IndividualTopics: []string{"solo"}},
+	})
+
+	requireContains(t, out, "Transaction groups: none — every observed topic can migrate individually.")
+	if strings.Contains(out, "migrate each group atomically") {
+		t.Errorf("a run with no groups rendered the group table header\n--- summary ---\n%s", out)
+	}
+}
+
 // groupLines returns the rendered group rows in the order they appear, so ordering can
 // be asserted without pinning the surrounding prose.
 func groupLines(out string) []string {

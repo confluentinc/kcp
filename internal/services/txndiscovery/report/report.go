@@ -131,6 +131,12 @@ func PrintTerminal(w io.Writer, s Summary) {
 // information; the names themselves live in the YAML.
 func printGroupTable(w io.Writer, groups []grouping.Group) {
 	_, _ = fmt.Fprintln(w)
+	// A table header with nothing under it reads as "the report broke". Naming the
+	// zero state says the run worked and found no coupling, which is a result.
+	if len(groups) == 0 {
+		_, _ = fmt.Fprintln(w, "Transaction groups: none — every observed topic can migrate individually.")
+		return
+	}
 	_, _ = fmt.Fprintln(w, "Transaction groups (topics coupled by a shared transaction — migrate each group atomically):")
 	for _, g := range groups {
 		tag := ""
