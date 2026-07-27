@@ -338,16 +338,17 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	// principalArns mode is implemented here; discoverAllRoles (enumeration)
 	// and verifyEffectiveAccess (SimulatePrincipalPolicy) are Phase 1B slice 2.
 	//
-	// KNOWN GAP (see task-6-report.md): a cross-plane duplicate tuple (native
-	// and IAM-derived ACLs resolving to the identical types.Acls value) is NOT
-	// deduplicated anywhere in this pipeline. NormalizeForCC's stage-4 only
-	// drops a Describe implied by a broader op, not literal duplicates, and
-	// the acls reconciler's map[types.Acls]struct{} diff (reconciler.go Plan)
-	// is built solely from the TARGET's existing ACLs, not accumulated across
-	// entries already staged from Desired — so an identical tuple from both
-	// planes is currently planned and applied TWICE. Flagged for a follow-up
-	// fix, not addressed here per the task-6 brief (no new dedupe stage added
-	// without a decision on where it belongs).
+	// A cross-plane duplicate tuple (native and IAM-derived ACLs resolving to
+	// the identical types.Acls value), or a within-plane duplicate (e.g. two
+	// IAM policy statements granting the same op/resource), is NOT
+	// deduplicated by NormalizeForCC — its stage-4 only drops a Describe
+	// implied by a broader op, not literal duplicates — nor by the acls
+	// reconciler, whose map[types.Acls]struct{} diff (reconciler.go Plan) is
+	// built solely from the TARGET's existing ACLs, never accumulated across
+	// entries already staged from Desired. Per the Phase 1B design
+	// ("union + dedupe onto the target"), dedupe is folded in below at the
+	// normalized-set boundary (dedupeACLs), which uniformly covers all three
+	// duplicate shapes — native-internal, IAM-internal, and cross-plane.
 	if iam := m.Spec.ACLs.IAM; iam != nil {
 		if iam.DiscoverAllRoles {
 			return nil, fmt.Errorf("spec.acls.iam.discoverAllRoles: enumeration mode is not yet implemented (Phase 1B slice 2)")
@@ -375,6 +376,7 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	}
 	norm, diags := macls.NormalizeForCC(filtered)
 	logACLDiagnostics(diags)
+	norm = dedupeACLs(norm)
 
 	// World-open topics policy (allow.everyone.if.no.acl.found).
 	if err := checkUnprotectedTopics(m); err != nil {
@@ -501,6 +503,29 @@ func filterACLs(in []types.Acls, include, exclude []string) ([]types.Acls, error
 		out = append(out, a)
 	}
 	return out, nil
+}
+
+// dedupeACLs collapses acls to its distinct types.Acls tuples, preserving
+// first-occurrence order. types.Acls is all-string-fields and fully
+// comparable, so it doubles as its own map key. This closes the "additive
+// union + dedupe" half of the Phase 1B design: without it, a tuple appearing
+// more than once in the normalized set — whether from two IAM policy
+// statements granting the same op/resource, or from the native and IAM
+// planes resolving to the identical tuple for the same principal — is
+// planned and applied once per occurrence, because the acls reconciler's
+// diff (reconciler.go Plan) only compares Desired against the target's
+// EXISTING ACLs and never against duplicates within Desired itself.
+func dedupeACLs(acls []types.Acls) []types.Acls {
+	seen := make(map[types.Acls]struct{}, len(acls))
+	out := make([]types.Acls, 0, len(acls))
+	for _, a := range acls {
+		if _, ok := seen[a]; ok {
+			continue
+		}
+		seen[a] = struct{}{}
+		out = append(out, a)
+	}
+	return out
 }
 
 // distinctPrincipals returns the sorted, de-duplicated set of principals across

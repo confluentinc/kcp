@@ -861,25 +861,15 @@ func TestApply_ACLs_IAM_VerifyEffectiveAccess_NotImplemented(t *testing.T) {
 	_ = logs
 }
 
-// CONFIRMED GAP (task-6 brief's flagged risk — see task-6-report.md):
-// native and IAM both grant the IDENTICAL types.Acls tuple for the same
-// principal (User:AppRole via testPrincipalArn) — Allow Read on Topic
-// "orders" — via two independent planes. NormalizeForCC's stage-4 dedup only
-// removes a Describe implied by a broader op, not literal duplicate tuples,
-// and the acls reconciler's map[types.Acls]struct{} diff (reconciler.go
-// Plan) is built ONLY from the TARGET's existing ACLs, never from entries
-// already staged earlier in the same Desired slice — so two identical
-// entries in Desired each independently test "not present on target yet" and
-// both plan/apply as ActionCreate.
-//
-// This test asserts the OBSERVED (buggy) behavior — a double POST — as a
-// characterization test/regression tripwire, NOT the desired behavior. Per
-// the task-6 brief, this integration does not add a new dedupe stage to fix
-// it (out of scope, flagged for the controller instead): fixing this
-// requires either an intra-Desired dedupe in NormalizeForCC/the union step,
-// or making the acls reconciler's existingSet self-accumulate as it plans.
-// If that fix lands, update this test to expect exactly one create.
-func TestApply_ACLs_IAM_IdenticalNativeAndIAMTuple_DoubleCreates_KNOWN_GAP(t *testing.T) {
+// Cross-plane dedupe (fixed — see task-6-report.md "Fix: dedupe desired ACL
+// set"): native and IAM both grant the IDENTICAL types.Acls tuple for the
+// same principal (User:AppRole via testPrincipalArn) — Allow Read on Topic
+// "orders" — via two independent planes. Per the Phase 1B design ("union +
+// dedupe onto the target"), buildACLReconcilers now dedupes the normalized
+// Desired set (dedupeACLs in cmd_migrate_apply.go) before it reaches either
+// distinctPrincipals or the acls reconciler, so this identical tuple must be
+// created exactly once, not once per plane.
+func TestApply_ACLs_IAM_IdenticalNativeAndIAMTuple_DedupedToSingleCreate(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam2")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
 	fetcher := iamFetcherOne("kafka-cluster:ReadData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders")
@@ -890,7 +880,41 @@ func TestApply_ACLs_IAM_IdenticalNativeAndIAMTuple_DoubleCreates_KNOWN_GAP(t *te
 	require.NoError(t, err, "logs: %s", logs)
 
 	require.Equal(t, int64(1), tgt.saPosts, "one service account for the single distinct principal")
-	require.Equal(t, int64(2), tgt.aclPosts, "KNOWN GAP: identical native+IAM ACL tuple is currently double-created — see task-6-report.md")
+	require.Equal(t, int64(1), tgt.aclPosts, "identical native+IAM ACL tuple must be deduped to a single create")
+}
+
+// Within-plane dedupe: a single IAM principal whose identity policy has TWO
+// statements that each grant the SAME (op, resource) — e.g. an inline policy
+// and a managed policy both saying "Allow kafka-cluster:ReadData on
+// topic/.../orders" — must still resolve to exactly one ACL create.
+// ReadIAMACLs translates every matching statement independently, so without
+// dedupeACLs this within-plane duplicate would double-create exactly like
+// the cross-plane case above.
+func TestApply_ACLs_IAM_TwoStatementsSameOpResource_DedupedToSingleCreate(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam6")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
+	resourceArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"
+	fetcher := func(ctx context.Context, arn string) (*iamservice.PrincipalPolicies, error) {
+		return &iamservice.PrincipalPolicies{
+			PrincipalArn: arn, PrincipalName: "AppRole", PrincipalType: "role",
+			InlinePolicies: []iamservice.InlinePolicy{
+				{PolicyName: "p1", PolicyDocument: map[string]any{
+					"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData", "Resource": resourceArn}},
+				}},
+				{PolicyName: "p2", PolicyDocument: map[string]any{
+					"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData", "Resource": resourceArn}},
+				}},
+			},
+		}, nil
+	}
+
+	// No native ACLs at all — this isolates the within-IAM-plane duplicate
+	// from the cross-plane case.
+	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam6", iamYAML, nil, fetcher, false)
+	require.NoError(t, err, "logs: %s", logs)
+
+	require.Equal(t, int64(1), tgt.saPosts, "one service account for the single distinct principal")
+	require.Equal(t, int64(1), tgt.aclPosts, "two IAM statements granting the same op/resource must be deduped to a single create")
 }
 
 func TestEnsureMSKScramMechanism(t *testing.T) {
