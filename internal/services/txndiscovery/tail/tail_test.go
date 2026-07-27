@@ -1297,3 +1297,64 @@ func TestConcurrentFetchesAreCapped(t *testing.T) {
 		"at most %d fetches may be in flight at once, but %d were", cap, peak.Load())
 	assert.Positive(t, peak.Load())
 }
+
+func TestEveryFetchCarriesTheConfiguredAllocationBoundsAndIsolation(t *testing.T) {
+	// The response size bounds are the allocation limit against an untrusted
+	// broker, so they must be explicit on every request rather than left to a
+	// library default that a dependency bump could change.
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	reached, responder := afterCall(1, func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		return fetchResponse(topic, 0, 0, 0), nil
+	})
+	c.respondWith(responder)
+
+	opts := testOptions(nil)
+	opts.MaxWaitTime = 750 * time.Millisecond
+	opts.MinBytes = 1
+	opts.MaxBytes = 3 << 20
+	opts.MaxPartitionBytes = 2 << 20
+
+	tl := New(c, opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	waitFor(t, reached, "a fetch to be issued")
+	cancel()
+	drain(t, out)
+
+	spec := c.fetchSpecs()[0]
+	assert.Equal(t, int32(750), spec.MaxWaitMS)
+	assert.Equal(t, int32(1), spec.MinBytes)
+	assert.Equal(t, int32(3<<20), spec.MaxBytes)
+	assert.Equal(t, int32(2<<20), spec.MaxPartitionBytes)
+	assert.Equal(t, sarama.ReadCommitted, spec.Isolation,
+		"read-uncommitted would surface records from transactions that later abort")
+}
+
+func TestTheDefaultAllocationBoundsAreExplicitNotLibraryDefaults(t *testing.T) {
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	reached, responder := afterCall(1, func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		return fetchResponse(topic, 0, 0, 0), nil
+	})
+	c.respondWith(responder)
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	waitFor(t, reached, "a fetch to be issued")
+	cancel()
+	drain(t, out)
+
+	spec := c.fetchSpecs()[0]
+	assert.Equal(t, DefaultMaxPartitionBytes, spec.MaxPartitionBytes)
+	assert.Equal(t, DefaultMaxBytes, spec.MaxBytes)
+	assert.Equal(t, DefaultMinBytes, spec.MinBytes)
+	assert.Equal(t, sarama.ReadCommitted, spec.Isolation)
+}

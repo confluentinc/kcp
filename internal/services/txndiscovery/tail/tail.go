@@ -50,6 +50,15 @@ type Options struct {
 	// data. Together with the client's read timeout it bounds shutdown
 	// latency, because an in-flight fetch cannot be cancelled.
 	MaxWaitTime time.Duration
+	// MinBytes is how much data the broker waits to accumulate before
+	// answering, unless MaxWaitTime elapses first.
+	MinBytes int32
+	// MaxBytes caps the whole response. With one partition per request it is
+	// the effective allocation bound against an untrusted broker.
+	MaxBytes int32
+	// MaxPartitionBytes caps one partition's share of a response, and so also
+	// determines how often batches arrive cut at the boundary.
+	MaxPartitionBytes int32
 	// IdleBackoff is the pause after a fetch that returned no records.
 	IdleBackoff time.Duration
 	// BackoffBase is the first retry wait after a failed fetch. It doubles on
@@ -71,6 +80,20 @@ type Options struct {
 func New(c Client, opts Options) *Tail {
 	if opts.MaxWaitTime <= 0 {
 		opts.MaxWaitTime = DefaultMaxWaitTime
+	}
+	if opts.MinBytes <= 0 {
+		opts.MinBytes = DefaultMinBytes
+	}
+	if opts.MaxPartitionBytes <= 0 {
+		opts.MaxPartitionBytes = DefaultMaxPartitionBytes
+	}
+	if opts.MaxBytes <= 0 {
+		opts.MaxBytes = DefaultMaxBytes
+	}
+	if opts.MaxBytes < opts.MaxPartitionBytes {
+		// A response bound below the per-partition bound would silently
+		// truncate every fetch; raise it rather than stall.
+		opts.MaxBytes = opts.MaxPartitionBytes
 	}
 	if opts.IdleBackoff <= 0 {
 		opts.IdleBackoff = DefaultIdleBackoff
@@ -100,7 +123,12 @@ const (
 	// available rather than batching up to MaxWaitTime.
 	DefaultMinBytes int32 = 1
 	// DefaultMaxPartitionBytes bounds one partition's share of a response.
+	// Internal metadata topic records are small, so a mebibyte is generous
+	// while keeping peak memory at MaxConcurrentFetches times this.
 	DefaultMaxPartitionBytes int32 = 1 << 20
+	// DefaultMaxBytes bounds a whole response. One partition is requested per
+	// fetch, so it matches the per-partition bound rather than exceeding it.
+	DefaultMaxBytes int32 = 1 << 20
 	// DefaultIdleBackoff is the pause after a fetch that returned nothing. A
 	// real broker already blocked for MaxWaitTime, so this only stops a
 	// hot loop when the broker answers immediately.
@@ -441,9 +469,9 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 			Offset:            offset,
 			Version:           leader.FetchVersion,
 			MaxWaitMS:         int32(t.opts.MaxWaitTime / time.Millisecond),
-			MinBytes:          DefaultMinBytes,
-			MaxBytes:          DefaultMaxPartitionBytes,
-			MaxPartitionBytes: DefaultMaxPartitionBytes,
+			MinBytes:          t.opts.MinBytes,
+			MaxBytes:          t.opts.MaxBytes,
+			MaxPartitionBytes: t.opts.MaxPartitionBytes,
 			Isolation:         sarama.ReadCommitted,
 		}
 		resp, err, ok := t.fetch(ctx, leader, spec)
@@ -484,59 +512,20 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 		}
 		attempt = 0
 
-		next := offset
-		emitted := false
-		aborted := newAbortTracker(block.AbortedTransactions)
-		for _, records := range block.RecordsSet {
-			batch, last, ok := decodeBatch(a, leader, records.RecordBatch)
-			if !ok {
-				continue
-			}
-			aborted.advanceTo(records.RecordBatch.LastOffset())
-			if batch.Control {
-				// A control batch is the transaction marker itself, never
-				// aborted data. An abort marker ends its producer's rolled-back
-				// transaction, so the producer's next one must not be filtered.
-				typ, cerr := controlRecordType(records.RecordBatch)
-				switch {
-				case cerr != nil:
-					// The marker is unreadable, so whether this producer's
-					// transaction aborted or committed is unknown. Leaving it
-					// in the aborted set keeps filtering rather than crediting
-					// possibly rolled-back records as real.
-					st.mu.Lock()
-					st.decodeErrors++
-					st.mu.Unlock()
-				case typ == sarama.ControlRecordAbort:
-					aborted.clear(batch.ProducerID)
-				}
-			} else if batch.IsTransactional && aborted.isAborted(batch.ProducerID) {
-				// Skipped, but still consumed: the offset advances past the
-				// records that were decoded, or the loop refetches them.
-				st.mu.Lock()
-				st.abortedBatches++
-				st.mu.Unlock()
-				next = last + 1
-				continue
-			}
-			delivered := int64(len(batch.Records))
-			if !t.emit(ctx, batch) {
-				return
-			}
-			st.record(func(p *partitionState) { p.recordsRead += delivered })
-			emitted = true
-			next = last + 1
+		next, emitted, alive := t.consumeBlock(ctx, a, st, leader, block, offset)
+		if !alive {
+			return
 		}
 		advanced := next > offset
 		offset = next
-		st.mu.Lock()
-		st.nextOffset = offset
-		st.lastStableOffset = block.LastStableOffset
-		st.highWaterMark = block.HighWaterMarkOffset
-		if advanced {
-			st.lastAdvance = time.Now()
-		}
-		st.mu.Unlock()
+		st.record(func(p *partitionState) {
+			p.nextOffset = offset
+			p.lastStableOffset = block.LastStableOffset
+			p.highWaterMark = block.HighWaterMarkOffset
+			if advanced {
+				p.lastAdvance = time.Now()
+			}
+		})
 
 		if !emitted {
 			// A real broker already held the fetch open for MaxWaitTime, so
@@ -545,6 +534,68 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 			t.opts.Sleep(ctx, t.opts.IdleBackoff)
 		}
 	}
+}
+
+// consumeBlock walks one partition's returned batches, filtering the ones that
+// belong to rolled-back transactions and emitting the rest.
+//
+// It reports the offset to fetch from next, whether anything was emitted, and
+// whether the loop is still alive — false meaning the context ended mid-send.
+// The next offset is always derived from records that were actually decoded,
+// never from a batch header's last offset, because a batch cut at the fetch
+// boundary claims records this response did not carry.
+func (t *Tail) consumeBlock(
+	ctx context.Context,
+	a assignment,
+	st *partitionState,
+	leader Leader,
+	block *sarama.FetchResponseBlock,
+	offset int64,
+) (next int64, emitted bool, alive bool) {
+	next = offset
+	aborted := newAbortTracker(block.AbortedTransactions)
+
+	for _, records := range block.RecordsSet {
+		batch, last, ok := decodeBatch(a, leader, records.RecordBatch)
+		if !ok {
+			continue
+		}
+		aborted.advanceTo(records.RecordBatch.LastOffset())
+
+		switch {
+		case batch.Control:
+			// A control batch is the transaction marker itself, never aborted
+			// data. An abort marker ends its producer's rolled-back
+			// transaction, so the producer's next one must not be filtered.
+			typ, cerr := controlRecordType(records.RecordBatch)
+			switch {
+			case cerr != nil:
+				// The marker is unreadable, so whether this producer's
+				// transaction aborted or committed is unknown. Leaving it in
+				// the aborted set keeps filtering rather than crediting
+				// possibly rolled-back records as real.
+				st.record(func(p *partitionState) { p.decodeErrors++ })
+			case typ == sarama.ControlRecordAbort:
+				aborted.clear(batch.ProducerID)
+			}
+
+		case batch.IsTransactional && aborted.isAborted(batch.ProducerID):
+			// Dropped, but still consumed: the offset advances past the
+			// records that were decoded, or the loop refetches them forever.
+			st.record(func(p *partitionState) { p.abortedBatches++ })
+			next = last + 1
+			continue
+		}
+
+		delivered := int64(len(batch.Records))
+		if !t.emit(ctx, batch) {
+			return next, emitted, false
+		}
+		st.record(func(p *partitionState) { p.recordsRead += delivered })
+		emitted = true
+		next = last + 1
+	}
+	return next, emitted, true
 }
 
 // backoffFor returns the wait before retry number attempt, counting from zero:
