@@ -176,6 +176,10 @@ type ConsumerOffsetsOptions struct {
 // Reading __consumer_offsets is an optional grant: managed clusters hide the
 // topic and an operator's credentials may simply lack the ACL. The command
 // wiring supplies the probe so this package needs no admin client of its own.
+//
+// The returned error reaches both the console and kcp.log verbatim, so it must
+// name the failure — a missing topic and a missing ACL need different fixes —
+// without carrying a customer topic name, consumer group id or transactional id.
 type TopicProbe func(ctx context.Context) error
 
 // NewConsumerOffsetsTail builds a tail consumer over the shared catalog the
@@ -408,7 +412,14 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 			// Counted, not fatal, and the rest of the batch is still read: the
 			// counter is this source's only format-drift alarm, and abandoning
 			// the batch would silently lose the recoveries after the bad key.
+			// The count is what the summary reports; the per-record detail stays
+			// at Debug so sustained drift cannot flood the console under
+			// --verbose. The offset is the diagnostic — the group and topic the
+			// key would have named are disclosure, and kcp.log is Debug+
+			// unconditionally and is attached to support tickets.
 			t.keyDecodeErrors.Add(1)
+			slog.Debug("⏭️ skipped a consumer-offsets record whose key would not decode",
+				"offset", r.Offset, "error", err)
 			continue
 		}
 		// An empty topic is a group-metadata record (key version 2): consumer

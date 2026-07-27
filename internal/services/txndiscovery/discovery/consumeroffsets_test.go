@@ -1,9 +1,11 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -724,6 +726,49 @@ func TestWithNoProbeConfiguredTheTailRunsNormally(t *testing.T) {
 
 	require.Len(t, flush(t, tl), 1)
 	assert.False(t, tl.Stats().Unavailable)
+}
+
+func TestNoCustomerIdentifierReachesTheLogAtAnyLevel(t *testing.T) {
+	// kcp.log is Debug+ unconditionally, has no level control, and is the file
+	// operators attach to support tickets — so it is a fourth artifact, not a
+	// scratch pad. A topic name, consumer group id or transactional id on any
+	// slog call defeats the counts-only terminal entirely, and under --verbose
+	// those same lines reach the console.
+	//
+	// Every identifier this source handles is distinctive here, and the whole
+	// run is exercised: a clean decode, a decode failure (Debug), and a failed
+	// availability probe (Warn).
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	const (
+		topicName = "zzdistinctivetopiczz"
+		groupID   = "zzdistinctivegroupzz"
+		txnID     = "zzdistinctivetxnzz"
+	)
+
+	cat := NewTxnCatalog()
+	cat.Observe(txnID, 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{
+		Probe: func(context.Context) error { return errors.New("cluster denied the read") },
+	})
+
+	tl.Available(context.Background())
+	tl.HandleBatch(commitBatch(4242,
+		commitKey(groupID, topicName, 0),
+		be16(99), // an undecodable key, so the Debug path runs too
+	))
+	flush(t, tl)
+
+	logged := buf.String()
+	require.NotEmpty(t, logged, "the fixture must actually produce log lines, or this asserts nothing")
+	for _, secret := range []string{topicName, groupID, txnID} {
+		assert.NotContains(t, logged, secret)
+	}
+	// The producer id identifies a specific application instance too.
+	assert.NotContains(t, logged, "4242")
 }
 
 // --- integration with the tail's abort filter --------------------------------
