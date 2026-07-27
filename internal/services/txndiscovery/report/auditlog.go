@@ -121,14 +121,17 @@ func openAuditFile(path string) (*os.File, error) {
 		_ = f.Close()
 		return nil, fmt.Errorf("refusing to write the audit log: %s is %s, not a regular file; remove it or choose another path with --audit-log-out", path, describeFileType(fi.Mode()))
 	}
-	// auditFileMode is only applied when the open creates the file. An existing file
-	// keeps whatever mode it already had, so the mode has to be verified rather than
-	// assumed — the audit log carries topic names and transactional ids.
-	if perm := fi.Mode().Perm(); perm&^auditFileMode != 0 {
+	if err := checkAuditFilePerm(path, fi.Mode()); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("refusing to write the audit log: %s has mode %#o, wider than %#o, and the audit log carries topic names and transactional ids; remove it or choose another path with --audit-log-out", path, perm, auditFileMode)
+		return nil, err
 	}
 	return f, nil
+}
+
+// errAuditFileTooWide is the refusal for an audit log whose mode is wider than
+// auditFileMode.
+func errAuditFileTooWide(path string, perm fs.FileMode) error {
+	return fmt.Errorf("refusing to write the audit log: %s has mode %#o, wider than %#o, and the audit log carries topic names and transactional ids; remove it or choose another path with --audit-log-out", path, perm, auditFileMode)
 }
 
 // rotateExisting moves any file already at path aside to <path>.<timestamp>.
