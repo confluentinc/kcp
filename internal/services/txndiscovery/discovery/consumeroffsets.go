@@ -33,6 +33,7 @@ const finalFlushTimeout = 10 * time.Second
 // than using sarama's consumer API, which discards the batch header.
 type ConsumerOffsetsTail struct {
 	catalog *TxnCatalog
+	topic   string
 
 	mu sync.Mutex
 	// pending holds sightings not yet resolved to a transaction: producer id ->
@@ -42,14 +43,24 @@ type ConsumerOffsetsTail struct {
 }
 
 // ConsumerOffsetsOptions configures a ConsumerOffsetsTail. The zero value is
-// usable.
-type ConsumerOffsetsOptions struct{}
+// usable: every field falls back to its package default.
+type ConsumerOffsetsOptions struct {
+	// Topic is the offsets log to demultiplex out of the shared tail channel.
+	// It must match the TopicSpec the tail was started with, so it is set from
+	// the same place rather than hardcoded on both sides. Defaults to
+	// DefaultConsumerOffsetsTopic.
+	Topic string
+}
 
 // NewConsumerOffsetsTail builds a tail consumer over the shared catalog the
 // __transaction_state reader populates.
 func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *ConsumerOffsetsTail {
+	if opts.Topic == "" {
+		opts.Topic = DefaultConsumerOffsetsTopic
+	}
 	return &ConsumerOffsetsTail{
 		catalog: catalog,
+		topic:   opts.Topic,
 		pending: make(map[int64]map[string]struct{}),
 	}
 }
@@ -61,7 +72,7 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 // topics into a single channel, so batches for other topics are this
 // consumer's to ignore.
 func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
-	if b.Topic != DefaultConsumerOffsetsTopic {
+	if b.Topic != t.topic {
 		return
 	}
 	// Only a commit written inside a transaction correlates. A batch header

@@ -180,3 +180,22 @@ func TestABatchFromAnotherTopicOnTheSharedChannelIsIgnored(t *testing.T) {
 
 	assert.Empty(t, flush(t, tl), "a batch from another topic must not correlate")
 }
+
+func TestTheDemultiplexedTopicFollowsTheConfiguredTopic(t *testing.T) {
+	// The demux compares against a configured name, not a hardcoded one. U11
+	// builds the tail's TopicSpec and this consumer from the same setting, so a
+	// hardcode here would silently drop every batch on a cluster whose offsets
+	// topic is named otherwise — a consumer that reads nothing looks exactly
+	// like a cluster with no exactly-once traffic.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{Topic: "__custom_offsets"})
+
+	b := commitBatch(4242, commitKey("payments-group", "orders.in", 0))
+	b.Topic = "__custom_offsets"
+	tl.HandleBatch(b)
+
+	got := flush(t, tl)
+	require.Len(t, got, 1)
+	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
+}
