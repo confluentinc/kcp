@@ -262,3 +262,27 @@ func TestATombstonedCommitIsNotALiveConsumedInput(t *testing.T) {
 
 	assert.Empty(t, flush(t, tl), "a tombstone is a deleted commit, not a live one")
 }
+
+func TestAKeyThatFailsToDecodeIsCountedAndDoesNotStopTheTail(t *testing.T) {
+	// Record keys are a broker-internal binary format, not part of the stable
+	// client protocol, so a broker upgrade can change them under us. A decode
+	// failure must neither panic nor abandon the rest of the batch — dropping
+	// the remaining records would silently lose recoveries — and it must be
+	// counted, because the counter is the only format-drift alarm this source
+	// has. A run that decoded nothing otherwise looks like an idle cluster.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	tl.HandleBatch(commitBatch(4242,
+		be16(99),  // an unsupported key version
+		[]byte{0}, // shorter than the version prefix itself
+		commitKey("payments-group", "orders.in", 0),
+	))
+
+	got := flush(t, tl)
+
+	require.Len(t, got, 1, "the records after a bad key are still processed")
+	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
+	assert.Equal(t, int64(2), tl.Stats().KeyDecodeErrors)
+}

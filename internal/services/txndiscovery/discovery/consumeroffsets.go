@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
@@ -36,6 +37,8 @@ type ConsumerOffsetsTail struct {
 	catalog *TxnCatalog
 	topic   string
 
+	keyDecodeErrors atomic.Int64
+
 	mu sync.Mutex
 	// pending holds sightings not yet resolved to a transaction: producer id ->
 	// the set of consumed topics it committed offsets for. An entry is removed
@@ -63,6 +66,24 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 		catalog: catalog,
 		topic:   opts.Topic,
 		pending: make(map[int64]map[string]struct{}),
+	}
+}
+
+// ConsumerOffsetsStats is what this source contributes to the run's report.
+type ConsumerOffsetsStats struct {
+	// KeyDecodeErrors counts record keys this source could not parse. Record
+	// keys are a broker-internal format rather than part of the stable client
+	// protocol, so this is the format-drift alarm and is never swallowed.
+	KeyDecodeErrors int64
+}
+
+// Name reports this source's provenance label.
+func (t *ConsumerOffsetsTail) Name() string { return SourceConsumerOffsets }
+
+// Stats returns a snapshot of what this source recovered and how it coped.
+func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
+	return ConsumerOffsetsStats{
+		KeyDecodeErrors: t.keyDecodeErrors.Load(),
 	}
 }
 
@@ -108,6 +129,10 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 		}
 		key, err := txnlog.DecodeOffsetKey(r.Key)
 		if err != nil {
+			// Counted, not fatal, and the rest of the batch is still read: the
+			// counter is this source's only format-drift alarm, and abandoning
+			// the batch would silently lose the recoveries after the bad key.
+			t.keyDecodeErrors.Add(1)
 			continue
 		}
 		// An empty topic is a group-metadata record (key version 2): consumer
