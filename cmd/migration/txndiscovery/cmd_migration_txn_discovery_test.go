@@ -230,19 +230,28 @@ func TestTxnDiscovery_ScramWithoutCredentials_Rejected(t *testing.T) {
 func TestTxnDiscovery_UnsupportedScramMechanism_Rejected(t *testing.T) {
 	for _, mechanism := range []string{"SHA1", "sha512", "PLAIN", ""} {
 		t.Run("mechanism="+mechanism, func(t *testing.T) {
-			cmd := newTestCmd(t, []string{
+			resetFlags()
+			cmd := NewMigrationTxnDiscoveryCmd()
+			clearFlagEnv(t, cmd)
+			reached := false
+			previous := runDiscovery
+			runDiscovery = func(context.Context, Opts) error { reached = true; return nil }
+			t.Cleanup(func() { runDiscovery = previous })
+
+			cmd.SetArgs([]string{
 				"--source-bootstrap", "broker:9092",
 				"--use-sasl-scram",
 				"--sasl-scram-username", "reader",
 				"--sasl-scram-password", "hunter2",
 				"--sasl-scram-mechanism", mechanism,
-			}...)
+			})
 
 			err := cmd.Execute()
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "--sasl-scram-mechanism")
 			assert.Contains(t, err.Error(), "SHA256")
 			assert.Contains(t, err.Error(), "SHA512")
+			assert.False(t, reached, "rejection happens during flag validation, before any client is built")
 		})
 	}
 }

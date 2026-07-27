@@ -101,10 +101,25 @@ func TestRun_KcpLogStaysCleanWhenTheEnrichmentPathsFail(t *testing.T) {
 
 	require.NoError(t, h.runner(t, opts).Run(context.Background()))
 
-	require.NotEmpty(t, logs.String(), "the failing paths must actually have logged something")
+	require.Contains(t, logs.String(), "consumer-offsets", "the unreadable offsets log must actually have warned")
 	for _, name := range []string{leakTopicProduced, leakTopicConsumed, leakTxnID, leakGroupID} {
 		assert.NotContains(t, logs.String(), name)
 	}
+}
+
+// The log narrative: a run measured in hours must leave a record in kcp.log of
+// having started and finished, and what it found — as counts, never names.
+// Without it a support ticket's kcp.log is silent about the command entirely.
+func TestRun_KcpLogRecordsTheRunAsCounts(t *testing.T) {
+	dir := t.TempDir()
+	logs := captureLog(t)
+	h, opts := leakHarness(t, dir)
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	assert.Contains(t, logs.String(), "🚀", "the command's start is a top-level entry point")
+	assert.Contains(t, logs.String(), "✅", "and its completion")
+	assert.Contains(t, logs.String(), "transactions=1", "the counts are what the log carries")
 }
 
 // Security: the SASL credential reaches the command by flag or environment and

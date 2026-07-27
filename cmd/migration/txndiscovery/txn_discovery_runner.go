@@ -183,6 +183,17 @@ func (r *Runner) Run(ctx context.Context) error {
 		activeSources = append(activeSources, discovery.SourceConsumerGroups)
 	}
 
+	// The log narrative for a run measured in hours. Counts and parameters only:
+	// kcp.log's file leg is unconditionally Debug+ and is what operators attach
+	// to support tickets, so no topic name or transactional id may appear.
+	slog.Info("🚀 starting transaction discovery",
+		"duration", r.opts.Duration.String(),
+		"interval", r.opts.Interval.String(),
+		"sources", len(activeSources),
+		"dry_run", r.opts.DryRun,
+		"audit_log", r.opts.AuditLogPath != "",
+	)
+
 	tl := tail.New(cl.Tail, tail.Options{})
 	batches, err := tl.Start(runCtx, specs)
 	if err != nil {
@@ -286,6 +297,14 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	summary := report.Summarize(run)
+	slog.Info("✅ transaction discovery complete",
+		"transactions", len(footprints),
+		"groups", len(run.Result.Groups),
+		"individual_topics", len(run.Result.IndividualTopics),
+		"records_read", tailStats.RecordsRead,
+		"partitions_running", tailStats.PartitionsRunning,
+		"partitions_assigned", tailStats.PartitionsAssigned,
+	)
 	report.PrintTerminal(r.opts.Stdout, summary)
 	if r.opts.Verbose {
 		// KTD4: the detailed keep-up block is behind --verbose; the summary
