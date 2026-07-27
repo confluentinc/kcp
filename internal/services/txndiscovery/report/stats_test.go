@@ -1,9 +1,11 @@
 package report
 
 import (
+	"bytes"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -170,6 +172,55 @@ func TestStatsJSONCarriesRecordsReadLagAndPerSourceDecodeFailures(t *testing.T) 
 	}
 	if got := num(t, at(t, doc, "consumer_offsets_log", "key_decode_errors")); got != 6 {
 		t.Errorf("consumer_offsets_log.key_decode_errors = %v, want 6", got)
+	}
+}
+
+func TestWriteStatsJSONFailsActionablyWhenTheOutputDirectoryDoesNotExist(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no-such-dir")
+
+	err := WriteStatsJSON(filepath.Join(missing, "txn-discovery-stats.json"), statsRun())
+	if err == nil {
+		t.Fatal("writing into a nonexistent directory succeeded")
+	}
+	for _, want := range []string{missing, "does not exist"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("read temp dir: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("failed write left %d entries behind: %v", len(entries), entries)
+	}
+}
+
+func TestKeepUpDetailBreaksDownEverySourceAndEveryPartition(t *testing.T) {
+	var buf bytes.Buffer
+	PrintKeepUp(&buf, statsRun())
+	out := buf.String()
+
+	for _, want := range []string{
+		// Aggregate fetch state, including the error taxonomy the health line reduces
+		// to one number.
+		"fetch: 1/2 partitions live, 1300 records read, lag 77, open-txn backlog 11",
+		"3 decode, 2 leadership, 1 unclassified, 4 offset reset, 6 transport",
+		// Per partition, so a stalled one is identifiable rather than merely counted.
+		"__transaction_state[7]: next 900, LSO 977, HWM 988, lag 77, backlog 11, 1000 records, live",
+		"__consumer_offsets[12]: next 300, LSO 300, HWM 300, lag 0, backlog 0, 300 records, STOPPED",
+		"last error: kafka server: Not the leader",
+		// Per source.
+		"transaction-state reader: 1000 records, 40 footprints, 30 committed / 2 aborted, 1 tombstone",
+		"decode failures: 8 key, 9 value",
+		"consumer-offsets tail: 300 records, 25 txn offset-commits, 3 groups linked, 2 input topics recovered",
+		"14 pending evictions",
+		"6 key decode failures",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("keep-up detail is missing %q\n--- keep-up ---\n%s", want, out)
+		}
 	}
 }
 

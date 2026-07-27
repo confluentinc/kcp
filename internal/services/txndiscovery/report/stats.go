@@ -3,6 +3,7 @@ package report
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
@@ -114,6 +115,70 @@ type statsTxn struct {
 	FirstSeen        time.Time `json:"first_seen"`
 	LastSeen         time.Time `json:"last_seen"`
 	Samples          int       `json:"samples"`
+}
+
+// PrintKeepUp writes the detailed keep-up breakdown.
+//
+// Per KTD4 this does NOT belong in the default summary, which carries one health line:
+// three overlapping views of the same numbers is what the output tidy-up removed. The
+// command calls this only under --verbose, for the operator who has seen the health line
+// warn and needs to know which partition or which source is responsible.
+//
+// It names only the two internal topics the tail is assigned, never a customer topic.
+func PrintKeepUp(w io.Writer, r Run) {
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Keep-up detail:")
+
+	t := r.Tail
+	_, _ = fmt.Fprintf(w, "  fetch: %d/%d %s live, %d %s read, lag %d, open-txn backlog %d\n",
+		t.PartitionsRunning, t.PartitionsAssigned, plural(t.PartitionsAssigned, "partition", "partitions"),
+		t.RecordsRead, plural64(t.RecordsRead, "record", "records"), t.Lag, t.OpenTxnBacklog)
+	// The taxonomy the health line collapses into one number. A run that recovered
+	// from fifty leader changes and one that never saw a broker hiccup produce the
+	// same health line, and this is where they differ.
+	_, _ = fmt.Fprintf(w, "    errors: %d decode, %d leadership, %d unclassified, %d offset reset, %d transport\n",
+		t.DecodeErrors, t.LeadershipErrors, t.UnclassifiedErrors, t.OffsetResets, t.TransportErrors)
+
+	for _, p := range t.Partitions {
+		state := "live"
+		if !p.Running {
+			state = "STOPPED"
+		}
+		_, _ = fmt.Fprintf(w, "    %s[%d]: next %d, LSO %d, HWM %d, lag %d, backlog %d, %d %s, %s\n",
+			p.Topic, p.Partition, p.NextOffset, p.LastStableOffset, p.HighWaterMark,
+			p.Lag, p.OpenTxnBacklog, p.RecordsRead, plural64(p.RecordsRead, "record", "records"), state)
+		if p.LastError != "" {
+			_, _ = fmt.Fprintf(w, "      last error: %s\n", p.LastError)
+		}
+	}
+
+	ts := r.TxnState
+	_, _ = fmt.Fprintf(w, "  transaction-state reader: %d %s, %d %s, %d committed / %d aborted, %d %s\n",
+		ts.RecordsSeen, plural64(ts.RecordsSeen, "record", "records"),
+		ts.Footprints, plural64(ts.Footprints, "footprint", "footprints"),
+		ts.Committed, ts.Aborted,
+		ts.Tombstones, plural64(ts.Tombstones, "tombstone", "tombstones"))
+	if ts.KeyDecodeErrors > 0 || ts.ValueDecodeErrors > 0 {
+		_, _ = fmt.Fprintf(w, "    decode failures: %d key, %d value — the __transaction_state record format may have drifted\n",
+			ts.KeyDecodeErrors, ts.ValueDecodeErrors)
+	}
+
+	o := r.Offsets
+	if o.Unavailable {
+		_, _ = fmt.Fprintf(w, "  consumer-offsets tail: did not run (%s)\n", o.UnavailableReason)
+		return
+	}
+	_, _ = fmt.Fprintf(w, "  consumer-offsets tail: %d %s, %d txn %s, %d %s linked, %d input %s recovered\n",
+		o.RecordsSeen, plural64(o.RecordsSeen, "record", "records"),
+		o.TxnRecords, plural64(o.TxnRecords, "offset-commit", "offset-commits"),
+		o.GroupsLinked, plural(o.GroupsLinked, "group", "groups"),
+		len(o.RecoveredTopics), plural(len(o.RecoveredTopics), "topic", "topics"))
+	// Evictions are the only signal that the bounded pending buffer discarded
+	// recoveries, so a run that evicted heavily observed fewer inputs than exist.
+	_, _ = fmt.Fprintf(w, "    %d pending, %d pending %s, %d key decode %s\n",
+		o.PendingProducers,
+		o.PendingEvicted, plural64(o.PendingEvicted, "eviction", "evictions"),
+		o.KeyDecodeErrors, plural64(o.KeyDecodeErrors, "failure", "failures"))
 }
 
 // WriteStatsJSON writes the diagnostics document for r to path.
