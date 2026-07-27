@@ -10,6 +10,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 )
 
 // Run is the raw material of a completed discovery run: what the sources
@@ -30,6 +31,12 @@ type Run struct {
 
 	// Result is the grouping computed from those footprints.
 	Result grouping.Result
+
+	// Tail is the fetch component's snapshot. It must be taken BEFORE the run's
+	// context is cancelled: every partition loop clears its running flag as it
+	// exits, so a snapshot taken after shutdown reports zero partitions live and
+	// the health line would condemn a perfectly healthy run.
+	Tail tail.Stats
 
 	// TxnState is the __transaction_state reader's counters.
 	TxnState discovery.TxnStateStats
@@ -59,6 +66,41 @@ type Summary struct {
 	TxnAborted     int64
 
 	Result grouping.Result
+
+	// Health is the one keep-up indicator the summary carries; the full per-source
+	// and per-partition detail lives in the stats document (KTD4).
+	Health Health
+}
+
+// Health is the three things that together say whether the window was actually
+// observed. Any one of them alone can read clean on a run that missed data: a stalled
+// partition reports zero lag, and a reader that decoded nothing reports no lag either.
+type Health struct {
+	// PartitionsAssigned and PartitionsRunning are counted at the moment the tail
+	// snapshot was taken, which must be before shutdown.
+	PartitionsAssigned int
+	PartitionsRunning  int
+
+	// Lag is the aggregate last-stable-offset lag (KTD9), not the high-watermark
+	// gap: under ReadCommitted the broker serves nothing past the last stable
+	// offset, so an open transaction is not something the reader can catch up on.
+	Lag int64
+
+	// DecodeErrors is every broker-supplied structure any source failed to parse.
+	// It is the format-drift alarm.
+	DecodeErrors int64
+}
+
+// healthOf collects the keep-up indicators from every source that produces them.
+func healthOf(r Run) Health {
+	return Health{
+		PartitionsAssigned: r.Tail.PartitionsAssigned,
+		PartitionsRunning:  r.Tail.PartitionsRunning,
+		Lag:                r.Tail.Lag,
+		DecodeErrors: r.Tail.DecodeErrors +
+			r.TxnState.KeyDecodeErrors + r.TxnState.ValueDecodeErrors +
+			r.Offsets.KeyDecodeErrors,
+	}
 }
 
 // Summarize derives the render-ready summary from a completed run.
@@ -74,6 +116,7 @@ func Summarize(r Run) Summary {
 		TxnCommitted:   r.TxnState.Committed,
 		TxnAborted:     r.TxnState.Aborted,
 		Result:         result,
+		Health:         healthOf(r),
 	}
 }
 
@@ -121,7 +164,17 @@ func PrintTerminal(w io.Writer, s Summary) {
 	_, _ = fmt.Fprintf(w, "  read-process-write     : %d %s; %d consumed input topic(s) recovered\n",
 		rpwGroups, plural(rpwGroups, "group", "groups"), 0)
 
+	_, _ = fmt.Fprintf(w, "  keep-up                : %s\n", s.Health.Line())
+
 	printGroupTable(w, groups)
+}
+
+// Line renders the single health indicator the summary carries.
+func (h Health) Line() string {
+	return fmt.Sprintf("OK — %d/%d %s live, %d %s of lag, %d decode %s",
+		h.PartitionsRunning, h.PartitionsAssigned, plural(h.PartitionsAssigned, "partition", "partitions"),
+		h.Lag, plural64(h.Lag, "record", "records"),
+		h.DecodeErrors, plural64(h.DecodeErrors, "failure", "failures"))
 }
 
 // printGroupTable writes one row per group.
@@ -152,6 +205,13 @@ func printGroupTable(w io.Writer, groups []grouping.Group) {
 }
 
 func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+func plural64(n int64, one, many string) string {
 	if n == 1 {
 		return one
 	}

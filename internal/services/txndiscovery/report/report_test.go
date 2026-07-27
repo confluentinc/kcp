@@ -8,6 +8,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 )
 
 // render runs the terminal summary for r and returns what an operator would see.
@@ -138,6 +139,23 @@ func TestSummaryLeaksNoTopicNameOrTransactionalID(t *testing.T) {
 			t.Errorf("summary leaked the customer identifier %q\n--- summary ---\n%s", id, out)
 		}
 	}
+}
+
+func TestHealthLineIsOKWhenCaughtUpCleanAndEveryPartitionLive(t *testing.T) {
+	out := render(t, Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		Tail: tail.Stats{
+			PartitionsAssigned: 3,
+			PartitionsRunning:  3,
+			RecordsRead:        500,
+			// An open transaction holding the high watermark above the last stable
+			// offset is the normal state on an internal topic and is not reader lag
+			// (KTD9), so it must not spoil the health line.
+			OpenTxnBacklog: 42,
+		},
+	})
+
+	requireContains(t, out, "keep-up                : OK — 3/3 partitions live, 0 records of lag, 0 decode failures")
 }
 
 func TestSummaryRendersAZeroStateWhenNoGroupsWereFound(t *testing.T) {
