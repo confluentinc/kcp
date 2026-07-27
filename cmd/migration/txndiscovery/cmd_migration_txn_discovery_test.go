@@ -165,3 +165,23 @@ func TestTxnDiscovery_PasswordFromEnvironment_IsPickedUp(t *testing.T) {
 	require.NoError(t, cmd.Execute(), "the environment value must satisfy the required-flag check")
 	assert.Equal(t, "from-the-environment", saslScramPassword)
 }
+
+// R3: an explicitly supplied flag beats the environment. An operator overriding
+// an exported credential on one invocation must not silently get the exported one.
+func TestTxnDiscovery_ExplicitFlag_BeatsEnvironment(t *testing.T) {
+	resetFlags()
+	t.Setenv("SASL_SCRAM_PASSWORD", "from-the-environment")
+	t.Setenv("SOURCE_BOOTSTRAP", "env-broker:9092")
+
+	cmd := NewMigrationTxnDiscoveryCmd()
+	cmd.SetArgs([]string{
+		"--source-bootstrap", "flag-broker:9092",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "reader",
+		"--sasl-scram-password", "from-the-flag",
+	})
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "from-the-flag", saslScramPassword)
+	assert.Equal(t, "flag-broker:9092", sourceBootstrap)
+}
