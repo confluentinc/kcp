@@ -1,11 +1,14 @@
 package txndiscovery
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/IBM/sarama"
 )
 
 // Opts is the resolved configuration of one discovery run: everything the
@@ -42,6 +45,42 @@ type Opts struct {
 
 	// Stdout is where the terminal narrative goes.
 	Stdout io.Writer
+}
+
+// topicDescriber is the one cluster-admin call the preflight makes.
+//
+// DescribeTopics is used rather than the client's offset lookup because it
+// returns a per-topic Kafka error code, which is what separates a mistyped
+// --txn-state-topic from a missing ACL. The client's Exists path collapses both
+// into "not in the topic list".
+type topicDescriber interface {
+	DescribeTopics(topics []string) ([]*sarama.TopicMetadata, error)
+}
+
+// probeTxnStateTopic verifies the transaction-state log is there and readable.
+//
+// No error it returns carries the topic name: main slog.Error's every command
+// error, so all of them land in kcp.log, and --txn-state-topic is
+// operator-supplied.
+func probeTxnStateTopic(d topicDescriber, topic string) error {
+	md, err := d.DescribeTopics([]string{topic})
+	if err != nil {
+		return fmt.Errorf("could not read the transaction-state topic's metadata: check --source-bootstrap, the source authentication flags and that the credentials carry an ACL granting DESCRIBE and READ on it: %w", err)
+	}
+	if len(md) == 0 || md[0] == nil {
+		return fmt.Errorf("the broker returned no metadata for the transaction-state topic named by --txn-state-topic, so it could not be confirmed readable")
+	}
+
+	switch md[0].Err {
+	case sarama.ErrNoError:
+		return nil
+	case sarama.ErrUnknownTopicOrPartition:
+		// kcp disables auto topic creation, so an unknown name stays unknown
+		// rather than being created by the probe.
+		return fmt.Errorf("the topic named by --txn-state-topic does not exist on this cluster: check the flag for a typo, and note that managed offerings such as Confluent Cloud and MSK Serverless do not expose it at all")
+	default:
+		return fmt.Errorf("the transaction-state topic named by --txn-state-topic is not readable: check the source authentication flags' credentials and that they carry an ACL granting DESCRIBE and READ on it: %w", md[0].Err)
+	}
 }
 
 // parseOpts snapshots the flag variables into an Opts.
