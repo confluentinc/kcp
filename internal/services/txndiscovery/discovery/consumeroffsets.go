@@ -63,6 +63,13 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 	if !b.IsTransactional {
 		return
 	}
+	// A control batch is the transaction marker itself, not application data.
+	// The tail component delivers control batches flagged rather than filtering
+	// them, so dropping them is this consumer's job — and a marker is
+	// transactional with a real producer id, so no other filter here stops it.
+	if b.Control {
+		return
+	}
 	for _, r := range b.Records {
 		key, err := txnlog.DecodeOffsetKey(r.Key)
 		if err != nil {

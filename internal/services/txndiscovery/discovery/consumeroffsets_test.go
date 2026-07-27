@@ -119,3 +119,22 @@ func TestANonTransactionalBatchIsIgnored(t *testing.T) {
 
 	assert.Empty(t, flush(t, tl), "a non-transactional commit must not correlate")
 }
+
+func TestAControlBatchIsIgnored(t *testing.T) {
+	// A control batch is the transaction marker itself — the COMMIT or ABORT the
+	// coordinator writes — not application data. The tail component delivers
+	// control batches flagged rather than filtering them, so dropping them is
+	// this consumer's job. A marker is transactional and carries a real producer
+	// id, so every other filter here waves it through; only the flag stops it.
+	// Its record key is not an OffsetCommitKey at all, so treating it as one
+	// would decode a marker as a consumed topic.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	b := commitBatch(4242, commitKey("payments-group", "orders.in", 0))
+	b.Control = true
+	tl.HandleBatch(b)
+
+	assert.Empty(t, flush(t, tl), "a control batch must not correlate")
+}
