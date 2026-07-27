@@ -2,6 +2,7 @@ package tail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -25,10 +26,12 @@ type fakeClient struct {
 	offsets    map[string]int64
 	leaders    map[string]Leader
 
-	fetches   []FetchSpec
-	refreshes []string
+	fetches      []FetchSpec
+	fetchLeaders []Leader
+	refreshes    []string
 
-	respond func(spec FetchSpec, call int) (*sarama.FetchResponse, error)
+	respond   func(spec FetchSpec, call int) (*sarama.FetchResponse, error)
+	onRefresh func()
 }
 
 func newFakeClient() *fakeClient {
@@ -111,15 +114,36 @@ func (f *fakeClient) Leader(topic string, partition int32) (Leader, error) {
 
 func (f *fakeClient) RefreshMetadata(topics ...string) error {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.refreshes = append(f.refreshes, topics...)
+	hook := f.onRefresh
+	f.mu.Unlock()
+	// Run outside the lock: the hook typically moves a leader, which locks.
+	if hook != nil {
+		hook()
+	}
 	return nil
+}
+
+// onRefreshDo installs a side effect for the next metadata refresh, which is
+// how a test moves a partition's leader mid-stream.
+func (f *fakeClient) onRefreshDo(fn func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onRefresh = fn
+}
+
+// leadersFetched returns the leader each fetch was issued against.
+func (f *fakeClient) leadersFetched() []Leader {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]Leader(nil), f.fetchLeaders...)
 }
 
 func (f *fakeClient) Fetch(leader Leader, spec FetchSpec) (*sarama.FetchResponse, error) {
 	f.mu.Lock()
 	call := len(f.fetches)
 	f.fetches = append(f.fetches, spec)
+	f.fetchLeaders = append(f.fetchLeaders, leader)
 	respond := f.respond
 	f.mu.Unlock()
 	if respond == nil {
@@ -815,4 +839,225 @@ func TestAnUndecodableControlRecordIsCountedAndKeepsFilteringItsProducer(t *test
 	assert.Equal(t, int64(2), stats.AbortedBatches)
 	assert.Equal(t, int64(4), stats.Partitions[0].NextOffset,
 		"the offset advances past decoded records only, including the ones that were filtered")
+}
+
+// --- error classification --------------------------------------------------
+
+// blockError builds a response whose partition block carries a Kafka error.
+func blockError(topic string, partition int32, kerr sarama.KError) *sarama.FetchResponse {
+	r := &sarama.FetchResponse{Version: 11}
+	r.AddError(topic, partition, kerr)
+	return r
+}
+
+func TestNotLeaderForPartitionRefreshesMetadataAndRetriesAgainstTheNewLeader(t *testing.T) {
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	c.onRefreshDo(func() {
+		c.setLeader(topic, 0, Leader{ID: 2, Addr: "b2:9092", FetchVersion: 11})
+	})
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if call == 0 {
+			return blockError(topic, 0, sarama.ErrNotLeaderForPartition), nil
+		}
+		r := fetchResponse(topic, 0, 1, 1)
+		if spec.Offset == 0 {
+			addBatch(r, topic, 0, batchOf(0, 100, 0, true, "after-move"))
+		}
+		return r, nil
+	})
+
+	var sleeps []time.Duration
+	tl := New(c, testOptions(&sleeps))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	got := collect(t, out, 1, cancel)
+
+	assert.Contains(t, c.refreshedTopics(), topic, "a leadership error must force a metadata refresh")
+
+	leaders := c.leadersFetched()
+	require.GreaterOrEqual(t, len(leaders), 2)
+	assert.Equal(t, int32(1), leaders[0].ID)
+	assert.Equal(t, int32(2), leaders[1].ID, "the retry must go to the newly resolved leader")
+
+	specs := c.fetchSpecs()
+	assert.Equal(t, int64(0), specs[1].Offset, "the retry resumes from the same offset, with no gap")
+	assert.Equal(t, "after-move", string(got[0].Records[0].Value))
+
+	assert.NotEmpty(t, sleeps, "a leadership error must back off before retrying")
+	// Receiving a batch at all proves the loop survived the error rather than
+	// treating it as fatal.
+	assert.Equal(t, int64(1), tl.Stats().LeadershipErrors)
+}
+
+func TestEveryLeadershipErrorIsRetriableAfterRefreshRatherThanFatal(t *testing.T) {
+	// A stale cached leader epoch is the routine outcome of a leader move; if
+	// the epoch codes were fatal, R11's recovery would never happen.
+	codes := []sarama.KError{
+		sarama.ErrNotLeaderForPartition,
+		sarama.ErrLeaderNotAvailable,
+		sarama.ErrFencedLeaderEpoch,
+		sarama.ErrUnknownLeaderEpoch,
+		sarama.ErrReplicaNotAvailable,
+	}
+
+	for _, code := range codes {
+		t.Run(code.Error(), func(t *testing.T) {
+			const topic = "t"
+			c := singlePartition(topic, 0)
+			c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+				if call == 0 {
+					return blockError(topic, 0, code), nil
+				}
+				r := fetchResponse(topic, 0, 1, 1)
+				if spec.Offset == 0 {
+					addBatch(r, topic, 0, batchOf(0, 100, 0, true, "recovered"))
+				}
+				return r, nil
+			})
+
+			tl := New(c, testOptions(nil))
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+			require.NoError(t, err)
+			got := collect(t, out, 1, cancel)
+
+			assert.Equal(t, "recovered", string(got[0].Records[0].Value))
+			assert.Contains(t, c.refreshedTopics(), topic, "%s must force a metadata refresh", code)
+			assert.Equal(t, int64(1), tl.Stats().LeadershipErrors, "%s must be classified as a leadership error", code)
+			assert.Equal(t, int64(0), tl.Stats().UnclassifiedErrors)
+		})
+	}
+}
+
+func TestAnUnrecognisedErrorCodeIsCountedAndSurfacedWithoutExitingTheLoop(t *testing.T) {
+	const topic = "t"
+	// A code this build of sarama has no name for — the case a broker upgrade
+	// introduces. The one outcome that must never happen is a loop that quietly
+	// stops, because that reads downstream as "this partition had no data".
+	unknown := sarama.KError(999)
+
+	c := singlePartition(topic, 0)
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if call == 0 {
+			return blockError(topic, 0, unknown), nil
+		}
+		r := fetchResponse(topic, 0, 1, 1)
+		if spec.Offset == 0 {
+			addBatch(r, topic, 0, batchOf(0, 100, 0, true, "kept-going"))
+		}
+		return r, nil
+	})
+
+	var sleeps []time.Duration
+	tl := New(c, testOptions(&sleeps))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	got := collect(t, out, 1, cancel)
+
+	assert.Equal(t, "kept-going", string(got[0].Records[0].Value), "the loop must keep reading past an unknown code")
+
+	stats := tl.Stats()
+	assert.Equal(t, int64(1), stats.UnclassifiedErrors)
+	assert.Equal(t, int64(0), stats.LeadershipErrors, "an unknown code must not be mistaken for a leadership error")
+	assert.Empty(t, c.refreshedTopics(), "an unknown code is no reason to refresh metadata")
+	assert.Contains(t, stats.Partitions[0].LastError, "999", "the code must be surfaced, not swallowed")
+	assert.NotEmpty(t, sleeps, "an unknown code must back off rather than spin")
+}
+
+func TestOffsetOutOfRangeReseeksToEarliestRatherThanLoopingOnADeadOffset(t *testing.T) {
+	const topic = "t"
+	c := newFakeClient()
+	c.setPartitions(topic, 0)
+	// The reader's remembered position has been retained away: the log now
+	// starts at 5, but the tail was told to begin at 100.
+	c.setOffset(topic, 0, StartEarliest, 5)
+	c.setOffset(topic, 0, StartLatest, 100)
+	c.setLeader(topic, 0, Leader{ID: 1, Addr: "b1:9092", FetchVersion: 11})
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if spec.Offset >= 100 {
+			return blockError(topic, 0, sarama.ErrOffsetOutOfRange), nil
+		}
+		r := fetchResponse(topic, 0, 6, 6)
+		if spec.Offset == 5 {
+			addBatch(r, topic, 0, batchOf(5, 100, 0, true, "from-earliest"))
+		}
+		return r, nil
+	})
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartLatest}})
+	require.NoError(t, err)
+	got := collect(t, out, 1, cancel)
+
+	assert.Equal(t, int64(5), got[0].Records[0].Offset, "the reader must resume from the log start, not spin on a dead offset")
+	specs := c.fetchSpecs()
+	require.GreaterOrEqual(t, len(specs), 2)
+	assert.Equal(t, int64(100), specs[0].Offset)
+	assert.Equal(t, int64(5), specs[1].Offset, "the reseek target is the partition's earliest available offset")
+	assert.Equal(t, int64(1), tl.Stats().OffsetResets)
+}
+
+func TestATransportErrorRetriesWithBackoffThatGrowsIsCappedAndResets(t *testing.T) {
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		switch {
+		case call < 6, call == 7:
+			// A broker restart looks like this: the connection fails outright,
+			// with no response and so no Kafka error code to classify.
+			return nil, errors.New("write tcp 10.0.0.1:9092: connection reset by peer")
+		case call == 6:
+			r := fetchResponse(topic, 0, 2, 2)
+			addBatch(r, topic, 0, batchOf(0, 100, 0, true, "first"))
+			return r, nil
+		default:
+			r := fetchResponse(topic, 0, 2, 2)
+			if spec.Offset == 1 {
+				addBatch(r, topic, 0, batchOf(1, 100, 0, true, "second"))
+			}
+			return r, nil
+		}
+	})
+
+	var sleeps []time.Duration
+	opts := testOptions(&sleeps)
+	opts.BackoffBase = 10 * time.Millisecond
+	opts.BackoffMax = 40 * time.Millisecond
+
+	tl := New(c, opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	got := collect(t, out, 2, cancel)
+
+	assert.Equal(t, "first", string(got[0].Records[0].Value))
+	assert.Equal(t, "second", string(got[1].Records[0].Value), "the reader resumes with no gap after a transport failure")
+
+	require.GreaterOrEqual(t, len(sleeps), 7)
+	assert.Equal(t, []time.Duration{
+		10 * time.Millisecond,
+		20 * time.Millisecond,
+		40 * time.Millisecond,
+		40 * time.Millisecond,
+		40 * time.Millisecond,
+		40 * time.Millisecond,
+	}, sleeps[:6], "backoff doubles from the base and is capped, so a long outage does not become an unbounded wait")
+	assert.Equal(t, 10*time.Millisecond, sleeps[6],
+		"a successful fetch resets the curve, so one blip does not permanently slow the reader")
+
+	assert.Equal(t, int64(7), tl.Stats().TransportErrors)
 }

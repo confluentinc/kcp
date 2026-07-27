@@ -11,6 +11,7 @@ package tail
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -50,6 +51,12 @@ type Options struct {
 	MaxWaitTime time.Duration
 	// IdleBackoff is the pause after a fetch that returned no records.
 	IdleBackoff time.Duration
+	// BackoffBase is the first retry wait after a failed fetch. It doubles on
+	// each consecutive failure and resets on the next success.
+	BackoffBase time.Duration
+	// BackoffMax caps the retry wait, so a long outage does not turn into an
+	// unbounded pause that outlives the observation window.
+	BackoffMax time.Duration
 	// Sleep is the injectable wait used for backoff and idle polling. Tests
 	// replace it so the suite never waits on a real timer.
 	Sleep func(ctx context.Context, d time.Duration)
@@ -62,6 +69,12 @@ func New(c Client, opts Options) *Tail {
 	}
 	if opts.IdleBackoff <= 0 {
 		opts.IdleBackoff = DefaultIdleBackoff
+	}
+	if opts.BackoffBase <= 0 {
+		opts.BackoffBase = DefaultBackoffBase
+	}
+	if opts.BackoffMax <= 0 {
+		opts.BackoffMax = DefaultBackoffMax
 	}
 	if opts.Sleep == nil {
 		opts.Sleep = sleepCtx
@@ -84,6 +97,14 @@ const (
 	// real broker already blocked for MaxWaitTime, so this only stops a
 	// hot loop when the broker answers immediately.
 	DefaultIdleBackoff = 50 * time.Millisecond
+	// DefaultBackoffBase is the first retry wait after a failed fetch. It is
+	// short because the common failure — a leader move — resolves as soon as
+	// the metadata refresh lands.
+	DefaultBackoffBase = 100 * time.Millisecond
+	// DefaultBackoffMax caps the retry wait. Five seconds keeps a partition
+	// responsive within a run measured in minutes while still throttling a
+	// broker that is down for a long time.
+	DefaultBackoffMax = 5 * time.Second
 )
 
 // PartitionStats reports one partition's progress.
@@ -116,6 +137,18 @@ type PartitionStats struct {
 	// DecodeErrors counts broker-supplied structures this partition could not
 	// parse.
 	DecodeErrors int64
+	// LeadershipErrors counts fetches rejected because this partition's leader
+	// moved.
+	LeadershipErrors int64
+	// UnclassifiedErrors counts error codes with no specific recovery.
+	UnclassifiedErrors int64
+	// OffsetResets counts reseeks to this partition's log start.
+	OffsetResets int64
+	// TransportErrors counts fetches that failed without a usable response.
+	TransportErrors int64
+	// LastError is the most recent fetch failure on this partition, empty if
+	// there has not been one. It is what surfaces an unrecognised code.
+	LastError string
 }
 
 // Stats is the aggregate view across every assigned partition.
@@ -134,7 +167,19 @@ type Stats struct {
 	// DecodeErrors counts broker-supplied structures this reader could not
 	// parse. It is the format-drift alarm, so it is never swallowed.
 	DecodeErrors int64
-	Partitions   []PartitionStats
+	// LeadershipErrors counts fetches rejected because the partition's leader
+	// moved, each of which forced a metadata refresh and a retry.
+	LeadershipErrors int64
+	// UnclassifiedErrors counts Kafka error codes this reader has no specific
+	// recovery for. They are backed off and surfaced, never fatal.
+	UnclassifiedErrors int64
+	// OffsetResets counts reseeks to the log start after the reader's position
+	// fell out of the retained range.
+	OffsetResets int64
+	// TransportErrors counts fetches that failed without a response at all,
+	// which is what a broker restart looks like from here.
+	TransportErrors int64
+	Partitions      []PartitionStats
 }
 
 // Tail reads a set of topics continuously, one fetch loop per partition,
@@ -161,23 +206,34 @@ type partitionState struct {
 	lastAdvance      time.Time
 	abortedBatches   int64
 	decodeErrors     int64
+	leadershipErrors int64
+
+	unclassifiedErrors int64
+	offsetResets       int64
+	transportErrors    int64
+	lastError          string
 }
 
 func (p *partitionState) snapshot() PartitionStats {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return PartitionStats{
-		Topic:            p.topic,
-		Partition:        p.partition,
-		NextOffset:       p.nextOffset,
-		LastStableOffset: p.lastStableOffset,
-		HighWaterMark:    p.highWaterMark,
-		Lag:              nonNegative(p.lastStableOffset - p.nextOffset),
-		OpenTxnBacklog:   nonNegative(p.highWaterMark - p.lastStableOffset),
-		Running:          p.running,
-		LastAdvance:      p.lastAdvance,
-		AbortedBatches:   p.abortedBatches,
-		DecodeErrors:     p.decodeErrors,
+		Topic:              p.topic,
+		Partition:          p.partition,
+		NextOffset:         p.nextOffset,
+		LastStableOffset:   p.lastStableOffset,
+		HighWaterMark:      p.highWaterMark,
+		Lag:                nonNegative(p.lastStableOffset - p.nextOffset),
+		OpenTxnBacklog:     nonNegative(p.highWaterMark - p.lastStableOffset),
+		Running:            p.running,
+		LastAdvance:        p.lastAdvance,
+		AbortedBatches:     p.abortedBatches,
+		DecodeErrors:       p.decodeErrors,
+		LeadershipErrors:   p.leadershipErrors,
+		UnclassifiedErrors: p.unclassifiedErrors,
+		OffsetResets:       p.offsetResets,
+		TransportErrors:    p.transportErrors,
+		LastError:          p.lastError,
 	}
 }
 
@@ -186,6 +242,13 @@ func (p *partitionState) setRunning(v bool) {
 	p.mu.Lock()
 	p.running = v
 	p.mu.Unlock()
+}
+
+// record applies a mutation under the partition's lock.
+func (p *partitionState) record(fn func(*partitionState)) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	fn(p)
 }
 
 // nonNegative clamps a computed lag at zero. A negative value is meaningless
@@ -212,6 +275,10 @@ func (t *Tail) Stats() Stats {
 		s.OpenTxnBacklog += ps.OpenTxnBacklog
 		s.AbortedBatches += ps.AbortedBatches
 		s.DecodeErrors += ps.DecodeErrors
+		s.LeadershipErrors += ps.LeadershipErrors
+		s.UnclassifiedErrors += ps.UnclassifiedErrors
+		s.OffsetResets += ps.OffsetResets
+		s.TransportErrors += ps.TransportErrors
 		s.Partitions = append(s.Partitions, ps)
 	}
 	return s
@@ -279,12 +346,25 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 	defer st.setRunning(false)
 
 	offset := a.offset
+	// attempt counts consecutive failures; it drives the backoff curve and
+	// resets on the next fetch that comes back clean.
+	attempt := 0
+	retry := func() {
+		t.opts.Sleep(ctx, backoffFor(t.opts.BackoffBase, t.opts.BackoffMax, attempt))
+		attempt++
+	}
+
 	for {
 		if ctx.Err() != nil {
 			return
 		}
 		leader, err := t.client.Leader(a.topic, a.partition)
 		if err != nil {
+			st.record(func(p *partitionState) {
+				p.transportErrors++
+				p.lastError = err.Error()
+			})
+			retry()
 			continue
 		}
 		spec := FetchSpec{
@@ -300,12 +380,34 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 		}
 		resp, err := t.client.Fetch(leader, spec)
 		if err != nil {
+			// No response at all, so no error code to classify. This is what a
+			// broker restart looks like from here.
+			st.record(func(p *partitionState) {
+				p.transportErrors++
+				p.lastError = err.Error()
+			})
+			retry()
 			continue
 		}
 		block := resp.GetBlock(a.topic, a.partition)
 		if block == nil {
+			// A response that omits the partition entirely is malformed, not a
+			// reason to give up on the partition.
+			st.record(func(p *partitionState) { p.transportErrors++ })
+			retry()
 			continue
 		}
+		if block.Err != sarama.ErrNoError {
+			next, backoff := t.recover(a, st, block.Err, offset)
+			offset = next
+			if backoff {
+				retry()
+			} else {
+				attempt = 0
+			}
+			continue
+		}
+		attempt = 0
 
 		next := offset
 		emitted := false
@@ -365,6 +467,68 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 			// loop hot-spins on an idle partition.
 			t.opts.Sleep(ctx, t.opts.IdleBackoff)
 		}
+	}
+}
+
+// backoffFor returns the wait before retry number attempt, counting from zero:
+// base, then doubling, capped at max. Deterministic rather than jittered —
+// there is one reader per partition, not a thundering herd to spread out.
+func backoffFor(base, max time.Duration, attempt int) time.Duration {
+	d := base
+	for i := 0; i < attempt && d < max; i++ {
+		d *= 2
+	}
+	if d > max {
+		d = max
+	}
+	return d
+}
+
+// recover applies the recovery for one classified fetch error, returning the
+// offset to fetch from next and whether the caller should back off first. It
+// never signals an exit: a partition loop that gives up silently is the
+// failure mode this component exists to avoid.
+func (t *Tail) recover(a assignment, st *partitionState, kerr sarama.KError, offset int64) (int64, bool) {
+	switch classifyKafkaError(kerr) {
+	case classLeadership:
+		// The leader moved. Refresh so the next Leader call resolves the new
+		// one, then retry from the same offset.
+		st.record(func(p *partitionState) {
+			p.leadershipErrors++
+			p.lastError = kerr.Error()
+		})
+		if rerr := t.client.RefreshMetadata(a.topic); rerr != nil {
+			slog.Debug("⏭️ metadata refresh after a leadership error failed", "partition", a.partition, "error", rerr)
+		}
+		return offset, true
+
+	case classOffset:
+		// The remembered position fell outside the retained range, so retrying
+		// it would loop on a dead offset forever. Reseek to the log start.
+		earliest, oerr := t.client.Offset(a.topic, a.partition, StartEarliest)
+		if oerr != nil {
+			slog.Debug("⏭️ could not resolve the earliest offset for a reseek", "partition", a.partition, "error", oerr)
+			return offset, true
+		}
+		st.record(func(p *partitionState) {
+			p.offsetResets++
+			p.nextOffset = earliest
+		})
+		slog.Warn("⚠️ fetch offset is outside the retained range; reseeking to the log start",
+			"partition", a.partition, "from", offset, "to", earliest)
+		return earliest, false
+
+	default:
+		// An error code with no specific recovery. Counting and surfacing it
+		// is the whole point: a loop that exited here would read downstream as
+		// a partition that simply had no data.
+		st.record(func(p *partitionState) {
+			p.unclassifiedErrors++
+			p.lastError = kerr.Error()
+		})
+		slog.Warn("⚠️ unrecognised Kafka error while fetching; backing off and retrying",
+			"partition", a.partition, "code", int16(kerr))
+		return offset, true
 	}
 }
 

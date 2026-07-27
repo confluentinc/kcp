@@ -77,6 +77,39 @@ func buildFetchRequest(spec FetchSpec) *sarama.FetchRequest {
 	return req
 }
 
+// errorClass names how the fetch loop recovers from a failed fetch.
+type errorClass int
+
+const (
+	// classLeadership: the partition's leader moved. Refresh metadata, back
+	// off, retry from the same offset.
+	classLeadership errorClass = iota
+	// classOffset: the reader's position is outside the retained range.
+	// Reseek to the log start rather than retrying a dead offset forever.
+	classOffset
+	// classUnclassified: an error code this reader does not recognise. It is
+	// counted and surfaced, never a reason to exit the loop.
+	classUnclassified
+)
+
+// classifyKafkaError maps a partition-level Kafka error to its recovery.
+func classifyKafkaError(kerr sarama.KError) errorClass {
+	switch kerr {
+	case sarama.ErrNotLeaderForPartition,
+		sarama.ErrLeaderNotAvailable,
+		// A stale cached leader epoch is the routine outcome of a leader move,
+		// not a corruption: refresh and retry rather than give up.
+		sarama.ErrFencedLeaderEpoch,
+		sarama.ErrUnknownLeaderEpoch,
+		sarama.ErrReplicaNotAvailable:
+		return classLeadership
+	case sarama.ErrOffsetOutOfRange:
+		return classOffset
+	default:
+		return classUnclassified
+	}
+}
+
 // abortTracker maintains the set of producer ids whose in-flight transaction
 // was rolled back, for one fetch response.
 //
