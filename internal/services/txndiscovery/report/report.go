@@ -433,8 +433,28 @@ type discoveryDoc struct {
 type discoveryGroup struct {
 	Name             string   `yaml:"name"`
 	ReadProcessWrite bool     `yaml:"read_process_write"`
+	Warning          string   `yaml:"warning,omitempty"`
 	Topics           []string `yaml:"topics"`
 	TransactionalIDs []string `yaml:"transactional_ids"`
+}
+
+// groupWarning explains what a read-process-write group's consumed inputs depend on,
+// naming the mechanism that recovered THIS group's inputs rather than whichever phase
+// happened to be enabled. A group with no read-process-write transaction has nothing to
+// warn about and gets no warning.
+func groupWarning(g grouping.Group, s Summary) string {
+	if !g.ReadProcessWrite {
+		return ""
+	}
+	m := s.Recovery.forGroup(g)
+	if !m.any() {
+		return "read-process-write group: consumed input topics are not captured; review before cutover."
+	}
+	warning := "read-process-write group: consumed input topics recovered and included via " + m.describe() + "."
+	if !s.Recovery.OffsetsActive {
+		warning += " Producer-id correlation did not run, so verify coverage for non-Streams exactly-once apps."
+	}
+	return warning
 }
 
 // WriteYAML writes the discovered groups to path.
@@ -450,6 +470,7 @@ func WriteYAML(path string, s Summary) error {
 		doc.Groups = append(doc.Groups, discoveryGroup{
 			Name:             g.Name,
 			ReadProcessWrite: g.ReadProcessWrite,
+			Warning:          groupWarning(g, s),
 			Topics:           g.Topics,
 			TransactionalIDs: g.TxnIDs,
 		})

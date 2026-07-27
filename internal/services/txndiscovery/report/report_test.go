@@ -13,6 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
+	"github.com/goccy/go-yaml"
 )
 
 // render runs the terminal summary for r and returns what an operator would see.
@@ -371,6 +372,82 @@ func TestYAMLClaimsNeitherPOCStatusNorThatItDrivesMigration(t *testing.T) {
 	} {
 		if strings.Contains(body, banned) {
 			t.Errorf("yaml contains %q\n--- yaml ---\n%s", banned, body)
+		}
+	}
+}
+
+// yamlDoc mirrors the on-disk document by its YAML keys rather than by reusing the
+// production struct, so a renamed key is a test failure instead of an invisible change.
+type yamlDoc struct {
+	GeneratedBy       string `yaml:"generated_by"`
+	ObservationWindow string `yaml:"observation_window"`
+	Groups            []struct {
+		Name             string   `yaml:"name"`
+		ReadProcessWrite bool     `yaml:"read_process_write"`
+		Warning          string   `yaml:"warning"`
+		Topics           []string `yaml:"topics"`
+		TransactionalIDs []string `yaml:"transactional_ids"`
+	} `yaml:"groups"`
+	IndividualTopicCount int      `yaml:"individual_topic_count"`
+	IndividualTopics     []string `yaml:"individual_topics"`
+}
+
+func parseYAML(t *testing.T, body string) yamlDoc {
+	t.Helper()
+	var doc yamlDoc
+	if err := yaml.Unmarshal([]byte(body), &doc); err != nil {
+		t.Fatalf("yaml did not parse: %v\n--- yaml ---\n%s", err, body)
+	}
+	return doc
+}
+
+func TestYAMLWarningNamesTheMechanismThatRecoveredThatGroupsInputs(t *testing.T) {
+	r := rpwRun()
+	// A third group that is read-process-write but had nothing recovered, so a
+	// warning that merely names whichever phase ran is distinguishable from one that
+	// names the phase that found THIS group's inputs.
+	r.Result.Groups = append(r.Result.Groups, grouping.Group{
+		Name: "group-3", Topics: []string{"out-d", "out-e"}, TxnIDs: []string{"unenriched"}, ReadProcessWrite: true,
+	})
+	r.Result.Groups = append(r.Result.Groups, grouping.Group{
+		Name: "group-4", Topics: []string{"plain-1", "plain-2"}, TxnIDs: []string{"plain"},
+	})
+
+	_, body := writeYAML(t, r)
+	doc := parseYAML(t, body)
+
+	want := map[string]string{
+		"group-1": "exact producer-id correlation via __consumer_offsets",
+		"group-2": "the Kafka Streams transactional.id<->group.id naming convention",
+		"group-3": "consumed input topics are not captured",
+		"group-4": "",
+	}
+	if len(doc.Groups) != len(want) {
+		t.Fatalf("expected %d groups on disk, got %d\n--- yaml ---\n%s", len(want), len(doc.Groups), body)
+	}
+	for _, g := range doc.Groups {
+		w, ok := want[g.Name]
+		if !ok {
+			t.Fatalf("unexpected group %q on disk", g.Name)
+		}
+		if w == "" {
+			if g.Warning != "" {
+				t.Errorf("group %q is not read-process-write but carries warning %q", g.Name, g.Warning)
+			}
+			continue
+		}
+		if !strings.Contains(g.Warning, w) {
+			t.Errorf("group %q warning = %q, want it to name %q", g.Name, g.Warning, w)
+		}
+	}
+	// group-1's inputs came from producer-id correlation alone, so naming must not be
+	// credited for it, and vice versa.
+	for _, g := range doc.Groups {
+		if g.Name == "group-1" && strings.Contains(g.Warning, "Kafka Streams") {
+			t.Errorf("group-1 credited the naming convention, which recovered nothing for it: %q", g.Warning)
+		}
+		if g.Name == "group-2" && strings.Contains(g.Warning, "producer-id correlation") {
+			t.Errorf("group-2 credited producer-id correlation, which recovered nothing for it: %q", g.Warning)
 		}
 	}
 }
