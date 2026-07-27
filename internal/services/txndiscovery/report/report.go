@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -480,7 +481,49 @@ func WriteYAML(path string, s Summary) error {
 	if err != nil {
 		return fmt.Errorf("failed to marshal the transaction discovery document: %w", err)
 	}
-	return os.WriteFile(path, body, 0644)
+	return writeSensitiveFile(path, body)
+}
+
+// artifactFileMode is the mode every artifact this package writes ends up at. The YAML
+// and the stats document both carry topic names and transactional ids — customer
+// business structure — so they match kcp-state.json's 0600 rather than the 0644 a
+// report would use.
+const artifactFileMode os.FileMode = 0600
+
+// writeSensitiveFile writes data to path at 0600, atomically.
+//
+// The write goes to a uniquely-named temp file in the same directory which is then
+// renamed onto the target, so an interrupted run leaves either the previous artifact or
+// nothing — never a half-written document that parses as a shorter list of groups.
+// os.CreateTemp already creates at 0600, and the mode is pinned again explicitly so an
+// unusual umask cannot widen it even briefly.
+func writeSensitiveFile(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create a temporary file next to %s: %w", path, err)
+	}
+	name := tmp.Name()
+	cleanup := func() { _ = os.Remove(name) }
+
+	if err := tmp.Chmod(artifactFileMode); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("failed to set permissions on %s: %w", name, err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		cleanup()
+		return fmt.Errorf("failed to write %s: %w", name, err)
+	}
+	if err := tmp.Close(); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to close %s: %w", name, err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		cleanup()
+		return fmt.Errorf("failed to move %s into place at %s: %w", name, path, err)
+	}
+	return nil
 }
 
 func plural(n int, one, many string) string {
