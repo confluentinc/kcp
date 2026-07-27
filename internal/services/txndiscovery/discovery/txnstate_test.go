@@ -3,6 +3,8 @@ package discovery
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
+	"sort"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -197,4 +199,41 @@ func TestTxnStateReader_FootprintContainingConsumerOffsetsIsReadProcessWrite(t *
 	// grouping stage's job, and dropping it here would make the observation unauditable.
 	assert.Equal(t, []string{"orders.enriched", DefaultConsumerOffsetsTopic}, got[0].Topics)
 	assert.False(t, got[1].ReadProcessWrite, "a produce-only footprint is not read-process-write")
+}
+
+func TestTxnStateReader_EveryStatusRegistersItsTxnIDAndProducerIDInTheCatalog(t *testing.T) {
+	// The catalog is what the enrichment phases correlate on instead of calling the
+	// transaction admin APIs, and both facts they need — the transactional id and the
+	// producer id — are on EVERY state record whatever its status. Registering only
+	// footprint-bearing records would hide every transaction that had already finished
+	// when the run started, which on a compacted log is most of them.
+	cat := NewTxnCatalog()
+	r := NewTxnStateReader(DefaultTxnStateTopic, cat)
+
+	// One record per status, none of which is Ongoing/PrepareCommit/PrepareAbort except
+	// where noted, and all with their partition set cleared as the coordinator leaves it.
+	var records []tail.Record
+	for i, status := range []int8{0, 4, 5, 6, 7} { // Empty, CompleteCommit, CompleteAbort, Dead, PrepareEpochFence
+		records = append(records, tail.Record{
+			Key:   txnKey(fmt.Sprintf("app-%d", i)),
+			Value: txnValue(int64(100+i), status),
+		})
+	}
+
+	got := runReader(t, r, stateBatch(records...))
+
+	assert.Empty(t, got, "no status in this set carries a footprint")
+
+	ids := cat.TxnIDs()
+	sort.Strings(ids)
+	assert.Equal(t, []string{"app-0", "app-1", "app-2", "app-3", "app-4"}, ids)
+	assert.Equal(t, map[int64]string{
+		100: "app-0", 101: "app-1", 102: "app-2", 103: "app-3", 104: "app-4",
+	}, cat.ProducerIDToTxnID())
+
+	st := r.Stats()
+	assert.Equal(t, int64(5), st.RecordsSeen)
+	assert.Equal(t, int64(5), st.Empty)
+	assert.Equal(t, int64(1), st.Committed)
+	assert.Equal(t, int64(1), st.Aborted)
 }
