@@ -77,6 +77,18 @@ func validateSelection(field string, include []string) []error {
 	return errs
 }
 
+// isMSKClusterArn reports whether s looks like an MSK cluster ARN
+// (arn:aws:kafka:<region>:<account>:cluster/<name>/<uuid>).
+func isMSKClusterArn(s string) bool {
+	return strings.HasPrefix(s, "arn:aws:kafka:") && strings.Contains(s, ":cluster/")
+}
+
+// isIAMPrincipalArn reports whether s looks like an IAM role or user ARN
+// (arn:aws:iam::<account>:role/<name> or arn:aws:iam::<account>:user/<name>).
+func isIAMPrincipalArn(s string) bool {
+	return strings.HasPrefix(s, "arn:aws:iam::") && (strings.Contains(s, ":role/") || strings.Contains(s, ":user/"))
+}
+
 // validateGlobs checks each pattern compiles as a path.Match glob.
 func validateGlobs(field string, patterns []string) []error {
 	var errs []error
@@ -266,6 +278,28 @@ func (m *Migration) Validate() []error {
 		if a.UnprotectedTopicPolicy != "" {
 			if err := validateEnum("spec.acls.unprotectedTopicPolicy", a.UnprotectedTopicPolicy, UnprotectedTopicPolicyWarn, UnprotectedTopicPolicyFail); err != nil {
 				errs = append(errs, err)
+			}
+		}
+		if iam := a.IAM; iam != nil {
+			if m.Spec.Source.Type != SourceMSK {
+				add("spec.acls.iam: only valid when spec.source.type is %q", SourceMSK)
+			}
+			if blank(iam.ClusterArn) {
+				add("spec.acls.iam.clusterArn: required when spec.acls.iam is set")
+			} else if !isMSKClusterArn(iam.ClusterArn) {
+				add("spec.acls.iam.clusterArn: %q is not a valid MSK cluster ARN (arn:aws:kafka:<region>:<account>:cluster/<name>/<uuid>)", iam.ClusterArn)
+			}
+			hasExplicit := len(iam.PrincipalArns) > 0
+			if hasExplicit && iam.DiscoverAllRoles {
+				add("spec.acls.iam: principalArns and discoverAllRoles are mutually exclusive")
+			}
+			if !hasExplicit && !iam.DiscoverAllRoles {
+				add("spec.acls.iam: requires principalArns or discoverAllRoles")
+			}
+			for _, p := range iam.PrincipalArns {
+				if !isIAMPrincipalArn(p) {
+					add("spec.acls.iam.principalArns: %q is not a valid IAM role/user ARN", p)
+				}
 			}
 		}
 	}

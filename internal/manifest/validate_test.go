@@ -623,6 +623,100 @@ func TestValidate_ACLsOnlyManifestAccepted(t *testing.T) {
 	require.Empty(t, m.Validate())
 }
 
+// mskArn is a well-formed MSK cluster ARN used across the acls.iam tests.
+const mskArn = "arn:aws:kafka:us-east-1:1:cluster/m/abc-5"
+
+// validCCMigrationWithACLs returns a valid msk->confluent-cloud migration
+// manifest with spec.acls set (Include + the cloudCredentials it requires on
+// a CC target) — the base fixture for spec.acls.iam validation tests.
+func validCCMigrationWithACLs(t *testing.T) *Migration {
+	t.Helper()
+	m := baseCCTargetManifest(t)
+	m.Spec.ClusterLink, m.Spec.Topics = nil, nil
+	m.Spec.Source.Type = SourceMSK
+	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
+	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	return m
+}
+
+// requireHasErr asserts errs contains, across all messages, every substring
+// in substrs (each substr must appear somewhere in the joined error text).
+func requireHasErr(t *testing.T, errs []error, substrs ...string) {
+	t.Helper()
+	joined := joinErrs(errs)
+	for _, s := range substrs {
+		require.Contains(t, joined, s, "expected errors to contain %q; got: %v", s, errs)
+	}
+}
+
+// TestValidate_ACLsIAM covers spec.acls.iam: msk-only, clusterArn required and
+// well-formed, principalArns/discoverAllRoles mutual exclusivity, and
+// well-formed principal ARNs.
+func TestValidate_ACLsIAM(t *testing.T) {
+	base := func(mut func(m *Migration)) *Migration {
+		m := validCCMigrationWithACLs(t)
+		mut(m)
+		return m
+	}
+	// (a) non-msk source
+	m := base(func(m *Migration) {
+		m.Spec.Source.Type = SourceApacheKafka
+		m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, PrincipalArns: []string{"arn:aws:iam::1:role/R"}}
+	})
+	requireHasErr(t, m.Validate(), "spec.acls.iam", "msk")
+	// (b) missing clusterArn
+	m = base(func(m *Migration) {
+		m.Spec.ACLs.IAM = &ACLsIAM{PrincipalArns: []string{"arn:aws:iam::1:role/R"}}
+	})
+	requireHasErr(t, m.Validate(), "clusterArn", "required")
+	// (c) both modes set
+	m = base(func(m *Migration) {
+		m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, PrincipalArns: []string{"arn:aws:iam::1:role/R"}, DiscoverAllRoles: true}
+	})
+	requireHasErr(t, m.Validate(), "mutually exclusive")
+	// (d) neither mode set
+	m = base(func(m *Migration) {
+		m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn}
+	})
+	requireHasErr(t, m.Validate(), "principalArns", "discoverAllRoles")
+	// (e) malformed clusterArn
+	m = base(func(m *Migration) {
+		m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: "not-an-arn", PrincipalArns: []string{"arn:aws:iam::1:role/R"}}
+	})
+	requireHasErr(t, m.Validate(), "clusterArn", "not a valid MSK cluster ARN")
+	// (f) malformed principal ARN
+	m = base(func(m *Migration) {
+		m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, PrincipalArns: []string{"not-an-arn"}}
+	})
+	requireHasErr(t, m.Validate(), "principalArns", "not a valid IAM role/user ARN")
+	// (g) valid explicit config
+	m = base(func(m *Migration) {
+		m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, PrincipalArns: []string{"arn:aws:iam::1:role/R"}}
+	})
+	require.Empty(t, m.Validate())
+}
+
+// TestValidate_ACLsIAM_DiscoverAllRolesValid confirms the discoverAllRoles
+// mode (no explicit principalArns) validates clean on its own.
+func TestValidate_ACLsIAM_DiscoverAllRolesValid(t *testing.T) {
+	m := validCCMigrationWithACLs(t)
+	m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, DiscoverAllRoles: true}
+	require.Empty(t, m.Validate())
+}
+
+// TestValidate_ACLsIAM_MultiplePrincipalArns_OneMalformed confirms each
+// principalArns entry is validated independently, not just the first.
+func TestValidate_ACLsIAM_MultiplePrincipalArns_OneMalformed(t *testing.T) {
+	m := validCCMigrationWithACLs(t)
+	m.Spec.ACLs.IAM = &ACLsIAM{
+		ClusterArn:    mskArn,
+		PrincipalArns: []string{"arn:aws:iam::1:role/Good", "bad-arn", "arn:aws:iam::1:user/AlsoGood"},
+	}
+	errs := m.Validate()
+	require.True(t, errorContains(errs, `"bad-arn" is not a valid IAM role/user ARN`))
+	require.False(t, errorContains(errs, `"arn:aws:iam::1:role/Good" is not a valid IAM role/user ARN`))
+}
+
 func TestValidate_SourceMSK_CannotSourceInitiate(t *testing.T) {
 	m := validCC()
 	m.Spec.Source.Type = SourceMSK
