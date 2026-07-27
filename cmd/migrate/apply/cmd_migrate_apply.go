@@ -337,9 +337,17 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	// equivalents for the explicitly-named principals. Only the explicit
 	// principalArns mode is implemented here; discoverAllRoles (enumeration)
 	// and verifyEffectiveAccess (SimulatePrincipalPolicy) are Phase 1B slice 2.
-	// Cross-plane duplicate tuples (native vs. IAM-derived) are left for the
-	// acls reconciler's existing map[types.Acls]struct{} diff, same as
-	// cross-principal duplicates within the IAM read itself.
+	//
+	// KNOWN GAP (see task-6-report.md): a cross-plane duplicate tuple (native
+	// and IAM-derived ACLs resolving to the identical types.Acls value) is NOT
+	// deduplicated anywhere in this pipeline. NormalizeForCC's stage-4 only
+	// drops a Describe implied by a broader op, not literal duplicates, and
+	// the acls reconciler's map[types.Acls]struct{} diff (reconciler.go Plan)
+	// is built solely from the TARGET's existing ACLs, not accumulated across
+	// entries already staged from Desired — so an identical tuple from both
+	// planes is currently planned and applied TWICE. Flagged for a follow-up
+	// fix, not addressed here per the task-6 brief (no new dedupe stage added
+	// without a decision on where it belongs).
 	if iam := m.Spec.ACLs.IAM; iam != nil {
 		if iam.DiscoverAllRoles {
 			return nil, fmt.Errorf("spec.acls.iam.discoverAllRoles: enumeration mode is not yet implemented (Phase 1B slice 2)")
