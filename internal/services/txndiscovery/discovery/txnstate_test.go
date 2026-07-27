@@ -1,9 +1,11 @@
 package discovery
 
 import (
+	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
+	"log/slog"
 	"sort"
 	"testing"
 	"time"
@@ -350,4 +352,33 @@ func TestTxnStateReader_CancelledContextStopsTheReaderRatherThanBlockingOnAnUnre
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run blocked on an unread send after its context was cancelled")
 	}
+}
+
+func TestTxnStateReader_NoTopicNameOrTransactionalIDReachesTheLog(t *testing.T) {
+	// kcp.log is written at Debug+ unconditionally and is the file operators attach to
+	// support tickets, so a name on ANY slog call defeats the counts-only terminal
+	// entirely — and under --verbose those same lines reach the console. The value
+	// decode path is the trap: the key decoded fine there, so the transactional id IS
+	// in scope and the POC this was ported from logs it.
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	r := NewTxnStateReader(DefaultTxnStateTopic, NewTxnCatalog())
+
+	runReader(t, r, stateBatch(
+		// Key decodes, value does not: the transactional id is available to be leaked.
+		tail.Record{Key: txnKey("secret-txnid"), Value: concat(be16(99), be64(1))},
+		// Neither decodes.
+		tail.Record{Key: concat(be16(9), kstr("secret-txnid")), Value: []byte("junk")},
+		// A clean record whose topic names must not be narrated either.
+		tail.Record{Key: txnKey("secret-txnid"), Value: txnValue(1, 1, "secret-topic")},
+	))
+
+	require.Equal(t, int64(1), r.Stats().KeyDecodeErrors)
+	require.Equal(t, int64(1), r.Stats().ValueDecodeErrors)
+
+	assert.NotContains(t, logged.String(), "secret-txnid", "a transactional id reached kcp.log")
+	assert.NotContains(t, logged.String(), "secret-topic", "a topic name reached kcp.log")
 }

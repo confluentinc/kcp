@@ -17,20 +17,54 @@ const DefaultTxnStateTopic = "__transaction_state"
 // enrolling it is how a transaction declares itself read-process-write.
 const DefaultConsumerOffsetsTopic = "__consumer_offsets"
 
-// TxnStateStats is a snapshot of what the transaction-state reader decoded.
+// TxnStateStats is a snapshot of what the transaction-state reader decoded. It is
+// what the run summary reports for this phase.
+//
+// Reader lag is deliberately absent: the tail component owns offset tracking and
+// reports lag against the last stable offset, so duplicating a records-behind figure
+// here would give the summary two disagreeing answers to the same question.
 type TxnStateStats struct {
+	// RecordsSeen counts every record this reader was handed, including tombstones
+	// and records it could not decode.
 	RecordsSeen int64
-	Footprints  int64
-	Empty       int64
-	Committed   int64
-	Aborted     int64
-	Tombstones  int64
+	// Footprints counts records that carried a topic-partition set and so produced an
+	// Observation.
+	Footprints int64
+	// Empty counts records whose status carries no footprint because the coordinator
+	// had already cleared the partition set.
+	Empty int64
+	// Committed and Aborted count the terminal CompleteCommit / CompleteAbort records
+	// seen. Reading from earliest, this is the completions the compacted log still
+	// retains plus those occurring inside the window — not a lifetime total, since
+	// compaction may already have collapsed an old transaction down to one record.
+	Committed int64
+	Aborted   int64
+	// Tombstones counts null-valued records, which is compaction retiring a
+	// transactional id rather than anything malformed.
+	Tombstones int64
 
+	// KeyDecodeErrors and ValueDecodeErrors count broker-supplied records this reader
+	// could not parse. They are the format-drift alarm — a non-zero count means the
+	// run may have missed footprints — and are kept apart so the summary can name
+	// which half of the record drifted.
 	KeyDecodeErrors   int64
 	ValueDecodeErrors int64
 }
 
-// TxnStateReader decodes __transaction_state records into Observations.
+// TxnStateReader decodes __transaction_state records — the transaction coordinator's
+// own log — into Observations, reconstructing each transaction's topic footprint
+// straight from the records the coordinator wrote.
+//
+// It does not own its Kafka connection. It consumes tail.Batch values from a channel
+// so that ONE tail instance can serve both this reader and the __consumer_offsets
+// one; batches are demultiplexed on topic. The caller starts that tail at the
+// EARLIEST offset, so the run also recovers footprints the log retained from before
+// it started, and keeps it in a continuous fetch loop rather than a periodic poll —
+// a short transaction's record can be compacted away between polls.
+//
+// As it decodes it registers every transactional id and producer id in the shared
+// TxnCatalog, which the enrichment phases read instead of calling the transaction
+// admin APIs.
 type TxnStateReader struct {
 	topic   string
 	catalog *TxnCatalog
@@ -46,12 +80,15 @@ type TxnStateReader struct {
 	valueDecodeErrors atomic.Int64
 }
 
-// NewTxnStateReader builds a reader over the named transaction-state topic.
+// NewTxnStateReader builds a reader over the named transaction-state topic, which is
+// DefaultTxnStateTopic unless the operator overrode it. Only batches carrying that
+// topic are decoded. Every decoded record is registered in catalog.
 func NewTxnStateReader(topic string, catalog *TxnCatalog) *TxnStateReader {
 	return &TxnStateReader{topic: topic, catalog: catalog}
 }
 
-// Stats returns a snapshot of the reader's counters.
+// Stats returns a snapshot of the reader's counters. Safe to call while Run is in
+// flight, which is what the periodic keep-up signal does.
 func (r *TxnStateReader) Stats() TxnStateStats {
 	return TxnStateStats{
 		RecordsSeen: r.recordsSeen.Load(),
@@ -66,7 +103,17 @@ func (r *TxnStateReader) Stats() TxnStateStats {
 	}
 }
 
-// Run drains the batch channel, emitting observations onto out.
+// Run consumes batches from in until the channel closes or ctx ends, emitting an
+// Observation onto out for every footprint-bearing record.
+//
+// This is the contract the command wiring implements: it owns the tail.Tail, reads
+// its single batch channel, and hands each batch to the reader whose topic it names.
+// Run takes a receive-only channel rather than a Tail precisely so one tail can be
+// demultiplexed across this reader and the __consumer_offsets one.
+//
+// out must be drained for the duration of the run. Run returns nil on both ordinary
+// endings — input exhausted, or context cancelled — because neither is a failure of
+// the run; the counters on Stats are what report whether the read was clean.
 func (r *TxnStateReader) Run(ctx context.Context, in <-chan tail.Batch, out chan<- Observation) error {
 	for b := range in {
 		// Demultiplex. One Tail serves this reader and the __consumer_offsets one over a
@@ -118,6 +165,9 @@ func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<-
 		// separately from the key errors so the summary can name which half drifted.
 		r.valueDecodeErrors.Add(1)
 		slog.Debug("⏭️ skipped a transaction-state record whose value would not decode",
+			// Deliberately NOT key.TransactionalID, which is in scope here and which the
+			// ported source logged: kcp.log is Debug+ unconditionally and is attached to
+			// support tickets, so the offset is the diagnostic and the id is disclosure.
 			"offset", rec.Offset, "error", err)
 		return true
 	}
