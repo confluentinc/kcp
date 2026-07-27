@@ -33,6 +33,15 @@ type Run struct {
 
 	// TxnState is the __transaction_state reader's counters.
 	TxnState discovery.TxnStateStats
+
+	// Offsets is the __consumer_offsets tail's counters, including the consumed
+	// input topics that phase recovered and whether it ran at all (R13).
+	Offsets discovery.ConsumerOffsetsStats
+
+	// EnrichmentActive reports whether consumer-group enrichment ran. The offsets
+	// phase carries its own Unavailable flag; enrichment has no counters of its
+	// own, so whether it ran has to be told to the report.
+	EnrichmentActive bool
 }
 
 // Summary is the derived, render-ready view of a run.

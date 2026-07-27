@@ -52,6 +52,94 @@ func TestSummaryRendersTheRunCounts(t *testing.T) {
 	requireContains(t, out, "read-process-write     : 0 groups; 0 consumed input topic(s) recovered")
 }
 
+// distinctiveRun is a run whose every topic name and transactional id is a token that
+// cannot occur in the summary's prose by accident, so a leak is unambiguous.
+func distinctiveRun() Run {
+	return Run{
+		Duration:      90 * time.Second,
+		Interval:      15 * time.Second,
+		ActiveSources: []string{discovery.SourceTxnStateLog, discovery.SourceConsumerGroups, discovery.SourceConsumerOffsets},
+		Footprints: []discovery.TxnFootprint{
+			{
+				TxnID:            "zqx-txnid-ledger-77",
+				ProducerID:       4001,
+				Topics:           []string{"zqx-topic-payments", "zqx-topic-ledger"},
+				ReadProcessWrite: true,
+				Sources:          []string{discovery.SourceTxnStateLog, discovery.SourceConsumerOffsets},
+			},
+			{
+				TxnID:      "zqx-txnid-audit-12",
+				ProducerID: 4002,
+				Topics:     []string{"zqx-topic-audit"},
+				Sources:    []string{discovery.SourceTxnStateLog},
+			},
+		},
+		TxnState: discovery.TxnStateStats{RecordsSeen: 40, Committed: 9, Aborted: 2},
+		Offsets: discovery.ConsumerOffsetsStats{
+			RecordsSeen:     120,
+			TxnRecords:      6,
+			GroupsLinked:    1,
+			Correlations:    1,
+			RecoveredTopics: []string{"zqx-topic-orders-in"},
+		},
+		EnrichmentActive: true,
+		Result: grouping.Result{
+			Groups: []grouping.Group{
+				{
+					Name:             "group-1",
+					Topics:           []string{"zqx-topic-ledger", "zqx-topic-orders-in", "zqx-topic-payments"},
+					TxnIDs:           []string{"zqx-txnid-ledger-77"},
+					ReadProcessWrite: true,
+				},
+			},
+			IndividualTopics:       []string{"zqx-topic-audit"},
+			ReadProcessWriteTopics: []string{"zqx-topic-ledger", "zqx-topic-payments"},
+		},
+	}
+}
+
+// customerIdentifiers are every topic name and transactional id distinctiveRun carries.
+func customerIdentifiers(r Run) []string {
+	seen := map[string]struct{}{}
+	add := func(vs ...string) {
+		for _, v := range vs {
+			seen[v] = struct{}{}
+		}
+	}
+	for _, fp := range r.Footprints {
+		add(fp.TxnID)
+		add(fp.Topics...)
+	}
+	for _, g := range r.Result.Groups {
+		add(g.Topics...)
+		add(g.TxnIDs...)
+	}
+	add(r.Result.IndividualTopics...)
+	add(r.Result.ReadProcessWriteTopics...)
+	add(r.Offsets.RecoveredTopics...)
+
+	out := make([]string, 0, len(seen))
+	for v := range seen {
+		out = append(out, v)
+	}
+	return out
+}
+
+func TestSummaryLeaksNoTopicNameOrTransactionalID(t *testing.T) {
+	r := distinctiveRun()
+	out := render(t, r)
+
+	ids := customerIdentifiers(r)
+	if len(ids) == 0 {
+		t.Fatal("fixture carries no identifiers, so this test would pass vacuously")
+	}
+	for _, id := range ids {
+		if strings.Contains(out, id) {
+			t.Errorf("summary leaked the customer identifier %q\n--- summary ---\n%s", id, out)
+		}
+	}
+}
+
 // groupLines returns the rendered group rows in the order they appear, so ordering can
 // be asserted without pinning the surrounding prose.
 func groupLines(out string) []string {
