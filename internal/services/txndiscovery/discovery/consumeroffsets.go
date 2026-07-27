@@ -70,6 +70,14 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 	if b.Control {
 		return
 	}
+	// -1 is Kafka's "no producer id" sentinel and 0 is an absent field. Keying a
+	// pending entry on either would pool every producer without an id into one
+	// bucket, and the moment any transaction was catalogued under that sentinel
+	// the whole pool would be attributed to it. The catalog refuses to WRITE a
+	// non-positive id; refusing to READ one is this side's job.
+	if b.ProducerID <= 0 {
+		return
+	}
 	for _, r := range b.Records {
 		key, err := txnlog.DecodeOffsetKey(r.Key)
 		if err != nil {

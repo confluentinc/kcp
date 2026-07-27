@@ -3,6 +3,7 @@ package discovery
 import (
 	"encoding/binary"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/stretchr/testify/assert"
@@ -137,4 +138,27 @@ func TestAControlBatchIsIgnored(t *testing.T) {
 	tl.HandleBatch(b)
 
 	assert.Empty(t, flush(t, tl), "a control batch must not correlate")
+}
+
+func TestABatchWithANonPositiveProducerIDIsIgnored(t *testing.T) {
+	// -1 is Kafka's "no producer id" sentinel and 0 is the zero value of an
+	// absent field. Buffering either would key a pending entry on a sentinel, so
+	// every unrelated producer lacking an id would pool its consumed topics into
+	// one bucket — and the moment any transaction happened to be catalogued
+	// under that sentinel, the whole pool would be attributed to it. The
+	// catalog's own guard only refuses to WRITE a non-positive id; refusing to
+	// READ one is this side's job.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	for _, pid := range []int64{-1, 0} {
+		tl.HandleBatch(commitBatch(pid, commitKey("payments-group", "orders.in", 0)))
+	}
+
+	assert.Empty(t, flush(t, tl), "a sentinel producer id must not correlate")
+	// And it is not merely unresolved — nothing was buffered under the sentinel
+	// key at all, so a later catalog entry cannot resurrect it.
+	assert.Empty(t, tl.resolveWith(map[int64]string{-1: "some-txn", 0: "other-txn"}, time.Now()),
+		"nothing may be buffered under a sentinel producer id")
 }
