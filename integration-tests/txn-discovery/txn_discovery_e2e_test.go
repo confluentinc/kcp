@@ -529,7 +529,45 @@ const (
 	ordersGroup = fixturePrefix + "quibble-consumer"
 	ordersIn    = fixturePrefix + "orders-in"
 	ordersOut   = fixturePrefix + "orders-out"
+
+	// AE5 internal-topic filtering: a second, entirely unrelated exactly-once
+	// workload that also commits its offsets transactionally.
+	billingTxn   = fixturePrefix + "billing-txn-88"
+	billingGroup = fixturePrefix + "wobble-consumer"
+	billingIn    = fixturePrefix + "billing-in"
+	billingOut   = fixturePrefix + "billing-out"
 )
+
+// TestUnrelatedExactlyOnceWorkloadsStaySeparate is AE5: two exactly-once
+// workloads that share nothing but __consumer_offsets must stay in separate
+// groups.
+//
+// Every exactly-once application on a cluster commits offsets to that one
+// internal topic, so it appears in every such transaction's footprint. Union it
+// like an ordinary topic and the transitive closure chains the entire estate
+// into a single group — a "result" that says migrate everything at once, which
+// is no result at all. Internal topics are therefore dropped BEFORE the union,
+// and this is the scenario that notices if that ordering is ever reversed.
+func TestUnrelatedExactlyOnceWorkloadsStaySeparate(t *testing.T) {
+	r := sharedRun(t)
+
+	orders := r.groupWith(ordersOut)
+	require.NotNil(t, orders, "the first workload's output topic is in no group\n%s", r.describe())
+	billing := r.groupWith(billingOut)
+	require.NotNil(t, billing, "the second workload's output topic is in no group\n%s", r.describe())
+
+	assert.NotEqual(t, orders.Name, billing.Name,
+		"two unrelated exactly-once workloads chained into one group through __consumer_offsets\n%s", r.describe())
+	assert.NotContains(t, orders.Topics, billingIn, "the second workload's input leaked into the first workload's group")
+	assert.NotContains(t, orders.Topics, billingOut, "the second workload's output leaked into the first workload's group")
+	assert.NotContains(t, billing.Topics, ordersIn, "the first workload's input leaked into the second workload's group")
+	assert.NotContains(t, billing.Topics, ordersOut, "the first workload's output leaked into the second workload's group")
+
+	// The internal topic every exactly-once app shares must not be reported as
+	// something to migrate at all.
+	assert.NotContains(t, r.observedTopics(), "__consumer_offsets",
+		"an internal topic was reported as migratable\n%s", r.describe())
+}
 
 // TestProducerIDRecoversConsumedInput is AE4: a non-Streams exactly-once
 // application whose group id bears no naming relationship to its transactional
@@ -690,10 +728,25 @@ func seedBeforeWindow(t *testing.T) {
 	createTopics(t, streamsIn, streamsOut)
 	commitGroupOffsets(t, streamsGroup, streamsIn)
 	produceTxn(t, txnFixture{TxnID: streamsTxn, Produce: []string{streamsOut}})
+
+	// The during-window fixtures' topics are created here so the observation
+	// window carries transactions rather than topic-creation churn. An unused
+	// topic is invisible to discovery, which reports only what it observed.
+	createTopics(t, ordersIn, ordersOut)
 }
 
 // seedDuringWindow produces the fixtures that must land inside the observation
 // window because the consumer-offsets tail starts at latest.
 func seedDuringWindow(t *testing.T) {
 	t.Helper()
+
+	// AE4. The offsets are committed INSIDE the transaction, so the resulting
+	// __consumer_offsets record is transactional and carries the producer id
+	// that ties it back to ordersTxn.
+	produceTxn(t, txnFixture{
+		TxnID:        ordersTxn,
+		Produce:      []string{ordersOut},
+		ConsumeTopic: ordersIn,
+		Group:        ordersGroup,
+	})
 }
