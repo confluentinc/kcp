@@ -848,6 +848,7 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *testing.T) {
 	var unwantedCall string
 	waitReadyCalled := false
+	acceptedCalled := false
 	gw := &mockGatewayService{
 		getGatewayPodUIDsFn: func(_ context.Context, _, _ string) (map[k8stypes.UID]struct{}, error) {
 			unwantedCall = "GetGatewayPodUIDs"
@@ -857,8 +858,8 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 			unwantedCall = "WaitForGatewayPods"
 			return nil
 		},
-		waitForGatewayObservedGenerationFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
-			unwantedCall = "WaitForGatewayObservedGeneration"
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			acceptedCalled = true
 			return nil
 		},
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
@@ -872,14 +873,42 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	// DetectUnroutedProducersDuration unset (0) → detection disabled: the fence
-	// keeps the lightweight readiness-only wait, never touches pod UIDs, and
-	// does not wait on operator reconcile.
+	// keeps the lightweight readiness-only wait and never touches pod UIDs. The
+	// operator-acceptance wait, by contrast, now runs on every path — the
+	// Deployment-only wait cannot tell a no-op apply from a rejected one.
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
 	assert.Empty(t, unwantedCall, "with detection disabled, FenceGateway must not use UID-diffing methods, but called: %s", unwantedCall)
 	assert.True(t, waitReadyCalled, "with detection disabled, FenceGateway must wait via WaitForGatewayReady")
+	assert.True(t, acceptedCalled, "the acceptance wait must run even with detection disabled")
+}
+
+// TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed asserts a rejected
+// fence CR aborts before the readiness wait. Previously the fence-without-
+// detection path relied solely on the Deployment wait, which would report "No
+// pod restart required" and let the migration continue to promote topics with
+// the gateway never actually fenced.
+func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
+	waitReadyCalled := false
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			return rejectionError("gw-1")
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			waitReadyCalled = true
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.False(t, waitReadyCalled, "a rejected fence must not fall through to the Deployment readiness wait")
+	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
 }
 
 func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T) {
@@ -896,7 +925,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			callOrder = append(callOrder, "apply")
 			return nil
 		},
-		waitForGatewayObservedGenerationFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "reconcile")
 			return nil
 		},
@@ -1061,6 +1090,168 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed waiting for gateway readiness")
 	assert.Contains(t, err.Error(), "kube unreachable")
+}
+
+// ===========================================================================
+// Operator-acceptance guard — the switchover-verification gap
+// ===========================================================================
+
+// rejectionError builds the error the gateway service returns when the CFK
+// operator refuses a spec, matching the production incident of 2026-07-27.
+func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
+	return &gateway.GatewayRejectedError{
+		Gateway:            gatewayName,
+		ConditionType:      "platform.confluent.io/cluster-ready",
+		Reason:             "ApplyFailed",
+		Message:            "secretRef kcp-perf-plain-jaas not found",
+		Generation:         4,
+		ObservedGeneration: 3,
+	}
+}
+
+// TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage is the
+// regression test for the reported bug: kcp printed "No pod restart required"
+// then "✅ Migration complete!" while the gateway was still fenced, because the
+// Deployment-based readiness wait cannot see that the operator refused the
+// switchover CR. SwitchGateway must now fail, and fail with the operator's own
+// diagnosis.
+func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
+	waitReadyCalled := false
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			return rejectionError("gw-1")
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			waitReadyCalled = true
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.Error(t, err, "a switchover the operator rejected must not be reported as a success")
+	assert.False(t, waitReadyCalled, "must abort before the Deployment wait that would report 'No pod restart required'")
+
+	var rejected *gateway.GatewayRejectedError
+	require.ErrorAs(t, err, &rejected, "the typed rejection must survive to the caller")
+	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
+	assert.Contains(t, err.Error(), "ApplyFailed")
+}
+
+// TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness pins the
+// ordering: acceptance must be confirmed between the apply and the readiness
+// wait, otherwise the readiness wait observes the pre-switchover Deployment.
+func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
+	var callOrder []string
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			callOrder = append(callOrder, "apply")
+			return nil
+		},
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			callOrder = append(callOrder, "accepted")
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			callOrder = append(callOrder, "ready")
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	require.NoError(t, wf.SwitchGateway(context.Background(), config))
+	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
+}
+
+// TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped keeps transport
+// failures distinguishable from operator rejections.
+func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			return fmt.Errorf("kube unreachable")
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed waiting for gateway reconcile during switchover")
+	assert.Contains(t, err.Error(), "kube unreachable")
+	var rejected *gateway.GatewayRejectedError
+	assert.NotErrorAs(t, err, &rejected, "a transport failure is not an operator rejection")
+}
+
+// TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait ensures
+// --rollout-timeout bounds the acceptance wait too, not just the readiness wait.
+func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.T) {
+	var observedTimeout time.Duration
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ time.Duration, timeout time.Duration) error {
+			observedTimeout = timeout
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	wf.SetRolloutTimeout(15 * time.Minute)
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+
+	require.NoError(t, wf.SwitchGateway(context.Background(), config))
+	assert.Equal(t, 15*time.Minute, observedTimeout)
+}
+
+// TestWorkflow_UnfenceGateway_OperatorRejection_Fails covers the rollback path:
+// reporting restored traffic while the gateway is still fenced is the worst
+// place to be blind to a rejected apply.
+func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
+	waitReadyCalled := false
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			return rejectionError("gw-1")
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			waitReadyCalled = true
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte("apiVersion: v1\nkind: Gateway\n")}
+
+	err := wf.unfenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.False(t, waitReadyCalled, "a rejected unfence must not report traffic restored")
+	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
+}
+
+// TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness pins the
+// ordering on the rollback path.
+func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
+	var callOrder []string
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error {
+			callOrder = append(callOrder, "apply")
+			return nil
+		},
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+			callOrder = append(callOrder, "accepted")
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			callOrder = append(callOrder, "ready")
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte("apiVersion: v1\nkind: Gateway\n")}
+
+	require.NoError(t, wf.unfenceGateway(context.Background(), config))
+	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
 }
 
 // ===========================================================================
