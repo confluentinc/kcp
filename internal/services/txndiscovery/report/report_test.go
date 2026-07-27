@@ -51,3 +51,48 @@ func TestSummaryRendersTheRunCounts(t *testing.T) {
 	requireContains(t, out, "topics                 : 6 total — 5 in 2 groups, 1 individual")
 	requireContains(t, out, "read-process-write     : 0 groups; 0 consumed input topic(s) recovered")
 }
+
+// groupLines returns the rendered group rows in the order they appear, so ordering can
+// be asserted without pinning the surrounding prose.
+func groupLines(out string) []string {
+	var rows []string
+	for _, line := range strings.Split(out, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "group-") {
+			rows = append(rows, trimmed)
+		}
+	}
+	return rows
+}
+
+func TestGroupTableListsLargestGroupsFirstWithStableOrdering(t *testing.T) {
+	// Deliberately supplied smallest-first and with the two three-topic groups in
+	// reverse name order: the table must impose its own ordering rather than echoing
+	// whatever order it was handed.
+	out := render(t, Run{
+		Result: grouping.Result{
+			Groups: []grouping.Group{
+				{Name: "group-3", Topics: []string{"m", "n"}, TxnIDs: []string{"t3"}},
+				{Name: "group-2", Topics: []string{"d", "e", "f"}, TxnIDs: []string{"t2a", "t2b"}},
+				{Name: "group-1", Topics: []string{"a", "b", "c"}, TxnIDs: []string{"t1"}},
+				{Name: "group-0", Topics: []string{"p", "q", "r", "s"}, TxnIDs: []string{"t0"}},
+			},
+		},
+	})
+
+	want := []string{
+		"group-0: 4 topics, 1 transactional id",
+		"group-1: 3 topics, 1 transactional id",
+		"group-2: 3 topics, 2 transactional ids",
+		"group-3: 2 topics, 1 transactional id",
+	}
+	got := groupLines(out)
+	if len(got) != len(want) {
+		t.Fatalf("expected %d group rows, got %d\n--- summary ---\n%s", len(want), len(got), out)
+	}
+	for i := range want {
+		if !strings.HasPrefix(got[i], want[i]) {
+			t.Errorf("group row %d = %q, want prefix %q\n--- summary ---\n%s", i, got[i], want[i], out)
+		}
+	}
+}

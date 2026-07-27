@@ -1,8 +1,10 @@
 package report
 
 import (
+	"cmp"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -52,6 +54,8 @@ type Summary struct {
 
 // Summarize derives the render-ready summary from a completed run.
 func Summarize(r Run) Summary {
+	result := r.Result
+	result.Groups = orderGroups(r.Result.Groups)
 	return Summary{
 		Duration:       r.Duration,
 		Interval:       r.Interval,
@@ -60,8 +64,25 @@ func Summarize(r Run) Summary {
 		TxnCount:       len(r.Footprints),
 		TxnCommitted:   r.TxnState.Committed,
 		TxnAborted:     r.TxnState.Aborted,
-		Result:         r.Result,
+		Result:         result,
 	}
+}
+
+// orderGroups returns a copy of groups ordered largest first, ties broken by name.
+//
+// grouping.Build already emits this order, but the ordering is re-imposed here rather
+// than assumed: it is what makes the artifacts diffable between runs, and inheriting it
+// from an upstream package's incidental behaviour would let a change there silently
+// reorder every report. The input slice is copied because it belongs to the caller.
+func orderGroups(groups []grouping.Group) []grouping.Group {
+	out := slices.Clone(groups)
+	slices.SortStableFunc(out, func(a, b grouping.Group) int {
+		if n := cmp.Compare(len(b.Topics), len(a.Topics)); n != 0 {
+			return n
+		}
+		return cmp.Compare(a.Name, b.Name)
+	})
+	return out
 }
 
 // PrintTerminal writes the operator-facing summary.
@@ -90,6 +111,29 @@ func PrintTerminal(w io.Writer, s Summary) {
 		groupedTopics+len(individual), groupedTopics, len(groups), plural(len(groups), "group", "groups"), len(individual))
 	_, _ = fmt.Fprintf(w, "  read-process-write     : %d %s; %d consumed input topic(s) recovered\n",
 		rpwGroups, plural(rpwGroups, "group", "groups"), 0)
+
+	printGroupTable(w, groups)
+}
+
+// printGroupTable writes one row per group.
+//
+// Counts only: no topic name and no transactional id reaches the terminal. Group names
+// are synthetic ordinals produced by grouping.Build, so they carry no customer
+// information; the names themselves live in the YAML.
+func printGroupTable(w io.Writer, groups []grouping.Group) {
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Transaction groups (topics coupled by a shared transaction — migrate each group atomically):")
+	for _, g := range groups {
+		tag := ""
+		if g.ReadProcessWrite {
+			tag = "  [read-process-write]"
+		}
+		_, _ = fmt.Fprintf(w, "  %s: %d %s, %d transactional %s%s\n",
+			g.Name,
+			len(g.Topics), plural(len(g.Topics), "topic", "topics"),
+			len(g.TxnIDs), plural(len(g.TxnIDs), "id", "ids"),
+			tag)
+	}
 }
 
 func plural(n int, one, many string) string {
