@@ -380,3 +380,65 @@ func TestTxnDiscovery_NonPositiveInterval_Rejected(t *testing.T) {
 		})
 	}
 }
+
+// R18: the audit trail follows --out's directory. Pointing --out at an
+// engagement folder and leaving the trail in the working directory splits the
+// two artifacts an operator has to read together.
+func TestTxnDiscovery_AuditLogPath_DefaultsBesideOut(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "no paths given",
+			args: nil,
+			want: DefaultAuditBasename,
+		},
+		{
+			name: "out in another directory",
+			args: []string{"--out", "/tmp/engagement/groups.yaml"},
+			want: "/tmp/engagement/" + DefaultAuditBasename,
+		},
+		{
+			name: "out is a bare filename",
+			args: []string{"--out", "groups.yaml"},
+			want: DefaultAuditBasename,
+		},
+		{
+			name: "explicit audit path wins",
+			args: []string{"--out", "/tmp/engagement/groups.yaml", "--audit-log-out", "/var/log/trail.jsonl"},
+			want: "/var/log/trail.jsonl",
+		},
+		{
+			name: "no-audit-log disables it",
+			args: []string{"--no-audit-log"},
+			want: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newTestCmd(t, append([]string{
+				"--source-bootstrap", "broker:9092",
+				"--use-unauthenticated-plaintext",
+			}, tc.args...)...)
+			require.NoError(t, cmd.Execute())
+
+			assert.Equal(t, tc.want, parseOpts().AuditLogPath)
+		})
+	}
+}
+
+// R18: naming a path for a trail that will not be written is a contradiction, so
+// it is rejected rather than silently resolved one way.
+func TestTxnDiscovery_AuditPathAndNoAuditLog_AreMutuallyExclusive(t *testing.T) {
+	cmd := newTestCmd(t,
+		"--source-bootstrap", "broker:9092",
+		"--use-unauthenticated-plaintext",
+		"--audit-log-out", "/tmp/trail.jsonl",
+		"--no-audit-log",
+	)
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "were all set")
+}
