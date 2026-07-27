@@ -286,3 +286,25 @@ func TestAKeyThatFailsToDecodeIsCountedAndDoesNotStopTheTail(t *testing.T) {
 	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
 	assert.Equal(t, int64(2), tl.Stats().KeyDecodeErrors)
 }
+
+func TestAnUnresolvedProducerStaysBufferedAndThenEmitsExactlyOnce(t *testing.T) {
+	// The two readers race by design: this one starts at LATEST so it sees live
+	// commits, while the __transaction_state reader starts at EARLIEST and takes
+	// the whole window to catch up. A commit therefore routinely arrives before
+	// its transaction is catalogued, so an unresolved sighting must be kept
+	// rather than dropped. Once it resolves it must leave the buffer, or every
+	// later pass re-emits it — inflating the sample count and writing a
+	// duplicate audit line for a coupling that happened once.
+	cat := NewTxnCatalog()
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+	tl.HandleBatch(commitBatch(4242, commitKey("payments-group", "orders.in", 0)))
+
+	assert.Empty(t, flush(t, tl), "nothing resolves while the catalog is empty")
+
+	cat.Observe("payments-txn-0", 4242)
+	got := flush(t, tl)
+	require.Len(t, got, 1, "the buffered sighting resolves once the catalog catches up")
+	assert.Equal(t, "payments-txn-0", got[0].TxnID)
+
+	assert.Empty(t, flush(t, tl), "a resolved sighting must not be re-emitted")
+}

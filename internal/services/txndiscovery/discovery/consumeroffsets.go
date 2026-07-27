@@ -206,7 +206,10 @@ func (t *ConsumerOffsetsTail) resolveWith(pidToTxn map[int64]string, now time.Ti
 	for pid, topics := range t.pending {
 		txnID, ok := pidToTxn[pid]
 		if !ok {
-			// Its transaction has not been decoded yet — keep waiting.
+			// Its transaction has not been decoded yet — keep waiting. The two
+			// readers race by design: this one starts at latest, the
+			// __transaction_state reader starts at earliest and takes the whole
+			// window to catch up, so a commit routinely arrives first.
 			continue
 		}
 		out = append(out, Observation{
