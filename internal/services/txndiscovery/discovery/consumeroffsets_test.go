@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"encoding/binary"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,4 +336,41 @@ func TestManyCommitsFromOneProducerMergeIntoASortedDeduplicatedTopicSet(t *testi
 
 	require.Len(t, got, 1, "one producer yields one observation, not one per commit")
 	assert.Equal(t, []string{"alpha.in", "orders.in", "zeta.in"}, got[0].Topics)
+}
+
+// streamsNamingCorrelates is the Kafka Streams naming convention the
+// consumer-group enrichment phase relies on: a Streams app sets group.id to its
+// application.id and derives transactional.id as "<application.id>-<taskId>"
+// (EOS v1) or "<application.id>-<processId>" (EOS v2). It is reproduced here so
+// the test below can assert what that heuristic CANNOT do, rather than merely
+// claiming it.
+func streamsNamingCorrelates(groupID, txnID string) bool {
+	return txnID == groupID || strings.HasPrefix(txnID, groupID+"-")
+}
+
+func TestCorrelationSucceedsWhereTheStreamsNamingHeuristicFails(t *testing.T) {
+	// This is the case the whole raw-fetch decision was made for. A plain
+	// consumer+producer exactly-once app — not Kafka Streams — picks its
+	// group.id and its transactional.id independently, so no naming rule can
+	// relate them. The enrichment phase is blind to it; the producer id in the
+	// batch header is not.
+	const groupID = "svc-ingest-consumer"
+	const txnID = "billing-writer-7"
+
+	require.False(t, streamsNamingCorrelates(groupID, txnID),
+		"fixture must be one the naming heuristic cannot correlate")
+	require.False(t, streamsNamingCorrelates(txnID, groupID),
+		"nor in the other direction")
+
+	cat := NewTxnCatalog()
+	cat.Observe(txnID, 990001)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	tl.HandleBatch(commitBatch(990001, commitKey(groupID, "raw.events", 0)))
+
+	got := flush(t, tl)
+
+	require.Len(t, got, 1, "the producer-id join must recover what naming cannot")
+	assert.Equal(t, txnID, got[0].TxnID)
+	assert.Equal(t, []string{"raw.events"}, got[0].Topics)
 }
