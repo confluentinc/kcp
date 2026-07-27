@@ -5,6 +5,7 @@ package txndiscovery
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -130,6 +131,55 @@ func preRunTxnDiscovery(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// authResolution is the source-cluster authentication choice, resolved from the
+// flags into the triple client.AdminOptionForAuthMethod takes.
+type authResolution struct {
+	AuthType      types.AuthType
+	Method        types.AuthMethodConfig
+	SkipTLSVerify bool
+}
+
+// resolveAuth turns the auth flags into that triple. MarkFlagsOneRequired and
+// MarkFlagsMutuallyExclusive guarantee exactly one branch is live.
+func resolveAuth() authResolution {
+	r := authResolution{SkipTLSVerify: insecureSkipTLSVerify}
+	switch {
+	case useSaslIam:
+		r.AuthType = types.AuthTypeIAM
+		r.Method.IAM = &types.IAMConfig{Use: true}
+	case useSaslScram:
+		r.AuthType = types.AuthTypeSASLSCRAM
+		r.Method.SASLScram = &types.SASLScramConfig{
+			Use:       true,
+			Username:  saslScramUsername,
+			Password:  saslScramPassword,
+			Mechanism: saslScramMechanism,
+		}
+	case useSaslPlain:
+		r.AuthType = types.AuthTypeSASLPlain
+		r.Method.SASLPlain = &types.SASLPlainConfig{
+			Use:      true,
+			Username: saslPlainUsername,
+			Password: saslPlainPassword,
+		}
+	case useTls:
+		r.AuthType = types.AuthTypeTLS
+		r.Method.TLS = &types.TLSConfig{
+			Use:        true,
+			CACert:     tlsCaCert,
+			ClientCert: tlsClientCert,
+			ClientKey:  tlsClientKey,
+		}
+	case useUnauthenticatedTLS:
+		r.AuthType = types.AuthTypeUnauthenticatedTLS
+		r.Method.UnauthenticatedTLS = &types.UnauthenticatedTLSConfig{Use: true}
+	case useUnauthenticatedPlaintext:
+		r.AuthType = types.AuthTypeUnauthenticatedPlaintext
+		r.Method.UnauthenticatedPlaintext = &types.UnauthenticatedPlaintextConfig{Use: true}
+	}
+	return r
 }
 
 func runTxnDiscovery(cmd *cobra.Command, args []string) error {
