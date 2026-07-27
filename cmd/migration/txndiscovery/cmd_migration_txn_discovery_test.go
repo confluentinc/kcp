@@ -343,3 +343,40 @@ func TestTxnDiscovery_IncompleteCredentialSet_Rejected(t *testing.T) {
 		})
 	}
 }
+
+// R4, abuse case: a window of zero or less would open every reader, observe
+// nothing, and write a confident, empty txn-discovery.yaml — an artifact that
+// reads as "this cluster has no transactional coupling".
+func TestTxnDiscovery_NonPositiveDuration_Rejected(t *testing.T) {
+	for _, d := range []string{"0", "0s", "-1s", "-5m"} {
+		t.Run("duration="+d, func(t *testing.T) {
+			cmd := newTestCmd(t,
+				"--source-bootstrap", "broker:9092",
+				"--use-unauthenticated-plaintext",
+				"--duration", d,
+			)
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--duration")
+		})
+	}
+}
+
+// R4, abuse case: --interval feeds time.NewTicker, which panics on a
+// non-positive period. A crash mid-observation loses the whole window.
+func TestTxnDiscovery_NonPositiveInterval_Rejected(t *testing.T) {
+	for _, i := range []string{"0", "0s", "-1s"} {
+		t.Run("interval="+i, func(t *testing.T) {
+			cmd := newTestCmd(t,
+				"--source-bootstrap", "broker:9092",
+				"--use-unauthenticated-plaintext",
+				"--interval", i,
+			)
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--interval")
+		})
+	}
+}

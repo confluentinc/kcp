@@ -4,11 +4,22 @@ package txndiscovery
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+)
+
+const (
+	// DefaultOutPath is where the discovered groups land unless --out says otherwise.
+	DefaultOutPath = "txn-discovery.yaml"
+	// DefaultAuditBasename is the audit trail's filename. It is resolved against
+	// --out's directory, so pointing --out at another directory takes the trail
+	// with it rather than stranding it in the working directory.
+	DefaultAuditBasename = "txn-discovery-audit.jsonl"
 )
 
 var (
@@ -33,6 +44,19 @@ var (
 	tlsClientCert         string
 	tlsClientKey          string
 	insecureSkipTLSVerify bool
+
+	duration              time.Duration
+	interval              time.Duration
+	txnStateTopic         string
+	enrichConsumerGroups  bool
+	tailConsumerOffsets   bool
+	includeInternalTopics bool
+
+	outPath      string
+	statsOutPath string
+	auditLogPath string
+	noAuditLog   bool
+	dryRun       bool
 )
 
 // NewMigrationTxnDiscoveryCmd builds the `kcp migration txn-discovery` command.
@@ -51,6 +75,16 @@ func NewMigrationTxnDiscoveryCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&sourceBootstrap, "source-bootstrap", "", "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092,broker2:9092).")
 	cmd.Flags().AddFlagSet(requiredFlags)
+
+	observationFlags := pflag.NewFlagSet("observation", pflag.ExitOnError)
+	observationFlags.SortFlags = false
+	observationFlags.DurationVar(&duration, "duration", 5*time.Minute, "How long to observe the cluster. A longer window observes more transactions; a workload whose footprint records were compacted before the window opened is unrecoverable.")
+	observationFlags.DurationVar(&interval, "interval", 30*time.Second, "Cadence at which consumer-group enrichment refreshes and buffered producer-id sightings are resolved.")
+	observationFlags.StringVar(&txnStateTopic, "txn-state-topic", discovery.DefaultTxnStateTopic, "Name of the transaction-state internal topic — the source of truth, read from the beginning.")
+	observationFlags.BoolVar(&enrichConsumerGroups, "enrich-consumer-groups", true, "Recover the consumed input topics of read-process-write applications from consumer-group offsets, correlated by the Kafka Streams transactional.id/group.id naming convention. Needs describe on consumer groups.")
+	observationFlags.BoolVar(&tailConsumerOffsets, "tail-consumer-offsets", true, "Recover consumed inputs of arbitrary (non-Streams) exactly-once applications by exact producer-id correlation, tailing the consumer-offsets log. Needs read on that internal topic; the run warns and continues on the naming convention alone where it is unreadable.")
+	observationFlags.BoolVar(&includeInternalTopics, "include-internal-topics", false, "Keep internal (__-prefixed) topics in the grouping. Debug only: the consumer-offsets log is shared by every exactly-once application, so including it chains unrelated workloads into one group.")
+	cmd.Flags().AddFlagSet(observationFlags)
 
 	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
 	authFlags.SortFlags = false
@@ -88,6 +122,15 @@ func NewMigrationTxnDiscoveryCmd() *cobra.Command {
 	tlsFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for Kafka connections. Lab use only.")
 	cmd.Flags().AddFlagSet(tlsFlags)
 
+	outputFlags := pflag.NewFlagSet("output", pflag.ExitOnError)
+	outputFlags.SortFlags = false
+	outputFlags.StringVar(&outPath, "out", DefaultOutPath, "Path to write the discovered groups to. Written 0600: it enumerates customer topic names.")
+	outputFlags.StringVar(&statsOutPath, "stats-out", "", "Also write a JSON diagnostics report — per-partition keep-up metrics, decode-failure counts, and the full per-transaction footprints — to this path. Written 0600.")
+	outputFlags.StringVar(&auditLogPath, "audit-log-out", "", "Path for the JSONL audit trail explaining every grouping decision. Defaults to "+DefaultAuditBasename+" beside --out. Written 0600.")
+	outputFlags.BoolVar(&noAuditLog, "no-audit-log", false, "Do not write the audit trail. It is the only artifact that answers why two topics were grouped, so disabling it is rarely what you want.")
+	outputFlags.BoolVar(&dryRun, "dry-run", false, "Observe and print the summary but write no files. Does not suppress kcp.log.")
+	cmd.Flags().AddFlagSet(outputFlags)
+
 	_ = cmd.MarkFlagRequired("source-bootstrap")
 	cmd.MarkFlagsMutuallyExclusive(authFlagNames...)
 	cmd.MarkFlagsOneRequired(authFlagNames...)
@@ -112,6 +155,16 @@ func preRunTxnDiscovery(cmd *cobra.Command, args []string) error {
 	// value passed by flag is visible in the process list.
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
+	}
+
+	// A non-positive window would start every reader, observe nothing and write
+	// an authoritative-looking empty result; a non-positive interval would panic
+	// time.NewTicker part-way through the run.
+	if duration <= 0 {
+		return fmt.Errorf("--duration must be greater than zero (got %s)", duration)
+	}
+	if interval <= 0 {
+		return fmt.Errorf("--interval must be greater than zero (got %s)", interval)
 	}
 
 	if useSaslIam {
