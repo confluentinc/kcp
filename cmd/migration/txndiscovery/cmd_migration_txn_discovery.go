@@ -39,6 +39,7 @@ func NewMigrationTxnDiscoveryCmd() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
+		PreRunE:       preRunTxnDiscovery,
 		RunE:          runTxnDiscovery,
 	}
 
@@ -99,6 +100,15 @@ var authFlagNames = []string{
 	"use-tls",
 	"use-unauthenticated-tls",
 	"use-unauthenticated-plaintext",
+}
+
+func preRunTxnDiscovery(cmd *cobra.Command, args []string) error {
+	if useSaslScram {
+		_ = cmd.MarkFlagRequired("sasl-scram-username")
+		_ = cmd.MarkFlagRequired("sasl-scram-password")
+	}
+
+	return nil
 }
 
 func runTxnDiscovery(cmd *cobra.Command, args []string) error {
