@@ -2,6 +2,9 @@ package report
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -210,6 +213,39 @@ func TestHealthLineWarnsOnLastStableOffsetLagButNotOnOpenTransactionBacklog(t *t
 	// on, so it must not appear as lag on the health line.
 	if strings.Contains(out, "9000") {
 		t.Errorf("open-transaction backlog was reported as reader lag\n--- summary ---\n%s", out)
+	}
+}
+
+func TestSummaryWarnsWhenAuditLinesFailedToReachDisk(t *testing.T) {
+	// Driven from a real AuditWriter rather than a hand-set number, because the
+	// contract being proved is that the writer's error count reaches the summary at
+	// all: a truncated trace reads downstream as "no transaction coupled these
+	// topics", which is indistinguishable from a clean run.
+	w, err := NewAuditWriter(filepath.Join(t.TempDir(), "audit.jsonl"))
+	if err != nil {
+		t.Fatalf("open audit log: %v", err)
+	}
+	defer func() { _ = w.Close() }()
+	w.sink = &failingWriter{err: errors.New("no space left on device")}
+	for i := 0; i < 3; i++ {
+		w.Record(
+			discovery.Observation{TxnID: fmt.Sprintf("t-%d", i), Source: discovery.SourceTxnStateLog},
+			discovery.Change{Added: []string{fmt.Sprintf("topic-%d", i)}},
+		)
+	}
+	if w.Errors() != 3 {
+		t.Fatalf("fixture did not produce audit errors: got %d", w.Errors())
+	}
+
+	out := render(t, Run{ActiveSources: []string{discovery.SourceTxnStateLog}, AuditErrors: w.Errors()})
+	requireContains(t, out, "WARNING: 3 audit log lines failed to reach disk")
+	requireContains(t, out, "the trace is incomplete")
+}
+
+func TestSummaryDoesNotWarnAboutTheAuditLogWhenEveryLineReachedDisk(t *testing.T) {
+	out := render(t, Run{ActiveSources: []string{discovery.SourceTxnStateLog}, AuditErrors: 0})
+	if strings.Contains(out, "audit log") {
+		t.Errorf("a clean run warned about the audit log\n--- summary ---\n%s", out)
 	}
 }
 

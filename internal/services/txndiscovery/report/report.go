@@ -45,6 +45,10 @@ type Run struct {
 	// input topics that phase recovered and whether it ran at all (R13).
 	Offsets discovery.ConsumerOffsetsStats
 
+	// AuditErrors is AuditWriter.Errors(): audit lines that were meant to reach disk
+	// and did not. Zero when the audit log was disabled.
+	AuditErrors int
+
 	// EnrichmentActive reports whether consumer-group enrichment ran. The offsets
 	// phase carries its own Unavailable flag; enrichment has no counters of its
 	// own, so whether it ran has to be told to the report.
@@ -70,6 +74,9 @@ type Summary struct {
 	// Health is the one keep-up indicator the summary carries; the full per-source
 	// and per-partition detail lives in the stats document (KTD4).
 	Health Health
+
+	// AuditErrors is how many audit lines never reached disk.
+	AuditErrors int
 }
 
 // Health is the three things that together say whether the window was actually
@@ -117,6 +124,7 @@ func Summarize(r Run) Summary {
 		TxnAborted:     r.TxnState.Aborted,
 		Result:         result,
 		Health:         healthOf(r),
+		AuditErrors:    r.AuditErrors,
 	}
 }
 
@@ -165,6 +173,15 @@ func PrintTerminal(w io.Writer, s Summary) {
 		rpwGroups, plural(rpwGroups, "group", "groups"), 0)
 
 	_, _ = fmt.Fprintf(w, "  keep-up                : %s\n", s.Health.Line())
+
+	// A truncated audit log is silent by nature: the missing lines read downstream as
+	// "no transaction coupled these topics", which is exactly what a clean run looks
+	// like. The count is the only thing that tells the two apart, so it is surfaced
+	// next to the other keep-up signal rather than left to the exit code alone.
+	if s.AuditErrors > 0 {
+		_, _ = fmt.Fprintf(w, "  WARNING: %d audit log %s failed to reach disk, so the trace is incomplete — a coupling it should record may be missing.\n",
+			s.AuditErrors, plural(s.AuditErrors, "line", "lines"))
+	}
 
 	printGroupTable(w, groups)
 }
