@@ -1,6 +1,7 @@
 package txnlog
 
 import (
+	"bytes"
 	"encoding/binary"
 	"math"
 	"runtime"
@@ -384,6 +385,57 @@ func TestDecodeValue_ArrayCountLargerThanBufferIsRejectedBeforeAllocating(t *tes
 			require.Error(t, decodeErr)
 			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(allocBudget),
 				"decoding a %d-byte record allocated more than %d bytes, so the count was trusted before it was checked",
+				len(b), allocBudget)
+		})
+	}
+}
+
+func TestDecodeValue_LargeRecordDoesNotAmplifyItsOwnSizeIntoTheTopicArrayPrealloc(t *testing.T) {
+	// The array-count guard reasons "every entry costs at least one byte on the wire",
+	// so it accepts any count up to the bytes remaining. That bounds the COUNT, not the
+	// ALLOCATION: a TopicPartitions is a string header plus a slice header, 40 bytes, so
+	// a count merely PROPORTIONAL to the record's own size sails through the guard and
+	// preallocates 40x the record.
+	//
+	// This is what the existing count-exceeds-buffer test misses. It uses a small record
+	// with an absurd count, which the guard correctly rejects. The reachable shape is a
+	// large record with a self-consistent count, and kcp does not lower
+	// sarama.MaxResponseSize from its 100 MiB default (nor can it make a broker honour
+	// the requested MaxPartitionBytes), so one response drives a ~4 GiB allocation and
+	// OOM-kills a multi-hour run. Asserting only on the returned error passes throughout.
+	const allocBudget = 4 << 20 // 4 MiB, four times the record
+
+	// 0xFF filler so the first loop iteration fails fast: what is being measured is the
+	// prealloc, not the cost of parsing a megabyte of plausible entries.
+	filler := bytes.Repeat([]byte{0xFF}, 1<<20)
+	header := concat(
+		be16(0),   // version, overwritten per case below
+		be64(1),   // producerId
+		be16(0),   // producerEpoch
+		be32(0),   // timeoutMs
+		[]byte{1}, // status = Ongoing
+	)
+
+	classic := concat(header, be32(int32(len(filler))), filler)
+	flexible := concat(header, uvar(uint64(len(filler))+1), filler)
+	flexible[1] = 1 // version 1 = flexible
+
+	for name, b := range map[string][]byte{
+		"classic topic array":  classic,
+		"flexible topic array": flexible,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var before, after runtime.MemStats
+			var decodeErr error
+
+			runtime.ReadMemStats(&before)
+			require.NotPanics(t, func() { _, decodeErr = DecodeValue(b) })
+			runtime.ReadMemStats(&after)
+
+			require.Error(t, decodeErr)
+			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(allocBudget),
+				"decoding a %d-byte record allocated more than %d bytes: the entry count was "+
+					"bounded against the bytes remaining, but the allocation it sizes is 40 bytes an entry",
 				len(b), allocBudget)
 		})
 	}

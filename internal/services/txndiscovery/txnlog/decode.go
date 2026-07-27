@@ -310,7 +310,16 @@ func (r *reader) partitions(flexible bool) []TopicPartitions {
 		return nil
 	}
 
-	out := make([]TopicPartitions, 0, n)
+	// The guard above bounds the COUNT against the bytes remaining; it does not bound
+	// the ALLOCATION, because a TopicPartitions costs 40 bytes in memory and one byte on
+	// the wire. Sizing the prealloc from n directly therefore amplifies the record 40x,
+	// and a count merely proportional to a large record's own size passes the guard —
+	// sarama's response cap is 100 MiB, so that is ~4 GiB and an OOM-killed run. Capping
+	// the prealloc independently of the untrusted count costs a few appends on the
+	// legitimate path (a real footprint of >1024 topics is not a thing) and lets the
+	// bytes themselves, via r.err, decide how far the loop actually gets.
+	const maxPrealloc = 1024
+	out := make([]TopicPartitions, 0, min(n, maxPrealloc))
 	for i := 0; i < n && r.err == nil; i++ {
 		var tp TopicPartitions
 		if flexible {
