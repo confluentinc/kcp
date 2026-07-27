@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -449,6 +450,34 @@ func TestYAMLWarningNamesTheMechanismThatRecoveredThatGroupsInputs(t *testing.T)
 		if g.Name == "group-2" && strings.Contains(g.Warning, "producer-id correlation") {
 			t.Errorf("group-2 credited producer-id correlation, which recovered nothing for it: %q", g.Warning)
 		}
+	}
+}
+
+func TestWriteYAMLFailsActionablyWhenTheOutputDirectoryDoesNotExist(t *testing.T) {
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "no-such-dir")
+	path := filepath.Join(missing, "txn-discovery.yaml")
+
+	err := WriteYAML(path, Summarize(distinctiveRun()))
+	if err == nil {
+		t.Fatal("writing into a nonexistent directory succeeded")
+	}
+	for _, want := range []string{missing, "does not exist"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err, want)
+		}
+	}
+	// A partial artifact is worse than none: a truncated document parses as a shorter
+	// list of groups, which reads as "these topics are not coupled".
+	if _, statErr := os.Stat(missing); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Errorf("the missing directory was created: %v", statErr)
+	}
+	entries, readErr := os.ReadDir(dir)
+	if readErr != nil {
+		t.Fatalf("read temp dir: %v", readErr)
+	}
+	if len(entries) != 0 {
+		t.Errorf("failed write left %d entries behind: %v", len(entries), entries)
 	}
 }
 

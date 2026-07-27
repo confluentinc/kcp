@@ -2,8 +2,10 @@ package report
 
 import (
 	"cmp"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -498,7 +500,14 @@ const artifactFileMode os.FileMode = 0600
 // os.CreateTemp already creates at 0600, and the mode is pinned again explicitly so an
 // unusual umask cannot widen it even briefly.
 func writeSensitiveFile(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	dir := filepath.Dir(path)
+	// Checked up front and named separately, because the raw failure is "open
+	// <dir>/.<name>.tmp-1837027495: no such file or directory" — a temp name the
+	// operator never chose, and no statement of which part of their path is wrong.
+	if _, err := os.Stat(dir); errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("cannot write %s: the directory %s does not exist; create it or choose another output path", filepath.Base(path), dir)
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("failed to create a temporary file next to %s: %w", path, err)
 	}
