@@ -1,6 +1,7 @@
 package txndiscovery
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 )
 
 // Opts is the resolved configuration of one discovery run: everything the
@@ -80,6 +82,40 @@ func probeTxnStateTopic(d topicDescriber, topic string) error {
 		return fmt.Errorf("the topic named by --txn-state-topic does not exist on this cluster: check the flag for a typo, and note that managed offerings such as Confluent Cloud and MSK Serverless do not expose it at all")
 	default:
 		return fmt.Errorf("the transaction-state topic named by --txn-state-topic is not readable: check the source authentication flags' credentials and that they carry an ACL granting DESCRIBE and READ on it: %w", md[0].Err)
+	}
+}
+
+// fanOut copies every batch from the tail's single channel to each reader's own.
+//
+// tail.Tail deliberately exposes ONE channel carrying every partition of both
+// topics, because both readers need the same lifecycle and shutdown ordering.
+// A Go channel delivers each value to exactly one receiver, so handing that
+// channel to both readers would split the stream between them: half the
+// transaction-state records would arrive at the offsets tail, which drops
+// anything not on its topic, and vice versa. Nothing would error — the run
+// would simply observe half of what it read. Hence a copy per destination, and
+// hence both readers also filter on Batch.Topic.
+//
+// Every destination is closed on the way out, whichever way that happens. Those
+// closes are load-bearing: they are what makes the transaction-state reader
+// return and what triggers the offsets tail's final flush.
+func fanOut(ctx context.Context, src <-chan tail.Batch, dests []chan tail.Batch) {
+	defer func() {
+		for _, d := range dests {
+			close(d)
+		}
+	}()
+	for b := range src {
+		for _, d := range dests {
+			select {
+			case d <- b:
+			case <-ctx.Done():
+				// A reader that has stopped receiving must not wedge shutdown.
+				// The tail's own emit is cancellable, so abandoning the source
+				// here leaves nothing blocked behind us.
+				return
+			}
+		}
 	}
 }
 

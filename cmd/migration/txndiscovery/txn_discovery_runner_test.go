@@ -1,11 +1,14 @@
 package txndiscovery
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -110,4 +113,71 @@ func TestPreflight_EmptyMetadata_Fails(t *testing.T) {
 	d := &fakeDescriber{md: nil}
 
 	require.Error(t, probeTxnStateTopic(d, "__transaction_state"))
+}
+
+// R10: one tail.Tail serves both readers over ONE channel carrying both topics.
+// A shared channel delivers each batch to exactly one receiver, so handing the
+// same channel to both readers silently splits the stream between them —
+// records vanish with no error anywhere. Every batch must be COPIED to every
+// destination.
+func TestFanOut_CopiesEveryBatchToEveryDestination(t *testing.T) {
+	src := make(chan tail.Batch, 2)
+	src <- tail.Batch{Topic: "__transaction_state", Partition: 3, Records: []tail.Record{{Offset: 7}}}
+	src <- tail.Batch{Topic: "__consumer_offsets", Partition: 11, ProducerID: 4242}
+	close(src)
+
+	a, b := make(chan tail.Batch, 4), make(chan tail.Batch, 4)
+	fanOut(context.Background(), src, []chan tail.Batch{a, b})
+
+	got := func(ch chan tail.Batch) []tail.Batch {
+		var out []tail.Batch
+		for batch := range ch {
+			out = append(out, batch)
+		}
+		return out
+	}
+	first, second := got(a), got(b)
+
+	require.Len(t, first, 2, "every destination sees every batch")
+	assert.Equal(t, first, second, "both destinations see the same batches, in the same order")
+	assert.Equal(t, "__transaction_state", first[0].Topic)
+	assert.Equal(t, "__consumer_offsets", first[1].Topic)
+}
+
+// The fan-out closes its destinations when the source ends: that close is what
+// makes the __transaction_state reader return and, crucially, what triggers the
+// consumer-offsets tail's final flush.
+func TestFanOut_ClosesDestinationsWhenTheSourceEnds(t *testing.T) {
+	src := make(chan tail.Batch)
+	close(src)
+
+	a := make(chan tail.Batch, 1)
+	fanOut(context.Background(), src, []chan tail.Batch{a})
+
+	_, open := <-a
+	assert.False(t, open, "the destination must be closed, not merely empty")
+}
+
+// A reader that has stopped receiving must not wedge the fan-out: the
+// destinations still close, so the other readers still finish and flush.
+func TestFanOut_UnreadDestination_DoesNotWedgeShutdown(t *testing.T) {
+	src := make(chan tail.Batch, 1)
+	src <- tail.Batch{Topic: "__transaction_state"}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	blocked := make(chan tail.Batch) // unbuffered and never read
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		fanOut(ctx, src, []chan tail.Batch{blocked})
+	}()
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("fanOut blocked on an unread destination after cancellation")
+	}
+	_, open := <-blocked
+	assert.False(t, open, "the destination is closed even on the cancellation path")
 }
