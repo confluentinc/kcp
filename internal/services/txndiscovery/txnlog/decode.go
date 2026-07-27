@@ -1,9 +1,11 @@
-// Package txnlog decodes records from Kafka's internal __transaction_state topic.
+// Package txnlog decodes records from Kafka's internal __transaction_state and
+// __consumer_offsets topics.
 //
-// There is no off-the-shelf Go decoder for this format: TransactionLogKey /
-// TransactionLogValue are broker-internal record schemas, not part of the client
-// wire protocol, so no Kafka client library exposes them. This is a hand port of
-// Kafka's TransactionLogKey.json / TransactionLogValue.json schemas.
+// There is no off-the-shelf Go decoder for these formats: TransactionLogKey /
+// TransactionLogValue and the __consumer_offsets record keys are broker-internal
+// record schemas, not part of the client wire protocol, so no Kafka client library
+// for Go exposes them. These are hand ports of Kafka's TransactionLogKey.json,
+// TransactionLogValue.json, OffsetCommitKey.json and GroupMetadataKey.json schemas.
 //
 // The broker is an untrusted input source here: these records are not covered by
 // the stable client protocol and can drift across broker versions. Every read is
