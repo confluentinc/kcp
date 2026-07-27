@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"sort"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -89,11 +90,22 @@ type ConsumerOffsetsTail struct {
 	// evicted counts sightings dropped without ever resolving — because the
 	// buffer was full, or because they aged out.
 	evicted int64
+
+	// Recovery attribution, cumulative across the run and counted only on
+	// delivery. The report credits each recovered input to the phase that found
+	// it, and it cannot infer that afterwards: both enrichment phases emit under
+	// the same transactional id and the accumulator unions them.
+	groupsLinked map[string]struct{}
+	correlations map[string]struct{} // "producerID\x00txnID"
+	recovered    map[string]struct{} // consumed topics this phase recovered
 }
 
 // pendingCommits is one producer's unresolved sighting.
 type pendingCommits struct {
 	topics map[string]struct{}
+	// group is the consumer group that committed, kept for the linked-group
+	// count only. It is never logged and never written to an artifact.
+	group string
 	// firstSeen is when this producer was first buffered. The TTL runs from
 	// here rather than from the last commit, because the question a sighting
 	// ages out on is "has its transaction shown up yet?", and a producer that
@@ -186,6 +198,20 @@ type ConsumerOffsetsStats struct {
 	// bounded buffer discarded recoveries: a run that evicted heavily observed
 	// far fewer consumed inputs than the cluster actually has.
 	PendingEvicted int64
+
+	// GroupsLinked is how many consumer groups were tied to a transaction by
+	// producer id.
+	GroupsLinked int
+
+	// Correlations is how many distinct producer-id to transactional-id links
+	// were resolved.
+	Correlations int
+
+	// RecoveredTopics are the consumed input topics THIS phase recovered,
+	// sorted. The report credits each input to the phase that found it, and
+	// cannot infer that afterwards: both enrichment phases emit under the same
+	// transactional id and the accumulator unions them.
+	RecoveredTopics []string
 }
 
 // Name reports this source's provenance label.
@@ -199,6 +225,9 @@ func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
 		KeyDecodeErrors:  t.keyDecodeErrors.Load(),
 		PendingProducers: len(t.pending),
 		PendingEvicted:   t.evicted,
+		GroupsLinked:     len(t.groupsLinked),
+		Correlations:     len(t.correlations),
+		RecoveredTopics:  sortedKeys(t.recovered),
 	}
 }
 
@@ -296,14 +325,14 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 		if grouping.IsInternalTopic(key.Topic) {
 			continue
 		}
-		t.recordCommit(b.ProducerID, key.Topic)
+		t.recordCommit(b.ProducerID, key.Group, key.Topic)
 	}
 }
 
 // recordCommit buffers one sighting: producer id pid committed an offset for
 // consumed topic. It stays buffered until the producer id resolves to a
 // transaction.
-func (t *ConsumerOffsetsTail) recordCommit(pid int64, topic string) {
+func (t *ConsumerOffsetsTail) recordCommit(pid int64, group, topic string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
@@ -325,6 +354,9 @@ func (t *ConsumerOffsetsTail) recordCommit(pid int64, topic string) {
 		t.compactOrderLocked()
 	}
 	e.topics[topic] = struct{}{}
+	if group != "" {
+		e.group = group
+	}
 }
 
 // evictOldestLocked drops the longest-waiting pending entry. A sighting that
@@ -389,7 +421,7 @@ func (t *ConsumerOffsetsTail) resolveAndFlush(ctx context.Context, out chan<- Ob
 			// time would mean a pass cancelled mid-send had both removed the
 			// sighting and failed to deliver it: the recovery gone, no counter
 			// moving, and the final flush finding nothing left to do.
-			t.forget(obs.ProducerID)
+			t.deliver(obs)
 		case <-ctx.Done():
 			// Abandoned. Everything not yet sent stays buffered for the final
 			// flush, which runs on a context that is not already cancelled.
@@ -404,14 +436,30 @@ func (t *ConsumerOffsetsTail) resolveAndFlush(ctx context.Context, out chan<- Ob
 	t.expire(now)
 }
 
-// forget removes a sighting that has been delivered.
+// deliver records what an observation recovered and drops its sighting from the
+// buffer. It runs only after the observation has been handed to the consumer,
+// so the recovery stats count inputs that actually reached the accumulator
+// rather than ones this source merely resolved.
 //
 // HandleBatch and the resolve passes are serialised by Run's select loop, so no
-// commit can land between an entry being resolved and being forgotten here.
-func (t *ConsumerOffsetsTail) forget(pid int64) {
+// commit can land between an entry being resolved and being delivered here.
+func (t *ConsumerOffsetsTail) deliver(obs Observation) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	delete(t.pending, pid)
+
+	if t.recovered == nil {
+		t.groupsLinked = make(map[string]struct{})
+		t.correlations = make(map[string]struct{})
+		t.recovered = make(map[string]struct{})
+	}
+	if e := t.pending[obs.ProducerID]; e != nil && e.group != "" {
+		t.groupsLinked[e.group] = struct{}{}
+	}
+	t.correlations[strconv.FormatInt(obs.ProducerID, 10)+"\x00"+obs.TxnID] = struct{}{}
+	for _, topic := range obs.Topics {
+		t.recovered[topic] = struct{}{}
+	}
+	delete(t.pending, obs.ProducerID)
 }
 
 // expire drops pending sightings that have gone unresolved for longer than the

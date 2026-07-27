@@ -597,3 +597,36 @@ func TestAnIntervalPassAbandonedMidSendDoesNotLoseWhatItResolved(t *testing.T) {
 	assert.Equal(t, "payments-txn-0", got[0].TxnID)
 	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
 }
+
+func TestTheStatsReportWhatThisPhaseItselfRecovered(t *testing.T) {
+	// The report credits each recovered input to the phase that actually found
+	// it — producer-id correlation or the naming heuristic — so this source has
+	// to say which topics IT recovered. Inferring it downstream is not possible:
+	// both phases emit observations under the same transactional id, and the
+	// accumulator unions them, so by the time the report sees a footprint the
+	// provenance of an individual topic is gone.
+	//
+	// Only DELIVERED recoveries count. A sighting resolved but not handed over
+	// has recovered nothing yet, and counting it would credit this phase for an
+	// input that never reached the accumulator.
+	cat := NewTxnCatalog()
+	cat.Observe("txn-a", 11)
+	cat.Observe("txn-b", 22)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	tl.HandleBatch(commitBatch(11,
+		commitKey("group-one", "zeta.in", 0),
+		commitKey("group-one", "alpha.in", 0),
+	))
+	tl.HandleBatch(commitBatch(22, commitKey("group-two", "alpha.in", 0)))
+	// A sighting whose transaction is never catalogued recovers nothing.
+	tl.HandleBatch(commitBatch(33, commitKey("group-three", "ghost.in", 0)))
+
+	require.Len(t, flush(t, tl), 2)
+
+	st := tl.Stats()
+	assert.Equal(t, []string{"alpha.in", "zeta.in"}, st.RecoveredTopics,
+		"deduplicated across producers and sorted; the unresolved one is absent")
+	assert.Equal(t, 2, st.GroupsLinked)
+	assert.Equal(t, 2, st.Correlations)
+}
