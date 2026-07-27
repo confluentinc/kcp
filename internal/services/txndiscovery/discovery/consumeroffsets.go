@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"log/slog"
 	"sort"
 	"strconv"
 	"sync"
@@ -76,7 +77,13 @@ type ConsumerOffsetsTail struct {
 	maxPending int
 	interval   time.Duration
 	pendingTTL time.Duration
+	probe      TopicProbe
 	now        func() time.Time
+
+	// probeOnce memoises the availability check: Run gates on it and the
+	// command wiring calls it too, but the cluster is asked once per run.
+	probeOnce sync.Once
+	available bool
 
 	mu sync.Mutex
 	// pending holds sightings not yet resolved to a transaction: producer id ->
@@ -92,6 +99,9 @@ type ConsumerOffsetsTail struct {
 	// evicted counts sightings dropped without ever resolving — because the
 	// buffer was full, or because they aged out.
 	evicted int64
+	// unavailableReason is why the probe found the topic unreadable, empty when
+	// it did not.
+	unavailableReason string
 
 	// Recovery attribution, cumulative across the run and counted only on
 	// delivery. The report credits each recovered input to the phase that found
@@ -150,10 +160,23 @@ type ConsumerOffsetsOptions struct {
 	// chances a sighting gets. Defaults to DefaultPendingTTLIntervals.
 	PendingTTLIntervals int
 
+	// Probe reports whether the offsets log can be read on this cluster,
+	// returning an error naming why when it cannot. Nil means "assume
+	// readable": the zero value has to stay usable, and treating a missing
+	// probe as unavailable would silently disable the phase.
+	Probe TopicProbe
+
 	// Now is the clock, injectable so the suite does not wait on real time.
 	// Defaults to time.Now.
 	Now func() time.Time
 }
+
+// TopicProbe reports whether an internal topic can be read on this cluster.
+//
+// Reading __consumer_offsets is an optional grant: managed clusters hide the
+// topic and an operator's credentials may simply lack the ACL. The command
+// wiring supplies the probe so this package needs no admin client of its own.
+type TopicProbe func(ctx context.Context) error
 
 // NewConsumerOffsetsTail builds a tail consumer over the shared catalog the
 // __transaction_state reader populates.
@@ -179,6 +202,7 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 		maxPending: opts.MaxPendingProducers,
 		interval:   opts.Interval,
 		pendingTTL: time.Duration(opts.PendingTTLIntervals) * opts.Interval,
+		probe:      opts.Probe,
 		now:        opts.Now,
 		pending:    make(map[int64]*pendingCommits),
 	}
@@ -226,6 +250,21 @@ type ConsumerOffsetsStats struct {
 	// cannot infer that afterwards: both enrichment phases emit under the same
 	// transactional id and the accumulator unions them.
 	RecoveredTopics []string
+
+	// Unavailable is set when the availability probe found the offsets log
+	// unreadable, so this phase never ran and recovered nothing (R13).
+	//
+	// This is the flag the report gates crediting on. A phase that never ran and
+	// a phase that ran and found nothing both report zero recovered inputs, and
+	// only this distinguishes them — without it the summary would present an
+	// unreadable topic as evidence that the cluster has no read-process-write
+	// applications, which is the opposite of the truth it can support.
+	Unavailable bool
+
+	// UnavailableReason is why the probe failed, empty when it did not. The
+	// warning is unactionable without it: a missing topic and a missing ACL need
+	// different fixes.
+	UnavailableReason string
 }
 
 // Name reports this source's provenance label.
@@ -236,15 +275,44 @@ func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return ConsumerOffsetsStats{
-		RecordsSeen:      t.recordsSeen.Load(),
-		TxnRecords:       t.txnRecords.Load(),
-		KeyDecodeErrors:  t.keyDecodeErrors.Load(),
-		PendingProducers: len(t.pending),
-		PendingEvicted:   t.evicted,
-		GroupsLinked:     len(t.groupsLinked),
-		Correlations:     len(t.correlations),
-		RecoveredTopics:  sortedKeys(t.recovered),
+		RecordsSeen:       t.recordsSeen.Load(),
+		TxnRecords:        t.txnRecords.Load(),
+		KeyDecodeErrors:   t.keyDecodeErrors.Load(),
+		PendingProducers:  len(t.pending),
+		PendingEvicted:    t.evicted,
+		GroupsLinked:      len(t.groupsLinked),
+		Correlations:      len(t.correlations),
+		RecoveredTopics:   sortedKeys(t.recovered),
+		Unavailable:       t.unavailableReason != "",
+		UnavailableReason: t.unavailableReason,
 	}
+}
+
+// Available reports whether the offsets log can be read on this cluster,
+// probing once per run and caching the answer.
+//
+// R13: when it is false the command warns and continues with consumer-group
+// enrichment alone rather than failing. Reading __consumer_offsets is an
+// optional grant, and the __transaction_state footprints are still worth having
+// without it.
+func (t *ConsumerOffsetsTail) Available(ctx context.Context) bool {
+	t.probeOnce.Do(func() {
+		if t.probe == nil {
+			t.available = true
+			return
+		}
+		err := t.probe(ctx)
+		t.available = err == nil
+		if err != nil {
+			t.mu.Lock()
+			t.unavailableReason = err.Error()
+			t.mu.Unlock()
+			// The topic name is deliberately absent: kcp.log is unconditionally
+			// Debug+ and is what operators attach to support tickets.
+			slog.Warn("⚠️ the consumer-offsets log cannot be read; recovering exactly-once inputs by consumer-group naming alone", "error", err)
+		}
+	})
+	return t.available
 }
 
 // Run consumes batches from in until the channel closes, buffering every
@@ -259,6 +327,15 @@ func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
 // out must be drained for the duration of the run. Run returns nil on both
 // ordinary endings — the counters on Stats report whether the read was clean.
 func (t *ConsumerOffsetsTail) Run(ctx context.Context, in <-chan tail.Batch, out chan<- Observation) error {
+	if !t.Available(ctx) {
+		// R13. The input is drained rather than abandoned: the caller fans one
+		// tail channel out to both readers, and walking away from ours would
+		// block that fan-out on an unread send.
+		for range in { //nolint:revive // draining, deliberately
+		}
+		return nil
+	}
+
 	ticker := time.NewTicker(t.interval)
 	defer ticker.Stop()
 

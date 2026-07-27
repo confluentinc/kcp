@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -661,4 +662,64 @@ func TestTheStatsSeparateRecordsSeenFromTransactionalCommits(t *testing.T) {
 	st := tl.Stats()
 	assert.Equal(t, int64(4), st.RecordsSeen, "every record on OUR topic, transactional or not")
 	assert.Equal(t, int64(2), st.TxnRecords, "only the transactional commits that yielded a consumed topic")
+}
+
+func TestWhenTheOffsetsTopicIsUnreadableTheProbeShortCircuitsTheTail(t *testing.T) {
+	// R13. Reading __consumer_offsets is an optional grant: managed clusters
+	// hide the topic and an operator's credentials may simply lack the ACL.
+	// That must degrade to the naming heuristic alone, not fail the run — the
+	// __transaction_state footprints are still worth having.
+	//
+	// The flag matters as much as the short-circuit. A phase that never ran and
+	// a phase that ran and found nothing both report zero recovered inputs, and
+	// the report must not credit the first as evidence the cluster has no
+	// read-process-write applications.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+
+	var probes int
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{
+		Probe: func(context.Context) error {
+			probes++
+			return errors.New("topic authorization failed")
+		},
+	})
+
+	require.False(t, tl.Available(context.Background()))
+
+	in := make(chan tail.Batch, 1)
+	in <- commitBatch(4242, commitKey("payments-group", "orders.in", 0))
+	close(in)
+	out := make(chan Observation, 4)
+	require.NoError(t, tl.Run(context.Background(), in, out))
+	close(out)
+
+	var got []Observation
+	for obs := range out {
+		got = append(got, obs)
+	}
+	assert.Empty(t, got, "an unreadable topic correlates nothing")
+
+	st := tl.Stats()
+	assert.True(t, st.Unavailable, "the report must not read this as a cluster with no EOS inputs")
+	assert.Contains(t, st.UnavailableReason, "topic authorization failed",
+		"and the reason has to reach the operator, or the warning is unactionable")
+	assert.Zero(t, st.RecordsSeen, "no batch is decoded after a failed probe")
+	assert.Equal(t, 1, probes, "probed once for the run, not once per caller")
+}
+
+func TestWithNoProbeConfiguredTheTailRunsNormally(t *testing.T) {
+	// The probe is injected by the command wiring; the zero value must stay
+	// usable, and "no probe" must not read as "unavailable" — that would silently
+	// disable the phase for every caller that did not supply one.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	require.True(t, tl.Available(context.Background()))
+
+	tl.HandleBatch(commitBatch(4242, commitKey("payments-group", "orders.in", 0)))
+
+	require.Len(t, flush(t, tl), 1)
+	assert.False(t, tl.Stats().Unavailable)
 }
