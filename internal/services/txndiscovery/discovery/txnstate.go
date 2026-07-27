@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"log/slog"
 	"sync/atomic"
 	"time"
 
@@ -25,6 +26,7 @@ type TxnStateStats struct {
 	Aborted     int64
 	Tombstones  int64
 
+	KeyDecodeErrors   int64
 	ValueDecodeErrors int64
 }
 
@@ -39,6 +41,9 @@ type TxnStateReader struct {
 	committed   atomic.Int64
 	aborted     atomic.Int64
 	tombstones  atomic.Int64
+
+	keyDecodeErrors   atomic.Int64
+	valueDecodeErrors atomic.Int64
 }
 
 // NewTxnStateReader builds a reader over the named transaction-state topic.
@@ -55,6 +60,9 @@ func (r *TxnStateReader) Stats() TxnStateStats {
 		Committed:   r.committed.Load(),
 		Aborted:     r.aborted.Load(),
 		Tombstones:  r.tombstones.Load(),
+
+		KeyDecodeErrors:   r.keyDecodeErrors.Load(),
+		ValueDecodeErrors: r.valueDecodeErrors.Load(),
 	}
 }
 
@@ -85,6 +93,13 @@ func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<-
 
 	key, err := txnlog.DecodeKey(rec.Key)
 	if err != nil {
+		// Counted, not fatal. One unreadable record must not end the observation
+		// window — the run would then report what it had read so far as the whole
+		// truth. The count is what the summary reports; the per-record detail stays at
+		// Debug so sustained drift cannot flood the console under --verbose.
+		r.keyDecodeErrors.Add(1)
+		slog.Debug("⏭️ skipped a transaction-state record whose key would not decode",
+			"offset", rec.Offset, "error", err)
 		return true
 	}
 	val, err := txnlog.DecodeValue(rec.Value)

@@ -237,3 +237,31 @@ func TestTxnStateReader_EveryStatusRegistersItsTxnIDAndProducerIDInTheCatalog(t 
 	assert.Equal(t, int64(1), st.Committed)
 	assert.Equal(t, int64(1), st.Aborted)
 }
+
+func TestTxnStateReader_UndecodableKeyIsCountedAndDoesNotStopTheReader(t *testing.T) {
+	// The broker is untrusted input here: these are internal record schemas outside the
+	// stable client protocol. One unreadable key must not take the reader down with it,
+	// or a single malformed record ends the observation window and the run silently
+	// reports whatever it had managed to read so far as the whole truth.
+	r := NewTxnStateReader(DefaultTxnStateTopic, NewTxnCatalog())
+
+	got := runReader(t, r, stateBatch(
+		// Key version 9 — not a version that exists, so the decoder rejects it rather
+		// than guessing at the layout.
+		tail.Record{Key: concat(be16(9), kstr("evil-app")), Value: txnValue(1, 1, "a")},
+		// Truncated: the length prefix claims more bytes than the buffer holds.
+		tail.Record{Key: concat(be16(0), be16(64), []byte("short")), Value: txnValue(2, 1, "b")},
+		// A good record after the bad ones proves the loop kept going.
+		tail.Record{Key: txnKey("healthy-app"), Value: txnValue(3, 1, "c")},
+	))
+
+	require.Len(t, got, 1, "the reader must survive the bad keys and still emit the good record")
+	assert.Equal(t, "healthy-app", got[0].TxnID)
+
+	st := r.Stats()
+	assert.Equal(t, int64(3), st.RecordsSeen)
+	assert.Equal(t, int64(2), st.KeyDecodeErrors)
+	// A bad key must not be miscounted as the format-drift alarm for values.
+	assert.Equal(t, int64(0), st.ValueDecodeErrors)
+	assert.Equal(t, int64(1), st.Footprints)
+}
