@@ -1,6 +1,7 @@
 package apply
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
 	macls "github.com/confluentinc/kcp/internal/migrate/acls"
@@ -16,6 +18,7 @@ import (
 	mnew "github.com/confluentinc/kcp/internal/migrate/newtopics"
 	msa "github.com/confluentinc/kcp/internal/migrate/serviceaccounts"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	iamservice "github.com/confluentinc/kcp/internal/services/iam"
 	"github.com/confluentinc/kcp/internal/services/reconcile"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
@@ -41,6 +44,20 @@ type sourceACLLister interface {
 // Kafka connection.
 var newSourceACLLister = func(conn types.KafkaSourceConn) (sourceACLLister, error) {
 	return migrate.BuildSourceAdmin(conn)
+}
+
+// newIAMFetcher builds the AWS IAM client and returns it wrapped as a
+// macls.PrincipalPolicyFetcher. It is a package-level var so tests can
+// substitute a fake without an AWS credential chain — mirrors
+// newSourceACLLister above.
+var newIAMFetcher = func() (macls.PrincipalPolicyFetcher, error) {
+	iamClient, err := client.NewIAMClient()
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, principalArn string) (*iamservice.PrincipalPolicies, error) {
+		return iamservice.GetPrincipalPolicies(ctx, iamClient, principalArn)
+	}, nil
 }
 
 // ccIAMBaseURL is the Confluent Cloud IAM v2 API base URL used to provision
@@ -314,6 +331,32 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	raw, err := macls.ReadNativeACLs(adm)
 	if err != nil {
 		return nil, fmt.Errorf("reading source ACLs: %w", err)
+	}
+
+	// READ (IAM plane, Phase 1B slice 1): union in the IAM-derived ACL
+	// equivalents for the explicitly-named principals. Only the explicit
+	// principalArns mode is implemented here; discoverAllRoles (enumeration)
+	// and verifyEffectiveAccess (SimulatePrincipalPolicy) are Phase 1B slice 2.
+	// Cross-plane duplicate tuples (native vs. IAM-derived) are left for the
+	// acls reconciler's existing map[types.Acls]struct{} diff, same as
+	// cross-principal duplicates within the IAM read itself.
+	if iam := m.Spec.ACLs.IAM; iam != nil {
+		if iam.DiscoverAllRoles {
+			return nil, fmt.Errorf("spec.acls.iam.discoverAllRoles: enumeration mode is not yet implemented (Phase 1B slice 2)")
+		}
+		if iam.VerifyEffectiveAccess {
+			return nil, fmt.Errorf("spec.acls.iam.verifyEffectiveAccess: not yet implemented (Phase 1B slice 2)")
+		}
+		fetch, err := newIAMFetcher()
+		if err != nil {
+			return nil, fmt.Errorf("building IAM client: %w", err)
+		}
+		iamAcls, err := macls.ReadIAMACLs(cmd.Context(), fetch, iam.PrincipalArns, iam.ClusterArn)
+		if err != nil {
+			return nil, fmt.Errorf("reading IAM-derived ACLs: %w", err)
+		}
+		raw = append(raw, iamAcls...)
+		slog.Warn("⚠️ IAM-derived ACLs are granted by identity policy; effective access (SCP/permission-boundary/deny) not verified — set spec.acls.iam.verifyEffectiveAccess to confirm")
 	}
 
 	// Filter by spec.acls include/exclude (glob against principal and resource

@@ -17,6 +17,8 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
+	macls "github.com/confluentinc/kcp/internal/migrate/acls"
+	iamservice "github.com/confluentinc/kcp/internal/services/iam"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/require"
 )
@@ -716,6 +718,179 @@ func TestApply_ACLs_UnprotectedTopicPolicyUnset_MSK_ProceedsWithWarning(t *testi
 	require.Contains(t, logs, "not yet enforced")
 	require.Equal(t, int64(1), tgt.saPosts)
 	require.Equal(t, int64(1), tgt.aclPosts)
+}
+
+// testClusterArn/testPrincipalArn are a fixed MSK cluster ARN + IAM role ARN
+// pair used across the IAM-plane tests below. principalFromArn (see
+// iam_translate.go) derives "User:AppRole" from testPrincipalArn.
+const (
+	testClusterArn   = "arn:aws:kafka:us-east-1:111122223333:cluster/mymsk/abc-5"
+	testPrincipalArn = "arn:aws:iam::111122223333:role/AppRole"
+)
+
+// runACLApplyIAM is like runACLApplyMSK but adds spec.acls.iam wiring: iamYAML
+// is the raw "iam:" sub-block (indented to sit under "acls:"), nativeACLs
+// seeds the fake source ACL lister, and fetcher stubs newIAMFetcher — so the
+// IAM read path is exercised with no AWS credential chain.
+func runACLApplyIAM(t *testing.T, tgt *aclCaptureTarget, clusterID, iamYAML string, nativeACLs []sarama.ResourceAcls, fetcher macls.PrincipalPolicyFetcher, dryRun bool) (stdout, stderr, logs string, err error) {
+	t.Helper()
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("api_key: k\napi_secret: s\n"), 0600))
+	cloudCreds := filepath.Join(dir, "cloud.yaml")
+	require.NoError(t, os.WriteFile(cloudCreds, []byte("api_key: ck\napi_secret: cs\n"), 0600))
+	sourceCreds := filepath.Join(dir, "source.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
+	mf := filepath.Join(dir, "migration.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: msk\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+clusterID+"\n    clusterCredentials: "+targetCreds+"\n    cloudCredentials: "+cloudCreds+"\n    kafka:\n      restEndpoint: "+tgt.srv.URL+"\n"+
+			"  serviceAccounts:\n    autoCreate: true\n"+
+			"  acls:\n    include: [\"*\"]\n"+iamYAML), 0600))
+
+	oldReader := newSourceReader
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
+	oldLister := newSourceACLLister
+	newSourceACLLister = func(types.KafkaSourceConn) (sourceACLLister, error) {
+		return fakeACLSourceAdmin{acls: nativeACLs}, nil
+	}
+	oldFetcher := newIAMFetcher
+	newIAMFetcher = func() (macls.PrincipalPolicyFetcher, error) { return fetcher, nil }
+	oldBase := ccIAMBaseURL
+	ccIAMBaseURL = tgt.srv.URL
+	t.Cleanup(func() {
+		newSourceReader = oldReader
+		newSourceACLLister = oldLister
+		newIAMFetcher = oldFetcher
+		ccIAMBaseURL = oldBase
+	})
+
+	cmd := NewMigrateApplyCmd()
+	var outBuf, errBuf, logBuf bytes.Buffer
+	cmd.SetOut(&outBuf)
+	cmd.SetErr(&errBuf)
+	args := []string{"-f", mf}
+	if dryRun {
+		args = append(args, "--dry-run")
+	}
+	cmd.SetArgs(args)
+
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	err = cmd.Execute()
+	return outBuf.String(), errBuf.String(), logBuf.String(), err
+}
+
+// iamFetcherOne returns a fixed newIAMFetcher-compatible fake that always
+// returns the same PrincipalPolicies (one inline policy document) regardless
+// of which principalArn ReadIAMACLs calls it with.
+func iamFetcherOne(action, resourceArn string) macls.PrincipalPolicyFetcher {
+	return func(ctx context.Context, arn string) (*iamservice.PrincipalPolicies, error) {
+		return &iamservice.PrincipalPolicies{
+			PrincipalArn: arn, PrincipalName: "AppRole", PrincipalType: "role",
+			InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+				"Statement": []any{map[string]any{"Effect": "Allow", "Action": action, "Resource": resourceArn}},
+			}}},
+		}, nil
+	}
+}
+
+// Dry-run union: native ACLs (User:app, Read, "orders") and IAM-derived ACLs
+// (User:AppRole, Write, "payments" — a distinct principal/resource so this
+// test observes pure union, not the dedupe case) must both appear in the
+// planned acls set, and dry-run must mutate nothing.
+func TestApply_ACLs_IAM_UnionDryRun(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam1")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
+	fetcher := iamFetcherOne("kafka-cluster:WriteData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments")
+
+	out, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam1", iamYAML, oneReadACL("User:app"), fetcher, true)
+	require.NoError(t, err, "logs: %s", logs)
+
+	require.Contains(t, out, "orders", "native ACL must appear in the plan")
+	require.Contains(t, out, "payments", "IAM-derived ACL must appear in the plan (union)")
+	require.Equal(t, int64(0), tgt.saPosts, "dry-run must not create service accounts")
+	require.Equal(t, int64(0), tgt.aclPosts, "dry-run must not create ACLs")
+}
+
+// The "effective access not verified" caveat must be emitted at WARN whenever
+// spec.acls.iam is set (explicit-principals mode), regardless of dry-run.
+func TestApply_ACLs_IAM_WarnLabelEmitted(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam3")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
+	fetcher := iamFetcherOne("kafka-cluster:WriteData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments")
+
+	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam3", iamYAML, oneReadACL("User:app"), fetcher, true)
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, logs, "WARN")
+	require.Contains(t, logs, "effective access")
+	require.Contains(t, logs, "not verified")
+}
+
+// spec.acls.iam.discoverAllRoles is Phase 1B slice 2 — apply must refuse with
+// a clear "not yet implemented" error rather than silently no-op'ing or
+// attempting enumeration, and must not mutate the target.
+func TestApply_ACLs_IAM_DiscoverAllRoles_NotImplemented(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam4")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      discoverAllRoles: true\n"
+
+	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam4", iamYAML, oneReadACL("User:app"), nil, true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "spec.acls.iam.discoverAllRoles")
+	require.Contains(t, err.Error(), "not yet implemented")
+	require.Equal(t, int64(0), tgt.saPosts)
+	require.Equal(t, int64(0), tgt.aclPosts)
+	_ = logs
+}
+
+// spec.acls.iam.verifyEffectiveAccess is Phase 1B slice 2 — apply must refuse
+// with a clear "not yet implemented" error and must not mutate the target.
+func TestApply_ACLs_IAM_VerifyEffectiveAccess_NotImplemented(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam5")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n      verifyEffectiveAccess: true\n"
+
+	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam5", iamYAML, oneReadACL("User:app"), nil, true)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "spec.acls.iam.verifyEffectiveAccess")
+	require.Contains(t, err.Error(), "not yet implemented")
+	require.Equal(t, int64(0), tgt.saPosts)
+	require.Equal(t, int64(0), tgt.aclPosts)
+	_ = logs
+}
+
+// CONFIRMED GAP (task-6 brief's flagged risk — see task-6-report.md):
+// native and IAM both grant the IDENTICAL types.Acls tuple for the same
+// principal (User:AppRole via testPrincipalArn) — Allow Read on Topic
+// "orders" — via two independent planes. NormalizeForCC's stage-4 dedup only
+// removes a Describe implied by a broader op, not literal duplicate tuples,
+// and the acls reconciler's map[types.Acls]struct{} diff (reconciler.go
+// Plan) is built ONLY from the TARGET's existing ACLs, never from entries
+// already staged earlier in the same Desired slice — so two identical
+// entries in Desired each independently test "not present on target yet" and
+// both plan/apply as ActionCreate.
+//
+// This test asserts the OBSERVED (buggy) behavior — a double POST — as a
+// characterization test/regression tripwire, NOT the desired behavior. Per
+// the task-6 brief, this integration does not add a new dedupe stage to fix
+// it (out of scope, flagged for the controller instead): fixing this
+// requires either an intra-Desired dedupe in NormalizeForCC/the union step,
+// or making the acls reconciler's existingSet self-accumulate as it plans.
+// If that fix lands, update this test to expect exactly one create.
+func TestApply_ACLs_IAM_IdenticalNativeAndIAMTuple_DoubleCreates_KNOWN_GAP(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam2")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
+	fetcher := iamFetcherOne("kafka-cluster:ReadData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders")
+
+	// Native fake ACL for the SAME principal ("User:AppRole", matching
+	// principalFromArn(testPrincipalArn)) grants the SAME tuple.
+	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam2", iamYAML, oneReadACL("User:AppRole"), fetcher, false)
+	require.NoError(t, err, "logs: %s", logs)
+
+	require.Equal(t, int64(1), tgt.saPosts, "one service account for the single distinct principal")
+	require.Equal(t, int64(2), tgt.aclPosts, "KNOWN GAP: identical native+IAM ACL tuple is currently double-created — see task-6-report.md")
 }
 
 func TestEnsureMSKScramMechanism(t *testing.T) {
