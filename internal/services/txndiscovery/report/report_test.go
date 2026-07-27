@@ -481,6 +481,79 @@ func TestWriteYAMLFailsActionablyWhenTheOutputDirectoryDoesNotExist(t *testing.T
 	}
 }
 
+// hostileNames are topic names chosen to break a document assembled by string
+// formatting rather than by an encoder. Whoever can create a topic on the observed
+// cluster chooses these bytes, and they additionally arrive through decoders for
+// broker-internal binary formats that are not part of the stable client protocol.
+var hostileNames = []string{
+	"-leading-dash",
+	"key: value",
+	"trailing-hash # comment",
+	"!!str tagged",
+	"yes",
+	"no",
+	"on",
+	"true",
+	"null",
+	"~",
+	"1.0",
+	"\"double-quoted\"",
+	"'single-quoted'",
+	"&anchor",
+	"*alias",
+	"{inline: map}",
+	"[inline, seq]",
+	"---",
+	"...",
+	"\ttab-indented",
+	" leading-space",
+	"trailing-space ",
+	"line-one\nline-two",
+	// The forgery probe: if the document were assembled with string formatting, this
+	// name would close its own list item and open a second, complete group.
+	"forge\n  - name: forged-group\n    read_process_write: false\n    topics:\n      - pwned\n    transactional_ids: []",
+}
+
+func TestYAMLRoundTripsTopicNamesContainingYAMLMetacharacters(t *testing.T) {
+	r := Run{
+		Duration: time.Minute,
+		Result: grouping.Result{
+			Groups: []grouping.Group{{
+				Name:   "group-1",
+				Topics: hostileNames,
+				TxnIDs: hostileNames,
+			}},
+			IndividualTopics: hostileNames,
+		},
+	}
+
+	_, body := writeYAML(t, r)
+	doc := parseYAML(t, body)
+
+	// Exactly one group: a name that forged a second list item would show up here.
+	if len(doc.Groups) != 1 {
+		t.Fatalf("expected 1 group after round-trip, got %d\n--- yaml ---\n%s", len(doc.Groups), body)
+	}
+	for _, tc := range []struct {
+		what string
+		got  []string
+	}{
+		{"topics", doc.Groups[0].Topics},
+		{"transactional_ids", doc.Groups[0].TransactionalIDs},
+		{"individual_topics", doc.IndividualTopics},
+	} {
+		if len(tc.got) != len(hostileNames) {
+			t.Errorf("%s round-tripped to %d entries, want %d\n--- yaml ---\n%s", tc.what, len(tc.got), len(hostileNames), body)
+			continue
+		}
+		for i, want := range hostileNames {
+			if tc.got[i] != want {
+				t.Errorf("%s[%d] round-tripped to %q, want %q", tc.what, i, tc.got[i], want)
+			}
+		}
+	}
+}
+
 // groupLines returns the rendered group rows in the order they appear, so ordering can
 // be asserted without pinning the surrounding prose.
 func groupLines(out string) []string {

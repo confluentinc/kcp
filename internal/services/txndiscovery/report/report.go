@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -430,15 +431,55 @@ type discoveryDoc struct {
 	// IndividualTopics were only ever seen alone in a transaction, so they can
 	// migrate one at a time. Listed rather than merely counted so the document holds
 	// the complete set of observed topics.
-	IndividualTopics []string `yaml:"individual_topics"`
+	IndividualTopics []yamlName `yaml:"individual_topics"`
 }
 
 type discoveryGroup struct {
-	Name             string   `yaml:"name"`
-	ReadProcessWrite bool     `yaml:"read_process_write"`
-	Warning          string   `yaml:"warning,omitempty"`
-	Topics           []string `yaml:"topics"`
-	TransactionalIDs []string `yaml:"transactional_ids"`
+	Name             string     `yaml:"name"`
+	ReadProcessWrite bool       `yaml:"read_process_write"`
+	Warning          string     `yaml:"warning,omitempty"`
+	Topics           []yamlName `yaml:"topics"`
+	TransactionalIDs []yamlName `yaml:"transactional_ids"`
+}
+
+// yamlName is a topic name or transactional id on its way into the document: a string
+// whose bytes are chosen by whoever can create a topic or configure a producer, and
+// which additionally arrives through decoders for broker-internal binary formats that
+// are not part of the stable client protocol.
+//
+// It exists because github.com/goccy/go-yaml's encoder emits a string containing a TAB
+// as a PLAIN (unquoted) scalar, and the parser then discards the tab — "a\tb" is written
+// as "a<TAB>b" and reads back as "ab". Transactional ids are free-form strings an
+// application chooses, so this is reachable, and a silently altered name in this
+// document points an operator at a topic that does not exist or, worse, at a different
+// one that does. Emitting an explicitly double-quoted scalar sidesteps the encoder's
+// style choice entirely and is also what makes a name containing a newline unable to
+// forge a second group entry.
+//
+// One case stays lossy, deliberately and for the same reason the audit writer accepts
+// it: invalid UTF-8 is escaped byte-wise, so \xff reads back as U+00FF rather than as
+// the original byte. The document stays well-formed and the coupling it records stays
+// correct; only the rendering of the name changes. Kafka constrains topic names to
+// [a-zA-Z0-9._-], so invalid UTF-8 cannot come from a legitimate topic — its presence
+// means an upstream decode went wrong, which the decode-error counters report.
+type yamlName string
+
+// MarshalYAML emits the name as a double-quoted scalar. strconv.Quote's escapes (\t,
+// \n, \\, \", \xNN, \uNNNN) are all valid inside a YAML double-quoted scalar.
+func (n yamlName) MarshalYAML() ([]byte, error) {
+	return []byte(strconv.Quote(string(n))), nil
+}
+
+// yamlNames converts a list of names for the document.
+func yamlNames(in []string) []yamlName {
+	if in == nil {
+		return nil
+	}
+	out := make([]yamlName, len(in))
+	for i, v := range in {
+		out[i] = yamlName(v)
+	}
+	return out
 }
 
 // groupWarning explains what a read-process-write group's consumed inputs depend on,
@@ -467,15 +508,15 @@ func WriteYAML(path string, s Summary) error {
 		GeneratedAt:          time.Now().UTC().Format(time.RFC3339),
 		ObservationWindow:    s.Duration.String(),
 		IndividualTopicCount: len(s.Result.IndividualTopics),
-		IndividualTopics:     s.Result.IndividualTopics,
+		IndividualTopics:     yamlNames(s.Result.IndividualTopics),
 	}
 	for _, g := range s.Result.Groups {
 		doc.Groups = append(doc.Groups, discoveryGroup{
 			Name:             g.Name,
 			ReadProcessWrite: g.ReadProcessWrite,
 			Warning:          groupWarning(g, s),
-			Topics:           g.Topics,
-			TransactionalIDs: g.TxnIDs,
+			Topics:           yamlNames(g.Topics),
+			TransactionalIDs: yamlNames(g.TxnIDs),
 		})
 	}
 
