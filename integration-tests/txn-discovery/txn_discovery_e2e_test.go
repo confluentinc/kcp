@@ -374,12 +374,32 @@ type runResult struct {
 	audit []auditLine
 	// kcpLog is the run's log file, empty when it wrote none.
 	kcpLog string
+
+	// files is every name the run left in its directory, and modes their
+	// permission bits.
+	//
+	// Both are captured when the run finishes rather than read on demand,
+	// because the directory is a t.TempDir() belonging to whichever test first
+	// triggered the shared run and is removed when THAT test returns. Reading a
+	// mode later would find nothing there and a "writes nothing" assertion
+	// would pass against a deleted directory.
+	files []string
+	modes map[string]os.FileMode
 }
 
 // collect reads a finished run's directory.
 func collect(t *testing.T, dir string, code int, stdout, stderr string) *runResult {
 	t.Helper()
-	r := &runResult{dir: dir, exitCode: code, stdout: stdout, stderr: stderr}
+	r := &runResult{dir: dir, exitCode: code, stdout: stdout, stderr: stderr, modes: map[string]os.FileMode{}}
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err, "failed to list the run's directory")
+	for _, e := range entries {
+		r.files = append(r.files, e.Name())
+		info, ierr := e.Info()
+		require.NoError(t, ierr, "failed to stat an artifact")
+		r.modes[e.Name()] = info.Mode().Perm()
+	}
 
 	if data, err := os.ReadFile(filepath.Join(dir, outFile)); err == nil {
 		var doc discoveryDoc
@@ -547,7 +567,102 @@ const (
 	// log, and both carry the footprint — so the reader observes this topic set
 	// many times over.
 	repeatRuns = 3
+
+	// Aborted transaction. Its consumed input must never be credited.
+	abortedTxn   = fixturePrefix + "aborted-txn"
+	abortedGroup = fixturePrefix + "abort-consumer"
+	abortedIn    = fixturePrefix + "aborted-in"
+	abortedOut   = fixturePrefix + "aborted-out"
 )
+
+// TestSummaryCarriesNoTopicNames is R16's abuse case: the terminal reports
+// counts, never names.
+//
+// A topic name like acme.payments.settlements discloses a customer's business
+// structure, and a summary is the thing that gets pasted into a ticket or
+// screen-shared in a workshop. The names live in the 0600 YAML instead.
+func TestSummaryCarriesNoTopicNames(t *testing.T) {
+	r := sharedRun(t)
+
+	// Non-vacuity: there must have been names available to leak. Against an
+	// empty run this assertion would hold for the wrong reason.
+	require.NotEmpty(t, r.observedTopics(), "the run discovered no topics, so this test proves nothing")
+	require.Contains(t, strings.Join(r.observedTopics(), ","), fixturePrefix,
+		"the run's own artifacts carry no fixture-prefixed name, so this test proves nothing")
+
+	assert.NotContains(t, r.stdout, fixturePrefix,
+		"a topic name or transactional id reached the terminal summary\n--- STDOUT ---\n%s", r.stdout)
+	assert.NotContains(t, r.stderr, fixturePrefix,
+		"a topic name or transactional id reached stderr\n--- STDERR ---\n%s", r.stderr)
+
+	// The summary is still expected to say something: an empty stdout would
+	// satisfy the assertions above and report nothing to the operator.
+	assert.Contains(t, r.stdout, "Transaction discovery summary", "the summary was not printed at all")
+	assert.Contains(t, r.stdout, "Transaction groups", "the group table was not printed at all")
+}
+
+// TestKcpLogCarriesNoNames is the same abuse case applied to the fourth sink.
+//
+// kcp.log's file leg is unconditionally Debug+ with no level control, and it is
+// the file operators attach to support tickets. A single Debug line carrying a
+// topic name defeats the counts-only terminal entirely — and under --verbose
+// those same lines reach the console.
+func TestKcpLogCarriesNoNames(t *testing.T) {
+	r := sharedRun(t)
+
+	require.NotEmpty(t, r.kcpLog, "the run wrote no kcp.log, so this test proves nothing")
+	require.Contains(t, r.kcpLog, "transaction discovery",
+		"kcp.log does not contain this command's own log narrative, so it is not the file under test")
+
+	assert.NotContains(t, r.kcpLog, fixturePrefix,
+		"a topic name or transactional id reached kcp.log\n--- KCP.LOG ---\n%s", r.kcpLog)
+}
+
+// TestArtifactsAreOwnerOnly is the artifact-permission abuse case: all three
+// files are written 0600, verified by stat rather than by inspection.
+//
+// The YAML and the audit log enumerate customer topic names, and the stats
+// document is included because it is not a counts-only file — it carries the
+// full per-transaction footprints, transactional ids and all. The POC wrote
+// that one 0644; the mode must not port across.
+func TestArtifactsAreOwnerOnly(t *testing.T) {
+	r := sharedRun(t)
+
+	for _, name := range []string{outFile, statsFile, auditFile} {
+		mode, ok := r.modes[name]
+		require.True(t, ok, "%s was never written, so its mode cannot be checked (files: %v)", name, r.files)
+		assert.Equal(t, os.FileMode(0600), mode,
+			"%s is mode %#o, not 0600: it enumerates customer topic names", name, mode)
+	}
+}
+
+// TestAbortedTransactionInputIsNotGrouped is the abuse case behind the abort
+// filter: an offset commit belonging to a rolled-back transaction must not be
+// credited as a consumed input.
+//
+// ReadCommitted does NOT remove aborted records at the wire level — it bounds
+// the fetch at the last stable offset and attaches an AbortedTransactions list,
+// leaving the discarding to the client. A raw fetch loop inherits none of that
+// from sarama's consumer, so without an explicit filter the aborted commit
+// reads exactly like a committed one. Zombie-fenced and rebalance-aborted
+// transactions are routine on an exactly-once cluster, so this is the normal
+// case, not a corner one: the consequence would be a migration group built
+// around a topic the application never actually consumed.
+func TestAbortedTransactionInputIsNotGrouped(t *testing.T) {
+	r := sharedRun(t)
+
+	// The premise first. A PrepareAbort record carries a footprint, so the
+	// aborted transaction's PRODUCED topic must be visible — that is what proves
+	// the transaction was observed at all. Without this guard the test would
+	// pass just as well against a fixture that never ran.
+	require.Contains(t, r.observedTopics(), abortedOut,
+		"the aborted transaction was never observed, so this test cannot show its input was filtered\n%s", r.describe())
+
+	assert.NotContains(t, r.observedTopics(), abortedIn,
+		"the consumed input of an ABORTED transaction was credited as a real input\n%s", r.describe())
+	assert.Nil(t, r.groupWith(abortedIn),
+		"the consumed input of an ABORTED transaction was grouped\n%s", r.describe())
+}
 
 // TestAuditLogExplainsAUnion is F2, the flow the audit log exists for: an
 // operator looking at a group in txn-discovery.yaml asks why two topics ended
@@ -829,7 +944,7 @@ func seedBeforeWindow(t *testing.T) {
 		produceTxn(t, txnFixture{TxnID: repeatTxn, Produce: []string{repeatTopic}})
 	}
 
-	createTopics(t, ordersIn, ordersOut, billingIn, billingOut)
+	createTopics(t, ordersIn, ordersOut, billingIn, billingOut, abortedIn, abortedOut)
 }
 
 // seedDuringWindow produces the fixtures that must land inside the observation
@@ -854,5 +969,15 @@ func seedDuringWindow(t *testing.T) {
 		Produce:      []string{billingOut},
 		ConsumeTopic: billingIn,
 		Group:        billingGroup,
+	})
+
+	// An exactly-once workload that rolls back. Its offset commit still reaches
+	// __consumer_offsets — that is what the abort filter has to discard.
+	produceTxn(t, txnFixture{
+		TxnID:        abortedTxn,
+		Produce:      []string{abortedOut},
+		ConsumeTopic: abortedIn,
+		Group:        abortedGroup,
+		Abort:        true,
 	})
 }
