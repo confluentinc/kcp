@@ -630,3 +630,35 @@ func TestTheStatsReportWhatThisPhaseItselfRecovered(t *testing.T) {
 	assert.Equal(t, 2, st.GroupsLinked)
 	assert.Equal(t, 2, st.Correlations)
 }
+
+func TestTheStatsSeparateRecordsSeenFromTransactionalCommits(t *testing.T) {
+	// The keep-up signal needs both numbers, and their RATIO is the diagnostic.
+	// The overwhelming majority of __consumer_offsets traffic is ordinary
+	// commits and group metadata, so a healthy run on an exactly-once cluster
+	// reads a great many records and correlates a small fraction of them. A run
+	// reporting zero records read means the tail never got going; a run reading
+	// plenty but correlating none means the cluster has no exactly-once traffic
+	// — and without both counts those two look identical in the summary.
+	cat := NewTxnCatalog()
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	// Two ordinary commits: seen, not correlatable.
+	plain := commitBatch(4242, commitKey("plain-group", "orders.in", 0), commitKey("plain-group", "orders.in", 1))
+	plain.IsTransactional = false
+	tl.HandleBatch(plain)
+
+	// One transactional commit carrying two consumed topic-partitions.
+	tl.HandleBatch(commitBatch(4242,
+		commitKey("eos-group", "orders.in", 0),
+		commitKey("eos-group", "payments.in", 0),
+	))
+
+	// A batch on the other topic is not this source's traffic at all.
+	other := commitBatch(4242, commitKey("eos-group", "orders.in", 0))
+	other.Topic = DefaultTxnStateTopic
+	tl.HandleBatch(other)
+
+	st := tl.Stats()
+	assert.Equal(t, int64(4), st.RecordsSeen, "every record on OUR topic, transactional or not")
+	assert.Equal(t, int64(2), st.TxnRecords, "only the transactional commits that yielded a consumed topic")
+}

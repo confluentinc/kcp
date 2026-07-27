@@ -69,6 +69,8 @@ type ConsumerOffsetsTail struct {
 	catalog *TxnCatalog
 	topic   string
 
+	recordsSeen     atomic.Int64
+	txnRecords      atomic.Int64
 	keyDecodeErrors atomic.Int64
 
 	maxPending int
@@ -184,6 +186,18 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 
 // ConsumerOffsetsStats is what this source contributes to the run's report.
 type ConsumerOffsetsStats struct {
+	// RecordsSeen counts every record delivered on this source's topic,
+	// transactional or not.
+	RecordsSeen int64
+
+	// TxnRecords counts the transactional offset commits that yielded a
+	// consumed topic — the records this source actually correlates on. Its
+	// ratio to RecordsSeen is the diagnostic: a run that read plenty and
+	// correlated none is a cluster with no exactly-once traffic, while a run
+	// that read nothing is a tail that never got going, and without both counts
+	// those look identical.
+	TxnRecords int64
+
 	// KeyDecodeErrors counts record keys this source could not parse. Record
 	// keys are a broker-internal format rather than part of the stable client
 	// protocol, so this is the format-drift alarm and is never swallowed.
@@ -222,6 +236,8 @@ func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return ConsumerOffsetsStats{
+		RecordsSeen:      t.recordsSeen.Load(),
+		TxnRecords:       t.txnRecords.Load(),
 		KeyDecodeErrors:  t.keyDecodeErrors.Load(),
 		PendingProducers: len(t.pending),
 		PendingEvicted:   t.evicted,
@@ -274,6 +290,12 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 	if b.Topic != t.topic {
 		return
 	}
+	// Counted before the filters below, so RecordsSeen reports what the tail
+	// delivered on this topic rather than what survived correlation. A run that
+	// read nothing and a run that read plenty and correlated none are different
+	// problems, and only this counter separates them.
+	t.recordsSeen.Add(int64(len(b.Records)))
+
 	// Only a commit written inside a transaction correlates. A batch header
 	// carries a producer id for a plain idempotent producer too, so joining a
 	// non-transactional commit on it would attribute an unrelated consumer's
@@ -325,6 +347,7 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 		if grouping.IsInternalTopic(key.Topic) {
 			continue
 		}
+		t.txnRecords.Add(1)
 		t.recordCommit(b.ProducerID, key.Group, key.Topic)
 	}
 }
