@@ -10,6 +10,7 @@ package tail
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -331,6 +332,9 @@ func (t *Tail) Start(ctx context.Context, topics []TopicSpec) (<-chan Batch, err
 	if err != nil {
 		return nil, err
 	}
+	if err := t.checkLeadersServeable(assignments); err != nil {
+		return nil, err
+	}
 
 	t.out = make(chan Batch)
 	t.sem = make(chan struct{}, t.opts.MaxConcurrentFetches)
@@ -379,6 +383,25 @@ func discover(c Client, topics []TopicSpec) ([]assignment, error) {
 		}
 	}
 	return out, nil
+}
+
+// checkLeadersServeable resolves each partition's leader once before any loop
+// starts, so a broker too old to serve a read-committed fetch is a fast,
+// actionable failure rather than a loop that retries for the whole window.
+//
+// Any other leader-resolution failure is left to the loops: a leader that is
+// momentarily unavailable is exactly what they are built to recover from.
+func (t *Tail) checkLeadersServeable(assignments []assignment) error {
+	for _, a := range assignments {
+		if _, err := t.client.Leader(a.topic, a.partition); err != nil {
+			if errors.Is(err, ErrFetchVersionUnsupported) {
+				return err
+			}
+			slog.Debug("⏭️ leader unresolved at startup; the partition loop will retry",
+				"partition", a.partition, "error", err)
+		}
+	}
+	return nil
 }
 
 // runPartition is the per-partition fetch loop.

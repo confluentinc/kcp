@@ -2,8 +2,10 @@ package tail
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"sort"
+	"sync"
 
 	"github.com/IBM/sarama"
 )
@@ -21,6 +23,11 @@ const (
 	DefaultFetchVersionCeiling int16 = 11
 )
 
+// ErrFetchVersionUnsupported reports a broker that cannot serve a fetch at the
+// minimum version this reader needs. It is fatal at startup rather than
+// retriable: no amount of waiting will make an old broker grow the fields.
+var ErrFetchVersionUnsupported = errors.New("broker does not support a new enough Fetch API version")
+
 // negotiateFetchVersion picks the Fetch API version to use against one broker:
 // the lower of the local ceiling and the broker's advertised maximum, floored
 // at MinFetchVersion (KTD3).
@@ -37,10 +44,10 @@ func negotiateFetchVersion(keys []sarama.ApiVersionsResponseKey, ceiling int16) 
 		}
 	}
 	if advertised < 0 {
-		return 0, fmt.Errorf("broker did not advertise the Fetch API, so no fetch version could be negotiated")
+		return 0, fmt.Errorf("%w: broker did not advertise the Fetch API at all", ErrFetchVersionUnsupported)
 	}
 	if advertised < MinFetchVersion {
-		return 0, fmt.Errorf("broker advertises a maximum Fetch API version of %d, but reading committed transactional data needs at least v%d (isolation level, last stable offset and the aborted-transaction list)", advertised, MinFetchVersion)
+		return 0, fmt.Errorf("%w: broker advertises a maximum Fetch API version of %d, but reading committed transactional data needs at least v%d (isolation level, last stable offset and the aborted-transaction list)", ErrFetchVersionUnsupported, advertised, MinFetchVersion)
 	}
 	version := ceiling
 	if advertised < version {
@@ -75,6 +82,110 @@ func buildFetchRequest(spec FetchSpec) *sarama.FetchRequest {
 	// cannot fail the fetch after a leader move.
 	req.AddBlock(spec.Topic, spec.Partition, spec.Offset, spec.MaxPartitionBytes, -1)
 	return req
+}
+
+// SaramaClient is the production Client, backed by a sarama.Client. It does
+// not own that client and never closes it.
+type SaramaClient struct {
+	client  sarama.Client
+	ceiling int16
+
+	mu sync.Mutex
+	// brokers maps a broker id to the open connection Leader resolved, so
+	// Fetch can route to it without re-resolving.
+	brokers map[int32]*sarama.Broker
+	// versions caches the negotiated Fetch version per broker, since a
+	// broker's advertised ceiling does not change while it is up.
+	versions map[int32]int16
+}
+
+// NewSaramaClient adapts a sarama.Client to the seam. A ceiling of zero or
+// less uses DefaultFetchVersionCeiling.
+func NewSaramaClient(c sarama.Client, ceiling int16) *SaramaClient {
+	if ceiling <= 0 {
+		ceiling = DefaultFetchVersionCeiling
+	}
+	return &SaramaClient{
+		client:   c,
+		ceiling:  ceiling,
+		brokers:  make(map[int32]*sarama.Broker),
+		versions: make(map[int32]int16),
+	}
+}
+
+// Partitions lists a topic's partition ids.
+func (s *SaramaClient) Partitions(topic string) ([]int32, error) {
+	return s.client.Partitions(topic)
+}
+
+// Offset resolves a partition's earliest or latest offset.
+func (s *SaramaClient) Offset(topic string, partition int32, pos StartPosition) (int64, error) {
+	which := sarama.OffsetOldest
+	if pos == StartLatest {
+		which = sarama.OffsetNewest
+	}
+	return s.client.GetOffset(topic, partition, which)
+}
+
+// Leader resolves the current leader of a partition and the Fetch version
+// negotiated against it.
+//
+// Error text deliberately names the partition and never the topic: every
+// command error is logged to kcp.log, which operators attach to support
+// tickets, and a topic name there discloses customer business structure.
+func (s *SaramaClient) Leader(topic string, partition int32) (Leader, error) {
+	b, err := s.client.Leader(topic, partition)
+	if err != nil {
+		return Leader{}, fmt.Errorf("failed to resolve the leader for partition %d: %w", partition, err)
+	}
+	version, err := s.fetchVersion(b)
+	if err != nil {
+		return Leader{}, err
+	}
+	s.mu.Lock()
+	s.brokers[b.ID()] = b
+	s.mu.Unlock()
+	return Leader{ID: b.ID(), Addr: b.Addr(), FetchVersion: version}, nil
+}
+
+// fetchVersion negotiates, and then remembers, the Fetch version for a broker.
+func (s *SaramaClient) fetchVersion(b *sarama.Broker) (int16, error) {
+	s.mu.Lock()
+	if v, ok := s.versions[b.ID()]; ok {
+		s.mu.Unlock()
+		return v, nil
+	}
+	s.mu.Unlock()
+
+	resp, err := b.ApiVersions(&sarama.ApiVersionsRequest{Version: 0})
+	if err != nil {
+		return 0, fmt.Errorf("failed to read the API versions advertised by broker %d: %w", b.ID(), err)
+	}
+	version, err := negotiateFetchVersion(resp.ApiKeys, s.ceiling)
+	if err != nil {
+		return 0, fmt.Errorf("broker %d cannot serve this reader: %w", b.ID(), err)
+	}
+
+	s.mu.Lock()
+	s.versions[b.ID()] = version
+	s.mu.Unlock()
+	return version, nil
+}
+
+// RefreshMetadata forces a metadata refresh for the named topics.
+func (s *SaramaClient) RefreshMetadata(topics ...string) error {
+	return s.client.RefreshMetadata(topics...)
+}
+
+// Fetch performs one fetch round-trip against the broker Leader resolved.
+func (s *SaramaClient) Fetch(leader Leader, spec FetchSpec) (*sarama.FetchResponse, error) {
+	s.mu.Lock()
+	b := s.brokers[leader.ID]
+	s.mu.Unlock()
+	if b == nil {
+		return nil, fmt.Errorf("no open connection to broker %d", leader.ID)
+	}
+	return b.Fetch(buildFetchRequest(spec))
 }
 
 // errorClass names how the fetch loop recovers from a failed fetch.
