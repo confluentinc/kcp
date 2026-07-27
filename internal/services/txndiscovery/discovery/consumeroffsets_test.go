@@ -162,3 +162,21 @@ func TestABatchWithANonPositiveProducerIDIsIgnored(t *testing.T) {
 	assert.Empty(t, tl.resolveWith(map[int64]string{-1: "some-txn", 0: "other-txn"}, time.Now()),
 		"nothing may be buffered under a sentinel producer id")
 }
+
+func TestABatchFromAnotherTopicOnTheSharedChannelIsIgnored(t *testing.T) {
+	// One tail instance serves both this consumer and the __transaction_state
+	// reader, fanning every partition of both topics into a single channel, so
+	// each consumer must demultiplex on the batch's topic. The batch here is
+	// transactional with a real producer id, so every other filter waves it
+	// through — only the topic check stops a __transaction_state record's key
+	// from being decoded as an OffsetCommitKey and published as a consumed topic.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	b := commitBatch(4242, commitKey("payments-group", "orders.in", 0))
+	b.Topic = "__transaction_state"
+	tl.HandleBatch(b)
+
+	assert.Empty(t, flush(t, tl), "a batch from another topic must not correlate")
+}

@@ -55,7 +55,15 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 }
 
 // HandleBatch records the transactional offset commits carried by one batch.
+//
+// It is the demultiplexing entry point: one tail instance serves both this
+// consumer and the __transaction_state reader, fanning every partition of both
+// topics into a single channel, so batches for other topics are this
+// consumer's to ignore.
 func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
+	if b.Topic != DefaultConsumerOffsetsTopic {
+		return
+	}
 	// Only a commit written inside a transaction correlates. A batch header
 	// carries a producer id for a plain idempotent producer too, so joining a
 	// non-transactional commit on it would attribute an unrelated consumer's
