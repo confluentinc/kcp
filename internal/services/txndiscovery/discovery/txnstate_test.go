@@ -172,3 +172,29 @@ func TestTxnStateReader_TombstoneIsCountedAndProducesNoObservation(t *testing.T)
 	assert.Equal(t, int64(0), st.ValueDecodeErrors)
 	assert.Equal(t, int64(0), st.Footprints)
 }
+
+func TestTxnStateReader_FootprintContainingConsumerOffsetsIsReadProcessWrite(t *testing.T) {
+	// A transaction that enrolled __consumer_offsets committed consumer offsets inside
+	// itself, which makes it a consume-transform-produce app. Its CONSUMED input topics
+	// are not in this footprint — only its outputs are — so the flag is what tells the
+	// downstream enrichment phases there are inputs still to recover.
+	r := NewTxnStateReader(DefaultTxnStateTopic, NewTxnCatalog())
+
+	got := runReader(t, r,
+		stateBatch(tail.Record{
+			Key:   txnKey("streams-app-0"),
+			Value: txnValue(7, 1, "orders.enriched", DefaultConsumerOffsetsTopic),
+		}),
+		stateBatch(tail.Record{
+			Key:   txnKey("produce-only-0"),
+			Value: txnValue(8, 1, "audit.events"),
+		}),
+	)
+
+	require.Len(t, got, 2)
+	assert.True(t, got[0].ReadProcessWrite, "a footprint enrolling __consumer_offsets is read-process-write")
+	// The raw footprint is passed through INCLUDING the internal topic: filtering is the
+	// grouping stage's job, and dropping it here would make the observation unauditable.
+	assert.Equal(t, []string{"orders.enriched", DefaultConsumerOffsetsTopic}, got[0].Topics)
+	assert.False(t, got[1].ReadProcessWrite, "a produce-only footprint is not read-process-write")
+}

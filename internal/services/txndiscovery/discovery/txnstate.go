@@ -12,6 +12,10 @@ import (
 // DefaultTxnStateTopic is Kafka's internal transaction-coordinator log.
 const DefaultTxnStateTopic = "__transaction_state"
 
+// DefaultConsumerOffsetsTopic is Kafka's internal consumer-offsets log. A footprint
+// enrolling it is how a transaction declares itself read-process-write.
+const DefaultConsumerOffsetsTopic = "__consumer_offsets"
+
 // TxnStateStats is a snapshot of what the transaction-state reader decoded.
 type TxnStateStats struct {
 	RecordsSeen int64
@@ -112,12 +116,17 @@ func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<-
 	}
 
 	r.footprints.Add(1)
+	topics := val.Topics()
 	obs := Observation{
 		TxnID:      key.TransactionalID,
 		ProducerID: val.ProducerID,
-		Topics:     val.Topics(),
-		Source:     SourceTxnStateLog,
-		ObservedAt: time.Now(),
+		// The RAW footprint, internal topics included. Filtering belongs to the grouping
+		// stage; dropping __consumer_offsets here would erase the evidence for the flag
+		// below from the audit trail.
+		Topics:           topics,
+		ReadProcessWrite: containsTopic(topics, DefaultConsumerOffsetsTopic),
+		Source:           SourceTxnStateLog,
+		ObservedAt:       time.Now(),
 	}
 	select {
 	case out <- obs:
@@ -125,4 +134,14 @@ func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<-
 	case <-ctx.Done():
 		return false
 	}
+}
+
+// containsTopic reports whether want is in topics.
+func containsTopic(topics []string, want string) bool {
+	for _, t := range topics {
+		if t == want {
+			return true
+		}
+	}
+	return false
 }
