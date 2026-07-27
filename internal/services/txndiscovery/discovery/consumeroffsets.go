@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -379,19 +380,38 @@ func (t *ConsumerOffsetsTail) FinalFlush(out chan<- Observation) {
 func (t *ConsumerOffsetsTail) resolveAndFlush(ctx context.Context, out chan<- Observation) {
 	now := t.now()
 	observations := t.resolveWith(t.catalog.ProducerIDToTxnID(), now)
+
+	for _, obs := range observations {
+		select {
+		case out <- obs:
+			// Only now, once the observation is actually in the consumer's
+			// hands, does the sighting leave the buffer. Dropping it at resolve
+			// time would mean a pass cancelled mid-send had both removed the
+			// sighting and failed to deliver it: the recovery gone, no counter
+			// moving, and the final flush finding nothing left to do.
+			t.forget(obs.ProducerID)
+		case <-ctx.Done():
+			// Abandoned. Everything not yet sent stays buffered for the final
+			// flush, which runs on a context that is not already cancelled.
+			return
+		}
+	}
+
 	// Expire AFTER resolving, never before. A sighting that has just reached its
 	// TTL may be exactly the one the __transaction_state reader has finally
 	// caught up to; expiring first would discard a recovery on the very pass
 	// that could have made it, visible only as an eviction count.
 	t.expire(now)
+}
 
-	for _, obs := range observations {
-		select {
-		case out <- obs:
-		case <-ctx.Done():
-			return
-		}
-	}
+// forget removes a sighting that has been delivered.
+//
+// HandleBatch and the resolve passes are serialised by Run's select loop, so no
+// commit can land between an entry being resolved and being forgotten here.
+func (t *ConsumerOffsetsTail) forget(pid int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	delete(t.pending, pid)
 }
 
 // expire drops pending sightings that have gone unresolved for longer than the
@@ -418,11 +438,16 @@ func (t *ConsumerOffsetsTail) expire(now time.Time) {
 
 // resolveWith is the pure join at the heart of this unit: every pending
 // sighting whose producer id appears in pidToTxn becomes an observation under
-// that transaction and leaves the buffer. It keys purely on the producer id, so
-// it correlates a consumer group to its transaction however their names relate.
+// that transaction. It keys purely on the producer id, so it correlates a
+// consumer group to its transaction however their names relate.
 //
-// Observations are returned rather than sent so the caller can respect its
-// context without holding the lock.
+// It does NOT remove what it matched. Observations are returned for the caller
+// to send — so sending can respect a context without holding the lock — and the
+// caller calls forget once each one has actually been delivered. Removing here
+// instead would let a pass cancelled mid-send lose the recovery entirely.
+//
+// Sorted by transactional id so a pass over identical state emits in a stable
+// order, which the audit trail is diffed on.
 func (t *ConsumerOffsetsTail) resolveWith(pidToTxn map[int64]string, now time.Time) []Observation {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -447,7 +472,7 @@ func (t *ConsumerOffsetsTail) resolveWith(pidToTxn map[int64]string, now time.Ti
 			Source:           SourceConsumerOffsets,
 			ObservedAt:       now,
 		})
-		delete(t.pending, pid)
 	}
+	sort.Slice(out, func(i, j int) bool { return out[i].TxnID < out[j].TxnID })
 	return out
 }

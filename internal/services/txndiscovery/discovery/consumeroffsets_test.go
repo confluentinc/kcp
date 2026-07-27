@@ -570,3 +570,30 @@ func TestRunFinalFlushesOnAFreshContextAfterTheWindowIsCancelled(t *testing.T) {
 	assert.Equal(t, "payments-txn-0", got[0].TxnID)
 	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
 }
+
+func TestAnIntervalPassAbandonedMidSendDoesNotLoseWhatItResolved(t *testing.T) {
+	// An interval pass races the end of the window: the context can be cancelled
+	// between resolving a sighting and sending its observation. A pass that
+	// dropped the entry when it resolved it would then have removed the sighting
+	// from the buffer AND failed to deliver it — the recovery is gone, with no
+	// counter moving and the final flush finding nothing left to do. Nothing
+	// downstream can tell that apart from a transaction that had no inputs.
+	//
+	// So a sighting leaves the buffer only once its observation has actually
+	// been handed over.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+	tl.HandleBatch(commitBatch(4242, commitKey("payments-group", "orders.in", 0)))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	tl.resolveAndFlush(ctx, make(chan Observation)) // nobody reads; the send is abandoned
+
+	require.Equal(t, 1, tl.Stats().PendingProducers, "an undelivered sighting stays buffered")
+
+	got := flush(t, tl)
+	require.Len(t, got, 1, "and the final flush still delivers it")
+	assert.Equal(t, "payments-txn-0", got[0].TxnID)
+	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
+}
