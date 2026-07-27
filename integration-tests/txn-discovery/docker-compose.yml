@@ -1,0 +1,61 @@
+name: kcp-txn-discovery
+
+services:
+  # Single-node KRaft broker for the `kcp migration txn-discovery` suite.
+  #
+  # Three settings below are load-bearing rather than stylistic. Each one, if
+  # dropped, turns a scenario into something that either cannot run or passes
+  # for the wrong reason.
+  kafka:
+    image: confluentinc/cp-kafka:7.6.0
+    hostname: kafka
+    container_name: kcp-test-txn-discovery-kafka
+    ports:
+      - "29092:29092"
+    environment:
+      # 22 characters: a KRaft cluster id is a base64-encoded 16-byte UUID and
+      # the broker refuses to boot on anything else.
+      CLUSTER_ID: 'TxNdIsCoVeRyClUsTerId0'
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+
+      # (1) DUAL LISTENERS. A single localhost-advertised listener breaks the
+      # transaction coordinator on a one-node cluster: the broker's own
+      # AddPartitionsToTxnManager connects to the coordinator through the
+      # advertised inter-broker address, and "localhost" from inside the
+      # container is the container, not the host-mapped port. INTERNAL is what
+      # the broker uses to talk to itself; EXTERNAL is what the host-side test
+      # and the kcp binary use.
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+      # (2) REPLICATION FACTOR AND MIN-ISR OF 1 ON ALL THREE INTERNAL TOPICS.
+      # The image defaults to 3. On one node the transaction-state log then
+      # never reaches its minimum ISR, __transaction_state never becomes
+      # available, and every transaction fails at InitProducerId — so the whole
+      # suite would have nothing to discover.
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+
+      # (3) BROKER-SIDE AUTO-CREATE LEFT ON, deliberately, mirroring a typical
+      # MSK cluster. TestNoTopicCreationOnProbe points --txn-state-topic at a
+      # name that does not exist and then checks the broker still does not have
+      # it. With auto-create off the broker would refuse to create it anyway and
+      # the test would prove nothing about kcp's client-side
+      # Metadata.AllowAutoTopicCreation=false guard (U1).
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+      # Keeps the transaction coordinator from expiring the suite's short-lived
+      # transactional ids while a run is still observing them.
+      KAFKA_TRANSACTIONAL_ID_EXPIRATION_MS: 3600000
+      KAFKA_TRANSACTION_MAX_TIMEOUT_MS: 900000
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 30

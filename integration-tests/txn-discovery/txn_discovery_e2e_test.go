@@ -1,0 +1,592 @@
+//go:build e2e_txndiscovery
+
+// Package txndiscovery_test exercises `kcp migration txn-discovery` against a
+// real single-node Kafka broker started by docker-compose.
+//
+// Per KTD5 the suite runs the BUILT BINARY as a subprocess and asserts on its
+// exit code, its stdout, and the files it wrote. Calling the discovery packages
+// directly — which the superseded branch's e2e did — would leave the command,
+// its flags, its preflight and its output formatting entirely unexercised, and
+// those are the deliverable.
+//
+// Fixtures are produced in-process by sarama transactional producers, so there
+// is no seed script to keep in step with the assertions.
+//
+// Every fixture name carries the `zzqx-` prefix. That is not decoration: three
+// abuse-case tests assert that no topic name and no transactional id reaches
+// stdout or kcp.log, and a prefix that cannot occur incidentally is what makes
+// those assertions meaningful rather than accidentally true.
+package txndiscovery_test
+
+import (
+	"bufio"
+	"bytes"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/IBM/sarama"
+	"github.com/goccy/go-yaml"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+const (
+	// bootstrapAddr is the EXTERNAL listener the compose file advertises to the
+	// host. The broker reaches itself on the INTERNAL one.
+	bootstrapAddr = "localhost:29092"
+
+	// containerName must match docker-compose.yml; the broker-restart test
+	// drives it directly.
+	containerName = "kcp-test-txn-discovery-kafka"
+
+	// fixturePrefix is what the no-names assertions grep for.
+	fixturePrefix = "zzqx-"
+)
+
+// kafkaVersion is the broker's protocol version. cp-kafka 7.6.0 is Kafka 3.6.
+var kafkaVersion = sarama.V3_6_0_0
+
+// ---------------------------------------------------------------------------
+// Kafka fixture helpers
+// ---------------------------------------------------------------------------
+
+// baseConfig is the shared sarama configuration for every fixture client.
+func baseConfig() *sarama.Config {
+	cfg := sarama.NewConfig()
+	cfg.Version = kafkaVersion
+	cfg.ClientID = "kcp-txn-discovery-e2e"
+	cfg.Metadata.Retry.Max = 10
+	cfg.Metadata.Retry.Backoff = 500 * time.Millisecond
+	return cfg
+}
+
+// newAdmin returns a cluster admin against the broker.
+func newAdmin(t *testing.T) sarama.ClusterAdmin {
+	t.Helper()
+	admin, err := sarama.NewClusterAdmin([]string{bootstrapAddr}, baseConfig())
+	require.NoError(t, err, "failed to connect a cluster admin to %s — is the compose broker up?", bootstrapAddr)
+	t.Cleanup(func() { _ = admin.Close() })
+	return admin
+}
+
+// createTopics creates each topic with one partition, ignoring "already exists".
+//
+// One partition, deliberately: a transaction's Ongoing record is written as
+// partitions are added to it, so a multi-partition output topic can produce two
+// footprint records with a growing topic-partition set. TestAuditLogRecordsGrowthOnly
+// asserts an exact line count and would be at the mercy of that.
+func createTopics(t *testing.T, names ...string) {
+	t.Helper()
+	admin := newAdmin(t)
+	for _, name := range names {
+		err := admin.CreateTopic(name, &sarama.TopicDetail{NumPartitions: 1, ReplicationFactor: 1}, false)
+		if err != nil && !errors.Is(err, sarama.ErrTopicAlreadyExists) &&
+			!strings.Contains(err.Error(), "already exists") {
+			t.Fatalf("failed to create topic: %v", err)
+		}
+	}
+}
+
+// txnFixture describes one transaction to produce.
+type txnFixture struct {
+	// TxnID is the transactional.id, which is what the transaction-state log
+	// records the footprint under.
+	TxnID string
+
+	// Produce are the topics the transaction writes to. They become the
+	// transaction's footprint and therefore its group.
+	Produce []string
+
+	// ConsumeTopic and Group, when set, make this a consume-transform-produce
+	// transaction: the offsets are committed INSIDE the transaction with
+	// AddOffsetsToTxn, so the resulting __consumer_offsets record is a
+	// transactional one carrying the producer id. That is the record
+	// producer-id correlation joins on.
+	ConsumeTopic string
+	Group        string
+
+	// Abort rolls the transaction back instead of committing it.
+	Abort bool
+}
+
+// produceTxn runs one transaction to completion against the broker.
+func produceTxn(t *testing.T, f txnFixture) {
+	t.Helper()
+
+	cfg := baseConfig()
+	cfg.Producer.Idempotent = true
+	cfg.Producer.RequiredAcks = sarama.WaitForAll
+	cfg.Producer.Return.Successes = true
+	cfg.Producer.Return.Errors = true
+	cfg.Net.MaxOpenRequests = 1
+	cfg.Producer.Transaction.ID = f.TxnID
+	cfg.Producer.Transaction.Timeout = 60 * time.Second
+
+	producer, err := sarama.NewSyncProducer([]string{bootstrapAddr}, cfg)
+	require.NoError(t, err, "failed to create a transactional producer")
+	defer func() { _ = producer.Close() }()
+
+	require.NoError(t, producer.BeginTxn(), "BeginTxn failed")
+
+	for _, topic := range f.Produce {
+		_, _, err := producer.SendMessage(&sarama.ProducerMessage{
+			Topic: topic,
+			Key:   sarama.StringEncoder("k"),
+			Value: sarama.StringEncoder("v"),
+		})
+		require.NoError(t, err, "failed to produce inside the transaction")
+	}
+
+	if f.ConsumeTopic != "" {
+		require.NotEmpty(t, f.Group, "a consumed topic needs the group that committed it")
+		err := producer.AddOffsetsToTxn(map[string][]*sarama.PartitionOffsetMetadata{
+			f.ConsumeTopic: {{Partition: 0, Offset: 1}},
+		}, f.Group)
+		require.NoError(t, err, "AddOffsetsToTxn failed")
+	}
+
+	if f.Abort {
+		require.NoError(t, producer.AbortTxn(), "AbortTxn failed")
+		return
+	}
+	require.NoError(t, producer.CommitTxn(), "CommitTxn failed")
+}
+
+// commitGroupOffsets commits an offset for topic under group OUTSIDE any
+// transaction, which is how a plain consumer records what it consumes.
+//
+// Consumer-group enrichment reads exactly this — the topics a group has
+// committed offsets for — so it is what the Kafka Streams naming scenario needs
+// on the cluster. The commit is deliberately non-transactional: it must be the
+// NAMING convention that recovers the input, not producer-id correlation.
+func commitGroupOffsets(t *testing.T, group, topic string) {
+	t.Helper()
+
+	cfg := baseConfig()
+	cfg.Consumer.Offsets.AutoCommit.Enable = false
+	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest
+
+	client, err := sarama.NewClient([]string{bootstrapAddr}, cfg)
+	require.NoError(t, err, "failed to create a client for the offset commit")
+	defer func() { _ = client.Close() }()
+
+	om, err := sarama.NewOffsetManagerFromClient(group, client)
+	require.NoError(t, err, "failed to create an offset manager")
+	defer func() { _ = om.Close() }()
+
+	pom, err := om.ManagePartition(topic, 0)
+	require.NoError(t, err, "failed to manage the partition's offsets")
+	pom.MarkOffset(1, "")
+	om.Commit()
+	require.NoError(t, pom.Close(), "failed to close the partition offset manager")
+}
+
+// topicExists reports whether the broker has topic, using a listing rather than
+// a topic-scoped metadata request.
+//
+// The distinction matters for TestNoTopicCreationOnProbe: a topic-scoped
+// metadata request is exactly what can create a topic on a broker with
+// auto-create on, so an independent verifier that asked that way could create
+// the very topic it is checking for and never notice.
+func topicExists(t *testing.T, topic string) bool {
+	t.Helper()
+	admin := newAdmin(t)
+	topics, err := admin.ListTopics()
+	require.NoError(t, err, "failed to list topics")
+	_, ok := topics[topic]
+	return ok
+}
+
+// ---------------------------------------------------------------------------
+// Running the binary under test
+// ---------------------------------------------------------------------------
+
+// repoRoot resolves the checkout root from this package's directory.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
+	require.NoError(t, err)
+	return root
+}
+
+// kcpBinary returns the path to the binary the Makefile target built.
+func kcpBinary(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(repoRoot(t), "kcp")
+	_, err := os.Stat(path)
+	require.NoError(t, err, "the kcp binary is missing — run `make test-txn-discovery`, which builds it")
+	return path
+}
+
+// artifact filenames, fixed so every run's assertions look in the same place.
+const (
+	outFile   = "txn-discovery.yaml"
+	statsFile = "txn-discovery-stats.json"
+	auditFile = "txn-discovery-audit.jsonl"
+	logFile   = "kcp.log"
+)
+
+// kcpProc is a discovery run in flight.
+type kcpProc struct {
+	cmd    *exec.Cmd
+	dir    string
+	stdout *bytes.Buffer
+	stderr *bytes.Buffer
+}
+
+// startKCP launches `kcp migration txn-discovery` in its own directory.
+//
+// The directory is per-run and is where the artifacts AND kcp.log land, since
+// the root command writes the log relative to the process working directory.
+// That isolation is what lets the kcp.log assertions be about one run.
+func startKCP(t *testing.T, args ...string) *kcpProc {
+	t.Helper()
+	dir := t.TempDir()
+
+	full := append([]string{"migration", "txn-discovery"}, args...)
+	cmd := exec.Command(kcpBinary(t), full...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	require.NoError(t, cmd.Start(), "failed to start the kcp binary")
+
+	p := &kcpProc{cmd: cmd, dir: dir, stdout: &stdout, stderr: &stderr}
+	t.Cleanup(func() {
+		if p.cmd.ProcessState == nil && p.cmd.Process != nil {
+			_ = p.cmd.Process.Kill()
+			_ = p.cmd.Wait()
+		}
+	})
+	return p
+}
+
+// awaitObserving blocks until the run has begun reading the cluster.
+//
+// The consumer-offsets tail starts at LATEST, so a fixture produced before the
+// tail resolved its start offsets is invisible to producer-id correlation. The
+// run's own "starting transaction discovery" log line is the closest signal
+// available; the extra pause covers the partition discovery that follows it.
+func (p *kcpProc) awaitObserving(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(60 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(filepath.Join(p.dir, logFile))
+		if err == nil && strings.Contains(string(data), "starting transaction discovery") {
+			time.Sleep(5 * time.Second)
+			return
+		}
+		if p.cmd.ProcessState != nil {
+			t.Fatalf("the run exited before it began observing:\n%s\n%s", p.stdout.String(), p.stderr.String())
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("the run never reported that it had started observing:\n%s\n%s", p.stdout.String(), p.stderr.String())
+}
+
+// wait blocks for the run to finish and collects everything it produced.
+func (p *kcpProc) wait(t *testing.T) *runResult {
+	t.Helper()
+	err := p.cmd.Wait()
+	code := 0
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatalf("failed to wait for the kcp binary: %v", err)
+	}
+	return collect(t, p.dir, code, p.stdout.String(), p.stderr.String())
+}
+
+// runKCP runs a discovery run to completion with no fixtures produced during it.
+func runKCP(t *testing.T, args ...string) *runResult {
+	t.Helper()
+	return startKCP(t, args...).wait(t)
+}
+
+// ---------------------------------------------------------------------------
+// Artifacts
+// ---------------------------------------------------------------------------
+
+// discoveryDoc mirrors txn-discovery.yaml. It is redeclared here rather than
+// imported: the suite is a consumer of the on-disk format, and sharing the
+// producer's struct would let a field rename pass unnoticed.
+type discoveryDoc struct {
+	GeneratedBy          string           `yaml:"generated_by"`
+	GeneratedAt          string           `yaml:"generated_at"`
+	ObservationWindow    string           `yaml:"observation_window"`
+	Groups               []discoveryGroup `yaml:"groups"`
+	IndividualTopicCount int              `yaml:"individual_topic_count"`
+	IndividualTopics     []string         `yaml:"individual_topics"`
+}
+
+type discoveryGroup struct {
+	Name             string   `yaml:"name"`
+	ReadProcessWrite bool     `yaml:"read_process_write"`
+	Warning          string   `yaml:"warning"`
+	Topics           []string `yaml:"topics"`
+	TransactionalIDs []string `yaml:"transactional_ids"`
+}
+
+// auditLine mirrors one line of txn-discovery-audit.jsonl.
+type auditLine struct {
+	Timestamp time.Time `json:"timestamp"`
+	TxnID     string    `json:"transactional_id"`
+	Source    string    `json:"source"`
+	Added     []string  `json:"added"`
+	Topics    []string  `json:"topics"`
+}
+
+// runResult is everything one run left behind.
+type runResult struct {
+	dir      string
+	exitCode int
+	stdout   string
+	stderr   string
+
+	// doc is the parsed YAML, nil when the run wrote none.
+	doc *discoveryDoc
+	// audit is every parsed audit line, nil when no audit log was written.
+	audit []auditLine
+	// kcpLog is the run's log file, empty when it wrote none.
+	kcpLog string
+}
+
+// collect reads a finished run's directory.
+func collect(t *testing.T, dir string, code int, stdout, stderr string) *runResult {
+	t.Helper()
+	r := &runResult{dir: dir, exitCode: code, stdout: stdout, stderr: stderr}
+
+	if data, err := os.ReadFile(filepath.Join(dir, outFile)); err == nil {
+		var doc discoveryDoc
+		require.NoError(t, yaml.Unmarshal(data, &doc), "the discovery YAML did not parse:\n%s", data)
+		r.doc = &doc
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, auditFile)); err == nil {
+		scanner := bufio.NewScanner(bytes.NewReader(data))
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var al auditLine
+			require.NoError(t, json.Unmarshal([]byte(line), &al), "an audit line did not parse: %s", line)
+			r.audit = append(r.audit, al)
+		}
+		require.NoError(t, scanner.Err(), "failed to read the audit log")
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, logFile)); err == nil {
+		r.kcpLog = string(data)
+	}
+	return r
+}
+
+// requireSucceeded fails the test unless the run exited cleanly and wrote a
+// document, quoting the run's own output when it did not.
+func (r *runResult) requireSucceeded(t *testing.T) {
+	t.Helper()
+	require.Equal(t, 0, r.exitCode, "the discovery run failed:\nSTDOUT\n%s\nSTDERR\n%s", r.stdout, r.stderr)
+	require.NotNil(t, r.doc, "the run wrote no %s:\nSTDOUT\n%s", outFile, r.stdout)
+}
+
+// groupWith returns the group containing topic, or nil.
+func (r *runResult) groupWith(topic string) *discoveryGroup {
+	for i := range r.doc.Groups {
+		for _, tp := range r.doc.Groups[i].Topics {
+			if tp == topic {
+				return &r.doc.Groups[i]
+			}
+		}
+	}
+	return nil
+}
+
+// isIndividual reports whether topic was reported as safe to migrate alone.
+func (r *runResult) isIndividual(topic string) bool {
+	for _, tp := range r.doc.IndividualTopics {
+		if tp == topic {
+			return true
+		}
+	}
+	return false
+}
+
+// observedTopics is every topic the document names, grouped or individual.
+func (r *runResult) observedTopics() []string {
+	var out []string
+	for _, g := range r.doc.Groups {
+		out = append(out, g.Topics...)
+	}
+	return append(out, r.doc.IndividualTopics...)
+}
+
+// auditFor returns every audit line naming topic in its resulting set.
+func (r *runResult) auditFor(topic string) []auditLine {
+	var out []auditLine
+	for _, l := range r.audit {
+		for _, tp := range l.Topics {
+			if tp == topic {
+				out = append(out, l)
+				break
+			}
+		}
+	}
+	return out
+}
+
+// auditForTxn returns every audit line for one transactional id.
+func (r *runResult) auditForTxn(txnID string) []auditLine {
+	var out []auditLine
+	for _, l := range r.audit {
+		if l.TxnID == txnID {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// describe renders the run for a failure message.
+func (r *runResult) describe() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "exit=%d\n--- STDOUT ---\n%s", r.exitCode, r.stdout)
+	if r.stderr != "" {
+		fmt.Fprintf(&b, "--- STDERR ---\n%s", r.stderr)
+	}
+	if r.doc != nil {
+		fmt.Fprintf(&b, "--- GROUPS ---\n")
+		for _, g := range r.doc.Groups {
+			fmt.Fprintf(&b, "  %s rpw=%v topics=%v txns=%v\n", g.Name, g.ReadProcessWrite, g.Topics, g.TransactionalIDs)
+		}
+		fmt.Fprintf(&b, "--- INDIVIDUAL ---\n  %v\n", r.doc.IndividualTopics)
+	}
+	return b.String()
+}
+
+// ---------------------------------------------------------------------------
+// The shared observation run
+// ---------------------------------------------------------------------------
+
+// Fixture names. Every one carries the fixturePrefix.
+const (
+	// warm-up: creates __transaction_state and __consumer_offsets so that a
+	// scenario whose own fixture is missing fails on its assertion rather than
+	// on a preflight that could not find the transaction-state log.
+	warmupTxn   = fixturePrefix + "warmup-txn"
+	warmupOut   = fixturePrefix + "warmup-out"
+	warmupIn    = fixturePrefix + "warmup-in"
+	warmupGroup = fixturePrefix + "warmup-cg"
+
+	// AE1 transitive union: two transactions overlapping on unionShared.
+	unionTxnA   = fixturePrefix + "union-txn-a"
+	unionTxnB   = fixturePrefix + "union-txn-b"
+	unionAlpha  = fixturePrefix + "union-alpha"
+	unionShared = fixturePrefix + "union-shared"
+	unionGamma  = fixturePrefix + "union-gamma"
+)
+
+// TestTransitiveUnion is AE1: coupling is transitive, so two transactions that
+// share a single topic collapse into ONE group of three rather than two groups
+// of two.
+func TestTransitiveUnion(t *testing.T) {
+	r := sharedRun(t)
+
+	g := r.groupWith(unionShared)
+	require.NotNil(t, g, "the topic shared by two transactions is in no group\n%s", r.describe())
+
+	assert.ElementsMatch(t, []string{unionAlpha, unionShared, unionGamma}, g.Topics,
+		"the two transactions sharing a topic did not collapse into one group of three\n%s", r.describe())
+	assert.ElementsMatch(t, []string{unionTxnA, unionTxnB}, g.TransactionalIDs,
+		"the group does not credit both transactions that formed it\n%s", r.describe())
+
+	// The two non-shared topics must be in the SAME group, not merely in some
+	// group each: two groups of two would satisfy a weaker assertion.
+	assert.Same(t, g, r.groupWith(unionAlpha), "the first transaction's topic landed in a different group")
+	assert.Same(t, g, r.groupWith(unionGamma), "the second transaction's topic landed in a different group")
+}
+
+var (
+	sharedOnce sync.Once
+	shared     *runResult
+)
+
+// sharedRun performs one observation window covering every scenario whose
+// fixtures can coexist, and returns its artifacts.
+//
+// One window rather than one per scenario, because each window costs its full
+// --duration. The fixtures are independent by construction: distinct topic and
+// transactional-id namespaces, so grouping cannot join them and each test's
+// assertion is about its own names only. The scenarios that cannot share a run
+// — a preflight that must fail, a broker that must restart — have their own.
+func sharedRun(t *testing.T) *runResult {
+	t.Helper()
+	sharedOnce.Do(func() { shared = doSharedRun(t) })
+	require.NotNil(t, shared, "the shared discovery run did not complete; see the first failing test in this package")
+	return shared
+}
+
+func doSharedRun(t *testing.T) *runResult {
+	t.Helper()
+
+	seedBeforeWindow(t)
+
+	proc := startKCP(t,
+		"--source-bootstrap", bootstrapAddr,
+		"--use-unauthenticated-plaintext",
+		"--duration", "45s",
+		"--interval", "5s",
+		"--out", outFile,
+		"--stats-out", statsFile,
+		"--audit-log-out", auditFile,
+	)
+	proc.awaitObserving(t)
+
+	// Produced in rounds rather than once. The consumer-offsets tail starts at
+	// latest and a single-node broker's first fetch after start can land either
+	// side of a one-shot fixture; repeating an identical transaction cannot
+	// create a second group, so the redundancy costs nothing.
+	for round := 0; round < 3; round++ {
+		seedDuringWindow(t)
+		time.Sleep(5 * time.Second)
+	}
+
+	res := proc.wait(t)
+	res.requireSucceeded(t)
+	return res
+}
+
+// seedBeforeWindow produces the fixtures the transaction-state log carries.
+//
+// They can precede the run because that log is read from the BEGINNING: a
+// transaction committed before the window opened is still discovered.
+func seedBeforeWindow(t *testing.T) {
+	t.Helper()
+
+	createTopics(t, warmupOut, warmupIn)
+	// A full consume-transform-produce cycle, so both internal topics exist
+	// before any run: without __transaction_state the preflight fails, and
+	// without __consumer_offsets the offsets tail reports itself unavailable.
+	produceTxn(t, txnFixture{TxnID: warmupTxn, Produce: []string{warmupOut}, ConsumeTopic: warmupIn, Group: warmupGroup})
+
+	// AE1. Two transactions overlapping on unionShared, which the union-find
+	// must collapse into one group of three.
+	createTopics(t, unionAlpha, unionShared, unionGamma)
+	produceTxn(t, txnFixture{TxnID: unionTxnA, Produce: []string{unionAlpha, unionShared}})
+	produceTxn(t, txnFixture{TxnID: unionTxnB, Produce: []string{unionShared, unionGamma}})
+}
+
+// seedDuringWindow produces the fixtures that must land inside the observation
+// window because the consumer-offsets tail starts at latest.
+func seedDuringWindow(t *testing.T) {
+	t.Helper()
+}
