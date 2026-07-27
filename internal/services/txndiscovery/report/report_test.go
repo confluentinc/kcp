@@ -53,7 +53,7 @@ func TestSummaryRendersTheRunCounts(t *testing.T) {
 	requireContains(t, out, "transactions read      : 12 record(s) on the transaction-state log, 4 transactional id(s) observed")
 	requireContains(t, out, "transactions           : 3 committed, 1 aborted")
 	requireContains(t, out, "topics                 : 6 total — 5 in 2 groups, 1 individual")
-	requireContains(t, out, "read-process-write     : 0 groups; 0 consumed input topic(s) recovered")
+	requireContains(t, out, "read-process-write     : 0 groups; consumed inputs recovered for 0 transactions")
 }
 
 // distinctiveRun is a run whose every topic name and transactional id is a token that
@@ -213,6 +213,55 @@ func TestHealthLineWarnsOnLastStableOffsetLagButNotOnOpenTransactionBacklog(t *t
 	// on, so it must not appear as lag on the health line.
 	if strings.Contains(out, "9000") {
 		t.Errorf("open-transaction backlog was reported as reader lag\n--- summary ---\n%s", out)
+	}
+}
+
+// rpwRun is a read-process-write run in which each enrichment phase recovered the
+// inputs of exactly one transaction, so an attribution that credits whichever phase
+// merely ran is distinguishable from one that credits the phase that found the input.
+func rpwRun() Run {
+	return Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog, discovery.SourceConsumerGroups, discovery.SourceConsumerOffsets},
+		Footprints: []discovery.TxnFootprint{
+			{TxnID: "by-offsets", ReadProcessWrite: true, Topics: []string{"out-a", "in-a"},
+				Sources: []string{discovery.SourceTxnStateLog, discovery.SourceConsumerOffsets}},
+			{TxnID: "by-naming", ReadProcessWrite: true, Topics: []string{"out-b", "in-b"},
+				Sources: []string{discovery.SourceConsumerGroups, discovery.SourceTxnStateLog}},
+			{TxnID: "unenriched", ReadProcessWrite: true, Topics: []string{"out-c"},
+				Sources: []string{discovery.SourceTxnStateLog}},
+		},
+		EnrichmentActive: true,
+		Offsets:          discovery.ConsumerOffsetsStats{RecoveredTopics: []string{"in-a"}},
+		Result: grouping.Result{
+			Groups: []grouping.Group{
+				{Name: "group-1", Topics: []string{"in-a", "out-a"}, TxnIDs: []string{"by-offsets"}, ReadProcessWrite: true},
+				{Name: "group-2", Topics: []string{"in-b", "out-b"}, TxnIDs: []string{"by-naming"}, ReadProcessWrite: true},
+			},
+			IndividualTopics:       []string{"out-c"},
+			ReadProcessWriteTopics: []string{"in-a", "in-b", "out-a", "out-b", "out-c"},
+		},
+	}
+}
+
+func TestSummaryCreditsOnlyThePhaseThatActuallyRecoveredEachInput(t *testing.T) {
+	out := render(t, rpwRun())
+
+	requireContains(t, out, "read-process-write     : 2 groups; consumed inputs recovered for 2 transactions")
+	requireContains(t, out, "exact producer-id correlation via __consumer_offsets: 1 transaction, 1 input topic")
+	requireContains(t, out, "the Kafka Streams transactional.id<->group.id naming convention: 1 transaction")
+}
+
+func TestSummaryDoesNotCreditAnEnrichmentPhaseThatRecoveredNothing(t *testing.T) {
+	r := rpwRun()
+	// The offsets tail ran but correlated nothing: every recovery came from naming.
+	r.Footprints[0].Sources = []string{discovery.SourceTxnStateLog}
+	r.Offsets.RecoveredTopics = nil
+
+	out := render(t, r)
+
+	requireContains(t, out, "the Kafka Streams transactional.id<->group.id naming convention: 1 transaction")
+	if strings.Contains(out, "exact producer-id correlation via __consumer_offsets:") {
+		t.Errorf("credited the producer-id correlation phase, which recovered nothing\n--- summary ---\n%s", out)
 	}
 }
 

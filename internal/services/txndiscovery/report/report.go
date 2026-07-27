@@ -77,6 +77,118 @@ type Summary struct {
 
 	// AuditErrors is how many audit lines never reached disk.
 	AuditErrors int
+
+	// Recovery attributes recovered consumed inputs to the phase that found them.
+	Recovery Recovery
+}
+
+// Recovery records which enrichment phase actually recovered each read-process-write
+// transaction's consumed inputs.
+//
+// Attribution matters because the two phases have very different coverage: the Kafka
+// Streams naming convention only correlates applications that follow it, while
+// producer-id correlation works for any exactly-once application. Crediting a phase
+// that merely ran would tell an operator their non-Streams applications were covered
+// when nothing looked at them.
+//
+// The two phases are attributed at different granularities, and deliberately so. The
+// __consumer_offsets tail records the exact set of input topics it recovered, so it is
+// credited per topic. Consumer-group enrichment keeps no such record: the accumulator
+// unions every source's topics into one set, so once an enrichment observation has
+// merged there is no way to tell which topics it contributed. What survives is the
+// per-transaction source list, so naming is credited per transaction. Inventing a topic
+// count for it would mean guessing.
+type Recovery struct {
+	// ByOffsetsTopics are the consumed input topics producer-id correlation
+	// recovered, exactly.
+	ByOffsetsTopics []string
+
+	// ByOffsetsTxns and ByNamingTxns count the transactions each phase enriched.
+	// A transaction enriched by both is counted in each.
+	ByOffsetsTxns int
+	ByNamingTxns  int
+
+	// Txns is how many distinct transactions had inputs recovered by either phase.
+	Txns int
+
+	// OffsetsActive and EnrichmentActive report whether each phase ran, so a phase
+	// that was never enabled is not presented as having found nothing.
+	OffsetsActive    bool
+	EnrichmentActive bool
+
+	// OffsetsUnavailableReason is why the offsets tail could not run (R13).
+	OffsetsUnavailableReason string
+
+	// byTxn maps a transactional id to the phases that enriched it, which is what
+	// lets a group's warning name the mechanism that recovered ITS inputs.
+	byTxn map[string]mechanisms
+}
+
+// mechanisms is the set of enrichment phases that reported one transaction.
+type mechanisms struct {
+	byOffsets bool
+	byNaming  bool
+}
+
+func (m mechanisms) any() bool { return m.byOffsets || m.byNaming }
+
+// describe names the phases in m, or the empty string when none apply.
+func (m mechanisms) describe() string {
+	switch {
+	case m.byOffsets && m.byNaming:
+		return "exact producer-id correlation via __consumer_offsets and the Kafka Streams naming convention"
+	case m.byOffsets:
+		return "exact producer-id correlation via __consumer_offsets"
+	case m.byNaming:
+		return "the Kafka Streams transactional.id<->group.id naming convention"
+	default:
+		return ""
+	}
+}
+
+// recoveryOf derives the attribution from the per-transaction source lists.
+func recoveryOf(r Run) Recovery {
+	rec := Recovery{
+		ByOffsetsTopics:          r.Offsets.RecoveredTopics,
+		OffsetsActive:            slices.Contains(r.ActiveSources, discovery.SourceConsumerOffsets) && !r.Offsets.Unavailable,
+		EnrichmentActive:         r.EnrichmentActive,
+		OffsetsUnavailableReason: r.Offsets.UnavailableReason,
+		byTxn:                    make(map[string]mechanisms, len(r.Footprints)),
+	}
+	for _, fp := range r.Footprints {
+		var m mechanisms
+		for _, src := range fp.Sources {
+			switch src {
+			case discovery.SourceConsumerOffsets:
+				m.byOffsets = true
+			case discovery.SourceConsumerGroups:
+				m.byNaming = true
+			}
+		}
+		if !m.any() {
+			continue
+		}
+		rec.byTxn[fp.TxnID] = m
+		rec.Txns++
+		if m.byOffsets {
+			rec.ByOffsetsTxns++
+		}
+		if m.byNaming {
+			rec.ByNamingTxns++
+		}
+	}
+	return rec
+}
+
+// forGroup collapses the mechanisms that enriched any of a group's transactions.
+func (rc Recovery) forGroup(g grouping.Group) mechanisms {
+	var out mechanisms
+	for _, id := range g.TxnIDs {
+		m := rc.byTxn[id]
+		out.byOffsets = out.byOffsets || m.byOffsets
+		out.byNaming = out.byNaming || m.byNaming
+	}
+	return out
 }
 
 // Health is the three things that together say whether the window was actually
@@ -125,6 +237,7 @@ func Summarize(r Run) Summary {
 		Result:         result,
 		Health:         healthOf(r),
 		AuditErrors:    r.AuditErrors,
+		Recovery:       recoveryOf(r),
 	}
 }
 
@@ -169,8 +282,9 @@ func PrintTerminal(w io.Writer, s Summary) {
 	_, _ = fmt.Fprintf(w, "  transactions           : %d committed, %d aborted\n", s.TxnCommitted, s.TxnAborted)
 	_, _ = fmt.Fprintf(w, "  topics                 : %d total — %d in %d %s, %d individual\n",
 		groupedTopics+len(individual), groupedTopics, len(groups), plural(len(groups), "group", "groups"), len(individual))
-	_, _ = fmt.Fprintf(w, "  read-process-write     : %d %s; %d consumed input topic(s) recovered\n",
-		rpwGroups, plural(rpwGroups, "group", "groups"), 0)
+	_, _ = fmt.Fprintf(w, "  read-process-write     : %d %s; consumed inputs recovered for %d %s\n",
+		rpwGroups, plural(rpwGroups, "group", "groups"),
+		s.Recovery.Txns, plural(s.Recovery.Txns, "transaction", "transactions"))
 
 	_, _ = fmt.Fprintf(w, "  keep-up                : %s\n", s.Health.Line())
 
@@ -184,6 +298,50 @@ func PrintTerminal(w io.Writer, s Summary) {
 	}
 
 	printGroupTable(w, groups)
+
+	if len(s.Result.ReadProcessWriteTopics) > 0 {
+		printRecovery(w, s)
+	}
+}
+
+// printRecovery explains what happened to the consumed inputs of the exactly-once
+// applications observed, naming only the phases that actually recovered something.
+func printRecovery(w io.Writer, s Summary) {
+	rc := s.Recovery
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Read-process-write (exactly-once consume-transform-produce) apps detected.")
+	_, _ = fmt.Fprintf(w, "  %d %s are coupled by consume-transform-produce transactions.\n",
+		len(s.Result.ReadProcessWriteTopics), plural(len(s.Result.ReadProcessWriteTopics), "topic", "topics"))
+
+	switch {
+	case rc.Txns > 0:
+		_, _ = fmt.Fprintln(w, "  Consumed input topics were recovered and folded into their groups by:")
+		if rc.ByOffsetsTxns > 0 || len(rc.ByOffsetsTopics) > 0 {
+			_, _ = fmt.Fprintf(w, "    - exact producer-id correlation via __consumer_offsets: %d %s, %d input %s\n",
+				rc.ByOffsetsTxns, plural(rc.ByOffsetsTxns, "transaction", "transactions"),
+				len(rc.ByOffsetsTopics), plural(len(rc.ByOffsetsTopics), "topic", "topics"))
+		}
+		if rc.ByNamingTxns > 0 {
+			// No topic count: the accumulator unions every source's topics, so which
+			// of a transaction's topics enrichment contributed is not recoverable.
+			_, _ = fmt.Fprintf(w, "    - the Kafka Streams transactional.id<->group.id naming convention: %d %s\n",
+				rc.ByNamingTxns, plural(rc.ByNamingTxns, "transaction", "transactions"))
+		}
+		if !rc.OffsetsActive {
+			_, _ = fmt.Fprintln(w, "  NOTE: producer-id correlation did not run, so non-Streams exactly-once")
+			_, _ = fmt.Fprintln(w, "        applications may have unrecovered inputs — verify coverage before cutover.")
+		}
+	case rc.EnrichmentActive || rc.OffsetsActive:
+		_, _ = fmt.Fprintln(w, "  No consumed input topics were recovered: no correlatable exactly-once consumer")
+		_, _ = fmt.Fprintln(w, "  group was observed in the window. Verify inputs before cutover.")
+	default:
+		_, _ = fmt.Fprintln(w, "  Their consumed input topics are not visible through the transaction footprint")
+		_, _ = fmt.Fprintln(w, "  and may need to migrate with them. Verify inputs before cutover.")
+	}
+
+	if rc.OffsetsUnavailableReason != "" {
+		_, _ = fmt.Fprintf(w, "  NOTE: the __consumer_offsets tail could not run (%s).\n", rc.OffsetsUnavailableReason)
+	}
 }
 
 // Line renders the single health indicator the summary carries: the status, the three
