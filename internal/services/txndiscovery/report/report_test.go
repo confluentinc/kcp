@@ -193,6 +193,26 @@ func TestHealthLineIsNotOKWhenAPartitionStoppedEvenWithZeroLag(t *testing.T) {
 	requireContains(t, out, "1 partition stopped early, so part of the window went unobserved")
 }
 
+func TestHealthLineWarnsOnLastStableOffsetLagButNotOnOpenTransactionBacklog(t *testing.T) {
+	out := render(t, Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		Tail: tail.Stats{
+			PartitionsAssigned: 2,
+			PartitionsRunning:  2,
+			Lag:                750,
+			OpenTxnBacklog:     9000,
+		},
+	})
+
+	requireContains(t, out, "keep-up                : WARNING — 2/2 partitions live, 750 records of lag, 0 decode failures")
+	requireContains(t, out, "the reader did not catch up to the last stable offset, so the window was not fully observed")
+	// KTD9: the high-watermark-to-LSO gap is not something the reader can catch up
+	// on, so it must not appear as lag on the health line.
+	if strings.Contains(out, "9000") {
+		t.Errorf("open-transaction backlog was reported as reader lag\n--- summary ---\n%s", out)
+	}
+}
+
 func TestSummaryRendersAZeroStateWhenNoGroupsWereFound(t *testing.T) {
 	out := render(t, Run{
 		Duration:      time.Minute,

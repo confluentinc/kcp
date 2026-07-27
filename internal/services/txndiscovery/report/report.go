@@ -197,6 +197,9 @@ func (h Health) concerns() []string {
 		out = append(out, fmt.Sprintf("%d %s stopped early, so part of the window went unobserved",
 			dead, plural(dead, "partition", "partitions")))
 	}
+	if h.Lag > 0 {
+		out = append(out, "the reader did not catch up to the last stable offset, so the window was not fully observed")
+	}
 	if h.DecodeErrors > 0 {
 		out = append(out, "the internal record format may have drifted, so footprints may be missing")
 	}
