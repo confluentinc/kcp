@@ -227,23 +227,47 @@ func arnClusterIdentity(arn string) (name, uuid string, ok bool) {
 	return parts[0], parts[1], true
 }
 
+// arnResourcePortion returns the segment of an ARN after its last colon —
+// for a well-formed "arn:aws:kafka:<region>:<account>:<resource>" ARN this is
+// exactly the "<resource>" portion (restype/name/uuid/... or a bare "*"),
+// since none of the preceding fields (region, account) can themselves
+// contain a colon. ok is false only for a string with no colon at all (e.g.
+// the bare wildcard "*", which callers must check for separately).
+func arnResourcePortion(arn string) (string, bool) {
+	idx := strings.LastIndex(arn, ":")
+	if idx == -1 {
+		return "", false
+	}
+	return arn[idx+1:], true
+}
+
 // clusterArnMatches reports whether an IAM grant's resource ARN denotes (or
 // wildcard-covers) the given source cluster ARN, gating which grants are
 // eligible for translation at all (fix 2 over the reference, which performs
 // no cluster scoping whatsoever).
 //
+// Cluster identity (name + uuid) — not region/account — is what decides a
+// match: an MSK cluster UUID is globally unique, so region/account
+// wildcards (or even a differing region/account) must never by themselves
+// cause a match; only the cluster-name+uuid pair, or an explicit
+// all-resources wildcard, may.
+//
 // True when:
-//   - grantResourceArn is the bare wildcard "*", or
-//   - grantResourceArn contains the substring ":*" anywhere — i.e. some
-//     ARN field (region, account, or the resource path itself) is wildcarded
-//     immediately after a colon, the shape IAM policies use for
-//     "arn:aws:kafka:*:<account>:*"-style broad grants; or
+//   - grantResourceArn is the bare wildcard "*" (IAM "all resources"), or
+//   - the ARN's resource portion (everything after the 5th colon) is itself
+//     "*" (e.g. "arn:aws:kafka:*:<account>:*" — an all-resources grant that
+//     merely also wildcards region/account), or
 //   - grantResourceArn's own cluster-name+uuid (arnClusterIdentity) matches
-//     sourceClusterArn's, regardless of any other field (notably region:
-//     region is not part of an MSK cluster's identity, so a grant ARN with a
-//     different or wildcarded region but the same name+uuid still matches).
+//     sourceClusterArn's field-for-field, where a "*" on either side of the
+//     name or the uuid individually counts as a match for that field
+//     (region is deliberately excluded from this comparison — it is not
+//     part of an MSK cluster's identity, so a grant ARN with a different or
+//     wildcarded region but the same name+uuid still matches).
 func clusterArnMatches(grantResourceArn, sourceClusterArn string) bool {
-	if grantResourceArn == "*" || strings.Contains(grantResourceArn, ":*") {
+	if grantResourceArn == "*" {
+		return true
+	}
+	if portion, ok := arnResourcePortion(grantResourceArn); ok && portion == "*" {
 		return true
 	}
 
@@ -255,7 +279,10 @@ func clusterArnMatches(grantResourceArn, sourceClusterArn string) bool {
 	if !ok {
 		return false
 	}
-	return grantName == sourceName && grantUUID == sourceUUID
+
+	nameMatches := grantName == "*" || grantName == sourceName
+	uuidMatches := grantUUID == "*" || grantUUID == sourceUUID
+	return nameMatches && uuidMatches
 }
 
 // arnRestypeToResourceType maps an ARN's "<restype>/" segment spelling

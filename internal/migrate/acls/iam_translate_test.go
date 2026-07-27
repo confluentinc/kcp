@@ -198,6 +198,35 @@ func TestClusterArnMatches(t *testing.T) {
 			cluster: cluster,
 			want:    false,
 		},
+		{
+			// The over-migration bug: a region-wildcarded ARN naming a
+			// DIFFERENT cluster contains the substring ":*" (from
+			// "kafka:*:...") but must NOT match just because of that —
+			// cluster identity (name+uuid), not the presence of any ":*"
+			// wildcard, is what decides.
+			name:    "region wildcard on a DIFFERENT cluster does not match (over-migration bug)",
+			grant:   "arn:aws:kafka:*:123456789012:topic/OTHER/zzz-9/x",
+			cluster: cluster,
+			want:    false,
+		},
+		{
+			name:    "region wildcard on the SAME cluster (trailing resource wildcard) matches",
+			grant:   "arn:aws:kafka:*:123456789012:topic/mymsk/abc-5/*",
+			cluster: cluster,
+			want:    true,
+		},
+		{
+			name:    "resource portion fully wildcarded (arn:aws:kafka:*:account:*) matches any cluster",
+			grant:   "arn:aws:kafka:*:123456789012:*",
+			cluster: cluster,
+			want:    true,
+		},
+		{
+			name:    "bare wildcard \"*\" matches any cluster",
+			grant:   "*",
+			cluster: cluster,
+			want:    true,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
