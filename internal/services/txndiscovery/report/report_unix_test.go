@@ -34,6 +34,18 @@ func requireMode0600(t *testing.T, path string) {
 	}
 }
 
+func TestStatsJSONIsWritten0600(t *testing.T) {
+	withPermissiveUmask(t)
+
+	// The stats document is NOT a counts-only file: it carries every observed
+	// transaction's id and topic set, so the POC's 0644 must not port across.
+	path := filepath.Join(t.TempDir(), "txn-discovery-stats.json")
+	if err := WriteStatsJSON(path, distinctiveRun()); err != nil {
+		t.Fatalf("WriteStatsJSON: %v", err)
+	}
+	requireMode0600(t, path)
+}
+
 func TestYAMLIsWritten0600(t *testing.T) {
 	withPermissiveUmask(t)
 
