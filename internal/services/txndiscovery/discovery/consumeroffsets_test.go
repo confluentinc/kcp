@@ -308,3 +308,31 @@ func TestAnUnresolvedProducerStaysBufferedAndThenEmitsExactlyOnce(t *testing.T) 
 
 	assert.Empty(t, flush(t, tl), "a resolved sighting must not be re-emitted")
 }
+
+func TestManyCommitsFromOneProducerMergeIntoASortedDeduplicatedTopicSet(t *testing.T) {
+	// One producer commits an offset per consumed topic-partition, on every
+	// transaction, for the whole window — so the same topic arrives hundreds of
+	// times across many batches. They must union into one set rather than a
+	// list with repeats, and the order must be stable: the YAML and the audit
+	// trail are diffed between runs, and Go randomises map iteration, so an
+	// unsorted set would churn the artifacts over identical observations.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	// Arriving out of order, across separate batches, with repeats.
+	tl.HandleBatch(commitBatch(4242,
+		commitKey("payments-group", "zeta.in", 0),
+		commitKey("payments-group", "orders.in", 0),
+	))
+	tl.HandleBatch(commitBatch(4242,
+		commitKey("payments-group", "orders.in", 1), // same topic, another partition
+		commitKey("payments-group", "alpha.in", 0),
+		commitKey("payments-group", "zeta.in", 3),
+	))
+
+	got := flush(t, tl)
+
+	require.Len(t, got, 1, "one producer yields one observation, not one per commit")
+	assert.Equal(t, []string{"alpha.in", "orders.in", "zeta.in"}, got[0].Topics)
+}
