@@ -100,3 +100,50 @@ func TestTxnDiscovery_ScramWithoutCredentials_Rejected(t *testing.T) {
 		})
 	}
 }
+
+// R6: NewKafkaClient discards the mechanism error (it is assigned to _), so an
+// unsupported mechanism there silently produces a client that cannot
+// authenticate. Validation therefore has to happen during flag handling.
+func TestTxnDiscovery_UnsupportedScramMechanism_Rejected(t *testing.T) {
+	for _, mechanism := range []string{"SHA1", "sha512", "PLAIN", ""} {
+		t.Run("mechanism="+mechanism, func(t *testing.T) {
+			resetFlags()
+
+			cmd := NewMigrationTxnDiscoveryCmd()
+			cmd.SetArgs([]string{
+				"--source-bootstrap", "broker:9092",
+				"--use-sasl-scram",
+				"--sasl-scram-username", "reader",
+				"--sasl-scram-password", "hunter2",
+				"--sasl-scram-mechanism", mechanism,
+			})
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--sasl-scram-mechanism")
+			assert.Contains(t, err.Error(), "SHA256")
+			assert.Contains(t, err.Error(), "SHA512")
+		})
+	}
+}
+
+// R6: the two mechanisms kcp supports pass validation. Without this the previous
+// test is satisfied by rejecting every mechanism.
+func TestTxnDiscovery_SupportedScramMechanism_Accepted(t *testing.T) {
+	for _, mechanism := range []string{"SHA256", "SHA512"} {
+		t.Run("mechanism="+mechanism, func(t *testing.T) {
+			resetFlags()
+
+			cmd := NewMigrationTxnDiscoveryCmd()
+			cmd.SetArgs([]string{
+				"--source-bootstrap", "broker:9092",
+				"--use-sasl-scram",
+				"--sasl-scram-username", "reader",
+				"--sasl-scram-password", "hunter2",
+				"--sasl-scram-mechanism", mechanism,
+			})
+
+			require.NoError(t, cmd.Execute())
+		})
+	}
+}

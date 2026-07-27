@@ -3,6 +3,8 @@
 package txndiscovery
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -106,6 +108,17 @@ func preRunTxnDiscovery(cmd *cobra.Command, args []string) error {
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
+
+		// NewKafkaClient assigns the SCRAM configuration error to _, so an
+		// unsupported mechanism there yields a client that simply cannot
+		// authenticate, reported as a connection failure hours of debugging
+		// away from its cause. Validate it here, while it is still a flag.
+		switch saslScramMechanism {
+		case "SHA256", "SHA512":
+			// supported
+		default:
+			return fmt.Errorf("invalid --sasl-scram-mechanism %q: must be SHA256 or SHA512", saslScramMechanism)
+		}
 	}
 
 	return nil
