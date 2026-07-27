@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/stretchr/testify/assert"
@@ -722,4 +724,138 @@ func TestWithNoProbeConfiguredTheTailRunsNormally(t *testing.T) {
 
 	require.Len(t, flush(t, tl), 1)
 	assert.False(t, tl.Stats().Unavailable)
+}
+
+// --- integration with the tail's abort filter --------------------------------
+
+// offsetsFakeClient is a tail.Client that serves one canned fetch response and
+// then nothing. It exists so this suite can drive a REAL tail.Tail: the abort
+// filter is the tail's, and the guarantee this unit depends on only holds across
+// the two of them.
+type offsetsFakeClient struct {
+	topic string
+	mu    sync.Mutex
+	calls int
+	first *sarama.FetchResponse
+}
+
+func (f *offsetsFakeClient) Partitions(string) ([]int32, error) { return []int32{0}, nil }
+
+func (f *offsetsFakeClient) Offset(string, int32, tail.StartPosition) (int64, error) { return 0, nil }
+
+func (f *offsetsFakeClient) Leader(string, int32) (tail.Leader, error) {
+	return tail.Leader{ID: 1, Addr: "b1:9092", FetchVersion: 11}, nil
+}
+
+func (f *offsetsFakeClient) RefreshMetadata(...string) error { return nil }
+
+func (f *offsetsFakeClient) Fetch(_ tail.Leader, spec tail.FetchSpec) (*sarama.FetchResponse, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls++
+	if spec.Offset == 0 && f.calls == 1 {
+		return f.first, nil
+	}
+	empty := &sarama.FetchResponse{Version: 11}
+	empty.AddError(f.topic, 0, sarama.ErrNoError)
+	empty.SetLastStableOffset(f.topic, 0, 2)
+	return empty, nil
+}
+
+func TestAnOffsetCommitBelongingToAnAbortedTransactionProducesNoObservation(t *testing.T) {
+	// Zombie fencing and rebalance-driven aborts are routine on an exactly-once
+	// cluster, so rolled-back offset commits are not an edge case — and
+	// ReadCommitted does NOT remove them at the wire level. Crediting one would
+	// report an input the application never actually consumed in that
+	// transaction, and the operator would migrate a topic into a group on the
+	// strength of work that was undone.
+	//
+	// The filter itself lives in the tail component, so this drives a real
+	// tail.Tail rather than calling HandleBatch: the guarantee only holds across
+	// the two together, and that seam is exactly what a unit test of either half
+	// alone would miss.
+	const topic = DefaultConsumerOffsetsTopic
+	const abortedPID, committedPID int64 = 4242, 5555
+
+	resp := &sarama.FetchResponse{Version: 11}
+	resp.AddError(topic, 0, sarama.ErrNoError)
+	resp.SetLastStableOffset(topic, 0, 2)
+	blk := resp.GetBlock(topic, 0)
+	blk.HighWaterMarkOffset = 2
+	blk.AbortedTransactions = []*sarama.AbortedTransaction{
+		{ProducerID: abortedPID, FirstOffset: 0},
+	}
+	addOffsetsBatch(resp, topic, offsetsBatch(0, abortedPID, commitKey("aborted-group", "rolled.back.in", 0)))
+	addOffsetsBatch(resp, topic, offsetsBatch(1, committedPID, commitKey("ok-group", "committed.in", 0)))
+
+	cat := NewTxnCatalog()
+	cat.Observe("txn-aborted", abortedPID)
+	cat.Observe("txn-committed", committedPID)
+
+	fake := &offsetsFakeClient{topic: topic, first: resp}
+	tl := tail.New(fake, tail.Options{
+		Sleep: func(context.Context, time.Duration) { time.Sleep(time.Millisecond) },
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	batches, err := tl.Start(ctx, []tail.TopicSpec{{Topic: topic, Start: tail.StartLatest}})
+	require.NoError(t, err)
+
+	co := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{Interval: time.Hour})
+	out := make(chan Observation, 16)
+	done := make(chan error, 1)
+	go func() { done <- co.Run(ctx, batches, out) }()
+
+	// Wait for the committed batch to arrive, then end the window.
+	require.Eventually(t, func() bool { return co.Stats().RecordsSeen >= 1 },
+		5*time.Second, 5*time.Millisecond, "the tail never delivered the committed batch")
+	cancel()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after the tail closed its channel")
+	}
+	close(out)
+
+	var got []Observation
+	for obs := range out {
+		got = append(got, obs)
+	}
+
+	// The abort filter really engaged — without this the test would also pass if
+	// the tail had simply never served the aborted batch.
+	require.Equal(t, int64(1), tl.Stats().AbortedBatches, "the aborted batch must have been filtered, not merely absent")
+
+	require.Len(t, got, 1, "only the committed transaction's input is recovered")
+	assert.Equal(t, "txn-committed", got[0].TxnID)
+	assert.Equal(t, []string{"committed.in"}, got[0].Topics)
+	assert.NotContains(t, co.Stats().RecoveredTopics, "rolled.back.in")
+}
+
+// offsetsBatch builds a transactional record batch carrying one offset-commit
+// record per key.
+func offsetsBatch(firstOffset int64, producerID int64, keys ...[]byte) *sarama.RecordBatch {
+	rb := &sarama.RecordBatch{
+		Version:         2,
+		FirstOffset:     firstOffset,
+		LastOffsetDelta: int32(len(keys) - 1),
+		ProducerID:      producerID,
+		ProducerEpoch:   1,
+		IsTransactional: true,
+	}
+	for i, k := range keys {
+		rb.Records = append(rb.Records, &sarama.Record{
+			OffsetDelta: int64(i),
+			Key:         k,
+			Value:       []byte{0, 1},
+		})
+	}
+	return rb
+}
+
+func addOffsetsBatch(r *sarama.FetchResponse, topic string, rb *sarama.RecordBatch) {
+	blk := r.GetBlock(topic, 0)
+	blk.RecordsSet = append(blk.RecordsSet, &sarama.Records{RecordBatch: rb})
 }
