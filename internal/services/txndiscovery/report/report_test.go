@@ -355,6 +355,26 @@ func TestYAMLCarriesEveryTopicNameAndTransactionalID(t *testing.T) {
 	}
 }
 
+func TestYAMLClaimsNeitherPOCStatusNorThatItDrivesMigration(t *testing.T) {
+	_, body := writeYAML(t, distinctiveRun())
+
+	// Nothing in kcp reads this document; presenting it as an input to an automated
+	// migration, or leaving a field for the operator to complete before migrating,
+	// promises a workflow that does not exist.
+	for _, banned := range []string{
+		"POC",
+		"bootstrap_url",
+		"before migrating",
+		"drive an automated migration",
+		"provisional",
+		"roadmap",
+	} {
+		if strings.Contains(body, banned) {
+			t.Errorf("yaml contains %q\n--- yaml ---\n%s", banned, body)
+		}
+	}
+}
+
 // groupLines returns the rendered group rows in the order they appear, so ordering can
 // be asserted without pinning the surrounding prose.
 func groupLines(out string) []string {
