@@ -573,7 +573,125 @@ const (
 	abortedGroup = fixturePrefix + "abort-consumer"
 	abortedIn    = fixturePrefix + "aborted-in"
 	abortedOut   = fixturePrefix + "aborted-out"
+
+	// AE6/AE7. A transaction-state topic name that does not exist and must not
+	// come to exist.
+	ghostTxnStateTopic = fixturePrefix + "ghost-txn-state"
 )
+
+// TestPreflightDeniesUnreadableTxnStateAndWritesNothing is AE6: when the
+// transaction-state log cannot be read the command fails fast, exits non-zero,
+// and leaves no artifact behind.
+//
+// Writing nothing is the half that matters. A zero-group txn-discovery.yaml
+// from a run that never read anything is indistinguishable from a genuine
+// finding that the cluster has no transactional coupling — and an operator
+// acting on it would migrate coupled topics apart.
+//
+// The denial is provoked by naming a topic that does not exist rather than by
+// revoking an ACL: this broker runs no authorizer, so an existing-but-forbidden
+// __transaction_state is not expressible here. See the note in the package
+// README of scenarios — the ACL branch of the preflight is covered by U11's
+// unit tests instead.
+func TestPreflightDeniesUnreadableTxnStateAndWritesNothing(t *testing.T) {
+	require.False(t, topicExists(t, ghostTxnStateTopic),
+		"the fixture topic already exists, so the preflight would not be denied")
+
+	r := runKCP(t,
+		"--source-bootstrap", bootstrapAddr,
+		"--use-unauthenticated-plaintext",
+		"--duration", "30s",
+		"--interval", "5s",
+		"--txn-state-topic", ghostTxnStateTopic,
+		"--out", outFile,
+		"--stats-out", statsFile,
+		"--audit-log-out", auditFile,
+	)
+
+	assert.NotEqual(t, 0, r.exitCode, "an unreadable transaction-state log did not fail the run\n%s", r.describe())
+
+	// It must fail FAST — at the preflight, not after holding the window open.
+	// The run above asked for 30 seconds; a preflight that ran anyway would be
+	// visible as a summary.
+	assert.NotContains(t, r.stdout, "Transaction discovery summary",
+		"the run printed a summary despite failing preflight\n%s", r.describe())
+
+	// The message has to tell the operator which of the two causes it was. An
+	// unknown topic is a typo in a flag; an authorization failure is a missing
+	// grant. Reporting both the same way sends them to the wrong fix.
+	combined := r.stdout + r.stderr
+	assert.Contains(t, combined, "--txn-state-topic",
+		"the failure does not name the flag responsible\n%s", r.describe())
+	assert.Contains(t, combined, "does not exist",
+		"the failure does not distinguish an unknown topic from an authorization problem\n%s", r.describe())
+
+	for _, name := range []string{outFile, statsFile, auditFile} {
+		assert.NotContains(t, r.files, name,
+			"a failed preflight still wrote %s (files: %v)", name, r.files)
+	}
+	// kcp.log is the exception, and its presence is also what proves the
+	// assertions above are about a run that actually happened.
+	assert.Contains(t, r.files, logFile, "the run wrote no kcp.log, so it may not have run at all")
+}
+
+// TestNoTopicCreationOnProbe is AE7: probing a topic that does not exist must
+// not bring it into existence, on a broker whose own auto-create is ON.
+//
+// sarama defaults Metadata.AllowAutoTopicCreation to true and kcp never set it,
+// so any topic-scoped metadata request could materialise the topic it asked
+// about. For a command whose entire job is to probe internal topic names by
+// name, that turns a read-only discovery tool into one that mutates the cluster
+// it is inspecting. U1 closed it in the shared client construction; this is the
+// proof against a real broker.
+func TestNoTopicCreationOnProbe(t *testing.T) {
+	// Non-vacuity, and the reason compose leaves auto-create ON. If the broker
+	// would refuse to create a topic anyway, the whole scenario proves nothing
+	// about kcp's client-side guard.
+	requireBrokerAutoCreatesTopics(t)
+
+	require.False(t, topicExists(t, ghostTxnStateTopic),
+		"the probe target already exists, so its absence afterwards would prove nothing")
+
+	r := runKCP(t,
+		"--source-bootstrap", bootstrapAddr,
+		"--use-unauthenticated-plaintext",
+		"--duration", "30s",
+		"--interval", "5s",
+		"--txn-state-topic", ghostTxnStateTopic,
+		"--out", outFile,
+	)
+	require.NotEqual(t, 0, r.exitCode, "the probe did not fail, so the topic may simply have been created and read\n%s", r.describe())
+
+	// Checked with an independent admin client, and by listing rather than by
+	// asking about the name: a topic-scoped metadata request is exactly the
+	// thing that can create a topic, so a verifier that asked that way could
+	// create the very topic it is checking for.
+	assert.False(t, topicExists(t, ghostTxnStateTopic),
+		"probing a nonexistent topic created it on a broker with auto-create enabled")
+}
+
+// requireBrokerAutoCreatesTopics proves the broker under test really does
+// create a topic in response to a topic-scoped metadata request, by doing
+// exactly that with a client that permits it.
+func requireBrokerAutoCreatesTopics(t *testing.T) {
+	t.Helper()
+
+	canary := fmt.Sprintf("%sautocreate-canary-%d", fixturePrefix, time.Now().UnixNano())
+	require.False(t, topicExists(t, canary), "the canary topic already exists")
+
+	cfg := baseConfig()
+	cfg.Metadata.AllowAutoTopicCreation = true
+	client, err := sarama.NewClient([]string{bootstrapAddr}, cfg)
+	require.NoError(t, err, "failed to create the auto-create canary client")
+	defer func() { _ = client.Close() }()
+
+	// A topic-scoped metadata request. The error is ignored: an unknown topic
+	// is reported as an error on the same response that causes the creation.
+	_ = client.RefreshMetadata(canary)
+
+	require.Eventually(t, func() bool { return topicExists(t, canary) }, 20*time.Second, 500*time.Millisecond,
+		"the broker did NOT auto-create a topic from a metadata request, so the no-auto-create scenario would be vacuous — check KAFKA_AUTO_CREATE_TOPICS_ENABLE in docker-compose.yml")
+}
 
 // TestSummaryCarriesNoTopicNames is R16's abuse case: the terminal reports
 // counts, never names.
