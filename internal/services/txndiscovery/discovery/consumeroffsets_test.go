@@ -1,6 +1,7 @@
 package discovery
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -448,4 +449,80 @@ func TestASustainedStreamOfUnresolvableCommitsDoesNotGrowThePendingBufferWithout
 	}
 	sort.Strings(survived)
 	assert.Equal(t, []string{"topic-07", "topic-08", "topic-09", "topic-10"}, survived)
+}
+
+func TestAnUnresolvedSightingAgesOutAfterAMultipleOfTheInterval(t *testing.T) {
+	// The entry cap alone only engages once the buffer is full, which on a
+	// moderately busy cluster may be never — so a run can still carry thousands
+	// of sightings from the first minute for hours, none of which will ever
+	// resolve. Ageing them out keeps the buffer proportional to what is
+	// plausibly still in flight rather than to the length of the run.
+	//
+	// The TTL is a multiple of the resolve interval, not an absolute duration,
+	// because the interval is what sets how many chances a sighting gets.
+	const interval = time.Second
+	start := time.Now()
+	now := start
+
+	cat := NewTxnCatalog()
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{
+		Interval:            interval,
+		PendingTTLIntervals: 3,
+		Now:                 func() time.Time { return now },
+	})
+
+	tl.HandleBatch(commitBatch(1, commitKey("g", "old.in", 0)))
+	now = start.Add(2 * interval)
+	tl.HandleBatch(commitBatch(2, commitKey("g", "new.in", 0)))
+
+	// A pass three and a half intervals after the first sighting: it is past its
+	// three-interval TTL, the second — two intervals younger — is not.
+	now = start.Add(3*interval + interval/2)
+	out := make(chan Observation, 8)
+	tl.resolveAndFlush(context.Background(), out)
+
+	st := tl.Stats()
+	assert.Equal(t, 1, st.PendingProducers)
+	assert.Equal(t, int64(1), st.PendingEvicted, "an aged-out sighting is counted, not silently lost")
+
+	// The survivor is the younger one, not an arbitrary one.
+	got := tl.resolveWith(map[int64]string{1: "txn-1", 2: "txn-2"}, now)
+	require.Len(t, got, 1)
+	assert.Equal(t, "txn-2", got[0].TxnID)
+	assert.Equal(t, []string{"new.in"}, got[0].Topics)
+}
+
+func TestAResolvePassResolvesBeforeItExpires(t *testing.T) {
+	// Ordering inside one pass is load-bearing. A sighting that has just reached
+	// its TTL may be exactly the one the __transaction_state reader has finally
+	// caught up to — expiring first would discard a recovery on the very pass
+	// that could have made it, and the loss would be invisible except as an
+	// eviction count.
+	const interval = time.Second
+	start := time.Now()
+	now := start
+
+	cat := NewTxnCatalog()
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{
+		Interval:            interval,
+		PendingTTLIntervals: 2,
+		Now:                 func() time.Time { return now },
+	})
+	tl.HandleBatch(commitBatch(7, commitKey("g", "late.in", 0)))
+
+	// The catalog catches up only now, well past the sighting's TTL.
+	cat.Observe("late-txn", 7)
+	now = start.Add(10 * interval)
+
+	out := make(chan Observation, 8)
+	tl.resolveAndFlush(context.Background(), out)
+	close(out)
+
+	var got []Observation
+	for obs := range out {
+		got = append(got, obs)
+	}
+	require.Len(t, got, 1, "a resolvable sighting must not be expired out from under the join")
+	assert.Equal(t, "late-txn", got[0].TxnID)
+	assert.Zero(t, tl.Stats().PendingEvicted)
 }

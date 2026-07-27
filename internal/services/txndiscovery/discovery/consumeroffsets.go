@@ -30,6 +30,23 @@ const finalFlushTimeout = 10 * time.Second
 // a few hundred bytes — so the cap bounds this buffer in the low tens of MiB.
 const DefaultMaxPendingProducers = 20000
 
+// DefaultResolveInterval is how often buffered sightings are resolved against
+// the catalog. Resolution is a map lookup per pending entry, so the cadence is
+// set by how promptly a recovery should reach the audit trail rather than by
+// cost.
+const DefaultResolveInterval = 30 * time.Second
+
+// DefaultPendingTTLIntervals is how many resolve intervals a sighting may go
+// unresolved before it is dropped.
+//
+// The entry cap alone only engages once the buffer is full, which on a
+// moderately busy cluster may be never — so without a TTL a run keeps every
+// sighting from its first minute for hours. Ten intervals is deliberately
+// generous: the __transaction_state reader starts at the log's beginning and
+// can take many minutes to reach the present on a large partition, and every
+// sighting dropped before it gets there is a recovery lost.
+const DefaultPendingTTLIntervals = 10
+
 // ConsumerOffsetsTail recovers the CONSUMED (input) topics of exactly-once
 // applications by joining transactional offset commits to transactions on the
 // record-batch producer id.
@@ -53,6 +70,9 @@ type ConsumerOffsetsTail struct {
 	keyDecodeErrors atomic.Int64
 
 	maxPending int
+	interval   time.Duration
+	pendingTTL time.Duration
+	now        func() time.Time
 
 	mu sync.Mutex
 	// pending holds sightings not yet resolved to a transaction: producer id ->
@@ -65,13 +85,20 @@ type ConsumerOffsetsTail struct {
 	order []pendingRef
 	// seq numbers pending entries in creation order.
 	seq uint64
-	// evictedByCapacity counts entries dropped because the buffer was full.
-	evictedByCapacity int64
+	// evicted counts sightings dropped without ever resolving — because the
+	// buffer was full, or because they aged out.
+	evicted int64
 }
 
 // pendingCommits is one producer's unresolved sighting.
 type pendingCommits struct {
 	topics map[string]struct{}
+	// firstSeen is when this producer was first buffered. The TTL runs from
+	// here rather than from the last commit, because the question a sighting
+	// ages out on is "has its transaction shown up yet?", and a producer that
+	// keeps committing without ever being catalogued is exactly the case the
+	// buffer must not hold forever.
+	firstSeen time.Time
 	// seq is this entry's position in creation order. A producer that resolves
 	// and then commits again gets a new one, so a stale order entry naming the
 	// same producer id cannot evict the fresh sighting.
@@ -97,6 +124,20 @@ type ConsumerOffsetsOptions struct {
 	// Past it the longest-waiting entries are dropped and counted. Defaults to
 	// DefaultMaxPendingProducers.
 	MaxPendingProducers int
+
+	// Interval is the cadence at which buffered sightings are resolved against
+	// the catalog and flushed. Defaults to DefaultResolveInterval.
+	Interval time.Duration
+
+	// PendingTTLIntervals is how many resolve intervals a sighting may go
+	// unresolved before it is dropped. Expressed as a multiple of Interval
+	// rather than as a duration because the interval is what sets how many
+	// chances a sighting gets. Defaults to DefaultPendingTTLIntervals.
+	PendingTTLIntervals int
+
+	// Now is the clock, injectable so the suite does not wait on real time.
+	// Defaults to time.Now.
+	Now func() time.Time
 }
 
 // NewConsumerOffsetsTail builds a tail consumer over the shared catalog the
@@ -108,10 +149,22 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 	if opts.MaxPendingProducers <= 0 {
 		opts.MaxPendingProducers = DefaultMaxPendingProducers
 	}
+	if opts.Interval <= 0 {
+		opts.Interval = DefaultResolveInterval
+	}
+	if opts.PendingTTLIntervals <= 0 {
+		opts.PendingTTLIntervals = DefaultPendingTTLIntervals
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
 	return &ConsumerOffsetsTail{
 		catalog:    catalog,
 		topic:      opts.Topic,
 		maxPending: opts.MaxPendingProducers,
+		interval:   opts.Interval,
+		pendingTTL: time.Duration(opts.PendingTTLIntervals) * opts.Interval,
+		now:        opts.Now,
 		pending:    make(map[int64]*pendingCommits),
 	}
 }
@@ -144,7 +197,7 @@ func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
 	return ConsumerOffsetsStats{
 		KeyDecodeErrors:  t.keyDecodeErrors.Load(),
 		PendingProducers: len(t.pending),
-		PendingEvicted:   t.evictedByCapacity,
+		PendingEvicted:   t.evicted,
 	}
 }
 
@@ -228,7 +281,11 @@ func (t *ConsumerOffsetsTail) recordCommit(pid int64, topic string) {
 			t.evictOldestLocked()
 		}
 		t.seq++
-		e = &pendingCommits{topics: make(map[string]struct{}), seq: t.seq}
+		e = &pendingCommits{
+			topics:    make(map[string]struct{}),
+			firstSeen: t.now(),
+			seq:       t.seq,
+		}
 		t.pending[pid] = e
 		t.order = append(t.order, pendingRef{pid: pid, seq: e.seq})
 		t.compactOrderLocked()
@@ -248,7 +305,7 @@ func (t *ConsumerOffsetsTail) evictOldestLocked() {
 		// replaced by a later sighting from the same producer.
 		if e, ok := t.pending[ref.pid]; ok && e.seq == ref.seq {
 			delete(t.pending, ref.pid)
-			t.evictedByCapacity++
+			t.evicted++
 			return
 		}
 	}
@@ -287,12 +344,42 @@ func (t *ConsumerOffsetsTail) FinalFlush(out chan<- Observation) {
 // the shared catalog and emits an observation for every pending sighting that
 // now resolves.
 func (t *ConsumerOffsetsTail) resolveAndFlush(ctx context.Context, out chan<- Observation) {
-	for _, obs := range t.resolveWith(t.catalog.ProducerIDToTxnID(), time.Now()) {
+	now := t.now()
+	observations := t.resolveWith(t.catalog.ProducerIDToTxnID(), now)
+	// Expire AFTER resolving, never before. A sighting that has just reached its
+	// TTL may be exactly the one the __transaction_state reader has finally
+	// caught up to; expiring first would discard a recovery on the very pass
+	// that could have made it, visible only as an eviction count.
+	t.expire(now)
+
+	for _, obs := range observations {
 		select {
 		case out <- obs:
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+// expire drops pending sightings that have gone unresolved for longer than the
+// TTL. Entries are held oldest-first, so the walk stops at the first survivor.
+func (t *ConsumerOffsetsTail) expire(now time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for len(t.order) > 0 {
+		ref := t.order[0]
+		e, ok := t.pending[ref.pid]
+		if !ok || e.seq != ref.seq {
+			// A stale reference to an entry that resolved or was replaced.
+			t.order = t.order[1:]
+			continue
+		}
+		if now.Sub(e.firstSeen) <= t.pendingTTL {
+			return
+		}
+		t.order = t.order[1:]
+		delete(t.pending, ref.pid)
+		t.evicted++
 	}
 }
 
