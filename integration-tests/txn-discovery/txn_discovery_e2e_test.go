@@ -180,13 +180,27 @@ func commitGroupOffsets(t *testing.T, group, topic string) {
 
 	om, err := sarama.NewOffsetManagerFromClient(group, client)
 	require.NoError(t, err, "failed to create an offset manager")
-	defer func() { _ = om.Close() }()
 
 	pom, err := om.ManagePartition(topic, 0)
 	require.NoError(t, err, "failed to manage the partition's offsets")
 	pom.MarkOffset(1, "")
 	om.Commit()
-	require.NoError(t, pom.Close(), "failed to close the partition offset manager")
+
+	// om.Close(), never pom.Close(). With AutoCommit disabled sarama never
+	// starts the offset manager's main loop, and it is that loop which releases
+	// a partition manager and closes the error channel pom.Close() drains — so
+	// pom.Close() deadlocks. om.Close() releases every partition manager itself.
+	require.NoError(t, om.Close(), "failed to close the offset manager")
+
+	// The fixture verifies itself. A commit that silently did not land would
+	// make the enrichment scenario fail for a reason three components away from
+	// the one under test.
+	admin := newAdmin(t)
+	resp, err := admin.ListConsumerGroupOffsets(group, nil)
+	require.NoError(t, err, "failed to read back the committed offsets")
+	block := resp.GetBlock(topic, 0)
+	require.NotNil(t, block, "the offset commit did not land: the group has no offset for the topic")
+	require.GreaterOrEqual(t, block.Offset, int64(0), "the offset commit did not land: the group's offset is unset")
 }
 
 // topicExists reports whether the broker has topic, using a listing rather than
@@ -506,7 +520,44 @@ const (
 	streamsTxn   = streamsGroup + "-0_0"
 	streamsIn    = fixturePrefix + "streams-in"
 	streamsOut   = fixturePrefix + "streams-out"
+
+	// AE4 exact correlation where naming fails. The group id and the
+	// transactional id are deliberately unrelated words: "orders" shares no
+	// prefix with "quibble", so correlateByStreamsConvention cannot match them
+	// and only the record-batch producer id can.
+	ordersTxn   = fixturePrefix + "orders-txn-77"
+	ordersGroup = fixturePrefix + "quibble-consumer"
+	ordersIn    = fixturePrefix + "orders-in"
+	ordersOut   = fixturePrefix + "orders-out"
 )
+
+// TestProducerIDRecoversConsumedInput is AE4: a non-Streams exactly-once
+// application whose group id bears no naming relationship to its transactional
+// id still has its consumed input folded into the produced group, joined on the
+// record-batch producer id.
+//
+// This is the scenario the whole raw-Broker.Fetch decision exists for: sarama's
+// consumer API discards the batch header, so nothing above it can see the
+// producer id that makes this join possible.
+func TestProducerIDRecoversConsumedInput(t *testing.T) {
+	r := sharedRun(t)
+
+	// Guard the premise rather than assume it: if the names DID correlate, the
+	// test would pass through the naming path and prove nothing about
+	// producer-id correlation.
+	require.False(t, strings.HasPrefix(ordersTxn, ordersGroup+"-"),
+		"the fixture names correlate by the Streams convention, so this test cannot isolate producer-id correlation")
+
+	g := r.groupWith(ordersOut)
+	require.NotNil(t, g, "the produced output topic is in no group\n%s", r.describe())
+
+	assert.Contains(t, g.Topics, ordersIn,
+		"the consumed input was not recovered by producer-id correlation\n%s", r.describe())
+	assert.True(t, g.ReadProcessWrite,
+		"a group whose inputs came from a transactional offset commit is not marked read-process-write\n%s", r.describe())
+	assert.Contains(t, g.Warning, "producer-id correlation",
+		"the group's warning does not credit producer-id correlation\n%s", r.describe())
+}
 
 // TestStreamsNamingRecoversConsumedInput is AE3: a transaction's footprint
 // names only what it PRODUCED, so the consumed input has to be recovered from
@@ -632,6 +683,13 @@ func seedBeforeWindow(t *testing.T) {
 	// AE2. One transaction, one topic: nothing to couple it to.
 	createTopics(t, soloTopic)
 	produceTxn(t, txnFixture{TxnID: soloTxn, Produce: []string{soloTopic}})
+
+	// AE3. The offsets are committed OUTSIDE the transaction, so producer-id
+	// correlation cannot see them and only the naming convention can join the
+	// group's input to the transaction's output.
+	createTopics(t, streamsIn, streamsOut)
+	commitGroupOffsets(t, streamsGroup, streamsIn)
+	produceTxn(t, txnFixture{TxnID: streamsTxn, Produce: []string{streamsOut}})
 }
 
 // seedDuringWindow produces the fixtures that must land inside the observation
