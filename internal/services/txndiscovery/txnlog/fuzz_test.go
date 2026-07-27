@@ -40,14 +40,23 @@ const (
 	// the fixed decoder ceiling and every legitimate footprint, which allocate in the
 	// tens of kilobytes. Above it: the finding-2 regression, which allocated 40.0x its
 	// input (41943280 bytes from 1048597) — reverting that fix has to make this target
-	// fail, and at 12 it does, with room to spare.
+	// fail on the pocCountAmplification seed, and at 12 it does, with room to spare.
 	//
-	// It is deliberately NOT the decoder's structural worst case. A TopicPartitions
-	// costs 40 bytes in memory against as few as 3 bytes on the wire, and append's
-	// regrowth multiplies the total by a further ~5, so a large input consisting
-	// ENTIRELY of minimal well-formed entries can still exceed this. That residual is
-	// real and is called out in the fix for finding 2; this constant is set to catch the
-	// count-driven amplification, not to certify the structural ratio.
+	// It stays at 12 rather than being tightened onto maxTopicEntries, because that cap
+	// does NOT bound the ratio this constant measures. It bounds the ABSOLUTE: the worst
+	// case is now ~22 MB of churn (~8 MB peak) instead of the ~3 GB a 100 MiB response
+	// could previously drive. The worst RATIO is untouched at ~74x, because the cap is
+	// reached with a proportionally smaller input — 100,000 flexible entries is 300 KB in
+	// and 22 MB out, exactly the ratio a 100 MiB input used to give. Certifying that as a
+	// true bound would mean raising this to 71+, at which point neither regression above
+	// clears the budget and this target stops catching either. The two goals cannot share
+	// one per-byte term, so this one keeps the teeth; the cap itself is held by the unit
+	// tests, which is where an assertion that needs a ~300 KB input belongs anyway.
+	//
+	// The corollary is a rule for seeds, and it is why the finding-3 reproduction is not
+	// one: this budget is deliberately BELOW what a legitimate at-the-cap footprint costs,
+	// so any seed near the cap turns a correct decode into a reported crasher. See the
+	// note above FuzzDecodeValue's seeds.
 	valueAllocPerInputByte = 12
 
 	// keyAllocPerInputByte bounds the two key decoders, which allocate only the strings
@@ -108,6 +117,27 @@ func pocCountAmplification() []byte {
 	filler := bytes.Repeat([]byte{0xFF}, 1<<20)
 	return concat(be16(0), be64(1), be16(0), be32(0), []byte{1}, be32(int32(len(filler))), filler)
 }
+
+// The finding-3 reproduction — a wholly WELL-FORMED record carrying more minimal entries
+// than maxTopicEntries allows — is deliberately NOT seeded here. It lives in
+// TestDecodeValue_ManyMinimalEntriesDoNotAmplifyIntoTheTopicArray instead, which runs
+// under the same plain `go test` and catches the same regression.
+//
+// Seeding it would make this target FLAKY, which the unit test cannot be. To exercise the
+// cap an input must declare more than maxTopicEntries entries, so the smallest one is
+// ~300 KB. Drop its count just under the cap — a one-bit mutation of a 3-byte uvarint,
+// and integer fields are exactly what a fuzzer mutates — and the record becomes
+// LEGITIMATE: ~100,000 real entries, ~22 MB allocated, against a budget of 1 MiB +
+// 12/byte = 4.6 MB. That is a reported crasher for input the decoder handled correctly,
+// and it would be one bit-flip from a seed rather than a fluke. Not seeding is what keeps
+// it out of reach: the fuzzer will not assemble 300 KB of well-formed minimal entries by
+// chance. So the seed buys no regression coverage the unit tests lack, and its only novel
+// exploration is around the one boundary that misreports.
+//
+// Keeping the corpus small also keeps execs cheap — the Go fuzzer ships every corpus
+// entry between coordinator and worker on each exec — though run-to-run exec counts on
+// this target vary by more than 2x, so that is a reason to prefer small seeds, not a
+// measurement anyone should quote.
 
 // validValueV0 is the classic-encoding fixture from decode_test.go, including the
 // internal topic that makes a footprint read-process-write.
