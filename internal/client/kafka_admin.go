@@ -242,6 +242,13 @@ func configureCommonSettings(config *sarama.Config, clientID string, kafkaVersio
 	// Request-specific timeout configurations
 	config.Metadata.Timeout = 15 * time.Second // Metadata request timeout
 
+	// kcp only ever reads from Kafka, but sarama defaults this to true: a metadata
+	// request naming a topic that does not exist makes a broker with
+	// auto.create.topics.enable=true create it. That turns a discovery command
+	// probing a mistyped or unknown topic name into one that mutates the cluster
+	// it is inspecting, so it stays off for every kcp client and admin.
+	config.Metadata.AllowAutoTopicCreation = false
+
 	// Retry configuration with backoff
 	config.Metadata.Retry.Max = 3
 	config.Metadata.Retry.Backoff = 250 * time.Millisecond
