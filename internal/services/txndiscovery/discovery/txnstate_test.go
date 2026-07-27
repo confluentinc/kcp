@@ -123,3 +123,30 @@ func TestTxnStateReader_FootprintBearingRecordProducesAnObservationCarryingItsTo
 	assert.Equal(t, int64(1), r.Stats().Footprints)
 	assert.Equal(t, int64(1), r.Stats().RecordsSeen)
 }
+
+func TestTxnStateReader_CompletedTransactionRegistersInTheCatalogButProducesNoObservation(t *testing.T) {
+	// Once a transaction completes, the coordinator rewrites its state record with the
+	// partition set CLEARED. Emitting an observation from it would report an empty
+	// footprint as if it were the truth and, worse, credit the transaction with having
+	// touched nothing. The transactional id and producer id are still on the record,
+	// though, and the enrichment phases correlate on exactly those — so the catalog
+	// registration must happen regardless of status.
+	cat := NewTxnCatalog()
+	r := NewTxnStateReader(DefaultTxnStateTopic, cat)
+
+	got := runReader(t, r, stateBatch(tail.Record{
+		Offset: 11,
+		Key:    txnKey("payments-app-0"),
+		Value:  txnValue(42, 4), // 4 = CompleteCommit, no partitions
+	}))
+
+	assert.Empty(t, got)
+	assert.Equal(t, []string{"payments-app-0"}, cat.TxnIDs())
+	assert.Equal(t, map[int64]string{42: "payments-app-0"}, cat.ProducerIDToTxnID())
+
+	st := r.Stats()
+	assert.Equal(t, int64(1), st.RecordsSeen)
+	assert.Equal(t, int64(0), st.Footprints)
+	assert.Equal(t, int64(1), st.Committed)
+	assert.Equal(t, int64(1), st.Empty)
+}

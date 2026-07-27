@@ -16,6 +16,9 @@ const DefaultTxnStateTopic = "__transaction_state"
 type TxnStateStats struct {
 	RecordsSeen int64
 	Footprints  int64
+	Empty       int64
+	Committed   int64
+	Aborted     int64
 }
 
 // TxnStateReader decodes __transaction_state records into Observations.
@@ -25,6 +28,9 @@ type TxnStateReader struct {
 
 	recordsSeen atomic.Int64
 	footprints  atomic.Int64
+	empty       atomic.Int64
+	committed   atomic.Int64
+	aborted     atomic.Int64
 }
 
 // NewTxnStateReader builds a reader over the named transaction-state topic.
@@ -37,6 +43,9 @@ func (r *TxnStateReader) Stats() TxnStateStats {
 	return TxnStateStats{
 		RecordsSeen: r.recordsSeen.Load(),
 		Footprints:  r.footprints.Load(),
+		Empty:       r.empty.Load(),
+		Committed:   r.committed.Load(),
+		Aborted:     r.aborted.Load(),
 	}
 }
 
@@ -63,6 +72,29 @@ func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<-
 	}
 	val, err := txnlog.DecodeValue(rec.Value)
 	if err != nil {
+		return true
+	}
+
+	// Register with the shared catalog before anything else. Even a Complete* record,
+	// which carries no footprint, still carries the transactional id and producer id
+	// the enrichment phases correlate on — so registration is unconditional on status.
+	r.catalog.Observe(key.TransactionalID, val.ProducerID)
+
+	// Count the terminal states so the run can report how many transactions committed
+	// versus aborted in the window. Reading from earliest, this counts the completions
+	// the compacted log still retains plus those occurring inside the window, not a
+	// guaranteed lifetime total.
+	switch val.Status {
+	case txnlog.StatusCompleteCommit:
+		r.committed.Add(1)
+	case txnlog.StatusCompleteAbort:
+		r.aborted.Add(1)
+	}
+
+	if !val.Status.HasFootprint() {
+		// Empty / Complete* / Dead: the coordinator has already cleared the partition
+		// set, so there is no footprint to report — only the catalog entry above.
+		r.empty.Add(1)
 		return true
 	}
 
