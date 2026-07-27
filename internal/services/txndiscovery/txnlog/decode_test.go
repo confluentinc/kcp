@@ -1,7 +1,9 @@
 package txnlog
 
 import (
+	"bytes"
 	"encoding/binary"
+	"math"
 	"runtime"
 	"testing"
 
@@ -384,6 +386,108 @@ func TestDecodeValue_ArrayCountLargerThanBufferIsRejectedBeforeAllocating(t *tes
 			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(allocBudget),
 				"decoding a %d-byte record allocated more than %d bytes, so the count was trusted before it was checked",
 				len(b), allocBudget)
+		})
+	}
+}
+
+func TestDecodeValue_LargeRecordDoesNotAmplifyItsOwnSizeIntoTheTopicArrayPrealloc(t *testing.T) {
+	// The array-count guard reasons "every entry costs at least one byte on the wire",
+	// so it accepts any count up to the bytes remaining. That bounds the COUNT, not the
+	// ALLOCATION: a TopicPartitions is a string header plus a slice header, 40 bytes, so
+	// a count merely PROPORTIONAL to the record's own size sails through the guard and
+	// preallocates 40x the record.
+	//
+	// This is what the existing count-exceeds-buffer test misses. It uses a small record
+	// with an absurd count, which the guard correctly rejects. The reachable shape is a
+	// large record with a self-consistent count, and kcp does not lower
+	// sarama.MaxResponseSize from its 100 MiB default (nor can it make a broker honour
+	// the requested MaxPartitionBytes), so one response drives a ~4 GiB allocation and
+	// OOM-kills a multi-hour run. Asserting only on the returned error passes throughout.
+	const allocBudget = 4 << 20 // 4 MiB, four times the record
+
+	// 0xFF filler so the first loop iteration fails fast: what is being measured is the
+	// prealloc, not the cost of parsing a megabyte of plausible entries.
+	filler := bytes.Repeat([]byte{0xFF}, 1<<20)
+	header := concat(
+		be16(0),   // version, overwritten per case below
+		be64(1),   // producerId
+		be16(0),   // producerEpoch
+		be32(0),   // timeoutMs
+		[]byte{1}, // status = Ongoing
+	)
+
+	classic := concat(header, be32(int32(len(filler))), filler)
+	flexible := concat(header, uvar(uint64(len(filler))+1), filler)
+	flexible[1] = 1 // version 1 = flexible
+
+	for name, b := range map[string][]byte{
+		"classic topic array":  classic,
+		"flexible topic array": flexible,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var before, after runtime.MemStats
+			var decodeErr error
+
+			runtime.ReadMemStats(&before)
+			require.NotPanics(t, func() { _, decodeErr = DecodeValue(b) })
+			runtime.ReadMemStats(&after)
+
+			require.Error(t, decodeErr)
+			assert.Less(t, after.TotalAlloc-before.TotalAlloc, uint64(allocBudget),
+				"decoding a %d-byte record allocated more than %d bytes: the entry count was "+
+					"bounded against the bytes remaining, but the allocation it sizes is 40 bytes an entry",
+				len(b), allocBudget)
+		})
+	}
+}
+
+func TestDecodeValue_UvarintLengthNearMaxInt64DoesNotOverflowTheBoundsGuard(t *testing.T) {
+	// The bounds guard used to test `pos + n > len(b)`. In the classic encoding n comes
+	// from an int16 and cannot exceed 32767, so the sum never overflows — which is why
+	// every existing truncation test passes. In the FLEXIBLE encoding n comes from a
+	// uvarint and can be up to 2^63-1, so `pos + n` wraps to a negative number, the
+	// guard reads it as "in bounds", and the slice that follows panics:
+	//
+	//	panic: runtime error: slice bounds out of range [:-9223372036854775783]
+	//
+	// The package's stated invariant is that malformed broker input yields a counted
+	// error, never a panic. Nothing in kcp recovers, and this decodes on a reader
+	// goroutine, so a ~30-byte malformed record kills a multi-hour observation window
+	// with no YAML, no stats and an unclosed audit log.
+	tests := map[string][]byte{
+		// compactStr: n := int(uvarint) - 1, straight into need(n) and then a slice.
+		"compact string length": concat(
+			be16(1),   // version 1 = flexible
+			be64(1),   // producerId
+			be16(0),   // producerEpoch
+			be32(0),   // timeoutMs
+			[]byte{1}, // status = Ongoing
+			uvar(2),   // compact array: one topic entry
+			uvar(math.MaxInt64),
+		),
+		// skipTaggedFields: need(size) passes, `pos += size` drives pos negative, and
+		// the NEXT read panics rather than this one — the corruption outlives the field.
+		"tagged field size": concat(
+			be16(1),   // version 1 = flexible
+			be64(1),   // producerId
+			be16(0),   // producerEpoch
+			be32(0),   // timeoutMs
+			[]byte{1}, // status = Ongoing
+			uvar(2),   // compact array: one topic entry
+			cstr("t"), // topic
+			uvar(0),   // partition ids: null compact array
+			uvar(1),   // tagged fields: one entry
+			uvar(0),   // tag number
+			uvar(math.MaxInt64),
+		),
+	}
+
+	for name, b := range tests {
+		t.Run(name, func(t *testing.T) {
+			var decodeErr error
+			require.NotPanics(t, func() { _, decodeErr = DecodeValue(b) },
+				"a %d-byte malformed record panicked instead of erroring", len(b))
+			require.Error(t, decodeErr)
 		})
 	}
 }

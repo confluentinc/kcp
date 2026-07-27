@@ -382,3 +382,57 @@ func TestTxnStateReader_NoTopicNameOrTransactionalIDReachesTheLog(t *testing.T) 
 	assert.NotContains(t, logged.String(), "secret-txnid", "a transactional id reached kcp.log")
 	assert.NotContains(t, logged.String(), "secret-topic", "a topic name reached kcp.log")
 }
+
+// controlBatch wraps a transaction marker in the batch shape the tail delivers for one:
+// flagged as a control batch, transactional, and carrying a real producer id, because a
+// marker genuinely is all three.
+func controlBatch(records ...tail.Record) tail.Batch {
+	b := stateBatch(records...)
+	b.IsTransactional = true
+	b.Control = true
+	b.ProducerID = 42
+	return b
+}
+
+// markerKey encodes a control record's key: version int16, then the marker type
+// (0 = ABORT, 1 = COMMIT). Four bytes, and nothing else.
+func markerKey(markerType int16) []byte { return concat(be16(0), be16(markerType)) }
+
+// markerValue encodes a control record's value: version int16, then coordinatorEpoch
+// int32. Six bytes, and nothing else.
+func markerValue(coordinatorEpoch int32) []byte { return concat(be16(0), be32(coordinatorEpoch)) }
+
+func TestTxnStateReader_ControlBatchIsSkippedRatherThanDecodedAsATransactionRecord(t *testing.T) {
+	// tail.consumeBlock deliberately EMITS control batches and documents that dropping
+	// them is the consumer's job. ConsumerOffsetsTail.HandleBatch does so; this reader
+	// did not, so a marker reaching the transaction-state topic was fed to decoders
+	// written for a completely different schema.
+	//
+	// Neither marker survives that. A commit marker's 4-byte key decodes as key-version 0
+	// and then reads the marker TYPE as a string length, which runs off the end of the
+	// key; an abort marker's key decodes to an empty transactional id and its 6-byte
+	// value then dies in the value decoder. Either way a counter ticks — and these two
+	// counters are the format-drift alarm, the thing that tells an operator a broker
+	// upgrade has moved the internal schema out from under the run. Firing it on a
+	// cluster whose format never drifted is a false alarm on the one signal that has to
+	// stay trustworthy.
+	for name, markerType := range map[string]int16{"abort marker": 0, "commit marker": 1} {
+		t.Run(name, func(t *testing.T) {
+			cat := NewTxnCatalog()
+			r := NewTxnStateReader(DefaultTxnStateTopic, cat)
+
+			got := runReader(t, r, controlBatch(tail.Record{
+				Offset: 5,
+				Key:    markerKey(markerType),
+				Value:  markerValue(7),
+			}))
+
+			assert.Empty(t, got, "a marker is not application data and carries no footprint")
+			assert.Empty(t, cat.TxnIDs(), "a marker carries no transactional id to register")
+
+			st := r.Stats()
+			assert.Equal(t, int64(0), st.KeyDecodeErrors, "a marker key fired the format-drift alarm")
+			assert.Equal(t, int64(0), st.ValueDecodeErrors, "a marker value fired the format-drift alarm")
+		})
+	}
+}

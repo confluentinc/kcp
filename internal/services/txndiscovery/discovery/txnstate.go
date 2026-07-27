@@ -123,6 +123,17 @@ func (r *TxnStateReader) Run(ctx context.Context, in <-chan tail.Batch, out chan
 		if b.Topic != r.topic {
 			continue
 		}
+		// A control batch is the transaction marker itself, not application data. The
+		// tail component delivers control batches flagged rather than filtering them, so
+		// dropping them is this consumer's job, exactly as it is ConsumerOffsetsTail's.
+		// A marker's key and value are a completely different schema — four and six
+		// bytes — so feeding them to the TransactionLog decoders ticks the decode-error
+		// counters, and those counters are the format-drift alarm: firing them on a
+		// cluster whose format never drifted discredits the one signal that tells an
+		// operator a broker upgrade has moved the schema out from under the run.
+		if b.Control {
+			continue
+		}
 		for _, rec := range b.Records {
 			if !r.handle(ctx, rec, out) {
 				return nil
