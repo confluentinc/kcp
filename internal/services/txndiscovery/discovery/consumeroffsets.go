@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/txnlog"
 )
@@ -106,6 +107,13 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 		// group state, not an offset commit. It decodes cleanly, so only this
 		// check stops a nameless topic reaching a real transaction's group.
 		if key.Topic == "" {
+			continue
+		}
+		// An exactly-once app routinely commits offsets for internal topics.
+		// Publishing one as a recovered input would give the grouping stage an
+		// edge through a topic every such app shares, and would report a topic
+		// no operator can migrate in the audit trail and the recovery stats.
+		if grouping.IsInternalTopic(key.Topic) {
 			continue
 		}
 		t.recordCommit(b.ProducerID, key.Topic)

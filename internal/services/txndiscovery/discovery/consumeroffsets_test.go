@@ -220,3 +220,28 @@ func TestAGroupMetadataKeyContributesNoConsumedTopic(t *testing.T) {
 
 	assert.Empty(t, flush(t, tl), "group metadata names no consumed topic")
 }
+
+func TestAnInternalConsumedTopicIsDropped(t *testing.T) {
+	// An exactly-once app can commit offsets for an internal topic — a Streams
+	// repartition or changelog topic is the routine case. Publishing one as a
+	// recovered input would hand the grouping stage an edge through a topic
+	// every such app shares, and the union-find would chain unrelated workloads
+	// into one group. Grouping filters internal topics itself, but this source
+	// also feeds the audit trail and the recovered-topics stat, both of which
+	// would otherwise report a topic no operator can migrate.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	tl.HandleBatch(commitBatch(4242,
+		commitKey("payments-group", "__consumer_offsets", 0),
+		commitKey("payments-group", "app-repartition-store-changelog", 0),
+		commitKey("payments-group", "orders.in", 0),
+	))
+
+	got := flush(t, tl)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, []string{"app-repartition-store-changelog", "orders.in"}, got[0].Topics,
+		"only __-prefixed topics are internal; a Streams changelog is a real topic")
+}
