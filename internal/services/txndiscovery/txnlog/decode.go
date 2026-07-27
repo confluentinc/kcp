@@ -21,6 +21,40 @@ import (
 
 var errTruncated = errors.New("txnlog: truncated record")
 
+// maxTopicEntries caps how many TopicPartitions entries one transaction's footprint may
+// materialise. Exceeding it is a decode error, in the same fail-loud spirit as an
+// unsupported schema version: a footprint this large means the record is not what this
+// decoder thinks it is, and guessing is worse than stopping.
+//
+// The cap is needed because bounding the entry COUNT against the bytes remaining does
+// not bound the MEMORY. An entry costs 40 bytes decoded against as few as 3 bytes on the
+// wire (flexible: uvarint topic length, uvarint partition count, uvarint tagged-field
+// count), and append's ~1.25x regrowth churns roughly 5x the final slice on the way up.
+// A record of honest, well-formed, minimal entries therefore allocates ~37x its length
+// in the classic encoding and ~74x in the flexible one, with no guard entitled to reject
+// it — the count is truthful, there are simply a lot of entries. kcp leaves sarama's
+// MaxResponseSize at its 100 MiB default and a broker need not honour the requested
+// MaxPartitionBytes, so the reachable end of that is ~1.4 GB of live slice and ~3 GB
+// peak during the final regrowth: an OOM-killed multi-hour observation window.
+//
+// 100,000 is chosen to sit far above any legitimate footprint and still far below any
+// allocation worth worrying about:
+//
+//   - Legitimate side. An entry here is one TOPIC in a transaction, not one partition.
+//     __transaction_state and __consumer_offsets default to 50 partitions each; the
+//     largest Kafka Streams footprints are realistically low thousands of
+//     topic-partitions, spread across far fewer topics. 100,000 also exceeds the total
+//     topic count of essentially any real cluster — brokers hit metadata limits well
+//     before that — and a transaction cannot touch more topics than its cluster has. So
+//     the cap is orders of magnitude clear of anything a real producer can produce.
+//   - Allocation side. 100,000 x 40 bytes is 4 MB of entries, ~9 MB peak across the last
+//     regrowth. Single-digit MB is a cost a long-running scan can absorb; gigabytes are
+//     not.
+//
+// The count is known before any entry is read, so exceeding the cap costs no allocation
+// at all rather than a capped one.
+const maxTopicEntries = 100_000
+
 // Key is a decoded __transaction_state record key.
 type Key struct {
 	Version         int16
@@ -307,6 +341,15 @@ func (r *reader) partitions(flexible bool) []TopicPartitions {
 	// allocation.
 	if n < 0 || n > len(r.b)-r.pos {
 		r.fail()
+		return nil
+	}
+	// The guard above rejects a count the remaining bytes cannot back. It says nothing
+	// about a count they CAN back, which is the other half of the problem: see
+	// maxTopicEntries. Distinct wording from errTruncated on purpose — "the bytes ran
+	// out" and "the bytes were all there and there were too many of them" point at
+	// opposite causes when a broker's internal schema drifts.
+	if n > maxTopicEntries {
+		r.err = fmt.Errorf("txnlog: transaction footprint declares %d topic entries, above the %d limit", n, maxTopicEntries)
 		return nil
 	}
 
