@@ -201,6 +201,39 @@ func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
 	}
 }
 
+// Run consumes batches from in until the channel closes, buffering every
+// transactional offset commit and resolving the buffer against the catalog on
+// the configured interval. When the input ends it performs the final flush.
+//
+// This mirrors the __transaction_state reader's contract: the command wiring
+// owns the tail.Tail, reads its single batch channel, and copies each batch to
+// the reader whose topic it names. Run takes a receive-only channel rather than
+// a Tail precisely so one tail can be demultiplexed across both readers.
+//
+// out must be drained for the duration of the run. Run returns nil on both
+// ordinary endings — the counters on Stats report whether the read was clean.
+func (t *ConsumerOffsetsTail) Run(ctx context.Context, in <-chan tail.Batch, out chan<- Observation) error {
+	ticker := time.NewTicker(t.interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case b, ok := <-in:
+			if !ok {
+				// The tail has stopped and the fan-out has closed our channel.
+				// The final flush runs on a fresh context because ctx is
+				// already cancelled by now and this is where most resolutions
+				// land.
+				t.FinalFlush(out)
+				return nil
+			}
+			t.HandleBatch(b)
+		case <-ticker.C:
+			t.resolveAndFlush(ctx, out)
+		}
+	}
+}
+
 // HandleBatch records the transactional offset commits carried by one batch.
 //
 // It is the demultiplexing entry point: one tail instance serves both this

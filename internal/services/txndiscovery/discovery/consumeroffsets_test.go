@@ -526,3 +526,47 @@ func TestAResolvePassResolvesBeforeItExpires(t *testing.T) {
 	assert.Equal(t, "late-txn", got[0].TxnID)
 	assert.Zero(t, tl.Stats().PendingEvicted)
 }
+
+func TestRunFinalFlushesOnAFreshContextAfterTheWindowIsCancelled(t *testing.T) {
+	// Most resolutions land in the final flush. This reader starts at LATEST so
+	// it sees commits immediately, while the __transaction_state reader starts
+	// at EARLIEST and is still catching up — so a transaction routinely becomes
+	// known only as the window closes. By then the observation context is
+	// already cancelled, so flushing on it would resolve every buffered sighting
+	// (removing it from the buffer) and then send none of them. The whole point
+	// of the phase would be lost at the last step, silently.
+	cat := NewTxnCatalog()
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{
+		Interval: time.Hour, // long enough that no interval pass fires
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	in := make(chan tail.Batch)
+	out := make(chan Observation, 8)
+
+	done := make(chan error, 1)
+	go func() { done <- tl.Run(ctx, in, out) }()
+
+	in <- commitBatch(4242, commitKey("payments-group", "orders.in", 0))
+
+	// The window ends. Only now does the state reader reach this transaction.
+	cat.Observe("payments-txn-0", 4242)
+	cancel()
+	close(in)
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after its input closed")
+	}
+
+	close(out)
+	var got []Observation
+	for obs := range out {
+		got = append(got, obs)
+	}
+	require.Len(t, got, 1, "the final flush must still deliver on a cancelled context")
+	assert.Equal(t, "payments-txn-0", got[0].TxnID)
+	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
+}
