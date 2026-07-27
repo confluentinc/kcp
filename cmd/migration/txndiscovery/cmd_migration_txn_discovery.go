@@ -114,6 +114,21 @@ func preRunTxnDiscovery(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if useSaslIam {
+		_ = cmd.MarkFlagRequired("aws-region")
+	}
+
+	if useSaslPlain {
+		_ = cmd.MarkFlagRequired("sasl-plain-username")
+		_ = cmd.MarkFlagRequired("sasl-plain-password")
+	}
+
+	if useTls {
+		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		_ = cmd.MarkFlagRequired("tls-client-cert")
+		_ = cmd.MarkFlagRequired("tls-client-key")
+	}
+
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")

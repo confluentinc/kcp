@@ -1,10 +1,13 @@
 package txndiscovery
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -38,16 +41,39 @@ func resetFlags() {
 	insecureSkipTLSVerify = false
 }
 
+// clearFlagEnv blanks the environment variable behind every flag the command
+// declares.
+//
+// R3 binds each flag to its uppercase, underscored name, and several of those —
+// AWS_REGION above all — are routinely exported in a developer's shell. Without
+// this a case asserting that a missing flag is rejected passes or fails on the
+// machine it runs on. Viper treats an empty variable as unset, so blanking is
+// the same as unsetting for the binder.
+func clearFlagEnv(t *testing.T, cmd *cobra.Command) {
+	t.Helper()
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		t.Setenv(strings.ToUpper(strings.ReplaceAll(f.Name, "-", "_")), "")
+	})
+}
+
+// newTestCmd builds a command with the package flag variables reset and the
+// ambient environment blanked, so a case depends only on the args it passes.
+func newTestCmd(t *testing.T, args ...string) *cobra.Command {
+	t.Helper()
+	resetFlags()
+	cmd := NewMigrationTxnDiscoveryCmd()
+	clearFlagEnv(t, cmd)
+	cmd.SetArgs(args)
+	return cmd
+}
+
 // R2: the auth flags mirror `kcp migration execute` — mutually exclusive, one required.
 func TestTxnDiscovery_TwoAuthMethods_Rejected(t *testing.T) {
-	resetFlags()
-
-	cmd := NewMigrationTxnDiscoveryCmd()
-	cmd.SetArgs([]string{
+	cmd := newTestCmd(t, []string{
 		"--source-bootstrap", "broker:9092",
 		"--use-unauthenticated-plaintext",
 		"--use-unauthenticated-tls",
-	})
+	}...)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -56,10 +82,7 @@ func TestTxnDiscovery_TwoAuthMethods_Rejected(t *testing.T) {
 
 // R2: an auth method is not optional — a run with none would silently pick one.
 func TestTxnDiscovery_NoAuthMethod_Rejected(t *testing.T) {
-	resetFlags()
-
-	cmd := NewMigrationTxnDiscoveryCmd()
-	cmd.SetArgs([]string{"--source-bootstrap", "broker:9092"})
+	cmd := newTestCmd(t, []string{"--source-bootstrap", "broker:9092"}...)
 
 	err := cmd.Execute()
 	require.Error(t, err)
@@ -91,10 +114,7 @@ func TestTxnDiscovery_ScramWithoutCredentials_Rejected(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetFlags()
-
-			cmd := NewMigrationTxnDiscoveryCmd()
-			cmd.SetArgs(append([]string{"--source-bootstrap", "broker:9092"}, tc.args...))
+			cmd := newTestCmd(t, append([]string{"--source-bootstrap", "broker:9092"}, tc.args...)...)
 
 			err := cmd.Execute()
 			require.Error(t, err)
@@ -109,16 +129,13 @@ func TestTxnDiscovery_ScramWithoutCredentials_Rejected(t *testing.T) {
 func TestTxnDiscovery_UnsupportedScramMechanism_Rejected(t *testing.T) {
 	for _, mechanism := range []string{"SHA1", "sha512", "PLAIN", ""} {
 		t.Run("mechanism="+mechanism, func(t *testing.T) {
-			resetFlags()
-
-			cmd := NewMigrationTxnDiscoveryCmd()
-			cmd.SetArgs([]string{
+			cmd := newTestCmd(t, []string{
 				"--source-bootstrap", "broker:9092",
 				"--use-sasl-scram",
 				"--sasl-scram-username", "reader",
 				"--sasl-scram-password", "hunter2",
 				"--sasl-scram-mechanism", mechanism,
-			})
+			}...)
 
 			err := cmd.Execute()
 			require.Error(t, err)
@@ -134,16 +151,13 @@ func TestTxnDiscovery_UnsupportedScramMechanism_Rejected(t *testing.T) {
 func TestTxnDiscovery_SupportedScramMechanism_Accepted(t *testing.T) {
 	for _, mechanism := range []string{"SHA256", "SHA512"} {
 		t.Run("mechanism="+mechanism, func(t *testing.T) {
-			resetFlags()
-
-			cmd := NewMigrationTxnDiscoveryCmd()
-			cmd.SetArgs([]string{
+			cmd := newTestCmd(t, []string{
 				"--source-bootstrap", "broker:9092",
 				"--use-sasl-scram",
 				"--sasl-scram-username", "reader",
 				"--sasl-scram-password", "hunter2",
 				"--sasl-scram-mechanism", mechanism,
-			})
+			}...)
 
 			require.NoError(t, cmd.Execute())
 		})
@@ -154,15 +168,12 @@ func TestTxnDiscovery_SupportedScramMechanism_Accepted(t *testing.T) {
 // equivalents. The environment path is the documented recommendation, because a
 // flag value is visible in the process list.
 func TestTxnDiscovery_PasswordFromEnvironment_IsPickedUp(t *testing.T) {
-	resetFlags()
-	t.Setenv("SASL_SCRAM_PASSWORD", "from-the-environment")
-
-	cmd := NewMigrationTxnDiscoveryCmd()
-	cmd.SetArgs([]string{
+	cmd := newTestCmd(t,
 		"--source-bootstrap", "broker:9092",
 		"--use-sasl-scram",
 		"--sasl-scram-username", "reader",
-	})
+	)
+	t.Setenv("SASL_SCRAM_PASSWORD", "from-the-environment")
 
 	require.NoError(t, cmd.Execute(), "the environment value must satisfy the required-flag check")
 	assert.Equal(t, "from-the-environment", saslScramPassword)
@@ -171,17 +182,14 @@ func TestTxnDiscovery_PasswordFromEnvironment_IsPickedUp(t *testing.T) {
 // R3: an explicitly supplied flag beats the environment. An operator overriding
 // an exported credential on one invocation must not silently get the exported one.
 func TestTxnDiscovery_ExplicitFlag_BeatsEnvironment(t *testing.T) {
-	resetFlags()
-	t.Setenv("SASL_SCRAM_PASSWORD", "from-the-environment")
-	t.Setenv("SOURCE_BOOTSTRAP", "env-broker:9092")
-
-	cmd := NewMigrationTxnDiscoveryCmd()
-	cmd.SetArgs([]string{
+	cmd := newTestCmd(t,
 		"--source-bootstrap", "flag-broker:9092",
 		"--use-sasl-scram",
 		"--sasl-scram-username", "reader",
 		"--sasl-scram-password", "from-the-flag",
-	})
+	)
+	t.Setenv("SASL_SCRAM_PASSWORD", "from-the-environment")
+	t.Setenv("SOURCE_BOOTSTRAP", "env-broker:9092")
 
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "from-the-flag", saslScramPassword)
@@ -239,10 +247,7 @@ func TestTxnDiscovery_AuthFlags_ResolveToTheirAuthType(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			resetFlags()
-
-			cmd := NewMigrationTxnDiscoveryCmd()
-			cmd.SetArgs(append([]string{"--source-bootstrap", "broker:9092"}, tc.args...))
+			cmd := newTestCmd(t, append([]string{"--source-bootstrap", "broker:9092"}, tc.args...)...)
 			require.NoError(t, cmd.Execute())
 
 			got := resolveAuth()
@@ -275,10 +280,7 @@ func tlsEnabledFor(a types.AuthType) bool {
 // R2: --insecure-skip-tls-verify defaults to false, so a run that does not name
 // it is not quietly making a TLS-verification decision.
 func TestTxnDiscovery_InsecureSkipTLSVerify_DefaultsToFalse(t *testing.T) {
-	resetFlags()
-
-	cmd := NewMigrationTxnDiscoveryCmd()
-	cmd.SetArgs([]string{"--source-bootstrap", "broker:9092", "--use-unauthenticated-tls"})
+	cmd := newTestCmd(t, []string{"--source-bootstrap", "broker:9092", "--use-unauthenticated-tls"}...)
 	require.NoError(t, cmd.Execute())
 
 	assert.False(t, resolveAuth().SkipTLSVerify)
@@ -286,17 +288,58 @@ func TestTxnDiscovery_InsecureSkipTLSVerify_DefaultsToFalse(t *testing.T) {
 
 // R2: and it reaches the auth helper's third argument when it is set.
 func TestTxnDiscovery_InsecureSkipTLSVerify_IsCarried(t *testing.T) {
-	resetFlags()
-
-	cmd := NewMigrationTxnDiscoveryCmd()
-	cmd.SetArgs([]string{
+	cmd := newTestCmd(t, []string{
 		"--source-bootstrap", "broker:9092",
 		"--use-sasl-scram",
 		"--sasl-scram-username", "reader",
 		"--sasl-scram-password", "hunter2",
 		"--insecure-skip-tls-verify",
-	})
+	}...)
 	require.NoError(t, cmd.Execute())
 
 	assert.True(t, resolveAuth().SkipTLSVerify)
+}
+
+// R2: an auth method selected without its full credential set is a flag error,
+// not a connection failure discovered minutes later against the broker.
+func TestTxnDiscovery_IncompleteCredentialSet_Rejected(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "iam without a region",
+			args: []string{"--use-sasl-iam"},
+			want: "aws-region",
+		},
+		{
+			name: "plain without credentials",
+			args: []string{"--use-sasl-plain"},
+			want: "sasl-plain-username",
+		},
+		{
+			name: "plain username without password",
+			args: []string{"--use-sasl-plain", "--sasl-plain-username", "reader"},
+			want: "sasl-plain-password",
+		},
+		{
+			name: "mutual tls without certificates",
+			args: []string{"--use-tls"},
+			want: "tls-ca-cert",
+		},
+		{
+			name: "mutual tls missing the client key",
+			args: []string{"--use-tls", "--tls-ca-cert", "ca.pem", "--tls-client-cert", "client.pem"},
+			want: "tls-client-key",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := newTestCmd(t, append([]string{"--source-bootstrap", "broker:9092"}, tc.args...)...)
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tc.want)
+		})
+	}
 }
