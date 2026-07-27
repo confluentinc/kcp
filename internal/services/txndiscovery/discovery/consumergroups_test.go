@@ -491,3 +491,56 @@ func TestConsumerGroupEnricher_GroupWithUnreadableOffsetsIsSkippedAndThePassCont
 		t.Errorf("skipped group was not logged; log was:\n%s", logs.String())
 	}
 }
+
+// kcp.log is unconditionally Debug+ and is the file operators attach to support
+// tickets, so a consumer group id, topic name, or transactional id in ANY log line
+// leaks customer business structure regardless of level — and under --verbose those
+// same lines reach the console. Both of this phase's log paths are driven here, with
+// distinctively-named fixtures, and neither may name anything.
+func TestConsumerGroupEnricher_LogLinesNameNoGroupTopicOrTransaction(t *testing.T) {
+	const (
+		groupID = "qxgroupqx"
+		txnID   = "qxgroupqx-abc12"
+		topic   = "qxtopicqx"
+	)
+
+	catalog := NewTxnCatalog()
+	catalog.Observe(txnID, 7)
+
+	admin := &fakeGroupAdmin{
+		groups:  map[string]string{groupID: "consumer"},
+		offsets: map[string]*sarama.OffsetFetchResponse{groupID: offsetFetch(map[string][]int32{topic: {0}})},
+		// First pass fails at the listing; every later pass reaches — and fails at —
+		// the per-group offsets call, so both log paths fire.
+		listErr:  []error{errors.New("listing blew up")},
+		fetchErr: map[string]error{groupID: errors.New("offsets blew up")},
+	}
+	logs := &syncBuffer{}
+	e := newTestEnricher(admin, catalog, logs)
+	e.Interval = 5 * time.Millisecond
+
+	ctx, cancel := context.WithCancel(context.Background())
+	out := make(chan Observation, 16)
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx, out) }()
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	got := logs.String()
+	// Both paths must actually have run, or the absence assertions below prove nothing.
+	for _, marker := range []string{"listing blew up", "offsets blew up"} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("log path %q never fired, so this test would pass vacuously; log was:\n%s", marker, got)
+		}
+	}
+	for name, kind := range map[string]string{
+		groupID: "consumer group id",
+		txnID:   "transactional id",
+		topic:   "topic name",
+	} {
+		if strings.Contains(got, name) {
+			t.Errorf("log leaked a %s (%q); log was:\n%s", kind, name, got)
+		}
+	}
+}
