@@ -147,3 +147,21 @@ func TestTxnDiscovery_SupportedScramMechanism_Accepted(t *testing.T) {
 		})
 	}
 }
+
+// R3: credentials come from flags or their auto-bound uppercase environment
+// equivalents. The environment path is the documented recommendation, because a
+// flag value is visible in the process list.
+func TestTxnDiscovery_PasswordFromEnvironment_IsPickedUp(t *testing.T) {
+	resetFlags()
+	t.Setenv("SASL_SCRAM_PASSWORD", "from-the-environment")
+
+	cmd := NewMigrationTxnDiscoveryCmd()
+	cmd.SetArgs([]string{
+		"--source-bootstrap", "broker:9092",
+		"--use-sasl-scram",
+		"--sasl-scram-username", "reader",
+	})
+
+	require.NoError(t, cmd.Execute(), "the environment value must satisfy the required-flag check")
+	assert.Equal(t, "from-the-environment", saslScramPassword)
+}

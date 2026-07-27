@@ -5,6 +5,7 @@ package txndiscovery
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -105,6 +106,13 @@ var authFlagNames = []string{
 }
 
 func preRunTxnDiscovery(cmd *cobra.Command, args []string) error {
+	// Every flag also reads from its uppercase, underscored environment
+	// equivalent. For the two password flags that is the documented path: a
+	// value passed by flag is visible in the process list.
+	if err := utils.BindEnvToFlags(cmd); err != nil {
+		return err
+	}
+
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
