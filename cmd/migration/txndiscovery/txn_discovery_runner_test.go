@@ -3,11 +3,13 @@ package txndiscovery
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -180,4 +182,34 @@ func TestFanOut_UnreadDestination_DoesNotWedgeShutdown(t *testing.T) {
 	}
 	_, open := <-blocked
 	assert.False(t, open, "the destination is closed even on the cancellation path")
+}
+
+// R7, R9, R16, R17: the run holds the window, then produces the artifacts. This
+// is the whole happy path — a transaction's produced footprint from
+// __transaction_state, its consumed input recovered from __consumer_offsets by
+// producer id, both in one group in the YAML.
+func TestRun_TheWindowEndsTheRunAndTheArtifactsAreWritten(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("payments-txn-0")},
+		[][]byte{txnValue(4242, "payments.out", "__consumer_offsets")},
+	))
+	h.tailClient.script(discovery.DefaultConsumerOffsetsTopic, commitRecordBatch(0, 4242,
+		commitKey("payments-group", "payments.in", 0),
+	))
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	yaml := readFile(t, opts.OutPath)
+	assert.Contains(t, yaml, "payments.out", "the produced footprint reaches the YAML")
+	assert.Contains(t, yaml, "payments.in", "the consumed input recovered by producer id reaches the YAML")
+	assert.Contains(t, yaml, "payments-txn-0")
+
+	assert.True(t, exists(t, opts.StatsOutPath), "--stats-out is written")
+	assert.True(t, exists(t, opts.AuditLogPath), "the audit trail is on by default")
+	assert.Equal(t, 1, h.closes, "the sarama client and cluster admin are released")
 }
