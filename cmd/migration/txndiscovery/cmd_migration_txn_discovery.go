@@ -3,6 +3,7 @@
 package txndiscovery
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -251,6 +252,24 @@ func resolveAuth() authResolution {
 	return r
 }
 
+// runDiscovery is the command's action, behind a variable so the flag tests can
+// exercise validation without reaching a broker.
+var runDiscovery = func(ctx context.Context, opts Opts) error {
+	return NewRunner(opts).Run(ctx)
+}
+
 func runTxnDiscovery(cmd *cobra.Command, args []string) error {
-	return nil
+	opts := parseOpts()
+	// R5: the POC's --log-level is dropped in favour of the root --verbose,
+	// which is where kcp's console verbosity already lives. Looked up rather
+	// than imported, because cmd/migration importing cmd would be a cycle.
+	opts.Verbose = boolFlag(cmd, "verbose")
+	return runDiscovery(cmd.Context(), opts)
+}
+
+// boolFlag reads an inherited boolean flag, reporting false when it is absent —
+// which it is when the command is built standalone rather than under the root.
+func boolFlag(cmd *cobra.Command, name string) bool {
+	f := cmd.Flags().Lookup(name)
+	return f != nil && f.Value.String() == "true"
 }

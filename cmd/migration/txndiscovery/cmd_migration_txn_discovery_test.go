@@ -1,8 +1,10 @@
 package txndiscovery
 
 import (
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
@@ -56,15 +58,75 @@ func clearFlagEnv(t *testing.T, cmd *cobra.Command) {
 	})
 }
 
-// newTestCmd builds a command with the package flag variables reset and the
-// ambient environment blanked, so a case depends only on the args it passes.
+// newTestCmd builds a command with the package flag variables reset, the
+// ambient environment blanked, and the run itself stubbed out, so a case
+// depends only on the args it passes and never reaches a broker.
 func newTestCmd(t *testing.T, args ...string) *cobra.Command {
 	t.Helper()
 	resetFlags()
 	cmd := NewMigrationTxnDiscoveryCmd()
 	clearFlagEnv(t, cmd)
 	cmd.SetArgs(args)
+	stubRun(t)
 	return cmd
+}
+
+// stubRun replaces the command's action with a recorder and returns a pointer to
+// what it was handed. Flag handling is what these cases exercise; connecting to
+// a cluster is the runner's own suite.
+func stubRun(t *testing.T) *Opts {
+	t.Helper()
+	previous := runDiscovery
+	var captured Opts
+	runDiscovery = func(_ context.Context, o Opts) error {
+		captured = o
+		return nil
+	}
+	t.Cleanup(func() { runDiscovery = previous })
+	return &captured
+}
+
+// R4, R5: the command hands the runner exactly what the flags say, including
+// the root --verbose that replaced the POC's --log-level.
+func TestTxnDiscovery_TheCommandRunsWithTheParsedOptions(t *testing.T) {
+	resetFlags()
+	root := &cobra.Command{Use: "kcp"}
+	root.PersistentFlags().Bool("verbose", false, "Enable verbose logging to console")
+	cmd := NewMigrationTxnDiscoveryCmd()
+	root.AddCommand(cmd)
+	clearFlagEnv(t, cmd)
+	got := stubRun(t)
+
+	root.SetArgs([]string{
+		"txn-discovery",
+		"--verbose",
+		"--source-bootstrap", "b1:9092, b2:9092,",
+		"--use-sasl-iam", "--aws-region", "eu-west-2",
+		"--duration", "90s",
+		"--interval", "15s",
+		"--txn-state-topic", "__txn_state_custom",
+		"--enrich-consumer-groups=false",
+		"--tail-consumer-offsets=false",
+		"--include-internal-topics",
+		"--out", "/tmp/engagement/groups.yaml",
+		"--stats-out", "/tmp/engagement/stats.json",
+	})
+	require.NoError(t, root.Execute())
+
+	assert.Equal(t, []string{"b1:9092", "b2:9092"}, got.Brokers, "a trailing comma must not become an empty broker")
+	assert.Equal(t, "eu-west-2", got.Region)
+	assert.Equal(t, types.AuthTypeIAM, got.Auth.AuthType)
+	assert.Equal(t, 90*time.Second, got.Duration)
+	assert.Equal(t, 15*time.Second, got.Interval)
+	assert.Equal(t, "__txn_state_custom", got.TxnStateTopic)
+	assert.False(t, got.EnrichConsumerGroups)
+	assert.False(t, got.TailConsumerOffsets)
+	assert.True(t, got.IncludeInternalTopics)
+	assert.Equal(t, "/tmp/engagement/groups.yaml", got.OutPath)
+	assert.Equal(t, "/tmp/engagement/stats.json", got.StatsOutPath)
+	assert.Equal(t, "/tmp/engagement/"+DefaultAuditBasename, got.AuditLogPath)
+	assert.True(t, got.Verbose, "the root --verbose gates the detailed keep-up block")
+	assert.NotNil(t, got.Stdout)
 }
 
 // R2: the auth flags mirror `kcp migration execute` — mutually exclusive, one required.
