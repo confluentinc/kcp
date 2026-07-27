@@ -180,6 +180,19 @@ type ACLs struct {
 	// (detection pending): apply always emits a caveat that this cannot be
 	// checked yet, and "fail" errors out rather than silently proceeding.
 	UnprotectedTopicPolicy string `yaml:"unprotectedTopicPolicy,omitempty" json:"unprotectedTopicPolicy,omitempty"`
+	// IAM configures the AWS MSK IAM authorization plane (Phase 1B).
+	IAM *ACLsIAM `yaml:"iam,omitempty" json:"iam,omitempty"`
+}
+
+// ACLsIAM configures the AWS MSK IAM authorization plane (Phase 1B). Only valid
+// when spec.source.type is msk. ClusterArn scopes discovered grants to THIS
+// source cluster. PrincipalArns (explicit) and DiscoverAllRoles (enumeration)
+// are mutually exclusive. VerifyEffectiveAccess opts into SimulatePrincipalPolicy.
+type ACLsIAM struct {
+	ClusterArn            string   `yaml:"clusterArn" json:"clusterArn"`
+	PrincipalArns         []string `yaml:"principalArns,omitempty" json:"principalArns,omitempty"`
+	DiscoverAllRoles      bool     `yaml:"discoverAllRoles,omitempty" json:"discoverAllRoles,omitempty"`
+	VerifyEffectiveAccess bool     `yaml:"verifyEffectiveAccess,omitempty" json:"verifyEffectiveAccess,omitempty"`
 }
 
 type Schemas struct {

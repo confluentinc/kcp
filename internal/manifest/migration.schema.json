@@ -370,6 +370,36 @@
             },
             "unprotectedTopicPolicy": {
               "type": "string"
+            },
+            "iam": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "clusterArn": {
+                  "type": "string"
+                },
+                "principalArns": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "discoverAllRoles": {
+                  "type": "boolean"
+                },
+                "verifyEffectiveAccess": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "clusterArn"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
