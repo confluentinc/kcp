@@ -245,3 +245,20 @@ func TestAnInternalConsumedTopicIsDropped(t *testing.T) {
 	assert.Equal(t, []string{"app-repartition-store-changelog", "orders.in"}, got[0].Topics,
 		"only __-prefixed topics are internal; a Streams changelog is a real topic")
 }
+
+func TestATombstonedCommitIsNotALiveConsumedInput(t *testing.T) {
+	// A tombstone — a valid key with an empty value — is how the coordinator
+	// DELETES an offset commit on expiry or an admin DeleteOffsets. Its key
+	// still names a topic, so every decode-side check passes it; reading it as
+	// a live commit would report an input the application no longer consumes,
+	// and the operator would migrate a topic into a group that does not need it.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	b := commitBatch(4242, commitKey("payments-group", "orders.in", 0))
+	b.Records[0].Value = nil
+	tl.HandleBatch(b)
+
+	assert.Empty(t, flush(t, tl), "a tombstone is a deleted commit, not a live one")
+}

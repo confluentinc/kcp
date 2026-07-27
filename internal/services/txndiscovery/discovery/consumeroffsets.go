@@ -99,6 +99,13 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 		return
 	}
 	for _, r := range b.Records {
+		// A tombstone — a valid key with an empty value — is how the coordinator
+		// DELETES a commit on offset expiry or an admin DeleteOffsets. Its key
+		// still names a topic, so nothing downstream would notice; reading it as
+		// live would report an input the application no longer consumes.
+		if len(r.Value) == 0 {
+			continue
+		}
 		key, err := txnlog.DecodeOffsetKey(r.Key)
 		if err != nil {
 			continue
