@@ -493,7 +493,52 @@ const (
 	unionAlpha  = fixturePrefix + "union-alpha"
 	unionShared = fixturePrefix + "union-shared"
 	unionGamma  = fixturePrefix + "union-gamma"
+
+	// AE2 isolated topic: a transaction touching exactly one topic.
+	soloTxn   = fixturePrefix + "solo-txn"
+	soloTopic = fixturePrefix + "solo-topic"
+
+	// AE3 Streams naming recovery. streamsTxn follows the Kafka Streams
+	// convention "<application.id>-<taskId>" over streamsGroup, which is what
+	// lets enrichment join the group's committed input to the transaction's
+	// produced output.
+	streamsGroup = fixturePrefix + "streams-app"
+	streamsTxn   = streamsGroup + "-0_0"
+	streamsIn    = fixturePrefix + "streams-in"
+	streamsOut   = fixturePrefix + "streams-out"
 )
+
+// TestStreamsNamingRecoversConsumedInput is AE3: a transaction's footprint
+// names only what it PRODUCED, so the consumed input has to be recovered from
+// the consumer group whose id the transactional id is derived from.
+func TestStreamsNamingRecoversConsumedInput(t *testing.T) {
+	r := sharedRun(t)
+
+	g := r.groupWith(streamsOut)
+	require.NotNil(t, g, "the produced output topic is in no group\n%s", r.describe())
+
+	assert.Contains(t, g.Topics, streamsIn,
+		"the consumed input was not folded into the produced group by the Streams naming convention\n%s", r.describe())
+	assert.True(t, g.ReadProcessWrite,
+		"a group whose inputs came from a consumer group is not marked read-process-write\n%s", r.describe())
+	assert.Contains(t, g.Warning, "naming convention",
+		"the group's warning does not name the mechanism that recovered its inputs\n%s", r.describe())
+}
+
+// TestIsolatedTopicIsIndividual is AE2: a topic that only ever appeared alone
+// in a transaction is reported as individually migratable, not as a group.
+//
+// The negative half is the load-bearing one. A one-topic "group" would satisfy
+// "the topic appears in the output" while telling an operator to batch a
+// migration they do not need to batch.
+func TestIsolatedTopicIsIndividual(t *testing.T) {
+	r := sharedRun(t)
+
+	assert.True(t, r.isIndividual(soloTopic),
+		"a topic seen alone in a transaction was not reported as individually migratable\n%s", r.describe())
+	assert.Nil(t, r.groupWith(soloTopic),
+		"a topic seen alone in a transaction was reported as coupled to others\n%s", r.describe())
+}
 
 // TestTransitiveUnion is AE1: coupling is transitive, so two transactions that
 // share a single topic collapse into ONE group of three rather than two groups
@@ -583,6 +628,10 @@ func seedBeforeWindow(t *testing.T) {
 	createTopics(t, unionAlpha, unionShared, unionGamma)
 	produceTxn(t, txnFixture{TxnID: unionTxnA, Produce: []string{unionAlpha, unionShared}})
 	produceTxn(t, txnFixture{TxnID: unionTxnB, Produce: []string{unionShared, unionGamma}})
+
+	// AE2. One transaction, one topic: nothing to couple it to.
+	createTopics(t, soloTopic)
+	produceTxn(t, txnFixture{TxnID: soloTxn, Produce: []string{soloTopic}})
 }
 
 // seedDuringWindow produces the fixtures that must land inside the observation
