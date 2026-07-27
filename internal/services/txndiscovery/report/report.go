@@ -190,6 +190,13 @@ func (h Health) Line() string {
 // concerns lists what is wrong with the run, empty when nothing is.
 func (h Health) concerns() []string {
 	var out []string
+	// Liveness first, because it is the concern that hides behind a clean-looking
+	// line: a stopped partition contributes no lag and no decode errors, so without
+	// this branch the worst outcome renders identically to the best one.
+	if dead := h.PartitionsAssigned - h.PartitionsRunning; dead > 0 {
+		out = append(out, fmt.Sprintf("%d %s stopped early, so part of the window went unobserved",
+			dead, plural(dead, "partition", "partitions")))
+	}
 	if h.DecodeErrors > 0 {
 		out = append(out, "the internal record format may have drifted, so footprints may be missing")
 	}

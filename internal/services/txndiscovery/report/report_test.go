@@ -176,6 +176,23 @@ func TestHealthLineWarnsWhenAnySourceFailedToDecode(t *testing.T) {
 	requireContains(t, out, "the internal record format may have drifted, so footprints may be missing")
 }
 
+func TestHealthLineIsNotOKWhenAPartitionStoppedEvenWithZeroLag(t *testing.T) {
+	// The stall failure mode: a partition loop that exited reports zero lag and no
+	// decode errors, so liveness is the only thing that distinguishes it from a
+	// caught-up run.
+	out := render(t, Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		Tail: tail.Stats{
+			PartitionsAssigned: 4,
+			PartitionsRunning:  3,
+			RecordsRead:        900,
+		},
+	})
+
+	requireContains(t, out, "keep-up                : WARNING — 3/4 partitions live, 0 records of lag, 0 decode failures")
+	requireContains(t, out, "1 partition stopped early, so part of the window went unobserved")
+}
+
 func TestSummaryRendersAZeroStateWhenNoGroupsWereFound(t *testing.T) {
 	out := render(t, Run{
 		Duration:      time.Minute,
