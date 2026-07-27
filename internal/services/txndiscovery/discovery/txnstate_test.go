@@ -265,3 +265,33 @@ func TestTxnStateReader_UndecodableKeyIsCountedAndDoesNotStopTheReader(t *testin
 	assert.Equal(t, int64(0), st.ValueDecodeErrors)
 	assert.Equal(t, int64(1), st.Footprints)
 }
+
+func TestTxnStateReader_UndecodableValueIncrementsItsOwnCounterAndDoesNotStopTheReader(t *testing.T) {
+	// Value decode failures are the format-drift alarm. If a broker upgrade changes the
+	// TransactionLogValue schema the reader stops understanding footprints, and the run
+	// would otherwise finish "successfully" having found nothing — reporting an EOS
+	// cluster as having no transactional coupling at all. The counter is tracked apart
+	// from the key counter so the summary can name which half of the record drifted.
+	r := NewTxnStateReader(DefaultTxnStateTopic, NewTxnCatalog())
+
+	got := runReader(t, r, stateBatch(
+		// Value version 99 — the decoder rejects an unknown schema rather than guessing.
+		tail.Record{Key: txnKey("drift-app"), Value: concat(be16(99), be64(1))},
+		// Truncated mid-record: the header is present but the body is cut short.
+		tail.Record{Key: txnKey("cut-app"), Value: concat(be16(0), be64(2), be16(1))},
+		tail.Record{Key: txnKey("healthy-app"), Value: txnValue(3, 1, "c")},
+	))
+
+	require.Len(t, got, 1, "the reader must survive the bad values and still emit the good record")
+	assert.Equal(t, "healthy-app", got[0].TxnID)
+
+	st := r.Stats()
+	assert.Equal(t, int64(3), st.RecordsSeen)
+	assert.Equal(t, int64(2), st.ValueDecodeErrors)
+	// The keys decoded fine, so this must stay clean or the summary blames the wrong half.
+	assert.Equal(t, int64(0), st.KeyDecodeErrors)
+	// A record whose value would not decode is NOT a tombstone: conflating the two would
+	// silence the alarm behind a routine compaction count.
+	assert.Equal(t, int64(0), st.Tombstones)
+	assert.Equal(t, int64(1), st.Footprints)
+}

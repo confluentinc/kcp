@@ -104,6 +104,14 @@ func (r *TxnStateReader) handle(ctx context.Context, rec tail.Record, out chan<-
 	}
 	val, err := txnlog.DecodeValue(rec.Value)
 	if err != nil {
+		// The format-drift alarm. If a broker upgrade changes the TransactionLogValue
+		// schema the reader stops understanding footprints, and without this counter the
+		// run would finish "successfully" having found nothing — reporting an
+		// exactly-once cluster as having no transactional coupling at all. Counted
+		// separately from the key errors so the summary can name which half drifted.
+		r.valueDecodeErrors.Add(1)
+		slog.Debug("⏭️ skipped a transaction-state record whose value would not decode",
+			"offset", rec.Offset, "error", err)
 		return true
 	}
 
