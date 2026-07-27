@@ -717,6 +717,57 @@ func TestValidate_ACLsIAM_MultiplePrincipalArns_OneMalformed(t *testing.T) {
 	require.False(t, errorContains(errs, `"arn:aws:iam::1:role/Good" is not a valid IAM role/user ARN`))
 }
 
+// TestValidate_ACLsIAM_ClusterArnMalformed_EmptyRegionAccount rejects an ARN
+// that merely LOOKS like an MSK cluster ARN by substring (has "arn:aws:kafka:"
+// prefix and ":cluster/" somewhere in it) but has empty region/account
+// segments — this shape does not actually scope anything (arnClusterIdentity
+// in internal/migrate/acls/iam_translate.go cannot parse a cluster identity
+// out of it any better than validation can), so a manifest naming it would
+// silently match zero grants at apply time. See Finding 2(a) / task-7.
+func TestValidate_ACLsIAM_ClusterArnMalformed_EmptyRegionAccount(t *testing.T) {
+	m := validCCMigrationWithACLs(t)
+	m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: "arn:aws:kafka::cluster/x", PrincipalArns: []string{"arn:aws:iam::1:role/R"}}
+	requireHasErr(t, m.Validate(), "clusterArn", "not a valid MSK cluster ARN")
+}
+
+// TestValidate_ACLsIAM_ClusterArnWellFormed_Valid is the positive counterpart:
+// a fully-populated ARN (region, account, name, uuid all non-empty) must
+// validate clean.
+func TestValidate_ACLsIAM_ClusterArnWellFormed_Valid(t *testing.T) {
+	m := validCCMigrationWithACLs(t)
+	m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: "arn:aws:kafka:us-east-1:111122223333:cluster/mymsk/abc-5", PrincipalArns: []string{"arn:aws:iam::1:role/R"}}
+	require.Empty(t, m.Validate())
+}
+
+// TestValidate_ACLsIAM_PrincipalArnMalformed_EmptyAccountOrName mirrors the
+// clusterArn tightening for principal ARNs: an ARN that superficially matches
+// (prefix + ":role/"/":user/" substring) but has an empty account or an empty
+// trailing name segment must be rejected — principalFromArn
+// (internal/migrate/acls/iam_translate.go) would otherwise derive a bogus
+// "User:" (empty name) Kafka principal from it.
+func TestValidate_ACLsIAM_PrincipalArnMalformed_EmptyAccountOrName(t *testing.T) {
+	m := validCCMigrationWithACLs(t)
+	m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, PrincipalArns: []string{"arn:aws:iam:::role/R"}}
+	requireHasErr(t, m.Validate(), "principalArns", "not a valid IAM role/user ARN")
+
+	m2 := validCCMigrationWithACLs(t)
+	m2.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, PrincipalArns: []string{"arn:aws:iam::111122223333:role/"}}
+	requireHasErr(t, m2.Validate(), "principalArns", "not a valid IAM role/user ARN")
+}
+
+// TestValidate_ACLsIAM_PrincipalArnWellFormed_Valid confirms well-formed role
+// and user ARNs (including a path-bearing role name) still validate clean
+// after the tightening.
+func TestValidate_ACLsIAM_PrincipalArnWellFormed_Valid(t *testing.T) {
+	m := validCCMigrationWithACLs(t)
+	m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: mskArn, PrincipalArns: []string{
+		"arn:aws:iam::111122223333:role/AppRole",
+		"arn:aws:iam::111122223333:user/alice",
+		"arn:aws:iam::111122223333:role/team/AppRole",
+	}}
+	require.Empty(t, m.Validate())
+}
+
 func TestValidate_SourceMSK_CannotSourceInitiate(t *testing.T) {
 	m := validCC()
 	m.Spec.Source.Type = SourceMSK

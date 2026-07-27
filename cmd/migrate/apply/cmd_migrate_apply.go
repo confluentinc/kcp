@@ -364,6 +364,9 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 		if err != nil {
 			return nil, fmt.Errorf("reading IAM-derived ACLs: %w", err)
 		}
+		if len(iam.PrincipalArns) > 0 && len(iamAcls) == 0 {
+			slog.Warn("⚠️ spec.acls.iam matched zero ACLs — no kafka-cluster grants for the given principalArns scoped to clusterArn; check the ARNs and clusterArn")
+		}
 		raw = append(raw, iamAcls...)
 		slog.Warn("⚠️ IAM-derived ACLs are granted by identity policy; effective access (SCP/permission-boundary/deny) not verified — set spec.acls.iam.verifyEffectiveAccess to confirm")
 	}

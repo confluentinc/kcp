@@ -38,6 +38,15 @@ func NormalizePrincipalARNs(in []string) []string {
 		arn := strings.Replace(principal, "arn:aws:sts::", "arn:aws:iam::", 1)
 		arn = strings.Replace(arn, ":assumed-role/", ":role/", 1)
 
+		// KNOWN LIMITATION (Finding 3 / task-7, inherited from create-asset's
+		// evaluatePrincipal — not changed here): this trims to the first two
+		// "/"-segments unconditionally, so a PATH-BEARING role ARN like
+		// "arn:aws:iam::acct:role/team/AppRole" loses "AppRole" and normalizes
+		// to "arn:aws:iam::acct:role/team". Roles-with-paths are uncommon in
+		// practice; fixing this would need to distinguish "session-name
+		// segment on an STS-derived ARN" (drop it) from "path segment on an
+		// already-role/user ARN" (keep it), which the ARN string alone doesn't
+		// disambiguate.
 		parts := strings.Split(arn, "/")
 		if len(parts) > 2 {
 			arn = strings.Join(parts[:2], "/")

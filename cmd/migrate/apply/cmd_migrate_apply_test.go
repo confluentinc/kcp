@@ -917,6 +917,42 @@ func TestApply_ACLs_IAM_TwoStatementsSameOpResource_DedupedToSingleCreate(t *tes
 	require.Equal(t, int64(1), tgt.aclPosts, "two IAM statements granting the same op/resource must be deduped to a single create")
 }
 
+// A typo'd clusterArn or principalArn is easy to make and, previously, silent:
+// spec.acls.iam.principalArns is non-empty but every statement's resource ARN
+// is scoped to a DIFFERENT cluster, so ReadIAMACLs returns zero ACLs with no
+// error. buildACLReconcilers must surface this with a WARN rather than
+// quietly proceeding as if the operator asked for nothing (Finding 2(b) /
+// task-7).
+func TestApply_ACLs_IAM_ZeroMatch_WarnsOperator(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam7")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
+	// Grant is scoped to a DIFFERENT cluster (name "OTHER", uuid "zzz-9") than
+	// testClusterArn ("mymsk"/"abc-5") -> clusterArnMatches excludes it ->
+	// translateStatements/ReadIAMACLs yields an empty slice.
+	fetcher := iamFetcherOne("kafka-cluster:ReadData", "arn:aws:kafka:us-east-1:111122223333:topic/OTHER/zzz-9/x")
+
+	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam7", iamYAML, nil, fetcher, true)
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, logs, "WARN")
+	require.Contains(t, logs, "matched zero ACLs")
+	require.Equal(t, int64(0), tgt.saPosts)
+	require.Equal(t, int64(0), tgt.aclPosts)
+}
+
+// The zero-match warning must NOT fire when the IAM read legitimately
+// produces ACLs (the "happy path" already covered by
+// TestApply_ACLs_IAM_UnionDryRun) — this is the negative counterpart so the
+// new warning can't regress into firing unconditionally.
+func TestApply_ACLs_IAM_NonZeroMatch_NoZeroMatchWarning(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam8")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n"
+	fetcher := iamFetcherOne("kafka-cluster:WriteData", "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments")
+
+	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam8", iamYAML, nil, fetcher, true)
+	require.NoError(t, err, "logs: %s", logs)
+	require.NotContains(t, logs, "matched zero ACLs")
+}
+
 func TestEnsureMSKScramMechanism(t *testing.T) {
 	scram := func(mech string) types.KafkaSourceConn {
 		return types.KafkaSourceConn{AuthMethod: types.AuthMethodConfig{

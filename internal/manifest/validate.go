@@ -77,16 +77,60 @@ func validateSelection(field string, include []string) []error {
 	return errs
 }
 
-// isMSKClusterArn reports whether s looks like an MSK cluster ARN
-// (arn:aws:kafka:<region>:<account>:cluster/<name>/<uuid>).
+// isMSKClusterArn reports whether s is a well-formed MSK cluster ARN
+// (arn:aws:kafka:<region>:<account>:cluster/<name>/<uuid>) with every field —
+// region, account, name, uuid — actually populated.
+//
+// This mirrors the parsing arnClusterIdentity
+// (internal/migrate/acls/iam_translate.go) relies on to scope IAM-derived ACL
+// grants to a cluster: a plain prefix+substring check (the previous
+// implementation) accepts shapes like "arn:aws:kafka::cluster/x" — missing
+// region/account — that superficially look right but that arnClusterIdentity
+// can't parse a real cluster identity out of either. Validating such an ARN
+// as OK would let a manifest reach apply time with a clusterArn that silently
+// scopes nothing (Finding 2(a) / task-7).
 func isMSKClusterArn(s string) bool {
-	return strings.HasPrefix(s, "arn:aws:kafka:") && strings.Contains(s, ":cluster/")
+	parts := strings.Split(s, ":")
+	if len(parts) != 6 || parts[0] != "arn" || parts[1] != "aws" || parts[2] != "kafka" {
+		return false
+	}
+	region, account, resource := parts[3], parts[4], parts[5]
+	if region == "" || account == "" {
+		return false
+	}
+	restype, rest, ok := strings.Cut(resource, "/")
+	if !ok || restype != "cluster" {
+		return false
+	}
+	name, uuid, ok := strings.Cut(rest, "/")
+	return ok && name != "" && uuid != ""
 }
 
-// isIAMPrincipalArn reports whether s looks like an IAM role or user ARN
-// (arn:aws:iam::<account>:role/<name> or arn:aws:iam::<account>:user/<name>).
+// isIAMPrincipalArn reports whether s is a well-formed IAM role or user ARN
+// (arn:aws:iam::<account>:role/<name> or arn:aws:iam::<account>:user/<name>)
+// with a non-empty account and a non-empty trailing name.
+//
+// Tightened for the same reason as isMSKClusterArn (Finding 2(a) / task-7): a
+// plain prefix+substring check accepts shapes like "arn:aws:iam:::role/" —
+// empty account, empty name — from which principalFromArn
+// (internal/migrate/acls/iam_translate.go) would derive a bogus "User:"
+// (empty) Kafka principal. name may itself contain further "/"-segments (a
+// path-bearing role ARN, e.g. "role/team/AppRole") — only the account and the
+// immediate restype/name split are checked.
 func isIAMPrincipalArn(s string) bool {
-	return strings.HasPrefix(s, "arn:aws:iam::") && (strings.Contains(s, ":role/") || strings.Contains(s, ":user/"))
+	parts := strings.Split(s, ":")
+	if len(parts) != 6 || parts[0] != "arn" || parts[1] != "aws" || parts[2] != "iam" || parts[3] != "" {
+		return false
+	}
+	account, resource := parts[4], parts[5]
+	if account == "" {
+		return false
+	}
+	restype, name, ok := strings.Cut(resource, "/")
+	if !ok || name == "" {
+		return false
+	}
+	return restype == "role" || restype == "user"
 }
 
 // validateGlobs checks each pattern compiles as a path.Match glob.
