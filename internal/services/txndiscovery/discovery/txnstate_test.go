@@ -295,3 +295,29 @@ func TestTxnStateReader_UndecodableValueIncrementsItsOwnCounterAndDoesNotStopThe
 	assert.Equal(t, int64(0), st.Tombstones)
 	assert.Equal(t, int64(1), st.Footprints)
 }
+
+func TestTxnStateReader_IgnoresBatchesFromAnotherTopic(t *testing.T) {
+	// One Tail instance serves both this reader and the __consumer_offsets one, and a
+	// single channel carries both topics, so every consumer must demultiplex on the
+	// batch's topic. Without this filter a __consumer_offsets commit record would be
+	// fed to the TransactionLogValue decoder, which cannot read it — turning a
+	// correctly wired run into a flood of value decode errors and firing the
+	// format-drift alarm on a cluster whose format never drifted.
+	r := NewTxnStateReader(DefaultTxnStateTopic, NewTxnCatalog())
+
+	got := runReader(t, r,
+		tail.Batch{
+			Topic:   DefaultConsumerOffsetsTopic,
+			Records: []tail.Record{{Key: []byte("an offset commit key"), Value: []byte("not a txn state value")}},
+		},
+		stateBatch(tail.Record{Key: txnKey("mine"), Value: txnValue(1, 1, "a")}),
+	)
+
+	require.Len(t, got, 1)
+	assert.Equal(t, "mine", got[0].TxnID)
+
+	st := r.Stats()
+	assert.Equal(t, int64(1), st.RecordsSeen, "a foreign topic's records are not this reader's to count")
+	assert.Equal(t, int64(0), st.KeyDecodeErrors)
+	assert.Equal(t, int64(0), st.ValueDecodeErrors, "a foreign record must not fire the format-drift alarm")
+}

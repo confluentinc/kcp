@@ -69,6 +69,13 @@ func (r *TxnStateReader) Stats() TxnStateStats {
 // Run drains the batch channel, emitting observations onto out.
 func (r *TxnStateReader) Run(ctx context.Context, in <-chan tail.Batch, out chan<- Observation) error {
 	for b := range in {
+		// Demultiplex. One Tail serves this reader and the __consumer_offsets one over a
+		// single channel, so a batch that is not ours is skipped rather than decoded:
+		// feeding an offset-commit record to the TransactionLogValue decoder would fire
+		// the format-drift alarm on a cluster whose format never drifted.
+		if b.Topic != r.topic {
+			continue
+		}
 		for _, rec := range b.Records {
 			if !r.handle(ctx, rec, out) {
 				return nil
