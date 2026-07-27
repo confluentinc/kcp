@@ -346,11 +346,49 @@ func formatLag64(n int64) string {
 	return string(result)
 }
 
-// FenceGateway applies the fenced gateway CR YAML to block traffic and waits
-// for the Confluent operator to report the gateway as Ready at the new spec
-// generation. The wait runs without a deadline by default — the operator
-// drives convergence and the user can Ctrl-C if a rollout wedges. An optional
-// per-workflow rolloutTimeout caps the wait when set (via SetRolloutTimeout).
+// waitForGatewayAccepted blocks until the Confluent operator has accepted the
+// gateway CR just applied, and must be called after every apply and before the
+// Deployment-based readiness/pod waits.
+//
+// Those waits only ever look at the apps/v1 Deployment. When the operator
+// rejects a CR it never touches the Deployment, so the Deployment sits complete
+// and healthy running the *previous* generation's pods — the readiness wait's
+// detection window expires, reports "No pod restart required" and returns nil.
+// That is how a switchover whose CR referenced a missing secret was reported as
+// a completed migration while the gateway stayed fenced and every client stayed
+// blocked. Confirming the operator accepted the spec is the only signal that
+// distinguishes a genuine no-op apply from a refused one.
+//
+// step names the phase for the error message ("fence", "switchover",
+// "unfence"). An operator rejection is returned as-is: gateway.GatewayRejectedError
+// already carries the operator's own reason and message, and callers can
+// errors.As it.
+func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *MigrationConfig, step string) error {
+	s.reporter.detail("Waiting for gateway reconcile...")
+	slog.Debug("waiting for gateway acceptance", "step", step, "gateway", config.InitialCrName, "rolloutTimeout", s.rolloutTimeout)
+
+	err := s.gatewayService.WaitForGatewayAccepted(ctx, config.K8sNamespace, config.InitialCrName, 2*time.Second, s.rolloutTimeout)
+	if err == nil {
+		return nil
+	}
+
+	var rejected *gateway.GatewayRejectedError
+	if errors.As(err, &rejected) {
+		// The rejection itself is rendered once upstream from the returned
+		// error; only add what the error cannot carry — how to go look.
+		s.reporter.remediation("Confluent operator rejected the %s gateway spec. Inspect its view of the gateway:\n"+
+			"   kubectl -n %s get gateway %s -o jsonpath='{.status.conditions}'", step, config.K8sNamespace, config.InitialCrName)
+		return err
+	}
+	return fmt.Errorf("failed waiting for gateway reconcile during %s: %w", step, err)
+}
+
+// FenceGateway applies the fenced gateway CR YAML to block traffic, confirms the
+// Confluent operator accepted the new spec, then waits for it to report the
+// gateway as Ready at that generation. The wait runs without a deadline by
+// default — the operator drives convergence and the user can Ctrl-C if a
+// rollout wedges. An optional per-workflow rolloutTimeout caps the wait when
+// set (via SetRolloutTimeout).
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
@@ -382,22 +420,19 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	slog.Debug("fenced gateway CR applied")
 	s.reporter.success("Fenced gateway CR applied")
 
+	// Gate both waits below on the operator having accepted the fenced spec.
+	// The Deployment-based waits cannot tell "no restart needed" apart from
+	// "operator refused the spec" — see waitForGatewayAccepted.
+	if err := s.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
+		return err
+	}
+
 	s.reporter.detail("Waiting for gateway readiness...")
 	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout, "detecting", detecting)
 
 	// With detection on, wait until the old unfenced pods are gone, not just
 	// until the new pod is Ready — see the comment above.
 	if detecting {
-		// Guard the pod-rollout wait: first block until the operator has
-		// observed the fenced CR. Otherwise a slow operator reconcile could let
-		// WaitForGatewayPods' detection window expire before the rollout even
-		// starts — concluding "no restart required" while the old, still-
-		// unfenced pod is live and reopening the false positive. A no-op
-		// re-apply (resume of an already-fenced gateway) returns immediately.
-		s.reporter.detail("Waiting for gateway reconcile...")
-		if err := s.gatewayService.WaitForGatewayObservedGeneration(ctx, config.K8sNamespace, config.InitialCrName, 2*time.Second, s.rolloutTimeout); err != nil {
-			return fmt.Errorf("failed waiting for gateway reconcile: %w", err)
-		}
 		if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, oldPodUIDs, 5*time.Second, s.rolloutTimeout, s.printPodRolloutProgress); err != nil {
 			return fmt.Errorf("failed waiting for gateway pod rollout: %w", err)
 		}
@@ -446,6 +481,13 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 	}
 	slog.Debug("initial gateway CR applied")
 	s.reporter.success("Initial gateway CR applied")
+
+	// Rollback is the worst place to be blind to a rejected apply: without the
+	// acceptance check this reports traffic restored while the gateway is still
+	// fenced.
+	if err := s.waitForGatewayAccepted(ctx, config, "unfence"); err != nil {
+		return err
+	}
 
 	s.reporter.detail("Waiting for gateway readiness...")
 	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
@@ -831,8 +873,14 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 }
 
 // SwitchGateway applies the switchover gateway CR YAML to point to Confluent
-// Cloud and waits for the operator to report the gateway as Ready. The wait
-// uses the same no-deadline-by-default behavior as FenceGateway.
+// Cloud, confirms the operator accepted the new spec, then waits for it to
+// report the gateway as Ready. The wait uses the same no-deadline-by-default
+// behavior as FenceGateway.
+//
+// The acceptance check is what stops this reporting a completed migration for a
+// switchover the operator refused — the failure mode described on
+// waitForGatewayAccepted, hit on 2026-07-27 while setting up the live-cluster
+// e2e test infrastructure.
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
@@ -841,6 +889,10 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 	}
 	slog.Debug("switchover gateway CR applied")
 	s.reporter.success("Switchover gateway CR applied")
+
+	if err := s.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
+		return err
+	}
 
 	s.reporter.detail("Waiting for gateway readiness...")
 	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
