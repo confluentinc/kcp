@@ -224,6 +224,55 @@ func TestKeepUpDetailBreaksDownEverySourceAndEveryPartition(t *testing.T) {
 	}
 }
 
+func TestStatsJSONCarriesEveryFootprintEvenWithHostileNames(t *testing.T) {
+	// The stats document is the artifact that carries per-transaction detail, so it
+	// takes the same hostile names the YAML does. JSON has no plain-scalar style to
+	// get wrong, but that has to be asserted rather than assumed: the audit writer's
+	// equivalent forgery became possible the moment its encoder was swapped out.
+	r := statsRun()
+	r.Footprints = []discovery.TxnFootprint{
+		{
+			TxnID:            hostileNames[len(hostileNames)-1], // the newline forgery probe
+			ProducerID:       991,
+			Topics:           hostileNames,
+			ReadProcessWrite: true,
+			Sources:          []string{discovery.SourceTxnStateLog, discovery.SourceConsumerOffsets},
+			Samples:          3,
+		},
+		{TxnID: "plain-txn", ProducerID: 992, Topics: []string{"plain-topic"}, Samples: 1},
+	}
+
+	_, doc := writeStats(t, r)
+
+	if got := num(t, at(t, doc, "observed_transactional_ids")); got != 2 {
+		t.Errorf("observed_transactional_ids = %v, want 2", got)
+	}
+	txns, ok := at(t, doc, "transactions").([]any)
+	if !ok || len(txns) != 2 {
+		t.Fatalf("transactions = %v, want 2 entries", at(t, doc, "transactions"))
+	}
+	first, _ := txns[0].(map[string]any)
+	if got, _ := first["transactional_id"].(string); got != r.Footprints[0].TxnID {
+		t.Errorf("transactional_id round-tripped to %q, want %q", got, r.Footprints[0].TxnID)
+	}
+	topics, _ := first["topics"].([]any)
+	if len(topics) != len(hostileNames) {
+		t.Fatalf("topics round-tripped to %d entries, want %d", len(topics), len(hostileNames))
+	}
+	for i, want := range hostileNames {
+		if got, _ := topics[i].(string); got != want {
+			t.Errorf("topics[%d] round-tripped to %q, want %q", i, got, want)
+		}
+	}
+	if got := num(t, first["producer_id"]); got != 991 {
+		t.Errorf("producer_id = %v, want 991", got)
+	}
+	sources, _ := first["sources"].([]any)
+	if len(sources) != 2 {
+		t.Errorf("sources = %v, want 2 entries", sources)
+	}
+}
+
 func statsRun2Doc(t *testing.T) (string, map[string]any) {
 	t.Helper()
 	return writeStats(t, statsRun())
