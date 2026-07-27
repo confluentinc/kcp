@@ -12,6 +12,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/report"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/stretchr/testify/require"
 )
@@ -259,13 +260,17 @@ func (h *harness) runner(t *testing.T, opts Opts) *Runner {
 	if opts.Stdout == nil {
 		opts.Stdout = &bytes.Buffer{}
 	}
+	// Only topics the run will actually tail: a probe failure keeps the
+	// consumer-offsets log out of the assignment, so waiting on its fetch count
+	// would wait for a fetch that never comes.
 	topics := []string{opts.TxnStateTopic}
-	if opts.TailConsumerOffsets {
+	if opts.TailConsumerOffsets && h.probeErr == nil {
 		topics = append(topics, discovery.DefaultConsumerOffsetsTopic)
 	}
 	return &Runner{
-		opts:    opts,
-		connect: h.connect,
+		opts:     opts,
+		connect:  h.connect,
+		newAudit: report.NewAuditWriter,
 		window: func(ctx context.Context, _ time.Duration) {
 			deadline := time.Now().Add(30 * time.Second)
 			for {

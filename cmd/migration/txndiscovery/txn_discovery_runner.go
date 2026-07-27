@@ -86,11 +86,16 @@ type Runner struct {
 	// configured duration, or as soon as ctx is done, which is how SIGINT ends
 	// a run early.
 	window func(ctx context.Context, d time.Duration)
+
+	// newAudit opens the audit trail. Seamed so the suite can drive the
+	// incomplete-trace path, whose only realistic production cause is a disk
+	// that fills mid-run.
+	newAudit func(path string) (*report.AuditWriter, error)
 }
 
 // NewRunner builds a runner over a real cluster.
 func NewRunner(opts Opts) *Runner {
-	return &Runner{opts: opts, connect: connectSarama, window: waitWindow}
+	return &Runner{opts: opts, connect: connectSarama, window: waitWindow, newAudit: report.NewAuditWriter}
 }
 
 // waitWindow is the production observation window: the configured duration, or
@@ -133,7 +138,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	// check at each call site.
 	var audit *report.AuditWriter
 	if !r.opts.DryRun && r.opts.AuditLogPath != "" {
-		audit, err = report.NewAuditWriter(r.opts.AuditLogPath)
+		audit, err = r.newAudit(r.opts.AuditLogPath)
 		if err != nil {
 			return err
 		}

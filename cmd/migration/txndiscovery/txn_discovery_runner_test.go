@@ -2,7 +2,10 @@ package txndiscovery
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,6 +13,7 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/report"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -212,4 +216,218 @@ func TestRun_TheWindowEndsTheRunAndTheArtifactsAreWritten(t *testing.T) {
 	assert.True(t, exists(t, opts.StatsOutPath), "--stats-out is written")
 	assert.True(t, exists(t, opts.AuditLogPath), "the audit trail is on by default")
 	assert.Equal(t, 1, h.closes, "the sarama client and cluster admin are released")
+}
+
+// R10, integration constraint: one tail serves both readers over one channel,
+// so the command must fan it out BY COPY. A shared channel delivers each batch
+// to exactly one receiver — the offsets tail would swallow transaction-state
+// batches and vice versa, losing roughly half of each stream with no error
+// anywhere.
+//
+// Enough batches on each topic that the split cannot go unnoticed: a shared
+// channel would have to route all sixteen correctly by chance.
+func TestRun_BothReadersSeeEveryBatch(t *testing.T) {
+	const n = 8
+
+	dir := t.TempDir()
+	h := newHarness()
+	for i := range n {
+		h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(int64(i),
+			[][]byte{txnKey(fmt.Sprintf("txn-%d", i))},
+			[][]byte{txnValue(int64(100+i), fmt.Sprintf("out.%d", i), "__consumer_offsets")},
+		))
+		h.tailClient.script(discovery.DefaultConsumerOffsetsTopic, commitRecordBatch(int64(i), int64(100+i),
+			commitKey(fmt.Sprintf("group-%d", i), fmt.Sprintf("in.%d", i), 0),
+		))
+	}
+
+	opts := baseOpts(dir)
+	opts.EnrichConsumerGroups = false
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	yaml := readFile(t, opts.OutPath)
+	for i := range n {
+		assert.Contains(t, yaml, fmt.Sprintf("out.%d", i), "every transaction-state batch reached its reader")
+		assert.Contains(t, yaml, fmt.Sprintf("in.%d", i), "every consumer-offsets batch reached its reader")
+	}
+}
+
+// R21, integration constraint: the tail's stats must be snapshotted BEFORE the
+// run's context is cancelled. Every partition loop clears its running flag as it
+// exits, so a snapshot taken after shutdown reports zero partitions live and the
+// health line condemns a perfectly healthy run as failed.
+func TestRun_TailStatsAreSnapshottedBeforeShutdown(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("txn-a")},
+		[][]byte{txnValue(11, "topic.a")},
+	))
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	var doc struct {
+		Tail struct {
+			PartitionsAssigned int `json:"partitions_assigned"`
+			PartitionsRunning  int `json:"partitions_running"`
+		} `json:"tail"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, opts.StatsOutPath)), &doc))
+
+	require.Positive(t, doc.Tail.PartitionsAssigned, "the run must actually have assigned partitions")
+	assert.Equal(t, doc.Tail.PartitionsAssigned, doc.Tail.PartitionsRunning,
+		"every assigned partition was live when the window closed; a post-cancel snapshot would report zero")
+}
+
+// R20: --dry-run suppresses every artifact write. It does not suppress kcp.log.
+func TestRun_DryRun_WritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("txn-a")},
+		[][]byte{txnValue(11, "topic.a", "topic.b")},
+	))
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+	opts.DryRun = true
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	assert.False(t, exists(t, opts.OutPath), "no groups YAML")
+	assert.False(t, exists(t, opts.StatsOutPath), "no stats JSON")
+	assert.False(t, exists(t, opts.AuditLogPath), "no audit trail — the audit log is a file write like any other")
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "a dry run leaves the output directory untouched")
+}
+
+// R18: --no-audit-log suppresses the audit trail and nothing else.
+func TestRun_NoAuditLog_SuppressesOnlyTheAuditTrail(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("txn-a")},
+		[][]byte{txnValue(11, "topic.a", "topic.b")},
+	))
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+	opts.AuditLogPath = "" // what --no-audit-log resolves to
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	assert.True(t, exists(t, opts.OutPath), "the groups YAML is still written")
+	assert.True(t, exists(t, opts.StatsOutPath), "the stats JSON is still written")
+	assert.False(t, exists(t, filepath.Join(dir, DefaultAuditBasename)), "no audit trail")
+	assert.Contains(t, readFile(t, opts.OutPath), "topic.a")
+}
+
+// R18, integration constraint: a truncated audit trail reads downstream as "no
+// transaction coupled these topics", which is indistinguishable from a clean
+// run. The exit code is the only thing that tells them apart.
+func TestRun_AuditWriteErrors_ProduceANonZeroExit(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("txn-a")},
+		[][]byte{txnValue(11, "topic.a", "topic.b")},
+	))
+
+	opts := baseOpts(dir)
+	runner := h.runner(t, opts)
+	// A writer whose file is already gone: every Record fails, exactly as a
+	// disk that filled part-way through the run would.
+	runner.newAudit = func(path string) (*report.AuditWriter, error) {
+		w, err := report.NewAuditWriter(path)
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+		return w, nil
+	}
+
+	err := runner.Run(context.Background())
+
+	require.Error(t, err, "an incomplete audit trail must not exit zero")
+	assert.Contains(t, err.Error(), "audit")
+	assert.True(t, exists(t, opts.OutPath), "the groups YAML is still written; only the exit code reports the gap")
+}
+
+// R9, integration constraint: the artifacts are written only after the offsets
+// tail's final flush. Here the resolve interval is longer than any plausible
+// run, so the producer-id correlation can ONLY be resolved by that final flush —
+// if the YAML were written first, the recovered input would be missing from it.
+func TestRun_ArtifactsAreWrittenAfterTheFinalFlush(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("eos-app-txn")},
+		[][]byte{txnValue(777, "eos.output", "__consumer_offsets")},
+	))
+	h.tailClient.script(discovery.DefaultConsumerOffsetsTopic, commitRecordBatch(0, 777,
+		// A group id bearing no naming relationship to the transactional id, so
+		// only the exact producer-id join can recover this input.
+		commitKey("unrelated-group-name", "eos.input", 0),
+	))
+
+	opts := baseOpts(dir)
+	opts.Interval = time.Hour
+	opts.EnrichConsumerGroups = false
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	assert.Contains(t, readFile(t, opts.OutPath), "eos.input",
+		"the late producer-id resolution must reach the YAML, so the write happens after the final flush")
+}
+
+// R12, abuse case: preflight failure exits non-zero and leaves nothing behind —
+// not even the audit trail, which is opened after the probe for exactly this
+// reason.
+func TestRun_PreflightFailure_ExitsNonZeroAndWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.describer = &fakeDescriber{md: metadataFor(discovery.DefaultTxnStateTopic, sarama.ErrTopicAuthorizationFailed, 0)}
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+
+	err := h.runner(t, opts).Run(context.Background())
+
+	require.Error(t, err)
+	assert.Contains(t, strings.ToLower(err.Error()), "credential")
+	assert.Contains(t, strings.ToLower(err.Error()), "acl")
+
+	entries, rerr := os.ReadDir(dir)
+	require.NoError(t, rerr)
+	assert.Empty(t, entries, "a failed preflight writes no files at all")
+}
+
+// R13: an unreadable consumer-offsets log degrades the run to consumer-group
+// enrichment alone rather than failing it.
+func TestRun_UnreadableConsumerOffsets_DegradesRatherThanFailing(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.probeErr = sarama.ErrTopicAuthorizationFailed
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("txn-a")},
+		[][]byte{txnValue(11, "topic.a", "topic.b")},
+	))
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	assert.Contains(t, readFile(t, opts.OutPath), "topic.a", "the transaction-state footprints are still worth having")
+
+	var doc struct {
+		Offsets struct {
+			Unavailable bool `json:"unavailable"`
+		} `json:"consumer_offsets_log"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, opts.StatsOutPath)), &doc))
+	assert.True(t, doc.Offsets.Unavailable,
+		"the phase must be recorded as never having run, so the summary does not present it as having found nothing")
 }
