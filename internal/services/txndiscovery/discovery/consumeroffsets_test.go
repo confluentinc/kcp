@@ -47,6 +47,12 @@ func commitKey(group, topic string, partition int32) []byte {
 	return concat(be16(1), kstr(group), kstr(topic), be32(partition))
 }
 
+// groupMetadataKey builds a GroupMetadataKey v2 — consumer-group state, which
+// shares the __consumer_offsets topic with offset commits but names no topic.
+func groupMetadataKey(group string) []byte {
+	return concat(be16(2), kstr(group))
+}
+
 // commitBatch builds the batch a transactional offset commit arrives in: the
 // header carries the producer id that ties it to its transaction.
 func commitBatch(producerID int64, keys ...[]byte) tail.Batch {
@@ -198,4 +204,19 @@ func TestTheDemultiplexedTopicFollowsTheConfiguredTopic(t *testing.T) {
 	got := flush(t, tl)
 	require.Len(t, got, 1)
 	assert.Equal(t, []string{"orders.in"}, got[0].Topics)
+}
+
+func TestAGroupMetadataKeyContributesNoConsumedTopic(t *testing.T) {
+	// Key version 2 is GroupMetadataKey: consumer-group state sharing the
+	// __consumer_offsets topic, naming no topic at all. It decodes successfully,
+	// so nothing upstream rejects it — and its empty Topic field would otherwise
+	// be buffered as a consumed topic named "", which reaches the YAML as a
+	// nameless member of a real transaction's group.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	tl.HandleBatch(commitBatch(4242, groupMetadataKey("payments-group")))
+
+	assert.Empty(t, flush(t, tl), "group metadata names no consumed topic")
 }

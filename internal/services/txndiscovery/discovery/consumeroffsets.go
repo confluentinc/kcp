@@ -102,6 +102,12 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 		if err != nil {
 			continue
 		}
+		// An empty topic is a group-metadata record (key version 2): consumer
+		// group state, not an offset commit. It decodes cleanly, so only this
+		// check stops a nameless topic reaching a real transaction's group.
+		if key.Topic == "" {
+			continue
+		}
 		t.recordCommit(b.ProducerID, key.Topic)
 	}
 }
