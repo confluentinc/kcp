@@ -536,7 +536,75 @@ const (
 	billingGroup = fixturePrefix + "wobble-consumer"
 	billingIn    = fixturePrefix + "billing-in"
 	billingOut   = fixturePrefix + "billing-out"
+
+	// AE8 audit growth-only. One transactional id, one output topic, several
+	// transactions: an unchanging topic set observed over and over.
+	repeatTxn   = fixturePrefix + "repeat-txn"
+	repeatTopic = fixturePrefix + "repeat-only"
+
+	// repeatRuns is how many transactions the repeat fixture runs. Each writes
+	// at least an Ongoing and a PrepareCommit record to the transaction-state
+	// log, and both carry the footprint — so the reader observes this topic set
+	// many times over.
+	repeatRuns = 3
 )
+
+// TestAuditLogExplainsAUnion is F2, the flow the audit log exists for: an
+// operator looking at a group in txn-discovery.yaml asks why two topics ended
+// up together, filters the trace by one of the topic names, and gets back the
+// transaction that coupled them.
+//
+// The terminal deliberately reports counts only, so this file is the ONLY
+// artifact that answers "why" — and by the time the question is asked the
+// __transaction_state records behind the answer may well have been compacted
+// away, which is what makes reconstructing it after the fact impossible.
+func TestAuditLogExplainsAUnion(t *testing.T) {
+	r := sharedRun(t)
+	require.NotEmpty(t, r.audit, "the run wrote no audit log at all\n%s", r.describe())
+
+	lines := r.auditFor(unionShared)
+	require.NotEmpty(t, lines,
+		"filtering the audit trail by a grouped topic name yielded nothing, so a union cannot be traced")
+
+	// Both transactions that touched the shared topic must be recoverable from
+	// the trace: one line naming only one of them would explain half a union.
+	var txns []string
+	for _, l := range lines {
+		txns = append(txns, l.TxnID)
+	}
+	assert.Contains(t, txns, unionTxnA, "the trace does not name the first coupling transaction: %+v", lines)
+	assert.Contains(t, txns, unionTxnB, "the trace does not name the second coupling transaction: %+v", lines)
+
+	for _, l := range lines {
+		assert.NotEmpty(t, l.Source, "an audit line does not say which phase observed the edge: %+v", l)
+		assert.NotEmpty(t, l.Added, "a growth line records no added topic: %+v", l)
+		assert.False(t, l.Timestamp.IsZero(), "an audit line carries no timestamp: %+v", l)
+	}
+}
+
+// TestAuditLogRecordsGrowthOnly is AE8: a transaction observed repeatedly with
+// an unchanged topic set produces exactly ONE audit line, written when the set
+// was first populated.
+//
+// R19 is not deduplication for tidiness. The audit log exists so an operator
+// can find the edge that coupled two topics; a line per observation would bury
+// those edges under thousands of restatements of what was already known, and on
+// a run measured in hours the file would grow with elapsed time rather than
+// with the number of distinct couplings.
+func TestAuditLogRecordsGrowthOnly(t *testing.T) {
+	r := sharedRun(t)
+	require.NotEmpty(t, r.audit, "the run wrote no audit log at all\n%s", r.describe())
+
+	lines := r.auditForTxn(repeatTxn)
+	require.Len(t, lines, 1,
+		"a transaction observed %d times over with an unchanged topic set wrote %d audit lines, not one: %+v",
+		repeatRuns, len(lines), lines)
+
+	assert.Equal(t, []string{repeatTopic}, lines[0].Added,
+		"the single line does not report the topic it added")
+	assert.Equal(t, []string{repeatTopic}, lines[0].Topics,
+		"the single line does not report the resulting topic set")
+}
 
 // TestUnrelatedExactlyOnceWorkloadsStaySeparate is AE5: two exactly-once
 // workloads that share nothing but __consumer_offsets must stay in separate
@@ -649,6 +717,15 @@ func TestTransitiveUnion(t *testing.T) {
 	assert.Same(t, g, r.groupWith(unionGamma), "the second transaction's topic landed in a different group")
 }
 
+// Shared-window timings. The live rounds finish at roughly liveRounds *
+// liveRoundGap into a sharedWindow-long run, leaving the rest of the window as
+// catch-up time for the transaction-state reader.
+const (
+	sharedWindow = 60 * time.Second
+	liveRounds   = 4
+	liveRoundGap = 6 * time.Second
+)
+
 var (
 	sharedOnce sync.Once
 	shared     *runResult
@@ -677,7 +754,7 @@ func doSharedRun(t *testing.T) *runResult {
 	proc := startKCP(t,
 		"--source-bootstrap", bootstrapAddr,
 		"--use-unauthenticated-plaintext",
-		"--duration", "45s",
+		"--duration", sharedWindow.String(),
 		"--interval", "5s",
 		"--out", outFile,
 		"--stats-out", statsFile,
@@ -685,13 +762,19 @@ func doSharedRun(t *testing.T) *runResult {
 	)
 	proc.awaitObserving(t)
 
-	// Produced in rounds rather than once. The consumer-offsets tail starts at
-	// latest and a single-node broker's first fetch after start can land either
-	// side of a one-shot fixture; repeating an identical transaction cannot
-	// create a second group, so the redundancy costs nothing.
-	for round := 0; round < 3; round++ {
+	// Produced in rounds rather than once, and finishing well before the window
+	// closes. Producer-id correlation needs BOTH halves of a join to have been
+	// observed — the transactional offset commit on the consumer-offsets log,
+	// which the tail reads from latest, and the producer-id-to-transaction
+	// mapping from the transaction-state log, which the reader works towards
+	// from the beginning across every partition. A fixture produced close to the
+	// end can have its commit seen and its transaction not yet reached, and the
+	// final flush cannot resolve what the catalog does not hold. Repeating an
+	// identical transaction cannot create a second group, so the redundancy is
+	// free; the quiet tail of the window is what makes the correlation land.
+	for round := 0; round < liveRounds; round++ {
 		seedDuringWindow(t)
-		time.Sleep(5 * time.Second)
+		time.Sleep(liveRoundGap)
 	}
 
 	res := proc.wait(t)
@@ -732,7 +815,21 @@ func seedBeforeWindow(t *testing.T) {
 	// The during-window fixtures' topics are created here so the observation
 	// window carries transactions rather than topic-creation churn. An unused
 	// topic is invisible to discovery, which reports only what it observed.
-	createTopics(t, ordersIn, ordersOut)
+	// AE8. One transactional id writing the SAME single topic several times
+	// over. Each transaction contributes at least an Ongoing and a
+	// PrepareCommit record and both carry the footprint, so the reader observes
+	// this set many times — and exactly one of those observations grew it.
+	//
+	// One topic on one partition, deliberately. A transaction's Ongoing record
+	// is written as partitions are added to it, so a two-topic fixture could
+	// legitimately produce a footprint of {a} followed by {a,b} — two growth
+	// events, and an exact line count at the mercy of broker timing.
+	createTopics(t, repeatTopic)
+	for i := 0; i < repeatRuns; i++ {
+		produceTxn(t, txnFixture{TxnID: repeatTxn, Produce: []string{repeatTopic}})
+	}
+
+	createTopics(t, ordersIn, ordersOut, billingIn, billingOut)
 }
 
 // seedDuringWindow produces the fixtures that must land inside the observation
@@ -748,5 +845,14 @@ func seedDuringWindow(t *testing.T) {
 		Produce:      []string{ordersOut},
 		ConsumeTopic: ordersIn,
 		Group:        ordersGroup,
+	})
+
+	// AE5. A second exactly-once workload sharing nothing with the first except
+	// the __consumer_offsets both commit into.
+	produceTxn(t, txnFixture{
+		TxnID:        billingTxn,
+		Produce:      []string{billingOut},
+		ConsumeTopic: billingIn,
+		Group:        billingGroup,
 	})
 }
