@@ -166,6 +166,12 @@ func TestTxnDiscovery_Help_RendersGroupedFlags(t *testing.T) {
 	})
 
 	assert.Contains(t, help, "environment variables", "the environment-variable path is the documented one for credentials")
+
+	// A custom usage function replaces cobra's default template, which is what
+	// would otherwise have rendered Examples. Without this the examples exist
+	// only in the generated docs and an operator running --help never sees them.
+	assert.Contains(t, help, "Examples:")
+	assert.Contains(t, help, cmd.Example)
 }
 
 // R2: the auth flags mirror `kcp migration execute` — mutually exclusive, one required.

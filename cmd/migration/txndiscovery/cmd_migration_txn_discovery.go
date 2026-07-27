@@ -211,6 +211,12 @@ visible in the process list.`,
 			}
 		}
 		_, _ = fmt.Fprintln(w, "All flags can be provided via environment variables (uppercase, with underscores).")
+		// A custom usage function replaces cobra's default template, which is
+		// what would otherwise have rendered these. Without this they reach
+		// only the generated docs and never an operator running --help.
+		if c.Example != "" {
+			_, _ = fmt.Fprintf(w, "\nExamples:\n%s\n", c.Example)
+		}
 		return nil
 	})
 
