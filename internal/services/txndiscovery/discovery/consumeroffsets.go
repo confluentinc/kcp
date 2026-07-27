@@ -1,0 +1,138 @@
+package discovery
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/txnlog"
+)
+
+// DefaultConsumerOffsetsTopic is Kafka's internal consumer-offsets log.
+const DefaultConsumerOffsetsTopic = "__consumer_offsets"
+
+// finalFlushTimeout bounds the fresh context the final flush runs on.
+const finalFlushTimeout = 10 * time.Second
+
+// ConsumerOffsetsTail recovers the CONSUMED (input) topics of exactly-once
+// applications by joining transactional offset commits to transactions on the
+// record-batch producer id.
+//
+// A transaction's footprint names only what it PRODUCED. When an exactly-once
+// app commits its consumer offsets inside the transaction
+// (sendOffsetsToTransaction), that commit is written to __consumer_offsets as a
+// TRANSACTIONAL record: the batch header carries the producer id, and the
+// record key carries the consumer group and the consumed topic. The
+// __transaction_state reader has already recorded which transactional id that
+// producer id belongs to, so joining the two on the producer id ties the
+// consumed topic to the exact transaction — with no assumption about how the
+// group id and the transactional id are named.
+//
+// That join is the entire reason this feature reads raw fetch responses rather
+// than using sarama's consumer API, which discards the batch header.
+type ConsumerOffsetsTail struct {
+	catalog *TxnCatalog
+
+	mu sync.Mutex
+	// pending holds sightings not yet resolved to a transaction: producer id ->
+	// the set of consumed topics it committed offsets for. An entry is removed
+	// once its producer id resolves and is emitted.
+	pending map[int64]map[string]struct{}
+}
+
+// ConsumerOffsetsOptions configures a ConsumerOffsetsTail. The zero value is
+// usable.
+type ConsumerOffsetsOptions struct{}
+
+// NewConsumerOffsetsTail builds a tail consumer over the shared catalog the
+// __transaction_state reader populates.
+func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *ConsumerOffsetsTail {
+	return &ConsumerOffsetsTail{
+		catalog: catalog,
+		pending: make(map[int64]map[string]struct{}),
+	}
+}
+
+// HandleBatch records the transactional offset commits carried by one batch.
+func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
+	for _, r := range b.Records {
+		key, err := txnlog.DecodeOffsetKey(r.Key)
+		if err != nil {
+			continue
+		}
+		t.recordCommit(b.ProducerID, key.Topic)
+	}
+}
+
+// recordCommit buffers one sighting: producer id pid committed an offset for
+// consumed topic. It stays buffered until the producer id resolves to a
+// transaction.
+func (t *ConsumerOffsetsTail) recordCommit(pid int64, topic string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	set := t.pending[pid]
+	if set == nil {
+		set = make(map[string]struct{})
+		t.pending[pid] = set
+	}
+	set[topic] = struct{}{}
+}
+
+// FinalFlush resolves everything still buffered, on a fresh context.
+//
+// It exists because most resolutions land here: a short-lived transaction may
+// only reach the __transaction_state reader late in the window, long after its
+// offset commit was buffered. The observation context is already cancelled by
+// the time the run winds down, so a flush on it would send nothing.
+func (t *ConsumerOffsetsTail) FinalFlush(out chan<- Observation) {
+	ctx, cancel := context.WithTimeout(context.Background(), finalFlushTimeout)
+	defer cancel()
+	t.resolveAndFlush(ctx, out)
+}
+
+// resolveAndFlush reads the current producer-id -> transactional-id map from
+// the shared catalog and emits an observation for every pending sighting that
+// now resolves.
+func (t *ConsumerOffsetsTail) resolveAndFlush(ctx context.Context, out chan<- Observation) {
+	for _, obs := range t.resolveWith(t.catalog.ProducerIDToTxnID(), time.Now()) {
+		select {
+		case out <- obs:
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// resolveWith is the pure join at the heart of this unit: every pending
+// sighting whose producer id appears in pidToTxn becomes an observation under
+// that transaction and leaves the buffer. It keys purely on the producer id, so
+// it correlates a consumer group to its transaction however their names relate.
+//
+// Observations are returned rather than sent so the caller can respect its
+// context without holding the lock.
+func (t *ConsumerOffsetsTail) resolveWith(pidToTxn map[int64]string, now time.Time) []Observation {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	var out []Observation
+	for pid, topics := range t.pending {
+		txnID, ok := pidToTxn[pid]
+		if !ok {
+			// Its transaction has not been decoded yet — keep waiting.
+			continue
+		}
+		out = append(out, Observation{
+			TxnID:      txnID,
+			ProducerID: pid,
+			Topics:     sortedKeys(topics),
+			// A recovered consumed input is by definition an input to a
+			// transaction that committed consumer offsets.
+			ReadProcessWrite: true,
+			Source:           SourceConsumerOffsets,
+			ObservedAt:       now,
+		})
+		delete(t.pending, pid)
+	}
+	return out
+}
