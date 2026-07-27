@@ -293,6 +293,9 @@ func PrintTerminal(w io.Writer, s Summary) {
 		s.Recovery.Txns, plural(s.Recovery.Txns, "transaction", "transactions"))
 
 	_, _ = fmt.Fprintf(w, "  keep-up                : %s\n", s.Health.Line())
+	for _, reason := range s.Health.concerns() {
+		_, _ = fmt.Fprintf(w, "                           - %s\n", reason)
+	}
 
 	// A truncated audit log is silent by nature: the missing lines read downstream as
 	// "no transaction coupled these topics", which is exactly what a clean run looks
@@ -350,22 +353,20 @@ func printRecovery(w io.Writer, s Summary) {
 	}
 }
 
-// Line renders the single health indicator the summary carries: the status, the three
-// numbers it is derived from, and — when it is not OK — why.
+// Line renders the single health indicator the summary carries: the status and the
+// three numbers it is derived from. Why it is not OK is in concerns, on its own lines —
+// three concurrent problems concatenated onto this one would run past 300 characters
+// and wrap into unreadability exactly when an operator most needs to read it.
 func (h Health) Line() string {
-	status, reasons := "OK", h.concerns()
-	if len(reasons) > 0 {
+	status := "OK"
+	if len(h.concerns()) > 0 {
 		status = "WARNING"
 	}
-	line := fmt.Sprintf("%s — %d/%d %s live, %d %s of lag, %d decode %s",
+	return fmt.Sprintf("%s — %d/%d %s live, %d %s of lag, %d decode %s",
 		status,
 		h.PartitionsRunning, h.PartitionsAssigned, plural(h.PartitionsAssigned, "partition", "partitions"),
 		h.Lag, plural64(h.Lag, "record", "records"),
 		h.DecodeErrors, plural64(h.DecodeErrors, "failure", "failures"))
-	if len(reasons) > 0 {
-		line += "; " + strings.Join(reasons, "; ")
-	}
-	return line
 }
 
 // concerns lists what is wrong with the run, empty when nothing is.

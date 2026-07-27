@@ -3,6 +3,7 @@ package report
 import (
 	"bytes"
 	"errors"
+	"flag"
 	"fmt"
 	"io/fs"
 	"os"
@@ -16,6 +17,9 @@ import (
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 	"github.com/goccy/go-yaml"
 )
+
+// updateGolden rewrites the golden summary instead of comparing against it.
+var updateGolden = flag.Bool("update-golden", false, "rewrite the golden summary fixture")
 
 // render runs the terminal summary for r and returns what an operator would see.
 func render(t *testing.T, r Run) string {
@@ -552,6 +556,58 @@ func TestYAMLRoundTripsTopicNamesContainingYAMLMetacharacters(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestSummaryMatchesGolden pins the whole rendered summary, not just the lines other
+// tests assert on. Its job is to make an accidental addition visible in review: a stray
+// topic name added to a line nobody asserts on is exactly the change that would slip
+// through a suite of substring checks.
+//
+// Regenerate with: go test ./internal/services/txndiscovery/report -update-golden
+func TestSummaryMatchesGolden(t *testing.T) {
+	got := render(t, goldenRun())
+	golden := filepath.Join("testdata", "summary.golden")
+
+	if *updateGolden {
+		if err := os.MkdirAll("testdata", 0755); err != nil {
+			t.Fatalf("create testdata: %v", err)
+		}
+		if err := os.WriteFile(golden, []byte(got), 0644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+		t.Log("golden updated")
+		return
+	}
+
+	want, err := os.ReadFile(golden)
+	if err != nil {
+		t.Fatalf("read golden (regenerate with -update-golden): %v", err)
+	}
+	if got != string(want) {
+		t.Errorf("summary does not match %s\n--- want ---\n%s\n--- got ---\n%s", golden, want, got)
+	}
+}
+
+// goldenRun is the distinctive-name run with the keep-up numbers and the audit failure
+// filled in, so the golden covers every section the summary can render.
+func goldenRun() Run {
+	r := distinctiveRun()
+	r.Tail = tail.Stats{
+		PartitionsAssigned: 4,
+		PartitionsRunning:  3,
+		RecordsRead:        1400,
+		Lag:                12,
+		OpenTxnBacklog:     300,
+		DecodeErrors:       1,
+	}
+	r.TxnState.KeyDecodeErrors = 2
+	r.AuditErrors = 5
+	r.Result.Groups = append(r.Result.Groups, grouping.Group{
+		Name:   "group-2",
+		Topics: []string{"zqx-topic-billing", "zqx-topic-invoices"},
+		TxnIDs: []string{"zqx-txnid-billing-3"},
+	})
+	return r
 }
 
 // groupLines returns the rendered group rows in the order they appear, so ordering can
