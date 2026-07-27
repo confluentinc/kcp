@@ -103,3 +103,19 @@ func TestATransactionalCommitWhoseProducerIDIsInTheCatalogResolvesToAnObservatio
 	assert.False(t, got[0].ObservedAt.IsZero())
 }
 
+func TestANonTransactionalBatchIsIgnored(t *testing.T) {
+	// The overwhelming majority of __consumer_offsets traffic is ordinary,
+	// non-transactional offset commits. A batch header carries a producer id for
+	// plain idempotent producers too, so correlating one would attribute an
+	// unrelated consumer's topics to whichever transaction happens to share that
+	// id. Only a commit written INSIDE a transaction says anything about one.
+	cat := NewTxnCatalog()
+	cat.Observe("payments-txn-0", 4242)
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{})
+
+	b := commitBatch(4242, commitKey("payments-group", "orders.in", 0))
+	b.IsTransactional = false
+	tl.HandleBatch(b)
+
+	assert.Empty(t, flush(t, tl), "a non-transactional commit must not correlate")
+}

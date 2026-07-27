@@ -56,6 +56,13 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 
 // HandleBatch records the transactional offset commits carried by one batch.
 func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
+	// Only a commit written inside a transaction correlates. A batch header
+	// carries a producer id for a plain idempotent producer too, so joining a
+	// non-transactional commit on it would attribute an unrelated consumer's
+	// topics to whichever transaction happened to share that id.
+	if !b.IsTransactional {
+		return
+	}
 	for _, r := range b.Records {
 		key, err := txnlog.DecodeOffsetKey(r.Key)
 		if err != nil {
