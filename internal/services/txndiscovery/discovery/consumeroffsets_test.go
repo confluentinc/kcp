@@ -1,7 +1,8 @@
 package discovery
 
 import (
-	"encoding/binary"
+	"fmt"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -18,30 +19,8 @@ import (
 // GroupMetadataKey.json schemas rather than produced by an encoder from the
 // package under test, so a decoder that agrees only with itself still fails.
 
-func be16(v int16) []byte {
-	b := make([]byte, 2)
-	binary.BigEndian.PutUint16(b, uint16(v))
-	return b
-}
-
-func be32(v int32) []byte {
-	b := make([]byte, 4)
-	binary.BigEndian.PutUint32(b, uint32(v))
-	return b
-}
-
-// kstr encodes a classic (non-flexible) string: int16 length then bytes.
-func kstr(s string) []byte {
-	return append(be16(int16(len(s))), []byte(s)...)
-}
-
-func concat(parts ...[]byte) []byte {
-	var out []byte
-	for _, p := range parts {
-		out = append(out, p...)
-	}
-	return out
-}
+// be16, be32, kstr and concat are the byte builders this suite shares with the
+// __transaction_state reader's (txnstate_test.go), same package.
 
 // commitKey builds an OffsetCommitKey v1 — the key an EOS app's
 // sendOffsetsToTransaction writes for one consumed topic-partition.
@@ -432,4 +411,41 @@ func TestARecoveredInputFoldsIntoTheProducedGroupWithItsProducerIDIntact(t *test
 	require.Len(t, res.Groups, 1, "the recovered input must not be a separate group")
 	assert.Equal(t, []string{"billing.out", "raw.events"}, res.Groups[0].Topics)
 	assert.True(t, res.Groups[0].ReadProcessWrite)
+}
+
+func TestASustainedStreamOfUnresolvableCommitsDoesNotGrowThePendingBufferWithoutBound(t *testing.T) {
+	// On a large cluster most commits come from producers whose transactions
+	// this run never observes — they were compacted away before the window, or
+	// belong to an app that never commits again. Those sightings never resolve,
+	// so an unbounded buffer grows for the whole run: a multi-hour observation
+	// on a busy cluster is exactly the situation a slow memory leak is worst in,
+	// because the operator loses the run rather than a request.
+	//
+	// The oldest go first: a sighting that has waited longest is the least
+	// likely to ever resolve, and dropping the newest would discard the commits
+	// whose transactions the __transaction_state reader is about to reach.
+	const maxPending = 4
+	cat := NewTxnCatalog()
+	tl := NewConsumerOffsetsTail(cat, ConsumerOffsetsOptions{MaxPendingProducers: maxPending})
+
+	for pid := int64(1); pid <= 10; pid++ {
+		tl.HandleBatch(commitBatch(pid, commitKey("g", fmt.Sprintf("topic-%02d", pid), 0)))
+	}
+
+	st := tl.Stats()
+	assert.Equal(t, maxPending, st.PendingProducers, "the buffer is capped")
+	assert.Equal(t, int64(6), st.PendingEvicted, "and what it dropped is counted, not silent")
+
+	// Prove it kept the NEWEST four rather than an arbitrary four: a catalog
+	// that resolves all ten may only yield the survivors.
+	all := map[int64]string{}
+	for pid := int64(1); pid <= 10; pid++ {
+		all[pid] = fmt.Sprintf("txn-%02d", pid)
+	}
+	var survived []string
+	for _, obs := range tl.resolveWith(all, time.Now()) {
+		survived = append(survived, obs.Topics[0])
+	}
+	sort.Strings(survived)
+	assert.Equal(t, []string{"topic-07", "topic-08", "topic-09", "topic-10"}, survived)
 }

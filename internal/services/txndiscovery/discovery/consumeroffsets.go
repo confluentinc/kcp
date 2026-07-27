@@ -11,11 +11,24 @@ import (
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/txnlog"
 )
 
-// DefaultConsumerOffsetsTopic is Kafka's internal consumer-offsets log.
-const DefaultConsumerOffsetsTopic = "__consumer_offsets"
-
 // finalFlushTimeout bounds the fresh context the final flush runs on.
 const finalFlushTimeout = 10 * time.Second
+
+// DefaultMaxPendingProducers caps how many unresolved producer ids the pending
+// buffer holds.
+//
+// The buffer only ever holds producers whose transaction has NOT been seen, and
+// on a large cluster that is most of them: their state records were compacted
+// before the window opened, or the transaction simply never recurs. Unbounded,
+// it therefore grows for the whole run, which on a multi-hour observation loses
+// the run rather than a request.
+//
+// Twenty thousand entries is roughly an order of magnitude above the producer
+// count of a large exactly-once estate, so a healthy cluster never reaches it
+// and the cap only engages on the pathological case it exists for. Each entry
+// is a map header plus the topic set one consumer group commits offsets for —
+// a few hundred bytes — so the cap bounds this buffer in the low tens of MiB.
+const DefaultMaxPendingProducers = 20000
 
 // ConsumerOffsetsTail recovers the CONSUMED (input) topics of exactly-once
 // applications by joining transactional offset commits to transactions on the
@@ -39,11 +52,36 @@ type ConsumerOffsetsTail struct {
 
 	keyDecodeErrors atomic.Int64
 
+	maxPending int
+
 	mu sync.Mutex
 	// pending holds sightings not yet resolved to a transaction: producer id ->
-	// the set of consumed topics it committed offsets for. An entry is removed
-	// once its producer id resolves and is emitted.
-	pending map[int64]map[string]struct{}
+	// the consumed topics it committed offsets for. An entry is removed once its
+	// producer id resolves and is emitted, or when it is evicted.
+	pending map[int64]*pendingCommits
+	// order lists pending entries oldest first, so eviction can drop the
+	// longest-waiting without scanning the map. It may hold references to
+	// entries that have since resolved or been replaced; seq disambiguates.
+	order []pendingRef
+	// seq numbers pending entries in creation order.
+	seq uint64
+	// evictedByCapacity counts entries dropped because the buffer was full.
+	evictedByCapacity int64
+}
+
+// pendingCommits is one producer's unresolved sighting.
+type pendingCommits struct {
+	topics map[string]struct{}
+	// seq is this entry's position in creation order. A producer that resolves
+	// and then commits again gets a new one, so a stale order entry naming the
+	// same producer id cannot evict the fresh sighting.
+	seq uint64
+}
+
+// pendingRef points at a pending entry as it was when it was created.
+type pendingRef struct {
+	pid int64
+	seq uint64
 }
 
 // ConsumerOffsetsOptions configures a ConsumerOffsetsTail. The zero value is
@@ -54,6 +92,11 @@ type ConsumerOffsetsOptions struct {
 	// the same place rather than hardcoded on both sides. Defaults to
 	// DefaultConsumerOffsetsTopic.
 	Topic string
+
+	// MaxPendingProducers caps how many unresolved producer ids stay buffered.
+	// Past it the longest-waiting entries are dropped and counted. Defaults to
+	// DefaultMaxPendingProducers.
+	MaxPendingProducers int
 }
 
 // NewConsumerOffsetsTail builds a tail consumer over the shared catalog the
@@ -62,10 +105,14 @@ func NewConsumerOffsetsTail(catalog *TxnCatalog, opts ConsumerOffsetsOptions) *C
 	if opts.Topic == "" {
 		opts.Topic = DefaultConsumerOffsetsTopic
 	}
+	if opts.MaxPendingProducers <= 0 {
+		opts.MaxPendingProducers = DefaultMaxPendingProducers
+	}
 	return &ConsumerOffsetsTail{
-		catalog: catalog,
-		topic:   opts.Topic,
-		pending: make(map[int64]map[string]struct{}),
+		catalog:    catalog,
+		topic:      opts.Topic,
+		maxPending: opts.MaxPendingProducers,
+		pending:    make(map[int64]*pendingCommits),
 	}
 }
 
@@ -75,6 +122,16 @@ type ConsumerOffsetsStats struct {
 	// keys are a broker-internal format rather than part of the stable client
 	// protocol, so this is the format-drift alarm and is never swallowed.
 	KeyDecodeErrors int64
+
+	// PendingProducers is how many sightings are still waiting for their
+	// transaction to appear in the catalog.
+	PendingProducers int
+
+	// PendingEvicted counts sightings dropped from the pending buffer without
+	// ever resolving. It is reported because it is the only signal that a
+	// bounded buffer discarded recoveries: a run that evicted heavily observed
+	// far fewer consumed inputs than the cluster actually has.
+	PendingEvicted int64
 }
 
 // Name reports this source's provenance label.
@@ -82,8 +139,12 @@ func (t *ConsumerOffsetsTail) Name() string { return SourceConsumerOffsets }
 
 // Stats returns a snapshot of what this source recovered and how it coped.
 func (t *ConsumerOffsetsTail) Stats() ConsumerOffsetsStats {
+	t.mu.Lock()
+	defer t.mu.Unlock()
 	return ConsumerOffsetsStats{
-		KeyDecodeErrors: t.keyDecodeErrors.Load(),
+		KeyDecodeErrors:  t.keyDecodeErrors.Load(),
+		PendingProducers: len(t.pending),
+		PendingEvicted:   t.evictedByCapacity,
 	}
 }
 
@@ -158,12 +219,56 @@ func (t *ConsumerOffsetsTail) HandleBatch(b tail.Batch) {
 func (t *ConsumerOffsetsTail) recordCommit(pid int64, topic string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	set := t.pending[pid]
-	if set == nil {
-		set = make(map[string]struct{})
-		t.pending[pid] = set
+
+	e := t.pending[pid]
+	if e == nil {
+		// Only a NEW producer grows the buffer; another commit from one already
+		// buffered costs at most one more topic.
+		if len(t.pending) >= t.maxPending {
+			t.evictOldestLocked()
+		}
+		t.seq++
+		e = &pendingCommits{topics: make(map[string]struct{}), seq: t.seq}
+		t.pending[pid] = e
+		t.order = append(t.order, pendingRef{pid: pid, seq: e.seq})
+		t.compactOrderLocked()
 	}
-	set[topic] = struct{}{}
+	e.topics[topic] = struct{}{}
+}
+
+// evictOldestLocked drops the longest-waiting pending entry. A sighting that
+// has waited longest is the least likely ever to resolve, and dropping the
+// newest instead would discard the commits whose transactions the
+// __transaction_state reader is about to reach.
+func (t *ConsumerOffsetsTail) evictOldestLocked() {
+	for len(t.order) > 0 {
+		ref := t.order[0]
+		t.order = t.order[1:]
+		// Skip references to entries that have since resolved, or that were
+		// replaced by a later sighting from the same producer.
+		if e, ok := t.pending[ref.pid]; ok && e.seq == ref.seq {
+			delete(t.pending, ref.pid)
+			t.evictedByCapacity++
+			return
+		}
+	}
+}
+
+// compactOrderLocked drops stale references so the order list cannot outgrow
+// the buffer it indexes. Resolving an entry leaves its reference behind, so
+// over a long run the list would otherwise grow with total sightings rather
+// than with the bounded number outstanding.
+func (t *ConsumerOffsetsTail) compactOrderLocked() {
+	if len(t.order) <= 2*t.maxPending {
+		return
+	}
+	live := make([]pendingRef, 0, len(t.pending))
+	for _, ref := range t.order {
+		if e, ok := t.pending[ref.pid]; ok && e.seq == ref.seq {
+			live = append(live, ref)
+		}
+	}
+	t.order = live
 }
 
 // FinalFlush resolves everything still buffered, on a fresh context.
@@ -203,7 +308,7 @@ func (t *ConsumerOffsetsTail) resolveWith(pidToTxn map[int64]string, now time.Ti
 	defer t.mu.Unlock()
 
 	var out []Observation
-	for pid, topics := range t.pending {
+	for pid, e := range t.pending {
 		txnID, ok := pidToTxn[pid]
 		if !ok {
 			// Its transaction has not been decoded yet — keep waiting. The two
@@ -215,7 +320,7 @@ func (t *ConsumerOffsetsTail) resolveWith(pidToTxn map[int64]string, now time.Ti
 		out = append(out, Observation{
 			TxnID:      txnID,
 			ProducerID: pid,
-			Topics:     sortedKeys(topics),
+			Topics:     sortedKeys(e.topics),
 			// A recovered consumed input is by definition an input to a
 			// transaction that committed consumer offsets.
 			ReadProcessWrite: true,
