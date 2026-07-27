@@ -169,12 +169,31 @@ func PrintTerminal(w io.Writer, s Summary) {
 	printGroupTable(w, groups)
 }
 
-// Line renders the single health indicator the summary carries.
+// Line renders the single health indicator the summary carries: the status, the three
+// numbers it is derived from, and — when it is not OK — why.
 func (h Health) Line() string {
-	return fmt.Sprintf("OK — %d/%d %s live, %d %s of lag, %d decode %s",
+	status, reasons := "OK", h.concerns()
+	if len(reasons) > 0 {
+		status = "WARNING"
+	}
+	line := fmt.Sprintf("%s — %d/%d %s live, %d %s of lag, %d decode %s",
+		status,
 		h.PartitionsRunning, h.PartitionsAssigned, plural(h.PartitionsAssigned, "partition", "partitions"),
 		h.Lag, plural64(h.Lag, "record", "records"),
 		h.DecodeErrors, plural64(h.DecodeErrors, "failure", "failures"))
+	if len(reasons) > 0 {
+		line += "; " + strings.Join(reasons, "; ")
+	}
+	return line
+}
+
+// concerns lists what is wrong with the run, empty when nothing is.
+func (h Health) concerns() []string {
+	var out []string
+	if h.DecodeErrors > 0 {
+		out = append(out, "the internal record format may have drifted, so footprints may be missing")
+	}
+	return out
 }
 
 // printGroupTable writes one row per group.

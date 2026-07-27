@@ -158,6 +158,24 @@ func TestHealthLineIsOKWhenCaughtUpCleanAndEveryPartitionLive(t *testing.T) {
 	requireContains(t, out, "keep-up                : OK — 3/3 partitions live, 0 records of lag, 0 decode failures")
 }
 
+func TestHealthLineWarnsWhenAnySourceFailedToDecode(t *testing.T) {
+	// One failure from each source that counts them, so the aggregate cannot pass by
+	// watching only the tail.
+	out := render(t, Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		Tail: tail.Stats{
+			PartitionsAssigned: 2,
+			PartitionsRunning:  2,
+			DecodeErrors:       1,
+		},
+		TxnState: discovery.TxnStateStats{KeyDecodeErrors: 2, ValueDecodeErrors: 3},
+		Offsets:  discovery.ConsumerOffsetsStats{KeyDecodeErrors: 4},
+	})
+
+	requireContains(t, out, "keep-up                : WARNING — 2/2 partitions live, 0 records of lag, 10 decode failures")
+	requireContains(t, out, "the internal record format may have drifted, so footprints may be missing")
+}
+
 func TestSummaryRendersAZeroStateWhenNoGroupsWereFound(t *testing.T) {
 	out := render(t, Run{
 		Duration:      time.Minute,
