@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -310,6 +311,47 @@ func TestSummaryRendersAZeroStateWhenNoGroupsWereFound(t *testing.T) {
 	requireContains(t, out, "Transaction groups: none — every observed topic can migrate individually.")
 	if strings.Contains(out, "migrate each group atomically") {
 		t.Errorf("a run with no groups rendered the group table header\n--- summary ---\n%s", out)
+	}
+}
+
+// resultIdentifiers are every topic name and transactional id the grouping result
+// carries — the set the YAML exists to record.
+func resultIdentifiers(res grouping.Result) []string {
+	var out []string
+	for _, g := range res.Groups {
+		out = append(out, g.Topics...)
+		out = append(out, g.TxnIDs...)
+	}
+	out = append(out, res.IndividualTopics...)
+	return out
+}
+
+// writeYAML writes the YAML for r into a fresh temp dir and returns its path and body.
+func writeYAML(t *testing.T, r Run) (string, string) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "txn-discovery.yaml")
+	if err := WriteYAML(path, Summarize(r)); err != nil {
+		t.Fatalf("write yaml: %v", err)
+	}
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read yaml: %v", err)
+	}
+	return path, string(body)
+}
+
+func TestYAMLCarriesEveryTopicNameAndTransactionalID(t *testing.T) {
+	r := distinctiveRun()
+	_, body := writeYAML(t, r)
+
+	ids := resultIdentifiers(r.Result)
+	if len(ids) == 0 {
+		t.Fatal("fixture carries no identifiers, so this test would pass vacuously")
+	}
+	for _, id := range ids {
+		if !strings.Contains(body, id) {
+			t.Errorf("yaml is missing %q\n--- yaml ---\n%s", id, body)
+		}
 	}
 }
 

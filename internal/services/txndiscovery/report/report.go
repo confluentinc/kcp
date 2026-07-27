@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"fmt"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
+	"github.com/goccy/go-yaml"
 )
 
 // Run is the raw material of a completed discovery run: what the sources
@@ -406,6 +408,58 @@ func printGroupTable(w io.Writer, groups []grouping.Group) {
 			len(g.TxnIDs), plural(len(g.TxnIDs), "id", "ids"),
 			tag)
 	}
+}
+
+// --- txn-discovery.yaml ---
+
+// discoveryDoc is the on-disk shape of txn-discovery.yaml.
+//
+// This is the artifact that carries the names: the terminal deliberately reports counts
+// only, so everything an operator needs to act on is here.
+type discoveryDoc struct {
+	GeneratedBy       string `yaml:"generated_by"`
+	GeneratedAt       string `yaml:"generated_at"`
+	ObservationWindow string `yaml:"observation_window"`
+
+	Groups []discoveryGroup `yaml:"groups"`
+
+	IndividualTopicCount int `yaml:"individual_topic_count"`
+	// IndividualTopics were only ever seen alone in a transaction, so they can
+	// migrate one at a time. Listed rather than merely counted so the document holds
+	// the complete set of observed topics.
+	IndividualTopics []string `yaml:"individual_topics"`
+}
+
+type discoveryGroup struct {
+	Name             string   `yaml:"name"`
+	ReadProcessWrite bool     `yaml:"read_process_write"`
+	Topics           []string `yaml:"topics"`
+	TransactionalIDs []string `yaml:"transactional_ids"`
+}
+
+// WriteYAML writes the discovered groups to path.
+func WriteYAML(path string, s Summary) error {
+	doc := discoveryDoc{
+		GeneratedBy:          "kcp migration txn-discovery",
+		GeneratedAt:          time.Now().UTC().Format(time.RFC3339),
+		ObservationWindow:    s.Duration.String(),
+		IndividualTopicCount: len(s.Result.IndividualTopics),
+		IndividualTopics:     s.Result.IndividualTopics,
+	}
+	for _, g := range s.Result.Groups {
+		doc.Groups = append(doc.Groups, discoveryGroup{
+			Name:             g.Name,
+			ReadProcessWrite: g.ReadProcessWrite,
+			Topics:           g.Topics,
+			TransactionalIDs: g.TxnIDs,
+		})
+	}
+
+	body, err := yaml.Marshal(doc)
+	if err != nil {
+		return fmt.Errorf("failed to marshal the transaction discovery document: %w", err)
+	}
+	return os.WriteFile(path, body, 0644)
 }
 
 func plural(n int, one, many string) string {
