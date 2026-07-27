@@ -51,3 +51,15 @@ func TestTxnDiscovery_TwoAuthMethods_Rejected(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "were all set")
 }
+
+// R2: an auth method is not optional — a run with none would silently pick one.
+func TestTxnDiscovery_NoAuthMethod_Rejected(t *testing.T) {
+	resetFlags()
+
+	cmd := NewMigrationTxnDiscoveryCmd()
+	cmd.SetArgs([]string{"--source-bootstrap", "broker:9092"})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "at least one of the flags")
+}

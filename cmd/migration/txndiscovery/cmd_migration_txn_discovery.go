@@ -85,6 +85,7 @@ func NewMigrationTxnDiscoveryCmd() *cobra.Command {
 
 	_ = cmd.MarkFlagRequired("source-bootstrap")
 	cmd.MarkFlagsMutuallyExclusive(authFlagNames...)
+	cmd.MarkFlagsOneRequired(authFlagNames...)
 
 	return cmd
 }
