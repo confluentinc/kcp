@@ -53,9 +53,9 @@ func TestPreflight_ReadableTopic_Passes(t *testing.T) {
 // it as an ACL problem sends the operator to their Kafka administrator for a
 // typo they can fix themselves.
 func TestPreflight_UnknownTopic_IsNotReportedAsAuthorization(t *testing.T) {
-	d := &fakeDescriber{md: metadataFor("__transaciton_state", sarama.ErrUnknownTopicOrPartition, 0)}
+	d := &fakeDescriber{md: metadataFor("_transaction_state", sarama.ErrUnknownTopicOrPartition, 0)}
 
-	err := probeTxnStateTopic(d, "__transaciton_state")
+	err := probeTxnStateTopic(d, "_transaction_state")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "does not exist")
 	assert.Contains(t, err.Error(), "--txn-state-topic")
