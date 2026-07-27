@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -222,6 +223,26 @@ func afterCall(n int, inner func(spec FetchSpec, call int) (*sarama.FetchRespons
 		}
 		return inner(spec, call)
 	}
+}
+
+// read drains n batches from out without cancelling, so a test can inspect
+// stats while the loops are still alive.
+func read(t *testing.T, out <-chan Batch, n int) []Batch {
+	t.Helper()
+	var got []Batch
+	deadline := time.After(5 * time.Second)
+	for len(got) < n {
+		select {
+		case b, ok := <-out:
+			if !ok {
+				t.Fatalf("channel closed after %d of %d batches", len(got), n)
+			}
+			got = append(got, b)
+		case <-deadline:
+			t.Fatalf("timed out after %d of %d batches", len(got), n)
+		}
+	}
+	return got
 }
 
 // drain reads until the output channel closes.
@@ -1060,4 +1081,219 @@ func TestATransportErrorRetriesWithBackoffThatGrowsIsCappedAndResets(t *testing.
 		"a successful fetch resets the curve, so one blip does not permanently slow the reader")
 
 	assert.Equal(t, int64(7), tl.Stats().TransportErrors)
+}
+
+func TestAPartitionLevelErrorDoesNotAbortSiblingPartitions(t *testing.T) {
+	const topic = "t"
+	c := newFakeClient()
+	c.setPartitions(topic, 0, 1)
+	for _, p := range []int32{0, 1} {
+		c.setOffset(topic, p, StartEarliest, 0)
+		c.setLeader(topic, p, Leader{ID: 1, Addr: "b1:9092", FetchVersion: 11})
+	}
+	// Partition 0 is permanently broken; partition 1 is healthy. The signal
+	// that the broken loop survived is that it fetches again at all.
+	var broken atomic.Int64
+	retried := make(chan struct{})
+	var once sync.Once
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if spec.Partition == 0 {
+			if broken.Add(1) >= 3 {
+				once.Do(func() { close(retried) })
+			}
+			return blockError(topic, 0, sarama.KError(58)), nil
+		}
+		r := fetchResponse(topic, 1, spec.Offset+1, spec.Offset+1)
+		addBatch(r, topic, 1, batchOf(spec.Offset, 100, 0, true, "healthy"))
+		return r, nil
+	})
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	got := read(t, out, 2)
+	waitFor(t, retried, "the broken partition to retry rather than exit")
+
+	for _, b := range got {
+		assert.Equal(t, int32(1), b.Partition, "the healthy partition keeps delivering")
+	}
+
+	byPartition := map[int32]PartitionStats{}
+	for _, p := range tl.Stats().Partitions {
+		byPartition[p.Partition] = p
+	}
+	assert.True(t, byPartition[0].Running, "the broken partition must keep retrying, not exit")
+	assert.True(t, byPartition[1].Running)
+	assert.Positive(t, byPartition[0].UnclassifiedErrors)
+	assert.Zero(t, byPartition[1].UnclassifiedErrors, "one partition's error must not be charged to another")
+
+	cancel()
+	drain(t, out)
+}
+
+func TestAResponseMissingThePartitionBlockIsHandledWithoutPanicking(t *testing.T) {
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if call == 0 {
+			// A response that answers the request but omits the partition
+			// entirely. The broker is untrusted input; this must not panic.
+			return &sarama.FetchResponse{Version: 11}, nil
+		}
+		r := fetchResponse(topic, 0, 1, 1)
+		if spec.Offset == 0 {
+			addBatch(r, topic, 0, batchOf(0, 100, 0, true, "survived"))
+		}
+		return r, nil
+	})
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	got := collect(t, out, 1, cancel)
+
+	assert.Equal(t, "survived", string(got[0].Records[0].Value))
+	specs := c.fetchSpecs()
+	assert.Equal(t, int64(0), specs[1].Offset, "a malformed response advances nothing")
+	assert.Positive(t, tl.Stats().TransportErrors, "a malformed response is counted, not ignored")
+}
+
+func TestABlockedFetchLeavesAtMostOneRequestInFlightAndIssuesNoMore(t *testing.T) {
+	// sarama.Broker.Fetch takes no context and cannot be cancelled, so
+	// shutdown waits for the in-flight request to come back on its own. What
+	// must hold is that no *further* request is issued once the context is
+	// done — the reader stops at the boundary, it does not abandon the socket.
+	const topic = "t"
+	c := singlePartition(topic, 0)
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if call == 0 {
+			once.Do(func() { close(entered) })
+			<-release
+		}
+		return fetchResponse(topic, 0, 0, 0), nil
+	})
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+
+	waitFor(t, entered, "the fetch to be issued")
+	cancel()
+	close(release)
+
+	drain(t, out)
+
+	assert.Len(t, c.fetchSpecs(), 1, "no fetch may be issued after the context is done")
+	assert.Equal(t, 0, tl.Stats().PartitionsRunning)
+}
+
+// --- keep-up counters ------------------------------------------------------
+
+func TestRecordsReadIsCountedPerPartitionAndAggregated(t *testing.T) {
+	const topic = "t"
+	c := newFakeClient()
+	c.setPartitions(topic, 0, 1)
+	for _, p := range []int32{0, 1} {
+		c.setOffset(topic, p, StartEarliest, 0)
+		c.setLeader(topic, p, Leader{ID: 1, Addr: "b1:9092", FetchVersion: 11})
+	}
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if spec.Partition == 0 && spec.Offset == 0 {
+			r := fetchResponse(topic, 0, 3, 3)
+			addBatch(r, topic, 0, batchOf(0, 100, 0, true, "a", "b"))
+			addBatch(r, topic, 0, batchOf(2, 100, 0, true, "c"))
+			return r, nil
+		}
+		if spec.Partition == 1 && spec.Offset == 0 {
+			r := fetchResponse(topic, 1, 1, 1)
+			addBatch(r, topic, 1, batchOf(0, 200, 0, true, "d"))
+			return r, nil
+		}
+		return fetchResponse(topic, spec.Partition, spec.Offset, spec.Offset), nil
+	})
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	collect(t, out, 3, cancel)
+
+	stats := tl.Stats()
+	byPartition := map[int32]PartitionStats{}
+	for _, p := range stats.Partitions {
+		byPartition[p.Partition] = p
+	}
+	assert.Equal(t, int64(3), byPartition[0].RecordsRead)
+	assert.Equal(t, int64(1), byPartition[1].RecordsRead)
+	assert.Equal(t, int64(4), stats.RecordsRead, "the keep-up signal needs an aggregate record count")
+}
+
+func TestConcurrentFetchesAreCapped(t *testing.T) {
+	// __transaction_state and __consumer_offsets default to 50 partitions
+	// each, so one loop per partition means up to 100 simultaneous long-poll
+	// fetches against a customer's production cluster for a run measured in
+	// hours. The cap is what keeps that bounded.
+	const (
+		topic      = "t"
+		partitions = 8
+		cap        = 2
+	)
+
+	c := newFakeClient()
+	parts := make([]int32, partitions)
+	for i := range parts {
+		parts[i] = int32(i)
+		c.setOffset(topic, int32(i), StartEarliest, 0)
+		c.setLeader(topic, int32(i), Leader{ID: 1, Addr: "b1:9092", FetchVersion: 11})
+	}
+	c.setPartitions(topic, parts...)
+
+	var inFlight, peak atomic.Int64
+	reached, responder := afterCall(partitions*3, func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		now := inFlight.Add(1)
+		for {
+			old := peak.Load()
+			if now <= old || peak.CompareAndSwap(old, now) {
+				break
+			}
+		}
+		// Hold the request open long enough that an uncapped reader would
+		// overlap many partitions at once.
+		time.Sleep(2 * time.Millisecond)
+		inFlight.Add(-1)
+		return fetchResponse(topic, spec.Partition, 0, 0), nil
+	})
+	c.respondWith(responder)
+
+	opts := testOptions(nil)
+	opts.MaxConcurrentFetches = cap
+
+	tl := New(c, opts)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	waitFor(t, reached, "enough fetches to observe the concurrency peak")
+	cancel()
+	drain(t, out)
+
+	assert.LessOrEqual(t, peak.Load(), int64(cap),
+		"at most %d fetches may be in flight at once, but %d were", cap, peak.Load())
+	assert.Positive(t, peak.Load())
 }

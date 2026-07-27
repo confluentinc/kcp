@@ -57,6 +57,10 @@ type Options struct {
 	// BackoffMax caps the retry wait, so a long outage does not turn into an
 	// unbounded pause that outlives the observation window.
 	BackoffMax time.Duration
+	// MaxConcurrentFetches caps how many fetches are in flight at once across
+	// every partition. It bounds both the load put on the source cluster and
+	// peak memory, which is this cap times MaxPartitionBytes.
+	MaxConcurrentFetches int
 	// Sleep is the injectable wait used for backoff and idle polling. Tests
 	// replace it so the suite never waits on a real timer.
 	Sleep func(ctx context.Context, d time.Duration)
@@ -75,6 +79,9 @@ func New(c Client, opts Options) *Tail {
 	}
 	if opts.BackoffMax <= 0 {
 		opts.BackoffMax = DefaultBackoffMax
+	}
+	if opts.MaxConcurrentFetches <= 0 {
+		opts.MaxConcurrentFetches = DefaultMaxConcurrentFetches
 	}
 	if opts.Sleep == nil {
 		opts.Sleep = sleepCtx
@@ -105,6 +112,14 @@ const (
 	// responsive within a run measured in minutes while still throttling a
 	// broker that is down for a long time.
 	DefaultBackoffMax = 5 * time.Second
+	// DefaultMaxConcurrentFetches caps in-flight fetches across all
+	// partitions. The two internal topics default to 50 partitions each, so
+	// uncapped this would be 100 simultaneous long polls against a customer's
+	// production cluster. Sixteen bounds peak memory at 16 x
+	// MaxPartitionBytes (16 MiB by default) and still cycles 100 partitions
+	// roughly every MaxWaitTime x 100/16 — a few seconds, which is ample for
+	// a run measured in minutes to hours.
+	DefaultMaxConcurrentFetches = 16
 )
 
 // PartitionStats reports one partition's progress.
@@ -131,6 +146,9 @@ type PartitionStats struct {
 	// has. A stalled partition reports zero lag, so this is the only signal
 	// separating it from a genuinely caught-up one.
 	LastAdvance time.Time
+	// RecordsRead counts records delivered from this partition. Records
+	// dropped by the abort filter are counted in AbortedBatches instead.
+	RecordsRead int64
 	// AbortedBatches counts batches dropped because their producer's
 	// transaction was rolled back.
 	AbortedBatches int64
@@ -157,6 +175,8 @@ type Stats struct {
 	PartitionsAssigned int
 	// PartitionsRunning is how many of those still have a live fetch loop.
 	PartitionsRunning int
+	// RecordsRead is the total number of records delivered to consumers.
+	RecordsRead int64
 	// Lag is the sum of the per-partition last-stable-offset lags.
 	Lag int64
 	// OpenTxnBacklog is the sum of the per-partition high-watermark-to-LSO gaps.
@@ -191,6 +211,22 @@ type Tail struct {
 	wg    sync.WaitGroup
 	out   chan Batch
 	parts []*partitionState
+	// sem bounds in-flight fetches across every partition loop.
+	sem chan struct{}
+}
+
+// fetch performs one fetch round-trip, holding a concurrency slot for its
+// duration. It reports ok false when the context ended before a slot came
+// free, so the caller stops rather than queueing behind a shutdown.
+func (t *Tail) fetch(ctx context.Context, leader Leader, spec FetchSpec) (resp *sarama.FetchResponse, err error, ok bool) {
+	select {
+	case t.sem <- struct{}{}:
+	case <-ctx.Done():
+		return nil, nil, false
+	}
+	defer func() { <-t.sem }()
+	resp, err = t.client.Fetch(leader, spec)
+	return resp, err, true
 }
 
 // partitionState is one partition's mutable progress, read concurrently by
@@ -204,6 +240,7 @@ type partitionState struct {
 	highWaterMark    int64
 	running          bool
 	lastAdvance      time.Time
+	recordsRead      int64
 	abortedBatches   int64
 	decodeErrors     int64
 	leadershipErrors int64
@@ -227,6 +264,7 @@ func (p *partitionState) snapshot() PartitionStats {
 		OpenTxnBacklog:     nonNegative(p.highWaterMark - p.lastStableOffset),
 		Running:            p.running,
 		LastAdvance:        p.lastAdvance,
+		RecordsRead:        p.recordsRead,
 		AbortedBatches:     p.abortedBatches,
 		DecodeErrors:       p.decodeErrors,
 		LeadershipErrors:   p.leadershipErrors,
@@ -271,6 +309,7 @@ func (t *Tail) Stats() Stats {
 		if ps.Running {
 			s.PartitionsRunning++
 		}
+		s.RecordsRead += ps.RecordsRead
 		s.Lag += ps.Lag
 		s.OpenTxnBacklog += ps.OpenTxnBacklog
 		s.AbortedBatches += ps.AbortedBatches
@@ -294,6 +333,7 @@ func (t *Tail) Start(ctx context.Context, topics []TopicSpec) (<-chan Batch, err
 	}
 
 	t.out = make(chan Batch)
+	t.sem = make(chan struct{}, t.opts.MaxConcurrentFetches)
 	for _, a := range assignments {
 		st := &partitionState{topic: a.topic, partition: a.partition, nextOffset: a.offset, running: true}
 		t.parts = append(t.parts, st)
@@ -355,6 +395,11 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 	}
 
 	for {
+		// Cancellation is checked here and nowhere else in the request path:
+		// sarama.Broker.Fetch takes no context, so an in-flight request is
+		// bounded by MaxWaitTime plus the client's read timeout rather than
+		// abandoned. What this guarantees is that no *new* request is issued
+		// once the context is done.
 		if ctx.Err() != nil {
 			return
 		}
@@ -378,7 +423,10 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 			MaxPartitionBytes: DefaultMaxPartitionBytes,
 			Isolation:         sarama.ReadCommitted,
 		}
-		resp, err := t.client.Fetch(leader, spec)
+		resp, err, ok := t.fetch(ctx, leader, spec)
+		if !ok {
+			return
+		}
 		if err != nil {
 			// No response at all, so no error code to classify. This is what a
 			// broker restart looks like from here.
@@ -391,9 +439,13 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 		}
 		block := resp.GetBlock(a.topic, a.partition)
 		if block == nil {
-			// A response that omits the partition entirely is malformed, not a
-			// reason to give up on the partition.
-			st.record(func(p *partitionState) { p.transportErrors++ })
+			// A response that answers the request but omits the partition is
+			// malformed. The broker is untrusted input, so this is counted and
+			// retried rather than dereferenced.
+			st.record(func(p *partitionState) {
+				p.transportErrors++
+				p.lastError = "fetch response omitted the requested partition"
+			})
 			retry()
 			continue
 		}
@@ -444,9 +496,11 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 				next = last + 1
 				continue
 			}
+			delivered := int64(len(batch.Records))
 			if !t.emit(ctx, batch) {
 				return
 			}
+			st.record(func(p *partitionState) { p.recordsRead += delivered })
 			emitted = true
 			next = last + 1
 		}
