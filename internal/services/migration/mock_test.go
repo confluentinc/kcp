@@ -13,7 +13,7 @@ import (
 // mockGatewayService implements gateway.Service using function fields for test control.
 type mockGatewayService struct {
 	getGatewayYAMLFn                   func(ctx context.Context, namespace, name string) ([]byte, error)
-	validateGatewayCRsFn               func(initial, fenced, switchover []byte) error
+	validateGatewayCRsFn               func(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error)
 	checkPermissionsFn                 func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	applyGatewayYAMLFn                 func(ctx context.Context, namespace, name string, yaml []byte) error
 	waitForGatewayObservedGenerationFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
@@ -29,11 +29,11 @@ func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name
 	return nil, fmt.Errorf("mockGatewayService.GetGatewayYAML not configured")
 }
 
-func (m *mockGatewayService) ValidateGatewayCRs(initial, fenced, switchover []byte) error {
+func (m *mockGatewayService) ValidateGatewayCRs(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error) {
 	if m.validateGatewayCRsFn != nil {
-		return m.validateGatewayCRsFn(initial, fenced, switchover)
+		return m.validateGatewayCRsFn(ctx, namespace, name, initial, fenced, switchover)
 	}
-	return nil
+	return gateway.CRValidationResult{}, nil
 }
 
 func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
