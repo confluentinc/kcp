@@ -651,11 +651,12 @@ func computeCutoverOverrides(clusters []report.ProcessedCluster, fleet CutoverDe
 		// mediation verdict unless the override is Blue/Green, which
 		// sidesteps the gateway entirely (N/A). We can't reuse
 		// `dec.GatewayMediated` directly because `decideCutover` ran
-		// against a single-cluster slice and `fleetUsesIAM` would
-		// have re-evaluated against that one cluster's auth instead
-		// of the whole fleet — producing wrong mediation for mixed
-		// IAM / non-IAM fleets. (See `detectPerClusterGatewayIncompat`
-		// for the separate OQ that surfaces the cross-check.)
+		// against a single-cluster slice — any fleet-scoped signal it
+		// consults would have been re-evaluated against that one
+		// cluster instead of the whole fleet, producing wrong
+		// mediation for mixed fleets. (See
+		// `detectPerClusterGatewayIncompat` for the separate OQ that
+		// surfaces the cross-check.)
 		mediated := fleet.GatewayMediated
 		if dec.Style == CutoverBlueGreen {
 			mediated = GatewayMediatedNotApplicable

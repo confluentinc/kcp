@@ -205,22 +205,6 @@ func serverlessSourceAuths(c report.ProcessedCluster) []string {
 	return nil
 }
 
-// fleetUsesIAM reports whether any cluster in the processed fleet has
-// IAM enabled on the source side. Drives the IAM-client effort signal
-// and the §Auth modernization framing — CC doesn't support IAM at
-// all, so IAM clients have to re-credential to SCRAM, mTLS, or OAuth
-// regardless of the cutover path chosen.
-func fleetUsesIAM(clusters []report.ProcessedCluster) bool {
-	for _, c := range clusters {
-		for _, auth := range sourceAuthsDetected(c) {
-			if auth == SourceAuthIAM {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // inputsMissing names load-bearing scan signals that weren't available
 // when decisions were computed for this cluster. Returned as a stable,
 // ordered list of short identifiers so downstream consumers can branch

@@ -145,7 +145,7 @@ func TestDecideCutover_IAMNeverAppearsInGatewayPrereqs(t *testing.T) {
 
 // withSourceAuth returns a minimal ProcessedCluster with the named
 // source auth enabled on the AWS-side ClientAuthentication. Used to
-// drive fleetUsesIAM() through decideCutover.
+// drive source-auth detection through decideCutover.
 func withSourceAuth(name, auth string) report.ProcessedCluster {
 	c := report.ProcessedCluster{Name: name}
 	c.AWSClientInformation.MskClusterConfig.ClusterType = kafkatypes.ClusterTypeProvisioned
