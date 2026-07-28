@@ -491,3 +491,96 @@ func TestDecodeValue_UvarintLengthNearMaxInt64DoesNotOverflowTheBoundsGuard(t *t
 		})
 	}
 }
+
+// minimalFootprintRecord builds a COMPLETE, WELL-FORMED value record whose topic array
+// holds n minimal entries: an empty topic name and an empty partition list.
+//
+// Nothing here is corrupt, truncated or inconsistent — the declared count matches the
+// entries that follow and every length prefix is honest — so none of the package's
+// bounds guards have grounds to reject it. That is what separates this shape from the
+// count-driven amplification the guards already catch. It is simply the cheapest legal
+// wire encoding of a TopicPartitions: 6 bytes classic, 3 bytes flexible, against 40
+// bytes of decoded struct.
+func minimalFootprintRecord(n int, flexible bool) []byte {
+	if flexible {
+		return concat(
+			be16(1), be64(1), be16(0), be32(0), []byte{1}, // header, status = Ongoing
+			uvar(uint64(n)+1), // compact array length
+			bytes.Repeat(concat(uvar(1), uvar(1), uvar(0)), n), // "" topic, empty partitions, no tagged fields
+			be64(1000), be64(900), uvar(0),
+		)
+	}
+	return concat(
+		be16(0), be64(1), be16(0), be32(0), []byte{1}, // header, status = Ongoing
+		be32(int32(n)), // array length
+		bytes.Repeat(concat(be16(0), be32(0)), n), // "" topic, zero partitions
+		be64(1000), be64(900),
+	)
+}
+
+var footprintEncodings = map[string]bool{"classic topic array": false, "flexible topic array": true}
+
+func TestDecodeValue_ManyMinimalEntriesDoNotAmplifyIntoTheTopicArray(t *testing.T) {
+	// Capping the PREALLOC closed the count-driven amplification but moved the same
+	// amplification into append's regrowth. A TopicPartitions costs 40 bytes in memory
+	// against as few as 3 bytes on the wire, and growing a slice to N elements churns
+	// roughly 5x its final size, so a record made ENTIRELY of minimal well-formed
+	// entries still allocates tens of times its own length.
+	//
+	// This is not the shape the existing guards catch. Those reject a count that the
+	// remaining bytes cannot possibly back; here the count is honest and every entry is
+	// legal — there are simply a lot of them. kcp does not lower sarama's 100 MiB
+	// response cap, and a broker is not obliged to honour the requested
+	// MaxPartitionBytes, so the reachable ceiling is ~1.4 GB of live slice with ~3 GB
+	// peak during the final regrowth. Asserting only on the returned value passes
+	// throughout: the record decodes perfectly.
+	const (
+		// Comfortably past any cap this package would plausibly set, so the decoder is
+		// forced to decide on the count rather than materialise its way to the answer.
+		entries = 200_000
+
+		// A well-formed record may cost a small constant multiple of its own bytes; it
+		// may not cost tens of times them.
+		allocPerInputByte = 4
+	)
+
+	for name, flexible := range footprintEncodings {
+		t.Run(name, func(t *testing.T) {
+			b := minimalFootprintRecord(entries, flexible)
+
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			require.NotPanics(t, func() { _, _ = DecodeValue(b) })
+			runtime.ReadMemStats(&after)
+
+			got := after.TotalAlloc - before.TotalAlloc
+			budget := uint64(allocPerInputByte * len(b))
+			assert.Less(t, got, budget,
+				"decoding %d bytes of well-formed minimal entries allocated %d bytes (%.1fx the input, budget %d): "+
+					"the entry count is honest, so nothing rejects it — the decoder has to bound how many entries it will materialise",
+				len(b), got, float64(got)/float64(len(b)), budget)
+		})
+	}
+}
+
+func TestDecodeValue_FootprintAtTheEntryLimitDecodesAndOneEntryBeyondIsRejected(t *testing.T) {
+	// Proves the cap is where the constant says it is, in both encodings, and that it
+	// does not truncate a legitimate large footprint into a short one. The over-limit
+	// error must also be tellable apart from a truncation: the two mean opposite things
+	// when a real broker's schema drifts, one "the bytes ran out" and the other "the
+	// bytes were all there and there were too many of them".
+	for name, flexible := range footprintEncodings {
+		t.Run(name, func(t *testing.T) {
+			atLimit := minimalFootprintRecord(maxTopicEntries, flexible)
+			v, err := DecodeValue(atLimit)
+			require.NoError(t, err, "a footprint of exactly %d entries is within the cap and must decode", maxTopicEntries)
+			require.Len(t, v.Partitions, maxTopicEntries, "the whole footprint must be returned, not a truncated prefix of it")
+
+			overLimit := minimalFootprintRecord(maxTopicEntries+1, flexible)
+			_, err = DecodeValue(overLimit)
+			require.Error(t, err, "a footprint of %d entries is past the cap and must be rejected", maxTopicEntries+1)
+			assert.NotErrorIs(t, err, errTruncated, "an over-limit footprint must not be reported as a truncated record")
+			assert.Contains(t, err.Error(), "topic entries", "the error must name what was exceeded so a real schema drift is diagnosable")
+		})
+	}
+}
