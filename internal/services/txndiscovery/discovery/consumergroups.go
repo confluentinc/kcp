@@ -52,6 +52,11 @@ type ConsumerGroupEnricher struct {
 	Interval time.Duration
 	Log      *slog.Logger
 
+	// FinalPassTimeout bounds how long FinalEnrich waits for the closing pass
+	// before abandoning it. Zero means finalFlushTimeout; the field exists so a
+	// test can assert the bound holds without waiting the production ten seconds.
+	FinalPassTimeout time.Duration
+
 	mu           sync.Mutex
 	passes       int
 	passFailures int
@@ -191,13 +196,61 @@ func (e *ConsumerGroupEnricher) Run(ctx context.Context, out chan<- Observation)
 // prevent.
 //
 // This mirrors ConsumerOffsetsTail.FinalFlush, which exists for the same reason on the
-// same catalog. The timeout is what keeps an unresponsive broker from wedging
-// shutdown, and it also bounds the send: by this point the accumulator is still
-// draining, but nothing may block the run from writing its artifacts indefinitely.
+// same catalog — but not the way it is bounded, and the difference is worth stating.
+// That flush is a pure in-memory map join, so a context is a genuine bound on it. This
+// pass talks to a broker through sarama's ClusterAdmin, whose ListConsumerGroups and
+// ListConsumerGroupOffsets take no context at all: a context can only be consulted
+// BETWEEN calls, never inside one. A pass makes 1+G of them in sequence, one per
+// naming-matched group, and with Net.ReadTimeout 30s, Admin.Retry.Max 5 and
+// Metadata.Retry.Max 3 x Metadata.Timeout 15s a single degraded call runs for minutes.
+// Nothing is written to disk until this returns, so an unbounded pass holds the entire
+// product of the window — hours of observation — behind a broker that has stopped
+// answering, leaving SIGKILL as the only way out and losing all three artifacts.
+//
+// The bound is therefore on the WAITING rather than on the calls: the pass runs on a
+// goroutine and this returns when it finishes or when the timeout fires, whichever
+// comes first, abandoning whatever call is in flight. The connection under it is closed
+// moments later by the runner's closers, which is what unblocks the abandoned call.
+//
+// The abandoned goroutine never gets the caller's channel. The runner closes the
+// observation channel as soon as the sources are done (close(obs) after srcWG.Wait()),
+// and a send on a closed channel panics unrecoverably — an abandoned pass sending on it
+// would kill a run that had already survived its window. So the pass sends on a private
+// relay this function owns and forwards from, and once the timeout fires it forwards no
+// more. The relay's only other reader is nobody, which is safe: enrich's send is
+// already a select on ctx.Done(), so the abandoned pass unwinds and returns the moment
+// its in-flight call comes back.
 func (e *ConsumerGroupEnricher) FinalEnrich(out chan<- Observation) {
-	ctx, cancel := context.WithTimeout(context.Background(), finalFlushTimeout)
+	timeout := e.FinalPassTimeout
+	if timeout <= 0 {
+		timeout = finalFlushTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	e.enrichLogErr(ctx, out)
+
+	relay := make(chan Observation)
+	go func() {
+		// Closed on the way out however the pass ends, which is what tells the
+		// loop below that the pass finished rather than timed out.
+		defer close(relay)
+		e.enrichLogErr(ctx, relay)
+	}()
+
+	for {
+		select {
+		case obs, ok := <-relay:
+			if !ok {
+				return
+			}
+			select {
+			case out <- obs:
+			case <-ctx.Done():
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // enrichLogErr runs one pass, logging rather than propagating its error so a single
@@ -232,6 +285,14 @@ func (e *ConsumerGroupEnricher) enrich(ctx context.Context, out chan<- Observati
 
 	now := time.Now()
 	for group := range groups {
+		// Checked before the call, not only at the send below. Once the pass is
+		// cancelled every remaining group costs a round trip whose result the send
+		// will discard, and a group that correlates but has committed nothing
+		// outside the internal topics never reaches that send at all — so without
+		// this a cancelled pass runs to the end of the listing.
+		if ctx.Err() != nil {
+			return nil
+		}
 		matches := correlateByStreamsConvention(group, txnIDs)
 		if len(matches) == 0 {
 			continue

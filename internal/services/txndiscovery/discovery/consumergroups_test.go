@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"reflect"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -28,32 +30,48 @@ type fakeGroupAdmin struct {
 	listErr  []error                                // consumed one per pass; nil means success
 	fetchErr map[string]error                       // group id -> error from the offsets call
 
+	// delay makes every call take this long before it answers, standing in for a
+	// degraded broker. sarama's ListConsumerGroups and ListConsumerGroupOffsets
+	// take no context at all, so this is the only shape a slow one has: a call
+	// that cannot be abandoned from the inside.
+	delay time.Duration
+
 	listCalls  int
 	fetchCalls []string
 }
 
 func (f *fakeGroupAdmin) ListConsumerGroups() (map[string]string, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.listCalls++
+	var err error
 	if len(f.listErr) > 0 {
-		err := f.listErr[0]
+		err = f.listErr[0]
 		f.listErr = f.listErr[1:]
-		if err != nil {
-			return nil, err
-		}
 	}
-	return f.groups, nil
+	groups, delay := f.groups, f.delay
+	f.mu.Unlock()
+
+	// Outside the lock, so a test can read the counters while a call is still in
+	// flight — which is the observation this fake exists to make.
+	time.Sleep(delay)
+	if err != nil {
+		return nil, err
+	}
+	return groups, nil
 }
 
 func (f *fakeGroupAdmin) ListConsumerGroupOffsets(group string, _ map[string][]int32) (*sarama.OffsetFetchResponse, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.fetchCalls = append(f.fetchCalls, group)
-	if err := f.fetchErr[group]; err != nil {
+	err := f.fetchErr[group]
+	resp, ok := f.offsets[group]
+	delay := f.delay
+	f.mu.Unlock()
+
+	time.Sleep(delay)
+	if err != nil {
 		return nil, err
 	}
-	resp, ok := f.offsets[group]
 	if !ok {
 		return offsetFetch(nil), nil
 	}
@@ -548,6 +566,152 @@ func TestConsumerGroupEnricher_FinalPassDeliversACorrelationTheCatalogGainedLate
 	}
 	if got[0].Source != SourceConsumerGroups {
 		t.Errorf("observation Source = %q, want %q", got[0].Source, SourceConsumerGroups)
+	}
+}
+
+// The final pass runs after the observation context is cancelled, which is the
+// operator's Ctrl-C: nothing is written to disk until it returns, so however long it
+// takes is how long the run holds the whole product of the window hostage.
+//
+// Its fresh context does NOT bound it. sarama's ClusterAdmin.ListConsumerGroups and
+// ListConsumerGroupOffsets take no context (admin.go), so a context can only ever be
+// consulted between calls, never inside one — and a pass makes 1+G of them in
+// sequence, one per naming-matched group. With Net.ReadTimeout 30s, Admin.Retry.Max 5
+// and Metadata.Retry.Max 3 x Metadata.Timeout 15s, ONE degraded call runs for minutes;
+// twenty Streams applications multiply that by twenty. The operator who pressed Ctrl-C
+// to bank a four-hour observation waits an hour, and SIGKILL is the only way out —
+// which loses all three artifacts.
+//
+// So the bound has to be on the WAITING, not on the calls: the pass must be abandoned
+// where it stands. The elapsed time is asserted against the timeout regardless of how
+// many groups match and how slow each call is.
+func TestConsumerGroupEnricher_FinalEnrichReturnsWithinItsTimeoutHoweverSlowTheBrokerIs(t *testing.T) {
+	// Per-call latency far above the bound: even the FIRST call, the group
+	// listing, outlasts the whole budget.
+	const perCall = 400 * time.Millisecond
+	const bound = 100 * time.Millisecond
+
+	for _, groupCount := range []int{1, 3, 10} {
+		t.Run(fmt.Sprintf("groups=%d", groupCount), func(t *testing.T) {
+			catalog := NewTxnCatalog()
+			admin := &fakeGroupAdmin{
+				groups:  map[string]string{},
+				offsets: map[string]*sarama.OffsetFetchResponse{},
+				delay:   perCall,
+			}
+			for i := range groupCount {
+				group := fmt.Sprintf("app%d", i)
+				catalog.Observe(group+"-abc12", int64(100+i))
+				admin.groups[group] = "consumer"
+				admin.offsets[group] = offsetFetch(map[string][]int32{group + ".in": {0}})
+			}
+			e := newTestEnricher(admin, catalog, &syncBuffer{})
+			e.FinalPassTimeout = bound
+
+			// Drained continuously, so a send can never be what holds the pass up.
+			out := make(chan Observation, 64)
+			drained := make(chan struct{})
+			go func() {
+				defer close(drained)
+				for range out { //nolint:revive // draining is the point
+				}
+			}()
+
+			started := time.Now()
+			e.FinalEnrich(out)
+			elapsed := time.Since(started)
+			close(out)
+			<-drained
+
+			// Generous slack for scheduling, still an order of magnitude below the
+			// 1+G sequential calls the unbounded pass makes.
+			if limit := bound + 200*time.Millisecond; elapsed > limit {
+				t.Errorf("FinalEnrich returned after %s with a %s timeout and %d matching groups, want under %s: shutdown is bounded by the broker, not by the timeout",
+					elapsed, bound, groupCount, limit)
+			}
+		})
+	}
+}
+
+// A pass whose context is already done must stop at the top of the group loop rather
+// than issue an offsets call per matching group.
+//
+// Without the check, cancelling the window commits the run to G more round trips: the
+// loop only ever consults the context at the SEND, which is reached after the call it
+// was meant to prevent. On a cancelled pass every one of those calls is work whose
+// result is thrown away at that same send.
+func TestConsumerGroupEnricher_CancelledPassMakesNoFurtherOffsetsCalls(t *testing.T) {
+	catalog := NewTxnCatalog()
+	admin := &fakeGroupAdmin{
+		groups:  map[string]string{},
+		offsets: map[string]*sarama.OffsetFetchResponse{},
+	}
+	for i := range 5 {
+		group := fmt.Sprintf("app%d", i)
+		catalog.Observe(group+"-abc12", int64(100+i))
+		admin.groups[group] = "consumer"
+		admin.offsets[group] = offsetFetch(map[string][]int32{group + ".in": {0}})
+	}
+	e := newTestEnricher(admin, catalog, &syncBuffer{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	out := make(chan Observation, 64)
+	if err := e.enrich(ctx, out); err != nil {
+		t.Fatalf("enrich returned %v, want nil on a cancelled pass", err)
+	}
+
+	listed, fetched := admin.calls()
+	if listed != 1 {
+		t.Errorf("made %d ListConsumerGroups calls, want 1 (the call already in flight when the window closed)", listed)
+	}
+	if len(fetched) != 0 {
+		t.Errorf("made %d ListConsumerGroupOffsets calls on a cancelled pass, want 0: %v", len(fetched), fetched)
+	}
+	if len(out) != 0 {
+		t.Errorf("emitted %d observations on a cancelled pass, want 0", len(out))
+	}
+}
+
+// The hazard the bound above introduces, guarded here rather than discovered in
+// production. Abandoning the pass leaves its goroutine mid-call, and the runner closes
+// the observation channel moments later (close(obs) after srcWG.Wait()). A send on a
+// closed channel panics, and a panic in an abandoned goroutine is unrecoverable — it
+// would take down a run that had already survived the window.
+//
+// The abandoned pass therefore never holds the caller's channel: FinalEnrich forwards
+// through a private relay and stops forwarding when the timeout fires, so the only
+// channel the goroutine can send on is one nobody else can close.
+func TestConsumerGroupEnricher_AbandonedFinalPassNeverTouchesTheCallersChannel(t *testing.T) {
+	const perCall = 300 * time.Millisecond
+
+	catalog := NewTxnCatalog()
+	catalog.Observe("payments-processor-abc12", 7)
+	admin := &fakeGroupAdmin{
+		groups:  map[string]string{"payments-processor": "consumer"},
+		offsets: map[string]*sarama.OffsetFetchResponse{"payments-processor": offsetFetch(map[string][]int32{"payments.requests": {0}})},
+		delay:   perCall,
+	}
+	e := newTestEnricher(admin, catalog, &syncBuffer{})
+	e.FinalPassTimeout = 20 * time.Millisecond
+
+	before := runtime.NumGoroutine()
+	out := make(chan Observation, 8)
+	e.FinalEnrich(out)
+
+	// Exactly what the runner does next.
+	close(out)
+
+	// Long enough for every abandoned call to have come back and the goroutine to
+	// have tried whatever it was going to try.
+	time.Sleep(4 * perCall)
+
+	for obs := range out {
+		t.Errorf("the abandoned pass delivered %+v on the caller's channel after it was closed", obs)
+	}
+	if after := runtime.NumGoroutine(); after > before+1 {
+		t.Errorf("goroutines went from %d to %d: the abandoned pass leaked rather than unwinding once its call returned", before, after)
 	}
 }
 
