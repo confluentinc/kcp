@@ -108,9 +108,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 
 	gw := &mockGatewayService{
 		getGatewayYAMLFn: getGatewayYAMLFn,
-		validateGatewayCRsFn: func(initial, fenced, switchover []byte) error {
-			return nil
-		},
+		// validateGatewayCRsFn left unset: the mock's default passes validation.
 		applyGatewayYAMLFn: applyGatewayYAMLFn,
 		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{
