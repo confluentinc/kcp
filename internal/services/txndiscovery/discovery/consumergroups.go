@@ -55,8 +55,10 @@ type ConsumerGroupEnricher struct {
 // Name returns the source name the observations this phase emits are tagged with.
 func (e *ConsumerGroupEnricher) Name() string { return SourceConsumerGroups }
 
-// Run enriches on entry and then on every Interval tick until ctx is done. The first
-// pass is immediate so an observation window shorter than the interval still enriches.
+// Run enriches on entry, then on every Interval tick, and once more as the window
+// closes. The first pass is immediate so an observation window shorter than the
+// interval still enriches; the last one is FinalEnrich, for the ids that arrived too
+// late for any tick to act on.
 func (e *ConsumerGroupEnricher) Run(ctx context.Context, out chan<- Observation) error {
 	e.enrichLogErr(ctx, out)
 	ticker := time.NewTicker(e.Interval)
@@ -64,11 +66,36 @@ func (e *ConsumerGroupEnricher) Run(ctx context.Context, out chan<- Observation)
 	for {
 		select {
 		case <-ctx.Done():
+			e.FinalEnrich(out)
 			return nil
 		case <-ticker.C:
 			e.enrichLogErr(ctx, out)
 		}
 	}
+}
+
+// FinalEnrich runs one last pass as the window closes, on a fresh context.
+//
+// It exists because this phase's last pass is the one most likely to matter, and the
+// one least likely to survive. The transactional ids come from the catalog, which the
+// __transaction_state reader fills as it works from the beginning of a 50-partition
+// compacted log, so an id can arrive tens of seconds into the window — and this
+// phase's admin calls share one sarama Broker connection with that reader's fetches,
+// which makes a pass cost seconds rather than milliseconds. The deciding pass
+// therefore tends to straddle the end of the window, where the observation context is
+// already cancelled: it correlates the group correctly and then discards the result at
+// the send. Without this the recovery is computed and thrown away, and the app's input
+// topic is reported as individually migratable — the exactly-once break R8 exists to
+// prevent.
+//
+// This mirrors ConsumerOffsetsTail.FinalFlush, which exists for the same reason on the
+// same catalog. The timeout is what keeps an unresponsive broker from wedging
+// shutdown, and it also bounds the send: by this point the accumulator is still
+// draining, but nothing may block the run from writing its artifacts indefinitely.
+func (e *ConsumerGroupEnricher) FinalEnrich(out chan<- Observation) {
+	ctx, cancel := context.WithTimeout(context.Background(), finalFlushTimeout)
+	defer cancel()
+	e.enrichLogErr(ctx, out)
 }
 
 // enrichLogErr runs one pass, logging rather than propagating its error so a single
