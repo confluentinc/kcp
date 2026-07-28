@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -50,6 +51,107 @@ type ConsumerGroupEnricher struct {
 	Catalog  *TxnCatalog
 	Interval time.Duration
 	Log      *slog.Logger
+
+	mu           sync.Mutex
+	passes       int
+	passFailures int
+	groupsListed int
+	// correlations holds the distinct "group\x00txnID" links made over the run. The
+	// listing repeats every pass, so a counter would report the same recovery once per
+	// pass; the set is what makes the number the run's total.
+	correlations map[string]struct{}
+}
+
+// EnricherStats is what this phase contributes to the run's report.
+type EnricherStats struct {
+	// Passes is how many enrichment passes completed.
+	//
+	// It is the cadence signal, and the reason this struct exists: this phase's admin
+	// calls are the run's slowest, so an --interval that should yield thirteen passes
+	// over a window can yield four, and nothing else in the report would say so.
+	//
+	// Every completed pass counts, including one that short-circuited on an empty
+	// catalog. The question is how many times the loop came round; a run against an
+	// idle cluster reporting zero passes would read as a phase that never started.
+	Passes int
+
+	// PassFailures is how many passes failed at the group listing.
+	//
+	// Kept apart from Passes because a phase whose every pass failed would otherwise
+	// report a full-cadence run — thirteen passes, no correlations — which is
+	// indistinguishable from a healthy run against a cluster with no exactly-once
+	// traffic. A single failed pass never aborts the window, so this count is the only
+	// artifact that says the phase was degraded.
+	PassFailures int
+
+	// GroupsListed is the most consumer groups any one pass listed.
+	//
+	// It separates "the naming convention matched nothing on this cluster" from "the
+	// credentials could not see a single group". Both recover no inputs, and Passes
+	// alone reports them identically.
+	//
+	// The most any pass saw rather than a running total, because the listing repeats
+	// every pass: a sum would multiply one cluster's group count by the cadence, and
+	// the last pass's figure would let a rebalance at the window's close understate the
+	// estate.
+	GroupsListed int
+
+	// Correlations is how many distinct consumer-group-to-transaction links this phase
+	// made over the run.
+	//
+	// Counted when the link is MADE, not when its observation is delivered, and the
+	// difference is the point: a correlation counted here that the report's naming
+	// attribution (Recovery.ByNamingTxns) does not credit was computed and then
+	// discarded at the send — R8's recovery silently not happening, which is what the
+	// final pass at the window's close exists to prevent.
+	Correlations int
+}
+
+// Stats returns a snapshot of what this phase has done so far.
+func (e *ConsumerGroupEnricher) Stats() EnricherStats {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return EnricherStats{
+		Passes:       e.passes,
+		PassFailures: e.passFailures,
+		GroupsListed: e.groupsListed,
+		Correlations: len(e.correlations),
+	}
+}
+
+// recordListing notes how many groups one pass saw, keeping the largest.
+func (e *ConsumerGroupEnricher) recordListing(n int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if n > e.groupsListed {
+		e.groupsListed = n
+	}
+}
+
+// recordCorrelation notes one group-to-transaction link, deduplicated across passes.
+func (e *ConsumerGroupEnricher) recordCorrelation(group, txnID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.correlations == nil {
+		e.correlations = make(map[string]struct{})
+	}
+	// NUL separator: it cannot occur in a group id or a transactional id, so two
+	// different links cannot collide into one key.
+	e.correlations[group+"\x00"+txnID] = struct{}{}
+}
+
+// countPass records that one pass finished its work.
+func (e *ConsumerGroupEnricher) countPass() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.passes++
+}
+
+// countPassFailure records that one pass did not get as far as finishing.
+func (e *ConsumerGroupEnricher) countPassFailure() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.passFailures++
 }
 
 // Name returns the source name the observations this phase emits are tagged with.
@@ -117,13 +219,16 @@ func (e *ConsumerGroupEnricher) enrich(ctx context.Context, out chan<- Observati
 	// only produce nothing, so it costs the cluster no admin calls at all.
 	txnIDs := e.Catalog.TxnIDs()
 	if len(txnIDs) == 0 {
+		e.countPass()
 		return nil
 	}
 
 	groups, err := e.Admin.ListConsumerGroups()
 	if err != nil {
+		e.countPassFailure()
 		return fmt.Errorf("list consumer groups: %w", err)
 	}
+	e.recordListing(len(groups))
 
 	now := time.Now()
 	for group := range groups {
@@ -145,6 +250,7 @@ func (e *ConsumerGroupEnricher) enrich(ctx context.Context, out chan<- Observati
 			continue
 		}
 		for _, txnID := range matches {
+			e.recordCorrelation(group, txnID)
 			obs := Observation{
 				TxnID: txnID,
 				// No ProducerID: this phase correlates on names, not producer ids. The
@@ -160,10 +266,13 @@ func (e *ConsumerGroupEnricher) enrich(ctx context.Context, out chan<- Observati
 			select {
 			case out <- obs:
 			case <-ctx.Done():
+				// Abandoned at shutdown rather than finished, so it is not counted:
+				// FinalEnrich's pass, on a fresh context, is the one that completes.
 				return nil
 			}
 		}
 	}
+	e.countPass()
 	return nil
 }
 
