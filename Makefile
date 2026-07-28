@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-txn-discovery
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-txn-discovery test-txn-discovery-ha
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -135,6 +135,20 @@ test-txn-discovery: build ## Run transaction-discovery E2E tests against a docke
 	@bash integration-tests/txn-discovery/setup.sh
 	@trap 'bash integration-tests/txn-discovery/teardown.sh' EXIT; \
 	go test -tags e2e_txndiscovery -timeout 20m -v ./integration-tests/txn-discovery/...
+
+# Opt-in and deliberately NOT wired into CI: it boots three brokers, kills one
+# mid-run, and spends a single observation window waiting for leadership to move,
+# so it is both slow and inherently timing-sensitive. The single-node suite above
+# is the one CI runs.
+#
+# Its build tag is separate from that suite's so that `test-txn-discovery` cannot
+# accidentally pick this file up, and its brokers listen on 29192-29194 rather
+# than 29092, so the two stacks can coexist instead of failing at `compose up`
+# over an already-bound host port.
+test-txn-discovery-ha: build ## Run transaction-discovery leader-failover E2E tests (opt-in, 3 brokers, slow)
+	@bash integration-tests/txn-discovery-ha/setup.sh
+	@trap 'bash integration-tests/txn-discovery-ha/teardown.sh' EXIT; \
+	go test -tags e2e_txndiscovery_ha -timeout 30m -v ./integration-tests/txn-discovery-ha/...
 
 # ==============================================================================
 # State-file backward-compat archive (real generated kcp-state.json fixtures)
