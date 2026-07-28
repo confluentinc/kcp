@@ -67,4 +67,4 @@ done
 
 echo ""
 echo "Environment is ready."
-echo "  Plaintext bootstrap: localhost:29092,localhost:29093,localhost:29094"
+echo "  Plaintext bootstrap: localhost:29192,localhost:29193,localhost:29194"

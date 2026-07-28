@@ -142,8 +142,9 @@ test-txn-discovery: build ## Run transaction-discovery E2E tests against a docke
 # is the one CI runs.
 #
 # Its build tag is separate from that suite's so that `test-txn-discovery` cannot
-# accidentally pick this file up — the two need different clusters on different
-# ports and would fight over them.
+# accidentally pick this file up, and its brokers listen on 29192-29194 rather
+# than 29092, so the two stacks can coexist instead of failing at `compose up`
+# over an already-bound host port.
 test-txn-discovery-ha: build ## Run transaction-discovery leader-failover E2E tests (opt-in, 3 brokers, slow)
 	@bash integration-tests/txn-discovery-ha/setup.sh
 	@trap 'bash integration-tests/txn-discovery-ha/teardown.sh' EXIT; \

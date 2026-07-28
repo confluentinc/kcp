@@ -12,6 +12,12 @@ name: kcp-txn-discovery-ha
 # Every node runs in combined mode (broker + controller). Killing one leaves a
 # two-of-three controller quorum, so the cluster stays writable while the
 # partitions the dead node led are re-elected.
+#
+# The external listeners are on 29192-29194 rather than the 29092 the single-node
+# suite uses. That is not cosmetic: docker refuses to start a container whose host
+# port is already bound, so an overlapping port makes this suite fail at
+# `compose up` whenever the other one happens to be running — a failure that says
+# nothing about either suite and costs a full boot to diagnose.
 x-kafka-env: &kafka-env
   # 22 characters: a KRaft cluster id is a base64-encoded 16-byte UUID and the
   # broker refuses to boot on anything else.
@@ -100,12 +106,12 @@ services:
     hostname: kafka1
     container_name: kcp-test-txn-discovery-ha-kafka1
     ports:
-      - "29092:29092"
+      - "29192:29192"
     environment:
       <<: *kafka-env
       KAFKA_NODE_ID: 1
-      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:9092,EXTERNAL://localhost:29092
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29192
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:9092,EXTERNAL://localhost:29192
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 5s
@@ -117,12 +123,12 @@ services:
     hostname: kafka2
     container_name: kcp-test-txn-discovery-ha-kafka2
     ports:
-      - "29093:29093"
+      - "29193:29193"
     environment:
       <<: *kafka-env
       KAFKA_NODE_ID: 2
-      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29093
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:9092,EXTERNAL://localhost:29093
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29193
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:9092,EXTERNAL://localhost:29193
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 5s
@@ -134,12 +140,12 @@ services:
     hostname: kafka3
     container_name: kcp-test-txn-discovery-ha-kafka3
     ports:
-      - "29094:29094"
+      - "29194:29194"
     environment:
       <<: *kafka-env
       KAFKA_NODE_ID: 3
-      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29094
-      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:9092,EXTERNAL://localhost:29094
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29194
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:9092,EXTERNAL://localhost:29194
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 5s

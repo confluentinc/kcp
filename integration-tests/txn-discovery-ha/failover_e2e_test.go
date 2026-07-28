@@ -43,7 +43,7 @@ const (
 	// bootstrapped only against that one could not refresh metadata afterwards,
 	// so the reader's recovery would be untestable for a reason that has nothing
 	// to do with the reader.
-	bootstrapAddr = "localhost:29092,localhost:29093,localhost:29094"
+	bootstrapAddr = "localhost:29192,localhost:29193,localhost:29194"
 
 	// txnStateTopic is the internal topic the command reads by default, and whose
 	// partition leadership this suite moves.
@@ -103,7 +103,7 @@ func newAdmin(t *testing.T) sarama.ClusterAdmin {
 
 // bootstrapAddrs splits the bootstrap string sarama wants as a slice.
 func bootstrapAddrs() []string {
-	return []string{"localhost:29092", "localhost:29093", "localhost:29094"}
+	return []string{"localhost:29192", "localhost:29193", "localhost:29194"}
 }
 
 // liveBrokerIDs returns the node ids the cluster currently reports, reporting
@@ -216,6 +216,28 @@ const (
 	warmupOut   = fixturePrefix + "warmup-out"
 	warmupIn    = fixturePrefix + "warmup-in"
 	warmupGroup = fixturePrefix + "warmup-cg"
+)
+
+// The open-transaction fixture, left uncommitted until after the window closes.
+//
+// It exists for one assertion: KTD9's, that lag is measured against the last
+// stable offset and not the high watermark. On a quiet cluster the two
+// definitions agree and the difference cannot be observed at all, so the suite
+// has to create the condition — a transaction that has written a transactional
+// offset commit to __consumer_offsets and not yet been decided, which is the
+// normal state on an exactly-once cluster and the reason a high-watermark-based
+// lag would have a permanent floor.
+const (
+	openTxn   = fixturePrefix + "open-txn"
+	openIn    = fixturePrefix + "open-in"
+	openGroup = fixturePrefix + "open-cg"
+
+	// openTxnTimeout has to outlast the rest of the observation window, or the
+	// coordinator aborts the transaction, the last stable offset catches up to the
+	// high watermark, and the condition under test disappears before the window
+	// closes. It must stay under the broker's transaction.max.timeout.ms, which
+	// docker-compose.yml sets to fifteen minutes.
+	openTxnTimeout = 14 * time.Minute
 )
 
 // createTopics creates each topic at the cluster's replication factor, ignoring
@@ -336,6 +358,89 @@ func produceWithin(f txnFixture, within time.Duration) error {
 		time.Sleep(2 * time.Second)
 	}
 	return fmt.Errorf("gave up after %s; last error: %w", within, last)
+}
+
+// beginOpenTransaction leaves a transactional offset commit sitting in
+// __consumer_offsets under a transaction that is never decided, and returns a
+// function that abandons it.
+//
+// That record is what pins the partition's last stable offset below its high
+// watermark for as long as the transaction is open, and that gap is the entire
+// point: it is the condition under which a high-watermark-based lag can never
+// reach zero. Without it, both definitions of lag report the same zero and the
+// assertion below cannot tell them apart.
+//
+// It is written through the raw protocol rather than through a transactional
+// producer because sarama's AddOffsetsToTxn only BUFFERS the offsets — nothing
+// reaches __consumer_offsets until CommitTxn, and a committed transaction leaves
+// no gap. So the four requests a commit would have issued are issued here, minus
+// the EndTxn that would close it: InitProducerId to claim a producer id and
+// epoch, AddOffsetsToTxn to put the group's offsets partition into the
+// transaction, and TxnOffsetCommit to write the record.
+func beginOpenTransaction(t *testing.T) func() {
+	t.Helper()
+	createTopics(t, openIn)
+
+	client := newClient(t)
+	id := openTxn
+
+	coordinator, err := client.TransactionCoordinator(id)
+	require.NoError(t, err, "failed to resolve the transaction coordinator for the deliberately-open transaction")
+
+	// Versions chosen to match what sarama's own transaction manager sends at the
+	// configured Kafka version, so this fixture speaks the same protocol the
+	// committed fixtures do. A fresh producer id is claimed with -1/-1.
+	init, err := coordinator.InitProducerID(&sarama.InitProducerIDRequest{
+		Version:            4,
+		TransactionalID:    &id,
+		TransactionTimeout: openTxnTimeout,
+		ProducerID:         -1,
+		ProducerEpoch:      -1,
+	})
+	require.NoError(t, err, "InitProducerId failed for the deliberately-open transaction")
+	require.Equal(t, sarama.ErrNoError, init.Err, "InitProducerId was refused: %v", init.Err)
+
+	added, err := coordinator.AddOffsetsToTxn(&sarama.AddOffsetsToTxnRequest{
+		Version:         2,
+		TransactionalID: id,
+		ProducerID:      init.ProducerID,
+		ProducerEpoch:   init.ProducerEpoch,
+		GroupID:         openGroup,
+	})
+	require.NoError(t, err, "AddOffsetsToTxn failed for the deliberately-open transaction")
+	require.Equal(t, sarama.ErrNoError, added.Err, "AddOffsetsToTxn was refused: %v", added.Err)
+
+	groupCoordinator, err := client.Coordinator(openGroup)
+	require.NoError(t, err, "failed to resolve the group coordinator for the deliberately-open transaction")
+
+	committed, err := groupCoordinator.TxnOffsetCommit(&sarama.TxnOffsetCommitRequest{
+		Version:         2,
+		TransactionalID: id,
+		GroupID:         openGroup,
+		ProducerID:      init.ProducerID,
+		ProducerEpoch:   init.ProducerEpoch,
+		Topics: map[string][]*sarama.PartitionOffsetMetadata{
+			openIn: {{Partition: 0, Offset: 1, LeaderEpoch: -1}},
+		},
+	})
+	require.NoError(t, err, "TxnOffsetCommit failed for the deliberately-open transaction")
+	for topic, parts := range committed.Topics {
+		for _, pe := range parts {
+			require.Equal(t, sarama.ErrNoError, pe.Err,
+				"the transactional offset commit was refused for %s[%d]: %v", topic, pe.Partition, pe.Err)
+		}
+	}
+
+	// Deliberately no EndTxn here. That is the whole fixture.
+	return func() {
+		_, _ = coordinator.EndTxn(&sarama.EndTxnRequest{
+			Version:           2,
+			TransactionalID:   id,
+			ProducerID:        init.ProducerID,
+			ProducerEpoch:     init.ProducerEpoch,
+			TransactionResult: false,
+		})
+	}
 }
 
 // ensureInternalTopics brings __transaction_state and __consumer_offsets into
@@ -961,6 +1066,14 @@ func doFailoverRun(t *testing.T) *failoverResult {
 
 	require.True(t, proc.running(),
 		"the observation window closed before the post-failover phase was produced: this is a harness timing failure, not a reader failure — raise failoverWindow")
+
+	// Opened here so it is still undecided when the window closes and the tail
+	// snapshot is taken. Its own recovery is not under test; what it provides is
+	// the high-watermark-to-last-stable-offset gap the lag assertion needs in
+	// order to be about anything.
+	abandonOpen := beginOpenTransaction(t)
+	t.Cleanup(abandonOpen)
+
 	time.Sleep(postPhaseQuietTail)
 	require.True(t, proc.running(),
 		"the observation window closed less than %s after the post-failover phase was produced, so the reader was never given time to see it: this is a harness timing failure, not a reader failure — raise failoverWindow",
@@ -1110,5 +1223,244 @@ func TestPostFailoverTransactionsAreObserved(t *testing.T) {
 			txnStateTopic, r.describe())
 		assert.Contains(t, g.TransactionalIDs, f.TxnID,
 			"the post-failover group is not credited to %s\n%s", f.TxnID, r.describe())
+	}
+}
+
+// TestEveryAssignedPartitionIsLiveAndReadingAtTheEnd is R11's liveness half:
+// no partition gave up and no partition is stuck retrying when the window closes.
+//
+// Both numbers are needed and neither is enough. A loop that exited stops being
+// counted as running, which is the loud failure. A loop stuck retrying a dead
+// connection is still counted as running, contributes no lag, and is otherwise
+// indistinguishable from a healthy idle partition — that is the quiet one, and
+// PartitionsStalled is the only signal that separates them.
+//
+// This asserts on liveness rather than on the error counters deliberately. The
+// counters are expected to be positive on a passing run.
+func TestEveryAssignedPartitionIsLiveAndReadingAtTheEnd(t *testing.T) {
+	r := failoverRun(t)
+	tl := r.stats.Tail
+
+	require.Positive(t, tl.PartitionsAssigned,
+		"the reader was assigned no partitions at all, so its liveness says nothing\n%s", r.describe())
+	assert.Equal(t, tl.PartitionsAssigned, tl.PartitionsRunning,
+		"%d of %d partitions stopped across the failover, so part of the window went unobserved\n%s",
+		tl.PartitionsAssigned-tl.PartitionsRunning, tl.PartitionsAssigned, r.describe())
+	assert.Zero(t, tl.PartitionsStalled,
+		"%d partitions were still retrying a failed fetch when the window closed, so they never recovered from the failover — and their zero lag means nothing was read, not that they caught up\n%s",
+		tl.PartitionsStalled, r.describe())
+
+	for _, p := range tl.Partitions {
+		assert.True(t, p.Running,
+			"%s[%d] stopped early\n%s", p.Topic, p.Partition, r.describe())
+		assert.False(t, p.Stalled,
+			"%s[%d] is retrying rather than reading; its last error was %q\n%s",
+			p.Topic, p.Partition, p.LastError, r.describe())
+	}
+
+	// Not a keep-up signal but a format-drift alarm, asserted here because a
+	// failover is exactly when a reader might start misreading a batch header: a
+	// new leader serves the same records from its own log, and a reader that
+	// mishandled the boundary would decode rather than fail outright.
+	assert.Zero(t, tl.DecodeErrors,
+		"records failed to decode across the failover\n%s", r.describe())
+}
+
+// TestNoOffsetRangeSkippedAcrossTheResume is the continuity scenario: the reader
+// resumed where it left off rather than jumping ahead.
+//
+// A skipped range is the quietest failure this component has. Every other signal
+// reads clean — the partition is running, its offset advanced, its lag is zero,
+// and the records it did read decoded fine — while the transactions in the gap
+// are simply absent, which downstream is indistinguishable from a cluster on
+// which those transactions never happened.
+//
+// It is derived from an identity the stats document makes checkable. The
+// transaction-state log is assigned from EARLIEST, its records are written by the
+// coordinator as ordinary non-transactional records so its offsets are dense, and
+// the reader only ever advances past records it actually decoded. So for each of
+// its partitions the number of records read must account for the ENTIRE offset
+// span between the log start and where the reader finished. Anything less is a
+// gap, whatever else the numbers say.
+func TestNoOffsetRangeSkippedAcrossTheResume(t *testing.T) {
+	r := failoverRun(t)
+
+	// The left-hand end of every span has to still be where it was, or the
+	// arithmetic below is measuring against the wrong origin. The compose file
+	// disables the log cleaner precisely so this holds.
+	now := earliestOffsets(t, txnStateTopic)
+	for part, start := range r.txnStateEarliest {
+		require.Equal(t, start, now[part],
+			"the log start offset of %s partition %d moved from %d to %d during the run, so the offset span cannot be accounted for — has the log cleaner been re-enabled?",
+			txnStateTopic, part, start, now[part])
+	}
+
+	killed := map[int32]bool{}
+	for _, p := range r.killedPartitions {
+		killed[p] = true
+	}
+
+	var totalSpan, killedSpan int64
+	for _, p := range r.stats.Tail.Partitions {
+		if p.Topic != txnStateTopic {
+			// __consumer_offsets is assigned from LATEST, so its log start is not
+			// where the reader began and the span identity does not apply.
+			continue
+		}
+		start, ok := r.txnStateEarliest[p.Partition]
+		require.True(t, ok, "%s partition %d has no captured log start offset", txnStateTopic, p.Partition)
+
+		span := p.NextOffset - start
+		require.GreaterOrEqual(t, span, int64(0),
+			"%s[%d] finished at offset %d, behind its log start %d\n%s", p.Topic, p.Partition, p.NextOffset, start, r.describe())
+
+		// The identity only holds while nothing was filtered out. The transaction
+		// coordinator writes plain records, so a dropped batch here would mean the
+		// reader is misreading the log rather than that the assertion is too
+		// strict.
+		require.Zero(t, p.AbortedBatches,
+			"%s[%d] dropped %d batches as aborted, which the transaction-state log should never contain\n%s",
+			p.Topic, p.Partition, p.AbortedBatches, r.describe())
+
+		assert.Equal(t, span, p.RecordsRead,
+			"%s[%d] read %d records over an offset span of %d (log start %d, finished at %d): %d offsets went unread, so a range was skipped rather than resumed\n%s",
+			p.Topic, p.Partition, p.RecordsRead, span, start, p.NextOffset, span-p.RecordsRead, r.describe())
+
+		totalSpan += span
+		if killed[p.Partition] {
+			killedSpan += span
+		}
+	}
+
+	require.Positive(t, totalSpan,
+		"the reader consumed no %s offsets at all, so continuity is vacuous\n%s", txnStateTopic, r.describe())
+	// And specifically across the resume point: continuity over partitions that
+	// were never disrupted would prove nothing about the failover.
+	require.Positive(t, killedSpan,
+		"no partition led by the killed node %d carried any record, so continuity was not checked across the resume point at all\n%s",
+		r.killedBroker, r.describe())
+}
+
+// TestReconnectDuplicatedNoGroupAndNoAuditLine is the other half of resuming
+// correctly: the reader did not re-read a range it had already consumed.
+//
+// Re-reading is the mirror image of skipping, and it is not harmless. A
+// transaction observed twice would be credited twice, so a topic could appear in
+// two groups — and an operator reading that would migrate the same topic in two
+// separate batches, or conclude the tool cannot be trusted about either.
+//
+// The audit half is asserted as growth-only per resulting topic set rather than
+// as one line per transaction. A transaction that produces to two topics may
+// legitimately be observed first with one of them and then with both, because
+// the Ongoing record is written as partitions are added — two genuine growth
+// events. What must never happen is the SAME topic set being recorded twice,
+// which is what a re-read range would produce.
+func TestReconnectDuplicatedNoGroupAndNoAuditLine(t *testing.T) {
+	r := failoverRun(t)
+
+	seen := map[string]int{}
+	for _, g := range r.doc.Groups {
+		seen[g.Name]++
+	}
+	for name, n := range seen {
+		assert.Equal(t, 1, n, "group name %s appears %d times in the document", name, n)
+	}
+
+	for _, ph := range r.phases {
+		for _, f := range ph.fixtures {
+			var in []string
+			for _, g := range r.doc.Groups {
+				for _, tp := range g.Topics {
+					if tp == f.Produce[0] {
+						in = append(in, g.Name)
+					}
+				}
+			}
+			assert.Len(t, in, 1,
+				"the %s-failover transaction %s has its topic in groups %v, so the reconnect duplicated it\n%s",
+				ph.name, f.TxnID, in, r.describe())
+		}
+	}
+
+	require.NotEmpty(t, r.audit, "the run wrote no audit log at all, so duplication in it cannot be checked\n%s", r.describe())
+	for _, ph := range r.phases {
+		for _, f := range ph.fixtures {
+			lines := r.auditForTxn(f.TxnID)
+			require.NotEmpty(t, lines,
+				"the %s-failover transaction %s has no audit line, so its grouping cannot be explained\n%s", ph.name, f.TxnID, r.describe())
+
+			bySet := map[string]int{}
+			for _, l := range lines {
+				set := append([]string(nil), l.Topics...)
+				sort.Strings(set)
+				bySet[strings.Join(set, ",")]++
+			}
+			for set, n := range bySet {
+				assert.Equal(t, 1, n,
+					"the %s-failover transaction %s has %d audit lines recording the identical topic set {%s}, so the reconnect re-read a range it had already consumed\n%s",
+					ph.name, f.TxnID, n, set, r.describe())
+			}
+
+			final := append([]string(nil), f.Produce...)
+			sort.Strings(final)
+			assert.Contains(t, bySet, strings.Join(final, ","),
+				"no audit line records the %s-failover transaction %s reaching its full topic set\n%s", ph.name, f.TxnID, r.describe())
+		}
+	}
+}
+
+// TestLagRecoversToZeroAgainstTheLastStableOffset is the keep-up scenario, and
+// KTD9 is the whole of its subtlety.
+//
+// Under ReadCommitted the broker serves nothing past the last stable offset, so
+// measuring lag against the HIGH WATERMARK gives a figure with a permanent floor
+// of the high-watermark-to-LSO gap whenever any transaction is open — which on
+// __consumer_offsets is the normal state on an exactly-once cluster. A reader
+// that had fully observed the window would report itself permanently behind, and
+// operators would learn to ignore the one indicator that says the window was
+// covered.
+//
+// So the test does two things a plain "lag is zero" would not. It checks the
+// arithmetic from the artifact, that lag is the last-stable-offset gap and the
+// high-watermark gap is reported separately. And it requires a partition to
+// actually HAVE an open transaction at the end, because on a quiet cluster the
+// two definitions agree and the distinction cannot be observed at all.
+func TestLagRecoversToZeroAgainstTheLastStableOffset(t *testing.T) {
+	r := failoverRun(t)
+	tl := r.stats.Tail
+
+	// Non-vacuity, and the confusion the stalled flag exists to prevent: a reader
+	// that never fetched successfully holds a zero last stable offset, so its lag
+	// computes as zero too.
+	require.Positive(t, tl.RecordsRead,
+		"the reader read no records at all, so zero lag would mean nothing was read rather than that it caught up\n%s", r.describe())
+
+	assert.Zero(t, tl.Lag,
+		"the reader never caught up to the last stable offset after the failover\n%s", r.describe())
+
+	for _, p := range tl.Partitions {
+		assert.Zero(t, p.Lag,
+			"%s[%d] is %d records behind its last stable offset\n%s", p.Topic, p.Partition, p.Lag, r.describe())
+		assert.Equal(t, max(int64(0), p.LastStableOffset-p.NextOffset), p.Lag,
+			"%s[%d] reports lag %d, which is not its last-stable-offset gap (LSO %d, next %d)\n%s",
+			p.Topic, p.Partition, p.Lag, p.LastStableOffset, p.NextOffset, r.describe())
+		assert.Equal(t, max(int64(0), p.HighWaterMark-p.LastStableOffset), p.OpenTxnBacklog,
+			"%s[%d] reports an open-transaction backlog of %d, which is not its high-watermark gap (HWM %d, LSO %d)\n%s",
+			p.Topic, p.Partition, p.OpenTxnBacklog, p.HighWaterMark, p.LastStableOffset, r.describe())
+	}
+
+	var withOpenTxn []statsPartition
+	for _, p := range tl.Partitions {
+		if p.OpenTxnBacklog > 0 {
+			withOpenTxn = append(withOpenTxn, p)
+		}
+	}
+	require.NotEmpty(t, withOpenTxn,
+		"no partition had an open transaction when the window closed, so an LSO-based lag and a high-watermark-based one would report the same zero and this test cannot tell them apart\n%s",
+		r.describe())
+	for _, p := range withOpenTxn {
+		assert.Zero(t, p.Lag,
+			"%s[%d] has an open transaction (HWM %d, LSO %d) and reports lag %d: the lag is being measured against the high watermark, so it can never reach zero while any transaction is open\n%s",
+			p.Topic, p.Partition, p.HighWaterMark, p.LastStableOffset, p.Lag, r.describe())
 	}
 }
