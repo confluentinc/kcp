@@ -326,6 +326,89 @@ func TestConsumerGroupEnricher_EmptyCatalogMakesNoAdminCall(t *testing.T) {
 	}
 }
 
+// A transactional id the catalog gains LATE in the window must still have its
+// consumed input recovered, so the window's end triggers one final pass.
+//
+// This is the pipeline's timing reality, not a hypothetical. The catalog is filled by
+// the __transaction_state reader, which works from the beginning of a 50-partition
+// compacted log, so a transaction's id routinely does not reach the catalog until tens
+// of seconds into the window — and the enricher's own admin calls share one sarama
+// Broker connection with that reader's fetches, so a pass takes seconds rather than
+// milliseconds. The deciding pass therefore straddles the end of the window: it
+// correlates the group correctly and then loses the race between its send and the
+// cancelled context, so the recovery is computed and thrown away. R8's recovery then
+// silently does not happen and the app's input topic is reported as individually
+// migratable — the exactly-once break the phase exists to prevent.
+//
+// The __consumer_offsets phase has the identical problem and solves it with a final
+// flush on a fresh context (see ConsumerOffsetsTail.FinalFlush, "most resolutions land
+// here"). This is that same contract for this phase.
+func TestConsumerGroupEnricher_FinalPassDeliversACorrelationTheCatalogGainedLate(t *testing.T) {
+	// Correlates to no group, so the first pass reaches the admin — which is the
+	// barrier that proves the late arrival really is late — and emits nothing.
+	catalog := NewTxnCatalog()
+	catalog.Observe("unrelated-workload-abc12", 3)
+
+	admin := &fakeGroupAdmin{
+		groups: map[string]string{"payments-processor": "consumer"},
+		offsets: map[string]*sarama.OffsetFetchResponse{
+			"payments-processor": offsetFetch(map[string][]int32{"payments.requests": {0, 1}}),
+		},
+	}
+	e := newTestEnricher(admin, catalog, &syncBuffer{}) // Interval is an hour: no tick will fire
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	out := make(chan Observation, 4)
+	done := make(chan error, 1)
+	go func() { done <- e.Run(ctx, out) }()
+
+	// Wait for the immediate pass to have been and gone, so the transaction below
+	// cannot be picked up by it.
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		if listed, _ := admin.calls(); listed >= 1 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the immediate pass never reached the admin, so the late arrival below would not be late")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// The reader decodes the Streams transaction late in the window.
+	catalog.Observe("payments-processor-abc12", 7)
+
+	// The window closes.
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Errorf("Run returned %v, want nil on cancellation", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run did not return after cancellation")
+	}
+
+	close(out)
+	var got []Observation
+	for obs := range out {
+		got = append(got, obs)
+	}
+	if len(got) != 1 {
+		t.Fatalf("delivered %d observations, want 1: the correlation the catalog gained late in the window was never emitted, so the consumed input is lost: %+v", len(got), got)
+	}
+	if got[0].TxnID != "payments-processor-abc12" {
+		t.Errorf("observation TxnID = %q, want the late-arriving correlated transactional id", got[0].TxnID)
+	}
+	if want := []string{"payments.requests"}; !reflect.DeepEqual(got[0].Topics, want) {
+		t.Errorf("observation Topics = %v, want %v", got[0].Topics, want)
+	}
+	if got[0].Source != SourceConsumerGroups {
+		t.Errorf("observation Source = %q, want %q", got[0].Source, SourceConsumerGroups)
+	}
+}
+
 // A coordinator moving, a rebalance, or a momentary ACL problem fails one pass. That
 // must not end enrichment for the rest of the window, and it must not vanish either:
 // the operator needs the failure in the log to know the phase was degraded.
