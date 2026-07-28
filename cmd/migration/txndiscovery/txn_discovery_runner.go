@@ -238,8 +238,11 @@ func (r *Runner) Run(ctx context.Context) error {
 			_ = offsets.Run(runCtx, dests[1], obs)
 		}()
 	}
+	// Declared outside the branch so its counters can be read after the window; a
+	// nil enricher is the --enrich-consumer-groups=false case.
+	var enricher *discovery.ConsumerGroupEnricher
 	if r.opts.EnrichConsumerGroups {
-		enricher := &discovery.ConsumerGroupEnricher{
+		enricher = &discovery.ConsumerGroupEnricher{
 			Admin:    cl.Admin,
 			Catalog:  catalog,
 			Interval: r.opts.Interval,
@@ -282,18 +285,22 @@ func (r *Runner) Run(ctx context.Context) error {
 	_ = closeAudit()
 
 	run := report.Run{
-		Duration:         r.opts.Duration,
-		Interval:         r.opts.Interval,
-		ActiveSources:    activeSources,
-		Footprints:       footprints,
-		Result:           grouping.Build(txns, grouping.Options{IncludeInternalTopics: r.opts.IncludeInternalTopics}),
-		Tail:             tailStats,
-		TxnState:         txnReader.Stats(),
-		AuditErrors:      audit.Errors(),
-		EnrichmentActive: r.opts.EnrichConsumerGroups,
+		Duration:      r.opts.Duration,
+		Interval:      r.opts.Interval,
+		ActiveSources: activeSources,
+		Footprints:    footprints,
+		Result:        grouping.Build(txns, grouping.Options{IncludeInternalTopics: r.opts.IncludeInternalTopics}),
+		Tail:          tailStats,
+		TxnState:      txnReader.Stats(),
+		AuditErrors:   audit.Errors(),
 	}
 	if offsets != nil {
 		run.Offsets = offsets.Stats()
+	}
+	// Read after srcWG.Wait(), so the final pass at the window's close — the one
+	// most likely to carry a correlation — is included rather than raced.
+	if enricher != nil {
+		run.Enrichment = enricher.Stats()
 	}
 
 	summary := report.Summarize(run)

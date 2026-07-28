@@ -112,6 +112,9 @@ func statsRun() Run {
 			GroupsLinked: 3, Correlations: 4,
 			RecoveredTopics: []string{"in-a", "in-b"},
 		},
+		Enrichment: discovery.EnricherStats{
+			Passes: 13, PassFailures: 2, GroupsListed: 41, Correlations: 5,
+		},
 	}
 }
 
@@ -212,6 +215,28 @@ func TestStatsJSONAndKeepUpDetailIdentifyWhichPartitionsAreStalled(t *testing.T)
 	}
 }
 
+// The cadence question the stats document exists to answer for every other source:
+// --interval 5s over a 60s window should yield thirteen enrichment passes, and a
+// captured run has to say how many it got. Without these counters a run that enriched
+// four times and one that enriched thirteen produce an identical document.
+func TestStatsJSONCarriesTheEnrichmentPassCadenceAndWhatItCorrelated(t *testing.T) {
+	_, doc := writeStats(t, statsRun())
+
+	for _, c := range []struct {
+		key  string
+		want float64
+	}{
+		{"passes", 13},
+		{"pass_failures", 2},
+		{"groups_listed", 41},
+		{"correlations", 5},
+	} {
+		if got := num(t, at(t, doc, "consumer_group_enrichment", c.key)); got != c.want {
+			t.Errorf("consumer_group_enrichment.%s = %v, want %v", c.key, got, c.want)
+		}
+	}
+}
+
 func TestWriteStatsJSONFailsActionablyWhenTheOutputDirectoryDoesNotExist(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "no-such-dir")
@@ -254,6 +279,10 @@ func TestKeepUpDetailBreaksDownEverySourceAndEveryPartition(t *testing.T) {
 		"consumer-offsets tail: 300 records, 25 txn offset-commits, 3 groups linked, 2 input topics recovered",
 		"14 pending evictions",
 		"6 key decode failures",
+		// The cadence the operator asked for against the cadence they got. This is the
+		// block an operator reads after the health line warns, and enrichment's pass
+		// count was the one source it could not account for.
+		"consumer-group enrichment: 13 passes, 2 failed, 41 groups listed, 5 correlations",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("keep-up detail is missing %q\n--- keep-up ---\n%s", want, out)

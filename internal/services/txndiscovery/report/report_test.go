@@ -93,7 +93,6 @@ func distinctiveRun() Run {
 			Correlations:    1,
 			RecoveredTopics: []string{"zqx-topic-orders-in"},
 		},
-		EnrichmentActive: true,
 		Result: grouping.Result{
 			Groups: []grouping.Group{
 				{
@@ -291,7 +290,6 @@ func rpwRun() Run {
 			{TxnID: "unenriched", ReadProcessWrite: true, Topics: []string{"out-c"},
 				Sources: []string{discovery.SourceTxnStateLog}},
 		},
-		EnrichmentActive: true,
 		Offsets:          discovery.ConsumerOffsetsStats{RecoveredTopics: []string{"in-a"}},
 		Result: grouping.Result{
 			Groups: []grouping.Group{
@@ -324,6 +322,43 @@ func TestSummaryDoesNotCreditAnEnrichmentPhaseThatRecoveredNothing(t *testing.T)
 	if strings.Contains(out, "exact producer-id correlation via __consumer_offsets:") {
 		t.Errorf("credited the producer-id correlation phase, which recovered nothing\n--- summary ---\n%s", out)
 	}
+}
+
+// Whether enrichment ran is derived from the sources the run declares, exactly as the
+// offsets phase's activity already is — not taken on a caller's word.
+//
+// Run.EnrichmentActive was a stopgap for a phase with no counters of its own. It now has
+// them, so the field is a second, independent source of truth for a fact ActiveSources
+// already states, and the two can disagree: a caller that passes --enrich-consumer-groups
+// and whose enrichment never starts would have the report announce a phase that did not
+// run, which is precisely what R13's Unavailable flag exists to prevent for the other
+// phase.
+func TestSummaryDerivesEnrichmentActivityFromTheRunsDeclaredSources(t *testing.T) {
+	// A read-process-write transaction nothing enriched: the summary's wording turns on
+	// whether an enrichment phase was active at all.
+	base := Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		Footprints: []discovery.TxnFootprint{
+			{TxnID: "eos", ReadProcessWrite: true, Topics: []string{"out"},
+				Sources: []string{discovery.SourceTxnStateLog}},
+		},
+		Result: grouping.Result{
+			Groups:                 []grouping.Group{{Name: "group-1", Topics: []string{"out"}, TxnIDs: []string{"eos"}, ReadProcessWrite: true}},
+			ReadProcessWriteTopics: []string{"out"},
+		},
+	}
+
+	withEnrichment := base
+	withEnrichment.ActiveSources = []string{discovery.SourceTxnStateLog, discovery.SourceConsumerGroups}
+	if got := Summarize(withEnrichment).Recovery.EnrichmentActive; !got {
+		t.Error("a run naming consumer-group enrichment among its sources is not reported as having enriched")
+	}
+	requireContains(t, render(t, withEnrichment), "no correlatable exactly-once consumer")
+
+	if got := Summarize(base).Recovery.EnrichmentActive; got {
+		t.Error("a run that did not name consumer-group enrichment is reported as having enriched")
+	}
+	requireContains(t, render(t, base), "not visible through the transaction footprint")
 }
 
 func TestSummaryWarnsWhenAuditLinesFailedToReachDisk(t *testing.T) {

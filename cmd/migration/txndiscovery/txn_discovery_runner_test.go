@@ -404,6 +404,44 @@ func TestRun_PreflightFailure_ExitsNonZeroAndWritesNothing(t *testing.T) {
 	assert.Empty(t, entries, "a failed preflight writes no files at all")
 }
 
+// R21: the enrichment phase's counters have to reach the stats document, or a
+// captured run cannot say whether the cadence --interval asked for was achieved.
+// Every other source's counters are wired through; this one's were not collected
+// at all, which is why a run that enriched four times in a window sized for
+// thirteen looked identical to one that enriched thirteen.
+func TestRun_EnrichmentCountersReachTheStatsDocument(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("payments-processor-abc12")},
+		[][]byte{txnValue(4242, "payments.out")},
+	))
+	// A group the Streams naming convention correlates to that transaction, so the
+	// pass has something to find rather than merely something to count.
+	h.admin.groups = map[string]string{"payments-processor": "consumer"}
+	h.admin.offsets = map[string][]string{"payments-processor": {"payments.in"}}
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()))
+
+	var doc struct {
+		Enrichment struct {
+			Passes       int `json:"passes"`
+			PassFailures int `json:"pass_failures"`
+			GroupsListed int `json:"groups_listed"`
+			Correlations int `json:"correlations"`
+		} `json:"consumer_group_enrichment"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, opts.StatsOutPath)), &doc))
+
+	assert.Positive(t, doc.Enrichment.Passes, "the run completed enrichment passes and the document reports none")
+	assert.Equal(t, 1, doc.Enrichment.GroupsListed, "the pass listed one group")
+	assert.Equal(t, 1, doc.Enrichment.Correlations, "the group correlated to the transaction")
+	assert.Zero(t, doc.Enrichment.PassFailures)
+}
+
 // R13: an unreadable consumer-offsets log degrades the run to consumer-group
 // enrichment alone rather than failing it.
 func TestRun_UnreadableConsumerOffsets_DegradesRatherThanFailing(t *testing.T) {

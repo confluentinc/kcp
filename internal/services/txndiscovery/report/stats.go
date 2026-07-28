@@ -6,6 +6,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
 )
 
@@ -24,9 +25,10 @@ type statsDoc struct {
 
 	ObservedTransactionalIDs int `json:"observed_transactional_ids"`
 
-	Tail                tailDoc        `json:"tail"`
-	TransactionStateLog txnStateDoc    `json:"transaction_state_log"`
-	ConsumerOffsetsLog  offsetsTailDoc `json:"consumer_offsets_log"`
+	Tail                    tailDoc        `json:"tail"`
+	TransactionStateLog     txnStateDoc    `json:"transaction_state_log"`
+	ConsumerOffsetsLog      offsetsTailDoc `json:"consumer_offsets_log"`
+	ConsumerGroupEnrichment enrichmentDoc  `json:"consumer_group_enrichment"`
 
 	// AuditLogWriteErrors is the count the summary warns on, recorded here too so a
 	// captured run's diagnostics say whether its audit trace is complete.
@@ -113,6 +115,25 @@ type offsetsTailDoc struct {
 	UnavailableReason string `json:"unavailable_reason"`
 }
 
+// enrichmentDoc is consumer-group enrichment's view: the cadence it actually achieved
+// and what it correlated.
+//
+// Passes against the run's enrichment_interval and observation_window is the whole
+// point of the block. This phase's admin calls are the run's slowest, so a run
+// configured for a pass every five seconds over a minute can complete four rather than
+// thirteen, and no other number in this document would say so.
+type enrichmentDoc struct {
+	Passes       int `json:"passes"`
+	PassFailures int `json:"pass_failures"`
+	// GroupsListed is the most groups any one pass saw, which separates a naming
+	// convention that matched nothing from credentials that could see no group at all.
+	GroupsListed int `json:"groups_listed"`
+	// Correlations counts links MADE. Compared against the naming attribution the
+	// summary reports, a surplus here is a correlation that was computed and then
+	// discarded before its observation was accumulated.
+	Correlations int `json:"correlations"`
+}
+
 type statsTxn struct {
 	TransactionalID  string    `json:"transactional_id"`
 	ProducerID       int64     `json:"producer_id"`
@@ -176,7 +197,16 @@ func PrintKeepUp(w io.Writer, r Run) {
 			ts.KeyDecodeErrors, ts.ValueDecodeErrors)
 	}
 
-	o := r.Offsets
+	printOffsetsKeepUp(w, r.Offsets)
+	printEnrichmentKeepUp(w, r.Enrichment)
+}
+
+// printOffsetsKeepUp writes the __consumer_offsets tail's section.
+//
+// Its own function because the unavailable case ends the section early, and inline that
+// early return would swallow every section written after it (R13 makes an unreadable
+// offsets log an ordinary outcome, not the end of the report).
+func printOffsetsKeepUp(w io.Writer, o discovery.ConsumerOffsetsStats) {
 	if o.Unavailable {
 		_, _ = fmt.Fprintf(w, "  consumer-offsets tail: did not run (%s)\n", o.UnavailableReason)
 		return
@@ -192,6 +222,23 @@ func PrintKeepUp(w io.Writer, r Run) {
 		o.PendingProducers,
 		o.PendingEvicted, plural64(o.PendingEvicted, "eviction", "evictions"),
 		o.KeyDecodeErrors, plural64(o.KeyDecodeErrors, "failure", "failures"))
+}
+
+// printEnrichmentKeepUp writes consumer-group enrichment's section: the cadence it
+// achieved, and what it saw and correlated.
+//
+// The pass count is the reason this section exists. Every other source's keep-up is a
+// question of whether the reader stayed level with a log; this phase's is whether it got
+// round at all, because its admin calls are the slowest thing the run does.
+//
+// Counts only — a group id, topic name or transactional id here would be exactly the
+// leak the counts-only terminal discipline exists to prevent.
+func printEnrichmentKeepUp(w io.Writer, e discovery.EnricherStats) {
+	_, _ = fmt.Fprintf(w, "  consumer-group enrichment: %d %s, %d failed, %d %s listed, %d %s\n",
+		e.Passes, plural(e.Passes, "pass", "passes"),
+		e.PassFailures,
+		e.GroupsListed, plural(e.GroupsListed, "group", "groups"),
+		e.Correlations, plural(e.Correlations, "correlation", "correlations"))
 }
 
 // WriteStatsJSON writes the diagnostics document for r to path.
@@ -224,6 +271,12 @@ func WriteStatsJSON(path string, r Run) error {
 			RecoveredTopics:   emptyIfNil(r.Offsets.RecoveredTopics),
 			Unavailable:       r.Offsets.Unavailable,
 			UnavailableReason: r.Offsets.UnavailableReason,
+		},
+		ConsumerGroupEnrichment: enrichmentDoc{
+			Passes:       r.Enrichment.Passes,
+			PassFailures: r.Enrichment.PassFailures,
+			GroupsListed: r.Enrichment.GroupsListed,
+			Correlations: r.Enrichment.Correlations,
 		},
 		AuditLogWriteErrors: r.AuditErrors,
 		Transactions:        make([]statsTxn, 0, len(r.Footprints)),

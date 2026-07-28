@@ -51,14 +51,14 @@ type Run struct {
 	// input topics that phase recovered and whether it ran at all (R13).
 	Offsets discovery.ConsumerOffsetsStats
 
+	// Enrichment is consumer-group enrichment's counters: how many passes it
+	// completed against the cadence --interval asked for, how many failed, and
+	// what they correlated.
+	Enrichment discovery.EnricherStats
+
 	// AuditErrors is AuditWriter.Errors(): audit lines that were meant to reach disk
 	// and did not. Zero when the audit log was disabled.
 	AuditErrors int
-
-	// EnrichmentActive reports whether consumer-group enrichment ran. The offsets
-	// phase carries its own Unavailable flag; enrichment has no counters of its
-	// own, so whether it ran has to be told to the report.
-	EnrichmentActive bool
 }
 
 // Summary is the derived, render-ready view of a run.
@@ -157,7 +157,7 @@ func recoveryOf(r Run) Recovery {
 	rec := Recovery{
 		ByOffsetsTopics:          r.Offsets.RecoveredTopics,
 		OffsetsActive:            slices.Contains(r.ActiveSources, discovery.SourceConsumerOffsets) && !r.Offsets.Unavailable,
-		EnrichmentActive:         r.EnrichmentActive,
+		EnrichmentActive:         slices.Contains(r.ActiveSources, discovery.SourceConsumerGroups),
 		OffsetsUnavailableReason: r.Offsets.UnavailableReason,
 		byTxn:                    make(map[string]mechanisms, len(r.Footprints)),
 	}
