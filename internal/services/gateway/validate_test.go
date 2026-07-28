@@ -3,10 +3,13 @@ package gateway
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,8 +33,8 @@ import (
 // Secret references are spread across three depths on purpose (secret store
 // config, per-bootstrap-server TLS, route cluster authentication) and
 // vault-config is referenced by both CRs so deduplication is exercised.
-// nodeIdRanges carries plain ints, which is what makes the tree unsafe to walk
-// with unstructured.Nested* — see mapField's comment.
+// nodeIdRanges carries integers, which goccy parses as uint64 — the reason the
+// tree is unsafe to walk with unstructured.Nested*; see mapField's comment.
 // ===========================================================================
 
 const (
@@ -205,16 +208,16 @@ func TestValidateGatewayCRs_ShippedExamplesPass(t *testing.T) {
 			}
 			initial, fenced, switchover := read("gateway_init.yaml"), read("gateway_fenced.yaml"), read("gateway_switchover.yaml")
 
-			// Seed every secret the example references so the live check passes
-			// and the static checks are what this exercises.
-			refs := map[string]struct{}{}
-			for _, data := range [][]byte{fenced, switchover} {
-				cr, err := parseGatewayCR(roleFenced, data)
-				require.NoError(t, err)
-				collectSecretRefs(cr.obj, refs)
-			}
-			objects := make([]runtime.Object, 0, len(refs))
-			for name := range refs {
+			// Seed exactly the secrets each example's READMEs tell the operator to
+			// create. Deriving the fixture from collectSecretRefs instead would make
+			// this untestable: a secret the walker misses would also be absent from
+			// the fake cluster, so the test would pass while the check silently did
+			// nothing. That is how clientCredentialsRef went unnoticed.
+			expected, known := shippedExampleSecrets[filepath.Base(dir)]
+			require.True(t, known, "no expected secret list for %s; add one", filepath.Base(dir))
+
+			objects := make([]runtime.Object, 0, len(expected))
+			for _, name := range expected {
 				objects = append(objects, newSecret(testNamespace, name))
 			}
 
@@ -223,9 +226,50 @@ func TestValidateGatewayCRs_ShippedExamplesPass(t *testing.T) {
 
 			require.NoError(t, err, "a shipped example must pass validation")
 			assert.Empty(t, result.Warnings)
-			assert.Positive(t, result.SecretRefsChecked, "every example references at least one secret")
+			assert.Equal(t, len(expected), result.SecretRefsChecked,
+				"every secret the example references must be found and checked")
+
+			// And the walker must find precisely that set — no more, no less.
+			refs, unrecognised := map[string]struct{}{}, map[string]struct{}{}
+			for _, data := range [][]byte{fenced, switchover} {
+				cr, err := parseGatewayCR(roleFenced, data)
+				require.NoError(t, err)
+				collectSecretRefs(cr.obj, refs, unrecognised)
+			}
+			assert.ElementsMatch(t, expected, slices.Sorted(maps.Keys(refs)))
+			assert.Empty(t, unrecognised, "an unrecognised *Ref field means a secret is going unchecked")
 		})
 	}
+}
+
+// shippedExampleSecrets is every Secret the fenced and switchover CRs of each
+// worked example reference, taken from the CRs and cross-checked against the
+// `kubectl create secret` commands in each example's README.
+var shippedExampleSecrets = map[string][]string{
+	"switchover-mtls-to-mtls": {
+		"ccloud-client-tls", "gateway-tls", "msk-client-tls",
+	},
+	"switchover-mtls-to-oauth": {
+		"file-store-config", "file-store-idp-credentials", "gateway-tls", "msk-client-tls", "oauth-jaas", "tls",
+	},
+	"switchover-mtls-to-sasl-plain": {
+		"file-store-ccloud-credentials", "file-store-config", "gateway-tls", "msk-client-tls", "plain-jaas", "tls",
+	},
+	"switchover-none-to-mtls": {
+		"ccloud-client-tls",
+	},
+	"switchover-none-to-oauth": {
+		"file-store-config", "file-store-idp-credentials", "oauth-jaas", "tls",
+	},
+	"switchover-none-to-saslplain": {
+		"file-store-config", "file-store-noauth-credentials", "plain-jaas", "tls",
+	},
+	"switchover-sasl-scram-to-oauth": {
+		"msk-tls", "oauth-jaas", "scram-admin-credentials", "tls", "vault-config",
+	},
+	"switchover-sasl-scram-to-sasl-plain": {
+		"msk-tls", "plain-jaas", "scram-admin-credentials", "tls", "vault-config",
+	},
 }
 
 // ===========================================================================
@@ -279,18 +323,47 @@ spec:
 	require.ErrorContains(t, err, "expected group \"platform.confluent.io\"")
 }
 
-func TestValidateGatewayCRs_UnexpectedAPIVersionWarnsOnly(t *testing.T) {
-	// kcp applies through the pinned v1beta1 GVR whatever the file says, so this
-	// is worth telling the operator about but not worth refusing a migration for.
+func TestValidateGatewayCRs_UnexpectedAPIVersionIsRefused(t *testing.T) {
+	// Server-side apply rejects a patch whose apiVersion disagrees with the
+	// endpoint's ("Incorrect version specified in apply patch"), so a mismatch
+	// fails the apply mid-migration — refuse it up front rather than warn.
 	switchover := replaceFirst(t, switchoverCR,
 		"apiVersion: platform.confluent.io/v1beta1",
 		"apiVersion: platform.confluent.io/v1alpha1")
 
-	result, err := validate(t, initialCR, fencedCR, switchover)
+	_, err := validate(t, initialCR, fencedCR, switchover)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `declares apiVersion "platform.confluent.io/v1alpha1"`)
+}
+
+func TestValidateGatewayCRs_ManagedFieldsIsRefused(t *testing.T) {
+	// A file derived from `kubectl get gateway -o yaml`. client-go refuses to
+	// apply it outright, before any request leaves the process, so without this
+	// check the apply fails after the fence with clients already blocked.
+	switchover := replaceFirst(t, switchoverCR, "  name: migration-gateway", `  name: migration-gateway
+  resourceVersion: "12345"
+  managedFields:
+    - manager: confluent-operator
+      operation: Update`)
+
+	_, err := validate(t, initialCR, fencedCR, switchover)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "carries metadata.managedFields, which server-side apply refuses")
+}
+
+func TestValidateGatewayCRs_InitialCRManagedFieldsAllowed(t *testing.T) {
+	// The initial CR always carries managedFields — it is fetched from the
+	// cluster — and unfenceGateway strips them before re-applying it.
+	initial := replaceFirst(t, initialCR, "  name: migration-gateway", `  name: migration-gateway
+  managedFields:
+    - manager: confluent-operator
+      operation: Update`)
+
+	_, err := validate(t, initial, fencedCR, switchoverCR)
 
 	require.NoError(t, err)
-	require.Len(t, result.Warnings, 1)
-	assert.Contains(t, result.Warnings[0], "declares apiVersion \"platform.confluent.io/v1alpha1\"")
 }
 
 func TestValidateGatewayCRs_MissingSpec(t *testing.T) {
@@ -314,6 +387,16 @@ func TestValidateGatewayCRs_NameMismatch(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), `the fenced gateway CR is named "some-other-gateway" but the migration targets gateway "migration-gateway"`)
+}
+
+func TestValidateGatewayCRs_AbsentNameIsAllowed(t *testing.T) {
+	// ApplyGatewayYAML fills the name in, so a CR file that omits it works today
+	// and must keep working — only a name that is present and wrong is a refusal.
+	fenced := replaceFirst(t, fencedCR, "metadata:\n  name: migration-gateway\n", "metadata:\n  labels:\n    app: gw\n")
+
+	_, err := validate(t, initialCR, fenced, switchoverCR)
+
+	require.NoError(t, err)
 }
 
 func TestValidateGatewayCRs_NamespaceMismatch(t *testing.T) {
@@ -401,6 +484,83 @@ func TestValidateGatewayCRs_SwitchoverFencesAnotherRouteWarnsOnly(t *testing.T) 
 	require.NoError(t, err)
 	require.Len(t, result.Warnings, 1)
 	assert.Contains(t, result.Warnings[0], "fences route(s) the migration does not fence (legacy-route)")
+}
+
+func TestValidateGatewayCRs_UnnamedRoutesMatchedByEndpoint(t *testing.T) {
+	// Regression: routes used to be matched across the two files by position, so
+	// this — the same route (port 9595) still fenced after switchover, with the
+	// fenced CR holding an extra route ahead of it — passed with only a warning
+	// naming the wrong slot. Name is the identity when present; the endpoint is
+	// what distinguishes unnamed routes.
+	fenced := `
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+spec:
+  routes:
+    - endpoint: gateway:9599
+    - endpoint: gateway:9595
+      fence:
+        scope: ALL
+`
+	switchover := `
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+spec:
+  replicas: 1
+  routes:
+    - endpoint: gateway:9595
+      fence:
+        scope: ALL
+`
+
+	_, err := validateGatewayCRs(context.Background(), newFakeClientset(),
+		testNamespace, testGateway, []byte(initialCR), []byte(fenced), []byte(switchover))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "still fences the route(s) the fenced CR blocks (routes[0] (endpoint gateway:9595))")
+}
+
+func TestValidateGatewayCRs_ExplicitlyNulledFenceIsNotAFence(t *testing.T) {
+	// `fence: null` is how a scripted edit removes a fence — server-side apply
+	// deletes a nulled field — so this switchover CR works and must not be
+	// refused as "still fences".
+	switchover := replaceFirst(t, switchoverCR,
+		"    - name: migration-route\n      endpoint: gateway:9595",
+		"    - name: migration-route\n      endpoint: gateway:9595\n      fence: null")
+
+	_, err := validate(t, initialCR, fencedCR, switchover)
+
+	require.NoError(t, err)
+}
+
+func TestValidateGatewayCRs_NulledFenceInFencedCRIsRefused(t *testing.T) {
+	// The mirror: a fenced CR whose only fence is nulled does not fence anything.
+	fenced := replaceFirst(t, fencedCR, "      fence:\n        scope: ALL\n        errorCode: BROKER_NOT_AVAILABLE", "      fence: null")
+
+	_, err := validate(t, initialCR, fenced, switchoverCR)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "contains no fence block")
+}
+
+func TestValidateGatewayCRs_UnmatchableFencedRouteWarns(t *testing.T) {
+	// With neither a name nor an endpoint there is nothing to match on, so say
+	// that rather than guess either way.
+	fenced := replaceFirst(t, fencedCR, "    - name: migration-route\n      endpoint: gateway:9595\n", "    - \n")
+	switchover := replaceFirst(t, switchoverCR,
+		"    - name: migration-route\n      endpoint: gateway:9595\n",
+		"    - fence:\n        scope: ALL\n")
+
+	result, err := validateGatewayCRs(context.Background(), clientsetWithSecrets(allTestSecrets...),
+		testNamespace, testGateway, []byte(initialCR), []byte(fenced), []byte(switchover))
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "neither a name nor an endpoint")
 }
 
 // ===========================================================================
@@ -630,14 +790,72 @@ func TestCollectSecretRefs_WalksEveryDepth(t *testing.T) {
 	cr, err := parseGatewayCR(roleSwitchover, []byte(switchoverCR))
 	require.NoError(t, err)
 
-	refs := map[string]struct{}{}
-	collectSecretRefs(cr.obj, refs)
+	refs, unrecognised := map[string]struct{}{}, map[string]struct{}{}
+	collectSecretRefs(cr.obj, refs, unrecognised)
 
 	assert.Equal(t, map[string]struct{}{
 		"vault-config": {}, // secretStores[].provider.configSecretRef
 		"ccloud-tls":   {}, // streamingDomains[].kafkaCluster.bootstrapServers[].tls.secretRef
 		"plain-jaas":   {}, // routes[].security.cluster.authentication.jaasConfigPassThrough.secretRef
 	}, refs)
+	assert.Empty(t, unrecognised)
+}
+
+func TestCollectSecretRefs_ClientCredentialsRef(t *testing.T) {
+	// Regression: clientCredentialsRef names a Secret in four of the eight shipped
+	// switchover examples and was not collected, so the operator got a green tick
+	// over exactly the missing-secret failure this validation exists to catch.
+	cr, err := parseGatewayCR(roleSwitchover, []byte(`
+kind: Gateway
+spec:
+  secretStores:
+    - name: file-store
+      provider:
+        type: File
+        configSecretRef: file-store-config
+        clientCredentialsRef: file-store-ccloud-credentials
+`))
+	require.NoError(t, err)
+
+	refs, unrecognised := map[string]struct{}{}, map[string]struct{}{}
+	collectSecretRefs(cr.obj, refs, unrecognised)
+
+	assert.Equal(t, map[string]struct{}{
+		"file-store-config":             {},
+		"file-store-ccloud-credentials": {},
+	}, refs)
+	assert.Empty(t, unrecognised)
+}
+
+func TestCollectSecretRefs_FlagsUnrecognisedRefFields(t *testing.T) {
+	// The tripwire for CRD growth: a Ref-suffixed field kcp does not know is a
+	// hole in the check, and must not sit behind a tick claiming a full pass.
+	cr, err := parseGatewayCR(roleSwitchover, []byte(`
+kind: Gateway
+spec:
+  routes:
+    - name: migration-route
+      security:
+        someFutureCredentialRef: a-secret-kcp-cannot-see
+`))
+	require.NoError(t, err)
+
+	refs, unrecognised := map[string]struct{}{}, map[string]struct{}{}
+	collectSecretRefs(cr.obj, refs, unrecognised)
+
+	assert.Empty(t, refs)
+	assert.Equal(t, map[string]struct{}{"someFutureCredentialRef": {}}, unrecognised)
+}
+
+func TestValidateGatewayCRs_UnrecognisedRefFieldWarns(t *testing.T) {
+	switchover := replaceFirst(t, switchoverCR, "      secretRef: plain-jaas", "      someFutureCredentialRef: unseen-secret")
+
+	result, err := validateGatewayCRs(context.Background(), clientsetWithSecrets(allTestSecrets...),
+		testNamespace, testGateway, []byte(initialCR), []byte(fencedCR), []byte(switchover))
+
+	require.NoError(t, err)
+	require.NotEmpty(t, result.Warnings)
+	assert.Contains(t, strings.Join(result.Warnings, "\n"), "someFutureCredentialRef")
 }
 
 func TestCollectSecretRefs_DescendsIntoNonStringSecretRef(t *testing.T) {
@@ -651,13 +869,111 @@ spec:
 `))
 	require.NoError(t, err)
 
-	refs := map[string]struct{}{}
-	collectSecretRefs(cr.obj, refs)
+	refs, unrecognised := map[string]struct{}{}, map[string]struct{}{}
+	collectSecretRefs(cr.obj, refs, unrecognised)
 
 	assert.Equal(t, map[string]struct{}{"nested-secret": {}}, refs)
+	assert.Empty(t, unrecognised)
 }
 
-func TestFencedRouteNames(t *testing.T) {
+// aliasBombCR is a YAML anchor bomb: goccy/go-yaml resolves an alias by sharing
+// the anchored node rather than copying it, so this sub-kilobyte document parses
+// in microseconds while describing a logical tree of ~4^19 (2.7e11) nodes.
+//
+// The level count is deliberate. Measured on this machine an un-memoised walk
+// covers ~600M nodes/second, so a 4^12 bomb finishes in 50ms and would make the
+// test below pass with or without the walk guard. At 4^19 the unguarded walk
+// needs several minutes and the test is a real regression detector, while the
+// guarded walk stays at ~10µs because it only ever visits the parsed nodes.
+const aliasBombCR = `
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+spec:
+  routes:
+    - name: migration-route
+      fence: {scope: ALL}
+  bomb:
+    a0: &a0 ["x","x","x","x"]
+    a1: &a1 [*a0,*a0,*a0,*a0]
+    a2: &a2 [*a1,*a1,*a1,*a1]
+    a3: &a3 [*a2,*a2,*a2,*a2]
+    a4: &a4 [*a3,*a3,*a3,*a3]
+    a5: &a5 [*a4,*a4,*a4,*a4]
+    a6: &a6 [*a5,*a5,*a5,*a5]
+    a7: &a7 [*a6,*a6,*a6,*a6]
+    a8: &a8 [*a7,*a7,*a7,*a7]
+    a9: &a9 [*a8,*a8,*a8,*a8]
+    a10: &a10 [*a9,*a9,*a9,*a9]
+    a11: &a11 [*a10,*a10,*a10,*a10]
+    a12: &a12 [*a11,*a11,*a11,*a11]
+    a13: &a13 [*a12,*a12,*a12,*a12]
+    a14: &a14 [*a13,*a13,*a13,*a13]
+    a15: &a15 [*a14,*a14,*a14,*a14]
+    a16: &a16 [*a15,*a15,*a15,*a15]
+    a17: &a17 [*a16,*a16,*a16,*a16]
+    a18: &a18 [*a17,*a17,*a17,*a17]
+    a19: [*a18,*a18,*a18,*a18]
+`
+
+func TestValidateGatewayCRs_AliasBombTerminates(t *testing.T) {
+	// Without the walk guard this pins one core for hours on a flat heap, with no
+	// ctx check to interrupt it — a sub-kilobyte CR file hanging `migration init`.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = validateGatewayCRs(context.Background(), clientsetWithSecrets(allTestSecrets...),
+			testNamespace, testGateway, []byte(initialCR), []byte(aliasBombCR), []byte(switchoverCR))
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("validation did not terminate on an alias bomb: the walk guard is not working")
+	}
+}
+
+func TestCollectSecretRefs_AliasedNodeWalkedOnce(t *testing.T) {
+	// The guard must dedupe by node identity without losing content: the secret
+	// behind an alias still has to be found.
+	cr, err := parseGatewayCR(roleFenced, []byte(`
+kind: Gateway
+spec:
+  shared: &shared
+    tls:
+      secretRef: shared-secret
+  a: *shared
+  b: *shared
+`))
+	require.NoError(t, err)
+
+	refs, unrecognised := map[string]struct{}{}, map[string]struct{}{}
+	collectSecretRefs(cr.obj, refs, unrecognised)
+
+	assert.Equal(t, map[string]struct{}{"shared-secret": {}}, refs)
+	assert.Empty(t, unrecognised)
+}
+
+func TestTreeContainsNonNilKey_AliasBombTerminates(t *testing.T) {
+	cr, err := parseGatewayCR(roleFenced, []byte(aliasBombCR))
+	require.NoError(t, err)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		// A key that is absent forces the full walk.
+		assert.False(t, treeContainsNonNilKey(cr.obj, "no-such-key"))
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(20 * time.Second):
+		t.Fatal("treeContainsNonNilKey did not terminate on an alias bomb")
+	}
+}
+
+func TestFencedRoutes(t *testing.T) {
 	cr, err := parseGatewayCR(roleFenced, []byte(`
 kind: Gateway
 spec:
@@ -667,21 +983,28 @@ spec:
     - name: a-route
       fence: {scope: ALL}
     - name: unfenced-route
+    - endpoint: gateway:9599
+      fence: {scope: ALL}
     - fence: {scope: ALL}
 `))
 	require.NoError(t, err)
 
-	fenced, present := fencedRouteNames(cr)
+	fenced, present := fencedRoutes(cr)
 
 	assert.True(t, present)
-	assert.Equal(t, []string{"a-route", "b-route", "routes[3]"}, fenced, "sorted, unnamed routes labelled by index")
+	assert.Equal(t, []routeFence{
+		{identity: "name=a-route", label: "a-route", matchable: true},
+		{identity: "name=b-route", label: "b-route", matchable: true},
+		{identity: "endpoint=gateway:9599", label: "routes[3] (endpoint gateway:9599)", matchable: true},
+		{identity: "", label: "routes[4]", matchable: false},
+	}, fenced, "name preferred, endpoint as fallback identity, neither means unmatchable")
 }
 
-func TestFencedRouteNames_NoRoutesKey(t *testing.T) {
+func TestFencedRoutes_NoRoutesKey(t *testing.T) {
 	cr, err := parseGatewayCR(roleFenced, []byte("kind: Gateway\nspec:\n  replicas: 1\n"))
 	require.NoError(t, err)
 
-	fenced, present := fencedRouteNames(cr)
+	fenced, present := fencedRoutes(cr)
 
 	assert.False(t, present, "no spec.routes is a different failure from routes-but-none-fenced")
 	assert.Empty(t, fenced)

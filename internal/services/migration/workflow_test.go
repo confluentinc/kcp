@@ -118,14 +118,16 @@ func TestWorkflow_Initialize_ReportsSecretsChecked(t *testing.T) {
 }
 
 func TestWorkflow_Initialize_ReportsSkippedSecretCheck(t *testing.T) {
-	// The honesty case: the static checks ran, the live one could not. The tick
-	// must say so rather than implying a full pass.
+	// The honesty case: the static checks ran, the live one could not. A check
+	// that did not run gets ⚠️ and a Warn in kcp.log — NOT a green tick that an
+	// operator scanning output minutes before cutover will read as "verified".
 	output, err := initializeWithValidation(t, gateway.CRValidationResult{
 		SecretCheckSkipped: "no permission to read secrets in namespace ns",
 	}, nil)
 
 	require.NoError(t, err)
-	assert.Contains(t, output, "Gateway CRs validated (secret references not checked: no permission to read secrets in namespace ns)")
+	assert.Contains(t, output, "secret references were NOT checked: no permission to read secrets in namespace ns")
+	assert.NotContains(t, output, "✔ Gateway CRs validated", "a skipped check must not be reported under a success tick")
 }
 
 func TestWorkflow_Initialize_ReportsNoSecretReferences(t *testing.T) {

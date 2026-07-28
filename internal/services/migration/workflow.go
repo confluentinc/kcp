@@ -120,7 +120,11 @@ func (s *MigrationActions) Initialize(
 
 	switch {
 	case validation.SecretCheckSkipped != "":
-		s.reporter.success("Gateway CRs validated (secret references not checked: %s)", validation.SecretCheckSkipped)
+		// A check that could not run gets ⚠️ and a Warn in kcp.log, not a green
+		// tick at Info. An operator scanning a wall of ticks minutes before
+		// cutover must be able to see that the live check never happened — that
+		// is the whole premise of this validation.
+		s.reporter.warn("Gateway CRs validated, but secret references were NOT checked: %s", validation.SecretCheckSkipped)
 	case validation.SecretRefsChecked > 0:
 		s.reporter.success("Gateway CRs validated (%d secret reference(s) present in %s)", validation.SecretRefsChecked, config.K8sNamespace)
 	default:
