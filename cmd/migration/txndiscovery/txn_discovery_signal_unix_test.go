@@ -35,7 +35,10 @@ func TestRun_SIGINT_EndsTheWindowEarlyAndStillWritesTheArtifacts(t *testing.T) {
 	opts.Duration = time.Hour
 	opts.StatsOutPath = filepath.Join(dir, "stats.json")
 	opts.TailConsumerOffsets = false
-	opts.EnrichConsumerGroups = false
+	// Enrichment on, so the run holds its own second connection to the broker: SIGINT
+	// is the exit path most likely to skip a release, and a signalled run that leaked
+	// an authenticated session would do so once per interrupted invocation.
+	opts.EnrichConsumerGroups = true
 
 	runner := h.runner(t, opts)
 	// The real production window: wait for the duration or for ctx, which
@@ -63,4 +66,5 @@ func TestRun_SIGINT_EndsTheWindowEarlyAndStillWritesTheArtifacts(t *testing.T) {
 	assert.Contains(t, yaml, "interrupted.out.b")
 	assert.True(t, exists(t, opts.StatsOutPath))
 	assert.True(t, exists(t, opts.AuditLogPath))
+	assert.Equal(t, 1, h.closes, "the signal path released the cluster's connections exactly once")
 }

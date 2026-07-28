@@ -161,6 +161,25 @@ func TestRun_TheCredentialReachesNoErrorMessage(t *testing.T) {
 	assert.NotContains(t, logs.String(), leakCredential)
 }
 
+// Security, on the second connection this command now opens. It is a second
+// authentication to the broker, so its failure path is assembled from the same
+// credentials the first one used — and it warns rather than returning an error, which
+// puts it on the console as well as in kcp.log.
+func TestConnect_TheEnrichmentConnectionFailureWarningCarriesNoCredential(t *testing.T) {
+	logs := captureLog(t)
+	s := &stubConnect{failAt: 2}
+	_, opts := leakHarness(t, t.TempDir()) // SCRAM auth carrying leakCredential
+
+	cl, err := connectSaramaWith(opts, s.newClient, s.newAdmin)
+	require.NoError(t, err)
+	require.NoError(t, cl.Close())
+
+	// The warning must actually have fired, or the assertion below is vacuous.
+	require.Contains(t, logs.String(), "consumer-group enrichment is disabled")
+	assert.NotContains(t, logs.String(), leakCredential, "kcp.log")
+	assert.NotContains(t, logs.String(), "zqx-reader", "the username is a credential too")
+}
+
 // R16: the terminal summary reports counts, never names. The artifacts carry
 // the names; a real run produces hundreds of topics and printing them buries
 // the numbers that matter.

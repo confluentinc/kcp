@@ -7,14 +7,17 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/report"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -37,6 +40,214 @@ func metadataFor(name string, err sarama.KError, partitions int) []*sarama.Topic
 		md.Partitions = append(md.Partitions, &sarama.PartitionMetadata{ID: int32(i)})
 	}
 	return []*sarama.TopicMetadata{md}
+}
+
+// --- the two-client wiring -------------------------------------------------
+
+// stubSaramaClient answers only what building a cluster admin over it needs. Its
+// Close count is what proves no connection is leaked.
+type stubSaramaClient struct {
+	sarama.Client
+	id     int
+	closes int
+}
+
+func (s *stubSaramaClient) Controller() (*sarama.Broker, error) { return &sarama.Broker{}, nil }
+func (s *stubSaramaClient) Config() *sarama.Config              { return sarama.NewConfig() }
+func (s *stubSaramaClient) Close() error                        { s.closes++; return nil }
+
+// stubAdmin is a cluster admin that remembers which client it was built over, which
+// is the whole question: sarama pipelines per connection and answers in order, so an
+// admin sharing the tail's client has its requests queue behind long-poll fetches.
+type stubAdmin struct {
+	over   *stubSaramaClient
+	closes int
+}
+
+func (s *stubAdmin) DescribeTopics(topics []string) ([]*sarama.TopicMetadata, error) {
+	return metadataFor(topics[0], sarama.ErrNoError, 1), nil
+}
+
+func (s *stubAdmin) ListConsumerGroups() (map[string]string, error) { return nil, nil }
+
+func (s *stubAdmin) ListConsumerGroupOffsets(string, map[string][]int32) (*sarama.OffsetFetchResponse, error) {
+	return &sarama.OffsetFetchResponse{}, nil
+}
+
+// Close releases the client, exactly as sarama's own ClusterAdmin.Close does.
+func (s *stubAdmin) Close() error { s.closes++; return s.over.Close() }
+
+// stubConnect records every client and admin one connect built, and the auth options
+// each client was built with.
+type stubConnect struct {
+	clients []*stubSaramaClient
+	admins  []*stubAdmin
+	auth    [][]client.AdminOption
+	failAt  int // 1-based call number the client factory fails on; 0 never fails
+}
+
+func (s *stubConnect) newClient(_ []string, _ string, opts ...client.AdminOption) (sarama.Client, error) {
+	if s.failAt == len(s.clients)+1 {
+		return nil, errors.New("no route to broker")
+	}
+	s.auth = append(s.auth, opts)
+	c := &stubSaramaClient{id: len(s.clients)}
+	s.clients = append(s.clients, c)
+	return c, nil
+}
+
+func (s *stubConnect) newAdmin(c sarama.Client) (clusterAdmin, error) {
+	a := &stubAdmin{over: c.(*stubSaramaClient)}
+	s.admins = append(s.admins, a)
+	return a, nil
+}
+
+// The regression this change closes. sarama pipelines requests on one connection and
+// delivers responses strictly in order, so an admin built over the client the tail
+// holds has every ListConsumerGroups and ListConsumerGroupOffsets queue behind the
+// tail's long-poll fetches — measured at 6.3-8.1s and 8.1-30.9s against the compose
+// broker, versus 0-2ms on a connection of its own. That turns --interval 5s over a
+// 60s window into four or five enrichment passes instead of thirteen.
+//
+// U7's reason for sharing was to avoid widening kcp's KafkaAdmin interface, and that
+// reason is untouched: the narrow ConsumerGroupAdmin interface still stands, and a
+// second client satisfies it identically.
+func TestConnect_TheEnrichmentAdminDoesNotShareTheTailsConnection(t *testing.T) {
+	s := &stubConnect{}
+	opts := baseOpts(t.TempDir())
+	opts.Auth = plaintextAuth()
+
+	cl, err := connectSaramaWith(opts, s.newClient, s.newAdmin)
+	require.NoError(t, err)
+
+	require.Len(t, s.clients, 2, "enrichment needs a connection of its own, so two clients are built")
+	require.Len(t, s.admins, 2)
+
+	preflight, ok := cl.Describer.(*stubAdmin)
+	require.True(t, ok)
+	enrichment, ok := cl.Admin.(*stubAdmin)
+	require.True(t, ok)
+
+	assert.Same(t, s.clients[0], preflight.over,
+		"the preflight admin rides the tail's client, which is free before the fetch loops start")
+	assert.NotSame(t, preflight.over, enrichment.over,
+		"the enrichment admin is on the tail's connection, so its calls queue behind the fetches")
+	assert.Same(t, s.clients[1], enrichment.over)
+
+	// A second connection is a second authentication, and the two must present
+	// identical credentials, TLS settings and --insecure-skip-tls-verify handling. The
+	// auth is resolved once and handed to both, which is what this compares: the same
+	// closure, not two resolutions that could diverge.
+	require.Len(t, s.auth, 2)
+	require.Len(t, s.auth[0], 1)
+	require.Len(t, s.auth[1], 1)
+	assert.Equal(t,
+		reflect.ValueOf(s.auth[0][0]).Pointer(), reflect.ValueOf(s.auth[1][0]).Pointer(),
+		"the two connections were given separately-resolved auth, so they can drift")
+}
+
+// plaintextAuth is the auth resolution --use-unauthenticated-plaintext produces, which
+// is what the compose broker in the integration suite speaks.
+func plaintextAuth() authResolution {
+	return authResolution{
+		AuthType: types.AuthTypeUnauthenticatedPlaintext,
+		Method:   types.AuthMethodConfig{UnauthenticatedPlaintext: &types.UnauthenticatedPlaintextConfig{Use: true}},
+	}
+}
+
+// Two connections mean two things to release. A run that closed only the first would
+// leak a socket and an authenticated session per invocation.
+func TestConnect_CloseReleasesBothConnections(t *testing.T) {
+	s := &stubConnect{}
+
+	opts := baseOpts(t.TempDir())
+	opts.Auth = plaintextAuth()
+
+	cl, err := connectSaramaWith(opts, s.newClient, s.newAdmin)
+	require.NoError(t, err)
+	require.NoError(t, cl.Close())
+
+	for i, c := range s.clients {
+		assert.Positive(t, c.closes, "client %d was never closed", i)
+	}
+}
+
+// A second connection is a second authentication to the broker, so it is not opened
+// unless something is going to use it.
+func TestConnect_EnrichmentDisabledBuildsNoSecondConnection(t *testing.T) {
+	s := &stubConnect{}
+	opts := baseOpts(t.TempDir())
+	opts.Auth = plaintextAuth()
+	opts.EnrichConsumerGroups = false
+
+	cl, err := connectSaramaWith(opts, s.newClient, s.newAdmin)
+	require.NoError(t, err)
+
+	assert.Len(t, s.clients, 1, "--enrich-consumer-groups=false must not authenticate a second time")
+	assert.Nil(t, cl.Admin, "with no enrichment client there is no enrichment admin")
+
+	require.NoError(t, cl.Close())
+	assert.Positive(t, s.clients[0].closes)
+}
+
+// R13's precedent applied to this phase: an optional enrichment source whose
+// connection cannot be opened warns and the run continues. Failing here would make a
+// SECOND authenticated connection a hard precondition of a command whose primary job —
+// the transaction-state footprints — needs only the first, and would throw the run away
+// before it observed anything.
+//
+// The first connection is still released: a failure part-way through must not leave an
+// authenticated session behind.
+func TestConnect_EnrichmentConnectionFailureDegradesRatherThanFailingTheRun(t *testing.T) {
+	s := &stubConnect{failAt: 2}
+	opts := baseOpts(t.TempDir())
+	opts.Auth = plaintextAuth()
+
+	cl, err := connectSaramaWith(opts, s.newClient, s.newAdmin)
+
+	require.NoError(t, err, "a second connection is not a precondition of reading the transaction-state log")
+	require.NotNil(t, cl)
+	assert.Nil(t, cl.Admin, "enrichment has no admin, so the run must not start the phase")
+	assert.NotNil(t, cl.Describer, "the preflight and the tail are unaffected")
+
+	require.NoError(t, cl.Close())
+	require.Len(t, s.clients, 1)
+	assert.Positive(t, s.clients[0].closes, "the first connection leaked when the second failed")
+}
+
+// The other half of that degradation: the run must not claim a phase it did not start.
+// A run whose enrichment connection failed and which still named consumer-group
+// enrichment among its sources would have every artifact report the phase as having
+// found nothing rather than as never having run — the exact confusion R13's Unavailable
+// flag exists to prevent for the offsets tail.
+func TestRun_NoEnrichmentAdminMeansThePhaseIsNotClaimedAsActive(t *testing.T) {
+	dir := t.TempDir()
+	h := newHarness()
+	h.admin = nil // the enrichment connection could not be opened
+	h.tailClient.script(discovery.DefaultTxnStateTopic, stateRecordBatch(0,
+		[][]byte{txnKey("payments-processor-abc12")},
+		[][]byte{txnValue(4242, "payments.out")},
+	))
+
+	opts := baseOpts(dir)
+	opts.StatsOutPath = filepath.Join(dir, "stats.json")
+
+	require.NoError(t, h.runner(t, opts).Run(context.Background()),
+		"an unopenable enrichment connection must not fail the run")
+
+	var doc struct {
+		ActiveSources []string `json:"active_sources"`
+		Enrichment    struct {
+			Passes int `json:"passes"`
+		} `json:"consumer_group_enrichment"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(readFile(t, opts.StatsOutPath)), &doc))
+
+	assert.NotContains(t, doc.ActiveSources, discovery.SourceConsumerGroups,
+		"the run claims a phase it never started")
+	assert.Contains(t, doc.ActiveSources, discovery.SourceTxnStateLog, "the primary source still ran")
+	assert.Zero(t, doc.Enrichment.Passes)
+	assert.Contains(t, readFile(t, opts.OutPath), "payments.out", "the footprints are still worth having")
 }
 
 // R12: a readable transaction-state topic is the whole precondition of the run,
@@ -402,6 +613,10 @@ func TestRun_PreflightFailure_ExitsNonZeroAndWritesNothing(t *testing.T) {
 	entries, rerr := os.ReadDir(dir)
 	require.NoError(t, rerr)
 	assert.Empty(t, entries, "a failed preflight writes no files at all")
+	// Both of the run's connections are open by the time the preflight runs, and a
+	// preflight that exits without releasing them leaks two authenticated sessions on
+	// every misconfigured invocation — which is the invocation an operator repeats.
+	assert.Equal(t, 1, h.closes, "the preflight failure path released the cluster's connections")
 }
 
 // R21: the enrichment phase's counters have to reach the stats document, or a

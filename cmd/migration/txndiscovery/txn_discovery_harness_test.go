@@ -237,15 +237,22 @@ func (h *harness) connect(Opts) (*cluster, error) {
 	if h.connectErr != nil {
 		return nil, h.connectErr
 	}
-	return &cluster{
+	c := &cluster{
 		Describer: h.describer,
 		Tail:      h.tailClient,
-		Admin:     h.admin,
 		OffsetsProbe: func(context.Context) error {
 			return h.probeErr
 		},
 		Close: func() error { h.closes++; return nil },
-	}, nil
+	}
+	// Assigned only when there is one, so a nil admin reaches the runner as a nil
+	// INTERFACE rather than as a non-nil interface holding a nil pointer. That is
+	// the shape connectSarama produces when the enrichment connection could not be
+	// opened, and the difference decides whether the run degrades or panics.
+	if h.admin != nil {
+		c.Admin = h.admin
+	}
+	return c, nil
 }
 
 // runner builds a Runner over the harness whose observation window closes once
