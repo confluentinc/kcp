@@ -60,8 +60,12 @@ func NewMigrationInitCmd() *cobra.Command {
 		Long: `Initialize a new migration by validating infrastructure and persisting migration state.
 
 This command validates the cluster link and mirror topics on the destination cluster,
-fetches the current gateway CR from Kubernetes, validates consistency across the initial,
-fenced, and switchover gateway CRs, and writes the migration configuration to the state file.
+fetches the current gateway CR from Kubernetes, validates the initial, fenced and switchover
+gateway CRs against each other — including that the Kubernetes secrets they reference exist
+in the namespace — and writes the migration configuration to the state file.
+
+Validating up front matters because the alternative is discovering the problem at cutover,
+after client traffic has already been fenced.
 
 The state file can then be used by 'kcp migration execute' to run the migration.
 

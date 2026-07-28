@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -25,9 +26,7 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
 			return []byte("initial-yaml"), nil
 		},
-		validateGatewayCRsFn: func(_, _, _ []byte) error {
-			return nil
-		},
+		// validateGatewayCRsFn left unset: the mock's default passes validation.
 	}
 
 	cl := &mockClusterLinkService{
@@ -61,6 +60,155 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 	assert.Equal(t, "initial-yaml", string(config.InitialCrYAML))
 	assert.Len(t, config.ClusterLinkTopics, 3)
 	assert.Equal(t, "broker:9092", config.ClusterLinkConfigs["bootstrap.servers"])
+}
+
+// ===========================================================================
+// Gateway CR validation reporting
+//
+// Initialize used to print "✔ Gateway CRs validated" unconditionally, over a
+// validator that did nothing but log "not yet implemented". These tests pin the
+// reporter line to what was actually verified: a tick may only claim a check
+// that ran.
+// ===========================================================================
+
+// initializeWithValidation runs Initialize against a healthy cluster link with
+// the given validation outcome, returning what the reporter printed.
+func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, validationErr error) (string, error) {
+	t.Helper()
+
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
+			return []byte("initial-yaml"), nil
+		},
+		validateGatewayCRsFn: func(_ context.Context, _, _ string, _, _, _ []byte) (gateway.CRValidationResult, error) {
+			return result, validationErr
+		},
+	}
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"}}, nil
+		},
+		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+			return map[string]string{}, nil
+		},
+	}
+
+	wf := NewMigrationActions(gw, cl)
+	var out, errOut bytes.Buffer
+	wf.reporter = &reporter{out: &out, err: &errOut}
+
+	err := wf.Initialize(context.Background(), &MigrationConfig{
+		K8sNamespace:        "ns",
+		InitialCrName:       "my-gw",
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+		FencedCrYAML:        []byte("fenced"),
+		SwitchoverCrYAML:    []byte("switchover"),
+	}, "key", "secret")
+
+	return out.String() + errOut.String(), err
+}
+
+func TestWorkflow_Initialize_ReportsSecretsChecked(t *testing.T) {
+	output, err := initializeWithValidation(t, gateway.CRValidationResult{SecretRefsChecked: 4}, nil)
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "Gateway CRs validated (4 secret reference(s) present in ns)")
+}
+
+func TestWorkflow_Initialize_ReportsSkippedSecretCheck(t *testing.T) {
+	// The honesty case: the static checks ran, the live one could not. The tick
+	// must say so rather than implying a full pass.
+	output, err := initializeWithValidation(t, gateway.CRValidationResult{
+		SecretCheckSkipped: "no permission to read secrets in namespace ns",
+	}, nil)
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "Gateway CRs validated (secret references not checked: no permission to read secrets in namespace ns)")
+}
+
+func TestWorkflow_Initialize_ReportsNoSecretReferences(t *testing.T) {
+	output, err := initializeWithValidation(t, gateway.CRValidationResult{}, nil)
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "Gateway CRs validated (no secret references)")
+}
+
+func TestWorkflow_Initialize_ValidationFailureIsNotReportedAsSuccess(t *testing.T) {
+	output, err := initializeWithValidation(t, gateway.CRValidationResult{},
+		fmt.Errorf("1 problem(s) found:\n  - the fenced gateway CR contains no fence block"))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "gateway CR validation failed")
+	assert.Contains(t, err.Error(), "contains no fence block")
+	assert.NotContains(t, output, "Gateway CRs validated")
+}
+
+func TestWorkflow_Initialize_SurfacesValidationWarnings(t *testing.T) {
+	output, err := initializeWithValidation(t, gateway.CRValidationResult{
+		SecretRefsChecked: 1,
+		Warnings:          []string{"the switchover gateway CR fences route(s) the migration does not fence (legacy-route)"},
+	}, nil)
+
+	require.NoError(t, err)
+	assert.Contains(t, output, "fences route(s) the migration does not fence (legacy-route)")
+	assert.Contains(t, output, "Gateway CRs validated")
+}
+
+func TestWorkflow_Initialize_WarningsSurfaceEvenWhenValidationFails(t *testing.T) {
+	// Warnings are context for diagnosing the failure, so they must not be
+	// swallowed by the early return.
+	output, err := initializeWithValidation(t, gateway.CRValidationResult{
+		Warnings: []string{"the fenced gateway CR has a fence block that is not on a route"},
+	}, fmt.Errorf("1 problem(s) found:\n  - something else"))
+
+	require.Error(t, err)
+	assert.Contains(t, output, "fence block that is not on a route")
+}
+
+func TestWorkflow_Initialize_PassesNamespaceAndGatewayToValidator(t *testing.T) {
+	// The live secret lookup is namespace-scoped, and the identity check needs the
+	// target gateway name — both come from the migration config.
+	var gotNamespace, gotGateway string
+	var gotInitial, gotFenced, gotSwitchover []byte
+
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
+			return []byte("initial-yaml"), nil
+		},
+		validateGatewayCRsFn: func(_ context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error) {
+			gotNamespace, gotGateway = namespace, name
+			gotInitial, gotFenced, gotSwitchover = initial, fenced, switchover
+			return gateway.CRValidationResult{}, nil
+		},
+	}
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"}}, nil
+		},
+		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+			return map[string]string{}, nil
+		},
+	}
+
+	wf := NewMigrationActions(gw, cl)
+	err := wf.Initialize(context.Background(), &MigrationConfig{
+		K8sNamespace:        "kcp",
+		InitialCrName:       "migration-gateway",
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+		FencedCrYAML:        []byte("fenced"),
+		SwitchoverCrYAML:    []byte("switchover"),
+	}, "key", "secret")
+
+	require.NoError(t, err)
+	assert.Equal(t, "kcp", gotNamespace)
+	assert.Equal(t, "migration-gateway", gotGateway)
+	assert.Equal(t, "initial-yaml", string(gotInitial), "the live CR just fetched, not the stale config field")
+	assert.Equal(t, "fenced", string(gotFenced))
+	assert.Equal(t, "switchover", string(gotSwitchover))
 }
 
 func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
