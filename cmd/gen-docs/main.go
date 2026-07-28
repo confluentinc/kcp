@@ -51,6 +51,7 @@ var commandOrder = map[string][]string{
 		"migrate-connectors",
 	},
 	"kcp migration": {
+		"txn-discovery",
 		"init",
 		"execute",
 		"lag-check",
