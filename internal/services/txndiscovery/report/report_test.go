@@ -290,7 +290,7 @@ func rpwRun() Run {
 			{TxnID: "unenriched", ReadProcessWrite: true, Topics: []string{"out-c"},
 				Sources: []string{discovery.SourceTxnStateLog}},
 		},
-		Offsets:          discovery.ConsumerOffsetsStats{RecoveredTopics: []string{"in-a"}},
+		Offsets: discovery.ConsumerOffsetsStats{RecoveredTopics: []string{"in-a"}},
 		Result: grouping.Result{
 			Groups: []grouping.Group{
 				{Name: "group-1", Topics: []string{"in-a", "out-a"}, TxnIDs: []string{"by-offsets"}, ReadProcessWrite: true},
