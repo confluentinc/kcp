@@ -1,0 +1,28 @@
+# Mirrors confluentinc/kcp's root .golangci.yml (this is a self-contained module,
+# so it carries its own config). The one addition is an errcheck exclusion for the
+# fmt.Fprint* family: this is a CLI that writes its report to stdout, and, like most
+# Go CLIs, does not error-check those writes. Every other error check stays enforced.
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - govet
+    - staticcheck
+    - errcheck
+    - ineffassign
+    - unused
+    - gocritic
+    - misspell
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+
+formatters:
+  enable:
+    - gofmt

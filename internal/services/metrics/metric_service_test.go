@@ -152,6 +152,9 @@ func TestNewSearchMetricQueryInfo(t *testing.T) {
 	assert.Equal(t, "SUM(m_bytesinpersec)", info.MathExpression)
 	assert.Contains(t, info.AggregationNote, "BytesInPerSec")
 	assert.Contains(t, info.AggregationNote, "SUM(m_bytesinpersec)")
+	// The note must disclose that the captured single-window CLI command may truncate,
+	// because kcp actually chunks the request under CloudWatch's 100,800 limit.
+	assert.Contains(t, info.AggregationNote, "100,800")
 }
 
 func TestBuildBrokerMetricQueries(t *testing.T) {

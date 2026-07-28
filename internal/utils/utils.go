@@ -46,7 +46,7 @@ func GetKafkaVersion(clusterInfo types.AWSClientInformation) string {
 	case kafkatypes.ClusterTypeProvisioned:
 		return ConvertKafkaVersion(clusterInfo.MskClusterConfig.Provisioned.CurrentBrokerSoftwareInfo.KafkaVersion)
 	case kafkatypes.ClusterTypeServerless:
-		slog.Warn("⚠️ Serverless clusters do not return a Kafka version, defaulting to 4.0.0")
+		slog.Debug("Serverless clusters do not return a Kafka version, defaulting to 4.0.0")
 		return "4.0.0"
 	default:
 		slog.Warn(fmt.Sprintf("⚠️ Unknown cluster type: %v, defaulting to 4.0.0", clusterInfo.MskClusterConfig.ClusterType))

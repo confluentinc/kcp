@@ -3,9 +3,10 @@ package plan
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/confluentinc/kcp/internal/types"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 )

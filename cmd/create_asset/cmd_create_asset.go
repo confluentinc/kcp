@@ -8,7 +8,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/create_asset/migrate_topics"
 	"github.com/confluentinc/kcp/cmd/create_asset/migration_infra"
 	"github.com/confluentinc/kcp/cmd/create_asset/reverse_proxy"
-	"github.com/confluentinc/kcp/cmd/create_asset/target_infra"
+	targetinfra "github.com/confluentinc/kcp/cmd/create_asset/target_infra"
 	"github.com/spf13/cobra"
 )
 

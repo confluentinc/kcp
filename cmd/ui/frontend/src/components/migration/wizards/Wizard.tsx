@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { useMachine } from '@xstate/react'
 import { useAppStore } from '@/stores/store'
+import { Button } from '@/components/common/ui/button'
 import { WizardStepForm } from './components/WizardStepForm'
 import { WizardProgress } from './components/WizardProgress'
 import { WizardConfirmation } from './components/WizardConfirmation'
@@ -103,6 +104,36 @@ export const Wizard = ({ config, clusterKey, wizardType, onComplete, onClose }: 
     } catch {
       // Failed to generate terraform - error is already logged by useWizardAPI
     }
+  }
+
+  // Handle the Gov-unsupported terminal step. This path is blocked before any
+  // Terraform is generated: it renders the explanation and only a Back button,
+  // with no route to generation.
+  if (currentStateId === 'gov_unsupported') {
+    const blockedMeta = (
+      config.states['gov_unsupported'] as
+        | { meta?: { title?: string; description?: string } }
+        | undefined
+    )?.meta
+
+    return (
+      <div className="max-w-2xl mx-auto p-6 space-y-6">
+        <WizardProgress />
+        <div className="space-y-6">
+          <div>
+            <h2 className="text-2xl font-bold text-gray-900 dark:text-gray-100">
+              {blockedMeta?.title}
+            </h2>
+            {blockedMeta?.description && (
+              <p className="text-gray-600 dark:text-gray-400 mt-2">{blockedMeta.description}</p>
+            )}
+          </div>
+          <Button type="button" variant="outline" onClick={handleBack}>
+            Back
+          </Button>
+        </div>
+      </div>
+    )
   }
 
   // Handle confirmation state

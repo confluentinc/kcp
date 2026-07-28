@@ -2,8 +2,8 @@ package hcl
 
 import (
 	"github.com/confluentinc/kcp/internal/services/hcl/confluent"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
 )
@@ -12,7 +12,7 @@ import (
 // Root-Level Generation - Public Migration
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastructure(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateRootMainTfForPublicMigrationInfrastructure(request hclrequests.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -76,6 +76,6 @@ func (mi *MigrationInfraHCLService) generateClusterLinkMainTf() string {
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateClusterLinkVariablesTf(request hclrequests.MigrationWizardRequest) string {
 	return GenerateVariablesTf(modules.GetClusterLinkModuleVariableDefinitions(request))
 }

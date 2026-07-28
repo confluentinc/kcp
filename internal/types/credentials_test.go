@@ -885,6 +885,85 @@ func TestRegionAuth_MergeClusterConfigs(t *testing.T) {
 	}
 }
 
+func TestCredentials_UpsertTargetedClusters(t *testing.T) {
+	existing := &Credentials{Regions: []RegionAuth{{
+		Name: "us-east-1",
+		Clusters: []ClusterAuth{
+			{Name: "a", Arn: "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+				AuthMethod: AuthMethodConfig{IAM: &IAMConfig{Use: true}}},
+			{Name: "b", Arn: "arn:aws:kafka:us-east-1:111:cluster/b/uuid",
+				AuthMethod: AuthMethodConfig{IAM: &IAMConfig{Use: true}}},
+		},
+	}}}
+
+	existing.UpsertTargetedClusters(RegionAuth{
+		Name: "us-east-1",
+		Clusters: []ClusterAuth{
+			{Name: "a", Arn: "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+				AuthMethod: AuthMethodConfig{SASLScram: &SASLScramConfig{Use: true, Mechanism: "SHA512"}}},
+		},
+	})
+
+	region := existing.Regions[0]
+	if len(region.Clusters) != 2 {
+		t.Fatalf("got %d clusters, want 2 (sibling b preserved)", len(region.Clusters))
+	}
+
+	var b *ClusterAuth
+	for i := range region.Clusters {
+		if region.Clusters[i].Arn == "arn:aws:kafka:us-east-1:111:cluster/b/uuid" {
+			b = &region.Clusters[i]
+		}
+	}
+	if b == nil || b.AuthMethod.IAM == nil || !b.AuthMethod.IAM.Use {
+		t.Error("sibling cluster b auth not preserved")
+	}
+
+	var a *ClusterAuth
+	for i := range region.Clusters {
+		if region.Clusters[i].Arn == "arn:aws:kafka:us-east-1:111:cluster/a/uuid" {
+			a = &region.Clusters[i]
+		}
+	}
+	if a == nil || a.AuthMethod.SASLScram == nil || !a.AuthMethod.SASLScram.Use {
+		t.Error("targeted cluster a not updated to SASLScram")
+	}
+}
+
+func TestCredentials_UpsertTargetedClusters_NewRegion(t *testing.T) {
+	c := &Credentials{Regions: []RegionAuth{}}
+	c.UpsertTargetedClusters(RegionAuth{
+		Name:     "eu-west-1",
+		Clusters: []ClusterAuth{{Name: "x", Arn: "arn:aws:kafka:eu-west-1:111:cluster/x/uuid"}},
+	})
+	if len(c.Regions) != 1 || len(c.Regions[0].Clusters) != 1 {
+		t.Fatalf("expected 1 region with 1 cluster, got %d regions", len(c.Regions))
+	}
+}
+
+func TestCredentials_UpsertTargetedClusters_AppendsToExistingRegion(t *testing.T) {
+	c := &Credentials{Regions: []RegionAuth{{
+		Name: "us-east-1",
+		Clusters: []ClusterAuth{
+			{Name: "a", Arn: "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+				AuthMethod: AuthMethodConfig{IAM: &IAMConfig{Use: true}}},
+		},
+	}}}
+
+	c.UpsertTargetedClusters(RegionAuth{
+		Name: "us-east-1",
+		Clusters: []ClusterAuth{
+			{Name: "c", Arn: "arn:aws:kafka:us-east-1:111:cluster/c/uuid",
+				AuthMethod: AuthMethodConfig{IAM: &IAMConfig{Use: true}}},
+		},
+	})
+
+	region := c.Regions[0]
+	if len(region.Clusters) != 2 {
+		t.Fatalf("got %d clusters, want 2 (existing a preserved + new c appended)", len(region.Clusters))
+	}
+}
+
 func TestCredentials_UpsertRegion(t *testing.T) {
 	tests := []struct {
 		name     string

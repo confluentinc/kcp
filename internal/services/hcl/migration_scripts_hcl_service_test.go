@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -19,7 +20,7 @@ func TestGenerateMirrorTopicsFiles_FilePerTopicLayout(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{Name: "orders"},
 			{Name: "events"},
@@ -28,7 +29,7 @@ func TestGenerateMirrorTopicsFiles_FilePerTopicLayout(t *testing.T) {
 		ClusterLinkName:           "msk-to-cc-link",
 		TargetClusterId:           "lkc-xyz789",
 		TargetClusterRestEndpoint: "https://pkc.cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeMirror,
+		Mode:                      hclrequests.MigrateTopicsModeMirror,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -57,7 +58,7 @@ func TestGenerateMirrorTopicsFiles_SanitizesFilenames(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{Name: "orders.payments"},
 			{Name: "events-stream"},
@@ -65,7 +66,7 @@ func TestGenerateMirrorTopicsFiles_SanitizesFilenames(t *testing.T) {
 		ClusterLinkName:           "link",
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeMirror,
+		Mode:                      hclrequests.MigrateTopicsModeMirror,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -81,7 +82,7 @@ func TestGenerateMirrorTopicsFiles_FilenameCollisionIsHardError(t *testing.T) {
 
 	service := NewMigrationScriptsHCLService()
 	// These two names both sanitize to "orders_dlq.tf" via FormatHclResourceName.
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{Name: "orders.dlq"},
 			{Name: "orders_dlq"},
@@ -89,7 +90,7 @@ func TestGenerateMirrorTopicsFiles_FilenameCollisionIsHardError(t *testing.T) {
 		ClusterLinkName:           "link",
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeMirror,
+		Mode:                      hclrequests.MigrateTopicsModeMirror,
 	}
 
 	_, err := service.GenerateMirrorTopicsFiles(request)
@@ -102,12 +103,12 @@ func TestGenerateMirrorTopicsFiles_ZeroTopicsProducesSharedFilesOnly(t *testing.
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics:                    nil,
 		ClusterLinkName:           "link",
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeMirror,
+		Mode:                      hclrequests.MigrateTopicsModeMirror,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -125,12 +126,12 @@ func TestGenerateMirrorTopicsFiles_FallsBackToSelectedTopicsWhenTopicsEmpty(t *t
 
 	// Simulates the UI handler path: only SelectedTopics is populated.
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		SelectedTopics:            []string{"orders", "events"},
 		ClusterLinkName:           "link",
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeMirror,
+		Mode:                      hclrequests.MigrateTopicsModeMirror,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -145,7 +146,7 @@ func TestGenerateMirrorTopicsFiles_InvalidModeIsRejected(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{{Name: "orders"}},
 		Mode:   "bogus",
 	}
@@ -165,7 +166,7 @@ func TestGenerateMirrorTopicsFiles_NewMode_BasicShape(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{
 				Name:       "orders",
@@ -180,7 +181,7 @@ func TestGenerateMirrorTopicsFiles_NewMode_BasicShape(t *testing.T) {
 		},
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeNew,
+		Mode:                      hclrequests.MigrateTopicsModeNew,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -219,7 +220,7 @@ func TestGenerateMirrorTopicsFiles_NewMode_FilePerTopic(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{Name: "orders", Partitions: 6},
 			{Name: "events", Partitions: 3},
@@ -227,7 +228,7 @@ func TestGenerateMirrorTopicsFiles_NewMode_FilePerTopic(t *testing.T) {
 		},
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeNew,
+		Mode:                      hclrequests.MigrateTopicsModeNew,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -249,7 +250,7 @@ func TestGenerateMirrorTopicsFiles_NewMode_NoReplicationFactorEver(t *testing.T)
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{
 				Name:       "orders",
@@ -261,7 +262,7 @@ func TestGenerateMirrorTopicsFiles_NewMode_NoReplicationFactorEver(t *testing.T)
 		},
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeNew,
+		Mode:                      hclrequests.MigrateTopicsModeNew,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -276,13 +277,13 @@ func TestGenerateMirrorTopicsFiles_NewMode_PreservesPartitionsCount(t *testing.T
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{Name: "orders", Partitions: 12},
 		},
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeNew,
+		Mode:                      hclrequests.MigrateTopicsModeNew,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -298,7 +299,7 @@ func TestGenerateMirrorTopicsFiles_MirrorModeUnchangedByNewModeWiring(t *testing
 
 	// Regression check: U4's branching does not alter mirror-mode output.
 	service := NewMigrationScriptsHCLService()
-	request := types.MirrorTopicsRequest{
+	request := hclrequests.MirrorTopicsRequest{
 		Topics: []types.TopicDetails{
 			{Name: "orders", Partitions: 6, Configurations: map[string]*string{
 				"cleanup.policy": mustStrPtr("compact"),
@@ -307,7 +308,7 @@ func TestGenerateMirrorTopicsFiles_MirrorModeUnchangedByNewModeWiring(t *testing
 		ClusterLinkName:           "link",
 		TargetClusterId:           "lkc-xyz",
 		TargetClusterRestEndpoint: "https://cc.example.com:443",
-		Mode:                      types.MigrateTopicsModeMirror,
+		Mode:                      hclrequests.MigrateTopicsModeMirror,
 	}
 
 	project, err := service.GenerateMirrorTopicsFiles(request)
@@ -327,7 +328,7 @@ func TestGenerateMirrorTopicsFiles_MirrorModeUnchangedByNewModeWiring(t *testing
 func TestGenerateMigrateAclsFiles_OperationMapping(t *testing.T) {
 	t.Parallel()
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -385,7 +386,7 @@ func TestGenerateMigrateAclsFiles_OperationMapping(t *testing.T) {
 func TestGenerateMigrateAclsFiles_NoDuplicateResourceNames(t *testing.T) {
 	t.Parallel()
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user_a", "user_b"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -434,7 +435,7 @@ func TestGenerateMigrateAclsFiles_NoDuplicateResourceNames(t *testing.T) {
 func TestGenerateMigrateAclsFiles_PerPrincipalFiles(t *testing.T) {
 	t.Parallel()
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"alice", "bob", "charlie"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -504,7 +505,7 @@ func TestGenerateMigrateAclsFiles_PerPrincipalFiles(t *testing.T) {
 func TestGenerateMigrateAclsFiles_FiltersUnsupportedResourceTypes(t *testing.T) {
 	t.Parallel()
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -564,7 +565,7 @@ func TestGenerateMigrateAclsFiles_FiltersUnsupportedResourceTypes(t *testing.T) 
 func TestGenerateMigrateAclsFiles_PreventDestroyTrue(t *testing.T) {
 	t.Parallel()
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -595,7 +596,7 @@ func TestGenerateMigrateAclsFiles_PreventDestroyTrue(t *testing.T) {
 func TestGenerateMigrateAclsFiles_PreventDestroyFalse(t *testing.T) {
 	t.Parallel()
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user1"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -627,7 +628,7 @@ func TestGenerateMigrateAclsFiles_PreventDestroyFalse(t *testing.T) {
 func TestGenerateMigrateAclsFiles_ResourceNameIncludesPrincipal(t *testing.T) {
 	t.Parallel()
 
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"my_service"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -684,7 +685,7 @@ func TestGenerateMigrateAclsFiles_IAMSourcedOperations(t *testing.T) {
 	t.Parallel()
 
 	// Use operation values exactly as they appear in types.AclMap
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"iam_user"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",
@@ -756,7 +757,7 @@ func TestGenerateMigrateAclsFiles_PrincipalWithSpecialCharacters(t *testing.T) {
 	t.Parallel()
 
 	service := NewMigrationScriptsHCLService()
-	request := types.MigrateAclsRequest{
+	request := hclrequests.MigrateAclsRequest{
 		SelectedPrincipals:        []string{"user@example.com", "service.account-123"},
 		TargetClusterId:           "lkc-abc123",
 		TargetClusterRestEndpoint: "https://test.confluent.cloud:443",

@@ -1,54 +1,55 @@
 package modules
 
 import (
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 )
 
-func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
-	return []ModuleVariable[types.MigrationWizardRequest]{
+func GetNetworkingVariables() []ModuleVariable[hclrequests.MigrationWizardRequest] {
+	return []ModuleVariable[hclrequests.MigrationWizardRequest]{
 		{
 			Name:       SchemaVpcID.Name,
 			Definition: SchemaVpcID.ToDefinition(),
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.VpcId
 			},
 			Condition: nil,
 		},
 		{
 			Name: "jump_cluster_broker_subnet_cidrs",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "jump_cluster_broker_subnet_cidrs",
 				Description: "CIDR ranges of the jump cluster broker subnets",
 				Sensitive:   false,
 				Type:        "list(string)",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.JumpClusterBrokerSubnetCidr
 			},
 			Condition: nil,
 		},
 		{
 			Name: "jump_cluster_setup_host_subnet_cidr",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "jump_cluster_setup_host_subnet_cidr",
 				Description: "CIDR block of the jump cluster setup host subnet",
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.JumpClusterSetupHostSubnetCidr
 			},
 			Condition: nil,
 		},
 		{
 			Name: "existing_private_link_vpce_id",
-			Definition: types.TerraformVariable{
+			Definition: hcltypes.TerraformVariable{
 				Name:        "existing_private_link_vpce_id",
 				Description: "ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud",
 				Sensitive:   false,
 				Type:        "string",
 			},
-			ValueExtractor: func(request types.MigrationWizardRequest) any {
+			ValueExtractor: func(request hclrequests.MigrationWizardRequest) any {
 				return request.ExistingPrivateLinkVpceId
 			},
 			Condition: nil,
@@ -56,11 +57,11 @@ func GetNetworkingVariables() []ModuleVariable[types.MigrationWizardRequest] {
 	}
 }
 
-func GetNetworkingModuleVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
+func GetNetworkingModuleVariableDefinitions(request hclrequests.MigrationWizardRequest) []hcltypes.TerraformVariable {
 	return ExtractModuleVariableDefinitions(GetNetworkingVariables(), request)
 }
 
-var NetworkingModuleOutputs = []types.TerraformOutput{
+var NetworkingModuleOutputs = []hcltypes.TerraformOutput{
 	{
 		Name:        "jump_cluster_setup_host_subnet_id",
 		Description: "ID of the subnet that the Ansible jump cluster setup host instance is deployed to.",
@@ -93,6 +94,6 @@ var NetworkingModuleOutputs = []types.TerraformOutput{
 	},
 }
 
-func GetNetworkingModuleOutputDefinitions() []types.TerraformOutput {
+func GetNetworkingModuleOutputDefinitions() []hcltypes.TerraformOutput {
 	return NetworkingModuleOutputs
 }

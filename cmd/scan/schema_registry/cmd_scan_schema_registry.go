@@ -72,7 +72,7 @@ func NewScanSchemaRegistryCmd() *cobra.Command {
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file.")
-	requiredFlags.StringVar(&srType, "sr-type", "", "Schema registry type: 'confluent' or 'glue'")
+	requiredFlags.StringVar(&srType, "sr-type", "", "Schema registry type: 'confluent' or 'glue'. Use 'confluent' for any registry exposing a Confluent-compatible REST API, e.g. Apicurio via its /apis/ccompat/v7 endpoint.")
 	schemaRegistryCmd.Flags().AddFlagSet(requiredFlags)
 
 	confluentFlags := pflag.NewFlagSet("confluent", pflag.ExitOnError)
@@ -177,6 +177,14 @@ func runScanConfluentSchemaRegistry() error {
 	authOption, err := getAuthOptionFromFlags()
 	if err != nil {
 		return fmt.Errorf("failed to get auth option: %v", err)
+	}
+
+	// Pre-flight the endpoint before handing off to the confluent-kafka-go client,
+	// which would otherwise surface a non-JSON (HTML) response as the opaque
+	// "invalid character '<'". The validator's error is already actionable, so it
+	// is returned as-is rather than re-wrapped.
+	if err := client.ValidateConfluentSchemaRegistryURL(opts.Url, authOption); err != nil {
+		return err
 	}
 
 	schemaRegistryClient, err := client.NewSchemaRegistryClient(opts.Url, authOption)

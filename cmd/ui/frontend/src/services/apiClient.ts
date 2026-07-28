@@ -187,6 +187,36 @@ const metrics = {
   },
 
   /**
+   * Get self-managed Connect metrics for a cluster. Connect is Kafka-distribution
+   * agnostic, so the same endpoint serves both MSK and OSK; sourceType is an explicit
+   * path segment and clusterId is a query param (OSK cluster id, or an MSK ARN — passed
+   * as a query value so its ':' and '/' characters are URL-encoded rather than breaking
+   * path-segment routing).
+   */
+  async getConnectMetrics(
+    sourceType: 'msk' | 'osk',
+    clusterId: string,
+    sessionId: string,
+    params?: MetricsQueryParams,
+    config?: RequestConfig
+  ): Promise<MetricsApiResponse> {
+    const queryParams: Record<string, string | Date | undefined> = { sessionId, clusterId }
+    if (params?.startDate) {
+      queryParams.startDate =
+        params.startDate instanceof Date ? params.startDate : new Date(params.startDate)
+    }
+    if (params?.endDate) {
+      queryParams.endDate =
+        params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
+    }
+    return get<MetricsApiResponse>(
+      `${API_ENDPOINTS.METRICS}/connect/${encodeURIComponent(sourceType)}`,
+      queryParams,
+      config
+    )
+  },
+
+  /**
    * Get metrics for an OSK cluster
    */
   async getOSKMetrics(

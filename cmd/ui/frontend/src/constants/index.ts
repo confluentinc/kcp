@@ -43,6 +43,12 @@ export const CONNECTOR_TABS = {
 } as const
 
 /**
+ * Placeholder substituted for redacted sensitive connector config values.
+ * Source of truth: Go constant redact.Placeholder (internal/redact/redact.go).
+ */
+export const REDACTED_PLACEHOLDER = '<kcp-redacted>'
+
+/**
  * Wizard types for migration workflows
  */
 export const WIZARD_TYPES = {

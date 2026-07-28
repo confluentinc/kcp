@@ -1,7 +1,7 @@
 package aws
 
 import (
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
@@ -11,7 +11,7 @@ const (
 	VarAwsRegion = "aws_region"
 )
 
-var AwsProviderVariables = []types.TerraformVariable{
+var AwsProviderVariables = []hcltypes.TerraformVariable{
 	{Name: VarAwsRegion, Description: "The AWS region", Sensitive: false, Type: "string"},
 }
 

@@ -1,6 +1,9 @@
 package utils
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 type ConnectorMapping struct {
 	PluginName    string
@@ -12,6 +15,40 @@ func InferPluginName(connectorClass string) (string, error) {
 		return mapping.PluginName, nil
 	}
 	return "", fmt.Errorf("unknown or unsupported connector class: %s", connectorClass)
+}
+
+// SanitizeConnectorFilename derives a filesystem-safe, single path segment from an
+// untrusted connector name so it can be interpolated into an output filename.
+//
+// Kafka Connect permits connector names containing "/", "\" and ".." (and the MSK
+// Connect / state-file paths carry whatever a compromised endpoint or hostile
+// state file provides). Using such a name directly in filepath.Join would let the
+// generated .tf escape the intended output directory — a path traversal that
+// becomes an arbitrary file write. Every character outside [A-Za-z0-9._-] is
+// replaced with "_", which guarantees the result contains no path separator on any
+// OS and therefore cannot traverse. A name that sanitizes to empty or to only dots
+// (".", "..", …) collapses to "connector" so the caller never builds a hidden,
+// bare-dot, or traversal filename.
+func SanitizeConnectorFilename(name string) string {
+	var b strings.Builder
+	b.Grow(len(name))
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9',
+			r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+
+	sanitized := b.String()
+	// All-dots (or empty) names are the only post-allowlist values that remain
+	// problematic: "." / ".." are traversal segments, and "" yields no name at all.
+	if strings.Trim(sanitized, ".") == "" {
+		return "connector"
+	}
+	return sanitized
 }
 
 // https://github.com/confluentinc/connect-migration-utility/tree/master/templates/fm

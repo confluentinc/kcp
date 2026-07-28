@@ -5,7 +5,7 @@ package hcl
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 )
 
 func TestBastionHost(t *testing.T) {
@@ -27,7 +27,7 @@ func TestBastionHost(t *testing.T) {
 			t.Parallel()
 
 			service := &BastionHostHCLService{DeploymentID: "testdeploy"}
-			request := types.BastionHostRequest{
+			request := hclrequests.BastionHostRequest{
 				Region:                     "us-east-1",
 				VPCId:                      "vpc-0123456789abcdef0",
 				PublicSubnetCidr:           "10.0.30.0/24",

@@ -1,8 +1,10 @@
 package jmx
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -153,7 +155,7 @@ func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -185,7 +187,7 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -222,7 +224,7 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 func TestBuildJMXQueryInfo(t *testing.T) {
 	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
 	defs := BrokerMetricDefinitions()
-	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second, defs)
+	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second, defs, "broker")
 
 	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
 	assert.Len(t, infos, expectedCount)
@@ -256,8 +258,8 @@ func TestBuildJMXQueryInfo(t *testing.T) {
 	assert.Contains(t, infos[6].AggregationNote, "Wildcard")
 
 	// Empty brokerURLs should return nil
-	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second, defs))
-	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second, defs))
+	assert.Nil(t, buildJMXQueryInfo(nil, 5*time.Minute, 10*time.Second, defs, "broker"))
+	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second, defs, "broker"))
 }
 
 func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
@@ -296,7 +298,14 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	}))
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions())
+	// Capture slog output to assert the controller-missing caveat is logged once
+	// per scan, not once per poll (collectRawSample runs on every tick).
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -311,6 +320,11 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	_, hasGlobal := result.Aggregates["GlobalPartitionCount"]
 	assert.False(t, hasGlobal, "GlobalPartitionCount should be omitted when controller MBean is not available")
 
+	// The caveat must be deduped to a single line even though the controller
+	// MBean is polled on every sample across the scan.
+	warnCount := strings.Count(logBuf.String(), "Controller MBean not available")
+	assert.Equal(t, 1, warnCount, "controller-missing caveat should be logged once per scan, not per poll")
+
 	// But query info should still include it (shows what was attempted)
 	queryNames := make(map[string]bool)
 	for _, qi := range result.QueryInfo {
@@ -320,7 +334,7 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 }
 
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
-	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions())
+	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions(), "broker")
 	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)
 
 	require.Error(t, err)

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
@@ -14,21 +15,62 @@ import (
 
 // FSM State constants
 const (
-	StateUninitialized = "uninitialized"
-	StateInitialized   = "initialized"
-	StateLagsOk        = "lags_ok"
-	StateFenced        = "fenced"
-	StatePromoted      = "promoted"
-	StateSwitched      = "switched"
+	StateUninitialized    = "uninitialized"
+	StateInitialized      = "initialized"
+	StateLagsOk           = "lags_ok"
+	StateFenced           = "fenced"
+	StateOffsetSyncPaused = "offset_sync_paused"
+	StateFenceVerified    = "fence_verified"
+	StatePromoted         = "promoted"
+	StateSwitched         = "switched"
 )
+
+// isKnownState reports whether s is a state value this binary understands.
+// Execute refuses unknown values so a corrupted state file — or one written
+// by a newer kcp — fails loudly instead of skipping every workflow step.
+func isKnownState(s string) bool {
+	switch s {
+	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
+		StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched:
+		return true
+	}
+	return false
+}
 
 // FSM Event constants
 const (
 	EventInitialize  = "initialize"
 	EventWaitForLags = "wait_for_lags"
 	EventFence       = "fence"
-	EventPromote     = "promote"
-	EventSwitch      = "switch"
+	// EventPauseOffsetSync pauses cluster-link consumer offset sync
+	// (--pause-consumer-offset-sync) immediately after fencing. Without the
+	// opt-in the transition still fires as a pass-through so the forward
+	// walk is identical either way.
+	EventPauseOffsetSync = "pause_offset_sync"
+	EventVerifyFence     = "verify_fence"
+	EventPromote         = "promote"
+	EventSwitch          = "switch"
+	// EventAbortFence rolls back to initialized when the pause_offset_sync
+	// step fails (from fenced) or the verify_fence step detects unrouted
+	// producers (from offset_sync_paused); the transition itself unfences
+	// the gateway and restores any paused sync config (see onAbortFence in
+	// orchestrator.go).
+	EventAbortFence = "abort_fence"
+	// EventExpireVerification demotes fence_verified to fenced at FSM
+	// bootstrap: the verification is a point-in-time attestation and never
+	// survives a restart, so a resume re-runs the verify_fence detection
+	// window. Fired only by NewMigrationOrchestrator; it has no action.
+	EventExpireVerification = "expire_verification"
+	// EventExpireFence demotes fenced and offset_sync_paused to lags_ok at FSM
+	// bootstrap: whether the live gateway still holds the fenced CR is equally
+	// a point-in-time fact. A crash or a partially-completed abort_fence
+	// rollback (initial CR applied, process gone before the rolled-back state
+	// reached disk) leaves the gateway unfenced while the state file still
+	// records a fenced-family state. Demoting makes the resume re-apply the
+	// fenced CR — a no-op rollout when the gateway never diverged — instead of
+	// verifying and promoting behind a fence that may not exist. Fired only by
+	// NewMigrationOrchestrator; it has no action.
+	EventExpireFence = "expire_fence"
 )
 
 // ----- migration configuration -----
@@ -62,6 +104,25 @@ type MigrationConfig struct {
 	// not yet restored — supports drift detection, idempotent resume, and remediation messaging.
 	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
 	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
+
+	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
+	// safety check that verifies source offsets are not still increasing before
+	// promoting mirror topics. A value of 0 skips the check. An increasing offset
+	// after fencing indicates a producer that bypassed the gateway and is writing
+	// directly to the source cluster.
+	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
+
+	// ConsumerOffsetSyncDrainDuration is how long the pause_offset_sync stage
+	// waits after fencing before disabling the cluster link's
+	// consumer.offset.sync.enable. The fence freezes source consumer offsets
+	// (clients can no longer commit), so holding here lets the link run one or
+	// more further sync cycles and propagate those final committed offsets to
+	// the destination, minimising messages reprocessed after switchover. Only
+	// has effect when PauseConsumerOffsetSync is set. Best-effort: offset sync
+	// is asynchronous, so this reduces but does not eliminate duplicate
+	// processing. A value of 0 (the default) skips the wait — the link is
+	// disabled immediately after fencing, the prior behaviour.
+	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
 
 	// Gateway CR configuration
 	InitialCrName    string `json:"initial_cr_name"`
@@ -120,14 +181,35 @@ func (ms *MigrationState) WriteToFile(filePath string) error {
 		return fmt.Errorf("failed to marshal migration state: %w", err)
 	}
 
-	// Atomic write: write to temp file first, then rename
-	tmpFile := filePath + ".tmp"
-	if err := os.WriteFile(tmpFile, data, 0644); err != nil {
+	// Atomic write: write to a uniquely-named temp file (created at mode 0600 by
+	// os.CreateTemp and pinned explicitly), then rename it onto the target. The
+	// migration state holds sensitive metadata, so it must never be group/world
+	// readable, even briefly or under an unusual umask. The real file is only
+	// ever replaced by the rename and is never deleted directly, so a crash
+	// before the rename leaves the previous migration state intact.
+	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpName := tmpFile.Name()
+
+	if err := tmpFile.Chmod(0600); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to set temp file permissions: %w", err)
+	}
+	if _, err := tmpFile.Write(data); err != nil {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpName)
 		return fmt.Errorf("failed to write temp file: %w", err)
 	}
+	if err := tmpFile.Close(); err != nil {
+		_ = os.Remove(tmpName)
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 
-	if err := os.Rename(tmpFile, filePath); err != nil {
-		_ = os.Remove(tmpFile) // best-effort cleanup of temp file on error
+	if err := os.Rename(tmpName, filePath); err != nil {
+		_ = os.Remove(tmpName) // best-effort cleanup of temp file on error
 		return fmt.Errorf("failed to rename temp file: %w", err)
 	}
 

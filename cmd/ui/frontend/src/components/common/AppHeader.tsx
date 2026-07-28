@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Header, HeaderSection, HeaderTitle } from '@/components/common/ui/header'
 import { Button } from '@/components/common/ui/button'
 import { Sun, Moon } from 'lucide-react'
+import { StateMetadataPopover } from '@/components/common/StateMetadataPopover'
 
 interface HeaderTab {
   id: string
@@ -95,6 +96,7 @@ export const AppHeader = ({ onFileUpload, isProcessing = false, error = null, ta
           >
             {darkMode ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
           </Button>
+          <StateMetadataPopover className={darkMode ? '' : 'text-white hover:bg-white/10'} />
         </HeaderSection>
       </Header>
       {error && (

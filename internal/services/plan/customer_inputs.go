@@ -4,6 +4,8 @@ import (
 	"sort"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
+
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -20,7 +22,7 @@ const bytesPerMB = 1024.0 * 1024.0
 // Runs once at the top of Build, after backfillAggregates. Every
 // downstream consumer reads the merged state — no awareness needed of
 // whether a value came from the scanner or the customer.
-func applyClusterDeclarations(state *types.ProcessedState, raw *types.PlanInputs) {
+func applyClusterDeclarations(state *report.ProcessedState, raw *PlanInputs) {
 	if raw == nil {
 		return
 	}
@@ -72,7 +74,7 @@ func applyClusterDeclarations(state *types.ProcessedState, raw *types.PlanInputs
 // CP version is silently ignored. The stub URL is a placeholder ("from
 // plan-inputs.yaml") that surfaces in §5's Source-detected line so
 // readers know it came from a declaration rather than a scan.
-func applyFleetCSRDeclaration(state *types.ProcessedState, raw *types.PlanInputs) {
+func applyFleetCSRDeclaration(state *report.ProcessedState, raw *PlanInputs) {
 	if raw.ConfluentSRCPVersion == nil || *raw.ConfluentSRCPVersion == "" {
 		return
 	}
@@ -93,8 +95,8 @@ func applyFleetCSRDeclaration(state *types.ProcessedState, raw *types.PlanInputs
 // mutate the canonical instance via the pointer; ambiguous names get
 // no pointer and no synthesis fallback. OSK clusters are excluded —
 // they fall through to the osk_source_unsupported OQ.
-func indexClustersByName(state *types.ProcessedState) (map[string]*types.ProcessedCluster, map[string]bool) {
-	out := map[string]*types.ProcessedCluster{}
+func indexClustersByName(state *report.ProcessedState) (map[string]*report.ProcessedCluster, map[string]bool) {
+	out := map[string]*report.ProcessedCluster{}
 	ambiguous := map[string]bool{}
 	for i := range state.Sources {
 		if state.Sources[i].MSKData == nil {
@@ -121,7 +123,7 @@ func indexClustersByName(state *types.ProcessedState) (map[string]*types.Process
 // hasClusterDeclaration reports whether the entry carries at least one
 // scan-equivalent field. Entries with only decision-level overrides
 // (TargetAuthMethod / DowntimeTolerance) need no state mutation.
-func hasClusterDeclaration(e types.ClusterPlanInputs) bool {
+func hasClusterDeclaration(e ClusterPlanInputs) bool {
 	return e.Region != nil ||
 		e.ClusterType != nil ||
 		e.KafkaVersion != nil ||
@@ -140,7 +142,7 @@ func hasClusterDeclaration(e types.ClusterPlanInputs) bool {
 
 // applyClusterOverlay overlays declared fields onto a scanned cluster.
 // Undeclared fields keep their scan values.
-func applyClusterOverlay(c *types.ProcessedCluster, e types.ClusterPlanInputs) {
+func applyClusterOverlay(c *report.ProcessedCluster, e ClusterPlanInputs) {
 	// Route shape edits through the correct block. Three cases:
 	//   1. Pivot to SERVERLESS — clear Provisioned, build Serverless fresh.
 	//   2. Already SERVERLESS, no pivot — overlay auth onto Serverless.
@@ -181,8 +183,8 @@ func applyClusterOverlay(c *types.ProcessedCluster, e types.ClusterPlanInputs) {
 
 // synthesiseCluster builds a fresh ProcessedCluster from a customer
 // declaration when no scan exists for `name`.
-func synthesiseCluster(name string, e types.ClusterPlanInputs) types.ProcessedCluster {
-	c := types.ProcessedCluster{Name: name}
+func synthesiseCluster(name string, e ClusterPlanInputs) report.ProcessedCluster {
+	c := report.ProcessedCluster{Name: name}
 	if e.Region != nil {
 		c.Region = *e.Region
 	}
@@ -224,9 +226,9 @@ func synthesiseCluster(name string, e types.ClusterPlanInputs) types.ProcessedCl
 
 // attachClusterToRegion drops `c` into the named region, creating
 // the region bucket (and the MSK source) if needed.
-func attachClusterToRegion(state *types.ProcessedState, c types.ProcessedCluster, region string) {
+func attachClusterToRegion(state *report.ProcessedState, c report.ProcessedCluster, region string) {
 	// Find or create the MSK source.
-	var msk *types.ProcessedMSKSource
+	var msk *report.ProcessedMSKSource
 	for i := range state.Sources {
 		if state.Sources[i].Type == types.SourceTypeMSK && state.Sources[i].MSKData != nil {
 			msk = state.Sources[i].MSKData
@@ -234,9 +236,9 @@ func attachClusterToRegion(state *types.ProcessedState, c types.ProcessedCluster
 		}
 	}
 	if msk == nil {
-		state.Sources = append(state.Sources, types.ProcessedSource{
+		state.Sources = append(state.Sources, report.ProcessedSource{
 			Type:    types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{},
+			MSKData: &report.ProcessedMSKSource{},
 		})
 		msk = state.Sources[len(state.Sources)-1].MSKData
 	}
@@ -247,7 +249,7 @@ func attachClusterToRegion(state *types.ProcessedState, c types.ProcessedCluster
 			return
 		}
 	}
-	msk.Regions = append(msk.Regions, types.ProcessedRegion{Name: region, Clusters: []types.ProcessedCluster{c}})
+	msk.Regions = append(msk.Regions, report.ProcessedRegion{Name: region, Clusters: []report.ProcessedCluster{c}})
 }
 
 // provisionedShape returns the Provisioned block with customer
@@ -255,7 +257,7 @@ func attachClusterToRegion(state *types.ProcessedState, c types.ProcessedCluster
 // deprecated — the switch in applyClusterOverlay branches first and
 // only calls this on the Provisioned path. The bool return is kept
 // to preserve the function signature; callers ignore it.
-func provisionedShape(cfg *kafkatypes.Cluster, e types.ClusterPlanInputs) (*kafkatypes.Provisioned, bool) {
+func provisionedShape(cfg *kafkatypes.Cluster, e ClusterPlanInputs) (*kafkatypes.Provisioned, bool) {
 	prov := cfg.Provisioned
 	if prov == nil {
 		prov = &kafkatypes.Provisioned{}
@@ -281,7 +283,7 @@ func provisionedShape(cfg *kafkatypes.Cluster, e types.ClusterPlanInputs) (*kafk
 }
 
 // buildProvisionedBlock — fresh Provisioned for the synthesis path.
-func buildProvisionedBlock(e types.ClusterPlanInputs) *kafkatypes.Provisioned {
+func buildProvisionedBlock(e ClusterPlanInputs) *kafkatypes.Provisioned {
 	prov := &kafkatypes.Provisioned{}
 	if e.KafkaVersion != nil {
 		v := *e.KafkaVersion
@@ -303,7 +305,7 @@ func buildProvisionedBlock(e types.ClusterPlanInputs) *kafkatypes.Provisioned {
 // buildServerlessBlock — Serverless struct from declared auth.
 // Serverless only supports IAM SASL today; non-IAM declarations are
 // silently dropped (auth_posture_unknown OQ surfaces the gap).
-func buildServerlessBlock(e types.ClusterPlanInputs) *kafkatypes.Serverless {
+func buildServerlessBlock(e ClusterPlanInputs) *kafkatypes.Serverless {
 	srv := &kafkatypes.Serverless{}
 	overlayServerlessAuth(srv, e.AuthMethods)
 	return srv
@@ -376,7 +378,7 @@ func makeACLs(n int) []types.Acls {
 
 // ensureTopicsSummary applies topic / partition counts onto
 // Topics.Summary, creating Topics if it was nil.
-func ensureTopicsSummary(c *types.ProcessedCluster, e types.ClusterPlanInputs) {
+func ensureTopicsSummary(c *report.ProcessedCluster, e ClusterPlanInputs) {
 	if c.KafkaAdminClientInformation.Topics == nil {
 		c.KafkaAdminClientInformation.Topics = &types.Topics{}
 	}
@@ -394,7 +396,7 @@ func ensureTopicsSummary(c *types.ProcessedCluster, e types.ClusterPlanInputs) {
 // fallback. Peak→P95 fallback only kicks in when neither the customer
 // NOR the scan supplied a P95 — otherwise we'd clobber a real
 // CloudWatch P95 with an oversized peak.
-func applyThroughputAggregates(c *types.ProcessedCluster, e types.ClusterPlanInputs) {
+func applyThroughputAggregates(c *report.ProcessedCluster, e ClusterPlanInputs) {
 	if c.ClusterMetrics.Aggregates == nil {
 		c.ClusterMetrics.Aggregates = map[string]types.MetricAggregate{}
 	}

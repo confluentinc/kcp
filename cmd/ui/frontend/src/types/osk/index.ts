@@ -1,6 +1,6 @@
 /**
- * Open Source Kafka (OSK) Type Definitions
- * Types for OSK clusters discovered via Kafka Admin API
+ * Apache Kafka Type Definitions
+ * Types for Apache Kafka clusters discovered via Kafka Admin API
  */
 
 import type { KafkaAdminInfo, DiscoveredClient } from '@/types'

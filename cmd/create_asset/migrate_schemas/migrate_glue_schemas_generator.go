@@ -10,6 +10,7 @@ import (
 	"github.com/fatih/color"
 
 	hclservice "github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -36,9 +37,9 @@ func NewMigrateGlueSchemasAssetGenerator(opts MigrateGlueSchemasOpts) *MigrateGl
 func (g *MigrateGlueSchemasAssetGenerator) Run() error {
 	slog.Info("generating glue schema migration assets", "registry", g.glueRegistry.RegistryName)
 
-	request := types.MigrateGlueSchemasRequest{
+	request := hclrequests.MigrateGlueSchemasRequest{
 		ConfluentCloudSchemaRegistryURL: g.ccSRRestEndpoint,
-		GlueRegistries: []types.GlueSchemaRegistryMigrationConfig{
+		GlueRegistries: []hclrequests.GlueSchemaRegistryMigrationConfig{
 			{
 				Migrate:      true,
 				RegistryName: g.glueRegistry.RegistryName,

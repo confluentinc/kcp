@@ -10,7 +10,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/report"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
 // Function-naming convention across this package:
@@ -52,7 +51,7 @@ func NewPlanService(cfg *PlanConfig, now func() time.Time) *PlanService {
 // Build produces a Plan from a ProcessedState and resolved plan-inputs.
 // Each step is a pure function so the test surface is the orchestration,
 // not its parts.
-func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsResolved, stateFilePath string) (*types.Plan, error) {
+func (s *PlanService) Build(state report.ProcessedState, inputs PlanInputsResolved, stateFilePath string) (*Plan, error) {
 	// Backfill `ClusterMetrics.Aggregates` once, in-place, against the
 	// canonical state. Every downstream caller (the per-cluster Build
 	// loop, plus every fleet-wide detector that re-runs
@@ -79,8 +78,8 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		return clusters[i].Arn < clusters[j].Arn
 	})
 
-	plan := &types.Plan{
-		Header: types.PlanHeader{
+	plan := &Plan{
+		Header: PlanHeader{
 			Source:            "Amazon MSK",
 			StateFilePath:     stateFilePath,
 			KCPVersion:        build_info.Version,
@@ -119,7 +118,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 		plan.ClusterTypeDecision = append(plan.ClusterTypeDecision, ct)
 		plan.NetworkingDecision = append(plan.NetworkingDecision, net)
 		plan.Auth = append(plan.Auth, auth)
-		plan.SourceEnvironment.Clusters = append(plan.SourceEnvironment.Clusters, types.SourceClusterSummary{
+		plan.SourceEnvironment.Clusters = append(plan.SourceEnvironment.Clusters, SourceClusterSummary{
 			ClusterID:    c.Name,
 			Region:       c.Region,
 			TopicCount:   topicCount(c),
@@ -152,7 +151,7 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 	// the strategy-typo / strategy-unknown signals are valuable even
 	// when the verdict resolves to no recommendation.
 	schema := decideSchema(state, s.cfg, inputs)
-	if schema != nil && !hasPath(schema, types.SchemaPathSchemaless) {
+	if schema != nil && !hasPath(schema, SchemaPathSchemaless) {
 		plan.Schema = schema
 	}
 	plan.OpenQuestions = append(plan.OpenQuestions, detectSchemaOpenQuestions(schema, s.cfg, inputs)...)
@@ -214,8 +213,8 @@ func (s *PlanService) Build(state types.ProcessedState, inputs types.PlanInputsR
 // will upgrade that recommendation. SERVERLESS-specific suppressions for
 // "ACLs not populated" and "0 brokers" live in cluster_signals.go so the
 // same logic is shared with the rule evaluator.
-func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, ct types.ClusterTypeDecision, net types.NetworkingDecision, auth types.AuthDecision, cfg *PlanConfig, inputs types.PlanInputsResolved) []types.OpenQuestion {
-	var oqs []types.OpenQuestion
+func detectOpenQuestions(c report.ProcessedCluster, sizing ClusterSizing, ct ClusterTypeDecision, net NetworkingDecision, auth AuthDecision, cfg *PlanConfig, inputs PlanInputsResolved) []OpenQuestion {
+	var oqs []OpenQuestion
 	// Auth posture undetectable. Fires whenever the source has no
 	// detected auth methods — auth is its own concern, surfaced
 	// independently of topic / ACL inventory gaps (those have their
@@ -224,7 +223,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 	// Provisioned needs an admin re-scan; Serverless needs the
 	// Serverless.ClientAuthentication block populated.
 	if len(auth.SourceAuths) == 0 {
-		oq := types.OpenQuestion{
+		oq := OpenQuestion{
 			ID:        "auth_posture_unknown",
 			ClusterID: c.Name,
 			Title:     "No client-authentication methods detected on the source — auth migration recommendation is unconfirmed",
@@ -250,7 +249,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 	if inputs.TargetAuthMethod != "" && inputs.PreferGateway && knownTargetAuthMethod(inputs.TargetAuthMethod) {
 		for _, row := range auth.TargetMappings {
 			if !row.GatewayCompatible {
-				oqs = append(oqs, types.OpenQuestion{
+				oqs = append(oqs, OpenQuestion{
 					ID:        "auth_target_gateway_incompatible",
 					ClusterID: c.Name,
 					Title:     fmt.Sprintf("`target_auth_method: %s` set but source auth `%s` is gateway-incompatible", inputs.TargetAuthMethod, row.SourceAuth),
@@ -277,7 +276,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 				"```yaml\nclusters:\n  %s:\n    peak_ingress_mbps: 100   # replace with your MBps\n    peak_egress_mbps:  300\n```\n\n"+
 				"**Option B — defer to the Confluent account team** to size against actual workload rates.", c.Name)
 		}
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "missing_p95_metrics",
 			ClusterID:  c.Name,
 			Title:      fmt.Sprintf("No %s throughput metrics — sizing fell back to SLA floor", percentileHeader(inputs.SizingPercentile)),
@@ -286,16 +285,17 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		})
 	}
 	if !aclScanRan(c) && !isServerless(c) {
-		oqs = append(oqs, types.OpenQuestion{
-			ID:         "acls_not_scanned",
-			ClusterID:  c.Name,
-			Title:      "Admin scan didn't populate ACLs — cap-vs-Enterprise rule was skipped",
-			Body:       "The `acl_count_exceeds_cap` hard-limit rule needs a successful ACL scan to evaluate. Either the scan didn't run, or `--skip-acls` was passed; without the ACL list the rule is treated as inconclusive and the verdict resolves on the other rules.",
+		oqs = append(oqs, OpenQuestion{
+			ID:        "acls_not_scanned",
+			ClusterID: c.Name,
+			Title:     "Admin scan didn't populate ACLs — cap-vs-Enterprise rule was skipped",
+			Body:      "The `acl_count_exceeds_cap` hard-limit rule needs a successful ACL scan to evaluate. Either the scan didn't run, or `--skip-acls` was passed; without the ACL list the rule is treated as inconclusive and the verdict resolves on the other rules.",
+			// `kcp scan clusters` doesn't take --region — it reads region from the state file.
 			HowToClose: fmt.Sprintf("Re-run `kcp scan clusters --source-type msk --credentials-file msk-credentials.yaml` without `--skip-acls`. The credentials file is a YAML with the admin Kafka credentials (SASL/IAM or SCRAM) — see `kcp scan clusters --help` for the schema, or [the kcp docs](https://confluentinc.github.io/kcp/command-reference/scan/clusters/) for a sample.\n\nSample `msk-credentials.yaml`:\n```yaml\nclusters:\n  - cluster_arn: <arn>\n    authentication_type: SASL_SCRAM        # or AWS_MSK_IAM\n    sasl_scram_username: <username>        # for SASL/SCRAM\n    sasl_scram_password: <password>\n```\n\nOR declare the ACL count directly in `plan-inputs.yaml`:\n```yaml\nclusters:\n  %s:\n    acl_count: 150   # replace with your actual ACL count\n```", c.Name),
 		})
 	}
 	if brokerInventoryGap(c) {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "broker_inventory_empty",
 			ClusterID:  c.Name,
 			Title:      "Source environment shows 0 brokers — likely an incomplete scan",
@@ -314,7 +314,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		default:
 			body = "`KafkaAdminClientInformation.Topics.Summary.Topics` is 0. The Source Environment table reads as `Topics: 0`, which is almost certainly wrong for a real MSK cluster (system topics alone usually push the count above zero)."
 		}
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "topic_inventory_empty",
 			ClusterID:  c.Name,
 			Title:      "Source environment shows 0 topics — likely an incomplete scan",
@@ -323,7 +323,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 		})
 	}
 	if hasUnknownClusterType(c) {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "cluster_type_unrecognised",
 			ClusterID:  c.Name,
 			Title:      "MSK cluster discriminator unrecognised — Plan treated as Provisioned with empty fields",
@@ -333,7 +333,7 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 	}
 	if privateLinkSizingExceedsCap(sizing, ct, net, cfg) {
 		cap := cfg.EnterpriseCaps.PrivateLinkMaxECKU
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "networking_privatelink_over_cap",
 			ClusterID:  c.Name,
 			Title:      fmt.Sprintf("PrivateLink trigger fired but cluster sizing exceeds the %d-eCKU PrivateLink cap on Enterprise", cap),
@@ -351,10 +351,10 @@ func detectOpenQuestions(c types.ProcessedCluster, sizing types.ClusterSizing, c
 }
 
 // detectOSKSourceOpenQuestion surfaces a fleet-wide OQ when the
-// state file contains OSK (open-source Kafka, on-prem) clusters.
+// state file contains Apache Kafka (self-managed, on-prem) clusters.
 // `kcp report plan` covers MSK only today; without this OQ those
 // clusters would be silently dropped from the plan.
-func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestion {
+func detectOSKSourceOpenQuestion(state report.ProcessedState) []OpenQuestion {
 	var oskCount int
 	for _, src := range state.Sources {
 		if src.OSKData != nil {
@@ -368,11 +368,11 @@ func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestio
 	if oskCount == 1 {
 		noun, verb = "cluster", "isn't"
 	}
-	return []types.OpenQuestion{{
+	return []OpenQuestion{{
 		ID:         "osk_source_unsupported",
 		Title:      fmt.Sprintf("%d on-prem Kafka %s in the state file %s covered by `kcp report plan`", oskCount, noun, verb),
-		Body:       "The state file includes `osk_sources` clusters (open-source Kafka, e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the OSK clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
-		HowToClose: "Plan the OSK clusters separately: run `kcp report plan` against a state file slice that only contains the OSK clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
+		Body:       "The state file includes `osk_sources` clusters (Apache Kafka, e.g. on-prem deployments). `kcp report plan` currently scopes to MSK source clusters only — the Apache Kafka clusters are silently dropped from every section above. The MSK-shaped recommendations still stand for any MSK clusters in the same state file.",
+		HowToClose: "Plan the Apache Kafka clusters separately: run `kcp report plan` against a state file slice that only contains the Apache Kafka clusters, OR work with your Confluent account team on a manual migration plan for the on-prem fleet.",
 	}}
 }
 
@@ -381,7 +381,7 @@ func detectOSKSourceOpenQuestion(state types.ProcessedState) []types.OpenQuestio
 // Plan's GeneratedAt time; if the state was empty (zero timestamp) the
 // OQ is suppressed because there's nothing to compare against.
 // `staleDays` comes from plan-config.yaml `thresholds.stale_state_days`.
-func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDays int) []types.OpenQuestion {
+func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDays int) []OpenQuestion {
 	if stateTimestamp.IsZero() {
 		return nil
 	}
@@ -395,7 +395,7 @@ func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDa
 	// "7 days old" reads as wrong-by-a-day). Math.Round avoids
 	// truncation toward zero.
 	days := int(math.Round(age.Hours() / 24))
-	return []types.OpenQuestion{{
+	return []OpenQuestion{{
 		ID:         "state_file_stale",
 		Title:      fmt.Sprintf("State file is %d days old — verdicts may not reflect current source state", days),
 		Body:       fmt.Sprintf("The source state file is dated `%s`; this Plan was generated `%s` (%d days later). Verdicts above (ACL-cap, broker counts, throughput sizing) are computed against the state file as-is, but the source environment may have drifted since.", stateTimestamp.UTC().Format("2006-01-02 15:04:05 UTC"), generatedAt.UTC().Format("2006-01-02 15:04:05 UTC"), days),
@@ -415,10 +415,10 @@ func detectStaleStateOQ(stateTimestamp time.Time, generatedAt time.Time, staleDa
 // overrides to Blue/Green, the gateway-intent / prereq OQs add a note
 // that those clusters are exempt — otherwise the OQ reads as if it
 // applies to the entire fleet.
-func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types.ClusterCutoverOverride, inputs types.PlanInputsResolved) []types.OpenQuestion {
-	var oqs []types.OpenQuestion
+func detectCutoverOpenQuestions(cutover CutoverDecision, overrides []ClusterCutoverOverride, inputs PlanInputsResolved) []OpenQuestion {
+	var oqs []OpenQuestion
 	if !knownDowntimeTolerance(inputs.DowntimeTolerance) {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "downtime_tolerance_unknown",
 			Title:      fmt.Sprintf("`downtime_tolerance: %s` is not a recognised value — defaulted to Stop-Restart-Repeat", inputs.DowntimeTolerance),
 			Body:       "The Plan only recognises `zero | seconds_per_service | minutes_per_service | scheduled_window_sequential | scheduled_window_all_at_once | let_confluent_choose`. The current value falls outside the enum, so the Plan inherits the Confluent default (Stop-Restart-Repeat) silently — which is probably not what you intended.",
@@ -436,8 +436,8 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 		exemptSuffix = fmt.Sprintf(" Per-cluster Blue/Green overrides (`%s`) sidestep the gateway question — this OQ applies to the rest of the fleet.", strings.Join(gatewayExempt, "`, `"))
 	}
 	switch cutover.RecommendationStatus {
-	case types.RecommendationDegradedAwaitingOQ:
-		oqs = append(oqs, types.OpenQuestion{
+	case RecommendationDegradedAwaitingOQ:
+		oqs = append(oqs, OpenQuestion{
 			ID:    "gateway_intent_unconfirmed",
 			Title: "Gateway opt-in started but not followed through — pick plain Cluster Linking or commit to the gateway",
 			Body:  "You set `prefer_gateway: true` in `plan-inputs.yaml`, but both gateway-infra prereqs are still at `not_started`. The Plan can't recommend the gateway path until at least one prereq is being worked on, so plain Cluster Linking applies in the meantime." + exemptSuffix,
@@ -447,8 +447,8 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 				"**Option B — commit to the gateway path.** Mark each infra prereq as you start it:\n" +
 				"```yaml\nprefer_gateway: true\nconfluent_for_kubernetes_status: in_progress   # not_started | in_progress | complete\ncc_gateway_license_status:       in_progress   # not_started | in_progress | complete\n```",
 		})
-	case types.RecommendationDegradedPrereqsPending:
-		oqs = append(oqs, types.OpenQuestion{
+	case RecommendationDegradedPrereqsPending:
+		oqs = append(oqs, OpenQuestion{
 			ID:    "gateway_prereqs_pending",
 			Title: "Gateway prereqs not yet at `in_progress` — advance them or fall back to plain Cluster Linking",
 			Body:  fmt.Sprintf("You set `prefer_gateway: true` and at least one gateway-infra prereq is still at `not_started`: %s. The gateway-mediated path needs both at `in_progress` or `complete` to be recommended; plain Cluster Linking applies until they advance.%s", pendingPrereqList(inputs), exemptSuffix),
@@ -463,17 +463,17 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 	// gateway. If the customer asks for it but mediation isn't possible
 	// (opt-out OR ambiguous OR prereqs pending), surface a cause-specific
 	// OQ. Blue/Green sidesteps the gateway entirely and never trips this.
-	if inputs.DowntimeTolerance == DowntimeSecondsPerService && cutover.GatewayMediated != types.GatewayMediatedTrue && cutover.Style != types.CutoverBlueGreen {
+	if inputs.DowntimeTolerance == DowntimeSecondsPerService && cutover.GatewayMediated != GatewayMediatedTrue && cutover.Style != CutoverBlueGreen {
 		body := "seconds_per_service downtime tolerance requires CC-Gateway mediation (the gateway's 30–90s `BROKER_NOT_AVAILABLE` window is what makes sub-minute cutovers possible). The current Plan doesn't mediate via the gateway because: "
 		switch {
 		case !inputs.PreferGateway:
 			body += "`prefer_gateway: false`. Set `prefer_gateway: true` OR relax `downtime_tolerance` to `minutes_per_service` (plain Cluster Linking)."
-		case cutover.RecommendationStatus == types.RecommendationDegradedAwaitingOQ:
+		case cutover.RecommendationStatus == RecommendationDegradedAwaitingOQ:
 			body += "gateway intent is unconfirmed (see the related Open Question above). Commit to the gateway path or relax `downtime_tolerance`."
 		default:
 			body += "one or more gateway prereqs are still at `not_started`. Move pending prereqs to `in_progress`/`complete`, OR relax `downtime_tolerance` to `minutes_per_service`."
 		}
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "downtime_tolerance_requires_gateway",
 			Title:      "`downtime_tolerance: seconds_per_service` requires the gateway but the recommendation is plain Cluster Linking",
 			Body:       body,
@@ -490,10 +490,10 @@ func detectCutoverOpenQuestions(cutover types.CutoverDecision, overrides []types
 // affected cluster is obvious). Per-cluster typos silently fall back
 // to the per-source default in decideAuth via effectiveTarget, so
 // without this detector they're invisible to the customer.
-func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []types.OpenQuestion {
-	var oqs []types.OpenQuestion
+func detectAuthFleetOpenQuestions(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
+	var oqs []OpenQuestion
 	if !knownTargetAuthMethod(inputs.TargetAuthMethod) {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "target_auth_method_unknown",
 			Title:      fmt.Sprintf("`target_auth_method: %s` is not a recognised value — per-source defaults applied instead", inputs.TargetAuthMethod),
 			Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The current value falls outside the enum; the per-source `auth_mapping` default is used silently for every cluster.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth),
@@ -509,11 +509,11 @@ func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs type
 		if knownTargetAuthMethod(value) {
 			continue
 		}
-		oqs = append(oqs, types.OpenQuestion{
-			ID:         "target_auth_method_unknown",
-			ClusterID:  name,
-			Title:      fmt.Sprintf("`clusters[%s].target_auth_method: %s` is not a recognised value — per-source default applied for this cluster", name, value),
-			Body:       fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The override falls outside the enum; the per-source `auth_mapping` default is used silently for `%s`.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth, name),
+		oqs = append(oqs, OpenQuestion{
+			ID:        "target_auth_method_unknown",
+			ClusterID: name,
+			Title:     fmt.Sprintf("`clusters[%s].target_auth_method: %s` is not a recognised value — per-source default applied for this cluster", name, value),
+			Body:      fmt.Sprintf("The Plan only recognises `%s | %s | %s`. The override falls outside the enum; the per-source `auth_mapping` default is used silently for `%s`.", TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth, name),
 			HowToClose: fmt.Sprintf("In `plan-inputs.yaml`, set the per-cluster override to a recognised value:\n\n"+
 				"```yaml\nclusters:\n  %s:\n    target_auth_method: %s   # %s | %s | %s\n```\n\nOR remove the line to keep the per-source default from `auth_mapping`.", name, TargetAuthAPIKeys, TargetAuthAPIKeys, TargetAuthMTLS, TargetAuthOAuth),
 		})
@@ -526,7 +526,7 @@ func detectAuthFleetOpenQuestions(clusters []types.ProcessedCluster, inputs type
 // stable alphabetical order. Unknown-cluster overrides are filtered
 // out here; `detectUnknownClusterOverrides` handles surfacing them as
 // their own OQ. Returns nil when no Raw inputs exist.
-func sortedKnownClusterOverrideNames(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []string {
+func sortedKnownClusterOverrideNames(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []string {
 	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
 		return nil
 	}
@@ -550,7 +550,7 @@ func sortedKnownClusterOverrideNames(clusters []types.ProcessedCluster, inputs t
 // cluster. Without this, a typo'd cluster name (e.g. `clusters[trust]`
 // against a fleet with no `trust` cluster) silently produces no
 // override and the reader has no signal that their input was rejected.
-func detectUnknownClusterOverrides(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []types.OpenQuestion {
+func detectUnknownClusterOverrides(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
 	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
 		return nil
 	}
@@ -569,9 +569,9 @@ func detectUnknownClusterOverrides(clusters []types.ProcessedCluster, inputs typ
 		return nil
 	}
 	sort.Strings(unknown)
-	oqs := make([]types.OpenQuestion, 0, len(unknown))
+	oqs := make([]OpenQuestion, 0, len(unknown))
 	for _, name := range unknown {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "cluster_override_unknown_cluster",
 			Title:      fmt.Sprintf("`clusters[%s]` in `plan-inputs.yaml` doesn't match any scanned cluster — override silently ignored", name),
 			Body:       fmt.Sprintf("The plan-inputs `clusters:` map names `%s`, but the state file contains no cluster with that name. The override block has no effect; either the cluster name is a typo, or the state file is from a different source than expected.", name),
@@ -588,7 +588,7 @@ func detectUnknownClusterOverrides(clusters []types.ProcessedCluster, inputs typ
 // silently dropped — so the customer needs a signal to disambiguate
 // (typically by renaming on the source side, or by scoping the plan
 // run to one region's state file).
-func detectAmbiguousClusterOverrides(state types.ProcessedState, inputs types.PlanInputsResolved) []types.OpenQuestion {
+func detectAmbiguousClusterOverrides(state report.ProcessedState, inputs PlanInputsResolved) []OpenQuestion {
 	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
 		return nil
 	}
@@ -613,9 +613,9 @@ func detectAmbiguousClusterOverrides(state types.ProcessedState, inputs types.Pl
 		return nil
 	}
 	sort.Strings(ambiguous)
-	oqs := make([]types.OpenQuestion, 0, len(ambiguous))
+	oqs := make([]OpenQuestion, 0, len(ambiguous))
 	for _, name := range ambiguous {
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:         "cluster_override_ambiguous",
 			Title:      fmt.Sprintf("`clusters[%s]` matches %d scanned clusters with the same name — override silently dropped", name, counts[name]),
 			Body:       fmt.Sprintf("The plan-inputs `clusters:` map names `%s`, and the state file contains %d clusters with that name (across different regions). The override could non-deterministically apply to the wrong one, so kcp dropped it instead of guessing.", name, counts[name]),
@@ -634,18 +634,18 @@ func detectAmbiguousClusterOverrides(state types.ProcessedState, inputs types.Pl
 // When the override value isn't in the recognised enum, the entry
 // carries OverrideRejected + RejectedOverrideValue so a JSON consumer
 // can detect rejected overrides structurally (mirrors AuthDecision).
-func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet types.CutoverDecision, inputs types.PlanInputsResolved) []types.ClusterCutoverOverride {
+func computeCutoverOverrides(clusters []report.ProcessedCluster, fleet CutoverDecision, inputs PlanInputsResolved) []ClusterCutoverOverride {
 	if inputs.Raw == nil || len(inputs.Raw.Clusters) == 0 {
 		return nil
 	}
-	var out []types.ClusterCutoverOverride
+	var out []ClusterCutoverOverride
 	for _, c := range clusters {
 		raw, ok := inputs.Raw.Clusters[c.Name]
 		if !ok || (raw.DowntimeTolerance == nil && raw.SubPattern == nil) {
 			continue
 		}
 		clusterInputs := applyClusterOverride(inputs, inputs.Raw, c.Name)
-		dec := decideCutover([]types.ProcessedCluster{c}, clusterInputs)
+		dec := decideCutover([]report.ProcessedCluster{c}, clusterInputs)
 		// Gateway prereqs are fleet-scoped — a per-cluster override
 		// can't earn its own gateway path. Inherit the fleet's
 		// mediation verdict unless the override is Blue/Green, which
@@ -657,15 +657,15 @@ func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet types.Cuto
 		// IAM / non-IAM fleets. (See `detectPerClusterGatewayIncompat`
 		// for the separate OQ that surfaces the cross-check.)
 		mediated := fleet.GatewayMediated
-		if dec.Style == types.CutoverBlueGreen {
-			mediated = types.GatewayMediatedNotApplicable
+		if dec.Style == CutoverBlueGreen {
+			mediated = GatewayMediatedNotApplicable
 		}
 		rejected, rejectedValue := rejectedCutoverOverride(raw)
 		styleMatchesFleet := dec.Style == fleet.Style && dec.SubPattern == fleet.SubPattern && mediated == fleet.GatewayMediated
 		if styleMatchesFleet && !rejected {
 			continue
 		}
-		out = append(out, types.ClusterCutoverOverride{
+		out = append(out, ClusterCutoverOverride{
 			ClusterID:             c.Name,
 			Style:                 dec.Style,
 			SubPattern:            dec.SubPattern,
@@ -684,17 +684,17 @@ func computeCutoverOverrides(clusters []types.ProcessedCluster, fleet types.Cuto
 // this, the customer's per-cluster choice is silently lost — the
 // cluster falls back to the fleet's plain Cluster Linking shape and
 // the reader has no signal.
-func detectPerClusterGatewayIncompat(clusters []types.ProcessedCluster, fleet types.CutoverDecision, inputs types.PlanInputsResolved) []types.OpenQuestion {
-	if fleet.GatewayMediated == types.GatewayMediatedTrue {
+func detectPerClusterGatewayIncompat(clusters []report.ProcessedCluster, fleet CutoverDecision, inputs PlanInputsResolved) []OpenQuestion {
+	if fleet.GatewayMediated == GatewayMediatedTrue {
 		return nil
 	}
-	var oqs []types.OpenQuestion
+	var oqs []OpenQuestion
 	for _, name := range sortedKnownClusterOverrideNames(clusters, inputs) {
 		cluster := inputs.Raw.Clusters[name]
 		if cluster.DowntimeTolerance == nil || *cluster.DowntimeTolerance != DowntimeSecondsPerService {
 			continue
 		}
-		oqs = append(oqs, types.OpenQuestion{
+		oqs = append(oqs, OpenQuestion{
 			ID:        "downtime_tolerance_requires_gateway",
 			ClusterID: name,
 			Title:     fmt.Sprintf("`clusters[%s].downtime_tolerance: seconds_per_service` requires the gateway but the fleet's recommendation is plain Cluster Linking", name),
@@ -711,10 +711,10 @@ func detectPerClusterGatewayIncompat(clusters []types.ProcessedCluster, fleet ty
 // question. Used by detectCutoverOpenQuestions to add a clarifying
 // note to fleet-wide gateway OQs so the reader doesn't think the OQ
 // applies to gateway-exempt clusters too.
-func bgOverrideClusterNames(overrides []types.ClusterCutoverOverride) []string {
+func bgOverrideClusterNames(overrides []ClusterCutoverOverride) []string {
 	var out []string
 	for _, o := range overrides {
-		if o.Style == types.CutoverBlueGreen {
+		if o.Style == CutoverBlueGreen {
 			out = append(out, o.ClusterID)
 		}
 	}
@@ -725,7 +725,7 @@ func bgOverrideClusterNames(overrides []types.ClusterCutoverOverride) []string {
 // values are outside the recognised enum. Returns the first rejected
 // value found (downtime_tolerance takes precedence over sub_pattern)
 // for the renderer / JSON consumer to display.
-func rejectedCutoverOverride(raw types.ClusterPlanInputs) (bool, string) {
+func rejectedCutoverOverride(raw ClusterPlanInputs) (bool, string) {
 	if raw.DowntimeTolerance != nil && !knownDowntimeTolerance(*raw.DowntimeTolerance) {
 		return true, *raw.DowntimeTolerance
 	}
@@ -743,14 +743,14 @@ func rejectedCutoverOverride(raw types.ClusterPlanInputs) (bool, string) {
 // for cluster names that match an actual scanned cluster;
 // unknown-name overrides are handled by
 // detectUnknownClusterOverrides.
-func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs types.PlanInputsResolved) []types.OpenQuestion {
-	var oqs []types.OpenQuestion
+func detectClusterCutoverOpenQuestions(clusters []report.ProcessedCluster, inputs PlanInputsResolved) []OpenQuestion {
+	var oqs []OpenQuestion
 	for _, name := range sortedKnownClusterOverrideNames(clusters, inputs) {
 		cluster := inputs.Raw.Clusters[name]
 		if cluster.DowntimeTolerance != nil {
 			value := *cluster.DowntimeTolerance
 			if !knownDowntimeTolerance(value) {
-				oqs = append(oqs, types.OpenQuestion{
+				oqs = append(oqs, OpenQuestion{
 					ID:        "downtime_tolerance_unknown",
 					ClusterID: name,
 					Title:     fmt.Sprintf("`clusters[%s].downtime_tolerance: %s` is not a recognised value — treated as `let_confluent_choose` (Stop-Restart-Repeat) for this cluster", name, value),
@@ -763,7 +763,7 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 		if cluster.SubPattern != nil {
 			value := *cluster.SubPattern
 			if !knownCutoverSubPattern(value) {
-				oqs = append(oqs, types.OpenQuestion{
+				oqs = append(oqs, OpenQuestion{
 					ID:        "sub_pattern_unknown",
 					ClusterID: name,
 					Title:     fmt.Sprintf("`clusters[%s].sub_pattern: %s` is not a recognised value — `app-by-app` applied for this cluster", name, value),
@@ -780,7 +780,7 @@ func detectClusterCutoverOpenQuestions(clusters []types.ProcessedCluster, inputs
 // pendingPrereqList renders the list of gateway prereqs still at
 // `not_started`, for inclusion in an OQ body. Inline rather than a
 // helper-with-cases because the body string is one-shot per Plan.
-func pendingPrereqList(inputs types.PlanInputsResolved) string {
+func pendingPrereqList(inputs PlanInputsResolved) string {
 	var pending []string
 	if inputs.ConfluentForKubernetesStatus == PrereqNotStarted {
 		pending = append(pending, "`confluent_for_kubernetes_status`")
@@ -808,7 +808,7 @@ func openQuestionPriority(id string) int {
 // CalculateMetricsAggregates per invocation. Skips clusters where
 // Aggregates is already populated (e.g. test fixtures that pre-set it)
 // or where there are no raw metrics to fold.
-func backfillAggregates(state *types.ProcessedState) {
+func backfillAggregates(state *report.ProcessedState) {
 	for i := range state.Sources {
 		if state.Sources[i].MSKData == nil {
 			continue
@@ -824,8 +824,8 @@ func backfillAggregates(state *types.ProcessedState) {
 	}
 }
 
-func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
-	var out []types.ProcessedCluster
+func collectClusters(state report.ProcessedState) []report.ProcessedCluster {
+	var out []report.ProcessedCluster
 	for _, src := range state.Sources {
 		if src.MSKData == nil {
 			continue
@@ -837,7 +837,7 @@ func collectClusters(state types.ProcessedState) []types.ProcessedCluster {
 	return out
 }
 
-func countRegions(state types.ProcessedState) int {
+func countRegions(state report.ProcessedState) int {
 	regions := map[string]struct{}{}
 	for _, src := range state.Sources {
 		if src.MSKData != nil {
@@ -860,25 +860,25 @@ func regionFlag(region string) string {
 	return " --region " + region
 }
 
-func topicCount(c types.ProcessedCluster) int {
+func topicCount(c report.ProcessedCluster) int {
 	if c.KafkaAdminClientInformation.Topics == nil {
 		return 0
 	}
 	return c.KafkaAdminClientInformation.Topics.Summary.Topics
 }
 
-func brokerCount(c types.ProcessedCluster) int {
+func brokerCount(c report.ProcessedCluster) int {
 	return len(c.AWSClientInformation.Nodes)
 }
 
-func buildSizingAppendix(sizings []types.ClusterSizing, cfg *PlanConfig, inputs types.PlanInputsResolved) []types.SizingMathDetail {
+func buildSizingAppendix(sizings []ClusterSizing, cfg *PlanConfig, inputs PlanInputsResolved) []SizingMathDetail {
 	caps := cfg.EnterpriseCaps
-	out := make([]types.SizingMathDetail, 0, len(sizings))
+	out := make([]SizingMathDetail, 0, len(sizings))
 	for _, s := range sizings {
 		if s.Degraded {
 			continue
 		}
-		out = append(out, types.SizingMathDetail{
+		out = append(out, SizingMathDetail{
 			ClusterID: s.ClusterID,
 			Formula: fmt.Sprintf("CEIL(max(%sIn/%d, %sOut/%d, partitions/%d) * (1 + %.2f headroom))",
 				percentileHeader(inputs.SizingPercentile), caps.PerECKUIngressMBps,

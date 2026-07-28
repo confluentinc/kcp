@@ -65,7 +65,7 @@ export const TCOInputs = () => {
 
   const tabs: { id: SourceType; label: string; count: number }[] = [
     { id: SOURCE_TYPES.MSK, label: 'MSK', count: mskClusters.length },
-    { id: SOURCE_TYPES.OSK, label: 'OSK', count: oskClusters.length },
+    { id: SOURCE_TYPES.OSK, label: 'Apache Kafka', count: oskClusters.length },
   ]
 
   const renderColumnHeader = (cluster: typeof activeClusters[number]) => {
@@ -148,7 +148,7 @@ export const TCOInputs = () => {
       {activeClusters.length === 0 ? (
         <div className="bg-warning/10 border border-warning/20 rounded-md p-4">
           <p className="text-warning">
-            No {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'OSK'} clusters found. Upload a KCP state file with {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'OSK'} cluster data.
+            No {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'Apache Kafka'} clusters found. Upload a KCP state file with {activeTab === SOURCE_TYPES.MSK ? 'MSK' : 'Apache Kafka'} cluster data.
           </p>
         </div>
       ) : (

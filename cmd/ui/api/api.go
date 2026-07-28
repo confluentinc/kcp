@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,16 +13,20 @@ import (
 
 	"github.com/confluentinc/kcp/cmd/ui/frontend"
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
+	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/fatih/color"
 	"github.com/labstack/echo/v4"
 )
 
 type ReportService interface {
-	ProcessState(state types.State) types.ProcessedState
-	FilterRegionCosts(processedState types.ProcessedState, regionName string, startTime, endTime *time.Time) (*types.ProcessedRegionCosts, error)
-	FilterMetrics(processedState types.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterClusterMetrics(processedState types.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	ProcessState(state types.State) report.ProcessedState
+	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
+	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -66,9 +71,9 @@ func NewUI(reportService ReportService, targetInfraHCLService hcl.TargetInfraGen
 			(len(state.SchemaRegistries.ConfluentSchemaRegistry) > 0 || len(state.SchemaRegistries.AWSGlue) > 0)
 
 		if !hasSources && hasSchemaRegistries {
-			slog.Warn("No cluster sources found — run kcp discover (MSK) or kcp scan clusters (OSK) to populate", "path", opts.StateFile)
+			slog.Warn("No cluster sources found — run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate", "path", opts.StateFile)
 		} else if !hasSources && !hasSchemaRegistries {
-			return nil, fmt.Errorf("state file %q contains no sources or schema registries — run kcp discover (MSK) or kcp scan clusters (OSK) to populate it", opts.StateFile)
+			return nil, fmt.Errorf("state file %q contains no sources or schema registries — run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it", opts.StateFile)
 		}
 	}
 
@@ -114,6 +119,10 @@ func (ui *UI) Run() error {
 
 	e.GET("/metrics/:region/:cluster", ui.handleGetMetrics)
 	e.GET("/metrics/osk/:clusterId", ui.handleGetOSKMetrics)
+	// Connect is Kafka-distribution agnostic — one route serves both MSK and OSK.
+	// The literal "connect" first segment avoids shadowing by the static "osk" node
+	// and the "/metrics/:region/:cluster" param route.
+	e.GET("/metrics/connect/:sourceType", ui.handleGetConnectMetrics)
 	e.GET("/costs/:region", ui.handleGetCosts)
 
 	e.POST("/upload-state", ui.handleUploadState)
@@ -224,7 +233,7 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 
 	if state.OSKSources == nil {
 		return c.JSON(http.StatusNotFound, map[string]any{
-			"error": "No OSK sources in state",
+			"error": "No Apache Kafka sources in state",
 		})
 	}
 
@@ -247,9 +256,85 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 	}
 
 	if filteredMetrics.Metrics == nil {
+		// An empty filtered result is ambiguous: the cluster either never had metrics
+		// collected, or it has metrics but none fall in the selected date range. Only
+		// the former warrants the "run a scan" hint. When a date filter was applied,
+		// re-probe without it (reusing the same lookup) to tell them apart; an
+		// out-of-range window then falls through to a normal empty 200 so the UI shows
+		// an empty chart rather than a misleading error. FilterClusterMetrics is shared
+		// with the `kcp report metrics` CLI, so the distinction is made here in the
+		// handler rather than by changing the filter's contract.
+		neverCollected := true
+		if startTime != nil || endTime != nil {
+			if unfiltered, uErr := ui.reportService.FilterClusterMetrics(processedState, clusterId, "osk", nil, nil); uErr == nil && unfiltered.Metrics != nil {
+				neverCollected = false
+			}
+		}
+		if neverCollected {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "No metrics available for this cluster",
+				"message": "Run 'kcp scan clusters --source-type apache-kafka --metrics jolokia' or '--metrics prometheus' to collect metrics",
+			})
+		}
+	}
+
+	return c.JSON(http.StatusOK, filteredMetrics)
+}
+
+// handleGetConnectMetrics serves self-managed Connect metrics for either an MSK or OSK
+// cluster. sourceType is an explicit path param ({msk, osk}); clusterId is a query param
+// (OSK cluster id, or an MSK ARN URL-encoded by the client). The filter searches only the
+// named source set, so a cluster id never resolves across source types.
+func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
+	state, err := ui.getStateBySession(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "No state data available",
+			"message": err.Error(),
+		})
+	}
+
+	sourceType := c.Param("sourceType")
+	if sourceType != "msk" && sourceType != "osk" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid source type",
+			"message": fmt.Sprintf("source type %q is not supported (must be 'msk' or 'osk')", sourceType),
+		})
+	}
+
+	clusterId := c.QueryParam("clusterId")
+	if clusterId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Missing cluster identifier",
+			"message": "clusterId query parameter is required",
+		})
+	}
+
+	startTime, endTime, err := parseDateRange(c)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]any{
+			"error":   "Invalid date format",
+			"message": err.Error(),
+		})
+	}
+
+	processedState := ui.reportService.ProcessState(*state)
+
+	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, startTime, endTime)
+	if err != nil {
+		// "Never collected" is the only case that warrants the scan-guidance hint.
+		// A cluster that HAS metrics but whose selected date range excludes them all
+		// is not an error — it falls through to a normal (empty) 200 below, so the
+		// user sees an empty chart rather than a misleading "run a scan" message.
+		if errors.Is(err, report.ErrNoConnectMetricsCollected) {
+			return c.JSON(http.StatusNotFound, map[string]any{
+				"error":   "No Connect metrics available for this cluster",
+				"message": "Run 'kcp scan self-managed-connectors --metrics jolokia' or '--metrics prometheus' to collect Connect metrics",
+			})
+		}
 		return c.JSON(http.StatusNotFound, map[string]any{
-			"error":   "No metrics available for this cluster",
-			"message": "Run 'kcp scan clusters --source-type osk --metrics jolokia' or '--metrics prometheus' to collect metrics",
+			"error":   "Cluster not found or no Connect metrics available",
+			"message": err.Error(),
 		})
 	}
 
@@ -324,7 +409,7 @@ func (ui *UI) handleUploadState(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrationAssets(c echo.Context) error {
-	var req types.MigrationWizardRequest
+	var req hclrequests.MigrationWizardRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -370,7 +455,7 @@ func (ui *UI) handleMigrationAssets(c echo.Context) error {
 	return c.JSON(http.StatusCreated, terraformModules)
 }
 
-func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
+func validateClusterLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	if req.TargetClusterId == "" {
@@ -393,7 +478,7 @@ func validateClusterLinkRequest(req types.MigrationWizardRequest) error {
 	return nil
 }
 
-func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
+func validatePrivateLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	// Check required fields
@@ -439,7 +524,7 @@ func validatePrivateLinkRequest(req types.MigrationWizardRequest) error {
 	return nil
 }
 
-func validatePrivateClusterLinkRequest(req types.MigrationWizardRequest) error {
+func validatePrivateClusterLinkRequest(req hclrequests.MigrationWizardRequest) error {
 	var missingFields []string
 
 	if req.VpcId == "" {
@@ -484,7 +569,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 	// Default PreventDestroy to true before binding. If the JSON request includes
 	// "prevent_destroy": false, the binding will override this. If the field is
 	// omitted from the request, this default of true is preserved.
-	req := types.TargetClusterWizardRequest{
+	req := hclrequests.TargetClusterWizardRequest{
 		PreventDestroy: true,
 	}
 	if err := c.Bind(&req); err != nil {
@@ -543,7 +628,7 @@ func (ui *UI) handleTargetClusterAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
-	var req types.MigrateAclsRequest
+	var req hclrequests.MigrateAclsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -568,7 +653,7 @@ func (ui *UI) handleMigrateAclsAssets(c echo.Context) error {
 		if err != nil {
 			return c.JSON(http.StatusNotFound, map[string]any{
 				"error":   "Cluster not found",
-				"message": fmt.Sprintf("OSK cluster '%s' not found: %v", req.ClusterId, err),
+				"message": fmt.Sprintf("Apache Kafka cluster '%s' not found: %v", req.ClusterId, err),
 			})
 		}
 		allAcls = oskCluster.KafkaAdminClientInformation.Acls
@@ -614,7 +699,7 @@ func (ui *UI) handleMigrateConnectorsAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
-	var req types.MirrorTopicsRequest
+	var req hclrequests.MirrorTopicsRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -625,7 +710,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 	// Default mode is mirror for back-compat with pre-mode-flag clients;
 	// the new wizard always sends Mode explicitly.
 	if req.Mode == "" {
-		req.Mode = types.MigrateTopicsModeMirror
+		req.Mode = hclrequests.MigrateTopicsModeMirror
 	}
 
 	// --mode new emits confluent_kafka_topic resources with partitions and
@@ -633,7 +718,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 	// payload. Hydrate from state using the (source_type, cluster_id) the
 	// wizard sends as hidden fields and the selected_topics name list as the
 	// filter. Mirror mode doesn't need this (cluster link drives configs).
-	if req.Mode == types.MigrateTopicsModeNew {
+	if req.Mode == hclrequests.MigrateTopicsModeNew {
 		if err := ui.hydrateTopicsFromState(c, &req); err != nil {
 			return c.JSON(http.StatusBadRequest, map[string]any{
 				"error":   "Failed to hydrate topic details for new mode",
@@ -663,7 +748,7 @@ func (ui *UI) handleMigrateTopicsAssets(c echo.Context) error {
 // populates req.Topics with full TopicDetails (partitions, configurations) for
 // each name in req.SelectedTopics. New-mode HCL generation needs partition
 // counts and config maps that the wizard's name-only selection can't carry.
-func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequest) error {
+func (ui *UI) hydrateTopicsFromState(c echo.Context, req *hclrequests.MirrorTopicsRequest) error {
 	if req.ClusterId == "" || req.SourceType == "" {
 		return fmt.Errorf("source_type and cluster_id are required for --mode new (wizard should send these as hidden fields)")
 	}
@@ -686,7 +771,7 @@ func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequ
 	case "osk":
 		cluster, err := state.GetOSKClusterByID(req.ClusterId)
 		if err != nil {
-			return fmt.Errorf("lookup OSK cluster %q: %w", req.ClusterId, err)
+			return fmt.Errorf("lookup Apache Kafka cluster %q: %w", req.ClusterId, err)
 		}
 		if cluster.KafkaAdminClientInformation.Topics != nil {
 			details = cluster.KafkaAdminClientInformation.Topics.Details
@@ -714,8 +799,8 @@ func (ui *UI) hydrateTopicsFromState(c echo.Context, req *types.MirrorTopicsRequ
 // flattenMigrateTopicsProject concatenates per-topic .tf files into a single
 // main.tf string so the legacy UI wizard contract stays intact while the CLI
 // uses the per-file layout.
-func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject) types.TerraformFiles {
-	out := types.TerraformFiles{}
+func flattenMigrateTopicsProject(project hcltypes.MigrationScriptsTerraformProject) hcltypes.TerraformFiles {
+	out := hcltypes.TerraformFiles{}
 	if len(project.Folders) == 0 {
 		return out
 	}
@@ -738,7 +823,7 @@ func flattenMigrateTopicsProject(project types.MigrationScriptsTerraformProject)
 }
 
 func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
-	var req types.MigrateSchemasRequest
+	var req hclrequests.MigrateSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",
@@ -758,7 +843,7 @@ func (ui *UI) handleMigrateSchemasAssets(c echo.Context) error {
 }
 
 func (ui *UI) handleMigrateGlueSchemasAssets(c echo.Context) error {
-	var req types.MigrateGlueSchemasRequest
+	var req hclrequests.MigrateGlueSchemasRequest
 	if err := c.Bind(&req); err != nil {
 		return c.JSON(http.StatusBadRequest, map[string]any{
 			"error":   "Invalid request body",

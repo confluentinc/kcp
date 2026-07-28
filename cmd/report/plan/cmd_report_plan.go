@@ -195,7 +195,7 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 // declaresAtLeastOneCluster reports whether `in.Clusters` carries at
 // least one cluster entry with a `region` set. The plan-inputs-only
 // path requires this — synthesis lands clusters into region buckets.
-func declaresAtLeastOneCluster(in *types.PlanInputs) bool {
+func declaresAtLeastOneCluster(in *plan.PlanInputs) bool {
 	for _, c := range in.Clusters {
 		if c.Region != nil && *c.Region != "" {
 			return true

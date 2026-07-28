@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Button } from '@/components/common/ui/button'
 
 interface MetricsCodeViewerProps {
@@ -13,6 +14,14 @@ export const MetricsCodeViewer = ({
   onCopy,
   isJSON = false,
 }: MetricsCodeViewerProps) => {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = () => {
+    onCopy()
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   return (
     <div className="space-y-4 min-w-0">
       <div className="bg-secondary rounded-lg p-4 min-w-0 max-w-full">
@@ -21,10 +30,10 @@ export const MetricsCodeViewer = ({
           <Button
             variant="outline"
             size="sm"
-            onClick={onCopy}
+            onClick={handleCopy}
             className="text-xs flex-shrink-0"
           >
-            Copy {label}
+            {copied ? 'Copied!' : `Copy ${label}`}
           </Button>
         </div>
         <div className="w-full overflow-hidden">

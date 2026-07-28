@@ -53,7 +53,7 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 
 func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []SelfManagedConnector) {
 	// Preserve existing metrics when updating connectors
-	var existingMetrics *ProcessedClusterMetrics
+	var existingMetrics *ConnectClusterMetrics
 	if c.SelfManagedConnectors != nil {
 		existingMetrics = c.SelfManagedConnectors.Metrics
 	}
@@ -129,10 +129,23 @@ func mergeAcls(newAcls, oldAcls []Acls) []Acls {
 
 // mergeSelfManagedConnectors merges connectors, with new taking precedence for duplicates (by name)
 func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnectors) *SelfManagedConnectors {
+	// Metrics are resolved up front (prefer-new-fall-back-to-old) so neither
+	// early return below can silently drop a previously-collected metrics set
+	// when one side reports zero connectors (R9).
+	metrics := preferConnectorMetrics(newConnectors, oldConnectors)
+
 	if oldConnectors == nil || len(oldConnectors.Connectors) == 0 {
+		if newConnectors == nil {
+			if metrics == nil {
+				return nil
+			}
+			return &SelfManagedConnectors{Metrics: metrics}
+		}
+		newConnectors.Metrics = metrics
 		return newConnectors
 	}
 	if newConnectors == nil || len(newConnectors.Connectors) == 0 {
+		oldConnectors.Metrics = metrics
 		return oldConnectors
 	}
 
@@ -149,16 +162,20 @@ func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnect
 		merged = append(merged, c)
 	}
 
-	result := &SelfManagedConnectors{Connectors: merged}
+	return &SelfManagedConnectors{Connectors: merged, Metrics: metrics}
+}
 
-	// Preserve metrics: prefer new, fall back to old
-	if newConnectors.Metrics != nil {
-		result.Metrics = newConnectors.Metrics
-	} else if oldConnectors.Metrics != nil {
-		result.Metrics = oldConnectors.Metrics
+// preferConnectorMetrics returns the metrics to keep when merging two
+// SelfManagedConnectors: the new run's metrics if present, otherwise the old
+// run's, otherwise nil.
+func preferConnectorMetrics(newConnectors, oldConnectors *SelfManagedConnectors) *ConnectClusterMetrics {
+	if newConnectors != nil && newConnectors.Metrics != nil {
+		return newConnectors.Metrics
 	}
-
-	return result
+	if oldConnectors != nil && oldConnectors.Metrics != nil {
+		return oldConnectors.Metrics
+	}
+	return nil
 }
 
 type DiscoveredClient struct {

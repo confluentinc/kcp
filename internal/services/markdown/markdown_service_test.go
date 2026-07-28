@@ -21,7 +21,7 @@ func TestPrintMarkdownTable(t *testing.T) {
 	}
 
 	t.Log("Basic table (all values shown):")
-	New().AddTable(headers, data).Print()
+	_ = New().AddTable(headers, data).Print()
 }
 
 func TestPrintMarkdownTableWithMissingData(t *testing.T) {
@@ -34,7 +34,7 @@ func TestPrintMarkdownTableWithMissingData(t *testing.T) {
 		{"Lando Norris", "McLaren", "205", "0"},
 	}
 
-	New().AddTable(headers, data).Print()
+	_ = New().AddTable(headers, data).Print()
 }
 
 func TestPrintMarkdownTableWithSkipRepeat(t *testing.T) {
@@ -55,7 +55,7 @@ func TestPrintMarkdownTableWithSkipRepeat(t *testing.T) {
 
 	// Skip repeating values for Team (column 0) and Nationality (column 2)
 	t.Log("Table with repeated values hidden:")
-	New().AddTable(headers, data, 0, 2).Print()
+	_ = New().AddTable(headers, data, 0, 2).Print()
 }
 
 func TestMarkdownBuilder(t *testing.T) {
@@ -79,7 +79,7 @@ func TestMarkdownBuilder(t *testing.T) {
 	md.AddCodeBlock("fmt.Println(\"F1 Championship 2025\")", "go")
 	md.AddHorizontalRule()
 	md.AddParagraph("Report generated using the markdown builder.")
-	md.Print()
+	_ = md.Print()
 }
 
 func TestMarkdownBuilderWithSkipRepeat(t *testing.T) {
@@ -102,7 +102,7 @@ func TestMarkdownBuilderWithSkipRepeat(t *testing.T) {
 	md.AddParagraph("Showing drivers by team with skip repeat on team column.")
 	md.AddTable(headers, data, 0) // Skip repeat on team column
 	md.AddParagraph("Notice how the team name only shows once per group.")
-	md.Print()
+	_ = md.Print()
 }
 
 func TestPrintOptions(t *testing.T) {

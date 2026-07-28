@@ -1,6 +1,6 @@
 import type { WizardConfig } from './types'
 import { getOSKClusterDataById } from '@/stores/store'
-import { targetClusterProperties, targetClusterUiSchema, jumpClusterTargetProperties, jumpClusterTargetUiSchema } from './sharedWizardSchemas'
+import { targetClusterProperties, targetClusterUiSchema, jumpClusterTargetProperties, jumpClusterTargetUiSchema, destinationGatingStates, destinationGuards, CC_GOV_PRODUCT_NAME } from './sharedWizardSchemas'
 
 export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardConfig => {
   const cluster = getOSKClusterDataById(clusterId)
@@ -15,7 +15,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
     const host = parts[0] || server
     const port = parseInt(parts[1] || '9092', 10)
     return {
-      broker_id: `osk-broker-${index}`,
+      broker_id: `kafka-broker-${index}`,
       subnet_id: '',
       endpoints: [{ host, port, ip: '' }],
     }
@@ -26,9 +26,13 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
     title: 'OSK Migration Infrastructure Wizard',
     description: 'Configure your migration infrastructure for OSK to Confluent Cloud migration',
     apiEndpoint: '/assets/migration',
-    initial: 'confluent_cloud_endpoints_question',
+    initial: 'destination_type',
 
     states: {
+      ...destinationGatingStates({
+        standardTarget: 'confluent_cloud_endpoints_question',
+        blockedMessage: `Migration infrastructure is not supported on ${CC_GOV_PRODUCT_NAME}: every migration type relies on Cluster Linking, which ${CC_GOV_PRODUCT_NAME} does not provide.`,
+      }),
       // Step 1: Public or Private?
       confluent_cloud_endpoints_question: {
         meta: {
@@ -67,6 +71,10 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
               actions: 'save_step_data',
             },
           ],
+          BACK: {
+            target: 'destination_type',
+            actions: 'undo_save_step_data',
+          },
         },
       },
 
@@ -529,6 +537,7 @@ export const createMigrationInfraOskWizardConfig = (clusterId: string): WizardCo
     },
 
     guards: {
+      ...destinationGuards,
       has_public_brokers: ({ event }) => {
         return event.data?.has_public_brokers === true
       },

@@ -1,7 +1,10 @@
 package kafka
 
 import (
+	"bytes"
 	"errors"
+	"log/slog"
+	"strings"
 	"testing"
 
 	"github.com/IBM/sarama"
@@ -451,4 +454,74 @@ func TestKafkaService_scanKafkaAcls(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestKafkaService_LogsClusterArnAtDebug proves the level audit keeps cluster
+// attribution in kcp.log: each scan-start log must carry clusterArn on a paired
+// DEBUG line (not inline on the clean INFO line), so a support engineer reading
+// kcp.log for a multi-cluster run can still tell which cluster each line is about.
+func TestKafkaService_LogsClusterArnAtDebug(t *testing.T) {
+	const testArn = "arn:aws:kafka:us-east-1:123456789012:cluster/test/abc-123"
+
+	tests := []struct {
+		name string
+		mock *mocks.MockKafkaAdmin
+		run  func(ks *KafkaService)
+	}{
+		{
+			name: "scanClusterTopics",
+			mock: &mocks.MockKafkaAdmin{
+				ListTopicsWithConfigsFunc: func() (map[string]sarama.TopicDetail, error) {
+					return map[string]sarama.TopicDetail{}, nil
+				},
+			},
+			run: func(ks *KafkaService) { _, _ = ks.scanClusterTopics() },
+		},
+		{
+			name: "describeKafkaCluster",
+			mock: &mocks.MockKafkaAdmin{
+				GetClusterKafkaMetadataFunc: func() (*client.ClusterKafkaMetadata, error) {
+					return &client.ClusterKafkaMetadata{ClusterID: "c-1"}, nil
+				},
+			},
+			run: func(ks *KafkaService) { _, _ = ks.describeKafkaCluster() },
+		},
+		{
+			name: "scanKafkaAcls",
+			mock: &mocks.MockKafkaAdmin{
+				ListAclsFunc: func() ([]sarama.ResourceAcls, error) {
+					return []sarama.ResourceAcls{}, nil
+				},
+			},
+			run: func(ks *KafkaService) { _, _ = ks.scanKafkaAcls() },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var logBuf bytes.Buffer
+			prev := slog.Default()
+			slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+			defer slog.SetDefault(prev)
+
+			ks := &KafkaService{client: tt.mock, authType: types.AuthTypeIAM, clusterArn: testArn}
+			tt.run(ks)
+
+			out := logBuf.String()
+			assert.True(t, debugLineHasAttr(out, "clusterArn", testArn),
+				"%s must record clusterArn on a DEBUG line for kcp.log attribution; got:\n%s", tt.name, out)
+		})
+	}
+}
+
+// debugLineHasAttr reports whether the captured slog text output contains a
+// DEBUG-level line carrying key=val (slog TextHandler renders unquoted values
+// with no spaces verbatim, e.g. clusterArn=arn:aws:...).
+func debugLineHasAttr(logOutput, key, val string) bool {
+	for _, line := range strings.Split(logOutput, "\n") {
+		if strings.Contains(line, "level=DEBUG") && strings.Contains(line, key+"="+val) {
+			return true
+		}
+	}
+	return false
 }

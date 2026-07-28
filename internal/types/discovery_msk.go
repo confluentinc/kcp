@@ -25,25 +25,77 @@ type DiscoveredRegion struct {
 	ClusterArns []string `json:"-"`
 }
 
+// mergeClusterPreservingAdminInfo returns newCluster with its KafkaAdminClientInformation
+// merged from existing (new discoveries take precedence; old scan-acquired values such as
+// ACLs / self-managed connectors are preserved when the new value is empty/nil).
+//
+// MSK connectors live on AWSClientInformation, which MergeFrom does not reach, so they are
+// merged explicitly here: a denied or empty ListConnectors re-run must not wipe connectors
+// already in state. Only Connectors is merge-preserved; every other AWSClientInformation
+// field keeps its wholesale-replace semantics.
+func mergeClusterPreservingAdminInfo(existing, newCluster DiscoveredCluster) DiscoveredCluster {
+	newCluster.KafkaAdminClientInformation.MergeFrom(existing.KafkaAdminClientInformation)
+	newCluster.AWSClientInformation.Connectors = mergeConnectors(
+		newCluster.AWSClientInformation.Connectors,
+		existing.AWSClientInformation.Connectors,
+	)
+	return newCluster
+}
+
+// mergeConnectors merges MSK connectors, with new taking precedence for duplicates
+// (by ConnectorName). Mirrors mergeSelfManagedConnectors: a nil/empty new set preserves
+// the old set (so a denied/empty re-run does not wipe prior connectors), and a nil/empty
+// old set yields the new set.
+func mergeConnectors(newConns, oldConns []ConnectorSummary) []ConnectorSummary {
+	if len(newConns) == 0 {
+		return oldConns
+	}
+	if len(oldConns) == 0 {
+		return newConns
+	}
+
+	connectorsByName := make(map[string]ConnectorSummary, len(oldConns)+len(newConns))
+	for _, c := range oldConns {
+		connectorsByName[c.ConnectorName] = c
+	}
+	for _, c := range newConns {
+		connectorsByName[c.ConnectorName] = c // new takes precedence
+	}
+
+	merged := make([]ConnectorSummary, 0, len(connectorsByName))
+	for _, c := range connectorsByName {
+		merged = append(merged, c)
+	}
+	return merged
+}
+
 // RefreshClusters replaces the cluster list but merges KafkaAdminClientInformation from existing clusters
 // New discoveries take precedence over old values (only uses old values when new values are empty/nil)
 func (dr *DiscoveredRegion) RefreshClusters(newClusters []DiscoveredCluster) {
-	// build map of ARN -> KafkaAdminClientInformation from existing clusters
-	adminInfoByArn := make(map[string]KafkaAdminClientInformation)
+	existingByArn := make(map[string]DiscoveredCluster)
 	for _, existingCluster := range dr.Clusters {
-		adminInfoByArn[existingCluster.Arn] = existingCluster.KafkaAdminClientInformation
+		existingByArn[existingCluster.Arn] = existingCluster
 	}
 
-	// replace cluster list with new discoveries
 	dr.Clusters = newClusters
 
-	// merge admin info: new discoveries take precedence, only use old values when new is empty/nil
 	for i := range dr.Clusters {
-		if oldAdminInfo, exists := adminInfoByArn[dr.Clusters[i].Arn]; exists {
-			newAdminInfo := &dr.Clusters[i].KafkaAdminClientInformation
-			newAdminInfo.MergeFrom(oldAdminInfo)
+		if existing, exists := existingByArn[dr.Clusters[i].Arn]; exists {
+			dr.Clusters[i] = mergeClusterPreservingAdminInfo(existing, dr.Clusters[i])
 		}
 	}
+}
+
+// UpsertCluster creates or replaces a single cluster by ARN, preserving every other
+// cluster in the region and merging the targeted cluster's scan-acquired admin info.
+func (dr *DiscoveredRegion) UpsertCluster(newCluster DiscoveredCluster) {
+	for i := range dr.Clusters {
+		if dr.Clusters[i].Arn == newCluster.Arn {
+			dr.Clusters[i] = mergeClusterPreservingAdminInfo(dr.Clusters[i], newCluster)
+			return
+		}
+	}
+	dr.Clusters = append(dr.Clusters, newCluster)
 }
 
 type DiscoveredCluster struct {
@@ -122,7 +174,8 @@ func (c *AWSClientInformation) GetBootstrapBrokersForAuthType(authType AuthType)
 		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
 	}
 
-	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
+	slog.Info("🔍 found broker addresses", "visibility", visibility, "authType", authType)
+	slog.Debug("found broker addresses", "visibility", visibility, "authType", authType, "addresses", brokerList)
 
 	// Split by comma and trim whitespace from each address, filter out empty strings
 	rawAddresses := strings.Split(brokerList, ",")
@@ -159,7 +212,8 @@ func (c *AWSClientInformation) GetAllBootstrapBrokersForAuthType(authType AuthTy
 		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
 	}
 
-	slog.Info("🔍 found broker addresses", "authType", authType, "addresses", brokerList)
+	slog.Info("🔍 found broker addresses", "authType", authType)
+	slog.Debug("found broker addresses", "authType", authType, "addresses", brokerList)
 
 	rawAddresses := strings.Split(strings.Join(brokerList, ","), ",")
 	addresses := make([]string, 0, len(rawAddresses))

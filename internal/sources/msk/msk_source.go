@@ -35,7 +35,7 @@ func (s *MSKSource) LoadCredentials(credentialsPath string) error {
 		return fmt.Errorf("failed to load MSK credentials: %v", errs)
 	}
 	s.credentials = creds
-	slog.Info("loaded MSK credentials", "regions", len(creds.Regions))
+	slog.Debug("loaded MSK credentials", "regions", len(creds.Regions))
 	return nil
 }
 
@@ -79,7 +79,7 @@ func (s *MSKSource) Scan(ctx context.Context, opts sources.ScanOptions) (*source
 		for _, clusterAuth := range regionAuth.Clusters {
 			clusterResult, err := s.scanCluster(regionAuth.Name, clusterAuth, opts)
 			if err != nil {
-				slog.Info("skipping cluster", "cluster", clusterAuth.Name, "error", err)
+				slog.Warn("skipping cluster", "cluster", clusterAuth.Name, "error", err)
 				continue
 			}
 			result.Clusters = append(result.Clusters, *clusterResult)
@@ -101,7 +101,8 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 		return nil, fmt.Errorf("failed to determine auth type for cluster: %s in region: %s: %v", clusterAuth.Arn, region, err)
 	}
 
-	slog.Info(fmt.Sprintf("starting broker scan for %s using %s authentication", clusterAuth.Arn, authType))
+	slog.Info(fmt.Sprintf("starting broker scan using %s authentication", authType))
+	slog.Debug("starting broker scan", "clusterArn", clusterAuth.Arn, "authType", authType)
 
 	brokerAddresses, err := discoveredCluster.AWSClientInformation.GetBootstrapBrokersForAuthType(authType)
 	if err != nil {
@@ -135,7 +136,8 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 		kafkaAdminInfo.SaslMechanism = types.NormalizeSaslMechanism(clusterAuth.AuthMethod.SASLScram.Mechanism)
 	}
 
-	slog.Info(fmt.Sprintf("broker scan complete for %s", clusterAuth.Arn))
+	slog.Info("broker scan complete")
+	slog.Debug("broker scan complete", "clusterArn", clusterAuth.Arn)
 
 	return &sources.ClusterScanResult{
 		Identifier: sources.ClusterIdentifier{
@@ -164,27 +166,13 @@ func (s *MSKSource) findClusterInState(state *types.State, region, clusterArn st
 }
 
 func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientBrokerEncryptionInTransit kafkatypes.ClientBroker, region string, kafkaVersion string, clusterAuth types.ClusterAuth) (*client.KafkaAdmin, error) {
-	var kafkaAdmin client.KafkaAdmin
-	var err error
-	switch authType {
-	case types.AuthTypeIAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithIAMAuth())
-	case types.AuthTypeSASLSCRAM:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithSASLSCRAMAuth(
-			clusterAuth.AuthMethod.SASLScram.Username,
-			clusterAuth.AuthMethod.SASLScram.Password,
-			clusterAuth.AuthMethod.SASLScram.Mechanism,
-			false, // MSK uses AWS-managed certificates; never skip TLS verification
-		))
-	case types.AuthTypeUnauthenticatedTLS:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedTlsAuth())
-	case types.AuthTypeUnauthenticatedPlaintext:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithUnauthenticatedPlaintextAuth())
-	case types.AuthTypeTLS:
-		kafkaAdmin, err = client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, client.WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey))
-	default:
-		return nil, fmt.Errorf("auth type: %v not yet supported", authType)
+	// MSK uses AWS-managed certificates; never skip TLS verification.
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option: %w", err)
 	}
+
+	kafkaAdmin, err := client.NewKafkaAdmin(brokerAddresses, clientBrokerEncryptionInTransit, region, kafkaVersion, authOpt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
 	}

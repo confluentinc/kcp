@@ -1,7 +1,8 @@
 package modules
 
 import (
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 )
 
 // ModuleVariable is a generic definition for module variables.
@@ -11,7 +12,7 @@ type ModuleVariable[R any] struct {
 	// This may differ from Definition.Name (the root-level variable name).
 	// WriteModuleInputs uses Name for the attribute key and Definition.Name for the var. reference.
 	Name             string
-	Definition       types.TerraformVariable
+	Definition       hcltypes.TerraformVariable
 	ValueExtractor   func(request R) any  // Extracts the value from FE request payload. If nil, it's not a root-level variable.
 	Condition        func(request R) bool // Determines if this variable should be included (nil = always include).
 	FromModuleOutput string               // If non-empty, this variable comes from the named module's output.
@@ -20,25 +21,25 @@ type ModuleVariable[R any] struct {
 // NOTE: VariableSchema migration is partially complete. Variables shared across modules
 // (provider, cluster link, vpc, security group, SSH key pair) use VariableSchema.
 // Remaining module-specific variables (jump cluster, networking, confluent cloud,
-// private link, external outbound) still define types.TerraformVariable inline.
+// private link, external outbound) still define hcltypes.TerraformVariable inline.
 
 // ============================================================================
 // Target Cluster
 // ============================================================================
 
-func collectTargetClusterVars() []ModuleVariable[types.TargetClusterWizardRequest] {
-	var allVars []ModuleVariable[types.TargetClusterWizardRequest]
+func collectTargetClusterVars() []ModuleVariable[hclrequests.TargetClusterWizardRequest] {
+	var allVars []ModuleVariable[hclrequests.TargetClusterWizardRequest]
 	allVars = append(allVars, GetTargetClusterProviderVariables()...)
 	allVars = append(allVars, GetConfluentCloudVariables()...)
 	allVars = append(allVars, GetTargetClusterPrivateLinkVariables()...)
 	return allVars
 }
 
-func GetTargetClusterModuleVariableValues(request types.TargetClusterWizardRequest) map[string]any {
+func GetTargetClusterModuleVariableValues(request hclrequests.TargetClusterWizardRequest) map[string]any {
 	return extractVariableValues(collectTargetClusterVars(), request)
 }
 
-func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizardRequest) []types.TerraformVariable {
+func GetTargetClusterModuleVariableDefinitions(request hclrequests.TargetClusterWizardRequest) []hcltypes.TerraformVariable {
 	return extractVariableDefinitions(collectTargetClusterVars(), request)
 }
 
@@ -46,8 +47,8 @@ func GetTargetClusterModuleVariableDefinitions(request types.TargetClusterWizard
 // Migration Infrastructure
 // ============================================================================
 
-func collectMigrationInfraVars(request types.MigrationWizardRequest) []ModuleVariable[types.MigrationWizardRequest] {
-	var allVars []ModuleVariable[types.MigrationWizardRequest]
+func collectMigrationInfraVars(request hclrequests.MigrationWizardRequest) []ModuleVariable[hclrequests.MigrationWizardRequest] {
+	var allVars []ModuleVariable[hclrequests.MigrationWizardRequest]
 	switch {
 	case request.HasPublicEndpoints:
 		allVars = append(allVars, GetPublicMigrationProviderVariables()...)
@@ -65,11 +66,11 @@ func collectMigrationInfraVars(request types.MigrationWizardRequest) []ModuleVar
 	return allVars
 }
 
-func GetMigrationInfraRootVariableValues(request types.MigrationWizardRequest) map[string]any {
+func GetMigrationInfraRootVariableValues(request hclrequests.MigrationWizardRequest) map[string]any {
 	return extractVariableValues(collectMigrationInfraVars(request), request)
 }
 
-func GetMigrationInfraRootVariableDefinitions(request types.MigrationWizardRequest) []types.TerraformVariable {
+func GetMigrationInfraRootVariableDefinitions(request hclrequests.MigrationWizardRequest) []hcltypes.TerraformVariable {
 	return extractVariableDefinitions(collectMigrationInfraVars(request), request)
 }
 
@@ -104,7 +105,7 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 			if len(v) == 0 {
 				continue
 			}
-		case []types.ExtOutboundClusterKafkaBroker:
+		case []hclrequests.ExtOutboundClusterKafkaBroker:
 			if len(v) == 0 {
 				continue
 			}
@@ -125,8 +126,8 @@ func extractVariableValues[R any](allVars []ModuleVariable[R], request R) map[st
 
 // extractVariableDefinitions extracts root-level variable definitions.
 // It filters by condition and skips variables without value extractors or those coming from module outputs.
-func extractVariableDefinitions[R any](allVars []ModuleVariable[R], request R) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
+func extractVariableDefinitions[R any](allVars []ModuleVariable[R], request R) []hcltypes.TerraformVariable {
+	var definitions []hcltypes.TerraformVariable
 
 	for _, varDef := range allVars {
 		if varDef.Condition != nil && !varDef.Condition(request) {

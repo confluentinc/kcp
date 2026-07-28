@@ -3,6 +3,7 @@ package discover
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -36,4 +37,15 @@ func TestDiscoverIAMAnnotationGolden(t *testing.T) {
 func envFlag(name string) bool {
 	v, ok := os.LookupEnv(name)
 	return ok && v != "" && v != "0" && v != "false"
+}
+
+// TestDiscoverIAMAnnotationIncludesMSKConnect ensures the discover IAM policy
+// grants the MSK Connect permissions required to re-discover connectors.
+func TestDiscoverIAMAnnotationIncludesMSKConnect(t *testing.T) {
+	got := discoverIAMAnnotation()
+	for _, action := range []string{"kafkaconnect:ListConnectors", "kafkaconnect:DescribeConnector"} {
+		if !strings.Contains(got, action) {
+			t.Errorf("discover IAM annotation missing required action %q", action)
+		}
+	}
 }

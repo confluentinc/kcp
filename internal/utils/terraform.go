@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 )
 
 // CleanPrincipalName cleans the principal name for use in Terraform resources
@@ -25,7 +25,7 @@ func CleanPrincipalName(principal string) string {
 }
 
 // WriteTerraformFiles writes the generated Terraform files to the output directory
-func WriteTerraformFiles(outputDir string, files types.TerraformFiles) error {
+func WriteTerraformFiles(outputDir string, files hcltypes.TerraformFiles) error {
 	if files.MainTf != "" {
 		if err := os.WriteFile(filepath.Join(outputDir, "main.tf"), []byte(files.MainTf), 0644); err != nil {
 			return fmt.Errorf("failed to write main.tf: %w", err)

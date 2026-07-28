@@ -77,8 +77,8 @@ yarn test:e2e:headed
 ### Test Fixtures
 
 Test fixtures are in `tests/fixtures/`:
-- `state-osk-only.json` - OSK clusters only
-- `state-both.json` - Both MSK and OSK clusters
+- `state-osk-only.json` - Apache Kafka clusters only
+- `state-both.json` - Both MSK and Apache Kafka clusters
 
 ## Architecture
 
@@ -91,7 +91,7 @@ The UI supports two Kafka source types:
 - Displays: ARN, VPC, instance type, CloudWatch metrics, costs
 - Tabs: Cluster, Metrics, Topics, ACLs, Connectors, Clients
 
-**OSK (Open Source Kafka)**
+**Apache Kafka**
 - Flat cluster list
 - Displays: Bootstrap servers, metadata, labels
 - Tabs: Cluster, Topics, ACLs, Connectors, Clients (no Metrics)
@@ -102,7 +102,7 @@ The UI supports two Kafka source types:
 - `useAppStore` hook provides access to:
   - `processedState` - unified source data
   - `selectedSourceType` - 'msk' | 'osk'
-  - `selectOSKCluster(clusterId)` - navigate to OSK cluster
+  - `selectOSKCluster(clusterId)` - navigate to Apache Kafka cluster
   - `selectCluster(region, arn)` - navigate to MSK cluster
 
 ### Type Guards

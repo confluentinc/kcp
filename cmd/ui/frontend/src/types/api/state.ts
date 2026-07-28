@@ -84,14 +84,23 @@ export interface SchemaRegistriesState {
   aws_glue?: GlueSchemaRegistry[]
 }
 
+export interface KcpBuildInfo {
+  version?: string
+  commit?: string
+  date?: string
+}
+
 /**
  * Processed state structure from backend
  */
 export interface ProcessedState {
   sources: ProcessedSource[]
   schema_registries?: SchemaRegistriesState
-  kcp_build_info?: unknown
+  kcp_build_info?: KcpBuildInfo
   timestamp?: string
+  schema_version?: number
+  updated_at?: string
+  upgraded_from?: string
 }
 
 /**
@@ -105,7 +114,7 @@ export interface StateUploadRequest {
     clusters: any[] // Will be processed by backend
   }
   schema_registries?: SchemaRegistriesState
-  kcp_build_info?: unknown
+  kcp_build_info?: KcpBuildInfo
   timestamp?: string
 }
 
@@ -115,7 +124,10 @@ export interface StateUploadRequest {
 export interface StateUploadResponse {
   sources: ProcessedSource[]
   schema_registries?: SchemaRegistriesState
-  kcp_build_info?: unknown
+  kcp_build_info?: KcpBuildInfo
   timestamp?: string
+  schema_version?: number
+  updated_at?: string
+  upgraded_from?: string
   message?: string
 }

@@ -284,9 +284,14 @@ export interface KafkaACL {
  */
 export interface TopicSummary {
   topics: number
-  total_partitions: number
   internal_topics: number
+  total_partitions: number
+  total_internal_partitions: number
   compact_topics: number
+  compact_internal_topics: number
+  compact_partitions: number
+  compact_internal_partitions: number
+  remote_storage_topics: number
 }
 
 /**
@@ -329,6 +334,22 @@ export interface SelfManagedConnector {
  */
 export interface SelfManagedConnectors {
   connectors: SelfManagedConnector[]
+  metrics?: {
+    metadata?: {
+      start_date?: string
+      end_date?: string
+      period?: number
+      metrics_source?: string
+    }
+    results?: Array<{
+      start: string
+      end: string
+      label: string
+      value: number | null
+    }>
+    aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
+    query_info?: import('@/types/api/metrics').MetricQueryInfo[]
+  }
 }
 
 /**

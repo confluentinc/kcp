@@ -61,9 +61,9 @@ export const Home = () => {
           }
         } else if (response && hasSchemaRegistries(response.schema_registries)) {
           setKcpState(response)
-          setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate.')
+          setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate.')
         } else if (response) {
-          setError('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate it, then reload.')
+          setError('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it, then reload.')
         }
       } catch {
         // No pre-loaded state, user will upload manually
@@ -119,10 +119,10 @@ export const Home = () => {
           } else if (result && hasSchemaRegistries(result.schema_registries)) {
             setKcpState(result)
             setIsProcessing(false)
-            setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate.')
+            setError('No cluster sources found. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate.')
           } else {
             setKcpState(null)
-            throw new Error('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (OSK) to populate it.')
+            throw new Error('State file contains no sources or schema registries. Run kcp discover (MSK) or kcp scan clusters (Apache Kafka) to populate it.')
           }
         } else {
           throw new Error('Invalid file format. Expected a KCP state file.')

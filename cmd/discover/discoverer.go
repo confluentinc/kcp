@@ -20,31 +20,37 @@ import (
 )
 
 type DiscovererOpts struct {
-	Regions     []string
-	SkipCosts   bool
-	SkipMetrics bool
-	SkipTopics  bool
-	State       *types.State
-	Credentials *types.Credentials
+	Regions            []string
+	SkipCosts          bool
+	SkipMetrics        bool
+	SkipTopics         bool
+	State              *types.State
+	Credentials        *types.Credentials
+	MetricsGranularity string
+	ClusterArns        []string
 }
 
 type Discoverer struct {
-	regions     []string
-	skipCosts   bool
-	skipMetrics bool
-	skipTopics  bool
-	state       *types.State
-	credentials *types.Credentials
+	regions            []string
+	skipCosts          bool
+	skipMetrics        bool
+	skipTopics         bool
+	state              *types.State
+	credentials        *types.Credentials
+	metricsGranularity string
+	clusterArns        []string
 }
 
 func NewDiscoverer(opts DiscovererOpts) *Discoverer {
 	return &Discoverer{
-		regions:     opts.Regions,
-		skipCosts:   opts.SkipCosts,
-		skipMetrics: opts.SkipMetrics,
-		skipTopics:  opts.SkipTopics,
-		state:       opts.State,
-		credentials: opts.Credentials,
+		regions:            opts.Regions,
+		skipCosts:          opts.SkipCosts,
+		skipMetrics:        opts.SkipMetrics,
+		skipTopics:         opts.SkipTopics,
+		state:              opts.State,
+		credentials:        opts.Credentials,
+		metricsGranularity: opts.MetricsGranularity,
+		clusterArns:        opts.ClusterArns,
 	}
 }
 
@@ -63,6 +69,8 @@ func (d *Discoverer) discoverRegions() error {
 	// initialize state/credentials from existing state/credentials if passed in
 	state := types.NewStateFrom(d.state)
 	credentials := types.NewCredentialsFrom(d.credentials)
+
+	matchedArns := map[string]bool{}
 
 	for _, region := range d.regions {
 		// Using conservative rate limits to avoid AWS 429 Too Many Requests errors
@@ -113,8 +121,10 @@ func (d *Discoverer) discoverRegions() error {
 		clusterDiscoverer := NewClusterDiscoverer(mskService, ec2Service, metricService, mskConnectService)
 		discoveredClusters := []types.DiscoveredCluster{}
 
-		for _, clusterArn := range discoveredRegion.ClusterArns {
-			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics, d.skipMetrics)
+		arnsToDiscover := filterArnsToDiscover(discoveredRegion.ClusterArns, d.clusterArns)
+		for _, clusterArn := range arnsToDiscover {
+			matchedArns[clusterArn] = true
+			discoveredCluster, err := clusterDiscoverer.Discover(context.Background(), clusterArn, region, d.skipTopics, d.skipMetrics, d.metricsGranularity)
 			if err != nil {
 				slog.Error("failed to discover cluster", "cluster", clusterArn, "error", err)
 				continue
@@ -123,8 +133,6 @@ func (d *Discoverer) discoverRegions() error {
 		}
 
 		discoveredRegion.Clusters = discoveredClusters
-		// upsert region into state (preserves untouched regions)
-		state.UpsertRegion(*discoveredRegion)
 
 		// generate credential configurations for connecting to clusters
 		regionAuth, err := d.captureCredentialOptions(discoveredRegion.Clusters, region)
@@ -133,12 +141,18 @@ func (d *Discoverer) discoverRegions() error {
 			continue
 		}
 
-		// upsert region credentials (preserves existing region auths)
-		credentials.UpsertRegion(*regionAuth)
+		persistDiscoveredRegion(state, credentials, *discoveredRegion, *regionAuth, len(d.clusterArns) > 0)
 
-		// track regions with/without clusters for reporting
-		if len(regionAuth.Clusters) == 0 {
+		// track regions with/without clusters for reporting (full-region mode only;
+		// in targeted mode an unmatched ARN is reported via the warning below instead)
+		if len(regionAuth.Clusters) == 0 && len(d.clusterArns) == 0 {
 			regionsWithoutClusters = append(regionsWithoutClusters, region)
+		}
+	}
+
+	for _, requested := range d.clusterArns {
+		if !matchedArns[requested] {
+			fmt.Printf("  ⚠️  Cluster ARN not found among discovered clusters: %s\n", requested)
 		}
 	}
 
@@ -290,7 +304,7 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 		return nil
 	}
 
-	headers := []string{"Cluster Name", "Region", "# of Brokers", "Public Access", "Kafka Version", "MSK Connectors"}
+	headers := []string{"Cluster Name", "Region", "# of Brokers", "Public Access", "Kafka Version"}
 	data := [][]string{}
 	arnData := [][]string{}
 
@@ -301,7 +315,6 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 		numBrokers := strconv.Itoa(cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
 		publicAccess := getPublicAccess(cluster)
 		kafkaVersion := utils.GetKafkaVersion(cluster.AWSClientInformation)
-		connectorCount := len(cluster.AWSClientInformation.Connectors)
 
 		data = append(data, []string{
 			clusterName,
@@ -309,7 +322,6 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 			numBrokers,
 			publicAccess,
 			kafkaVersion,
-			strconv.Itoa(connectorCount),
 		})
 		arnData = append(arnData, []string{clusterName, clusterArn})
 	}
@@ -408,6 +420,20 @@ func (d *Discoverer) outputClusterSummaryTable(state *types.State) error {
 	md.AddParagraph("To view cost and metrics reports, including the queries used to gather data, run `kcp report` or explore in `kcp ui`.")
 
 	return md.Print(markdown.PrintOptions{ToTerminal: true, ToFile: ""})
+}
+
+// persistDiscoveredRegion writes a freshly discovered region into state and credentials.
+// When targeted is true (a --cluster-arn run) only the discovered clusters are created or
+// replaced and every other cluster in the region is preserved; otherwise the region's cluster
+// list is fully replaced (full-region discovery, pruning clusters that no longer exist).
+func persistDiscoveredRegion(state *types.State, credentials *types.Credentials, region types.DiscoveredRegion, regionAuth types.RegionAuth, targeted bool) {
+	if targeted {
+		state.UpsertTargetedClusters(region)
+		credentials.UpsertTargetedClusters(regionAuth)
+	} else {
+		state.UpsertRegion(region)
+		credentials.UpsertRegion(regionAuth)
+	}
 }
 
 func getPublicAccess(cluster types.DiscoveredCluster) string {

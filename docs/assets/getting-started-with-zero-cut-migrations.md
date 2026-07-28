@@ -58,6 +58,9 @@ For MSK clusters, when the source is not publicly accessible, KCP can provision 
 
 For non-MSK clusters and full Cluster Linking configuration guidance, see the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html). For AWS MSK over private networking specifically, see [Cluster Linking with Private Networking](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html).
 
+> [!NOTE]
+> **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking. The linking-based `create-asset` paths (`migration-infra` for all types, `migrate-topics --mode mirror`, and `migrate-schemas --url`) are unsupported there and are refused when you declare `--cc-type government`. See [Source compatibility](source-compatibility.md#confluent-cloud-destination) for the full matrix.
+
 ---
 
 ## 5. Authentication Support Matrix
@@ -169,13 +172,17 @@ Clients should expect a brief partial downtime window of approximately 60 second
 
 **Consumer group offsets**: Consumer offset sync (`consumer.offset.sync.enable=true`) must be enabled on the cluster link before migration. Without it, consumers reconnecting after cutover may restart from an incorrect position. KCP validates this during `kcp migration init`. Post-cutover, consider stopping consumer offset sync for fully migrated consumer groups, as syncing stale offsets back from the source cluster after promotion serves no purpose.
 
+**Promotion batching**: `kcp migration execute` promotes all caught-up mirror topics in a single request, then waits for every one to reach the terminal `STOPPED` state before switching the gateway. The optional `--promote-batch-size N` flag promotes topics in synchronous batches instead: KCP promotes `N` topics, waits for all of them to reach `STOPPED`, then proceeds to the next batch, until every topic is promoted. It defaults to `0`, which promotes all topics at once (the behaviour described above).
+
+**Offset-sync drain (minimising duplicate processing)**: consumer offset sync runs on an interval (`consumer.offset.sync.ms`), so at the moment the gateway is fenced the destination's copy of each consumer group's committed offset can trail the source by up to one interval. If sync is then disabled immediately, those final commits never reach the destination and consumers reprocess them after switchover. The optional `--consumer-offset-sync-drain-duration` flag (only meaningful alongside `--pause-consumer-offset-sync`) holds after fencing, with sync still enabled, before disabling it. Because the fence has frozen the source offsets, this lets the link run one or more further sync cycles and land the final committed offsets on the destination, shrinking the duplicate window. A good starting value is roughly twice `consumer.offset.sync.ms`. It defaults to `0` (no wait — disable immediately). This is **best-effort**: offset sync is asynchronous, so the drain reduces but does not guarantee zero duplicate processing, and it does not cover messages a consumer processed but had not yet committed on the source before the fence. The only cost is that the gateway stays fenced (clients buffering/retrying) for the drain duration.
+
 **Gateway HA**: KCP patches gateway Kubernetes CRDs atomically across all gateway nodes. A gateway pod restart mid-cutover causes a brief client reconnection but does not lose data. A minimum of 2 gateway replicas (3 recommended) is the standard for production migrations.
 
 **Cost during migration window**: Source cluster and CC run simultaneously during replication. Factor in the double-cost window for your migration timeline. `kcp report costs` gives you the source cluster baseline; `kcp create-asset target-infra` with appropriate sizing gives you the CC estimate.
 
 **Rollback states**:
 
-- Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD.
+- Rollback after block but before any promotion: fully supported, safe. KCP unblocks and reverts the gateway CRD — and does this automatically when fence verification detects producers bypassing the gateway or the offset-sync pause fails, restoring any paused offset sync in the same rollback. Re-running execute resumes from the lag checks.
 - Rollback after promotion: possible (no data loss) but the cluster link is broken. Requires recreating the cluster link and mirror topics from scratch. This is not automated.
 - Rollback after unblock (traffic flowing to CC): not supported. Manual intervention required.
 
@@ -238,16 +245,20 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 ### Step 4: `kcp migration execute`
 
-Performs the cutover in four automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase.
+Performs the cutover in six automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never verifies or promotes behind a fence that an interrupted rollback may have already removed.
 
-| Phase                | What KCP does                                                                                           | What clients see                                                        |
-| -------------------- | ------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| **Pre-flight**       | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                 | Normal traffic                                                          |
-| **Block**            | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
-| **Promote**          | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic before each promotion | Still retrying; records buffered locally                                |
-| **Switch + unblock** | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                           | First retry succeeds; clients now on CC                                 |
+| Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| **Pre-flight**        | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                                                          | Normal traffic                                                          |
+| **Block**             | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                                                         | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
+| **Pause offset sync** | With `--pause-consumer-offset-sync`, pauses cluster-link consumer offset sync so destination consumer offsets freeze at their freshest values; skipped otherwise. `--consumer-offset-sync-drain-duration` optionally holds here first (sync still enabled) so final offsets propagate before the pause | Still retrying                                                          |
+| **Verify fence**      | With `--detect-unrouted-producers-duration` set, monitors source offsets over that window to catch producers still writing directly to the source cluster (bypassing the gateway); on detection, unblocks and restores offset sync automatically, then aborts. Opt-in — defaults to `0` (skipped) | Still retrying                                                          |
+| **Promote**           | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic, then confirms each reaches the terminal `STOPPED` state before proceeding | Still retrying; records buffered locally                                |
+| **Switch + unblock**  | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                                                                    | First retry succeeds; clients now on CC                                 |
 
 The total window from block to unblock is typically 30–90 seconds, dominated by lag drain on the highest-lag topic. If the Cluster Link is fully caught up before the block fires, the window is closer to the gateway rolling restart time (~60 seconds).
+
+`--promote-batch-size N` promotes topics in synchronous batches of `N` (promote `N`, wait for all to reach `STOPPED`, repeat) instead of all at once. See [§9 Known Constraints and Operational Guidance](#9-known-constraints-and-operational-guidance) for details.
 
 Steps:
 ![Description](images/image-20260112-175128.png)

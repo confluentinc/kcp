@@ -25,17 +25,21 @@ var (
 	useUnauthenticatedTLS       bool
 	useUnauthenticatedPlaintext bool
 
-	saslScramUsername string
-	saslScramPassword string
+	saslScramUsername  string
+	saslScramPassword  string
+	saslScramMechanism string
 
 	saslPlainUsername string
 	saslPlainPassword string
 
-	tlsCaCert             string
-	tlsClientCert         string
-	tlsClientKey          string
-	insecureSkipTLSVerify bool
-	rolloutTimeout        time.Duration
+	tlsCaCert                       string
+	tlsClientCert                   string
+	tlsClientKey                    string
+	insecureSkipTLSVerify           bool
+	rolloutTimeout                  time.Duration
+	detectUnroutedProducersDuration time.Duration
+	consumerOffsetSyncDrainDuration time.Duration
+	promoteBatchSize                int
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -45,7 +49,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		Long: `Execute an initialized migration through its remaining workflow steps.
 
 This command resumes a migration from its current state, progressing through:
-lag checking, gateway fencing, topic promotion, and gateway switchover.
+lag checking, gateway fencing, pausing consumer offset sync (opt-in), fence
+verification (opt-in), topic promotion, and gateway switchover.
 
 The migration must first be created with 'kcp migration init'. If execution is
 interrupted, re-running this command will resume from the last completed step.
@@ -60,7 +65,7 @@ the migration state file and must be provided each time.`,
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-sasl-iam --aws-region us-east-1
 
-  # OSK source with TLS
+  # Apache Kafka source with TLS
   kcp migration execute \
       --migration-id migration-a1b2c3d4-e5f6-7890-abcd-ef1234567890 \
       --lag-threshold 0 \
@@ -68,6 +73,7 @@ the migration state file and must be provided each time.`,
       --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
       --use-tls --tls-ca-cert ca.pem --tls-client-cert client.pem --tls-client-key client.key`,
 		SilenceErrors: true,
+		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationExecute,
 		RunE:          runMigrationExecute,
@@ -89,6 +95,9 @@ the migration state file and must be provided each time.`,
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
+	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
+	optionalFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.")
+	optionalFlags.DurationVar(&consumerOffsetSyncDrainDuration, "consumer-offset-sync-drain-duration", 0, "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless the migration was initialised with --pause-consumer-offset-sync. 0 (the default) disables the wait.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -109,6 +118,7 @@ the migration state file and must be provided each time.`,
 	saslScramFlags.SortFlags = false
 	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
 	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
+	saslScramFlags.StringVar(&saslScramMechanism, "sasl-scram-mechanism", "SHA512", "SASL/SCRAM mechanism (SHA256 or SHA512). Defaults to SHA512 for MSK compatibility.")
 	migrationExecuteCmd.Flags().AddFlagSet(saslScramFlags)
 	groups[saslScramFlags] = "SASL/SCRAM Flags"
 
@@ -181,6 +191,12 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	if useSaslScram {
 		_ = cmd.MarkFlagRequired("sasl-scram-username")
 		_ = cmd.MarkFlagRequired("sasl-scram-password")
+		switch saslScramMechanism {
+		case "SHA256", "SHA512":
+			// valid
+		default:
+			return fmt.Errorf("invalid --sasl-scram-mechanism %q: must be SHA256 or SHA512", saslScramMechanism)
+		}
 	}
 
 	if useSaslPlain {
@@ -192,6 +208,14 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 		_ = cmd.MarkFlagRequired("tls-ca-cert")
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
+	}
+
+	if detectUnroutedProducersDuration != 0 && detectUnroutedProducersDuration < 10*time.Second {
+		return fmt.Errorf("--detect-unrouted-producers-duration must be at least 10s (got %s). Use 0 to skip the check entirely", detectUnroutedProducersDuration)
+	}
+
+	if consumerOffsetSyncDrainDuration < 0 {
+		return fmt.Errorf("--consumer-offset-sync-drain-duration must not be negative (got %s). Use 0 to disable the drain", consumerOffsetSyncDrainDuration)
 	}
 
 	return nil
@@ -209,6 +233,10 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", migrationId, migrationStateFile)
 	}
+
+	// Apply runtime flags to config (not stored at init time)
+	config.DetectUnroutedProducersDuration = detectUnroutedProducersDuration
+	config.ConsumerOffsetSyncDrainDuration = consumerOffsetSyncDrainDuration
 
 	opts := parseMigrationExecutorOpts(*migrationState, *config)
 
@@ -253,6 +281,7 @@ func parseMigrationExecutorOpts(migrationState migration.MigrationState, config 
 		AuthType:              resolveAuthType(),
 		SaslScramUsername:     saslScramUsername,
 		SaslScramPassword:     saslScramPassword,
+		SaslScramMechanism:    saslScramMechanism,
 		SaslPlainUsername:     saslPlainUsername,
 		SaslPlainPassword:     saslPlainPassword,
 		TlsCaCert:             tlsCaCert,
@@ -260,5 +289,6 @@ func parseMigrationExecutorOpts(migrationState migration.MigrationState, config 
 		TlsClientKey:          tlsClientKey,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 		RolloutTimeout:        rolloutTimeout,
+		PromoteBatchSize:      promoteBatchSize,
 	}
 }

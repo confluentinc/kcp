@@ -78,15 +78,12 @@ func TestMergeMSKResults_RescanPreservesOldDataOnEmpty(t *testing.T) {
 }
 
 func TestMergeMSKResults_RescanPreservesSelfManagedConnectors(t *testing.T) {
-	// Locks in the connector-preservation guarantee: after the topic-parsing
-	// connector discovery was removed from `kcp scan clusters`, a fresh scan
-	// returns SelfManagedConnectors=nil. A subsequent re-scan that runs
-	// after `kcp scan self-managed-connectors` populated connectors via the
-	// REST API must NOT wipe those connectors. This test covers the exact
-	// sequence the CHANGELOG promises:
-	//   1. scan clusters       (writes nil)
-	//   2. scan self-managed-connectors  (writes connectors)
-	//   3. scan clusters       (returns nil — must preserve step 2)
+	// Locks in the connector-preservation guarantee: `kcp scan clusters`
+	// returns SelfManagedConnectors=nil, so a re-scan must NOT wipe connectors
+	// that already exist in state. Sequence under test:
+	//   1. scan clusters   (writes nil)
+	//   2. connectors populated in state by other means
+	//   3. scan clusters   (returns nil — must preserve step 2)
 	const arn = "arn:aws:kafka:us-east-1:123:cluster/test/abc-1"
 
 	state := &types.State{

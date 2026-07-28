@@ -7,75 +7,56 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 )
 
-type TimePeriod string
-
+// CloudWatch query periods (in seconds) selected per metrics granularity.
 const (
-	// debugging period
-	OneHourPeriodInSeconds int32 = 60 * 60      // 60 seconds * 60 minutes
-	DailyPeriodInSeconds   int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
-
-	Last24Hours TimePeriod = "last24Hours"
-	LastWeek    TimePeriod = "lastWeek"
-	LastMonth   TimePeriod = "lastMonth"
-	LastYear    TimePeriod = "lastYear"
+	OneMinutePeriodInSeconds  int32 = 60
+	FiveMinutePeriodInSeconds int32 = 60 * 5       // 60 seconds * 5 minutes
+	OneHourPeriodInSeconds    int32 = 60 * 60      // 60 seconds * 60 minutes
+	OneDayPeriodInSeconds     int32 = 60 * 60 * 24 // 60 seconds * 60 minutes * 24 hours
 )
 
-// GetTimeWindow calculates CloudWatch time windows for different periods based on a end time
-func GetTimeWindow(endTime time.Time, desiredPeriod TimePeriod) (types.CloudWatchTimeWindow, error) {
-	switch desiredPeriod {
-	case Last24Hours:
-		return calculateLast24Hours(endTime), nil
-	case LastWeek:
-		return calculateLastWeek(endTime), nil
-	case LastMonth:
-		return calculateLastMonth(endTime), nil
-	case LastYear:
-		return calculateLastYear(endTime), nil
+// GetTimeWindowForGranularity returns the CloudWatch query window ending at
+// endTime for the requested metrics granularity. The window length is bounded
+// by CloudWatch's per-period data retention: 60s→15 days, 5m→63 days, and both
+// 1h and 1d→365 days. The returned window's Period matches the granularity.
+func GetTimeWindowForGranularity(endTime time.Time, granularity string) (types.CloudWatchTimeWindow, error) {
+	switch granularity {
+	case "60s":
+		return calculateLast15Days(endTime), nil
+	case "5m":
+		return calculateLast63Days(endTime), nil
+	case "1h":
+		return calculateLast365Days(endTime, OneHourPeriodInSeconds), nil
+	case "1d":
+		return calculateLast365Days(endTime, OneDayPeriodInSeconds), nil
 	default:
-		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported time period: %s", desiredPeriod)
+		return types.CloudWatchTimeWindow{}, fmt.Errorf("unsupported metrics granularity: %s", granularity)
 	}
 }
 
-// calculateLast24Hours returns time window for the last 24 hours
-// End: endTime, Start: 24 hours before endTime, Period: 1 hour
-func calculateLast24Hours(endTime time.Time) types.CloudWatchTimeWindow {
-	startTime := endTime.Add(-24 * time.Hour)
+func calculateLast15Days(endTime time.Time) types.CloudWatchTimeWindow {
+	startTime := endTime.AddDate(0, 0, -15)
 	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
-		Period:    OneHourPeriodInSeconds,
+		Period:    OneMinutePeriodInSeconds,
 	}
 }
 
-// calculateLastWeek returns time window for the last 7 days
-// End: endTime, Start: 7 days before endTime, Period: 1 hour
-func calculateLastWeek(endTime time.Time) types.CloudWatchTimeWindow {
-	startTime := endTime.AddDate(0, 0, -7)
+func calculateLast63Days(endTime time.Time) types.CloudWatchTimeWindow {
+	startTime := endTime.AddDate(0, 0, -63)
 	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
-		Period:    OneHourPeriodInSeconds,
+		Period:    FiveMinutePeriodInSeconds,
 	}
 }
 
-// calculateLastMonth returns time window for the last month
-// End: endTime, Start: 1 month before endTime, Period: 1 day
-func calculateLastMonth(endTime time.Time) types.CloudWatchTimeWindow {
-	startTime := endTime.AddDate(0, -1, 0)
-	return types.CloudWatchTimeWindow{
-		StartTime: startTime,
-		EndTime:   endTime,
-		Period:    DailyPeriodInSeconds,
-	}
-}
-
-// calculateLastYear returns time window for the last 12 months
-// End: endTime, Start: 1 year before endTime, Period: 1 day
-func calculateLastYear(endTime time.Time) types.CloudWatchTimeWindow {
+func calculateLast365Days(endTime time.Time, period int32) types.CloudWatchTimeWindow {
 	startTime := endTime.AddDate(-1, 0, 0)
 	return types.CloudWatchTimeWindow{
 		StartTime: startTime,
 		EndTime:   endTime,
-		Period:    DailyPeriodInSeconds,
+		Period:    period,
 	}
 }

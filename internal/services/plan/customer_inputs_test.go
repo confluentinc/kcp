@@ -4,9 +4,11 @@ import (
 	"testing"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/confluentinc/kcp/internal/services/report"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 func sp(v string) *string   { return &v }
@@ -20,9 +22,9 @@ func fp(v float64) *float64 { return &v }
 // throughput aggregates). Downstream decisions consume the merged state
 // as if it had come from a scan.
 func TestApplyClusterDeclarations_SynthesisFromEmptyState(t *testing.T) {
-	state := types.ProcessedState{}
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	state := report.ProcessedState{}
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"events-platform": {
 				Region:             sp("us-west-2"),
 				ClusterType:        sp("PROVISIONED"),
@@ -77,13 +79,13 @@ func TestApplyClusterDeclarations_SynthesisFromEmptyState(t *testing.T) {
 // When a state file already carries the cluster, plan-inputs OVERLAYS
 // — declared fields win; un-declared fields keep their scan values.
 func TestApplyClusterDeclarations_OverlayWithExistingScan(t *testing.T) {
-	state := types.ProcessedState{
-		Sources: []types.ProcessedSource{{
+	state := report.ProcessedState{
+		Sources: []report.ProcessedSource{{
 			Type: types.SourceTypeMSK,
-			MSKData: &types.ProcessedMSKSource{
-				Regions: []types.ProcessedRegion{{
+			MSKData: &report.ProcessedMSKSource{
+				Regions: []report.ProcessedRegion{{
 					Name: "us-east-1",
-					Clusters: []types.ProcessedCluster{{
+					Clusters: []report.ProcessedCluster{{
 						Name:   "events",
 						Region: "us-east-1",
 						AWSClientInformation: types.AWSClientInformation{
@@ -105,8 +107,8 @@ func TestApplyClusterDeclarations_OverlayWithExistingScan(t *testing.T) {
 			},
 		}},
 	}
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"events": {
 				PeakIngressMBps: fp(120),
 				PeakEgressMBps:  fp(360),
@@ -134,9 +136,9 @@ func TestApplyClusterDeclarations_OverlayWithExistingScan(t *testing.T) {
 // Synthesis requires Region — entries without it are dropped so they
 // don't land in an unnamed bucket.
 func TestApplyClusterDeclarations_SynthesisRequiresRegion(t *testing.T) {
-	state := types.ProcessedState{}
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	state := report.ProcessedState{}
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"no-region": {
 				PeakIngressMBps: fp(100),
 				PeakEgressMBps:  fp(300),
@@ -151,9 +153,9 @@ func TestApplyClusterDeclarations_SynthesisRequiresRegion(t *testing.T) {
 // Customer declares cluster_type: SERVERLESS — synthesis builds the
 // Serverless block with IAM auth only.
 func TestApplyClusterDeclarations_SynthesisServerless(t *testing.T) {
-	state := types.ProcessedState{}
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	state := report.ProcessedState{}
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"srv": {
 				Region:         sp("us-east-1"),
 				ClusterType:    sp("SERVERLESS"),
@@ -178,10 +180,10 @@ func TestApplyClusterDeclarations_SynthesisServerless(t *testing.T) {
 // TargetAuthMethod) MUST NOT trigger synthesis. Those are layered
 // through applyClusterOverride separately.
 func TestApplyClusterDeclarations_DecisionOnlyOverrideDoesNotSynthesise(t *testing.T) {
-	state := types.ProcessedState{}
+	state := report.ProcessedState{}
 	dt := DowntimeZero
-	raw := &types.PlanInputs{
-		Clusters: map[string]types.ClusterPlanInputs{
+	raw := &PlanInputs{
+		Clusters: map[string]ClusterPlanInputs{
 			"some-cluster": {DowntimeTolerance: &dt},
 		},
 	}

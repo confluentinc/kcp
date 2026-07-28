@@ -6,19 +6,20 @@ import (
 	"os"
 
 	"github.com/confluentinc/kcp/internal/services/hcl"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
 type MigrationInfraOpts struct {
-	MigrationWizardRequest types.MigrationWizardRequest
+	MigrationWizardRequest hclrequests.MigrationWizardRequest
 
 	OutputDir     string
 	MigrationType types.MigrationType
 }
 
 type MigrationInfraAssetGenerator struct {
-	MigrationWizardRequest types.MigrationWizardRequest
+	MigrationWizardRequest hclrequests.MigrationWizardRequest
 
 	outputDir     string
 	migrationType types.MigrationType

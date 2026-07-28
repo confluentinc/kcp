@@ -1,6 +1,6 @@
 package modules
 
-import "github.com/confluentinc/kcp/internal/types"
+import "github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 
 // VariableSchema defines the metadata for a Terraform variable (name, type, description, sensitivity).
 // Shared across modules to avoid duplicating variable definitions.
@@ -11,9 +11,9 @@ type VariableSchema struct {
 	Sensitive   bool
 }
 
-// ToDefinition converts a VariableSchema to a types.TerraformVariable.
-func (v VariableSchema) ToDefinition() types.TerraformVariable {
-	return types.TerraformVariable{
+// ToDefinition converts a VariableSchema to a hcltypes.TerraformVariable.
+func (v VariableSchema) ToDefinition() hcltypes.TerraformVariable {
+	return hcltypes.TerraformVariable{
 		Name:        v.Name,
 		Type:        v.Type,
 		Description: v.Description,
@@ -114,8 +114,8 @@ var (
 // ExtractModuleVariableDefinitions extracts variable definitions for a module.
 // Unlike extractVariableDefinitions (which is for root-level), this includes ALL variables
 // regardless of ValueExtractor or FromModuleOutput — a module needs all its declared variables.
-func ExtractModuleVariableDefinitions[R any](allVars []ModuleVariable[R], request R) []types.TerraformVariable {
-	var definitions []types.TerraformVariable
+func ExtractModuleVariableDefinitions[R any](allVars []ModuleVariable[R], request R) []hcltypes.TerraformVariable {
+	var definitions []hcltypes.TerraformVariable
 
 	for _, varDef := range allVars {
 		if varDef.Condition != nil && !varDef.Condition(request) {

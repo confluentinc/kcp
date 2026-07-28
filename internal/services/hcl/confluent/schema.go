@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
@@ -20,7 +21,7 @@ func safePathName(name string) string {
 }
 
 // GlueSchemaVariables defines the variables needed for Glue schema migration resources
-var GlueSchemaVariables = []types.TerraformVariable{
+var GlueSchemaVariables = []hcltypes.TerraformVariable{
 	{Name: VarConfluentCloudSchemaRegistryURL, Description: "REST endpoint of the target Confluent Cloud Schema Registry", Sensitive: false, Type: "string"},
 	{Name: VarConfluentCloudSchemaRegistryAPIKey, Description: "API key for the target Confluent Cloud Schema Registry", Sensitive: false, Type: "string"},
 	{Name: VarConfluentCloudSchemaRegistrySecret, Description: "API secret for the target Confluent Cloud Schema Registry", Sensitive: true, Type: "string"},

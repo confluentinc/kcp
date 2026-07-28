@@ -8,7 +8,7 @@ test.describe('State Loading Methods', () => {
     // Clusters should appear without any upload action
     await page.waitForSelector('text=AWS MSK', { timeout: 10000 })
     await expect(page.locator('text=kcp-playground')).toBeVisible()
-    await expect(page.locator('text=OPEN SOURCE KAFKA')).toBeVisible()
+    await expect(page.locator('text=Apache Kafka')).toBeVisible()
     await expect(page.locator('text=production-kafka-us-east')).toBeVisible()
   })
 
@@ -27,7 +27,7 @@ test.describe('State Loading Methods', () => {
     })
 
     // Wait for the new state to load
-    await page.waitForSelector('text=OPEN SOURCE KAFKA', { timeout: 5000 })
+    await page.waitForSelector('text=Apache Kafka', { timeout: 5000 })
 
     // OSK cluster from uploaded state should appear
     await expect(page.locator('button:has-text("prod-kafka-cluster")')).toBeVisible()

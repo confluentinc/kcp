@@ -1,7 +1,7 @@
 package confluent
 
 import (
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 )
@@ -11,7 +11,7 @@ const (
 	VarConfluentCloudAPISecret = "confluent_cloud_api_secret"
 )
 
-var ConfluentProviderVariables = []types.TerraformVariable{
+var ConfluentProviderVariables = []hcltypes.TerraformVariable{
 	{Name: VarConfluentCloudAPIKey, Description: "Confluent Cloud API Key", Sensitive: false, Type: "string"},
 	{Name: VarConfluentCloudAPISecret, Description: "Confluent Cloud API Secret", Sensitive: true, Type: "string"},
 }

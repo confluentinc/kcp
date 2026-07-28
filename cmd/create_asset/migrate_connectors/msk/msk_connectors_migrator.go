@@ -14,12 +14,19 @@ import (
 	"strings"
 	"text/template"
 
+	"github.com/confluentinc/kcp/internal/redact"
+	"github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/types"
 	connector_utils "github.com/confluentinc/kcp/internal/utils"
 )
 
 //go:embed assets
 var assetsFs embed.FS
+
+// defaultTranslateBaseURL is the Confluent Cloud API host the connector-config
+// translate endpoint lives under. Overridable via the migrator's baseURL field
+// so tests can point translation at a local stub.
+const defaultTranslateBaseURL = "https://api.confluent.cloud"
 
 type TemplateData struct {
 	ConnectorName   string
@@ -59,6 +66,10 @@ type MskConnectorMigrator struct {
 
 	Connectors []types.ConnectorSummary
 	OutputDir  string
+
+	// baseURL is the host the translate endpoint is called under; defaults to
+	// defaultTranslateBaseURL and is overridable in tests.
+	baseURL string
 }
 
 func NewMskConnectorMigrator(opts MigrateMskConnectorOpts) *MskConnectorMigrator {
@@ -69,7 +80,23 @@ func NewMskConnectorMigrator(opts MigrateMskConnectorOpts) *MskConnectorMigrator
 		CcApiSecret:   opts.CcApiSecret,
 		Connectors:    opts.Connectors,
 		OutputDir:     opts.OutputDir,
+		baseURL:       defaultTranslateBaseURL,
 	}
+}
+
+// countRedactedConnectors reports how many connectors carry at least one
+// redacted sensitive field (a value equal to redact.Placeholder) in their
+// source configuration. Used to decide whether to warn the operator that the
+// generated assets need manual secret replacement. Count only — never the
+// connector names or field keys.
+func countRedactedConnectors(connectors []types.ConnectorSummary) int {
+	count := 0
+	for _, c := range connectors {
+		if redact.MapContainsRedacted(c.ConnectorConfiguration) {
+			count++
+		}
+	}
+	return count
 }
 
 func (mc *MskConnectorMigrator) Run() error {
@@ -88,6 +115,17 @@ func (mc *MskConnectorMigrator) Run() error {
 	}
 
 	fmt.Printf("🔍 Found %d connector(s) to migrate\n", len(mc.Connectors))
+
+	// Warn (count only — never names or field keys) when generated assets will
+	// carry redaction placeholders the operator must replace before applying.
+	if redacted := countRedactedConnectors(mc.Connectors); redacted > 0 {
+		fmt.Printf("⚠️  %d of %d connector(s) contain redacted sensitive fields (%s) — replace with real values in the generated Terraform before applying\n", redacted, len(mc.Connectors), redact.Placeholder)
+	}
+
+	// Write shared Terraform infrastructure files (providers.tf, variables.tf)
+	if err := hcl.WriteMigrateConnectorsInfraFiles(mc.OutputDir); err != nil {
+		return err
+	}
 
 	tmplContent, err := assetsFs.ReadFile("assets/connector.tmpl")
 	if err != nil {
@@ -114,14 +152,11 @@ func (mc *MskConnectorMigrator) Run() error {
 			}
 		}
 
-		filename := fmt.Sprintf("%s-connector.tf", connector.ConnectorName)
-		filepath := filepath.Join(mc.OutputDir, filename)
-
-		file, err := os.Create(filepath)
-		if err != nil {
-			return fmt.Errorf("failed to create file %s: %w", filepath, err)
-		}
-		defer func() { _ = file.Close() }()
+		// Sanitize the connector name to a single safe path segment before using it
+		// in a filename. AWS constrains MSK Connect names server-side, but a hostile
+		// state file could still carry "/" or ".." — keep the write inside OutputDir.
+		filename := fmt.Sprintf("%s-connector.tf", connector_utils.SanitizeConnectorFilename(connector.ConnectorName))
+		path := filepath.Join(mc.OutputDir, filename)
 
 		templateData := TemplateData{
 			ConnectorName:   connector.ConnectorName,
@@ -131,14 +166,38 @@ func (mc *MskConnectorMigrator) Run() error {
 			Warnings:        warnings,
 		}
 
-		if err := tmpl.Execute(file, templateData); err != nil {
-			return fmt.Errorf("failed to execute template for connector %s: %w", connector.ConnectorName, err)
+		if err := writeConnectorFile(tmpl, path, templateData); err != nil {
+			return err
 		}
 
 		slog.Debug(fmt.Sprintf("generated: %s", filename))
 	}
 
 	fmt.Printf("✅ Successfully generated connector files for %d connectors in %s\n", len(mc.Connectors), mc.OutputDir)
+
+	return nil
+}
+
+// writeConnectorFile renders templateData into a single connector .tf file at
+// path. It is a standalone function (not inlined in the Run loop) so the file
+// handle is closed when this returns — once per connector — rather than via a
+// deferred close that would accumulate open handles until Run() returns and
+// could exhaust file descriptors (or, on Windows, block subsequent file ops).
+// The deferred Close also surfaces a write error that only manifests on close.
+func writeConnectorFile(tmpl *template.Template, path string, templateData TemplateData) (err error) {
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("failed to create file %s: %w", path, err)
+	}
+	defer func() {
+		if cerr := file.Close(); cerr != nil && err == nil {
+			err = fmt.Errorf("failed to close file %s: %w", path, cerr)
+		}
+	}()
+
+	if err := tmpl.Execute(file, templateData); err != nil {
+		return fmt.Errorf("failed to execute template for connector %s: %w", templateData.ConnectorName, err)
+	}
 
 	return nil
 }
@@ -154,8 +213,13 @@ func (mc *MskConnectorMigrator) translateConnectorConfig(connector types.Connect
 		return nil, nil, fmt.Errorf("failed to determine plugin name: %w", err)
 	}
 
+	baseURL := mc.baseURL
+	if baseURL == "" {
+		baseURL = defaultTranslateBaseURL
+	}
 	url := fmt.Sprintf(
-		"https://api.confluent.cloud/connect/v1/environments/%s/clusters/%s/connector-plugins/%s/config/translate",
+		"%s/connect/v1/environments/%s/clusters/%s/connector-plugins/%s/config/translate",
+		baseURL,
 		mc.EnvironmentId,
 		mc.ClusterId,
 		pluginName,

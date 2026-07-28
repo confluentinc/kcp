@@ -1,12 +1,19 @@
 package types
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/state/migrate"
+
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 )
 
 func TestNewState(t *testing.T) {
@@ -580,12 +587,10 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 			},
 		},
 		{
-			// Regression test for the post-refactor shape. After removing the
-			// topic-parsing connector discovery from `kcp scan clusters`, a fresh
+			// Regression test for the post-refactor shape. A fresh
 			// `KafkaAdminClientInformation` returned from ScanKafkaResources has
 			// SelfManagedConnectors == nil (not an empty slice). The merge must
-			// preserve previously-discovered connectors written by
-			// `kcp scan self-managed-connectors`. Locks in R6.
+			// preserve connectors that already exist in state. Locks in R6.
 			name: "old connectors preserved when new is nil (post-refactor scan-clusters shape)",
 			current: KafkaAdminClientInformation{
 				SelfManagedConnectors: nil,
@@ -825,33 +830,106 @@ func TestNewStateFrom_PreservesExistingOSKData(t *testing.T) {
 	}
 }
 
-func TestProcessedSource_TypeDiscrimination(t *testing.T) {
-	// Test MSK source
-	mskSource := ProcessedSource{
-		Type: SourceTypeMSK,
-		MSKData: &ProcessedMSKSource{
-			Regions: []ProcessedRegion{},
+func TestNewStateFrom_PreservesUpgradedFromAndSchemaRegistries(t *testing.T) {
+	// A file that was migrated/upgraded carries a upgraded_from breadcrumb and may
+	// hold previously-discovered schema registries. A RUW command (discover/scan)
+	// rebuilds its working state via NewStateFrom, which must carry both forward —
+	// otherwise the next write silently drops them (append-only violation).
+	existingState := &State{
+		UpgradedFrom: "era=B",
+		SchemaRegistries: &SchemaRegistriesState{
+			ConfluentSchemaRegistry: []SchemaRegistryInformation{
+				{URL: "https://sr.example.com"},
+			},
 		},
-	}
-	if mskSource.Type != SourceTypeMSK {
-		t.Errorf("Expected MSK type, got %s", mskSource.Type)
-	}
-	if mskSource.MSKData == nil {
-		t.Error("MSKData should not be nil for MSK source")
 	}
 
-	// Test OSK source
-	oskSource := ProcessedSource{
-		Type: SourceTypeOSK,
-		OSKData: &ProcessedOSKSource{
-			Clusters: []ProcessedOSKCluster{},
+	newState := NewStateFrom(existingState)
+
+	if newState.UpgradedFrom != "era=B" {
+		t.Errorf("UpgradedFrom breadcrumb lost: got %q, want %q", newState.UpgradedFrom, "era=B")
+	}
+	if newState.SchemaRegistries == nil || len(newState.SchemaRegistries.ConfluentSchemaRegistry) != 1 {
+		t.Errorf("SchemaRegistries lost: got %+v", newState.SchemaRegistries)
+	}
+}
+
+func TestNewStateFrom_PreservesCreatedTimestamp(t *testing.T) {
+	// Timestamp is the "created" time; only updated_at moves on each write. A RUW
+	// rebuild from an existing state must keep the original created-at rather than
+	// resetting it to now on every discover/scan.
+	created := time.Date(2026, 5, 14, 0, 0, 0, 0, time.UTC)
+	existingState := &State{Timestamp: created}
+
+	newState := NewStateFrom(existingState)
+
+	if !newState.Timestamp.Equal(created) {
+		t.Errorf("created Timestamp reset: got %s, want %s", newState.Timestamp, created)
+	}
+}
+
+func TestNewStateFrom_FreshStateGetsCreationTimestamp(t *testing.T) {
+	// A brand-new state (no source file) legitimately gets a fresh created-at.
+	newState := NewStateFrom(nil)
+	if newState.Timestamp.IsZero() {
+		t.Error("fresh state should get a non-zero created Timestamp")
+	}
+}
+
+// reDerivedStateFields are the State fields NewStateFrom intentionally does NOT
+// carry from the source, because the writer (re)stamps them rather than treating
+// them as source data. Everything NOT listed here must survive a RUW rebuild.
+var reDerivedStateFields = map[string]bool{
+	"SchemaVersion": true, // WriteToFile stamps the current schema version
+	"KcpBuildInfo":  true, // stamped with the writer's own build
+	"UpdatedAt":     true, // WriteToFile sets the last-write time
+}
+
+// TestNewStateFrom_NoFieldSilentlyDropped guards against the recurring bug class
+// where NewStateFrom (a copy-by-name allowlist) drops a State field on RUW — this
+// is how upgraded_from, schema_registries and the created timestamp were all lost.
+// It populates every field, round-trips through NewStateFrom, and requires each
+// field to be either preserved or in reDerivedStateFields.
+//
+// When this fails after you add a State field: decide whether the field is source
+// data (carry it forward in NewStateFrom) or writer-stamped (add it to
+// reDerivedStateFields). Do NOT just add it to the allowlist to go green.
+func TestNewStateFrom_NoFieldSilentlyDropped(t *testing.T) {
+	fixed := time.Date(2026, 5, 14, 12, 0, 0, 0, time.UTC)
+	src := &State{
+		SchemaVersion: 7,
+		MSKSources:    &MSKSourcesState{Regions: []DiscoveredRegion{{Name: "us-east-1"}}},
+		OSKSources:    &OSKSourcesState{Clusters: []OSKDiscoveredCluster{{ID: "osk-1"}}},
+		SchemaRegistries: &SchemaRegistriesState{
+			ConfluentSchemaRegistry: []SchemaRegistryInformation{{URL: "https://sr.example.com"}},
 		},
+		KcpBuildInfo: KcpBuildInfo{Version: "9.9.9", Commit: "abc", Date: "2026-01-01"},
+		Timestamp:    fixed,
+		UpdatedAt:    fixed.Add(time.Hour),
+		UpgradedFrom: "era=B",
 	}
-	if oskSource.Type != SourceTypeOSK {
-		t.Errorf("Expected OSK type, got %s", oskSource.Type)
+
+	st := reflect.TypeOf(State{})
+	srcV := reflect.ValueOf(*src)
+
+	// Guard the guard: every field must be non-zero, otherwise a dropped field
+	// would read as zero==zero and slip past the comparison below.
+	for i := 0; i < st.NumField(); i++ {
+		if srcV.Field(i).IsZero() {
+			t.Fatalf("test fixture incomplete: State field %q is zero — populate it in this test so the drop-guard is meaningful", st.Field(i).Name)
+		}
 	}
-	if oskSource.OSKData == nil {
-		t.Error("OSKData should not be nil for OSK source")
+
+	outV := reflect.ValueOf(*NewStateFrom(src))
+	for i := 0; i < st.NumField(); i++ {
+		f := st.Field(i)
+		if reDerivedStateFields[f.Name] {
+			continue
+		}
+		if got, want := outV.Field(i).Interface(), srcV.Field(i).Interface(); !reflect.DeepEqual(got, want) {
+			t.Errorf("NewStateFrom dropped/altered field %q (json:%q) — it is neither carried forward nor writer-stamped.\nCopy it in NewStateFrom, or if the writer re-stamps it add it to reDerivedStateFields.\n got:  %#v\n want: %#v",
+				f.Name, f.Tag.Get("json"), got, want)
+		}
 	}
 }
 
@@ -1049,11 +1127,12 @@ func TestNewStateFromFile_SchemaMismatch_SurfacesVersionError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected load error from fallback, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
+	// The source file's version is surfaced via the "upgraded from ..." breadcrumb.
 	if !strings.Contains(err.Error(), "0.5.0") {
-		t.Errorf("expected error to contain file version, got: %v", err)
+		t.Errorf("expected error to reference the file's version, got: %v", err)
 	}
 }
 
@@ -1073,8 +1152,8 @@ func TestNewStateFromFile_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected unmarshal error, got: %v", err)
+	if !strings.Contains(err.Error(), "state file") {
+		t.Errorf("expected a state-file error, got: %v", err)
 	}
 }
 
@@ -1096,8 +1175,8 @@ func TestNewStateFromFile_SchemaMismatch_NoVersion_SurfacesFriendlyError(t *test
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected friendly error for versionless schema mismatch, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance for versionless schema mismatch, got: %v", err)
 	}
 }
 
@@ -1139,22 +1218,29 @@ func TestNewStateFromBytes_SchemaMismatch_WithVersion(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
+	// The file's version is surfaced via the "upgraded from ..." breadcrumb. The new
+	// contract no longer echoes the running binary's version (superseded #308 behavior);
+	// it gives actionable upgrade/recreate guidance instead.
 	if !strings.Contains(err.Error(), "0.5.0") {
-		t.Errorf("expected error to contain file version, got: %v", err)
+		t.Errorf("expected error to reference the file's version, got: %v", err)
 	}
-	if !strings.Contains(err.Error(), build_info.Version) {
-		t.Errorf("expected error to contain running version, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
 }
 
 func TestNewStateFromBytes_SchemaMismatch_NoVersion(t *testing.T) {
+	// An Era C-shaped file (msk_sources present) whose msk_sources is malformed passes
+	// through migration unchanged (era C, no schema_version) and fails the strict decode.
+	// With no version stamp it is NOT dev-classified, so it gets the generic, actionable
+	// recreate/upgrade message rather than a dev-build message (spec N5).
 	data := []byte(`{"msk_sources":["unexpected","array"]}`)
 	_, err := NewStateFromBytes(data)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected friendly error, got: %v", err)
+	if !strings.Contains(err.Error(), "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
 }
 
@@ -1164,8 +1250,9 @@ func TestNewStateFromBytes_InvalidJSON(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")
 	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected unmarshal error, got: %v", err)
+	// Invalid JSON fails during version inspection; the message names the state file.
+	if !strings.Contains(err.Error(), "state file") {
+		t.Errorf("expected a state-file error, got: %v", err)
 	}
 }
 
@@ -1180,29 +1267,34 @@ func TestNewStateFromBytes_EmptyVersion(t *testing.T) {
 	}
 }
 
-func TestNewStateFromBytes_UnknownFields_WithVersion_RejectsWithVersionContext(t *testing.T) {
-	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1"}]}`)
-	_, err := NewStateFromBytes(data)
+// A legacy Era B file that the engine can't fully migrate (here, an unknown field after the
+// B→C reshape) must fail with actionable, NON-CIRCULAR guidance: recreate with discover/scan.
+// It must NOT advise `kcp state upgrade` — that command shares this exact loader, so it would
+// fail identically (circular advice). Guards the fix for the schema_registries-style load failure.
+func assertNonCircularLoadError(t *testing.T, err error) {
+	t.Helper()
 	if err == nil {
-		t.Fatal("expected error for unknown fields, got nil")
+		t.Fatal("expected error for unsupported legacy file, got nil")
 	}
-	if !strings.Contains(err.Error(), "0.7.2") {
-		t.Errorf("expected error to contain file version, got: %v", err)
+	msg := err.Error()
+	if strings.Contains(msg, "kcp state upgrade") {
+		t.Errorf("error must NOT advise `kcp state upgrade` (circular — same loader), got: %v", err)
 	}
-	if !strings.Contains(err.Error(), build_info.Version) {
-		t.Errorf("expected error to contain running version, got: %v", err)
+	if !strings.Contains(msg, "recreate") {
+		t.Errorf("expected actionable recreate guidance, got: %v", err)
 	}
 }
 
-func TestNewStateFromBytes_UnknownFields_NoVersion_Rejects(t *testing.T) {
+func TestNewStateFromBytes_LegacyEraB_WithVersion_NonCircularAdvice(t *testing.T) {
+	data := []byte(`{"kcp_build_info":{"version":"0.7.2"},"regions":[{"region_name":"us-east-1"}]}`)
+	_, err := NewStateFromBytes(data)
+	assertNonCircularLoadError(t, err)
+}
+
+func TestNewStateFromBytes_LegacyEraB_NoVersion_NonCircularAdvice(t *testing.T) {
 	data := []byte(`{"regions":[{"region_name":"us-east-1"}]}`)
 	_, err := NewStateFromBytes(data)
-	if err == nil {
-		t.Fatal("expected error for unknown fields, got nil")
-	}
-	if !strings.Contains(err.Error(), "Please recreate the state file") {
-		t.Errorf("expected load error, got: %v", err)
-	}
+	assertNonCircularLoadError(t, err)
 }
 
 func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
@@ -1211,6 +1303,104 @@ func TestNewStateFromBytes_UnknownFields_AnyExtraField_Rejects(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unknown field, got nil")
 	}
+}
+
+func TestUpsertTargetedClusters(t *testing.T) {
+	clusterWithAcls := DiscoveredCluster{
+		Arn:    "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+		Region: "us-east-1",
+		KafkaAdminClientInformation: KafkaAdminClientInformation{
+			Acls: []Acls{{ResourceName: "topic-a", Principal: "User:alice"}},
+		},
+	}
+	siblingCluster := DiscoveredCluster{
+		Arn:    "arn:aws:kafka:us-east-1:111:cluster/b/uuid",
+		Region: "us-east-1",
+	}
+
+	t.Run("creates region when absent", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{}}}
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{clusterWithAcls},
+		})
+		if len(s.MSKSources.Regions) != 1 {
+			t.Fatalf("got %d regions, want 1", len(s.MSKSources.Regions))
+		}
+		if len(s.MSKSources.Regions[0].Clusters) != 1 {
+			t.Fatalf("got %d clusters, want 1", len(s.MSKSources.Regions[0].Clusters))
+		}
+	})
+
+	t.Run("preserves siblings and refreshes region costs", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{{
+			Name:     "us-east-1",
+			Costs:    CostInformation{},
+			Clusters: []DiscoveredCluster{clusterWithAcls, siblingCluster},
+		}}}}
+
+		// targeted re-discovery of cluster A with fresh (empty-admin-info) data + new region costs
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:  "us-east-1",
+			Costs: CostInformation{CostResults: make([]costexplorertypes.ResultByTime, 1)},
+			Clusters: []DiscoveredCluster{{
+				Arn:    "arn:aws:kafka:us-east-1:111:cluster/a/uuid",
+				Region: "us-east-1",
+			}},
+		})
+
+		region := s.MSKSources.Regions[0]
+		if len(region.Clusters) != 2 {
+			t.Fatalf("got %d clusters, want 2 (sibling preserved)", len(region.Clusters))
+		}
+		if len(region.Costs.CostResults) != 1 {
+			t.Errorf("region costs not refreshed: got %d results, want 1", len(region.Costs.CostResults))
+		}
+
+		// targeted cluster keeps its scan-acquired ACLs (MergeFrom preserves old when new empty)
+		var clusterA *DiscoveredCluster
+		for i := range region.Clusters {
+			if region.Clusters[i].Arn == "arn:aws:kafka:us-east-1:111:cluster/a/uuid" {
+				clusterA = &region.Clusters[i]
+			}
+		}
+		if clusterA == nil {
+			t.Fatal("targeted cluster A missing")
+		}
+		if len(clusterA.KafkaAdminClientInformation.Acls) != 1 {
+			t.Errorf("scan ACLs not preserved on targeted cluster: got %d, want 1", len(clusterA.KafkaAdminClientInformation.Acls))
+		}
+	})
+
+	t.Run("adds a new cluster to an existing region", func(t *testing.T) {
+		s := &State{MSKSources: &MSKSourcesState{Regions: []DiscoveredRegion{{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{clusterWithAcls, siblingCluster}, // A, B
+		}}}}
+
+		newCluster := DiscoveredCluster{
+			Arn:    "arn:aws:kafka:us-east-1:111:cluster/c/uuid",
+			Region: "us-east-1",
+		}
+		s.UpsertTargetedClusters(DiscoveredRegion{
+			Name:     "us-east-1",
+			Clusters: []DiscoveredCluster{newCluster},
+		})
+
+		region := s.MSKSources.Regions[0]
+		if len(region.Clusters) != 3 {
+			t.Fatalf("got %d clusters, want 3 (A, B preserved + new C appended)", len(region.Clusters))
+		}
+		found := false
+		for _, c := range region.Clusters {
+			if c.Arn == "arn:aws:kafka:us-east-1:111:cluster/c/uuid" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("new cluster C was not appended to the existing region")
+		}
+	})
 }
 
 func TestFormatQueryDuration(t *testing.T) {
@@ -1241,5 +1431,284 @@ func TestFormatQueryDuration(t *testing.T) {
 				t.Errorf("FormatQueryDuration(%v) = %q, want %q", tt.d, got, tt.expected)
 			}
 		})
+	}
+}
+
+// skipIfWindows skips file-mode assertions on Windows, where POSIX permission
+// bits are not meaningfully enforced.
+func skipIfWindows(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX file-mode semantics do not apply on Windows")
+	}
+}
+
+// TestWriteToFile_NewFileHasOwnerOnlyPerms verifies a freshly written state
+// file is created with mode 0600 (owner read/write only), not world/group
+// readable. (R1)
+func TestWriteToFile_NewFileHasOwnerOnlyPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600", got)
+	}
+}
+
+// TestWriteToFile_StaleLooseTempDoesNotLeak guards against regressing to the old
+// fixed-name temp scheme, whose bug was that a leftover <path>.tmp at 0644 from a
+// crashed run kept its loose mode and the rename carried it through. We seed that
+// exact condition and assert (a) the final state file is still 0600, (b) the
+// stale fixed-name temp is left untouched -- proving the writer created its own
+// unique temp rather than reusing the leftover one -- and (c) the writer's own
+// unique temp is cleaned up on success. (R3 abuse case)
+func TestWriteToFile_StaleLooseTempDoesNotLeak(t *testing.T) {
+	skipIfWindows(t)
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+	// Simulate a crash leaving a fixed-name temp at loose perms -- the exact
+	// condition the old os.WriteFile(path+".tmp", ...) code mishandled.
+	stale := path + ".tmp"
+	if err := os.WriteFile(stale, []byte("{}"), 0644); err != nil {
+		t.Fatalf("seed stale temp: %v", err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600 (stale 0644 temp leaked into result)", got)
+	}
+
+	// The writer must not reuse the stale fixed-name temp: it should still exist,
+	// untouched at 0644, proving a fresh unique temp was used instead.
+	staleInfo, err := os.Stat(stale)
+	if err != nil {
+		t.Fatalf("stale fixed-name temp should be left untouched, but stat failed: %v", err)
+	}
+	if got := staleInfo.Mode().Perm(); got != 0o644 {
+		t.Fatalf("stale fixed-name temp perms = %#o, want 0644 untouched (writer must not reuse the fixed name)", got)
+	}
+
+	// The writer's own unique temp (.kcp-state.json.tmp-*) must be cleaned up on success.
+	matches, err := filepath.Glob(filepath.Join(dir, ".kcp-state.json.tmp-*"))
+	if err != nil {
+		t.Fatalf("glob unique temp: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("unique temp file(s) left behind after success: %v", matches)
+	}
+}
+
+// TestWriteToFile_SecondWritePreservesPerms verifies a rewrite of an existing
+// state file keeps mode 0600 rather than loosening it back to 0644 -- so the
+// hardening holds across every command that persists state, not just the first.
+// (R4 regression guard)
+func TestWriteToFile_SecondWritePreservesPerms(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	for i := 0; i < 2; i++ {
+		if err := (&State{}).WriteToFile(path); err != nil {
+			t.Fatalf("WriteToFile (write %d): %v", i+1, err)
+		}
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms after second write = %#o, want 0600", got)
+	}
+}
+
+// TestWriteToFile_TightensExistingLooseFile verifies that an existing state
+// file already at 0644 (e.g. created by an older kcp build) is tightened to
+// 0600 on the next write -- no separate migration step required. (R5 regression
+// guard)
+func TestWriteToFile_TightensExistingLooseFile(t *testing.T) {
+	skipIfWindows(t)
+
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	if err := os.WriteFile(path, []byte("{}"), 0644); err != nil {
+		t.Fatalf("seed legacy 0644 state file: %v", err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat: %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("state file perms = %#o, want 0600 (existing 0644 file not tightened)", got)
+	}
+}
+
+// TestWriteToFile_RoundTripsContent verifies the permission change did not break
+// the write/load round trip -- content is still valid JSON and reloads via the
+// existing loader. (R6 regression guard)
+func TestWriteToFile_RoundTripsContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "kcp-state.json")
+	want := "round-trip-test-1.2.3"
+	if err := (&State{KcpBuildInfo: KcpBuildInfo{Version: want}}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	got, err := NewStateFromFile(path)
+	if err != nil {
+		t.Fatalf("NewStateFromFile: %v", err)
+	}
+	if got.KcpBuildInfo.Version != want {
+		t.Fatalf("reloaded version = %q, want %q", got.KcpBuildInfo.Version, want)
+	}
+}
+
+func TestWriteToFileStampsSchemaVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+
+	s := &State{} // no schema_version set by caller
+	if err := s.WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	var probe struct {
+		SchemaVersion int    `json:"schema_version"`
+		UpdatedAt     string `json:"updated_at"`
+	}
+	if err := json.Unmarshal(data, &probe); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if probe.SchemaVersion != migrate.CurrentSchemaVersion {
+		t.Errorf("schema_version = %d, want %d", probe.SchemaVersion, migrate.CurrentSchemaVersion)
+	}
+	if probe.UpdatedAt == "" {
+		t.Errorf("updated_at not stamped")
+	}
+}
+
+func TestWriteToFileBacksUpMigratingWrite(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+
+	// Existing on-disk file at an OLDER schema_version (0) than current.
+	if err := os.WriteFile(path, []byte(`{"schema_version":0,"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.0"},"timestamp":"2026-05-14T00:00:00Z"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatalf("WriteToFile: %v", err)
+	}
+
+	// Exactly one timestamped .bak should exist, holding the old (schema_version 0) bytes.
+	entries, _ := filepath.Glob(filepath.Join(dir, "kcp-state.json.*.bak"))
+	if len(entries) != 1 {
+		t.Fatalf("want 1 .bak, got %d: %v", len(entries), entries)
+	}
+	bak, _ := os.ReadFile(entries[0])
+	if !strings.Contains(string(bak), `"schema_version":0`) {
+		t.Errorf(".bak should contain the pre-migration file, got: %s", bak)
+	}
+
+	// A same-version rewrite must NOT create another backup.
+	if err := (&State{}).WriteToFile(path); err != nil {
+		t.Fatal(err)
+	}
+	entries, _ = filepath.Glob(filepath.Join(dir, "kcp-state.json.*.bak"))
+	if len(entries) != 1 {
+		t.Errorf("same-version rewrite must not back up; want 1 .bak, got %d", len(entries))
+	}
+}
+
+func TestNewStateFromBytesLoadsCurrentEraC(t *testing.T) {
+	data := []byte(`{"schema_version":1,"msk_sources":{"regions":[]},"kcp_build_info":{"version":"0.8.5","commit":"x","date":"y"},"timestamp":"2026-01-01T00:00:00Z"}`)
+	st, err := NewStateFromBytes(data)
+	if err != nil {
+		t.Fatalf("NewStateFromBytes: %v", err)
+	}
+	if st.MSKSources == nil {
+		t.Fatalf("msk_sources not decoded")
+	}
+}
+
+func TestNewStateFromBytesNewerSchemaIsActionable(t *testing.T) {
+	data := []byte(`{"schema_version":99,"msk_sources":{}}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error for newer schema")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "newer") || !strings.Contains(msg, "kcp update") {
+		t.Errorf("error should tell the user to update, got: %q", msg)
+	}
+	if strings.Contains(msg, "recreate") || strings.Contains(msg, "downgrade") {
+		t.Errorf("error must NOT suggest recreate/downgrade for a newer file, got: %q", msg)
+	}
+}
+
+func TestNewStateFromBytesDevStampedNewerSchema(t *testing.T) {
+	// Official-release reader opening a dev-STAMPED file with a newer schema_version:
+	// must explain it's a dev build, NOT advise `kcp update` (spec §6.9).
+	data := []byte(`{"schema_version":99,"kcp_build_info":{"version":"0.0.0-localdev"},"msk_sources":{}}`)
+	_, err := NewStateFromBytes(data)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "development build") {
+		t.Errorf("error should name the development build, got: %q", msg)
+	}
+	if strings.Contains(msg, "kcp update") {
+		t.Errorf("error must NOT advise `kcp update` for a dev-stamped file, got: %q", msg)
+	}
+}
+
+func TestWriteToFileFailsWhenExistingFileUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root — 0000 perms do not block reads")
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "kcp-state.json")
+	// Existing file at an older schema_version (so the next write is a *migrating* write),
+	// then made unreadable. The write must abort rather than silently overwrite with no backup.
+	if err := os.WriteFile(path, []byte(`{"schema_version":0,"kcp_build_info":{"version":"0.8.0"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) }) // let TempDir cleanup remove it
+
+	if err := (&State{}).WriteToFile(path); err == nil {
+		t.Fatal("WriteToFile must fail when the existing file can't be read (no silent overwrite without backup)")
+	}
+}
+
+func TestNewStateFromBytes_TrailingDataRejected(t *testing.T) {
+	data := []byte(`{"schema_version":1,"kcp_build_info":{"version":"0.8.5"},"msk_sources":{}}{"extra":true}`)
+	if _, err := NewStateFromBytes(data); err == nil {
+		t.Fatal("expected error for trailing data after the JSON object")
 	}
 }

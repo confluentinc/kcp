@@ -143,6 +143,7 @@ func (s *stubMSKConnectService) ListConnectors(ctx context.Context, params *kafk
 	}
 	return &kafkaconnect.ListConnectorsOutput{}, nil
 }
+
 func (s *stubMSKConnectService) DescribeConnector(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
 	if s.describeConnectorFn != nil {
 		return s.describeConnectorFn(ctx, params, optFns...)

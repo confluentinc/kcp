@@ -16,7 +16,7 @@ export const OSKSourceSection = ({ clusters }: OSKSourceSectionProps) => {
       {/* Section Label */}
       <div className="px-2 py-1">
         <span className="text-sm font-bold text-foreground uppercase tracking-wider" style={{ fontFamily: "'IBM Plex Sans', sans-serif" }}>
-          Open Source Kafka
+          Apache Kafka
         </span>
       </div>
 

@@ -122,18 +122,16 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 			return nil, fmt.Errorf("no connectors found for cluster %s in %s. The cluster exists but has no MSK Connect or self-managed connectors", cluster.Name, stateFile)
 		}
 		clustersByArn[clusterId] = cluster
-	} else {
-		if state.MSKSources != nil {
-			for _, region := range state.MSKSources.Regions {
-				for i := range region.Clusters {
-					cluster := &region.Clusters[i]
-					// Include cluster if it has any connectors (MSK Connect or self-managed)
-					hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
-						(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
-							len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
-					if hasConnectors {
-						clustersByArn[cluster.Arn] = cluster
-					}
+	} else if state.MSKSources != nil {
+		for _, region := range state.MSKSources.Regions {
+			for i := range region.Clusters {
+				cluster := &region.Clusters[i]
+				// Include cluster if it has any connectors (MSK Connect or self-managed)
+				hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
+					(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
+						len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
+				if hasConnectors {
+					clustersByArn[cluster.Arn] = cluster
 				}
 			}
 		}

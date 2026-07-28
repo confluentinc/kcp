@@ -11,7 +11,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/services/hcl/hcltypes"
 	"github.com/gruntwork-io/terratest/modules/terraform"
 	"github.com/stretchr/testify/require"
 )
@@ -89,7 +89,7 @@ terraform {
 }
 
 // projectToFiles flattens a MigrationInfraTerraformProject into a map of filename → content.
-func projectToFiles(project types.MigrationInfraTerraformProject) map[string]string {
+func projectToFiles(project hcltypes.MigrationInfraTerraformProject) map[string]string {
 	files := map[string]string{}
 
 	if project.MainTf != "" {
@@ -134,7 +134,7 @@ func projectToFiles(project types.MigrationInfraTerraformProject) map[string]str
 }
 
 // terraformFilesToMap flattens a TerraformFiles into a map of filename → content.
-func terraformFilesToMap(tf types.TerraformFiles) map[string]string {
+func terraformFilesToMap(tf hcltypes.TerraformFiles) map[string]string {
 	files := map[string]string{}
 
 	if tf.MainTf != "" {
@@ -163,7 +163,7 @@ func terraformFilesToMap(tf types.TerraformFiles) map[string]string {
 // into a flat filename → content map suitable for terraform validation. Unlike
 // schemaProjectToFiles (which prefixes per-registry folder paths), migrate-topics
 // always returns one folder rendered at the project root.
-func migrateTopicsProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
+func migrateTopicsProjectToFiles(project hcltypes.MigrationScriptsTerraformProject) map[string]string {
 	files := map[string]string{}
 	if len(project.Folders) == 0 {
 		return files
@@ -182,7 +182,7 @@ func migrateTopicsProjectToFiles(project types.MigrationScriptsTerraformProject)
 }
 
 // schemaProjectToFiles flattens a MigrationScriptsTerraformProject into a map.
-func schemaProjectToFiles(project types.MigrationScriptsTerraformProject) map[string]string {
+func schemaProjectToFiles(project hcltypes.MigrationScriptsTerraformProject) map[string]string {
 	files := map[string]string{}
 
 	for _, folder := range project.Folders {

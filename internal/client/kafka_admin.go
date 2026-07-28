@@ -100,29 +100,50 @@ func WithInsecureSkipVerify() AdminOption {
 	}
 }
 
-// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
-func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+// AdminOptionForAuthMethod maps an auth type + method config to the corresponding
+// AdminOption. skipTLSVerify applies to SASL/SCRAM (MSK passes false — AWS-managed
+// certs; Apache Kafka passes its InsecureSkipTLSVerify).
+func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConfig, skipTLSVerify bool) (AdminOption, error) {
 	switch authType {
 	case types.AuthTypeIAM:
-		return WithIAMAuth()
+		return WithIAMAuth(), nil
 	case types.AuthTypeSASLSCRAM:
-		return WithSASLSCRAMAuth(clusterAuth.AuthMethod.SASLScram.Username, clusterAuth.AuthMethod.SASLScram.Password, clusterAuth.AuthMethod.SASLScram.Mechanism, false)
-	case types.AuthTypeUnauthenticatedTLS:
-		return WithUnauthenticatedTlsAuth()
-	case types.AuthTypeUnauthenticatedPlaintext:
-		return WithUnauthenticatedPlaintextAuth()
-	case types.AuthTypeTLS:
-		return WithTLSAuth(clusterAuth.AuthMethod.TLS.CACert, clusterAuth.AuthMethod.TLS.ClientCert, clusterAuth.AuthMethod.TLS.ClientKey)
+		if auth.SASLScram == nil {
+			return nil, fmt.Errorf("auth type %q selected but sasl_scram config is nil", authType)
+		}
+		return WithSASLSCRAMAuth(auth.SASLScram.Username, auth.SASLScram.Password, auth.SASLScram.Mechanism, skipTLSVerify), nil
 	case types.AuthTypeSASLPlain:
-		return WithSASLPlainAuthNoTLS(clusterAuth.AuthMethod.SASLPlain.Username, clusterAuth.AuthMethod.SASLPlain.Password)
+		if auth.SASLPlain == nil {
+			return nil, fmt.Errorf("auth type %q selected but sasl_plain config is nil", authType)
+		}
+		return WithSASLPlainAuthNoTLS(auth.SASLPlain.Username, auth.SASLPlain.Password), nil
+	case types.AuthTypeUnauthenticatedTLS:
+		return WithUnauthenticatedTlsAuth(), nil
+	case types.AuthTypeUnauthenticatedPlaintext:
+		return WithUnauthenticatedPlaintextAuth(), nil
+	case types.AuthTypeTLS:
+		if auth.TLS == nil {
+			return nil, fmt.Errorf("auth type %q selected but tls config is nil", authType)
+		}
+		return WithTLSAuth(auth.TLS.CACert, auth.TLS.ClientCert, auth.TLS.ClientKey), nil
 	default:
-		slog.Warn("unknown auth type, defaulting to IAM", "authType", authType)
-		return WithIAMAuth()
+		return nil, fmt.Errorf("auth type %q not supported", authType)
 	}
 }
 
+// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
+// Retained for callers keyed to types.ClusterAuth; delegates to AdminOptionForAuthMethod.
+func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
+	opt, err := AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
+	if err != nil {
+		slog.Warn("could not resolve auth option, defaulting to IAM", "authType", authType, "error", err)
+		return WithIAMAuth()
+	}
+	return opt
+}
+
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
-	slog.Info("🔍 configuring SASL/OAuth (IAM) authentication")
+	slog.Debug("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
 	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 	config.Net.SASL.Enable = true
@@ -131,7 +152,7 @@ func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, 
 }
 
 func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string, insecureSkipTLSVerify bool) error {
-	slog.Info("configuring SASL/SCRAM authentication", "mechanism", mechanism, "insecure_skip_tls_verify", insecureSkipTLSVerify)
+	slog.Debug("configuring SASL/SCRAM authentication", "mechanism", mechanism, "insecure_skip_tls_verify", insecureSkipTLSVerify)
 	if insecureSkipTLSVerify {
 		slog.Warn("TLS certificate verification is disabled - this should only be used in test environments with self-signed certificates")
 	}
@@ -164,7 +185,7 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 }
 
 func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string, withTLSEncryption bool, insecureSkipVerify bool) {
-	slog.Info("configuring SASL/PLAIN authentication", "enableTlsEncryption", withTLSEncryption)
+	slog.Debug("configuring SASL/PLAIN authentication", "enableTlsEncryption", withTLSEncryption)
 	if !withTLSEncryption {
 		slog.Warn("SASL/PLAIN without TLS: credentials will be transmitted in cleartext over the network")
 	}
@@ -179,7 +200,7 @@ func configureSASLTypePlainAuthentication(config *sarama.Config, username string
 }
 
 func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool, insecureSkipVerify bool) {
-	slog.Info("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
+	slog.Debug("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
 	config.Net.TLS.Enable = withTLSEncryption
 	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
 }

@@ -38,8 +38,10 @@ func configureBasicAuth(srConfig *schemaregistry.Config, username, password stri
 	srConfig.BasicAuthUserInfo = fmt.Sprintf("%s:%s", username, password)
 }
 
-// NewSchemaRegistryClient creates a new Schema Registry client for the given URL
-func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemaregistry.Client, error) {
+// resolveSchemaRegistryConfig applies the given options onto a default
+// (unauthenticated) config. Shared by NewSchemaRegistryClient and the pre-flight
+// validator so both honor the same auth resolution.
+func resolveSchemaRegistryConfig(opts ...SchemaRegistryOption) SchemaRegistryConfig {
 	config := SchemaRegistryConfig{
 		authType: types.SchemaRegistryAuthTypeUnauthenticated,
 	}
@@ -47,6 +49,13 @@ func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemare
 	for _, opt := range opts {
 		opt(&config)
 	}
+
+	return config
+}
+
+// NewSchemaRegistryClient creates a new Schema Registry client for the given URL
+func NewSchemaRegistryClient(url string, opts ...SchemaRegistryOption) (schemaregistry.Client, error) {
+	config := resolveSchemaRegistryConfig(opts...)
 
 	srConfig := schemaregistry.NewConfig(url)
 

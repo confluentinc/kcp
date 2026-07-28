@@ -4,9 +4,9 @@ import (
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/services/hcl/aws"
+	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/hcl/modules"
 	"github.com/confluentinc/kcp/internal/services/hcl/other"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/hashicorp/hcl/v2/hclwrite"
 	"github.com/zclconf/go-cty/cty"
@@ -16,7 +16,7 @@ import (
 // Root-Level Generation - Private Migration - Jump Clusters
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrastructure(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateRootMainTfForPrivateMigrationInfrastructure(request hclrequests.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -88,7 +88,7 @@ func (mi *MigrationInfraHCLService) generateRootProvidersTfForPrivateMigrationIn
 // README Generation (Private - Jump Clusters)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateJumpClusterReadmeMd(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateJumpClusterReadmeMd(request hclrequests.MigrationWizardRequest) string {
 	credentialsSection := `
 You will be prompted for the following credentials during ` + "`terraform apply`" + `:
 
@@ -190,7 +190,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostMainTf() string 
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(request hclrequests.MigrationWizardRequest) string {
 	switch request.JumpClusterAuthType {
 	case "sasl_scram":
 		return aws.GenerateJumpClusterSaslScramSetupHostUserDataTpl()
@@ -199,7 +199,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostUserDataTpl(requ
 	}
 }
 
-func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVariablesTf(request hclrequests.MigrationWizardRequest) string {
 	return GenerateVariablesTf(modules.GetJumpClusterSetupHostVariableDefinitions(request))
 }
 
@@ -211,7 +211,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterSetupHostVersionsTf() str
 // Jump Cluster Module Generation (Private)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateJumpClustersMainTf(request hclrequests.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -292,7 +292,7 @@ func (mi *MigrationInfraHCLService) generateJumpClusterClusterLinksUserDataTpl(a
 	}
 }
 
-func (mi *MigrationInfraHCLService) generateJumpClustersVariablesTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateJumpClustersVariablesTf(request hclrequests.MigrationWizardRequest) string {
 	return GenerateVariablesTf(modules.GetJumpClusterModuleVariableDefinitions(request))
 }
 
@@ -308,7 +308,7 @@ func (mi *MigrationInfraHCLService) generateJumpClustersVersionsTf() string {
 // Networking Module Generation (Private)
 // ============================================================================
 
-func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request hclrequests.MigrationWizardRequest) string {
 	f := hclwrite.NewEmptyFile()
 	rootBody := f.Body()
 
@@ -391,7 +391,7 @@ func (mi *MigrationInfraHCLService) generateNetworkingMainTf(request types.Migra
 	return string(f.Bytes())
 }
 
-func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf(request types.MigrationWizardRequest) string {
+func (mi *MigrationInfraHCLService) generateNetworkingVariablesTf(request hclrequests.MigrationWizardRequest) string {
 	return GenerateVariablesTf(modules.GetNetworkingModuleVariableDefinitions(request))
 }
 
