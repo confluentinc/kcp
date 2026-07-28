@@ -203,6 +203,60 @@ func TestHealthLineIsNotOKWhenAPartitionStoppedEvenWithZeroLag(t *testing.T) {
 	requireContains(t, out, "1 partition stopped early, so part of the window went unobserved")
 }
 
+func TestHealthLineIsNotOKWhenPartitionsAreStuckRetryingEvenWithZeroLag(t *testing.T) {
+	// The run this test exists for, reproduced from the integration suite's own
+	// numbers: a broker restarted mid-run, every partition loop is retrying a
+	// dead connection, 98 of 100 read nothing at all — and the summary said
+	// "OK — 100/100 partitions live, 0 records of lag". Every existing signal
+	// was clean. The loops never exited, so the liveness count was full; no
+	// partition ever fetched successfully, so each held a zero last stable
+	// offset and its lag computed as zero; and nothing decoded, so there were no
+	// decode errors either.
+	out := render(t, Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		Tail: tail.Stats{
+			PartitionsAssigned: 100,
+			PartitionsRunning:  100,
+			PartitionsStalled:  98,
+			RecordsRead:        16,
+			TransportErrors:    3200,
+		},
+	})
+
+	if strings.Contains(out, "keep-up                : OK") {
+		t.Errorf("the health line reported OK while 98 partitions were retrying a dead connection\n--- summary ---\n%s", out)
+	}
+	requireContains(t, out, "keep-up                : WARNING — 100/100 partitions live, 0 records of lag, 0 decode failures, 3200 fetch failures")
+	requireContains(t, out, "98 partitions are retrying a failed fetch rather than reading")
+}
+
+func TestHealthLineStaysOKWhenAFetchFailureWasRecoveredFromButShowsTheCount(t *testing.T) {
+	// The other side of the same rule, and the reason it keys on partitions that
+	// are still stuck rather than on the error counters. Surviving a leader
+	// election or a broker restart IS the requirement, and a reader that
+	// recovered and caught up did its job: condemning it would train operators
+	// to ignore the one line that says the window was observed. The counts are
+	// rendered anyway, because a run that recovered from three thousand failures
+	// is not the same run as one that never faltered.
+	out := render(t, Run{
+		ActiveSources: []string{discovery.SourceTxnStateLog},
+		Tail: tail.Stats{
+			PartitionsAssigned: 50,
+			PartitionsRunning:  50,
+			PartitionsStalled:  0,
+			RecordsRead:        900,
+			LeadershipErrors:   12,
+			TransportErrors:    30,
+			UnclassifiedErrors: 1,
+		},
+	})
+
+	requireContains(t, out, "keep-up                : OK — 50/50 partitions live, 0 records of lag, 0 decode failures, 43 fetch failures")
+	if strings.Contains(out, "retrying a failed fetch") {
+		t.Errorf("a recovered disruption was reported as an ongoing stall\n--- summary ---\n%s", out)
+	}
+}
+
 func TestHealthLineWarnsOnLastStableOffsetLagButNotOnOpenTransactionBacklog(t *testing.T) {
 	out := render(t, Run{
 		ActiveSources: []string{discovery.SourceTxnStateLog},
@@ -595,10 +649,16 @@ func goldenRun() Run {
 	r.Tail = tail.Stats{
 		PartitionsAssigned: 4,
 		PartitionsRunning:  3,
-		RecordsRead:        1400,
-		Lag:                12,
-		OpenTxnBacklog:     300,
-		DecodeErrors:       1,
+		// One of the three live partitions is retrying a failed fetch, so the golden
+		// carries the stall concern as well as the stopped-early one: they are
+		// different failures and the summary has to be able to say both at once.
+		PartitionsStalled: 1,
+		RecordsRead:       1400,
+		Lag:               12,
+		OpenTxnBacklog:    300,
+		DecodeErrors:      1,
+		TransportErrors:   6,
+		LeadershipErrors:  1,
 	}
 	r.TxnState.KeyDecodeErrors = 2
 	r.AuditErrors = 5

@@ -702,6 +702,79 @@ func TestOnlyAPartitionThatAdvancedRecordsALastAdvanceTime(t *testing.T) {
 	assert.Equal(t, int64(0), byPartition[1].Lag, "the stalled partition's lag is zero, which is exactly why liveness is needed")
 }
 
+func TestAPartitionStuckRetryingAFailedFetchReportsItselfStalled(t *testing.T) {
+	// The gap the liveness counts leave open. A loop that keeps retrying is
+	// still running, and a partition that never fetched successfully holds a
+	// zero last stable offset, so its lag computes as zero: by both existing
+	// signals it is indistinguishable from a healthy, caught-up, idle
+	// partition. Whether its last fetch failed is the difference.
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	retrying := make(chan struct{})
+	var once sync.Once
+	var attempts atomic.Int64
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if attempts.Add(1) >= 3 {
+			once.Do(func() { close(retrying) })
+		}
+		return nil, brokenPipe()
+	})
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	waitFor(t, retrying, "the partition to keep retrying a failing fetch")
+
+	stats := tl.Stats()
+	require.Len(t, stats.Partitions, 1)
+	assert.True(t, stats.Partitions[0].Running, "the loop must keep retrying rather than exit")
+	assert.Zero(t, stats.Partitions[0].Lag, "the lag of a partition that never fetched is zero, which is why it cannot be the signal")
+	assert.True(t, stats.Partitions[0].Stalled,
+		"a partition whose last fetch failed is not reading, however alive its loop is")
+	assert.Equal(t, 1, stats.PartitionsStalled)
+
+	cancel()
+	drain(t, out)
+}
+
+func TestAnIdlePartitionIsNotStalledAndACleanFetchClearsAStall(t *testing.T) {
+	// The cry-wolf case, and why the stall is latched on a failed fetch rather
+	// than inferred from having read nothing. An idle partition answers with
+	// empty but SUCCESSFUL fetches, which is what a healthy caught-up reader
+	// looks like; and a partition that recovered has fetched cleanly since, so
+	// its failure belongs in the counters, not in the health verdict.
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	recovered, responder := afterCall(3, func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if call == 0 {
+			return nil, brokenPipe()
+		}
+		return fetchResponse(topic, 0, 0, 0), nil
+	})
+	c.respondWith(responder)
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	waitFor(t, recovered, "the partition to fetch cleanly again after the failure")
+
+	stats := tl.Stats()
+	require.Len(t, stats.Partitions, 1)
+	assert.False(t, stats.Partitions[0].Stalled, "a clean fetch clears the stall, however empty the response was")
+	assert.Equal(t, 0, stats.PartitionsStalled)
+	assert.Zero(t, stats.Partitions[0].RecordsRead, "an idle partition reads nothing, and that is not a fault")
+	assert.Positive(t, stats.TransportErrors, "the failure it recovered from must still be counted")
+
+	cancel()
+	drain(t, out)
+}
+
 // --- abort filtering -------------------------------------------------------
 
 func TestABatchBelongingToAnAbortedTransactionIsNotEmitted(t *testing.T) {

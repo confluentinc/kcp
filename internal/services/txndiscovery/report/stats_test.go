@@ -175,6 +175,43 @@ func TestStatsJSONCarriesRecordsReadLagAndPerSourceDecodeFailures(t *testing.T) 
 	}
 }
 
+func TestStatsJSONAndKeepUpDetailIdentifyWhichPartitionsAreStalled(t *testing.T) {
+	// The health line can only say how many partitions are retrying a failed
+	// fetch. Acting on that needs the ones that are, and neither running nor lag
+	// can point at them: a stuck loop is still running and reports zero lag.
+	r := statsRun()
+	r.Tail.PartitionsStalled = 1
+	r.Tail.Partitions[0].Stalled = true
+	r.Tail.Partitions[0].LastError = "write tcp 10.0.0.1:9092: write: broken pipe"
+
+	_, doc := writeStats(t, r)
+	if got := num(t, at(t, doc, "tail", "partitions_stalled")); got != 1 {
+		t.Errorf("tail.partitions_stalled = %v, want 1", got)
+	}
+	parts, ok := at(t, doc, "tail", "partitions").([]any)
+	if !ok || len(parts) != 2 {
+		t.Fatalf("tail.partitions = %v, want 2 entries", at(t, doc, "tail", "partitions"))
+	}
+	p0, _ := parts[0].(map[string]any)
+	if stalled, _ := p0["stalled"].(bool); !stalled {
+		t.Errorf("partitions[0].stalled = %v, want true", p0["stalled"])
+	}
+	if running, _ := p0["running"].(bool); !running {
+		t.Errorf("partitions[0].running = %v, want true: a stalled loop has not exited, which is the whole problem", p0["running"])
+	}
+	p1, _ := parts[1].(map[string]any)
+	if stalled, _ := p1["stalled"].(bool); stalled {
+		t.Errorf("partitions[1].stalled = %v, want false", p1["stalled"])
+	}
+
+	var buf bytes.Buffer
+	PrintKeepUp(&buf, r)
+	out := buf.String()
+	if !strings.Contains(out, "1000 records, STALLED") {
+		t.Errorf("keep-up detail does not mark the stalled partition\n--- keep-up ---\n%s", out)
+	}
+}
+
 func TestWriteStatsJSONFailsActionablyWhenTheOutputDirectoryDoesNotExist(t *testing.T) {
 	dir := t.TempDir()
 	missing := filepath.Join(dir, "no-such-dir")
