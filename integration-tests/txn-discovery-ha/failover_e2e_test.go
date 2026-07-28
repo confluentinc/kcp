@@ -17,14 +17,23 @@
 package txndiscoveryha_test
 
 import (
+	"bufio"
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/IBM/sarama"
+	"github.com/goccy/go-yaml"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -306,17 +315,27 @@ func produceTxn(f txnFixture) error {
 // what a real exactly-once client does when its coordinator moves.
 func produceTxnWithRetry(t *testing.T, f txnFixture, within time.Duration) {
 	t.Helper()
+	require.NoError(t, produceWithin(f, within),
+		"could not produce a transaction within %s", within)
+}
+
+// produceWithin is produceTxnWithRetry without the *testing.T, for the phase
+// produced on its own goroutine.
+//
+// t.Fatalf may only be called from the goroutine running the test, so the
+// during-the-kill phase has to hand its failure back over a channel instead.
+func produceWithin(f txnFixture, within time.Duration) error {
 	deadline := time.Now().Add(within)
 	var last error
-	for attempt := 1; time.Now().Before(deadline); attempt++ {
+	for time.Now().Before(deadline) {
 		if err := produceTxn(f); err == nil {
-			return
+			return nil
 		} else {
 			last = err
 		}
 		time.Sleep(2 * time.Second)
 	}
-	t.Fatalf("could not produce a transaction within %s; last error: %v", within, last)
+	return fmt.Errorf("gave up after %s; last error: %w", within, last)
 }
 
 // ensureInternalTopics brings __transaction_state and __consumer_offsets into
@@ -368,4 +387,728 @@ func awaitFullISR(t *testing.T) {
 	}
 	require.Eventually(t, ok, 3*time.Minute, 3*time.Second,
 		"the internal topics never reached a full in-sync replica set, so a leader could not survive being killed:\n%s", last)
+}
+
+// newClient returns a plain sarama client, used for the two questions the admin
+// API cannot answer: which broker coordinates a given transactional id, and
+// where a partition's log currently starts.
+func newClient(t *testing.T) sarama.Client {
+	t.Helper()
+	c, err := sarama.NewClient(bootstrapAddrs(), baseConfig())
+	require.NoError(t, err, "failed to connect a client to %s", bootstrapAddr)
+	t.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
+// txnStateLeaders maps each __transaction_state partition to the node currently
+// leading it.
+func txnStateLeaders(t *testing.T) map[int32]int32 {
+	t.Helper()
+	md, ok := internalTopicMetadata(t)
+	require.True(t, ok, "could not describe the internal topics")
+	out := map[int32]int32{}
+	for _, tm := range md {
+		if tm.Name != txnStateTopic {
+			continue
+		}
+		for _, p := range tm.Partitions {
+			out[p.ID] = p.Leader
+		}
+	}
+	require.NotEmpty(t, out, "%s reports no partitions", txnStateTopic)
+	return out
+}
+
+// pickTargetBroker chooses the node to kill: the one leading the most
+// __transaction_state partitions, and the partitions it leads.
+//
+// Most, rather than any, so the kill disrupts as many fetch loops as the layout
+// allows. Which node that is varies from run to run — leadership is assigned by
+// the controller, not by this suite — so it is resolved from metadata rather
+// than hardcoded, and reported in every failure message.
+func pickTargetBroker(t *testing.T) (int32, []int32) {
+	t.Helper()
+	leaders := txnStateLeaders(t)
+	led := map[int32][]int32{}
+	for part, leader := range leaders {
+		led[leader] = append(led[leader], part)
+	}
+
+	var best int32 = -1
+	for broker, parts := range led {
+		if best == -1 || len(parts) > len(led[best]) || (len(parts) == len(led[best]) && broker < best) {
+			best = broker
+		}
+	}
+	require.Contains(t, brokerContainer, best,
+		"the busiest %s leader is node %d, which maps to no container", txnStateTopic, best)
+
+	parts := append([]int32(nil), led[best]...)
+	sort.Slice(parts, func(i, j int) bool { return parts[i] < parts[j] })
+	require.NotEmpty(t, parts,
+		"no node leads any %s partition, so killing one would disrupt no fetch loop", txnStateTopic)
+	return best, parts
+}
+
+// pinnedTxnIDs finds want transactional ids whose transaction coordinator is
+// broker, by asking the cluster rather than by reimplementing its hashing.
+//
+// This is what makes the ledger sharp instead of probabilistic. A transactional
+// id's coordinator IS the leader of the __transaction_state partition its
+// footprint is written to, so an id coordinated by the node about to be killed
+// has its records land in a partition whose fetch loop must re-resolve a new
+// leader to keep reading. Left to chance — three transactions over twelve
+// partitions on three nodes — roughly a third of them would land on an
+// undisturbed partition, and a reader that recovered on none of them could
+// still satisfy the ledger.
+//
+// The salt in the name is what makes the search deterministic within a run: the
+// ids are enumerated in order and reported in every failure message.
+func pinnedTxnIDs(t *testing.T, client sarama.Client, base string, want int, broker int32) []string {
+	t.Helper()
+	var out []string
+	for salt := 0; len(out) < want && salt < 500; salt++ {
+		id := fmt.Sprintf("%s-c%d-txn", base, salt)
+		b, err := client.TransactionCoordinator(id)
+		if err != nil {
+			continue
+		}
+		if b.ID() == broker {
+			out = append(out, id)
+		}
+	}
+	require.Len(t, out, want,
+		"could not find %d transactional ids coordinated by node %d after 500 candidates", want, broker)
+	return out
+}
+
+// earliestOffsets reads each partition's current log start offset.
+//
+// The continuity check needs this: the reader is assigned %s from EARLIEST, so
+// its final next offset minus the log start is the span of offsets it was
+// responsible for, and the number of records it read must account for all of
+// them.
+func earliestOffsets(t *testing.T, topic string) map[int32]int64 {
+	t.Helper()
+	client := newClient(t)
+	require.NoError(t, client.RefreshMetadata(topic), "failed to refresh metadata for the offset scan")
+	parts, err := client.Partitions(topic)
+	require.NoError(t, err, "failed to list partitions for the offset scan")
+	out := make(map[int32]int64, len(parts))
+	for _, p := range parts {
+		off, err := client.GetOffset(topic, p, sarama.OffsetOldest)
+		require.NoError(t, err, "failed to read the log start offset of partition %d", p)
+		out[p] = off
+	}
+	return out
+}
+
+// killBroker removes a node from the cluster without letting it hand over.
+//
+// `docker kill`, not `docker stop`: SIGTERM triggers a controlled shutdown, in
+// which the broker asks the controller to move its leaderships before it goes
+// and closes its connections tidily. That is the easy case. SIGKILL is the one
+// worth testing — the socket simply stops answering, the controller has to
+// notice through the broker session timeout, and the reader's cached connection
+// is left latched on an error with no Kafka error code to classify.
+func killBroker(t *testing.T, broker int32) {
+	t.Helper()
+	container, ok := brokerContainer[broker]
+	require.True(t, ok, "node %d maps to no container", broker)
+	out, err := exec.Command("docker", "kill", container).CombinedOutput()
+	require.NoError(t, err, "failed to kill the broker leading the target partitions: %s", out)
+}
+
+// awaitLeadershipMovedOff blocks until no __transaction_state or
+// __consumer_offsets partition is still led by broker, and every partition has a
+// leader again. It returns the __transaction_state leadership afterwards.
+//
+// Both topics, not just the one under test: the reader is assigned partitions
+// from both, and one of the other topic's partitions left without a leader would
+// stall a fetch loop and fail the liveness assertion for an unrelated reason.
+func awaitLeadershipMovedOff(t *testing.T, broker int32) map[int32]int32 {
+	t.Helper()
+	var last string
+	require.Eventually(t, func() bool {
+		md, ok := internalTopicMetadata(t)
+		if !ok {
+			last = "the internal topics are not describable"
+			return false
+		}
+		for _, tm := range md {
+			for _, p := range tm.Partitions {
+				if p.Leader == broker {
+					last = fmt.Sprintf("%s partition %d is still led by node %d", tm.Name, p.ID, broker)
+					return false
+				}
+				if p.Leader < 0 {
+					last = fmt.Sprintf("%s partition %d has no leader", tm.Name, p.ID)
+					return false
+				}
+			}
+		}
+		return true
+	}, 2*time.Minute, 2*time.Second,
+		"leadership never moved off the killed node %d, so the cluster itself did not recover and the reader cannot be judged: %s", broker, last)
+	return txnStateLeaders(t)
+}
+
+// ---------------------------------------------------------------------------
+// Running the binary under test
+// ---------------------------------------------------------------------------
+
+// repoRoot resolves the checkout root from this package's directory.
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	root, err := filepath.Abs(filepath.Join(wd, "..", ".."))
+	require.NoError(t, err)
+	return root
+}
+
+// kcpBinary returns the path to the binary the Makefile target built.
+func kcpBinary(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(repoRoot(t), "kcp")
+	_, err := os.Stat(path)
+	require.NoError(t, err, "the kcp binary is missing — run `make test-txn-discovery-ha`, which builds it")
+	return path
+}
+
+// artifact filenames, fixed so every run's assertions look in the same place.
+const (
+	outFile   = "txn-discovery.yaml"
+	statsFile = "txn-discovery-stats.json"
+	auditFile = "txn-discovery-audit.jsonl"
+	logFile   = "kcp.log"
+)
+
+// kcpProc is a discovery run in flight.
+type kcpProc struct {
+	cmd    *exec.Cmd
+	dir    string
+	stdout *bytes.Buffer
+	stderr *bytes.Buffer
+}
+
+// startKCP launches `kcp migration txn-discovery` in its own directory, which is
+// where the artifacts and kcp.log land.
+func startKCP(t *testing.T, args ...string) *kcpProc {
+	t.Helper()
+	dir := t.TempDir()
+
+	full := append([]string{"migration", "txn-discovery"}, args...)
+	cmd := exec.Command(kcpBinary(t), full...)
+	cmd.Dir = dir
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	require.NoError(t, cmd.Start(), "failed to start the kcp binary")
+
+	p := &kcpProc{cmd: cmd, dir: dir, stdout: &stdout, stderr: &stderr}
+	t.Cleanup(func() {
+		if p.cmd.ProcessState == nil && p.cmd.Process != nil {
+			_ = p.cmd.Process.Kill()
+			_ = p.cmd.Wait()
+		}
+	})
+	return p
+}
+
+// running reports whether the observation window is still open.
+//
+// It is the guard that keeps a harness timing failure from being read as a
+// reader failure: a window that closed before the post-failover phase was
+// produced would leave that phase missing from the ledger, which is exactly what
+// a reader that never recovered looks like.
+func (p *kcpProc) running() bool { return p.cmd.ProcessState == nil }
+
+// awaitObserving blocks until the run has begun reading the cluster.
+func (p *kcpProc) awaitObserving(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for time.Now().Before(deadline) {
+		data, err := os.ReadFile(filepath.Join(p.dir, logFile))
+		if err == nil && strings.Contains(string(data), "starting transaction discovery") {
+			time.Sleep(5 * time.Second)
+			return
+		}
+		if p.cmd.ProcessState != nil {
+			t.Fatalf("the run exited before it began observing:\n%s\n%s", p.stdout.String(), p.stderr.String())
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	t.Fatalf("the run never reported that it had started observing:\n%s\n%s", p.stdout.String(), p.stderr.String())
+}
+
+// wait blocks for the run to finish and collects everything it produced.
+func (p *kcpProc) wait(t *testing.T) *runResult {
+	t.Helper()
+	err := p.cmd.Wait()
+	code := 0
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		code = exitErr.ExitCode()
+	} else if err != nil {
+		t.Fatalf("failed to wait for the kcp binary: %v", err)
+	}
+	return collect(t, p.dir, code, p.stdout.String(), p.stderr.String())
+}
+
+// ---------------------------------------------------------------------------
+// Artifacts
+// ---------------------------------------------------------------------------
+
+// discoveryDoc mirrors txn-discovery.yaml. It is redeclared here rather than
+// imported: the suite is a consumer of the on-disk format, and sharing the
+// producer's struct would let a field rename pass unnoticed.
+type discoveryDoc struct {
+	Groups               []discoveryGroup `yaml:"groups"`
+	IndividualTopicCount int              `yaml:"individual_topic_count"`
+	IndividualTopics     []string         `yaml:"individual_topics"`
+}
+
+type discoveryGroup struct {
+	Name             string   `yaml:"name"`
+	ReadProcessWrite bool     `yaml:"read_process_write"`
+	Topics           []string `yaml:"topics"`
+	TransactionalIDs []string `yaml:"transactional_ids"`
+}
+
+// statsDoc is the slice of txn-discovery-stats.json this suite reads. Unlike the
+// single-node suite it needs the PER-PARTITION array as well as the aggregates:
+// the continuity and liveness scenarios are about individual partitions, and an
+// aggregate cannot say which partition stopped advancing.
+type statsDoc struct {
+	Tail struct {
+		PartitionsAssigned int   `json:"partitions_assigned"`
+		PartitionsRunning  int   `json:"partitions_running"`
+		PartitionsStalled  int   `json:"partitions_stalled"`
+		RecordsRead        int64 `json:"records_read"`
+		Lag                int64 `json:"lag"`
+		OpenTxnBacklog     int64 `json:"open_txn_backlog"`
+		DecodeErrors       int64 `json:"decode_errors"`
+		LeadershipErrors   int64 `json:"leadership_errors"`
+		UnclassifiedErrors int64 `json:"unclassified_errors"`
+		OffsetResets       int64 `json:"offset_resets"`
+		TransportErrors    int64 `json:"transport_errors"`
+
+		Partitions []statsPartition `json:"partitions"`
+	} `json:"tail"`
+}
+
+type statsPartition struct {
+	Topic            string `json:"topic"`
+	Partition        int32  `json:"partition"`
+	NextOffset       int64  `json:"next_offset"`
+	LastStableOffset int64  `json:"last_stable_offset"`
+	HighWaterMark    int64  `json:"high_water_mark"`
+	Lag              int64  `json:"lag"`
+	OpenTxnBacklog   int64  `json:"open_txn_backlog"`
+	Running          bool   `json:"running"`
+	Stalled          bool   `json:"stalled"`
+	RecordsRead      int64  `json:"records_read"`
+	AbortedBatches   int64  `json:"aborted_batches"`
+	LeadershipErrors int64  `json:"leadership_errors"`
+	TransportErrors  int64  `json:"transport_errors"`
+	LastError        string `json:"last_error"`
+}
+
+// auditLine mirrors one line of txn-discovery-audit.jsonl.
+type auditLine struct {
+	Timestamp time.Time `json:"timestamp"`
+	TxnID     string    `json:"transactional_id"`
+	Source    string    `json:"source"`
+	Added     []string  `json:"added"`
+	Topics    []string  `json:"topics"`
+}
+
+// runResult is everything one run left behind.
+type runResult struct {
+	exitCode int
+	stdout   string
+	stderr   string
+
+	doc   *discoveryDoc
+	audit []auditLine
+	stats *statsDoc
+
+	// files is every name the run left in its directory. It is captured when the
+	// run finishes rather than read on demand, because the directory is a
+	// t.TempDir() belonging to whichever test first triggered the shared run and
+	// is removed when THAT test returns.
+	files []string
+}
+
+// collect reads a finished run's directory.
+func collect(t *testing.T, dir string, code int, stdout, stderr string) *runResult {
+	t.Helper()
+	r := &runResult{exitCode: code, stdout: stdout, stderr: stderr}
+
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err, "failed to list the run's directory")
+	for _, e := range entries {
+		r.files = append(r.files, e.Name())
+	}
+
+	if data, err := os.ReadFile(filepath.Join(dir, outFile)); err == nil {
+		var doc discoveryDoc
+		require.NoError(t, yaml.Unmarshal(data, &doc), "the discovery YAML did not parse:\n%s", data)
+		r.doc = &doc
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, auditFile)); err == nil {
+		scanner := bufio.NewScanner(bytes.NewReader(data))
+		scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			if line == "" {
+				continue
+			}
+			var al auditLine
+			require.NoError(t, json.Unmarshal([]byte(line), &al), "an audit line did not parse: %s", line)
+			r.audit = append(r.audit, al)
+		}
+		require.NoError(t, scanner.Err(), "failed to read the audit log")
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, statsFile)); err == nil {
+		var sd statsDoc
+		require.NoError(t, json.Unmarshal(data, &sd), "the stats JSON did not parse:\n%s", data)
+		r.stats = &sd
+	}
+	return r
+}
+
+// groupWith returns the group containing topic, or nil.
+func (r *runResult) groupWith(topic string) *discoveryGroup {
+	for i := range r.doc.Groups {
+		for _, tp := range r.doc.Groups[i].Topics {
+			if tp == topic {
+				return &r.doc.Groups[i]
+			}
+		}
+	}
+	return nil
+}
+
+// auditForTxn returns every audit line for one transactional id.
+func (r *runResult) auditForTxn(txnID string) []auditLine {
+	var out []auditLine
+	for _, l := range r.audit {
+		if l.TxnID == txnID {
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// The failover run
+// ---------------------------------------------------------------------------
+
+const (
+	// failoverWindow is the observation window. It has to cover the whole
+	// choreography — three production phases, a broker kill, a leader election
+	// and the reader's own capped backoff — plus a quiet tail long enough for the
+	// reader to catch up to the last stable offset on every partition.
+	failoverWindow = 240 * time.Second
+
+	// phaseTxns is how many transactions each phase produces. Small on purpose:
+	// every id is pinned to the coordinator being killed, so three is already an
+	// exhaustive ledger over the disrupted partitions rather than a sample.
+	phaseTxns = 3
+
+	// postPhaseQuietTail is how much of the window must still be open after the
+	// post-failover phase is produced. It is asserted rather than calculated:
+	// the run staying alive this long after the last fixture is what proves the
+	// reader was given time to see it.
+	postPhaseQuietTail = 30 * time.Second
+
+	// prePhaseSettle lets the pre-failover phase be read before the broker goes
+	// away, so a failure afterwards is unambiguously about resumption.
+	prePhaseSettle = 12 * time.Second
+
+	// postKillSettle gives the reader room to re-resolve before it is judged on
+	// records produced after the kill. The fetch loop's backoff is capped at five
+	// seconds and a metadata refresh has to land behind it.
+	postKillSettle = 15 * time.Second
+)
+
+// phase is one group of transactions and when it was produced relative to the
+// kill.
+type phase struct {
+	// name is "pre", "mid" or "post" and appears in every failure message: which
+	// phase went missing is the whole diagnosis.
+	name     string
+	fixtures []txnFixture
+}
+
+// failoverResult is the run plus everything about the failover needed to judge
+// it.
+type failoverResult struct {
+	*runResult
+
+	// killedBroker is the node whose container was killed mid-run.
+	killedBroker int32
+	// killedPartitions are the __transaction_state partitions it led at the
+	// moment of the kill: the fetch loops that had to re-resolve.
+	killedPartitions []int32
+	// leadersAfter is __transaction_state leadership once the cluster settled.
+	leadersAfter map[int32]int32
+
+	phases []phase
+
+	// txnStateEarliest is each __transaction_state partition's log start offset,
+	// captured before the run began. It is the left-hand end of the offset span
+	// the continuity check accounts for.
+	txnStateEarliest map[int32]int64
+}
+
+var (
+	failoverOnce sync.Once
+	failover     *failoverResult
+)
+
+// failoverRun performs one observation window with a broker killed in the middle
+// of it, and returns its artifacts.
+//
+// One window shared by every test, because each window costs its full
+// --duration and the choreography inside it cannot be repeated cheaply. The
+// scenarios are all assertions about the same run.
+func failoverRun(t *testing.T) *failoverResult {
+	t.Helper()
+	failoverOnce.Do(func() { failover = doFailoverRun(t) })
+	require.NotNil(t, failover, "the failover run did not complete; see the first failing test in this package")
+	return failover
+}
+
+func doFailoverRun(t *testing.T) *failoverResult {
+	t.Helper()
+
+	ensureInternalTopics(t)
+	awaitFullISR(t)
+
+	client := newClient(t)
+	target, ledParts := pickTargetBroker(t)
+	t.Logf("target node %d leads %s partitions %v", target, txnStateTopic, ledParts)
+
+	// Every transactional id in every phase is coordinated by the node about to
+	// be killed, so all three phases exercise the same disrupted partitions and
+	// only their timing differs.
+	phases := make([]phase, 0, 3)
+	for _, name := range []string{"pre", "mid", "post"} {
+		ids := pinnedTxnIDs(t, client, fixturePrefix+name, phaseTxns, target)
+		fixtures := make([]txnFixture, 0, len(ids))
+		for i, id := range ids {
+			base := fmt.Sprintf("%s%s-%d", fixturePrefix, name, i)
+			fixtures = append(fixtures, txnFixture{TxnID: id, Produce: []string{base + "-a", base + "-b"}})
+		}
+		phases = append(phases, phase{name: name, fixtures: fixtures})
+	}
+	for _, ph := range phases {
+		createTopics(t, topicsOf(ph.fixtures)...)
+	}
+
+	earliest := earliestOffsets(t, txnStateTopic)
+
+	proc := startKCP(t,
+		"--source-bootstrap", bootstrapAddr,
+		"--use-unauthenticated-plaintext",
+		"--duration", failoverWindow.String(),
+		"--interval", "5s",
+		"--out", outFile,
+		"--stats-out", statsFile,
+		"--audit-log-out", auditFile,
+	)
+	proc.awaitObserving(t)
+
+	// Phase one: before the kill.
+	for _, f := range phases[0].fixtures {
+		produceTxnWithRetry(t, f, 60*time.Second)
+	}
+	time.Sleep(prePhaseSettle)
+
+	// Phase two: across the kill. Started first so the kill lands while these
+	// transactions are in flight, and run on its own goroutine because a
+	// transactional producer whose coordinator disappears blocks until it can
+	// find the new one.
+	midErr := make(chan error, 1)
+	go func() {
+		for _, f := range phases[1].fixtures {
+			if err := produceWithin(f, 90*time.Second); err != nil {
+				midErr <- err
+				return
+			}
+		}
+		midErr <- nil
+	}()
+
+	killBroker(t, target)
+	require.NoError(t, <-midErr,
+		"the during-the-kill phase could not be produced at all, so the cluster rather than the reader failed")
+
+	leadersAfter := awaitLeadershipMovedOff(t, target)
+	time.Sleep(postKillSettle)
+
+	// Phase three: strictly after the kill. This is the phase that separates a
+	// recovered reader from a silently stalled one — everything before it is
+	// already in the accumulator, which is in-memory and append-only, so a reader
+	// that died at the kill would still satisfy a ledger built only from phases
+	// one and two.
+	for _, f := range phases[2].fixtures {
+		produceTxnWithRetry(t, f, 90*time.Second)
+	}
+
+	require.True(t, proc.running(),
+		"the observation window closed before the post-failover phase was produced: this is a harness timing failure, not a reader failure — raise failoverWindow")
+	time.Sleep(postPhaseQuietTail)
+	require.True(t, proc.running(),
+		"the observation window closed less than %s after the post-failover phase was produced, so the reader was never given time to see it: this is a harness timing failure, not a reader failure — raise failoverWindow",
+		postPhaseQuietTail)
+
+	res := proc.wait(t)
+	require.Equal(t, 0, res.exitCode, "the discovery run failed:\nSTDOUT\n%s\nSTDERR\n%s", res.stdout, res.stderr)
+	require.NotNil(t, res.doc, "the run wrote no %s:\nSTDOUT\n%s", outFile, res.stdout)
+	require.NotNil(t, res.stats, "the run wrote no %s, so the reader's own account of itself is unavailable", statsFile)
+
+	return &failoverResult{
+		runResult:        res,
+		killedBroker:     target,
+		killedPartitions: ledParts,
+		leadersAfter:     leadersAfter,
+		phases:           phases,
+		txnStateEarliest: earliest,
+	}
+}
+
+// topicsOf flattens the topics a set of fixtures produces to.
+func topicsOf(fs []txnFixture) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.Produce...)
+	}
+	return out
+}
+
+// describe renders the run for a failure message.
+func (r *failoverResult) describe() string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "killed node %d, which led %s partitions %v\n", r.killedBroker, txnStateTopic, r.killedPartitions)
+	fmt.Fprintf(&b, "exit=%d\n--- STDOUT ---\n%s", r.exitCode, r.stdout)
+	if r.stderr != "" {
+		fmt.Fprintf(&b, "--- STDERR ---\n%s", r.stderr)
+	}
+	t := r.stats.Tail
+	fmt.Fprintf(&b, "--- TAIL ---\n  %d/%d live, %d stalled, %d read, lag %d, backlog %d\n",
+		t.PartitionsRunning, t.PartitionsAssigned, t.PartitionsStalled, t.RecordsRead, t.Lag, t.OpenTxnBacklog)
+	fmt.Fprintf(&b, "  errors: %d transport, %d leadership, %d unclassified, %d decode, %d offset reset\n",
+		t.TransportErrors, t.LeadershipErrors, t.UnclassifiedErrors, t.DecodeErrors, t.OffsetResets)
+	for _, p := range t.Partitions {
+		if p.Stalled || !p.Running || p.Lag > 0 || p.LastError != "" {
+			fmt.Fprintf(&b, "  %s[%d]: next %d, LSO %d, HWM %d, lag %d, read %d, running=%v stalled=%v err=%q\n",
+				p.Topic, p.Partition, p.NextOffset, p.LastStableOffset, p.HighWaterMark, p.Lag, p.RecordsRead,
+				p.Running, p.Stalled, p.LastError)
+		}
+	}
+	fmt.Fprintf(&b, "--- PHASES ---\n")
+	for _, ph := range r.phases {
+		for _, f := range ph.fixtures {
+			present := r.groupWith(f.Produce[0]) != nil
+			fmt.Fprintf(&b, "  %s %s present=%v\n", ph.name, f.TxnID, present)
+		}
+	}
+	return b.String()
+}
+
+// TestFailoverActuallyDisruptedTheReader is the non-vacuity gate for every
+// scenario below it, and the reason they are worth asserting at all.
+//
+// Two things have to be true before a passing ledger means anything. The cluster
+// must really have moved leadership off the killed node — otherwise nothing was
+// re-resolved. And the reader must really have noticed: a run that sailed
+// through without a single failed fetch never exercised recovery, so the ledger
+// would be proving that a healthy reader reads, which is not R11.
+//
+// The error counters are used here and ONLY here. A passing failover run is
+// EXPECTED to show transport or leadership errors — that is the recovery
+// happening, not a fault — so they are a premise, never a health signal. What
+// health looks like is asserted separately, on partition liveness.
+func TestFailoverActuallyDisruptedTheReader(t *testing.T) {
+	r := failoverRun(t)
+
+	require.NotEmpty(t, r.killedPartitions,
+		"the killed node led no %s partition, so no fetch loop had to re-resolve anything", txnStateTopic)
+	for _, part := range r.killedPartitions {
+		leader, ok := r.leadersAfter[part]
+		require.True(t, ok, "%s partition %d vanished from metadata after the kill", txnStateTopic, part)
+		require.NotEqual(t, r.killedBroker, leader,
+			"%s partition %d is still led by the killed node %d, so its leader never moved", txnStateTopic, part, r.killedBroker)
+	}
+
+	disruptions := r.stats.Tail.TransportErrors + r.stats.Tail.LeadershipErrors
+	require.Positive(t, disruptions,
+		"killing node %d caused the reader no transport or leadership error, so it was never disrupted and every assertion in this file proves nothing\n%s",
+		r.killedBroker, r.describe())
+}
+
+// TestEveryPhaseAppearsInTheGrouping is the ledger: every transaction produced
+// before, during and after the failover is in the final grouping.
+//
+// It is a ledger rather than a spot check because the obvious assertions are all
+// satisfiable by a reader that died at the kill. The accumulator is in-memory
+// and append-only, so "nothing observed before the failover was lost" holds
+// trivially for a reader that never resumed. Enumerating the phases is what
+// makes the absence of one of them the thing that fails.
+func TestEveryPhaseAppearsInTheGrouping(t *testing.T) {
+	r := failoverRun(t)
+
+	missing := map[string][]string{}
+	for _, ph := range r.phases {
+		for _, f := range ph.fixtures {
+			if r.groupWith(f.Produce[0]) == nil {
+				missing[ph.name] = append(missing[ph.name], f.TxnID)
+			}
+		}
+	}
+	require.Empty(t, missing,
+		"transactions are missing from the output, by phase: %v\n%s", missing, r.describe())
+
+	for _, ph := range r.phases {
+		for _, f := range ph.fixtures {
+			g := r.groupWith(f.Produce[0])
+			assert.ElementsMatch(t, f.Produce, g.Topics,
+				"the %s-failover transaction %s did not produce its own group of topics\n%s", ph.name, f.TxnID, r.describe())
+			assert.Contains(t, g.TransactionalIDs, f.TxnID,
+				"the group is not credited to the %s-failover transaction %s\n%s", ph.name, f.TxnID, r.describe())
+		}
+	}
+}
+
+// TestPostFailoverTransactionsAreObserved is the discriminator the whole suite
+// exists for, called out on its own so a failure names it directly.
+//
+// Every other signal a stalled reader produces is ambiguous. It reports its
+// partitions live, because a loop retrying a dead connection has not exited. It
+// reports zero lag, because a partition that never fetched successfully holds a
+// zero last stable offset. It reports no duplicate group, most easily of all,
+// because it stopped. The one thing it cannot do is show a transaction that was
+// produced after it stopped reading.
+func TestPostFailoverTransactionsAreObserved(t *testing.T) {
+	r := failoverRun(t)
+
+	post := r.phases[len(r.phases)-1]
+	require.Equal(t, "post", post.name, "the last phase is %q, not the post-failover one", post.name)
+	require.NotEmpty(t, post.fixtures, "the post-failover phase produced nothing, so this test proves nothing")
+
+	for _, f := range post.fixtures {
+		g := r.groupWith(f.Produce[0])
+		require.NotNil(t, g,
+			"a transaction produced STRICTLY AFTER the failover is absent from the grouping: the reader did not resume.\n"+
+				"Its transactional id is coordinated by the node that was killed, so its footprint was written to a %s "+
+				"partition whose fetch loop had to re-resolve a new leader. A loop that kept retrying the dead broker "+
+				"instead still reports itself running with zero lag, so this absence is the only signal that says so.\n%s",
+			txnStateTopic, r.describe())
+		assert.Contains(t, g.TransactionalIDs, f.TxnID,
+			"the post-failover group is not credited to %s\n%s", f.TxnID, r.describe())
+	}
 }
