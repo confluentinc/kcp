@@ -20,6 +20,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/report"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // Opts is the resolved configuration of one discovery run: everything the
@@ -438,6 +439,20 @@ func connectSaramaWith(opts Opts, newClient clientFactory, newAdmin adminFactory
 	authOpt, err := client.AdminOptionForAuthMethod(opts.Auth.AuthType, opts.Auth.Method, opts.Auth.SkipTLSVerify)
 	if err != nil {
 		return nil, err
+	}
+
+	// --use-sasl-plain has no TLS. AdminOptionForAuthMethod maps it to
+	// WithSASLPlainAuthNoTLS, which sets disableTLS, and NewKafkaClient then configures
+	// SASL/PLAIN with encryption off — so the password crosses the network in the clear
+	// on both of the connections opened below. The SCRAM path warns when certificate
+	// verification is merely weakened; a mode that dispenses with encryption altogether
+	// cannot say less than that.
+	//
+	// Here rather than per client, because this command opens two and one problem
+	// reported twice reads as two problems. No attributes: this reaches the console as
+	// well as kcp.log, and the credential is exactly what it must not carry.
+	if opts.Auth.AuthType == types.AuthTypeSASLPlain {
+		slog.Warn("⚠️ --use-sasl-plain transmits the source-cluster password in cleartext: this mode configures SASL/PLAIN with TLS disabled, so anything on the network path between kcp and the brokers can read it")
 	}
 
 	sc, err := newClient(opts.Brokers, opts.Region, authOpt)

@@ -148,7 +148,7 @@ visible in the process list.`,
 	authFlags.SortFlags = false
 	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
 	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication for the source cluster.")
-	authFlags.BoolVar(&useSaslPlain, "use-sasl-plain", false, "Use SASL/PLAIN authentication for the source cluster.")
+	authFlags.BoolVar(&useSaslPlain, "use-sasl-plain", false, "Use SASL/PLAIN authentication for the source cluster. The listener is treated as SASL_PLAINTEXT: TLS is disabled, so the password is transmitted in cleartext and anything on the network path can read it.")
 	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS (mutual TLS) authentication for the source cluster.")
 	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source cluster.")
 	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source cluster.")

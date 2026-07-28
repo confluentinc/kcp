@@ -180,6 +180,96 @@ func TestConnect_TheEnrichmentConnectionFailureWarningCarriesNoCredential(t *tes
 	assert.NotContains(t, logs.String(), "zqx-reader", "the username is a credential too")
 }
 
+// Security: --use-sasl-plain puts the password on the wire in cleartext, and this
+// command must say so itself, once, when it connects.
+//
+// AdminOptionForAuthMethod maps AuthTypeSASLPlain to WithSASLPlainAuthNoTLS, which sets
+// disableTLS, and NewKafkaClient then configures SASL/PLAIN with TLS off — so the
+// credential crosses the network unencrypted on both of this command's connections. The
+// SCRAM path warns when verification is merely weakened; a mode that dispenses with
+// encryption altogether cannot say less.
+//
+// Once, not once per connection: this command opens two, and a warning repeated per
+// connection reads as two separate problems.
+//
+// The line itself carries no credential. It is a Warn, so unlike the Debug diagnostics
+// it reaches the console as well as kcp.log, and the value it is warning about is
+// exactly the value it must not print.
+func TestConnect_SASLPlainWarnsOnceThatTheCredentialCrossesTheNetworkInCleartext(t *testing.T) {
+	logs := captureLog(t)
+	s := &stubConnect{}
+	opts := baseOpts(t.TempDir())
+	opts.Auth = plainAuth()
+
+	cl, err := connectSaramaWith(opts, s.newClient, s.newAdmin)
+	require.NoError(t, err)
+	require.NoError(t, cl.Close())
+
+	got := logs.String()
+	require.Len(t, s.clients, 2, "the run opens two connections, so 'once' is a real claim")
+	assert.Equal(t, 1, strings.Count(got, "cleartext"),
+		"the cleartext warning must fire exactly once per run; log was:\n%s", got)
+	assert.Contains(t, got, "--use-sasl-plain", "the warning names the flag that caused it")
+	assert.Contains(t, got, "⚠️", "a caveat carries the warning emoji, one, at the start")
+	assert.NotContains(t, got, leakCredential, "the warning printed the password it is warning about")
+	assert.NotContains(t, got, "zqx-reader", "the username is a credential too")
+}
+
+// The other side of it: no other auth mode transmits credentials in cleartext, and a
+// warning that fired for all of them would be noise an operator learns to ignore.
+func TestConnect_TheCleartextWarningFiresForNoOtherAuthMode(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		auth authResolution
+	}{
+		{
+			name: "iam",
+			auth: authResolution{AuthType: types.AuthTypeIAM, Method: types.AuthMethodConfig{IAM: &types.IAMConfig{Use: true}}},
+		},
+		{
+			name: "sasl scram",
+			auth: authResolution{AuthType: types.AuthTypeSASLSCRAM, Method: types.AuthMethodConfig{SASLScram: &types.SASLScramConfig{Use: true, Username: "zqx-reader", Password: leakCredential, Mechanism: "SHA512"}}},
+		},
+		{
+			name: "mutual tls",
+			auth: authResolution{AuthType: types.AuthTypeTLS, Method: types.AuthMethodConfig{TLS: &types.TLSConfig{Use: true, CACert: "ca.pem", ClientCert: "client.pem", ClientKey: "client.key"}}},
+		},
+		{
+			name: "unauthenticated tls",
+			auth: authResolution{AuthType: types.AuthTypeUnauthenticatedTLS, Method: types.AuthMethodConfig{UnauthenticatedTLS: &types.UnauthenticatedTLSConfig{Use: true}}},
+		},
+		{
+			// Plaintext, but with no credential to expose: there is nothing to warn about.
+			name: "unauthenticated plaintext",
+			auth: plaintextAuth(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := captureLog(t)
+			s := &stubConnect{}
+			opts := baseOpts(t.TempDir())
+			opts.Auth = tc.auth
+
+			cl, err := connectSaramaWith(opts, s.newClient, s.newAdmin)
+			require.NoError(t, err)
+			require.NoError(t, cl.Close())
+
+			assert.NotContains(t, logs.String(), "cleartext", "log was:\n%s", logs.String())
+		})
+	}
+}
+
+// plainAuth is the auth resolution --use-sasl-plain produces, carrying the distinctive
+// credential fixture so a leak cannot hide.
+func plainAuth() authResolution {
+	return authResolution{
+		AuthType: types.AuthTypeSASLPlain,
+		Method: types.AuthMethodConfig{
+			SASLPlain: &types.SASLPlainConfig{Use: true, Username: "zqx-reader", Password: leakCredential},
+		},
+	}
+}
+
 // R16: the terminal summary reports counts, never names. The artifacts carry
 // the names; a real run produces hundreds of topics and printing them buries
 // the numbers that matter.
