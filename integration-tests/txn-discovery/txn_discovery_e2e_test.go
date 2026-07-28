@@ -602,6 +602,13 @@ func (r *runResult) describe() string {
 	if r.stderr != "" {
 		fmt.Fprintf(&b, "--- STDERR ---\n%s", r.stderr)
 	}
+	if r.stats != nil {
+		// The tail counters are the only place a stalled reader shows up. Lag
+		// cannot reveal it — a partition that has never fetched successfully
+		// still holds a zero last-stable-offset, so its lag computes as zero —
+		// and a loop stuck retrying still counts as running.
+		fmt.Fprintf(&b, "--- TAIL ---\n  %+v\n", r.stats.Tail)
+	}
 	if r.doc != nil {
 		fmt.Fprintf(&b, "--- GROUPS ---\n")
 		for _, g := range r.doc.Groups {
@@ -755,7 +762,17 @@ func TestReaderResumesAcrossBrokerRestart(t *testing.T) {
 	// the post-restart ones are what separate a resumed reader from a dead one.
 	for _, f := range append(append([]txnFixture{}, pre...), post...) {
 		g := r.groupWith(f.Produce[0])
-		require.NotNil(t, g, "transaction %s is missing from the output entirely\n%s", f.TxnID, r.describe())
+		require.NotNil(t, g,
+			"transaction %s is missing from the output entirely.\n"+
+				"If the tail counters below show a large transport_errors with "+
+				"leadership_errors and offset_resets at zero, the partition loops are "+
+				"retrying a dead connection: a broken pipe is classified as a transport "+
+				"error, whose branch backs off without refreshing metadata, so the stale "+
+				"broker is never replaced. Note also that such a run still reports "+
+				"'100/100 partitions live, 0 records of lag' — a partition that never "+
+				"fetched successfully holds a zero last-stable-offset, so its lag "+
+				"computes as zero, and a loop stuck retrying still counts as running.\n%s",
+			f.TxnID, r.describe())
 		assert.ElementsMatch(t, f.Produce, g.Topics,
 			"transaction %s did not produce its own group of topics\n%s", f.TxnID, r.describe())
 		assert.Contains(t, g.TransactionalIDs, f.TxnID,
