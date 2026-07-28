@@ -3,10 +3,11 @@ package plan
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/services/report"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/confluentinc/kcp/internal/services/report"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // fixtureCluster builds a ProcessedCluster with the metric aggregates that

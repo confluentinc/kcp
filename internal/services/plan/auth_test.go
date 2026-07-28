@@ -4,8 +4,9 @@ import (
 	"testing"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/stretchr/testify/assert"
+
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // authInputs builds a PlanInputsResolved with the default target_auth

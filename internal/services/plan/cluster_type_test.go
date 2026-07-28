@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/services/report"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/confluentinc/kcp/internal/services/report"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 func TestDecideClusterType_DefaultEnterprise(t *testing.T) {
