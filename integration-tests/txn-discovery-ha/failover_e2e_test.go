@@ -238,6 +238,11 @@ const (
 	// closes. It must stay under the broker's transaction.max.timeout.ms, which
 	// docker-compose.yml sets to fifteen minutes.
 	openTxnTimeout = 14 * time.Minute
+
+	// openTxnBudget bounds how long the fixture retries. It is part of the window
+	// budget: everything it spends is window the reader does not get for its quiet
+	// tail, which is why failoverWindow carries slack for it.
+	openTxnBudget = 90 * time.Second
 )
 
 // createTopics creates each topic at the cluster's replication factor, ignoring
@@ -373,22 +378,61 @@ func produceWithin(f txnFixture, within time.Duration) error {
 // It is written through the raw protocol rather than through a transactional
 // producer because sarama's AddOffsetsToTxn only BUFFERS the offsets — nothing
 // reaches __consumer_offsets until CommitTxn, and a committed transaction leaves
-// no gap. So the four requests a commit would have issued are issued here, minus
-// the EndTxn that would close it: InitProducerId to claim a producer id and
-// epoch, AddOffsetsToTxn to put the group's offsets partition into the
-// transaction, and TxnOffsetCommit to write the record.
+// no gap.
+//
+// It is retried AS A WHOLE, and that is not defensiveness. This fixture is
+// opened moments after a broker was killed, which is exactly when the brokers
+// that took over its coordinator duties are still loading state and answer
+// COORDINATOR_LOAD_IN_PROGRESS, NOT_COORDINATOR or UNKNOWN_TOPIC_OR_PARTITION.
+// sarama's own transaction manager retries all of those; this hand-rolled path
+// has to as well. Both failure modes were observed, and each one failed the
+// fixture and every assertion below it — which is indistinguishable from the
+// reader having broken, and so would make this suite useless as a negative
+// control. Every attempt is a fresh InitProducerId, which bumps the epoch and
+// fences the abandoned one, exactly as a real client's retry does.
 func beginOpenTransaction(t *testing.T) func() {
 	t.Helper()
 
 	client := newClient(t)
+	var abandon func()
+	var last error
+
+	require.Eventually(t, func() bool {
+		f, err := tryOpenTransaction(client)
+		if err != nil {
+			last = err
+			// The coordinators are the thing most likely to have moved, so both
+			// cached resolutions are dropped before the next attempt.
+			_ = client.RefreshTransactionCoordinator(openTxn)
+			_ = client.RefreshCoordinator(openGroup)
+			_ = client.RefreshMetadata(openIn)
+			return false
+		}
+		abandon = f
+		return true
+	}, openTxnBudget, 3*time.Second,
+		"could not leave a transaction open on %s; last error: %v", offsetsTopic, last)
+
+	return abandon
+}
+
+// tryOpenTransaction makes one attempt at the three requests a commit would have
+// issued, minus the EndTxn that would close the transaction: InitProducerId to
+// claim a producer id and epoch, AddOffsetsToTxn to put the group's offsets
+// partition into the transaction, and TxnOffsetCommit to write the record that
+// pins the last stable offset.
+//
+// The request versions match what sarama's own transaction manager sends at the
+// configured Kafka version, so this fixture speaks the same protocol the
+// committed fixtures do.
+func tryOpenTransaction(client sarama.Client) (func(), error) {
 	id := openTxn
 
 	coordinator, err := client.TransactionCoordinator(id)
-	require.NoError(t, err, "failed to resolve the transaction coordinator for the deliberately-open transaction")
+	if err != nil {
+		return nil, fmt.Errorf("resolving the transaction coordinator: %w", err)
+	}
 
-	// Versions chosen to match what sarama's own transaction manager sends at the
-	// configured Kafka version, so this fixture speaks the same protocol the
-	// committed fixtures do. A fresh producer id is claimed with -1/-1.
 	init, err := coordinator.InitProducerID(&sarama.InitProducerIDRequest{
 		Version:            4,
 		TransactionalID:    &id,
@@ -396,8 +440,12 @@ func beginOpenTransaction(t *testing.T) func() {
 		ProducerID:         -1,
 		ProducerEpoch:      -1,
 	})
-	require.NoError(t, err, "InitProducerId failed for the deliberately-open transaction")
-	require.Equal(t, sarama.ErrNoError, init.Err, "InitProducerId was refused: %v", init.Err)
+	if err != nil {
+		return nil, fmt.Errorf("InitProducerId: %w", err)
+	}
+	if init.Err != sarama.ErrNoError {
+		return nil, fmt.Errorf("InitProducerId refused: %w", init.Err)
+	}
 
 	added, err := coordinator.AddOffsetsToTxn(&sarama.AddOffsetsToTxnRequest{
 		Version:         2,
@@ -406,46 +454,38 @@ func beginOpenTransaction(t *testing.T) func() {
 		ProducerEpoch:   init.ProducerEpoch,
 		GroupID:         openGroup,
 	})
-	require.NoError(t, err, "AddOffsetsToTxn failed for the deliberately-open transaction")
-	require.Equal(t, sarama.ErrNoError, added.Err, "AddOffsetsToTxn was refused: %v", added.Err)
+	if err != nil {
+		return nil, fmt.Errorf("AddOffsetsToTxn: %w", err)
+	}
+	if added.Err != sarama.ErrNoError {
+		return nil, fmt.Errorf("AddOffsetsToTxn refused: %w", added.Err)
+	}
 
 	groupCoordinator, err := client.Coordinator(openGroup)
-	require.NoError(t, err, "failed to resolve the group coordinator for the deliberately-open transaction")
+	if err != nil {
+		return nil, fmt.Errorf("resolving the group coordinator: %w", err)
+	}
 
-	// Retried rather than issued once, because the group coordinator validates the
-	// topic-partition against its OWN metadata. A topic that the controller has
-	// already created can still be unknown to whichever broker coordinates this
-	// group for a moment afterwards, and the commit is then refused with
-	// UNKNOWN_TOPIC_OR_PARTITION. That cost this suite one run: the fixture failed
-	// and every assertion below it failed with it, which is indistinguishable from
-	// the reader having broken.
-	var lastErr sarama.KError
-	require.Eventually(t, func() bool {
-		_ = client.RefreshMetadata(openIn)
-		committed, cerr := groupCoordinator.TxnOffsetCommit(&sarama.TxnOffsetCommitRequest{
-			Version:         2,
-			TransactionalID: id,
-			GroupID:         openGroup,
-			ProducerID:      init.ProducerID,
-			ProducerEpoch:   init.ProducerEpoch,
-			Topics: map[string][]*sarama.PartitionOffsetMetadata{
-				openIn: {{Partition: 0, Offset: 1, LeaderEpoch: -1}},
-			},
-		})
-		if cerr != nil {
-			return false
-		}
-		lastErr = sarama.ErrNoError
-		for _, parts := range committed.Topics {
-			for _, pe := range parts {
-				if pe.Err != sarama.ErrNoError {
-					lastErr = pe.Err
-				}
+	committed, err := groupCoordinator.TxnOffsetCommit(&sarama.TxnOffsetCommitRequest{
+		Version:         2,
+		TransactionalID: id,
+		GroupID:         openGroup,
+		ProducerID:      init.ProducerID,
+		ProducerEpoch:   init.ProducerEpoch,
+		Topics: map[string][]*sarama.PartitionOffsetMetadata{
+			openIn: {{Partition: 0, Offset: 1, LeaderEpoch: -1}},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("TxnOffsetCommit: %w", err)
+	}
+	for topic, parts := range committed.Topics {
+		for _, pe := range parts {
+			if pe.Err != sarama.ErrNoError {
+				return nil, fmt.Errorf("TxnOffsetCommit refused for %s[%d]: %w", topic, pe.Partition, pe.Err)
 			}
 		}
-		return lastErr == sarama.ErrNoError
-	}, 60*time.Second, 2*time.Second,
-		"the transactional offset commit for the deliberately-open transaction was never accepted; last error: %v", lastErr)
+	}
 
 	// Deliberately no EndTxn here. That is the whole fixture.
 	return func() {
@@ -456,7 +496,7 @@ func beginOpenTransaction(t *testing.T) func() {
 			ProducerEpoch:     init.ProducerEpoch,
 			TransactionResult: false,
 		})
-	}
+	}, nil
 }
 
 // ensureInternalTopics brings __transaction_state and __consumer_offsets into
@@ -929,10 +969,15 @@ func (r *runResult) auditForTxn(txnID string) []auditLine {
 
 const (
 	// failoverWindow is the observation window. It has to cover the whole
-	// choreography — three production phases, a broker kill, a leader election
-	// and the reader's own capped backoff — plus a quiet tail long enough for the
-	// reader to catch up to the last stable offset on every partition.
-	failoverWindow = 240 * time.Second
+	// choreography — three production phases, a broker kill, a leader election,
+	// the reader's own capped backoff and the open-transaction fixture's retry
+	// budget — plus a quiet tail long enough for the reader to catch up to the
+	// last stable offset on every partition.
+	//
+	// It is generous rather than tight because the failure mode of being too tight
+	// is the worst one available: the window closing before the post-failover
+	// phase is read looks exactly like the reader never having resumed.
+	failoverWindow = 300 * time.Second
 
 	// phaseTxns is how many transactions each phase produces. Small on purpose:
 	// every id is pinned to the coordinator being killed, so three is already an
