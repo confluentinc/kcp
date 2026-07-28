@@ -61,17 +61,18 @@ type Opts struct {
 // cluster is the broker-facing surface one run needs, behind one seam so the
 // orchestration is testable without a broker.
 type cluster struct {
-	// Describer answers the preflight.
+	// Describer answers the preflight. It rides the tail's connection, which is
+	// idle until the fetch loops start.
 	Describer topicDescriber
 	// Tail is the fetch seam both readers share.
 	Tail tail.Client
-	// Admin is the narrow consumer-group slice of sarama.ClusterAdmin. U7
-	// deliberately did not widen kcp's KafkaAdmin interface for it, so it is
-	// built here from the same sarama.Client the tail holds — and closed here.
+	// Admin is the narrow consumer-group slice of sarama.ClusterAdmin, on a
+	// connection of its own — see connectSaramaWith. Nil when enrichment is off,
+	// or when its connection could not be built, which the run degrades on.
 	Admin discovery.ConsumerGroupAdmin
 	// OffsetsProbe reports whether the consumer-offsets log can be read (R13).
 	OffsetsProbe discovery.TopicProbe
-	// Close releases the sarama client and the cluster admin built over it.
+	// Close releases every client this cluster opened, and the admins over them.
 	Close func() error
 }
 
@@ -179,7 +180,13 @@ func (r *Runner) Run(ctx context.Context) error {
 			offsetsActive = true
 		}
 	}
-	if r.opts.EnrichConsumerGroups {
+	// Gated on the admin rather than on the flag: connect degrades to a nil Admin when
+	// enrichment's own connection could not be opened, and a run that named the phase
+	// anyway would have every artifact report it as having found nothing rather than as
+	// never having run. Whether the phase ran is now read off ActiveSources by the
+	// report, exactly as the offsets phase's activity already was.
+	enrichActive := r.opts.EnrichConsumerGroups && cl.Admin != nil
+	if enrichActive {
 		activeSources = append(activeSources, discovery.SourceConsumerGroups)
 	}
 
@@ -238,8 +245,11 @@ func (r *Runner) Run(ctx context.Context) error {
 			_ = offsets.Run(runCtx, dests[1], obs)
 		}()
 	}
-	if r.opts.EnrichConsumerGroups {
-		enricher := &discovery.ConsumerGroupEnricher{
+	// Declared outside the branch so its counters can be read after the window; a
+	// nil enricher is the --enrich-consumer-groups=false case.
+	var enricher *discovery.ConsumerGroupEnricher
+	if enrichActive {
+		enricher = &discovery.ConsumerGroupEnricher{
 			Admin:    cl.Admin,
 			Catalog:  catalog,
 			Interval: r.opts.Interval,
@@ -282,18 +292,22 @@ func (r *Runner) Run(ctx context.Context) error {
 	_ = closeAudit()
 
 	run := report.Run{
-		Duration:         r.opts.Duration,
-		Interval:         r.opts.Interval,
-		ActiveSources:    activeSources,
-		Footprints:       footprints,
-		Result:           grouping.Build(txns, grouping.Options{IncludeInternalTopics: r.opts.IncludeInternalTopics}),
-		Tail:             tailStats,
-		TxnState:         txnReader.Stats(),
-		AuditErrors:      audit.Errors(),
-		EnrichmentActive: r.opts.EnrichConsumerGroups,
+		Duration:      r.opts.Duration,
+		Interval:      r.opts.Interval,
+		ActiveSources: activeSources,
+		Footprints:    footprints,
+		Result:        grouping.Build(txns, grouping.Options{IncludeInternalTopics: r.opts.IncludeInternalTopics}),
+		Tail:          tailStats,
+		TxnState:      txnReader.Stats(),
+		AuditErrors:   audit.Errors(),
 	}
 	if offsets != nil {
 		run.Offsets = offsets.Stats()
+	}
+	// Read after srcWG.Wait(), so the final pass at the window's close — the one
+	// most likely to carry a correlation — is included rather than raced.
+	if enricher != nil {
+		run.Enrichment = enricher.Stats()
 	}
 
 	summary := report.Summarize(run)
@@ -344,47 +358,147 @@ func (r *Runner) writeArtifacts(summary report.Summary, run report.Run) error {
 	return nil
 }
 
-// connectSarama builds the real cluster surface: one sarama.Client, the tail
-// seam over it, and a cluster admin built from the same client.
+// clusterAdmin is every cluster-admin call this command makes: the preflight's topic
+// description, enrichment's two consumer-group calls, and the close that releases the
+// client underneath. *sarama.ClusterAdmin satisfies it as-is.
 //
-// AdminOptionForAuthMethod is the erroring variant. AdminOptionForAuth, the
-// other one, logs a warning and falls back to IAM when it cannot resolve the
-// auth type — which against a non-MSK cluster is a puzzling authentication
-// failure rather than the configuration error it actually is.
+// It is declared here rather than reached through kcp's KafkaAdmin for the same reason
+// discovery.ConsumerGroupAdmin is: that interface exposes five unrelated methods and
+// keeps its sarama.ClusterAdmin unexported, so widening it would ripple through every
+// mock in the repo.
+type clusterAdmin interface {
+	topicDescriber
+	discovery.ConsumerGroupAdmin
+	Close() error
+}
+
+// clientFactory and adminFactory are the two constructors connectSaramaWith uses,
+// seamed so the suite can prove which client each admin was built over — the whole
+// question this wiring answers.
+type clientFactory func(brokers []string, region string, opts ...client.AdminOption) (sarama.Client, error)
+
+type adminFactory func(sarama.Client) (clusterAdmin, error)
+
+// connectSarama builds the real cluster surface.
 func connectSarama(opts Opts) (*cluster, error) {
+	return connectSaramaWith(opts, client.NewKafkaClient, newSaramaClusterAdmin)
+}
+
+func newSaramaClusterAdmin(c sarama.Client) (clusterAdmin, error) {
+	return sarama.NewClusterAdminFromClient(c)
+}
+
+// connectSaramaWith builds the cluster surface over TWO sarama clients: one the tail
+// fetches on and the preflight borrows, and one that exists solely so consumer-group
+// enrichment's admin calls do not queue behind those fetches.
+//
+// The second connection is the point. sarama pipelines requests on a connection and
+// delivers responses strictly in order, and both client.Brokers() (which
+// ListConsumerGroups uses) and client.Coordinator() (which ListConsumerGroupOffsets
+// uses) hand back the very *sarama.Broker the tail's hundred fetch loops are long-polling
+// on. Measured against the compose broker with those loops running, one pass's two calls
+// took 16-37s over the shared connection and 0-2ms over an independent one — which is
+// why --interval 5s over a 60s window achieved four or five enrichment passes rather
+// than thirteen. The POC did not have this problem because it built a separate
+// kgo.Client per role.
+//
+// The preflight admin stays on the tail's client deliberately: DescribeTopics is issued
+// before tl.Start, when that connection is idle, so it costs nothing and saves an
+// authentication.
+//
+// AdminOptionForAuthMethod is the erroring variant of the auth resolution, resolved ONCE
+// and applied to both clients so the two connections cannot drift in credentials, TLS
+// settings or --insecure-skip-tls-verify handling. AdminOptionForAuth, the other one,
+// logs a warning and falls back to IAM when it cannot resolve the auth type — which
+// against a non-MSK cluster is a puzzling authentication failure rather than the
+// configuration error it actually is.
+func connectSaramaWith(opts Opts, newClient clientFactory, newAdmin adminFactory) (*cluster, error) {
 	authOpt, err := client.AdminOptionForAuthMethod(opts.Auth.AuthType, opts.Auth.Method, opts.Auth.SkipTLSVerify)
 	if err != nil {
 		return nil, err
 	}
 
-	sc, err := client.NewKafkaClient(opts.Brokers, opts.Region, authOpt)
+	sc, err := newClient(opts.Brokers, opts.Region, authOpt)
 	if err != nil {
 		return nil, err
 	}
 
-	// U7 deliberately did not widen kcp's KafkaAdmin interface for the two
-	// consumer-group calls, so the admin is built here over the same client.
-	// NewClusterAdminFromClient does not take ownership of it, which is why the
-	// close below releases both, admin first.
-	admin, err := sarama.NewClusterAdminFromClient(sc)
+	admin, err := newAdmin(sc)
 	if err != nil {
 		_ = sc.Close()
 		return nil, fmt.Errorf("failed to build a cluster admin for the source cluster: %w", err)
 	}
 
-	return &cluster{
+	// closers releases everything opened so far, newest first. Every exit path below
+	// runs it, including the ones that fail: a preflight that never gets to run must
+	// not leave two authenticated sessions on the broker.
+	closers := []func() error{admin.Close}
+
+	cl := &cluster{
 		Describer: admin,
 		Tail:      tail.NewSaramaClient(sc, 0),
-		Admin:     admin,
 		OffsetsProbe: func(context.Context) error {
 			return probeReadableTopic(admin, discovery.DefaultConsumerOffsetsTopic)
 		},
-		Close: func() error {
-			// Closing the admin closes the client it was built from, so the
-			// client is not closed again here.
-			return admin.Close()
-		},
-	}, nil
+	}
+
+	// Only when something will use it: a second client is a second authentication to
+	// the broker, and --enrich-consumer-groups=false has nothing to spend it on.
+	if opts.EnrichConsumerGroups {
+		enrichAdmin, cerr := enrichmentAdmin(opts, newClient, newAdmin, authOpt)
+		if cerr != nil {
+			// R13's precedent: an optional enrichment source that cannot be set up
+			// warns and the run continues, rather than a second connection becoming a
+			// hard precondition of a command whose primary job needs only the first.
+			// The degradation is not silent — Run leaves consumer-group enrichment out
+			// of the run's active sources, so every artifact reports the phase as not
+			// having run rather than as having found nothing.
+			//
+			// The error is carried but the credentials are not: this warning reaches the
+			// console as well as kcp.log.
+			slog.Warn("⚠️ consumer-group enrichment is disabled for this run: its connection to the source cluster could not be opened",
+				"err", cerr)
+		} else {
+			cl.Admin = enrichAdmin
+			closers = append(closers, enrichAdmin.Close)
+		}
+	}
+
+	cl.Close = func() error {
+		var firstErr error
+		// Newest first, and every one attempted: a close that errors must not strand
+		// the connections behind it.
+		for i := len(closers) - 1; i >= 0; i-- {
+			if err := closers[i](); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
+	return cl, nil
+}
+
+// enrichmentAdmin opens the connection enrichment gets to itself and builds its admin,
+// closing the client again if the admin cannot be built over it.
+//
+// The returned admin owns its client: closing it closes the connection, which is why the
+// caller only has to add its Close to the cluster's closers.
+//
+// authOpt is the caller's already-resolved auth, passed in rather than resolved again:
+// both connections must present identical credentials, TLS settings and
+// --insecure-skip-tls-verify handling, and resolving twice is how they would come to
+// differ.
+func enrichmentAdmin(opts Opts, newClient clientFactory, newAdmin adminFactory, authOpt client.AdminOption) (clusterAdmin, error) {
+	sc, err := newClient(opts.Brokers, opts.Region, authOpt)
+	if err != nil {
+		return nil, err
+	}
+	admin, err := newAdmin(sc)
+	if err != nil {
+		_ = sc.Close()
+		return nil, fmt.Errorf("failed to build a cluster admin for consumer-group enrichment: %w", err)
+	}
+	return admin, nil
 }
 
 // probeReadableTopic reports whether an internal topic can be described, which

@@ -110,6 +110,148 @@ func offsetFetch(topicPartitions map[string][]int32) *sarama.OffsetFetchResponse
 	return resp
 }
 
+// The pass count is the cadence signal: --interval 5s over a 60s window should
+// yield thirteen passes, and there is otherwise no way to see that a run achieved
+// four. Every completed pass counts, including one that short-circuited on an empty
+// catalog — the question this number answers is how many times the loop came round,
+// and a run against an idle cluster that reported zero passes would read as a phase
+// that never started.
+func TestConsumerGroupEnricher_StatsCountEveryCompletedPass(t *testing.T) {
+	catalog := NewTxnCatalog()
+	catalog.Observe("payments-processor-abc12", 7)
+
+	admin := &fakeGroupAdmin{
+		groups: map[string]string{"payments-processor": "consumer"},
+		offsets: map[string]*sarama.OffsetFetchResponse{
+			"payments-processor": offsetFetch(map[string][]int32{"payments.requests": {0}}),
+		},
+	}
+	e := newTestEnricher(admin, catalog, &syncBuffer{})
+
+	out := make(chan Observation, 16)
+	for range 3 {
+		if err := e.enrich(context.Background(), out); err != nil {
+			t.Fatalf("enrich returned %v, want nil", err)
+		}
+	}
+
+	if got := e.Stats().Passes; got != 3 {
+		t.Errorf("Stats().Passes = %d, want 3", got)
+	}
+}
+
+// A failed pass is not a completed one. Folding the two together would let a phase
+// whose every pass failed report a full-cadence run: thirteen passes, no
+// correlations — indistinguishable from a healthy run against a cluster with no
+// exactly-once traffic.
+func TestConsumerGroupEnricher_StatsCountAFailedPassAsAFailureNotACompletion(t *testing.T) {
+	catalog := NewTxnCatalog()
+	catalog.Observe("payments-processor-abc12", 7)
+
+	admin := &fakeGroupAdmin{
+		groups: map[string]string{"payments-processor": "consumer"},
+		offsets: map[string]*sarama.OffsetFetchResponse{
+			"payments-processor": offsetFetch(map[string][]int32{"payments.requests": {0}}),
+		},
+		listErr: []error{errors.New("coordinator not available"), nil},
+	}
+	e := newTestEnricher(admin, catalog, &syncBuffer{})
+
+	out := make(chan Observation, 16)
+	if err := e.enrich(context.Background(), out); err == nil {
+		t.Fatal("enrich returned nil on a failed listing, want an error")
+	}
+	if err := e.enrich(context.Background(), out); err != nil {
+		t.Fatalf("second enrich returned %v, want nil", err)
+	}
+
+	got := e.Stats()
+	if got.PassFailures != 1 {
+		t.Errorf("Stats().PassFailures = %d, want 1", got.PassFailures)
+	}
+	if got.Passes != 1 {
+		t.Errorf("Stats().Passes = %d, want 1 — a failed pass must not count as completed", got.Passes)
+	}
+}
+
+// GroupsListed is what separates "the naming convention matched nothing" from "the
+// credentials could not see a single group". Both recover no inputs, and a pass count
+// alone reports them identically.
+//
+// It is the most any one pass saw rather than a running total, because the listing
+// repeats every pass: summing it would multiply one cluster's group count by the
+// cadence, and reporting the last pass's figure would let a rebalance at the window's
+// close understate the estate.
+func TestConsumerGroupEnricher_StatsReportTheLargestGroupListingAnyPassSaw(t *testing.T) {
+	catalog := NewTxnCatalog()
+	catalog.Observe("payments-processor-abc12", 7)
+
+	admin := &fakeGroupAdmin{
+		groups: map[string]string{
+			"payments-processor": "consumer",
+			"analytics-reader":   "consumer",
+			"audit-sink":         "consumer",
+		},
+		offsets: map[string]*sarama.OffsetFetchResponse{
+			"payments-processor": offsetFetch(map[string][]int32{"payments.requests": {0}}),
+		},
+	}
+	e := newTestEnricher(admin, catalog, &syncBuffer{})
+
+	out := make(chan Observation, 16)
+	if err := e.enrich(context.Background(), out); err != nil {
+		t.Fatalf("enrich returned %v, want nil", err)
+	}
+	// A rebalance takes two groups away for the next pass. The larger figure survives.
+	admin.groups = map[string]string{"payments-processor": "consumer"}
+	if err := e.enrich(context.Background(), out); err != nil {
+		t.Fatalf("second enrich returned %v, want nil", err)
+	}
+
+	if got := e.Stats().GroupsListed; got != 3 {
+		t.Errorf("Stats().GroupsListed = %d, want 3 (the most any single pass listed, not a sum and not the last)", got)
+	}
+}
+
+// Correlations is the number that says enrichment did its job: a run that listed four
+// hundred groups and correlated none has a naming convention that does not hold on that
+// cluster, which is invisible from any other count.
+//
+// It counts DISTINCT group-to-transaction links across the whole run, not per pass:
+// every pass re-correlates the same groups, so a per-pass sum would report the same
+// single recovery thirteen times.
+func TestConsumerGroupEnricher_StatsCountDistinctCorrelationsAcrossPasses(t *testing.T) {
+	catalog := NewTxnCatalog()
+	catalog.Observe("payments-processor-abc12", 7)
+	catalog.Observe("payments-processor-def34", 8)
+	catalog.Observe("analytics-reader-0_0", 9)
+
+	admin := &fakeGroupAdmin{
+		groups: map[string]string{
+			"payments-processor": "consumer",
+			"analytics-reader":   "consumer",
+			"audit-sink":         "consumer", // correlates to nothing in the catalog
+		},
+		offsets: map[string]*sarama.OffsetFetchResponse{
+			"payments-processor": offsetFetch(map[string][]int32{"payments.requests": {0}}),
+			"analytics-reader":   offsetFetch(map[string][]int32{"analytics.raw": {0}}),
+		},
+	}
+	e := newTestEnricher(admin, catalog, &syncBuffer{})
+
+	out := make(chan Observation, 64)
+	for range 3 {
+		if err := e.enrich(context.Background(), out); err != nil {
+			t.Fatalf("enrich returned %v, want nil", err)
+		}
+	}
+
+	// payments-processor -> two transactional ids, analytics-reader -> one.
+	if got := e.Stats().Correlations; got != 3 {
+		t.Errorf("Stats().Correlations = %d, want 3 distinct links (three passes must not report nine)", got)
+	}
+}
+
 func TestCorrelateByStreamsConvention_ExactNameMatches(t *testing.T) {
 	txnIDs := []string{"analytics-a", "payments-processor", "audit"}
 
