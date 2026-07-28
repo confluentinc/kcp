@@ -379,7 +379,6 @@ func produceWithin(f txnFixture, within time.Duration) error {
 // transaction, and TxnOffsetCommit to write the record.
 func beginOpenTransaction(t *testing.T) func() {
 	t.Helper()
-	createTopics(t, openIn)
 
 	client := newClient(t)
 	id := openTxn
@@ -413,23 +412,40 @@ func beginOpenTransaction(t *testing.T) func() {
 	groupCoordinator, err := client.Coordinator(openGroup)
 	require.NoError(t, err, "failed to resolve the group coordinator for the deliberately-open transaction")
 
-	committed, err := groupCoordinator.TxnOffsetCommit(&sarama.TxnOffsetCommitRequest{
-		Version:         2,
-		TransactionalID: id,
-		GroupID:         openGroup,
-		ProducerID:      init.ProducerID,
-		ProducerEpoch:   init.ProducerEpoch,
-		Topics: map[string][]*sarama.PartitionOffsetMetadata{
-			openIn: {{Partition: 0, Offset: 1, LeaderEpoch: -1}},
-		},
-	})
-	require.NoError(t, err, "TxnOffsetCommit failed for the deliberately-open transaction")
-	for topic, parts := range committed.Topics {
-		for _, pe := range parts {
-			require.Equal(t, sarama.ErrNoError, pe.Err,
-				"the transactional offset commit was refused for %s[%d]: %v", topic, pe.Partition, pe.Err)
+	// Retried rather than issued once, because the group coordinator validates the
+	// topic-partition against its OWN metadata. A topic that the controller has
+	// already created can still be unknown to whichever broker coordinates this
+	// group for a moment afterwards, and the commit is then refused with
+	// UNKNOWN_TOPIC_OR_PARTITION. That cost this suite one run: the fixture failed
+	// and every assertion below it failed with it, which is indistinguishable from
+	// the reader having broken.
+	var lastErr sarama.KError
+	require.Eventually(t, func() bool {
+		_ = client.RefreshMetadata(openIn)
+		committed, cerr := groupCoordinator.TxnOffsetCommit(&sarama.TxnOffsetCommitRequest{
+			Version:         2,
+			TransactionalID: id,
+			GroupID:         openGroup,
+			ProducerID:      init.ProducerID,
+			ProducerEpoch:   init.ProducerEpoch,
+			Topics: map[string][]*sarama.PartitionOffsetMetadata{
+				openIn: {{Partition: 0, Offset: 1, LeaderEpoch: -1}},
+			},
+		})
+		if cerr != nil {
+			return false
 		}
-	}
+		lastErr = sarama.ErrNoError
+		for _, parts := range committed.Topics {
+			for _, pe := range parts {
+				if pe.Err != sarama.ErrNoError {
+					lastErr = pe.Err
+				}
+			}
+		}
+		return lastErr == sarama.ErrNoError
+	}, 60*time.Second, 2*time.Second,
+		"the transactional offset commit for the deliberately-open transaction was never accepted; last error: %v", lastErr)
 
 	// Deliberately no EndTxn here. That is the whole fixture.
 	return func() {
@@ -1013,6 +1029,10 @@ func doFailoverRun(t *testing.T) *failoverResult {
 	for _, ph := range phases {
 		createTopics(t, topicsOf(ph.fixtures)...)
 	}
+	// Created here rather than where it is used, minutes before the open
+	// transaction commits an offset for it, so its metadata has propagated to
+	// whichever broker ends up coordinating that group.
+	createTopics(t, openIn)
 
 	earliest := earliestOffsets(t, txnStateTopic)
 
