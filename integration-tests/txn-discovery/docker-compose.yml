@@ -54,6 +54,26 @@ services:
       # transactional ids while a run is still observing them.
       KAFKA_TRANSACTIONAL_ID_EXPIRATION_MS: 3600000
       KAFKA_TRANSACTION_MAX_TIMEOUT_MS: 900000
+
+      # (4) LOG CLEANER OFF. __transaction_state is a COMPACTED topic, and a
+      # transaction's footprint lives only in its Ongoing and PrepareCommit
+      # records. Once the transaction completes, the latest record under that
+      # key is CompleteCommit, whose partition set is EMPTY — so a compaction
+      # pass erases the footprint and leaves a record that says nothing about
+      # which topics were coupled.
+      #
+      # That is a real production blind spot the tool documents, and it is
+      # exactly why it must not be live here: it makes a fixture's discovery
+      # depend on whether the cleaner happened to run, which is nondeterministic
+      # and has nothing to do with the behaviour under test. It bit this suite
+      # three times before being tracked down — twice as an intermittently
+      # missing group, and once as pre-restart transactions vanishing when the
+      # restart itself triggered a cleaning pass.
+      #
+      # The ratio is belt-and-braces in case a later image force-enables the
+      # cleaner: at 1.0 a log must be entirely dirty before it is cleanable.
+      KAFKA_LOG_CLEANER_ENABLE: 'false'
+      KAFKA_LOG_CLEANER_MIN_CLEANABLE_RATIO: '1.0'
     healthcheck:
       test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
       interval: 5s

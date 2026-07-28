@@ -203,6 +203,48 @@ func commitGroupOffsets(t *testing.T, group, topic string) {
 	require.GreaterOrEqual(t, block.Offset, int64(0), "the offset commit did not land: the group's offset is unset")
 }
 
+// restartBroker stops and starts the broker container, then blocks until the
+// cluster can serve the transaction-state log again.
+//
+// `docker restart` rather than `docker compose up --force-recreate`: the
+// container keeps its filesystem, so the log the reader must resume within
+// survives. Recreating it would wipe the data and turn a resumption test into
+// a fresh-cluster test.
+func restartBroker(t *testing.T) {
+	t.Helper()
+	out, err := exec.Command("docker", "restart", containerName).CombinedOutput()
+	require.NoError(t, err, "failed to restart the broker: %s", out)
+	awaitBrokerReady(t)
+}
+
+// awaitBrokerReady blocks until the broker answers AND the transaction-state
+// log is loaded.
+//
+// Answering is not enough: the broker accepts API-version requests well before
+// the transaction coordinator has loaded its state, and a test that produced
+// into that gap would fail on the fixture rather than on the behaviour.
+func awaitBrokerReady(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		// A fresh admin per attempt: a client built before the restart holds
+		// stale metadata and a dead connection.
+		admin, err := sarama.NewClusterAdmin([]string{bootstrapAddr}, baseConfig())
+		if err != nil {
+			return false
+		}
+		defer func() { _ = admin.Close() }()
+		topics, err := admin.ListTopics()
+		if err != nil {
+			return false
+		}
+		_, ok := topics[txnStateTopic]
+		return ok
+	}, 120*time.Second, 2*time.Second, "the broker did not come back with a loaded transaction-state log")
+}
+
+// txnStateTopic is the internal topic the command reads by default.
+const txnStateTopic = "__transaction_state"
+
 // topicExists reports whether the broker has topic, using a listing rather than
 // a topic-scoped metadata request.
 //
@@ -352,6 +394,23 @@ type discoveryGroup struct {
 	TransactionalIDs []string `yaml:"transactional_ids"`
 }
 
+// statsDoc is the slice of txn-discovery-stats.json this suite reads: the
+// keep-up counters that say whether the reader stayed healthy and, for the
+// restart scenario, whether it was disrupted at all.
+type statsDoc struct {
+	Tail struct {
+		PartitionsAssigned int   `json:"partitions_assigned"`
+		PartitionsRunning  int   `json:"partitions_running"`
+		RecordsRead        int64 `json:"records_read"`
+		Lag                int64 `json:"lag"`
+		DecodeErrors       int64 `json:"decode_errors"`
+		LeadershipErrors   int64 `json:"leadership_errors"`
+		UnclassifiedErrors int64 `json:"unclassified_errors"`
+		OffsetResets       int64 `json:"offset_resets"`
+		TransportErrors    int64 `json:"transport_errors"`
+	} `json:"tail"`
+}
+
 // auditLine mirrors one line of txn-discovery-audit.jsonl.
 type auditLine struct {
 	Timestamp time.Time `json:"timestamp"`
@@ -374,6 +433,8 @@ type runResult struct {
 	audit []auditLine
 	// kcpLog is the run's log file, empty when it wrote none.
 	kcpLog string
+	// stats is the parsed diagnostics document, nil when none was asked for.
+	stats *statsDoc
 
 	// files is every name the run left in its directory, and modes their
 	// permission bits.
@@ -419,6 +480,11 @@ func collect(t *testing.T, dir string, code int, stdout, stderr string) *runResu
 			r.audit = append(r.audit, al)
 		}
 		require.NoError(t, scanner.Err(), "failed to read the audit log")
+	}
+	if data, err := os.ReadFile(filepath.Join(dir, statsFile)); err == nil {
+		var sd statsDoc
+		require.NoError(t, json.Unmarshal(data, &sd), "the stats JSON did not parse:\n%s", data)
+		r.stats = &sd
 	}
 	if data, err := os.ReadFile(filepath.Join(dir, logFile)); err == nil {
 		r.kcpLog = string(data)
@@ -577,7 +643,135 @@ const (
 	// AE6/AE7. A transaction-state topic name that does not exist and must not
 	// come to exist.
 	ghostTxnStateTopic = fixturePrefix + "ghost-txn-state"
+
+	// Broker restart. Transactions are produced in a phase before the restart
+	// and a phase after it, with deterministic ids so the run's output can be
+	// checked as a ledger.
+	restartPhaseTxns = 3
 )
+
+// TestReaderResumesAcrossBrokerRestart is R11's broker half: restarting the
+// broker mid-run leaves the reader re-resolving and resuming from its last
+// offset, with no gap and no duplicate group.
+//
+// The assertions are LEDGER-based, and deliberately so. The obvious ones are
+// all satisfied by a reader that simply died at the restart: the accumulator is
+// in-memory and append-only, so "nothing observed before the restart was lost"
+// holds trivially for a reader that never resumed, and "no duplicate group"
+// holds most easily of all for a reader that stopped. Only transactions
+// produced strictly AFTER the restart distinguish recovery from a silent stall,
+// so every phase is enumerated and every id must be present.
+func TestReaderResumesAcrossBrokerRestart(t *testing.T) {
+	awaitBrokerReady(t)
+
+	pre := restartFixtures(t, "pre")
+	post := restartFixtures(t, "post")
+	createTopics(t, append(topicsOf(pre), topicsOf(post)...)...)
+
+	proc := startKCP(t,
+		"--source-bootstrap", bootstrapAddr,
+		"--use-unauthenticated-plaintext",
+		"--duration", "150s",
+		"--interval", "5s",
+		"--out", outFile,
+		"--stats-out", statsFile,
+		"--audit-log-out", auditFile,
+	)
+	proc.awaitObserving(t)
+
+	for _, f := range pre {
+		produceTxn(t, f)
+	}
+	// Let the pre-restart phase be read before the broker goes away, so a
+	// failure afterwards is unambiguously about resumption.
+	time.Sleep(10 * time.Second)
+
+	restartBroker(t)
+
+	// The reader's backoff is capped at five seconds and a metadata refresh has
+	// to follow the restart, so give it room to re-resolve before judging it on
+	// records produced after.
+	time.Sleep(10 * time.Second)
+	for _, f := range post {
+		produceTxn(t, f)
+	}
+
+	r := proc.wait(t)
+	r.requireSucceeded(t)
+
+	// Non-vacuity, and the whole point of the scenario: the restart must
+	// actually have disrupted the reader. A run that sailed through without a
+	// single transport or leadership error did not exercise recovery, and the
+	// ledger below would then be proving nothing.
+	require.NotNil(t, r.stats, "the run wrote no stats document, so the disruption cannot be confirmed")
+	disruptions := r.stats.Tail.TransportErrors + r.stats.Tail.LeadershipErrors
+	require.Positive(t, disruptions,
+		"the broker restart caused no transport or leadership error, so the reader was never disrupted and this test proves nothing (tail=%+v)", r.stats.Tail)
+
+	// The ledger. Every transaction from both phases must be in the document —
+	// the post-restart ones are what separate a resumed reader from a dead one.
+	for _, f := range append(append([]txnFixture{}, pre...), post...) {
+		g := r.groupWith(f.Produce[0])
+		require.NotNil(t, g, "transaction %s is missing from the output entirely\n%s", f.TxnID, r.describe())
+		assert.ElementsMatch(t, f.Produce, g.Topics,
+			"transaction %s did not produce its own group of topics\n%s", f.TxnID, r.describe())
+		assert.Contains(t, g.TransactionalIDs, f.TxnID,
+			"the group is not credited to transaction %s\n%s", f.TxnID, r.describe())
+	}
+
+	// No duplicate group: a reconnect that re-read an offset range would show up
+	// as the same topic appearing in two groups, or as a repeated group name.
+	seenNames := map[string]int{}
+	for _, g := range r.doc.Groups {
+		seenNames[g.Name]++
+	}
+	for name, n := range seenNames {
+		assert.Equal(t, 1, n, "group name %s appears %d times", name, n)
+	}
+	for _, f := range append(append([]txnFixture{}, pre...), post...) {
+		var in []string
+		for _, g := range r.doc.Groups {
+			for _, tp := range g.Topics {
+				if tp == f.Produce[0] {
+					in = append(in, g.Name)
+				}
+			}
+		}
+		assert.Len(t, in, 1, "topic of %s appears in %v, so the reconnect duplicated it", f.TxnID, in)
+	}
+
+	// No gap: every partition assigned at startup must still be running at the
+	// end. A partition loop that gave up on the restart reads as zero lag and is
+	// otherwise indistinguishable from a healthy idle one.
+	assert.Equal(t, r.stats.Tail.PartitionsAssigned, r.stats.Tail.PartitionsRunning,
+		"%d of %d partitions stopped across the restart, so part of the window went unobserved",
+		r.stats.Tail.PartitionsAssigned-r.stats.Tail.PartitionsRunning, r.stats.Tail.PartitionsAssigned)
+	assert.Zero(t, r.stats.Tail.DecodeErrors, "records failed to decode across the restart")
+}
+
+// restartFixtures builds one phase's transactions, each writing its own pair of
+// topics so it forms its own group and can be found by name in the output.
+func restartFixtures(t *testing.T, phase string) []txnFixture {
+	t.Helper()
+	out := make([]txnFixture, 0, restartPhaseTxns)
+	for i := 0; i < restartPhaseTxns; i++ {
+		base := fmt.Sprintf("%srestart-%s-%d", fixturePrefix, phase, i)
+		out = append(out, txnFixture{
+			TxnID:   base + "-txn",
+			Produce: []string{base + "-a", base + "-b"},
+		})
+	}
+	return out
+}
+
+// topicsOf flattens the topics a set of fixtures produces to.
+func topicsOf(fs []txnFixture) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.Produce...)
+	}
+	return out
+}
 
 // TestPreflightDeniesUnreadableTxnStateAndWritesNothing is AE6: when the
 // transaction-state log cannot be read the command fails fast, exits non-zero,
