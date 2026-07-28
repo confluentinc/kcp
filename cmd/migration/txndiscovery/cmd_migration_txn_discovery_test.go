@@ -416,6 +416,85 @@ func TestTxnDiscovery_InsecureSkipTLSVerify_IsCarried(t *testing.T) {
 	assert.True(t, resolveAuth().SkipTLSVerify)
 }
 
+// --insecure-skip-tls-verify reaches exactly one of the six auth modes.
+//
+// The flag is threaded correctly as far as client.AdminOptionForAuthMethod, but only
+// WithSASLSCRAMAuth takes the parameter: WithIAMAuth, WithTLSAuth and
+// WithUnauthenticatedTlsAuth drop it on the floor, and the two plaintext modes have no
+// TLS for it to apply to. Accepting it anyway is fail-closed rather than a
+// vulnerability — verification stays ON — but the help text offers it for "Kafka
+// connections" without qualification, so an operator in a lab with a self-signed cert
+// and --use-tls gets a certificate error they cannot suppress and no clue why. It is
+// rejected while it is still a flag, rather than silently ignored for hours.
+//
+// Rejecting rather than widening the three shared constructors is deliberate: those
+// live in internal/client and are used by other commands, so changing their signatures
+// is a separate change with a wider blast radius.
+func TestTxnDiscovery_InsecureSkipTLSVerify_RejectedForAuthModesThatCannotHonourIt(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{
+			name: "iam drops it",
+			args: []string{"--use-sasl-iam", "--aws-region", "us-east-1"},
+		},
+		{
+			name: "mutual tls drops it",
+			args: []string{"--use-tls", "--tls-ca-cert", "ca.pem", "--tls-client-cert", "client.pem", "--tls-client-key", "client.key"},
+		},
+		{
+			name: "unauthenticated tls drops it",
+			args: []string{"--use-unauthenticated-tls"},
+		},
+		{
+			name: "sasl plain has no tls at all",
+			args: []string{"--use-sasl-plain", "--sasl-plain-username", "reader", "--sasl-plain-password", "hunter2"},
+		},
+		{
+			name: "unauthenticated plaintext has no tls at all",
+			args: []string{"--use-unauthenticated-plaintext"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetFlags()
+			cmd := NewMigrationTxnDiscoveryCmd()
+			clearFlagEnv(t, cmd)
+			reached := false
+			previous := runDiscovery
+			runDiscovery = func(context.Context, Opts) error { reached = true; return nil }
+			t.Cleanup(func() { runDiscovery = previous })
+
+			cmd.SetArgs(append([]string{
+				"--source-bootstrap", "broker:9092",
+				"--insecure-skip-tls-verify",
+			}, tc.args...))
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--insecure-skip-tls-verify")
+			assert.Contains(t, err.Error(), "--use-sasl-scram", "the error must name the mode that does honour the flag")
+			assert.False(t, reached, "rejection happens during flag validation, before any client is built")
+		})
+	}
+}
+
+// R3: and by the flag's VALUE, not by whether it was typed, so the environment path
+// cannot slip past the check. Every flag binds to its uppercase, underscored
+// equivalent, and INSECURE_SKIP_TLS_VERIFY exported in a shell reaches the same
+// resolution as the flag does.
+func TestTxnDiscovery_InsecureSkipTLSVerify_FromEnvironment_IsRejectedToo(t *testing.T) {
+	cmd := newTestCmd(t,
+		"--source-bootstrap", "broker:9092",
+		"--use-unauthenticated-tls",
+	)
+	t.Setenv("INSECURE_SKIP_TLS_VERIFY", "true")
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--insecure-skip-tls-verify")
+}
+
 // R2: an auth method selected without its full credential set is a flag error,
 // not a connection failure discovered minutes later against the broker.
 func TestTxnDiscovery_IncompleteCredentialSet_Rejected(t *testing.T) {

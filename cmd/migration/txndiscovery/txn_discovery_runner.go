@@ -20,6 +20,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/report"
 	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
+	"github.com/confluentinc/kcp/internal/types"
 )
 
 // Opts is the resolved configuration of one discovery run: everything the
@@ -148,6 +149,10 @@ func (r *Runner) Run(ctx context.Context) error {
 	defer func() { _ = closeAudit() }()
 
 	// SIGINT and SIGTERM end the window early; the artifacts are still written.
+	//
+	// The registration is given up the moment the window is over — see below. It is
+	// still deferred as well, for the paths that return before the window opens; the
+	// stop NotifyContext hands back is safe to call more than once.
 	sigCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 
@@ -264,6 +269,24 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 
 	r.window(sigCtx, r.opts.Duration)
+
+	// The window has done its job, so the signal handler is given back to Go
+	// BEFORE the drain — and before cancel(), which is what starts the drain.
+	//
+	// signal.NotifyContext's goroutine is one-shot: it cancels on the first signal
+	// and exits, leaving the registration in place on a size-1 channel nobody will
+	// read again, so every later signal is buffered and discarded. Held for the whole
+	// drain, that makes the run uninterruptible over exactly the stretch where an
+	// operator has reason to interrupt it: the drain is the last thing that talks to
+	// the broker, and a broker that has stopped answering is what makes it hang.
+	// SIGKILL would then be the only way out, and it takes all three artifacts —
+	// hours of observation — with it.
+	//
+	// Handing the signal back restores Go's default disposition, so a second Ctrl-C
+	// kills the process. Nothing before this point loses a signal by it: the window
+	// returns either because the duration elapsed or because a signal cancelled
+	// sigCtx, and in both cases the first signal has already had its effect.
+	stopSignals()
 
 	// BEFORE cancel. Every partition loop clears its running flag as it exits,
 	// so a snapshot taken after shutdown reports zero partitions live and the
@@ -416,6 +439,20 @@ func connectSaramaWith(opts Opts, newClient clientFactory, newAdmin adminFactory
 	authOpt, err := client.AdminOptionForAuthMethod(opts.Auth.AuthType, opts.Auth.Method, opts.Auth.SkipTLSVerify)
 	if err != nil {
 		return nil, err
+	}
+
+	// --use-sasl-plain has no TLS. AdminOptionForAuthMethod maps it to
+	// WithSASLPlainAuthNoTLS, which sets disableTLS, and NewKafkaClient then configures
+	// SASL/PLAIN with encryption off — so the password crosses the network in the clear
+	// on both of the connections opened below. The SCRAM path warns when certificate
+	// verification is merely weakened; a mode that dispenses with encryption altogether
+	// cannot say less than that.
+	//
+	// Here rather than per client, because this command opens two and one problem
+	// reported twice reads as two problems. No attributes: this reaches the console as
+	// well as kcp.log, and the credential is exactly what it must not carry.
+	if opts.Auth.AuthType == types.AuthTypeSASLPlain {
+		slog.Warn("⚠️ --use-sasl-plain transmits the source-cluster password in cleartext: this mode configures SASL/PLAIN with TLS disabled, so anything on the network path between kcp and the brokers can read it")
 	}
 
 	sc, err := newClient(opts.Brokers, opts.Region, authOpt)

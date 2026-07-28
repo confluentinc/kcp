@@ -192,9 +192,16 @@ type fakeGroupAdmin struct {
 	groups  map[string]string
 	offsets map[string][]string // group -> consumed topics
 	err     error
+
+	// delay makes every call take this long, standing in for a broker that has
+	// stopped answering. sarama's two consumer-group calls take no context, so
+	// this is the only shape a slow one has: a call nothing can abandon from the
+	// inside. Set before the run starts and never written again.
+	delay time.Duration
 }
 
 func (f *fakeGroupAdmin) ListConsumerGroups() (map[string]string, error) {
+	time.Sleep(f.delay)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -202,6 +209,7 @@ func (f *fakeGroupAdmin) ListConsumerGroups() (map[string]string, error) {
 }
 
 func (f *fakeGroupAdmin) ListConsumerGroupOffsets(group string, _ map[string][]int32) (*sarama.OffsetFetchResponse, error) {
+	time.Sleep(f.delay)
 	if f.err != nil {
 		return nil, f.err
 	}
