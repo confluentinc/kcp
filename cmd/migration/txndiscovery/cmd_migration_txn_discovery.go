@@ -177,7 +177,7 @@ visible in the process list.`,
 	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source cluster.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source cluster.")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source cluster.")
-	tlsFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for Kafka connections. Lab use only.")
+	tlsFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for Kafka connections. Supported with --use-sasl-scram only — the other authentication modes cannot honour it, and naming it alongside one of them is rejected rather than ignored. Lab use only.")
 	cmd.Flags().AddFlagSet(tlsFlags)
 
 	outputFlags := pflag.NewFlagSet("output", pflag.ExitOnError)
@@ -255,6 +255,28 @@ func preRunTxnDiscovery(cmd *cobra.Command, args []string) error {
 	}
 	if interval <= 0 {
 		return fmt.Errorf("--interval must be greater than zero (got %s)", interval)
+	}
+
+	// --insecure-skip-tls-verify reaches exactly one of the six auth modes.
+	//
+	// It is threaded correctly as far as client.AdminOptionForAuthMethod, but only
+	// WithSASLSCRAMAuth takes the parameter: WithIAMAuth, WithTLSAuth and
+	// WithUnauthenticatedTlsAuth have no such argument and drop it, and the two
+	// plaintext modes have no TLS for it to apply to. Ignoring it is fail-closed —
+	// verification stays ON — but the flag's own help offered it for "Kafka
+	// connections" without qualification, so an operator in a lab with a self-signed
+	// certificate and --use-tls got a certificate error they could not suppress and no
+	// indication why. Better a flag error now than that.
+	//
+	// Rejected rather than threaded through the other three constructors: those live in
+	// internal/client and are shared with other commands, so widening their signatures
+	// is a larger change than this one.
+	//
+	// Keyed on the resolved VALUE, so the environment path is covered too, and only
+	// when an auth mode is actually selected, so a run that named no mode still gets
+	// cobra's own message about that rather than this one.
+	if insecureSkipTLSVerify && (useSaslIam || useSaslPlain || useTls || useUnauthenticatedTLS || useUnauthenticatedPlaintext) {
+		return fmt.Errorf("--insecure-skip-tls-verify is only supported with --use-sasl-scram, the one authentication mode whose client accepts it: --use-sasl-iam, --use-tls and --use-unauthenticated-tls would ignore it and keep verifying certificates, and --use-sasl-plain and --use-unauthenticated-plaintext use no TLS at all")
 	}
 
 	if useSaslIam {
