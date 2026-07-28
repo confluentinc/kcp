@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -701,6 +702,79 @@ func TestOnlyAPartitionThatAdvancedRecordsALastAdvanceTime(t *testing.T) {
 	assert.Equal(t, int64(0), byPartition[1].Lag, "the stalled partition's lag is zero, which is exactly why liveness is needed")
 }
 
+func TestAPartitionStuckRetryingAFailedFetchReportsItselfStalled(t *testing.T) {
+	// The gap the liveness counts leave open. A loop that keeps retrying is
+	// still running, and a partition that never fetched successfully holds a
+	// zero last stable offset, so its lag computes as zero: by both existing
+	// signals it is indistinguishable from a healthy, caught-up, idle
+	// partition. Whether its last fetch failed is the difference.
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	retrying := make(chan struct{})
+	var once sync.Once
+	var attempts atomic.Int64
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if attempts.Add(1) >= 3 {
+			once.Do(func() { close(retrying) })
+		}
+		return nil, brokenPipe()
+	})
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	waitFor(t, retrying, "the partition to keep retrying a failing fetch")
+
+	stats := tl.Stats()
+	require.Len(t, stats.Partitions, 1)
+	assert.True(t, stats.Partitions[0].Running, "the loop must keep retrying rather than exit")
+	assert.Zero(t, stats.Partitions[0].Lag, "the lag of a partition that never fetched is zero, which is why it cannot be the signal")
+	assert.True(t, stats.Partitions[0].Stalled,
+		"a partition whose last fetch failed is not reading, however alive its loop is")
+	assert.Equal(t, 1, stats.PartitionsStalled)
+
+	cancel()
+	drain(t, out)
+}
+
+func TestAnIdlePartitionIsNotStalledAndACleanFetchClearsAStall(t *testing.T) {
+	// The cry-wolf case, and why the stall is latched on a failed fetch rather
+	// than inferred from having read nothing. An idle partition answers with
+	// empty but SUCCESSFUL fetches, which is what a healthy caught-up reader
+	// looks like; and a partition that recovered has fetched cleanly since, so
+	// its failure belongs in the counters, not in the health verdict.
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	recovered, responder := afterCall(3, func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if call == 0 {
+			return nil, brokenPipe()
+		}
+		return fetchResponse(topic, 0, 0, 0), nil
+	})
+	c.respondWith(responder)
+
+	tl := New(c, testOptions(nil))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	waitFor(t, recovered, "the partition to fetch cleanly again after the failure")
+
+	stats := tl.Stats()
+	require.Len(t, stats.Partitions, 1)
+	assert.False(t, stats.Partitions[0].Stalled, "a clean fetch clears the stall, however empty the response was")
+	assert.Equal(t, 0, stats.PartitionsStalled)
+	assert.Zero(t, stats.Partitions[0].RecordsRead, "an idle partition reads nothing, and that is not a fault")
+	assert.Positive(t, stats.TransportErrors, "the failure it recovered from must still be counted")
+
+	cancel()
+	drain(t, out)
+}
+
 // --- abort filtering -------------------------------------------------------
 
 func TestABatchBelongingToAnAbortedTransactionIsNotEmitted(t *testing.T) {
@@ -1081,6 +1155,100 @@ func TestATransportErrorRetriesWithBackoffThatGrowsIsCappedAndResets(t *testing.
 		"a successful fetch resets the curve, so one blip does not permanently slow the reader")
 
 	assert.Equal(t, int64(7), tl.Stats().TransportErrors)
+}
+
+// brokenPipe is the error a restarted broker actually surfaces: no response, no
+// Kafka error code, just a dead socket. Its rendered text is the one observed
+// against a real broker — "write tcp 10.0.0.1:9092: write: broken pipe".
+func brokenPipe() error {
+	return &net.OpError{
+		Op:   "write",
+		Net:  "tcp",
+		Addr: &net.TCPAddr{IP: net.IPv4(10, 0, 0, 1), Port: 9092},
+		Err:  errors.New("write: broken pipe"),
+	}
+}
+
+func TestATransportErrorRefreshesMetadataAndRetriesAgainstTheNewLeader(t *testing.T) {
+	// R11's broker half. A restart arrives as a transport error, not a
+	// leadership one, and the leader it invalidates is cached: without a
+	// refresh the loop re-resolves nothing and retries the same dead
+	// connection for the rest of the run, reading zero records while still
+	// reporting itself as running with zero lag.
+	const topic = "t"
+	c := singlePartition(topic, 0)
+	c.onRefreshDo(func() {
+		c.setLeader(topic, 0, Leader{ID: 2, Addr: "b2:9092", FetchVersion: 11})
+	})
+	c.respondWith(func(spec FetchSpec, call int) (*sarama.FetchResponse, error) {
+		if call == 0 {
+			return nil, brokenPipe()
+		}
+		r := fetchResponse(topic, 0, 1, 1)
+		if spec.Offset == 0 {
+			addBatch(r, topic, 0, batchOf(0, 100, 0, true, "after-reconnect"))
+		}
+		return r, nil
+	})
+
+	var sleeps []time.Duration
+	tl := New(c, testOptions(&sleeps))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	out, err := tl.Start(ctx, []TopicSpec{{Topic: topic, Start: StartEarliest}})
+	require.NoError(t, err)
+	got := collect(t, out, 1, cancel)
+
+	assert.Contains(t, c.refreshedTopics(), topic,
+		"a transport error must force a metadata refresh, or the loop keeps retrying the leader it already failed against")
+
+	leaders := c.leadersFetched()
+	require.GreaterOrEqual(t, len(leaders), 2)
+	assert.Equal(t, int32(1), leaders[0].ID)
+	assert.Equal(t, int32(2), leaders[1].ID, "the retry must go to the newly resolved leader")
+
+	specs := c.fetchSpecs()
+	assert.Equal(t, int64(0), specs[1].Offset, "the retry resumes from the same offset, with no gap")
+	assert.Equal(t, "after-reconnect", string(got[0].Records[0].Value))
+
+	// Refreshing is not a licence to hammer a broker that is genuinely down:
+	// the backoff still applies, and it is still the transport counter that
+	// moves, so --stats-out keeps the distinction from a leader election.
+	assert.NotEmpty(t, sleeps, "a transport error must back off as well as refresh")
+	stats := tl.Stats()
+	assert.Equal(t, int64(1), stats.TransportErrors)
+	assert.Equal(t, int64(0), stats.LeadershipErrors, "a dead socket is not a leadership error")
+	assert.Contains(t, stats.Partitions[0].LastError, "broken pipe")
+}
+
+func TestAFailedFetchDropsTheCachedConnectionSoTheNextLeaderCallRedials(t *testing.T) {
+	// The other half of surviving a restart, and the half a metadata refresh
+	// cannot do. A sarama Broker never recovers from a failed round trip on its
+	// own: neither the write path nor responseReceiver closes the socket, and
+	// client.updateMetadata keeps the existing *Broker whenever the address is
+	// unchanged — which is exactly what a broker that restarts in place looks
+	// like. Unless this adapter forgets the connection, every retry, refreshed
+	// metadata or not, is issued down the same dead socket.
+	s := NewSaramaClient(nil, 0)
+	b := sarama.NewBroker("127.0.0.1:1")
+	id := b.ID()
+	s.brokers[id] = b
+	s.versions[id] = 11
+
+	_, err := s.Fetch(Leader{ID: id, Addr: b.Addr(), FetchVersion: 11}, FetchSpec{
+		Topic: "t", Version: 11, MaxWaitMS: 100, MinBytes: 1,
+		MaxBytes: 1024, MaxPartitionBytes: 1024, Isolation: sarama.ReadCommitted,
+	})
+	require.Error(t, err, "a fetch down an unopened connection must fail")
+
+	s.mu.Lock()
+	_, cachedBroker := s.brokers[id]
+	_, cachedVersion := s.versions[id]
+	s.mu.Unlock()
+
+	assert.False(t, cachedBroker, "a failed fetch must drop the cached connection, or every retry reuses the dead socket")
+	assert.False(t, cachedVersion, "the version negotiated over the dead connection must be dropped with it: the broker may come back on a different build")
 }
 
 func TestAPartitionLevelErrorDoesNotAbortSiblingPartitions(t *testing.T) {

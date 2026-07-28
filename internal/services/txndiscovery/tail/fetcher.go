@@ -185,7 +185,39 @@ func (s *SaramaClient) Fetch(leader Leader, spec FetchSpec) (*sarama.FetchRespon
 	if b == nil {
 		return nil, fmt.Errorf("no open connection to broker %d", leader.ID)
 	}
-	return b.Fetch(buildFetchRequest(spec))
+	resp, err := b.Fetch(buildFetchRequest(spec))
+	if err != nil {
+		s.discard(b)
+		return nil, err
+	}
+	return resp, nil
+}
+
+// discard closes and forgets a broker whose round trip failed, so the next
+// Leader call dials a new connection instead of reusing the broken one.
+//
+// This is the half of surviving a broker restart that a metadata refresh cannot
+// do. A sarama Broker never recovers from a failed round trip on its own:
+// neither the write path nor responseReceiver closes the socket, and once the
+// response reader has latched an error every later request on that Broker fails
+// with it. Nor does refreshing help by itself — client.updateMetadata keeps the
+// existing *Broker whenever the address is unchanged, which is precisely what a
+// broker restarting in place looks like. Closing it here is what makes the Open
+// inside the next Leader call redial.
+//
+// Any failed fetch qualifies, not just an obviously networky one, because any
+// error surfaced from a sarama round trip leaves the Broker in that latched
+// state. The cost of over-discarding — on, say, a version error that never
+// reached the wire — is one redial.
+func (s *SaramaClient) discard(b *sarama.Broker) {
+	// Already-closed brokers report ErrNotConnected, which is the state wanted.
+	_ = b.Close()
+	s.mu.Lock()
+	delete(s.brokers, b.ID())
+	// The negotiated version goes with the connection: a broker that comes back
+	// may be a different build advertising a different Fetch ceiling.
+	delete(s.versions, b.ID())
+	s.mu.Unlock()
 }
 
 // errorClass names how the fetch loop recovers from a failed fetch.

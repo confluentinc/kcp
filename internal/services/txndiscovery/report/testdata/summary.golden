@@ -7,8 +7,9 @@
   transactions           : 9 committed, 2 aborted
   topics                 : 6 total — 5 in 2 groups, 1 individual
   read-process-write     : 1 group; consumed inputs recovered for 1 transaction
-  keep-up                : WARNING — 3/4 partitions live, 12 records of lag, 3 decode failures
+  keep-up                : WARNING — 3/4 partitions live, 12 records of lag, 3 decode failures, 7 fetch failures
                            - 1 partition stopped early, so part of the window went unobserved
+                           - 1 partition is retrying a failed fetch rather than reading, so the zero lag above means nothing was read, not that the reader caught up
                            - the reader did not catch up to the last stable offset, so the window was not fully observed
                            - the internal record format may have drifted, so footprints may be missing
   WARNING: 5 audit log lines failed to reach disk, so the trace is incomplete — a coupling it should record may be missing.

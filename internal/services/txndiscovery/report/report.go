@@ -197,7 +197,7 @@ func (rc Recovery) forGroup(g grouping.Group) mechanisms {
 	return out
 }
 
-// Health is the three things that together say whether the window was actually
+// Health is the set of indicators that together say whether the window was actually
 // observed. Any one of them alone can read clean on a run that missed data: a stalled
 // partition reports zero lag, and a reader that decoded nothing reports no lag either.
 type Health struct {
@@ -205,6 +205,16 @@ type Health struct {
 	// snapshot was taken, which must be before shutdown.
 	PartitionsAssigned int
 	PartitionsRunning  int
+
+	// PartitionsStalled is how many live loops were retrying a failed fetch rather
+	// than reading when the snapshot was taken.
+	//
+	// It closes the hole the other two numbers leave: a loop stuck retrying still
+	// counts as running, and a partition that never fetched successfully holds a
+	// zero last stable offset, so its lag computes as zero. Zero lag therefore does
+	// not mean "caught up" — it can mean "never read anything" — and this is what
+	// tells the two apart.
+	PartitionsStalled int
 
 	// Lag is the aggregate last-stable-offset lag (KTD9), not the high-watermark
 	// gap: under ReadCommitted the broker serves nothing past the last stable
@@ -214,6 +224,18 @@ type Health struct {
 	// DecodeErrors is every broker-supplied structure any source failed to parse.
 	// It is the format-drift alarm.
 	DecodeErrors int64
+
+	// FetchErrors is every fetch the reader had to retry: transport, leadership and
+	// unclassified together.
+	//
+	// It is reported but does not by itself spoil the line, and the asymmetry is
+	// deliberate. Surviving a leader election or a broker restart is the
+	// requirement, not a fault, so a reader that recovered and caught up must still
+	// read as OK or operators learn to ignore the one line that says the window was
+	// observed. What the number does is separate a run that recovered from three
+	// thousand failures from one that never faltered, which is otherwise invisible
+	// outside --stats-out.
+	FetchErrors int64
 }
 
 // healthOf collects the keep-up indicators from every source that produces them.
@@ -221,10 +243,12 @@ func healthOf(r Run) Health {
 	return Health{
 		PartitionsAssigned: r.Tail.PartitionsAssigned,
 		PartitionsRunning:  r.Tail.PartitionsRunning,
+		PartitionsStalled:  r.Tail.PartitionsStalled,
 		Lag:                r.Tail.Lag,
 		DecodeErrors: r.Tail.DecodeErrors +
 			r.TxnState.KeyDecodeErrors + r.TxnState.ValueDecodeErrors +
 			r.Offsets.KeyDecodeErrors,
+		FetchErrors: r.Tail.TransportErrors + r.Tail.LeadershipErrors + r.Tail.UnclassifiedErrors,
 	}
 }
 
@@ -362,11 +386,12 @@ func (h Health) Line() string {
 	if len(h.concerns()) > 0 {
 		status = "WARNING"
 	}
-	return fmt.Sprintf("%s — %d/%d %s live, %d %s of lag, %d decode %s",
+	return fmt.Sprintf("%s — %d/%d %s live, %d %s of lag, %d decode %s, %d fetch %s",
 		status,
 		h.PartitionsRunning, h.PartitionsAssigned, plural(h.PartitionsAssigned, "partition", "partitions"),
 		h.Lag, plural64(h.Lag, "record", "records"),
-		h.DecodeErrors, plural64(h.DecodeErrors, "failure", "failures"))
+		h.DecodeErrors, plural64(h.DecodeErrors, "failure", "failures"),
+		h.FetchErrors, plural64(h.FetchErrors, "failure", "failures"))
 }
 
 // concerns lists what is wrong with the run, empty when nothing is.
@@ -378,6 +403,16 @@ func (h Health) concerns() []string {
 	if dead := h.PartitionsAssigned - h.PartitionsRunning; dead > 0 {
 		out = append(out, fmt.Sprintf("%d %s stopped early, so part of the window went unobserved",
 			dead, plural(dead, "partition", "partitions")))
+	}
+	// The same hole one step further in, and the worse half of it: a loop that never
+	// exits is counted as live, so on its own the line above reads perfectly while
+	// the reader fetches nothing at all. Naming the zero-lag trap here is the point
+	// — an operator who reads "0 records of lag" next to this must not take it as
+	// evidence of catching up.
+	if h.PartitionsStalled > 0 {
+		out = append(out, fmt.Sprintf(
+			"%d %s retrying a failed fetch rather than reading, so the zero lag above means nothing was read, not that the reader caught up",
+			h.PartitionsStalled, plural(h.PartitionsStalled, "partition is", "partitions are")))
 	}
 	if h.Lag > 0 {
 		out = append(out, "the reader did not catch up to the last stable offset, so the window was not fully observed")

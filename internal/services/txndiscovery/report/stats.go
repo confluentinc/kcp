@@ -39,9 +39,13 @@ type statsDoc struct {
 // Both are needed — the aggregate says whether the run kept up, the per-partition
 // breakdown says which partition did not.
 type tailDoc struct {
-	PartitionsAssigned int   `json:"partitions_assigned"`
-	PartitionsRunning  int   `json:"partitions_running"`
-	RecordsRead        int64 `json:"records_read"`
+	PartitionsAssigned int `json:"partitions_assigned"`
+	PartitionsRunning  int `json:"partitions_running"`
+	// PartitionsStalled is how many live loops were retrying a failed fetch rather
+	// than reading. It is the count the health line escalates on, so the document
+	// has to carry it for a captured run to be diagnosable after the fact.
+	PartitionsStalled int   `json:"partitions_stalled"`
+	RecordsRead       int64 `json:"records_read"`
 	// Lag is measured to the last stable offset (KTD9); OpenTxnBacklog is the
 	// high-watermark gap, which is not something the reader can catch up on.
 	Lag                int64          `json:"lag"`
@@ -63,9 +67,12 @@ type partitionDoc struct {
 	HighWaterMark    int64  `json:"high_water_mark"`
 	Lag              int64  `json:"lag"`
 	OpenTxnBacklog   int64  `json:"open_txn_backlog"`
-	// Running and LastAdvance together separate a stalled partition from an idle
-	// one: both report zero lag, and only these say which happened.
+	// Running, Stalled and LastAdvance together separate a stalled partition from an
+	// idle one: both report zero lag, and only these say which happened. Stalled is
+	// the decisive one — a loop stuck retrying is still running, and neither has
+	// advanced.
 	Running     bool       `json:"running"`
+	Stalled     bool       `json:"stalled"`
 	LastAdvance *time.Time `json:"last_advance"`
 
 	RecordsRead        int64  `json:"records_read"`
@@ -141,8 +148,14 @@ func PrintKeepUp(w io.Writer, r Run) {
 
 	for _, p := range t.Partitions {
 		state := "live"
-		if !p.Running {
+		switch {
+		case !p.Running:
 			state = "STOPPED"
+		case p.Stalled:
+			// Distinct from STOPPED because the loop is alive and will keep trying,
+			// and distinct from live because it is not reading. Without this the
+			// partition renders identically to a healthy idle one.
+			state = "STALLED"
 		}
 		_, _ = fmt.Fprintf(w, "    %s[%d]: next %d, LSO %d, HWM %d, lag %d, backlog %d, %d %s, %s\n",
 			p.Topic, p.Partition, p.NextOffset, p.LastStableOffset, p.HighWaterMark,
@@ -243,6 +256,7 @@ func tailDocOf(s tail.Stats) tailDoc {
 	out := tailDoc{
 		PartitionsAssigned: s.PartitionsAssigned,
 		PartitionsRunning:  s.PartitionsRunning,
+		PartitionsStalled:  s.PartitionsStalled,
 		RecordsRead:        s.RecordsRead,
 		Lag:                s.Lag,
 		OpenTxnBacklog:     s.OpenTxnBacklog,
@@ -264,6 +278,7 @@ func tailDocOf(s tail.Stats) tailDoc {
 			Lag:                p.Lag,
 			OpenTxnBacklog:     p.OpenTxnBacklog,
 			Running:            p.Running,
+			Stalled:            p.Stalled,
 			RecordsRead:        p.RecordsRead,
 			AbortedBatches:     p.AbortedBatches,
 			DecodeErrors:       p.DecodeErrors,

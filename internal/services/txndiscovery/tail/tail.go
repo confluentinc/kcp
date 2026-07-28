@@ -171,9 +171,20 @@ type PartitionStats struct {
 	// loop that exited reads as zero lag and is otherwise indistinguishable
 	// from a healthy idle one.
 	Running bool
+	// Stalled reports that this partition's most recent fetch attempt failed and
+	// nothing has been fetched cleanly since — it is retrying, not reading.
+	//
+	// It exists because neither Running nor Lag can say so. A loop stuck
+	// retrying is still running, and a partition that never fetched
+	// successfully holds a zero LastStableOffset, so its lag computes as zero.
+	// By both of those signals a broken partition looks exactly like a healthy
+	// idle one. This is latched on a failed fetch and cleared by the next clean
+	// one, which is what keeps an idle partition — whose empty fetches still
+	// succeed — from reading as broken.
+	Stalled bool
 	// LastAdvance is when this partition's offset last moved, zero if it never
-	// has. A stalled partition reports zero lag, so this is the only signal
-	// separating it from a genuinely caught-up one.
+	// has. It says how long since progress, which Stalled cannot: a partition
+	// can be fetching cleanly and still not be advancing.
 	LastAdvance time.Time
 	// RecordsRead counts records delivered from this partition. Records
 	// dropped by the abort filter are counted in AbortedBatches instead.
@@ -204,6 +215,11 @@ type Stats struct {
 	PartitionsAssigned int
 	// PartitionsRunning is how many of those still have a live fetch loop.
 	PartitionsRunning int
+	// PartitionsStalled is how many live loops are retrying a failed fetch
+	// rather than reading. It counts only running partitions: one that exited is
+	// already reported by PartitionsRunning, and counting it twice would say two
+	// things went wrong where one did.
+	PartitionsStalled int
 	// RecordsRead is the total number of records delivered to consumers.
 	RecordsRead int64
 	// Lag is the sum of the per-partition last-stable-offset lags.
@@ -268,6 +284,7 @@ type partitionState struct {
 	lastStableOffset int64
 	highWaterMark    int64
 	running          bool
+	stalled          bool
 	lastAdvance      time.Time
 	recordsRead      int64
 	abortedBatches   int64
@@ -292,6 +309,7 @@ func (p *partitionState) snapshot() PartitionStats {
 		Lag:                nonNegative(p.lastStableOffset - p.nextOffset),
 		OpenTxnBacklog:     nonNegative(p.highWaterMark - p.lastStableOffset),
 		Running:            p.running,
+		Stalled:            p.stalled,
 		LastAdvance:        p.lastAdvance,
 		RecordsRead:        p.recordsRead,
 		AbortedBatches:     p.abortedBatches,
@@ -308,6 +326,15 @@ func (p *partitionState) snapshot() PartitionStats {
 func (p *partitionState) setRunning(v bool) {
 	p.mu.Lock()
 	p.running = v
+	p.mu.Unlock()
+}
+
+// setStalled latches or clears the "retrying, not reading" flag. It is called
+// on every failed fetch and on every clean one, so the flag always describes the
+// most recent attempt rather than the worst thing that ever happened.
+func (p *partitionState) setStalled(v bool) {
+	p.mu.Lock()
+	p.stalled = v
 	p.mu.Unlock()
 }
 
@@ -337,6 +364,9 @@ func (t *Tail) Stats() Stats {
 		ps := p.snapshot()
 		if ps.Running {
 			s.PartitionsRunning++
+			if ps.Stalled {
+				s.PartitionsStalled++
+			}
 		}
 		s.RecordsRead += ps.RecordsRead
 		s.Lag += ps.Lag
@@ -458,8 +488,10 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 		if err != nil {
 			st.record(func(p *partitionState) {
 				p.transportErrors++
+				p.stalled = true
 				p.lastError = err.Error()
 			})
+			t.refreshAfterTransportError(a)
 			retry()
 			continue
 		}
@@ -483,8 +515,10 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 			// broker restart looks like from here.
 			st.record(func(p *partitionState) {
 				p.transportErrors++
+				p.stalled = true
 				p.lastError = err.Error()
 			})
+			t.refreshAfterTransportError(a)
 			retry()
 			continue
 		}
@@ -495,12 +529,18 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 			// retried rather than dereferenced.
 			st.record(func(p *partitionState) {
 				p.transportErrors++
+				p.stalled = true
 				p.lastError = "fetch response omitted the requested partition"
 			})
+			t.refreshAfterTransportError(a)
 			retry()
 			continue
 		}
 		if block.Err != sarama.ErrNoError {
+			// Every classified error leaves the partition not reading: a
+			// leadership error must be retried, and a reseek has moved the
+			// position without yet fetching from it.
+			st.setStalled(true)
 			next, backoff := t.recover(a, st, block.Err, offset)
 			offset = next
 			if backoff {
@@ -511,6 +551,10 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 			continue
 		}
 		attempt = 0
+		// A clean fetch is the only thing that clears a stall, and an empty
+		// response is a clean fetch: an idle partition is reading, it just has
+		// nothing to read.
+		st.setStalled(false)
 
 		next, emitted, alive := t.consumeBlock(ctx, a, st, leader, block, offset)
 		if !alive {
@@ -610,6 +654,26 @@ func backoffFor(base, max time.Duration, attempt int) time.Duration {
 		d = max
 	}
 	return d
+}
+
+// refreshAfterTransportError re-resolves the partition's leader after a fetch
+// that failed without a usable response.
+//
+// A transport error is what a broker restart looks like from here — there is no
+// Kafka error code to classify, just a socket that stopped working — and the
+// leader behind it is cached. Backing off alone would retry the very connection
+// that just failed, for the rest of the run: R11's broker half needs the leader
+// re-resolved, exactly as a leadership error does.
+//
+// The caller still backs off afterwards. Refreshing is not an alternative to
+// waiting: a broker that is genuinely down must not be hammered, so the two are
+// paired rather than traded off, and the transport counter keeps moving so
+// --stats-out still distinguishes a dead socket from a leader election.
+func (t *Tail) refreshAfterTransportError(a assignment) {
+	if rerr := t.client.RefreshMetadata(a.topic); rerr != nil {
+		slog.Debug("⏭️ metadata refresh after a transport error failed",
+			"partition", a.partition, "error", rerr)
+	}
 }
 
 // recover applies the recovery for one classified fetch error, returning the
