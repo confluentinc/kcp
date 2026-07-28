@@ -87,13 +87,13 @@ func TestUpgradeForwardIncompatibleDevStamped(t *testing.T) {
 }
 
 func TestUpgradeCurrentIsIdentity(t *testing.T) {
-	data := `{"schema_version":1,"msk_sources":{},"kcp_build_info":{"version":"0.8.5"}}`
+	data := `{"schema_version":2,"msk_sources":{},"kcp_build_info":{"version":"0.8.5"}}`
 	got, from, err := Upgrade([]byte(data))
 	if err != nil {
 		t.Fatalf("Upgrade error: %v", err)
 	}
-	if from != "schema_version=1" {
-		t.Errorf("from label = %q, want schema_version=1", from)
+	if from != "schema_version=2" {
+		t.Errorf("from label = %q, want schema_version=2", from)
 	}
 	if string(got) != data {
 		t.Errorf("current-version data must pass through unchanged.\n got: %s\nwant: %s", got, data)
@@ -178,5 +178,93 @@ func TestUpgradeArraySchemaRegistriesNonConfluentErrors(t *testing.T) {
 	data := `{"regions":[],"schema_registries":[{"type":"glue","registry_arn":"arn:x"}],"kcp_build_info":{"version":"0.5.0"}}`
 	if _, _, err := Upgrade([]byte(data)); err == nil {
 		t.Fatal("expected error for non-confluent type in array-form schema_registries")
+	}
+}
+
+func TestUpgrade_V1SelfManagedConnectorsToConnectClusters(t *testing.T) {
+	in, err := os.ReadFile("testdata/era-c-v1-self-managed-connectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := Upgrade(in)
+	if err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	osk := doc["osk_sources"].(map[string]any)
+	clusters := osk["clusters"].([]any)
+	admin := clusters[0].(map[string]any)["kafka_admin_client_information"].(map[string]any)
+	if _, gone := admin["self_managed_connectors"]; gone {
+		t.Fatalf("self_managed_connectors should be removed")
+	}
+	ccs, ok := admin["connect_clusters"].([]any)
+	if !ok || len(ccs) != 1 {
+		t.Fatalf("want 1 connect_cluster, got %v", admin["connect_clusters"])
+	}
+	cc := ccs[0].(map[string]any)
+	if cc["connect_rest_url"] != "" {
+		t.Fatalf("legacy connect_rest_url should be empty placeholder, got %v", cc["connect_rest_url"])
+	}
+	if len(cc["connectors"].([]any)) != 1 {
+		t.Fatalf("connector not carried over: %v", cc["connectors"])
+	}
+	if doc["schema_version"].(float64) != 2 {
+		t.Fatalf("schema_version not bumped to 2: %v", doc["schema_version"])
+	}
+}
+
+func TestUpgrade_EraBSelfManagedConnectorsToConnectClusters(t *testing.T) {
+	// Regression test: self_managed_connectors was introduced (commit 0c02c469) while the
+	// file shape was still top-level `regions` (era B, v0.5.0-v0.7.3), i.e. BEFORE the B->C
+	// reshape and BEFORE schema_version even existed. A real era-B file can therefore carry
+	// self_managed_connectors, and the v1->v2 nesting step must still catch it — even though
+	// schema_version never equals 1 on the era-B path. Without era B in that step's guard,
+	// self_managed_connectors survives migration and NewStateFromBytes's DisallowUnknownFields
+	// strict decode rejects the file (see TestLoadFixtures in internal/types for that half of
+	// the regression proof).
+	in, err := os.ReadFile("testdata/era-b-self-managed-connectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, from, err := Upgrade(in)
+	if err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	if from != "kcp_build_info.version=0.7.1" {
+		t.Errorf("from = %q", from)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := doc["regions"]; ok {
+		t.Error("top-level regions should be gone after B->C")
+	}
+	msk, ok := doc["msk_sources"].(map[string]any)
+	if !ok {
+		t.Fatal("msk_sources missing after B->C")
+	}
+	regions := msk["regions"].([]any)
+	clusters := regions[0].(map[string]any)["clusters"].([]any)
+	admin := clusters[0].(map[string]any)["kafka_admin_client_information"].(map[string]any)
+	if _, gone := admin["self_managed_connectors"]; gone {
+		t.Fatalf("self_managed_connectors should be removed")
+	}
+	ccs, ok := admin["connect_clusters"].([]any)
+	if !ok || len(ccs) != 1 {
+		t.Fatalf("want 1 connect_cluster, got %v", admin["connect_clusters"])
+	}
+	cc := ccs[0].(map[string]any)
+	if cc["connect_rest_url"] != "" {
+		t.Fatalf("legacy connect_rest_url should be empty placeholder, got %v", cc["connect_rest_url"])
+	}
+	if len(cc["connectors"].([]any)) != 1 {
+		t.Fatalf("connector not carried over: %v", cc["connectors"])
+	}
+	if doc["schema_version"].(float64) != 2 {
+		t.Fatalf("schema_version not bumped to 2: %v", doc["schema_version"])
 	}
 }

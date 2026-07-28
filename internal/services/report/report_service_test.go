@@ -1004,11 +1004,14 @@ func TestFilterConnectMetrics(t *testing.T) {
 						{
 							ID: "osk-kafka",
 							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-								SelfManagedConnectors: &types.SelfManagedConnectors{
-									Connectors: []types.SelfManagedConnector{
-										{Name: "test-connector"},
+								ConnectClusters: []types.ConnectCluster{
+									{
+										ConnectRestURL: "u1",
+										Connectors: []types.Connector{
+											{Name: "test-connector"},
+										},
+										Metrics: oskConnectMetrics,
 									},
-									Metrics: oskConnectMetrics,
 								},
 							},
 							Metadata: types.OSKClusterMetadata{
@@ -1030,11 +1033,14 @@ func TestFilterConnectMetrics(t *testing.T) {
 									Name: "msk-kafka",
 									Arn:  mskArn,
 									KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-										SelfManagedConnectors: &types.SelfManagedConnectors{
-											Connectors: []types.SelfManagedConnector{
-												{Name: "msk-connector"},
+										ConnectClusters: []types.ConnectCluster{
+											{
+												ConnectRestURL: "u2",
+												Connectors: []types.Connector{
+													{Name: "msk-connector"},
+												},
+												Metrics: mskConnectMetrics,
 											},
-											Metrics: mskConnectMetrics,
 										},
 									},
 								},

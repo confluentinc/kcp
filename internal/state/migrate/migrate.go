@@ -13,7 +13,7 @@ import (
 // CurrentSchemaVersion is the schema_version this build reads and writes.
 // Bump in lockstep with any breaking change to the kcp-state.json shape, and
 // add the matching upcaster to steps (see internal/state/migrate/steps.go).
-const CurrentSchemaVersion = 1
+const CurrentSchemaVersion = 2
 
 // ErrNewerSchema means the file was written by a newer (released) KCP than this build can model.
 var ErrNewerSchema = errors.New("state file schema is newer than this KCP build supports")
@@ -87,7 +87,7 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 	}
 	applied := false
 	for _, s := range steps {
-		if s.appliesWhen(era, buildVersion) {
+		if s.appliesWhen(schemaVersion, era, buildVersion) {
 			slog.Debug("🔍 applying state schema migration step", "step", s.name, "era", era)
 			doc, err = s.transform(doc)
 			if err != nil {

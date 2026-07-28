@@ -371,8 +371,16 @@ func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clu
 		return nil, fmt.Errorf("cluster '%s' not found in %s sources", clusterID, sourceType)
 	}
 
-	smc := adminInfo.SelfManagedConnectors
-	if smc == nil || smc.Metrics == nil {
+	// Return the first Connect cluster that has metrics. This preserves the prior
+	// single-endpoint behavior; Plan 2 adds per-URL selection via connectRestURL.
+	var metrics *types.ConnectClusterMetrics
+	for i := range adminInfo.ConnectClusters {
+		if adminInfo.ConnectClusters[i].Metrics != nil {
+			metrics = adminInfo.ConnectClusters[i].Metrics
+			break
+		}
+	}
+	if metrics == nil {
 		// The cluster exists but no Connect metrics were ever collected. Signal this
 		// distinctly from the empty date-filtered result returned below, so the API
 		// layer shows the "run a scan" hint only when there is genuinely nothing to
@@ -380,17 +388,17 @@ func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clu
 		return nil, ErrNoConnectMetricsCollected
 	}
 
-	filteredMetrics := rs.filterMetricsByDateRange(smc.Metrics.Metrics, startTime, endTime)
+	filteredMetrics := rs.filterMetricsByDateRange(metrics.Metrics, startTime, endTime)
 	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	// Connect metrics carry their own metadata (start/end/period/metrics_source);
 	// region/cluster_arn and the broker-only fields have no meaning here and are
 	// intentionally not part of the Connect shape.
 	return &types.ConnectClusterMetrics{
-		Metadata:   smc.Metrics.Metadata,
+		Metadata:   metrics.Metadata,
 		Metrics:    filteredMetrics,
 		Aggregates: aggregates,
-		QueryInfo:  smc.Metrics.QueryInfo,
+		QueryInfo:  metrics.QueryInfo,
 	}, nil
 }
 

@@ -52,12 +52,13 @@ type SelfManagedConnectorsScannerOpts struct {
 }
 
 type SelfManagedConnectorsScanner struct {
-	StateFile  string
-	State      *types.State
-	SourceType types.SourceType
-	ClusterArn string
-	ClusterID  string
-	client     ConnectAPIClient
+	StateFile      string
+	State          *types.State
+	SourceType     types.SourceType
+	ClusterArn     string
+	ClusterID      string
+	connectRestURL string
+	client         ConnectAPIClient
 
 	metricsSource       string
 	metricsClusterCreds *types.OSKClusterAuth
@@ -85,6 +86,7 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 		SourceType:          opts.SourceType,
 		ClusterArn:          opts.ClusterArn,
 		ClusterID:           opts.ClusterID,
+		connectRestURL:      opts.ConnectRestURL,
 		client:              connectClient,
 		metricsSource:       opts.MetricsSource,
 		metricsClusterCreds: opts.MetricsClusterCreds,
@@ -150,7 +152,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return nil
 	}
 
-	connectors := []types.SelfManagedConnector{}
+	connectors := []types.Connector{}
 	totalRedacted := 0
 	for _, name := range connectorNames {
 		connector, redactedCount, err := s.getConnectorDetails(name)
@@ -203,9 +205,9 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 // raw secrets never enter the persisted state. The connector's worker_id (when
 // present) is captured as ConnectHost for per-host grouping in the UI. Returns
 // the connector, the number of redacted fields, and any error.
-func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.SelfManagedConnector, int, error) {
+func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.Connector, int, error) {
 	slog.Debug("🔍 fetching connector details", "connector", name)
-	connector := types.SelfManagedConnector{
+	connector := types.Connector{
 		Name: name,
 	}
 
@@ -350,33 +352,30 @@ func (s *SelfManagedConnectorsScanner) resolveKafkaAdminInfo() (*types.KafkaAdmi
 	}
 }
 
-func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.SelfManagedConnector) error {
+func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.Connector) error {
 	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
 	}
 
-	info.SetSelfManagedConnectors(connectors)
+	info.SetConnectCluster(s.connectRestURL, connectors)
 	fmt.Printf("✅ Updated cluster %s with self-managed connector information\n", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
 
 	return nil
 }
 
 // updateStateWithConnectMetrics attaches collected Connect worker metrics to the
-// connectors object for the cluster this scan targets (MSK or OSK, routed by
-// source type). It requires the connectors object to already exist so the
-// metrics have something to hang off; otherwise it returns a clear error.
+// ConnectCluster entry (keyed by connectRestURL) for the cluster this scan
+// targets (MSK or OSK, routed by source type). SetConnectClusterMetrics
+// find-or-creates the entry, so metrics no longer require a prior connectors
+// write.
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *types.ConnectClusterMetrics) error {
 	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
 	}
 
-	if info.SelfManagedConnectors == nil {
-		return fmt.Errorf("no self-managed connectors in state for cluster %s", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
-	}
-
-	info.SelfManagedConnectors.Metrics = metrics
+	info.SetConnectClusterMetrics(s.connectRestURL, metrics)
 	return nil
 }
 

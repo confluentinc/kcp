@@ -21,6 +21,12 @@ func TestLoadFixtures(t *testing.T) {
 		// Array-form schema_registries (v0.4.2–v0.7.1) — recovered to the object form by the
 		// schema_registries array→object upcaster, so it now loads.
 		{"era-b-v0.5.0.json", true},
+		// Regression: a real era-B file (top-level regions, pre-schema_version) carrying
+		// self_managed_connectors (introduced inside the era-B window, commit 0c02c469).
+		// Proves the v1->v2 nesting upcaster's guard also fires for era B, not just
+		// schema_version==1/era==C — otherwise self_managed_connectors survives migration
+		// and this strict (DisallowUnknownFields) decode fails.
+		{"era-b-self-managed-connectors.json", true},
 	}
 	base := filepath.Join("..", "state", "migrate", "testdata")
 	for _, tc := range cases {

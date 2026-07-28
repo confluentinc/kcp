@@ -22,6 +22,7 @@ import (
 // version — otherwise TestCurrentSchemaShapeMatchesEntry goes red.
 var schemaShapes = map[int]string{
 	1: "sha256:720619a5a172c612894076b92921683302818ad1c02372310e3e2e4291c81660",
+	2: "sha256:788738bbe16ead12d341420bd148bc823ada2d57e8bb83d7edf9be1fe36ce60b",
 }
 
 // schemaFloor is the first versioned schema.
