@@ -1,0 +1,147 @@
+name: kcp-txn-discovery-ha
+
+# Three-node KRaft cluster for the leader-failover half of R11.
+#
+# This is the only place `kcp migration txn-discovery` runs against a
+# realistically-replicated internal topic: __transaction_state at replication
+# factor three, so a broker can be killed mid-run and the partitions it led get
+# a new leader from the surviving in-sync replicas. Everything the single-node
+# suite (integration-tests/txn-discovery) proves about grouping is proved there;
+# what is proved here is that the reader re-resolves and keeps reading.
+#
+# Every node runs in combined mode (broker + controller). Killing one leaves a
+# two-of-three controller quorum, so the cluster stays writable while the
+# partitions the dead node led are re-elected.
+x-kafka-env: &kafka-env
+  # 22 characters: a KRaft cluster id is a base64-encoded 16-byte UUID and the
+  # broker refuses to boot on anything else.
+  CLUSTER_ID: 'TxNdIsCoVeRyHaClUsTer0'
+  KAFKA_PROCESS_ROLES: broker,controller
+  KAFKA_CONTROLLER_QUORUM_VOTERS: '1@kafka1:9093,2@kafka2:9093,3@kafka3:9093'
+
+  # (1) DUAL LISTENERS. Carried from the single-node suite, where a single
+  # localhost-advertised listener broke the transaction coordinator, and needed
+  # twice over here: INTERNAL is how the three brokers replicate to each other
+  # and how a coordinator is reached from inside the network, EXTERNAL is what
+  # the host-side test and the kcp binary use. A single listener advertising
+  # "localhost" would make every broker believe its two peers were itself.
+  KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+  KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+  KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+
+  # (2) REPLICATION FACTOR THREE AND MIN-ISR TWO ON THE INTERNAL TOPICS. This is
+  # the whole point of the file. At RF 1 the partitions the killed broker led
+  # would have no surviving replica to be re-elected from, so the reader would be
+  # waiting on a partition that no longer exists anywhere rather than on a leader
+  # that moved — which is a different failure, and not R11's.
+  #
+  # min-ISR two, not three: at three, killing one broker takes the ISR below the
+  # minimum and __transaction_state stops accepting writes, so the post-failover
+  # transactions could never be produced and the ledger would be unsatisfiable
+  # for a reason that has nothing to do with the reader.
+  KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 3
+  KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 2
+  KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 3
+
+  # Twelve rather than the default fifty on each internal topic. The behaviour
+  # under test is leadership moving between brokers, which twelve partitions
+  # spread over three nodes exercises just as well as fifty; what fifty adds is
+  # 300 replicas to bring into full ISR on a laptop before the window can even
+  # open, and 100 fetch loops cycling through a cap of 16 concurrent fetches
+  # instead of 24. The suite waits for full ISR before producing, so that cost is
+  # paid in wall-clock time on every run.
+  KAFKA_TRANSACTION_STATE_LOG_NUM_PARTITIONS: 12
+  KAFKA_OFFSETS_TOPIC_NUM_PARTITIONS: 12
+
+  # Fixture topics are created at replication factor three by the suite, and this
+  # makes an auto-created one match. An RF-1 fixture topic whose only replica sat
+  # on the killed broker would fail the post-failover producer outright — the
+  # ledger would show the phase missing, which is exactly the negative control's
+  # signature, from a cause that is not the reader.
+  KAFKA_DEFAULT_REPLICATION_FACTOR: 3
+  KAFKA_MIN_INSYNC_REPLICAS: 1
+  KAFKA_AUTO_CREATE_TOPICS_ENABLE: 'true'
+
+  # Keeps the transaction coordinator from expiring the suite's short-lived
+  # transactional ids while a run is still observing them.
+  KAFKA_TRANSACTIONAL_ID_EXPIRATION_MS: 3600000
+  KAFKA_TRANSACTION_MAX_TIMEOUT_MS: 900000
+
+  # (3) LOG CLEANER OFF. __transaction_state is a COMPACTED topic and a
+  # transaction's footprint lives only in its Ongoing and PrepareCommit records.
+  # Once the transaction completes, the latest record under that key is
+  # CompleteCommit, whose partition set is EMPTY — so a compaction pass erases
+  # the footprint and leaves a record that says nothing about which topics were
+  # coupled.
+  #
+  # That is a real production blind spot the tool documents, and it is why it
+  # must not be live here: it would make a phase's discovery depend on whether
+  # the cleaner happened to run. It cost the single-node suite three flakes,
+  # including pre-restart transactions vanishing because the restart itself
+  # triggered a cleaning pass — and this suite kills a broker, which is the same
+  # trigger.
+  #
+  # The ratio is belt-and-braces in case a later image force-enables the cleaner:
+  # at 1.0 a log must be entirely dirty before it is cleanable.
+  KAFKA_LOG_CLEANER_ENABLE: 'false'
+  KAFKA_LOG_CLEANER_MIN_CLEANABLE_RATIO: '1.0'
+
+x-kafka-node: &kafka-node
+  image: confluentinc/cp-kafka:7.6.0
+  # No restart policy, deliberately: `docker kill` must leave the node down for
+  # the rest of the run. A restarting broker would make the reader's recovery
+  # ambiguous — it could have resumed against the returning node rather than
+  # against the new leader.
+  restart: "no"
+
+services:
+  kafka1:
+    <<: *kafka-node
+    hostname: kafka1
+    container_name: kcp-test-txn-discovery-ha-kafka1
+    ports:
+      - "29092:29092"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 1
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka1:9092,EXTERNAL://localhost:29092
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  kafka2:
+    <<: *kafka-node
+    hostname: kafka2
+    container_name: kcp-test-txn-discovery-ha-kafka2
+    ports:
+      - "29093:29093"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 2
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29093
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka2:9092,EXTERNAL://localhost:29093
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+
+  kafka3:
+    <<: *kafka-node
+    hostname: kafka3
+    container_name: kcp-test-txn-discovery-ha-kafka3
+    ports:
+      - "29094:29094"
+    environment:
+      <<: *kafka-env
+      KAFKA_NODE_ID: 3
+      KAFKA_LISTENERS: INTERNAL://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093,EXTERNAL://0.0.0.0:29094
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka3:9092,EXTERNAL://localhost:29094
+    healthcheck:
+      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
