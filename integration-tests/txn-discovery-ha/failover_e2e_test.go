@@ -645,7 +645,8 @@ func pinnedTxnIDs(t *testing.T, client sarama.Client, base string, want int, bro
 
 // earliestOffsets reads each partition's current log start offset.
 //
-// The continuity check needs this: the reader is assigned %s from EARLIEST, so
+// The continuity check needs this: the reader is assigned the transaction-state
+// log from EARLIEST, so
 // its final next offset minus the log start is the span of offsets it was
 // responsible for, and the number of records it read must account for all of
 // them.
