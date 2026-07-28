@@ -131,6 +131,22 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-schema-registry
 
+  # Only the main txn-discovery suite runs here. The HA suite
+  # (make test-txn-discovery-ha) is deliberately excluded: it is opt-in, slow,
+  # and inherently timing-sensitive, since it kills a broker mid-stream and
+  # asserts on recovery.
+  - name: 'integration: txn discovery'
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
+    task:
+      jobs:
+        - name: 'txn discovery'
+          commands:
+            - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-txn-discovery
+
   - name: 'integration: migration e2e'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:

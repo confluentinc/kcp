@@ -5,6 +5,7 @@ import (
 	i "github.com/confluentinc/kcp/cmd/migration/init"
 	"github.com/confluentinc/kcp/cmd/migration/lagcheck"
 	"github.com/confluentinc/kcp/cmd/migration/list"
+	"github.com/confluentinc/kcp/cmd/migration/txndiscovery"
 
 	"github.com/spf13/cobra"
 )
@@ -40,6 +41,7 @@ Supporting documentation:
 		execute.NewMigrationExecuteCmd(),
 		lagcheck.NewMigrationLagCheckCmd(),
 		list.NewMigrationListCmd(),
+		txndiscovery.NewMigrationTxnDiscoveryCmd(),
 	)
 
 	return migrationCmd

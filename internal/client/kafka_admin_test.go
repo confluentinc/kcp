@@ -332,6 +332,72 @@ func TestConfigureCommonSettings(t *testing.T) {
 	assert.Equal(t, 250*time.Millisecond, config.Metadata.Retry.Backoff)
 }
 
+// kcp is read-only against Kafka by intent, but sarama defaults
+// Metadata.AllowAutoTopicCreation to true, so a metadata request naming a topic
+// that does not exist can make a permissive broker create it. Assert the field
+// explicitly rather than trusting sarama's default to stay put across upgrades.
+func TestConfigureCommonSettings_DisablesAutoTopicCreation(t *testing.T) {
+	config := sarama.NewConfig()
+
+	configureCommonSettings(config, "test-client", sarama.V2_6_0_0)
+
+	assert.False(t, config.Metadata.AllowAutoTopicCreation,
+		"metadata requests must never create topics as a side effect")
+}
+
+// newAutoCreateProbeBroker stands up a sarama mock broker that answers just
+// enough (ApiVersions + Metadata) for NewKafkaClient/NewKafkaAdmin to connect,
+// so the construction paths can be exercised end to end without a real cluster.
+func newAutoCreateProbeBroker(t *testing.T) *sarama.MockBroker {
+	t.Helper()
+
+	mockBroker := sarama.NewMockBroker(t, 1)
+	t.Cleanup(mockBroker.Close)
+
+	mockBroker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest": sarama.NewMockMetadataResponse(t).
+			SetBroker(mockBroker.Addr(), mockBroker.BrokerID()).
+			SetController(mockBroker.BrokerID()),
+	})
+
+	return mockBroker
+}
+
+// NewKafkaClient and NewKafkaAdmin build their sarama config independently of
+// one another, so each construction path is asserted separately — otherwise one
+// could regress to auto-creating topics while the other stayed safe.
+func TestNewKafkaClient_DisablesAutoTopicCreation(t *testing.T) {
+	mockBroker := newAutoCreateProbeBroker(t)
+
+	kafkaClient, err := NewKafkaClient([]string{mockBroker.Addr()}, "us-east-1", WithUnauthenticatedPlaintextAuth())
+	require.NoError(t, err)
+	defer func() { _ = kafkaClient.Close() }()
+
+	assert.False(t, kafkaClient.Config().Metadata.AllowAutoTopicCreation,
+		"NewKafkaClient must not let a metadata request create topics")
+}
+
+func TestNewKafkaAdmin_DisablesAutoTopicCreation(t *testing.T) {
+	mockBroker := newAutoCreateProbeBroker(t)
+
+	admin, err := NewKafkaAdmin(
+		[]string{mockBroker.Addr()},
+		kafkatypes.ClientBrokerPlaintext,
+		"us-east-1",
+		"2.6.0",
+		WithUnauthenticatedPlaintextAuth(),
+	)
+	require.NoError(t, err)
+	defer func() { _ = admin.Close() }()
+
+	adminClient, ok := admin.(*KafkaAdminClient)
+	require.True(t, ok, "NewKafkaAdmin should return a *KafkaAdminClient")
+
+	assert.False(t, adminClient.saramaConfig.Metadata.AllowAutoTopicCreation,
+		"NewKafkaAdmin must not let a metadata request create topics")
+}
+
 func TestConfigureSASLTypeOAuthAuthentication(t *testing.T) {
 	config := sarama.NewConfig()
 	region := "us-west-2"

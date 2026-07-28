@@ -1,0 +1,674 @@
+package txndiscovery
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"sync"
+	"syscall"
+	"time"
+
+	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/client"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/discovery"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/grouping"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/report"
+	"github.com/confluentinc/kcp/internal/services/txndiscovery/tail"
+	"github.com/confluentinc/kcp/internal/types"
+)
+
+// Opts is the resolved configuration of one discovery run: everything the
+// runner needs, with no dependency on the flag variables it came from.
+type Opts struct {
+	// Brokers are the source cluster's bootstrap addresses and Region the AWS
+	// region IAM signing needs.
+	Brokers []string
+	Region  string
+	Auth    authResolution
+
+	// Duration is the observation window; Interval the cadence at which
+	// enrichment refreshes and buffered producer-id sightings are resolved.
+	Duration time.Duration
+	Interval time.Duration
+
+	TxnStateTopic         string
+	EnrichConsumerGroups  bool
+	TailConsumerOffsets   bool
+	IncludeInternalTopics bool
+
+	// OutPath is the groups YAML. StatsOutPath and AuditLogPath are empty when
+	// their artifact is not wanted — AuditLogPath is empty for --no-audit-log,
+	// which the runner turns into a nil AuditWriter whose methods are all no-ops.
+	OutPath      string
+	StatsOutPath string
+	AuditLogPath string
+
+	// DryRun suppresses every artifact write. It does not suppress kcp.log.
+	DryRun bool
+
+	// Verbose mirrors the root --verbose flag and gates the detailed keep-up block.
+	Verbose bool
+
+	// Stdout is where the terminal narrative goes.
+	Stdout io.Writer
+}
+
+// cluster is the broker-facing surface one run needs, behind one seam so the
+// orchestration is testable without a broker.
+type cluster struct {
+	// Describer answers the preflight. It rides the tail's connection, which is
+	// idle until the fetch loops start.
+	Describer topicDescriber
+	// Tail is the fetch seam both readers share.
+	Tail tail.Client
+	// Admin is the narrow consumer-group slice of sarama.ClusterAdmin, on a
+	// connection of its own — see connectSaramaWith. Nil when enrichment is off,
+	// or when its connection could not be built, which the run degrades on.
+	Admin discovery.ConsumerGroupAdmin
+	// OffsetsProbe reports whether the consumer-offsets log can be read (R13).
+	OffsetsProbe discovery.TopicProbe
+	// Close releases every client this cluster opened, and the admins over them.
+	Close func() error
+}
+
+// Runner orchestrates one discovery run.
+type Runner struct {
+	opts Opts
+
+	// connect builds the broker-facing surface.
+	connect func(Opts) (*cluster, error)
+
+	// window blocks until the observation window should end — after the
+	// configured duration, or as soon as ctx is done, which is how SIGINT ends
+	// a run early.
+	window func(ctx context.Context, d time.Duration)
+
+	// newAudit opens the audit trail. Seamed so the suite can drive the
+	// incomplete-trace path, whose only realistic production cause is a disk
+	// that fills mid-run.
+	newAudit func(path string) (*report.AuditWriter, error)
+}
+
+// NewRunner builds a runner over a real cluster.
+func NewRunner(opts Opts) *Runner {
+	return &Runner{opts: opts, connect: connectSarama, window: waitWindow, newAudit: report.NewAuditWriter}
+}
+
+// waitWindow is the production observation window: the configured duration, or
+// as soon as ctx is done — which is how SIGINT ends a run early.
+func waitWindow(ctx context.Context, d time.Duration) {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
+// observationBuffer decouples the three sources from the single accumulator
+// goroutine, so a burst on one source does not stall the fetch loops feeding
+// the others.
+const observationBuffer = 256
+
+// Run performs one discovery run.
+//
+// The ordering is load-bearing: start the sources, hold the window, snapshot the
+// tail's stats, cancel, drain the sources (which is where the offsets tail's
+// final flush happens, on a fresh context), and only then write the artifacts.
+// Writing before the final flush ships a YAML missing the late producer-id
+// resolutions that phase exists to produce.
+func (r *Runner) Run(ctx context.Context) error {
+	cl, err := r.connect(r.opts)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = cl.Close() }()
+
+	// R12: fail before anything is created on disk or observed.
+	if err := probeTxnStateTopic(cl.Describer, r.opts.TxnStateTopic); err != nil {
+		return err
+	}
+
+	// R18/R20. A nil writer is the --no-audit-log (and --dry-run) case; every
+	// AuditWriter method tolerates nil, so this is one branch rather than a nil
+	// check at each call site.
+	var audit *report.AuditWriter
+	if !r.opts.DryRun && r.opts.AuditLogPath != "" {
+		audit, err = r.newAudit(r.opts.AuditLogPath)
+		if err != nil {
+			return err
+		}
+	}
+	closeAudit := sync.OnceValue(audit.Close)
+	defer func() { _ = closeAudit() }()
+
+	// SIGINT and SIGTERM end the window early; the artifacts are still written.
+	//
+	// The registration is given up the moment the window is over — see below. It is
+	// still deferred as well, for the paths that return before the window opens; the
+	// stop NotifyContext hands back is safe to call more than once.
+	sigCtx, stopSignals := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	// The catalog is populated by the transaction-state reader and read by both
+	// enrichment phases, so neither calls the transaction admin APIs.
+	catalog := discovery.NewTxnCatalog()
+	acc := discovery.NewAccumulator()
+
+	txnReader := discovery.NewTxnStateReader(r.opts.TxnStateTopic, catalog)
+	specs := []tail.TopicSpec{{Topic: r.opts.TxnStateTopic, Start: tail.StartEarliest}}
+	activeSources := []string{discovery.SourceTxnStateLog}
+
+	// R9/R13: the offsets tail is gated on an availability probe. When the topic
+	// is unreadable the object is kept anyway — its Stats carry the flag the
+	// report needs to distinguish "ran and found nothing" from "never ran".
+	var offsets *discovery.ConsumerOffsetsTail
+	offsetsActive := false
+	if r.opts.TailConsumerOffsets {
+		offsets = discovery.NewConsumerOffsetsTail(catalog, discovery.ConsumerOffsetsOptions{
+			Topic:    discovery.DefaultConsumerOffsetsTopic,
+			Interval: r.opts.Interval,
+			Probe:    cl.OffsetsProbe,
+		})
+		if offsets.Available(runCtx) {
+			specs = append(specs, tail.TopicSpec{Topic: discovery.DefaultConsumerOffsetsTopic, Start: tail.StartLatest})
+			activeSources = append(activeSources, discovery.SourceConsumerOffsets)
+			offsetsActive = true
+		}
+	}
+	// Gated on the admin rather than on the flag: connect degrades to a nil Admin when
+	// enrichment's own connection could not be opened, and a run that named the phase
+	// anyway would have every artifact report it as having found nothing rather than as
+	// never having run. Whether the phase ran is now read off ActiveSources by the
+	// report, exactly as the offsets phase's activity already was.
+	enrichActive := r.opts.EnrichConsumerGroups && cl.Admin != nil
+	if enrichActive {
+		activeSources = append(activeSources, discovery.SourceConsumerGroups)
+	}
+
+	// The log narrative for a run measured in hours. Counts and parameters only:
+	// kcp.log's file leg is unconditionally Debug+ and is what operators attach
+	// to support tickets, so no topic name or transactional id may appear.
+	slog.Info("🚀 starting transaction discovery",
+		"duration", r.opts.Duration.String(),
+		"interval", r.opts.Interval.String(),
+		"sources", len(activeSources),
+		"dry_run", r.opts.DryRun,
+		"audit_log", r.opts.AuditLogPath != "",
+	)
+
+	tl := tail.New(cl.Tail, tail.Options{})
+	batches, err := tl.Start(runCtx, specs)
+	if err != nil {
+		if errors.Is(err, tail.ErrFetchVersionUnsupported) {
+			return fmt.Errorf("the source cluster cannot serve the reads this command needs: %w", err)
+		}
+		return fmt.Errorf("failed to start reading the source cluster: %w", err)
+	}
+
+	obs := make(chan discovery.Observation, observationBuffer)
+	var accWG sync.WaitGroup
+	accWG.Add(1)
+	go func() {
+		defer accWG.Done()
+		// KTD7: the accumulator is the only component that knows whether an
+		// observation grew a transaction's topic set, so the audit line
+		// originates here rather than in the sources.
+		for o := range obs {
+			audit.Record(o, acc.Add(o))
+		}
+	}()
+
+	dests := []chan tail.Batch{make(chan tail.Batch)}
+	if offsetsActive {
+		dests = append(dests, make(chan tail.Batch))
+	}
+	go fanOut(runCtx, batches, dests)
+
+	var srcWG sync.WaitGroup
+	srcWG.Add(1)
+	go func() {
+		defer srcWG.Done()
+		_ = txnReader.Run(runCtx, dests[0], obs)
+	}()
+	if offsetsActive {
+		srcWG.Add(1)
+		go func() {
+			defer srcWG.Done()
+			// Run performs the final flush itself when its input closes, on a
+			// fresh context, because runCtx is already cancelled by then and
+			// that flush is where most resolutions land.
+			_ = offsets.Run(runCtx, dests[1], obs)
+		}()
+	}
+	// Declared outside the branch so its counters can be read after the window; a
+	// nil enricher is the --enrich-consumer-groups=false case.
+	var enricher *discovery.ConsumerGroupEnricher
+	if enrichActive {
+		enricher = &discovery.ConsumerGroupEnricher{
+			Admin:    cl.Admin,
+			Catalog:  catalog,
+			Interval: r.opts.Interval,
+			// Log must be set: the enricher dereferences it on a failed pass.
+			Log: slog.Default(),
+		}
+		srcWG.Add(1)
+		go func() {
+			defer srcWG.Done()
+			_ = enricher.Run(runCtx, obs)
+		}()
+	}
+
+	r.window(sigCtx, r.opts.Duration)
+
+	// The window has done its job, so the signal handler is given back to Go
+	// BEFORE the drain — and before cancel(), which is what starts the drain.
+	//
+	// signal.NotifyContext's goroutine is one-shot: it cancels on the first signal
+	// and exits, leaving the registration in place on a size-1 channel nobody will
+	// read again, so every later signal is buffered and discarded. Held for the whole
+	// drain, that makes the run uninterruptible over exactly the stretch where an
+	// operator has reason to interrupt it: the drain is the last thing that talks to
+	// the broker, and a broker that has stopped answering is what makes it hang.
+	// SIGKILL would then be the only way out, and it takes all three artifacts —
+	// hours of observation — with it.
+	//
+	// Handing the signal back restores Go's default disposition, so a second Ctrl-C
+	// kills the process. Nothing before this point loses a signal by it: the window
+	// returns either because the duration elapsed or because a signal cancelled
+	// sigCtx, and in both cases the first signal has already had its effect.
+	stopSignals()
+
+	// BEFORE cancel. Every partition loop clears its running flag as it exits,
+	// so a snapshot taken after shutdown reports zero partitions live and the
+	// health line condemns a perfectly healthy run as failed.
+	tailStats := tl.Stats()
+
+	cancel()
+	srcWG.Wait()
+	close(obs)
+	accWG.Wait()
+	tl.Wait()
+
+	footprints := acc.Snapshot()
+	txns := make([]grouping.Transaction, 0, len(footprints))
+	for _, fp := range footprints {
+		txns = append(txns, grouping.Transaction{
+			ID:               fp.TxnID,
+			Topics:           fp.Topics,
+			ReadProcessWrite: fp.ReadProcessWrite,
+		})
+	}
+
+	// Closed before the counters are read: on a buffered or network filesystem
+	// the deferred write error surfaces at close, and a failed close means lines
+	// are missing just as a failed write does.
+	_ = closeAudit()
+
+	run := report.Run{
+		Duration:      r.opts.Duration,
+		Interval:      r.opts.Interval,
+		ActiveSources: activeSources,
+		Footprints:    footprints,
+		Result:        grouping.Build(txns, grouping.Options{IncludeInternalTopics: r.opts.IncludeInternalTopics}),
+		Tail:          tailStats,
+		TxnState:      txnReader.Stats(),
+		AuditErrors:   audit.Errors(),
+	}
+	if offsets != nil {
+		run.Offsets = offsets.Stats()
+	}
+	// Read after srcWG.Wait(), so the final pass at the window's close — the one
+	// most likely to carry a correlation — is included rather than raced.
+	if enricher != nil {
+		run.Enrichment = enricher.Stats()
+	}
+
+	summary := report.Summarize(run)
+	slog.Info("✅ transaction discovery complete",
+		"transactions", len(footprints),
+		"groups", len(run.Result.Groups),
+		"individual_topics", len(run.Result.IndividualTopics),
+		"records_read", tailStats.RecordsRead,
+		"partitions_running", tailStats.PartitionsRunning,
+		"partitions_assigned", tailStats.PartitionsAssigned,
+	)
+	report.PrintTerminal(r.opts.Stdout, summary)
+	if r.opts.Verbose {
+		// KTD4: the detailed keep-up block is behind --verbose; the summary
+		// carries one health line.
+		report.PrintKeepUp(r.opts.Stdout, run)
+	}
+
+	if err := r.writeArtifacts(summary, run); err != nil {
+		return err
+	}
+
+	// The exit code is this command's, not the report's: a truncated audit log
+	// reads downstream as "no transaction coupled these topics", which is
+	// indistinguishable from a clean run unless the run itself fails.
+	if n := audit.Errors(); n > 0 {
+		return fmt.Errorf("the audit trail is incomplete: %d line(s) could not be written, so it cannot be relied on to explain a grouping", n)
+	}
+	return nil
+}
+
+// writeArtifacts writes the YAML and, when asked for, the stats JSON. R20:
+// --dry-run writes nothing at all — it does not suppress kcp.log.
+func (r *Runner) writeArtifacts(summary report.Summary, run report.Run) error {
+	if r.opts.DryRun {
+		_, _ = fmt.Fprintf(r.opts.Stdout, "\nDry run: no files written.\n")
+		return nil
+	}
+	if err := report.WriteYAML(r.opts.OutPath, summary); err != nil {
+		return err
+	}
+	if r.opts.StatsOutPath != "" {
+		if err := report.WriteStatsJSON(r.opts.StatsOutPath, run); err != nil {
+			return err
+		}
+	}
+	_, _ = fmt.Fprintf(r.opts.Stdout, "\nWrote %d group(s) to %s\n", len(summary.Result.Groups), r.opts.OutPath)
+	return nil
+}
+
+// clusterAdmin is every cluster-admin call this command makes: the preflight's topic
+// description, enrichment's two consumer-group calls, and the close that releases the
+// client underneath. *sarama.ClusterAdmin satisfies it as-is.
+//
+// It is declared here rather than reached through kcp's KafkaAdmin for the same reason
+// discovery.ConsumerGroupAdmin is: that interface exposes five unrelated methods and
+// keeps its sarama.ClusterAdmin unexported, so widening it would ripple through every
+// mock in the repo.
+type clusterAdmin interface {
+	topicDescriber
+	discovery.ConsumerGroupAdmin
+	Close() error
+}
+
+// clientFactory and adminFactory are the two constructors connectSaramaWith uses,
+// seamed so the suite can prove which client each admin was built over — the whole
+// question this wiring answers.
+type clientFactory func(brokers []string, region string, opts ...client.AdminOption) (sarama.Client, error)
+
+type adminFactory func(sarama.Client) (clusterAdmin, error)
+
+// connectSarama builds the real cluster surface.
+func connectSarama(opts Opts) (*cluster, error) {
+	return connectSaramaWith(opts, client.NewKafkaClient, newSaramaClusterAdmin)
+}
+
+func newSaramaClusterAdmin(c sarama.Client) (clusterAdmin, error) {
+	return sarama.NewClusterAdminFromClient(c)
+}
+
+// connectSaramaWith builds the cluster surface over TWO sarama clients: one the tail
+// fetches on and the preflight borrows, and one that exists solely so consumer-group
+// enrichment's admin calls do not queue behind those fetches.
+//
+// The second connection is the point. sarama pipelines requests on a connection and
+// delivers responses strictly in order, and both client.Brokers() (which
+// ListConsumerGroups uses) and client.Coordinator() (which ListConsumerGroupOffsets
+// uses) hand back the very *sarama.Broker the tail's hundred fetch loops are long-polling
+// on. Measured against the compose broker with those loops running, one pass's two calls
+// took 16-37s over the shared connection and 0-2ms over an independent one — which is
+// why --interval 5s over a 60s window achieved four or five enrichment passes rather
+// than thirteen. The POC did not have this problem because it built a separate
+// kgo.Client per role.
+//
+// The preflight admin stays on the tail's client deliberately: DescribeTopics is issued
+// before tl.Start, when that connection is idle, so it costs nothing and saves an
+// authentication.
+//
+// AdminOptionForAuthMethod is the erroring variant of the auth resolution, resolved ONCE
+// and applied to both clients so the two connections cannot drift in credentials, TLS
+// settings or --insecure-skip-tls-verify handling. AdminOptionForAuth, the other one,
+// logs a warning and falls back to IAM when it cannot resolve the auth type — which
+// against a non-MSK cluster is a puzzling authentication failure rather than the
+// configuration error it actually is.
+func connectSaramaWith(opts Opts, newClient clientFactory, newAdmin adminFactory) (*cluster, error) {
+	authOpt, err := client.AdminOptionForAuthMethod(opts.Auth.AuthType, opts.Auth.Method, opts.Auth.SkipTLSVerify)
+	if err != nil {
+		return nil, err
+	}
+
+	// --use-sasl-plain has no TLS. AdminOptionForAuthMethod maps it to
+	// WithSASLPlainAuthNoTLS, which sets disableTLS, and NewKafkaClient then configures
+	// SASL/PLAIN with encryption off — so the password crosses the network in the clear
+	// on both of the connections opened below. The SCRAM path warns when certificate
+	// verification is merely weakened; a mode that dispenses with encryption altogether
+	// cannot say less than that.
+	//
+	// Here rather than per client, because this command opens two and one problem
+	// reported twice reads as two problems. No attributes: this reaches the console as
+	// well as kcp.log, and the credential is exactly what it must not carry.
+	if opts.Auth.AuthType == types.AuthTypeSASLPlain {
+		slog.Warn("⚠️ --use-sasl-plain transmits the source-cluster password in cleartext: this mode configures SASL/PLAIN with TLS disabled, so anything on the network path between kcp and the brokers can read it")
+	}
+
+	sc, err := newClient(opts.Brokers, opts.Region, authOpt)
+	if err != nil {
+		return nil, err
+	}
+
+	admin, err := newAdmin(sc)
+	if err != nil {
+		_ = sc.Close()
+		return nil, fmt.Errorf("failed to build a cluster admin for the source cluster: %w", err)
+	}
+
+	// closers releases everything opened so far, newest first. Every exit path below
+	// runs it, including the ones that fail: a preflight that never gets to run must
+	// not leave two authenticated sessions on the broker.
+	closers := []func() error{admin.Close}
+
+	cl := &cluster{
+		Describer: admin,
+		Tail:      tail.NewSaramaClient(sc, 0),
+		OffsetsProbe: func(context.Context) error {
+			return probeReadableTopic(admin, discovery.DefaultConsumerOffsetsTopic)
+		},
+	}
+
+	// Only when something will use it: a second client is a second authentication to
+	// the broker, and --enrich-consumer-groups=false has nothing to spend it on.
+	if opts.EnrichConsumerGroups {
+		enrichAdmin, cerr := enrichmentAdmin(opts, newClient, newAdmin, authOpt)
+		if cerr != nil {
+			// R13's precedent: an optional enrichment source that cannot be set up
+			// warns and the run continues, rather than a second connection becoming a
+			// hard precondition of a command whose primary job needs only the first.
+			// The degradation is not silent — Run leaves consumer-group enrichment out
+			// of the run's active sources, so every artifact reports the phase as not
+			// having run rather than as having found nothing.
+			//
+			// The error is carried but the credentials are not: this warning reaches the
+			// console as well as kcp.log.
+			slog.Warn("⚠️ consumer-group enrichment is disabled for this run: its connection to the source cluster could not be opened",
+				"err", cerr)
+		} else {
+			cl.Admin = enrichAdmin
+			closers = append(closers, enrichAdmin.Close)
+		}
+	}
+
+	cl.Close = func() error {
+		var firstErr error
+		// Newest first, and every one attempted: a close that errors must not strand
+		// the connections behind it.
+		for i := len(closers) - 1; i >= 0; i-- {
+			if err := closers[i](); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+		return firstErr
+	}
+	return cl, nil
+}
+
+// enrichmentAdmin opens the connection enrichment gets to itself and builds its admin,
+// closing the client again if the admin cannot be built over it.
+//
+// The returned admin owns its client: closing it closes the connection, which is why the
+// caller only has to add its Close to the cluster's closers.
+//
+// authOpt is the caller's already-resolved auth, passed in rather than resolved again:
+// both connections must present identical credentials, TLS settings and
+// --insecure-skip-tls-verify handling, and resolving twice is how they would come to
+// differ.
+func enrichmentAdmin(opts Opts, newClient clientFactory, newAdmin adminFactory, authOpt client.AdminOption) (clusterAdmin, error) {
+	sc, err := newClient(opts.Brokers, opts.Region, authOpt)
+	if err != nil {
+		return nil, err
+	}
+	admin, err := newAdmin(sc)
+	if err != nil {
+		_ = sc.Close()
+		return nil, fmt.Errorf("failed to build a cluster admin for consumer-group enrichment: %w", err)
+	}
+	return admin, nil
+}
+
+// probeReadableTopic reports whether an internal topic can be described, which
+// is R13's availability check for the consumer-offsets log.
+//
+// The reason it returns reaches the console and kcp.log verbatim, so it names
+// the failure without naming the topic.
+func probeReadableTopic(d topicDescriber, topic string) error {
+	md, err := d.DescribeTopics([]string{topic})
+	if err != nil {
+		return err
+	}
+	if len(md) == 0 || md[0] == nil {
+		return fmt.Errorf("the broker returned no metadata for the consumer-offsets log")
+	}
+	if md[0].Err != sarama.ErrNoError {
+		return md[0].Err
+	}
+	return nil
+}
+
+// topicDescriber is the one cluster-admin call the preflight makes.
+//
+// DescribeTopics is used rather than the client's offset lookup because it
+// returns a per-topic Kafka error code, which is what separates a mistyped
+// --txn-state-topic from a missing ACL. The client's Exists path collapses both
+// into "not in the topic list".
+type topicDescriber interface {
+	DescribeTopics(topics []string) ([]*sarama.TopicMetadata, error)
+}
+
+// probeTxnStateTopic verifies the transaction-state log is there and readable.
+//
+// No error it returns carries the topic name: main slog.Error's every command
+// error, so all of them land in kcp.log, and --txn-state-topic is
+// operator-supplied.
+func probeTxnStateTopic(d topicDescriber, topic string) error {
+	md, err := d.DescribeTopics([]string{topic})
+	if err != nil {
+		return fmt.Errorf("could not read the transaction-state topic's metadata: check --source-bootstrap, the source authentication flags and that the credentials carry an ACL granting DESCRIBE and READ on it: %w", err)
+	}
+	if len(md) == 0 || md[0] == nil {
+		return fmt.Errorf("the broker returned no metadata for the transaction-state topic named by --txn-state-topic, so it could not be confirmed readable")
+	}
+
+	switch md[0].Err {
+	case sarama.ErrNoError:
+		return nil
+	case sarama.ErrUnknownTopicOrPartition:
+		// kcp disables auto topic creation, so an unknown name stays unknown
+		// rather than being created by the probe.
+		return fmt.Errorf("the topic named by --txn-state-topic does not exist on this cluster: check the flag for a typo, and note that managed offerings such as Confluent Cloud and MSK Serverless do not expose it at all")
+	default:
+		return fmt.Errorf("the transaction-state topic named by --txn-state-topic is not readable: check the source authentication flags' credentials and that they carry an ACL granting DESCRIBE and READ on it: %w", md[0].Err)
+	}
+}
+
+// fanOut copies every batch from the tail's single channel to each reader's own.
+//
+// tail.Tail deliberately exposes ONE channel carrying every partition of both
+// topics, because both readers need the same lifecycle and shutdown ordering.
+// A Go channel delivers each value to exactly one receiver, so handing that
+// channel to both readers would split the stream between them: half the
+// transaction-state records would arrive at the offsets tail, which drops
+// anything not on its topic, and vice versa. Nothing would error — the run
+// would simply observe half of what it read. Hence a copy per destination, and
+// hence both readers also filter on Batch.Topic.
+//
+// Every destination is closed on the way out, whichever way that happens. Those
+// closes are load-bearing: they are what makes the transaction-state reader
+// return and what triggers the offsets tail's final flush.
+func fanOut(ctx context.Context, src <-chan tail.Batch, dests []chan tail.Batch) {
+	defer func() {
+		for _, d := range dests {
+			close(d)
+		}
+	}()
+	for b := range src {
+		for _, d := range dests {
+			select {
+			case d <- b:
+			case <-ctx.Done():
+				// A reader that has stopped receiving must not wedge shutdown.
+				// The tail's own emit is cancellable, so abandoning the source
+				// here leaves nothing blocked behind us.
+				return
+			}
+		}
+	}
+}
+
+// parseOpts snapshots the flag variables into an Opts.
+func parseOpts() Opts {
+	return Opts{
+		Brokers:               splitCSV(sourceBootstrap),
+		Region:                awsRegion,
+		Auth:                  resolveAuth(),
+		Duration:              duration,
+		Interval:              interval,
+		TxnStateTopic:         txnStateTopic,
+		EnrichConsumerGroups:  enrichConsumerGroups,
+		TailConsumerOffsets:   tailConsumerOffsets,
+		IncludeInternalTopics: includeInternalTopics,
+		OutPath:               outPath,
+		StatsOutPath:          statsOutPath,
+		AuditLogPath:          resolveAuditLogPath(outPath, auditLogPath, noAuditLog),
+		DryRun:                dryRun,
+		Stdout:                os.Stdout,
+	}
+}
+
+// resolveAuditLogPath decides where the audit trail is written, or that it is
+// not. An explicit path wins; otherwise the trail lands beside --out, because
+// an operator reading txn-discovery.yaml is the one who needs the trail that
+// explains it.
+func resolveAuditLogPath(out, explicit string, disabled bool) string {
+	if disabled {
+		return ""
+	}
+	if explicit != "" {
+		return explicit
+	}
+	return filepath.Join(filepath.Dir(out), DefaultAuditBasename)
+}
+
+// splitCSV parses a comma-separated bootstrap list, dropping blanks so a
+// trailing comma does not become an empty broker address.
+func splitCSV(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

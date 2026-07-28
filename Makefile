@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-txn-discovery test-txn-discovery-ha
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -125,6 +125,30 @@ test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, 
 	@bash integration-tests/schema-registry/setup.sh
 	@bash integration-tests/schema-registry/run.sh || (bash integration-tests/schema-registry/teardown.sh; exit 1)
 	@bash integration-tests/schema-registry/teardown.sh
+
+# Depends on `build`, not `build-frontend`: the suite execs ./kcp as a
+# subprocess (KTD5), so the whole binary has to exist, not just the assets the
+# unit tests embed. Teardown is a trap rather than the duplicated
+# `|| (teardown; exit 1)` of the targets above so it also runs when the test
+# binary panics or the run is interrupted, neither of which reaches a `||`.
+test-txn-discovery: build ## Run transaction-discovery E2E tests against a docker-compose broker
+	@bash integration-tests/txn-discovery/setup.sh
+	@trap 'bash integration-tests/txn-discovery/teardown.sh' EXIT; \
+	go test -tags e2e_txndiscovery -timeout 20m -v ./integration-tests/txn-discovery/...
+
+# Opt-in and deliberately NOT wired into CI: it boots three brokers, kills one
+# mid-run, and spends a single observation window waiting for leadership to move,
+# so it is both slow and inherently timing-sensitive. The single-node suite above
+# is the one CI runs.
+#
+# Its build tag is separate from that suite's so that `test-txn-discovery` cannot
+# accidentally pick this file up, and its brokers listen on 29192-29194 rather
+# than 29092, so the two stacks can coexist instead of failing at `compose up`
+# over an already-bound host port.
+test-txn-discovery-ha: build ## Run transaction-discovery leader-failover E2E tests (opt-in, 3 brokers, slow)
+	@bash integration-tests/txn-discovery-ha/setup.sh
+	@trap 'bash integration-tests/txn-discovery-ha/teardown.sh' EXIT; \
+	go test -tags e2e_txndiscovery_ha -timeout 30m -v ./integration-tests/txn-discovery-ha/...
 
 # ==============================================================================
 # State-file backward-compat archive (real generated kcp-state.json fixtures)

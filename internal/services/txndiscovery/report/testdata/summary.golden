@@ -1,0 +1,24 @@
+============================================================
+ Transaction discovery summary
+============================================================
+  window                 : 1m30s (enrichment interval 15s)
+  sources                : transaction-state-log, consumer-groups, consumer-offsets-log
+  transactions read      : 40 record(s) on the transaction-state log, 2 transactional id(s) observed
+  transactions           : 9 committed, 2 aborted
+  topics                 : 6 total — 5 in 2 groups, 1 individual
+  read-process-write     : 1 group; consumed inputs recovered for 1 transaction
+  keep-up                : WARNING — 3/4 partitions live, 12 records of lag, 3 decode failures, 7 fetch failures
+                           - 1 partition stopped early, so part of the window went unobserved
+                           - 1 partition is retrying a failed fetch rather than reading, so the zero lag above means nothing was read, not that the reader caught up
+                           - the reader did not catch up to the last stable offset, so the window was not fully observed
+                           - the internal record format may have drifted, so footprints may be missing
+  WARNING: 5 audit log lines failed to reach disk, so the trace is incomplete — a coupling it should record may be missing.
+
+Transaction groups (topics coupled by a shared transaction — migrate each group atomically):
+  group-1: 3 topics, 1 transactional id  [read-process-write]
+  group-2: 2 topics, 1 transactional id
+
+Read-process-write (exactly-once consume-transform-produce) apps detected.
+  2 topics are coupled by consume-transform-produce transactions.
+  Consumed input topics were recovered and folded into their groups by:
+    - exact producer-id correlation via __consumer_offsets: 1 transaction, 1 input topic
