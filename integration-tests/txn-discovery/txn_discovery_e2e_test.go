@@ -214,32 +214,71 @@ func restartBroker(t *testing.T) {
 	t.Helper()
 	out, err := exec.Command("docker", "restart", containerName).CombinedOutput()
 	require.NoError(t, err, "failed to restart the broker: %s", out)
-	awaitBrokerReady(t)
+	awaitBrokerUp(t)
+	// Only meaningful AFTER a restart, where the log demonstrably existed
+	// beforehand. Requiring it on a fresh cluster would wait forever: the
+	// coordinator creates __transaction_state on the first transaction, not at
+	// boot.
+	awaitTxnStateLoaded(t)
 }
 
-// awaitBrokerReady blocks until the broker answers AND the transaction-state
-// log is loaded.
+// awaitBrokerUp blocks until the broker answers a metadata request.
+func awaitBrokerUp(t *testing.T) {
+	t.Helper()
+	require.Eventually(t, func() bool { _, ok := listTopics(t); return ok },
+		120*time.Second, 2*time.Second, "the broker never came back up")
+}
+
+// awaitTxnStateLoaded blocks until the transaction-state log is listable again.
 //
-// Answering is not enough: the broker accepts API-version requests well before
-// the transaction coordinator has loaded its state, and a test that produced
-// into that gap would fail on the fixture rather than on the behaviour.
-func awaitBrokerReady(t *testing.T) {
+// Answering a metadata request is not enough on its own: the broker accepts
+// requests well before the transaction coordinator has loaded its state, and a
+// fixture produced into that gap fails on the fixture rather than on the
+// behaviour under test.
+func awaitTxnStateLoaded(t *testing.T) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		// A fresh admin per attempt: a client built before the restart holds
-		// stale metadata and a dead connection.
-		admin, err := sarama.NewClusterAdmin([]string{bootstrapAddr}, baseConfig())
-		if err != nil {
+		topics, ok := listTopics(t)
+		if !ok {
 			return false
 		}
-		defer func() { _ = admin.Close() }()
-		topics, err := admin.ListTopics()
-		if err != nil {
-			return false
-		}
-		_, ok := topics[txnStateTopic]
-		return ok
+		_, exists := topics[txnStateTopic]
+		return exists
 	}, 120*time.Second, 2*time.Second, "the broker did not come back with a loaded transaction-state log")
+}
+
+// listTopics lists the cluster's topics through a throwaway admin client,
+// reporting failure rather than failing the test.
+//
+// A fresh client per call is deliberate: one built before a restart holds stale
+// metadata and a dead connection, so reusing it would keep reporting the
+// pre-restart view.
+func listTopics(t *testing.T) (map[string]sarama.TopicDetail, bool) {
+	t.Helper()
+	admin, err := sarama.NewClusterAdmin([]string{bootstrapAddr}, baseConfig())
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = admin.Close() }()
+	topics, err := admin.ListTopics()
+	if err != nil {
+		return nil, false
+	}
+	return topics, true
+}
+
+// ensureInternalTopics makes sure __transaction_state and __consumer_offsets
+// exist, by running one full consume-transform-produce transaction.
+//
+// Neither topic exists on a fresh cluster: the coordinators create them on
+// first use. Without them the command's preflight fails and the offsets tail
+// reports itself unavailable — both for reasons that have nothing to do with
+// whatever a test is actually asserting.
+func ensureInternalTopics(t *testing.T) {
+	t.Helper()
+	createTopics(t, warmupOut, warmupIn)
+	produceTxn(t, txnFixture{TxnID: warmupTxn, Produce: []string{warmupOut}, ConsumeTopic: warmupIn, Group: warmupGroup})
+	awaitTxnStateLoaded(t)
 }
 
 // txnStateTopic is the internal topic the command reads by default.
@@ -662,7 +701,11 @@ const (
 // produced strictly AFTER the restart distinguish recovery from a silent stall,
 // so every phase is enumerated and every id must be present.
 func TestReaderResumesAcrossBrokerRestart(t *testing.T) {
-	awaitBrokerReady(t)
+	awaitBrokerUp(t)
+	// The transaction-state log does not exist on a fresh cluster — the
+	// coordinator creates it on the first transaction — so it has to be brought
+	// into being before the command can be asked to read it.
+	ensureInternalTopics(t)
 
 	pre := restartFixtures(t, "pre")
 	post := restartFixtures(t, "post")
@@ -1216,11 +1259,7 @@ func doSharedRun(t *testing.T) *runResult {
 func seedBeforeWindow(t *testing.T) {
 	t.Helper()
 
-	createTopics(t, warmupOut, warmupIn)
-	// A full consume-transform-produce cycle, so both internal topics exist
-	// before any run: without __transaction_state the preflight fails, and
-	// without __consumer_offsets the offsets tail reports itself unavailable.
-	produceTxn(t, txnFixture{TxnID: warmupTxn, Produce: []string{warmupOut}, ConsumeTopic: warmupIn, Group: warmupGroup})
+	ensureInternalTopics(t)
 
 	// AE1. Two transactions overlapping on unionShared, which the union-find
 	// must collapse into one group of three.
