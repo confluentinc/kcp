@@ -46,6 +46,7 @@ func TestPrometheusClient_QueryRange_Success(t *testing.T) {
 	require.Len(t, results, 1)
 
 	assert.Equal(t, "test_metric", results[0].MetricName)
+	assert.Equal(t, map[string]string{"__name__": "test_metric"}, results[0].Labels)
 	assert.Len(t, results[0].Values, 2)
 	assert.Equal(t, time.Unix(1710000000, 0), results[0].Values[0].Timestamp)
 	assert.InDelta(t, 1234.5, results[0].Values[0].Value, 0.01)
@@ -189,6 +190,42 @@ func TestPrometheusClient_QueryRange_FiltersNaNAndInf(t *testing.T) {
 	assert.Len(t, results[0].Values, 2)
 	assert.InDelta(t, 100.0, results[0].Values[0].Value, 0.01)
 	assert.InDelta(t, 200.0, results[0].Values[1].Value, 0.01)
+}
+
+func TestPrometheusClient_QueryRange_PopulatesLabelsPerSeries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := prometheusAPIResponse{
+			Status: "success",
+			Data: prometheusResponseData{
+				ResultType: "matrix",
+				Result: []prometheusMatrixResult{
+					{
+						Metric: map[string]string{"__name__": "kafka_connect_source_task_source_record_write_rate", "connector": "c1"},
+						Values: [][]interface{}{
+							{float64(1710000000), "1.0"},
+						},
+					},
+					{
+						Metric: map[string]string{"__name__": "kafka_connect_source_task_source_record_write_rate", "connector": "c2"},
+						Values: [][]interface{}{
+							{float64(1710000000), "2.0"},
+						},
+					},
+				},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewPrometheusClient(server.URL)
+	results, err := client.QueryRange(context.Background(), "sum by (connector) (kafka_connect_source_task_source_record_write_rate)", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	assert.Equal(t, "c1", results[0].Labels["connector"])
+	assert.Equal(t, "c2", results[1].Labels["connector"])
 }
 
 func TestPrometheusClient_QueryRange_ErrorStatus(t *testing.T) {

@@ -32,11 +32,12 @@ type AggregateMBeanConfig struct {
 
 // MetricDefinitions holds all metric definitions for a JMX collection target.
 type MetricDefinitions struct {
-	Counters        []CounterMBeanConfig
-	Gauges          []GaugeMBeanConfig
-	Controller      []GaugeMBeanConfig
-	Aggregates      []AggregateMBeanConfig
-	UnitConversions map[string]float64
+	Counters               []CounterMBeanConfig
+	Gauges                 []GaugeMBeanConfig
+	Controller             []GaugeMBeanConfig
+	Aggregates             []AggregateMBeanConfig
+	PerConnectorAggregates []AggregateMBeanConfig
+	UnitConversions        map[string]float64
 }
 
 // BrokerMetricDefinitions returns the standard Kafka broker metric definitions.
@@ -75,8 +76,12 @@ func ConnectMetricDefinitions() MetricDefinitions {
 			{"outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "outgoing-byte-rate"},
 			{"connection-count", "kafka.connect:client-id=*,type=connect-metrics", "connection-count"},
 			{"request-rate", "kafka.connect:client-id=*,type=connect-metrics", "request-rate"},
+		},
+		PerConnectorAggregates: []AggregateMBeanConfig{
 			{"source-record-write-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate"},
 			{"source-record-poll-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-poll-rate"},
+			{"sink-record-read-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-read-rate"},
+			{"sink-record-send-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-send-rate"},
 		},
 	}
 }
@@ -198,6 +203,23 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 			total += val
 		}
 		sample.gauges[amb.Name] = total
+	}
+
+	for _, amb := range s.metrics.PerConnectorAggregates {
+		perConnector := map[string]float64{}
+		for _, brokerClient := range s.clients {
+			byLabel, err := brokerClient.ReadMBeanAggregateByLabel(ctx, amb.MBean, amb.Attribute, "connector")
+			if err != nil {
+				slog.Warn("Failed to read per-connector aggregate MBean", "mbean", amb.Name, "error", err)
+				continue
+			}
+			for connector, v := range byLabel {
+				perConnector[connector] += v
+			}
+		}
+		for connector, v := range perConnector {
+			sample.gauges[fmt.Sprintf("%s (%s)", amb.Name, connector)] = v
+		}
 	}
 
 	return sample, nil
@@ -428,6 +450,24 @@ func buildJMXQueryInfo(endpointURLs []string, duration, interval time.Duration, 
 		statistic := fmt.Sprintf("Sum of %s across matching instances", mb.Attribute)
 		note := fmt.Sprintf(
 			"Wildcard MBean pattern %s; the %s attribute is summed across all matching MBeans on all %d %s(s). Add -u user:pass to the curl command if authentication is configured.",
+			mb.MBean, mb.Attribute, endpointCount, entityName)
+		infos = append(infos, types.MetricQueryInfo{
+			MetricName:      mb.Name,
+			SourceType:      types.MetricBackendJolokia,
+			Statistic:       statistic,
+			Period:          periodSec,
+			QueryDuration:   durationStr,
+			MBeanPath:       mb.MBean,
+			JolokiaURL:      exampleURL,
+			CurlCommand:     fmt.Sprintf("curl '%s/read/%s/%s'", exampleURL, mb.MBean, mb.Attribute),
+			AggregationNote: note,
+		})
+	}
+
+	for _, mb := range defs.PerConnectorAggregates {
+		statistic := fmt.Sprintf("%s per connector (not summed cluster-wide)", mb.Attribute)
+		note := fmt.Sprintf(
+			"Wildcard MBean pattern %s; the %s attribute is grouped by the connector MBean property and reported per connector across all matching MBeans on all %d %s(s). Add -u user:pass to the curl command if authentication is configured.",
 			mb.MBean, mb.Attribute, endpointCount, entityName)
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:      mb.Name,

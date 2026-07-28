@@ -247,7 +247,13 @@ func TestScanner_UpdateStateWithConnectMetrics_MSK_Success(t *testing.T) {
 
 	cl2, _ := st.GetClusterByArn(testArn)
 	require.Len(t, cl2.KafkaAdminClientInformation.ConnectClusters, 1)
-	assert.Same(t, metrics, cl2.KafkaAdminClientInformation.ConnectClusters[0].Metrics)
+	// Since Task 2.4, updateStateWithConnectMetrics routes the input through
+	// splitConnectMetrics, which returns a new cluster-level object rather than
+	// the same pointer; assert on the preserved content instead of identity.
+	got := cl2.KafkaAdminClientInformation.ConnectClusters[0].Metrics
+	require.NotNil(t, got)
+	assert.Equal(t, metrics.Metadata, got.Metadata)
+	assert.Empty(t, got.Metrics)
 }
 
 // SetConnectClusterMetrics find-or-creates the ConnectCluster entry (Task 1.3),
@@ -282,7 +288,13 @@ func TestScanner_UpdateStateWithConnectMetrics_OSK_Success(t *testing.T) {
 
 	cl2, _ := st.GetOSKClusterByID(testOSKID)
 	require.Len(t, cl2.KafkaAdminClientInformation.ConnectClusters, 1)
-	assert.Same(t, metrics, cl2.KafkaAdminClientInformation.ConnectClusters[0].Metrics)
+	// Since Task 2.4, updateStateWithConnectMetrics routes the input through
+	// splitConnectMetrics, which returns a new cluster-level object rather than
+	// the same pointer; assert on the preserved content instead of identity.
+	got := cl2.KafkaAdminClientInformation.ConnectClusters[0].Metrics
+	require.NotNil(t, got)
+	assert.Equal(t, metrics.Metadata, got.Metadata)
+	assert.Empty(t, got.Metrics)
 }
 
 // --- collectConnectMetrics: guard rails (no network) ---
@@ -512,7 +524,13 @@ func TestUpdateStateWithConnectMetrics_AttachesMetrics(t *testing.T) {
 	got, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
 	require.Len(t, got.KafkaAdminClientInformation.ConnectClusters, 1)
-	require.Same(t, m, got.KafkaAdminClientInformation.ConnectClusters[0].Metrics, "metrics attached to the connect cluster")
+	// Since Task 2.4, updateStateWithConnectMetrics routes the input through
+	// splitConnectMetrics, which returns a new cluster-level object rather than
+	// the same pointer; assert on the preserved content instead of identity.
+	gotMetrics := got.KafkaAdminClientInformation.ConnectClusters[0].Metrics
+	require.NotNil(t, gotMetrics, "metrics attached to the connect cluster")
+	assert.Equal(t, m.Metadata, gotMetrics.Metadata)
+	assert.Empty(t, gotMetrics.Metrics)
 }
 
 // --- U2b: collectConnectMetrics dispatch + collector guards ---

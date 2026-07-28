@@ -364,18 +364,36 @@ func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []ty
 	return nil
 }
 
-// updateStateWithConnectMetrics attaches collected Connect worker metrics to the
-// ConnectCluster entry (keyed by connectRestURL) for the cluster this scan
-// targets (MSK or OSK, routed by source type). SetConnectClusterMetrics
-// find-or-creates the entry, so metrics no longer require a prior connectors
-// write.
+// updateStateWithConnectMetrics splits one collected ConnectClusterMetrics
+// (which may contain transient per-connector labels "<metric> (<connector>)"
+// from the JMX/Prometheus collectors, see splitConnectMetrics) into the
+// cluster-level metrics and each connector's own metrics, then attaches the
+// cluster-level block to the ConnectCluster entry (keyed by connectRestURL)
+// for the cluster this scan targets (MSK or OSK, routed by source type), and
+// each per-connector block to the matching Connector in that ConnectCluster.
+// SetConnectClusterMetrics find-or-creates the ConnectCluster entry, so
+// metrics no longer require a prior connectors write.
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *types.ConnectClusterMetrics) error {
 	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
 	}
 
-	info.SetConnectClusterMetrics(s.connectRestURL, metrics)
+	cluster, perConnector := splitConnectMetrics(metrics)
+	info.SetConnectClusterMetrics(s.connectRestURL, cluster)
+
+	// Attach each connector's own metrics to the matching Connector in this cluster.
+	for i := range info.ConnectClusters {
+		if info.ConnectClusters[i].ConnectRestURL != s.connectRestURL {
+			continue
+		}
+		for j := range info.ConnectClusters[i].Connectors {
+			name := info.ConnectClusters[i].Connectors[j].Name
+			if cm, ok := perConnector[name]; ok {
+				info.ConnectClusters[i].Connectors[j].Metrics = cm
+			}
+		}
+	}
 	return nil
 }
 

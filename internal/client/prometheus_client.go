@@ -80,6 +80,7 @@ func (c *PrometheusClient) BaseURL() string { return c.baseURL }
 // PrometheusMetricResult holds the parsed result for a single metric from a range query
 type PrometheusMetricResult struct {
 	MetricName string
+	Labels     map[string]string
 	Values     []PrometheusDataPoint
 }
 
@@ -193,6 +194,7 @@ func parseMatrixResults(raw []prometheusMatrixResult) ([]PrometheusMetricResult,
 
 		results = append(results, PrometheusMetricResult{
 			MetricName: metricName,
+			Labels:     r.Metric,
 			Values:     points,
 		})
 	}

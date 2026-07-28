@@ -26,7 +26,7 @@ type ReportService interface {
 	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
 	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID, sourceType, connectRestURL, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -284,7 +284,9 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 // handleGetConnectMetrics serves self-managed Connect metrics for either an MSK or OSK
 // cluster. sourceType is an explicit path param ({msk, osk}); clusterId is a query param
 // (OSK cluster id, or an MSK ARN URL-encoded by the client). The filter searches only the
-// named source set, so a cluster id never resolves across source types.
+// named source set, so a cluster id never resolves across source types. connectRestURL and
+// connectorName are optional query params that narrow the result to a specific Connect
+// cluster and/or connector; both default to "" (first Connect cluster / cluster-level metrics).
 func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 	state, err := ui.getStateBySession(c)
 	if err != nil {
@@ -320,7 +322,10 @@ func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 
 	processedState := ui.reportService.ProcessState(*state)
 
-	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, startTime, endTime)
+	connectRestURL := c.QueryParam("connectRestURL")
+	connectorName := c.QueryParam("connectorName")
+
+	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, connectRestURL, connectorName, startTime, endTime)
 	if err != nil {
 		// "Never collected" is the only case that warrants the scan-guidance hint.
 		// A cluster that HAS metrics but whose selected date range excludes them all
