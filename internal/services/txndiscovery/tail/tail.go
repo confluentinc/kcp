@@ -460,6 +460,7 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 				p.transportErrors++
 				p.lastError = err.Error()
 			})
+			t.refreshAfterTransportError(a)
 			retry()
 			continue
 		}
@@ -485,6 +486,7 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 				p.transportErrors++
 				p.lastError = err.Error()
 			})
+			t.refreshAfterTransportError(a)
 			retry()
 			continue
 		}
@@ -497,6 +499,7 @@ func (t *Tail) runPartition(ctx context.Context, a assignment, st *partitionStat
 				p.transportErrors++
 				p.lastError = "fetch response omitted the requested partition"
 			})
+			t.refreshAfterTransportError(a)
 			retry()
 			continue
 		}
@@ -610,6 +613,26 @@ func backoffFor(base, max time.Duration, attempt int) time.Duration {
 		d = max
 	}
 	return d
+}
+
+// refreshAfterTransportError re-resolves the partition's leader after a fetch
+// that failed without a usable response.
+//
+// A transport error is what a broker restart looks like from here — there is no
+// Kafka error code to classify, just a socket that stopped working — and the
+// leader behind it is cached. Backing off alone would retry the very connection
+// that just failed, for the rest of the run: R11's broker half needs the leader
+// re-resolved, exactly as a leadership error does.
+//
+// The caller still backs off afterwards. Refreshing is not an alternative to
+// waiting: a broker that is genuinely down must not be hammered, so the two are
+// paired rather than traded off, and the transport counter keeps moving so
+// --stats-out still distinguishes a dead socket from a leader election.
+func (t *Tail) refreshAfterTransportError(a assignment) {
+	if rerr := t.client.RefreshMetadata(a.topic); rerr != nil {
+		slog.Debug("⏭️ metadata refresh after a transport error failed",
+			"partition", a.partition, "error", rerr)
+	}
 }
 
 // recover applies the recovery for one classified fetch error, returning the
