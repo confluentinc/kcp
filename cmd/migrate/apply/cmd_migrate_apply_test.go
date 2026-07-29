@@ -904,11 +904,12 @@ func TestApply_ACLs_IAM_DiscoverAllRoles_EnumeratesAndExcludes(t *testing.T) {
 // spec.acls.iam.verifyEffectiveAccess now filters gathered grants through
 // newEffectiveAccessChecker instead of refusing with "not yet implemented"
 // (the Phase 1B slice 1 guard is gone): a grant the checker reports as NOT
-// effectively allowed must be dropped before translation, AND — because the
-// operator opted into verification — the "effective access ... not verified"
-// caveat must NOT be emitted (it would be actively misleading once
-// verification actually ran).
-func TestApply_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndSuppressesCaveat(t *testing.T) {
+// effectively allowed must be dropped before translation. Verification does
+// NOT suppress the WARN entirely: SimulatePrincipalPolicy only covers
+// identity policies + permission boundaries, never SCPs, so verify-ON emits
+// its own honest SCP-caveat WARN instead of the verify-OFF "not verified"
+// wording (which would now be inaccurate — verification DID run).
+func TestApply_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndEmitsSCPCaveat(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam5")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n      verifyEffectiveAccess: true\n"
 	resourceArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments"
@@ -922,7 +923,8 @@ func TestApply_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndSuppressesCaveat(t *
 	out, _, logs, err := runACLApplyIAMFull(t, tgt, "lkc-acl-iam5", iamYAML, nil, fetcher, nil, checker, true)
 	require.NoError(t, err, "logs: %s", logs)
 	require.NotContains(t, out, "payments", "a denied grant must be dropped by verifyEffectiveAccess before translation")
-	require.NotContains(t, logs, "effective access", "the not-verified caveat must not fire once verification actually ran")
+	require.Contains(t, logs, "SCP", "verify-ON must emit the SCP-not-evaluated caveat")
+	require.NotContains(t, logs, "not verified", "verify-ON must not repeat the verify-OFF wording once verification actually ran")
 	require.Equal(t, int64(0), tgt.saPosts)
 	require.Equal(t, int64(0), tgt.aclPosts)
 }
@@ -930,7 +932,9 @@ func TestApply_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndSuppressesCaveat(t *
 // The positive counterpart to the drop case above: a grant the checker
 // reports as effectively allowed must survive verifyEffectiveAccess and
 // still translate/appear in the plan — verification is a filter, not a
-// blanket suppressor.
+// blanket suppressor. The SCP-caveat WARN still fires (it documents a
+// limitation of verification itself, independent of any single grant's
+// outcome).
 func TestApply_ACLs_IAM_VerifyEffectiveAccess_KeepsAllowedGrant(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam5b")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n      verifyEffectiveAccess: true\n"
@@ -949,7 +953,8 @@ func TestApply_ACLs_IAM_VerifyEffectiveAccess_KeepsAllowedGrant(t *testing.T) {
 	out, _, logs, err := runACLApplyIAMFull(t, tgt, "lkc-acl-iam5b", iamYAML, nil, fetcher, nil, checker, true)
 	require.NoError(t, err, "logs: %s", logs)
 	require.Contains(t, out, "payments", "an effectively-allowed grant must survive verifyEffectiveAccess")
-	require.NotContains(t, logs, "effective access")
+	require.Contains(t, logs, "SCP", "verify-ON must emit the SCP-not-evaluated caveat")
+	require.NotContains(t, logs, "not verified", "verify-ON must not repeat the verify-OFF wording once verification actually ran")
 }
 
 // Cross-plane dedupe (fixed — see task-6-report.md "Fix: dedupe desired ACL

@@ -407,9 +407,9 @@ func buildAttachedPoliciesDetails(
 }
 
 func parsePolicyDocument(encodedDocument string) (map[string]interface{}, error) {
-	decodedDocument, err := url.QueryUnescape(encodedDocument)
+	decodedDocument, err := decodePolicyDocument(encodedDocument)
 	if err != nil {
-		return nil, fmt.Errorf("failed to URL decode policy document: %v", err)
+		return nil, err
 	}
 
 	var policyDocument map[string]interface{}
@@ -418,6 +418,67 @@ func parsePolicyDocument(encodedDocument string) (map[string]interface{}, error)
 	}
 
 	return policyDocument, nil
+}
+
+// decodePolicyDocument URL-decodes a policy document as returned by IAM
+// (GetPolicyVersion/GetRolePolicy/etc always URL-encode the JSON body). It is
+// split out from parsePolicyDocument so callers that need the raw decoded
+// JSON string — rather than an unmarshaled map — can reuse the same decode
+// step (e.g. GetRolePermissionsBoundaryDoc, whose caller needs a JSON string
+// for SimulatePrincipalPolicyInput.PermissionsBoundaryPolicyInputList).
+func decodePolicyDocument(encodedDocument string) (string, error) {
+	decodedDocument, err := url.QueryUnescape(encodedDocument)
+	if err != nil {
+		return "", fmt.Errorf("failed to URL decode policy document: %v", err)
+	}
+	return decodedDocument, nil
+}
+
+// GetRolePermissionsBoundaryDoc fetches the JSON document of the IAM
+// permissions boundary attached to roleName, if any. It returns
+// present=false (doc="", err=nil) when the role has no permissions boundary
+// attached — this is the common case, not an error.
+//
+// The returned doc is the URL-DECODED JSON string of the boundary policy's
+// default version, suitable for passing directly as one element of
+// SimulatePrincipalPolicyInput.PermissionsBoundaryPolicyInputList (which
+// wants a JSON string, not a parsed map — unlike parsePolicyDocument's
+// callers).
+//
+// This is a thin AWS wrapper (GetRole → GetPolicy → GetPolicyVersion), like
+// GetAllRolePolicies above: not unit-tested here, validated against a live
+// boundary-attached role instead.
+func GetRolePermissionsBoundaryDoc(ctx context.Context, iamClient *iam.Client, roleName string) (string, bool, error) {
+	roleOutput, err := iamClient.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get role %s: %v", roleName, err)
+	}
+
+	boundary := roleOutput.Role.PermissionsBoundary
+	if boundary == nil || aws.ToString(boundary.PermissionsBoundaryArn) == "" {
+		return "", false, nil
+	}
+	boundaryArn := aws.ToString(boundary.PermissionsBoundaryArn)
+
+	getPolicyOutput, err := iamClient.GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String(boundaryArn)})
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get permissions boundary policy %s for role %s: %v", boundaryArn, roleName, err)
+	}
+
+	getPolicyVersionOutput, err := iamClient.GetPolicyVersion(ctx, &iam.GetPolicyVersionInput{
+		PolicyArn: aws.String(boundaryArn),
+		VersionId: getPolicyOutput.Policy.DefaultVersionId,
+	})
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get permissions boundary policy version for %s (role %s): %v", boundaryArn, roleName, err)
+	}
+
+	decodedDocument, err := decodePolicyDocument(aws.ToString(getPolicyVersionOutput.PolicyVersion.Document))
+	if err != nil {
+		return "", false, fmt.Errorf("failed to decode permissions boundary policy document for %s (role %s): %v", boundaryArn, roleName, err)
+	}
+
+	return decodedDocument, true, nil
 }
 
 func PrintRolePolicies(policies *RolePolicies) {
