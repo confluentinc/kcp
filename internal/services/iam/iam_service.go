@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
 
@@ -111,6 +112,116 @@ func GetPrincipalPolicies(ctx context.Context, iamClient *iam.Client, principalA
 	result.AttachedPolicies = attachedPolicies
 
 	return result, nil
+}
+
+// GetAllRolePolicies enumerates every IAM role in the account via
+// GetAccountAuthorizationDetails (filtered to roles), paginating on
+// IsTruncated/Marker, and returns one PrincipalPolicies per role with its
+// inline policies decoded and its attached managed policies resolved to
+// their default-version document.
+//
+// This is a thin AWS wrapper: it does no exclusion/scoping (that lives in
+// the migrate layer). A role whose attached managed policy cannot be
+// resolved (missing from the account's Policies list, or no default
+// version present) is logged and skipped rather than failing the sweep,
+// since a single unresolvable policy should not block enumeration of every
+// other role.
+func GetAllRolePolicies(ctx context.Context, iamClient *iam.Client) ([]PrincipalPolicies, error) {
+	var roleDetails []iamtypes.RoleDetail
+	var managedPolicies []iamtypes.ManagedPolicyDetail
+
+	var marker *string
+	for {
+		output, err := iamClient.GetAccountAuthorizationDetails(ctx, &iam.GetAccountAuthorizationDetailsInput{
+			Filter: []iamtypes.EntityType{iamtypes.EntityTypeRole},
+			Marker: marker,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to get account authorization details: %v", err)
+		}
+
+		roleDetails = append(roleDetails, output.RoleDetailList...)
+		managedPolicies = append(managedPolicies, output.Policies...)
+
+		if !output.IsTruncated {
+			break
+		}
+		marker = output.Marker
+	}
+
+	principalPolicies := make([]PrincipalPolicies, 0, len(roleDetails))
+	for _, roleDetail := range roleDetails {
+		principalPolicies = append(principalPolicies, buildRolePrincipalPolicies(roleDetail, managedPolicies))
+	}
+
+	return principalPolicies, nil
+}
+
+// buildRolePrincipalPolicies converts a single RoleDetail (plus the account-wide
+// managed policy list it must be joined against) into a PrincipalPolicies value.
+func buildRolePrincipalPolicies(roleDetail iamtypes.RoleDetail, managedPolicies []iamtypes.ManagedPolicyDetail) PrincipalPolicies {
+	roleArn := aws.ToString(roleDetail.Arn)
+
+	inlinePolicies := make([]InlinePolicy, 0, len(roleDetail.RolePolicyList))
+	for _, pd := range roleDetail.RolePolicyList {
+		policyName := aws.ToString(pd.PolicyName)
+		policyDocument, err := parsePolicyDocument(aws.ToString(pd.PolicyDocument))
+		if err != nil {
+			slog.Warn("⚠️ skipping unparsable inline role policy", "role_arn", roleArn, "policy_name", policyName, "error", err)
+			continue
+		}
+		inlinePolicies = append(inlinePolicies, InlinePolicy{
+			PolicyName:     policyName,
+			PolicyDocument: policyDocument,
+		})
+	}
+
+	attachedPolicies := make([]AttachedPolicy, 0, len(roleDetail.AttachedManagedPolicies))
+	for _, summary := range roleDetail.AttachedManagedPolicies {
+		policyArn := aws.ToString(summary.PolicyArn)
+		policyDocument, err := resolveManagedPolicyDoc(managedPolicies, policyArn)
+		if err != nil {
+			slog.Warn("⚠️ skipping unresolvable attached managed policy", "role_arn", roleArn, "policy_arn", policyArn, "error", err)
+			continue
+		}
+		attachedPolicies = append(attachedPolicies, AttachedPolicy{
+			PolicyName:     aws.ToString(summary.PolicyName),
+			PolicyArn:      policyArn,
+			PolicyDocument: policyDocument,
+		})
+	}
+
+	return PrincipalPolicies{
+		PrincipalName:    aws.ToString(roleDetail.RoleName),
+		PrincipalArn:     roleArn,
+		PrincipalType:    "role",
+		InlinePolicies:   inlinePolicies,
+		AttachedPolicies: attachedPolicies,
+	}
+}
+
+// resolveManagedPolicyDoc finds the ManagedPolicyDetail matching arn in policies,
+// selects its default version (IsDefaultVersion, falling back to a VersionId match
+// against DefaultVersionId), and decodes that version's document. It is a pure
+// helper (no AWS calls) so the join + default-version-selection logic can be unit
+// tested without a fake IAM client.
+func resolveManagedPolicyDoc(policies []iamtypes.ManagedPolicyDetail, arn string) (map[string]any, error) {
+	for _, policy := range policies {
+		if aws.ToString(policy.Arn) != arn {
+			continue
+		}
+
+		defaultVersionID := aws.ToString(policy.DefaultVersionId)
+		for _, version := range policy.PolicyVersionList {
+			if version.IsDefaultVersion || (defaultVersionID != "" && aws.ToString(version.VersionId) == defaultVersionID) {
+				return parsePolicyDocument(aws.ToString(version.Document))
+			}
+		}
+
+		return nil, fmt.Errorf("managed policy %s has no default version", arn)
+	}
+
+	return nil, fmt.Errorf("managed policy %s not found in account authorization details", arn)
 }
 
 // ARN format: arn:aws:iam::123456789012:role/RoleName
