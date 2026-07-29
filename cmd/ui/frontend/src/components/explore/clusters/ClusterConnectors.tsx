@@ -172,6 +172,11 @@ export const ClusterConnectors = ({
       {/* Connector metrics (or empty state) */}
       {selectedConnector?.metrics?.metadata && clusterId ? (
         <ConnectMetrics
+          // Remount when the selected cluster/connector changes so the date
+          // filters re-initialize to the new selection's metadata window
+          // (otherwise stale dates carry over and the metrics render empty
+          // until the user manually hits Reset).
+          key={`connector:${selectedConnectRestURL}:${selectedConnectorName}`}
           bare
           clusterId={clusterId}
           sourceType={sourceType}
@@ -383,6 +388,9 @@ export const ClusterConnectors = ({
             of being lost. */}
         {selectedCluster?.metrics?.metadata && clusterId ? (
           <ConnectMetrics
+            // Remount on cluster change so date filters re-initialize to the new
+            // cluster's metadata window (avoids the empty-until-Reset behavior).
+            key={`cluster:${selectedConnectRestURL}`}
             clusterId={clusterId}
             sourceType={sourceType}
             connectRestURL={selectedConnectRestURL}
