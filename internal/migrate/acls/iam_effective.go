@@ -60,45 +60,69 @@ type EffectiveAccessChecker func(ctx context.Context, principalArn string, actio
 // verification: their surviving (action, resource) pairs are checked and
 // rebuilt as described below. Deny-effect statements are restrictions, not
 // grants — there is nothing to "verify effective access" for a statement
-// that already forbids something — so they pass through UNCHANGED, and
-// their pairs are never sent to check. A statement with a value in
-// "Effect" that translateStatements itself would not recognize (i.e.
+// that already forbids something — so their pairs are never sent to check;
+// they are instead carried over EXPANDED-BUT-UNFILTERED (see
+// rebuildStatements). A statement with a value in "Effect" that
+// translateStatements itself would not recognize (i.e.
 // canonicalPermissionType returns "") is dropped: translateStatements
 // would produce nothing from it either, so dropping it here is behaviour-
 // preserving.
 //
+// A Deny statement is itself a migratable grant: a source IAM Deny
+// translates to a native Kafka DENY ACL (translateStatements), and a Kafka
+// DENY overrides a broader Allow — so a principal whose ONLY kafka-cluster
+// statements are Deny (no Allow anywhere) must still survive filtering.
+// Dropping it would silently widen the target's effective access beyond
+// the source's, which is why FilterEffective never short-circuits on "no
+// Allow pairs" before rebuildStatements has had a chance to find a
+// surviving Deny.
+//
 // One check call is made per principal — the union of all its Allow
-// statements' distinct actions and resources — never one call per pair.
+// statements' distinct actions and resources — never one call per pair. A
+// principal with no Allow pairs at all skips the call entirely (nothing
+// for it to verify) rather than invoking check with empty lists.
 //
 // Per principal, Allow statements are rebuilt to keep only the (action,
 // resource) combos check reports allowed: a statement with N resources
 // becomes up to N statements (one per resource, since a wildcard action's
 // surviving set can differ per resource), each carrying only its surviving
 // concrete actions; a resource with no surviving actions contributes no
-// statement at all. Deny statements are carried over verbatim. A principal
-// left with no statements across all its policies (inline and attached) is
-// dropped from the result entirely. A principal whose grants all pass is
-// still returned — its statements are re-expressed (wildcards resolved to
-// explicit actions, one statement per resource) but denote the identical
-// (action, resource) set, so TranslatePrincipalPolicies derives the same
-// ACLs as it would without filtering.
+// statement at all. Deny statements are rebuilt the same way but WITHOUT
+// consulting check — every concrete kafka-cluster (action, resource) pair
+// the statement denotes (post kafka-cluster:* expansion) survives
+// unconditionally; a resource with no kafka-cluster actions at all (e.g. a
+// Deny naming only non-kafka-cluster actions) contributes no statement,
+// same as an all-denied Allow. A principal left with no statements across
+// all its policies (inline and attached) is dropped from the result
+// entirely — whether that's because every Allow was denied, every
+// statement named no kafka-cluster action, or both. A principal whose
+// grants all pass is still returned — its statements are re-expressed
+// (wildcards resolved to explicit actions, one statement per resource) but
+// denote the identical (action, resource) set, so
+// TranslatePrincipalPolicies derives the same ACLs as it would without
+// filtering.
 func FilterEffective(ctx context.Context, check EffectiveAccessChecker, pps []iamservice.PrincipalPolicies) ([]iamservice.PrincipalPolicies, error) {
 	out := make([]iamservice.PrincipalPolicies, 0, len(pps))
 
 	for _, pp := range pps {
 		pairs := extractAllowPairs(pp)
-		if len(pairs) == 0 {
-			// No kafka-cluster Allow grants at all: nothing for check to
-			// verify and nothing translateStatements would ever produce
-			// from Allow statements. Deny-only principals carry no
-			// migratable grant either, so the principal is dropped.
-			continue
-		}
 
-		actions, resources := distinctActionsAndResources(pairs)
-		allowed, err := check(ctx, pp.PrincipalArn, actions, resources)
-		if err != nil {
-			return nil, fmt.Errorf("failed to resolve effective IAM access for principal %q: %w", pp.PrincipalArn, err)
+		// allowed stays an empty (nil-safe) map when there are no Allow
+		// pairs to verify — no pointless check call — but rebuildStatements
+		// still runs: a Deny-only principal's kafka-cluster Deny statements
+		// must get their chance to survive (see FilterEffective's doc
+		// comment). allowed[anything] then reads false for every key, so an
+		// Allow statement's own pairs (if extractAllowPairs somehow found
+		// none but rebuildStatements still sees one — it can't, but this
+		// keeps the invariant explicit) never survive without a real check.
+		allowed := map[string]bool{}
+		if len(pairs) > 0 {
+			actions, resources := distinctActionsAndResources(pairs)
+			var err error
+			allowed, err = check(ctx, pp.PrincipalArn, actions, resources)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve effective IAM access for principal %q: %w", pp.PrincipalArn, err)
+			}
 		}
 
 		filtered := pp
@@ -297,29 +321,38 @@ func withStatements(doc map[string]any, statements []any) map[string]any {
 //
 //   - A statement whose Effect canonicalizes to "" (unrecognized) is
 //     dropped: translateStatements would produce nothing from it either.
-//   - A Deny statement passes through VERBATIM (see FilterEffective's doc
-//     comment for why Deny is never simulated or filtered).
-//   - An Allow statement is split into up to len(resources) replacement
-//     statements, one per original resource, each keeping only that
-//     resource's surviving concrete actions (survivingActions) with
+//   - Both Allow and Deny statements are split into up to len(resources)
+//     replacement statements, one per original resource, each keeping only
+//     that resource's surviving concrete kafka-cluster actions, with
 //     "Effect" preserved from the original. A resource with zero surviving
-//     actions contributes no replacement statement.
+//     actions contributes no replacement statement — including when the
+//     resource's actions were never kafka-cluster actions to begin with
+//     (e.g. a Deny naming only "s3:*"), which is what keeps a non-kafka-
+//     grant statement from single-handedly keeping a principal alive.
+//   - Allow's surviving actions are those check reported effectively
+//     allowed (survivingActions). Deny's surviving actions are every
+//     concrete kafka-cluster action the statement denotes at all
+//     (expandDistinctActions) — Deny is never simulated or filtered (see
+//     FilterEffective's doc comment for why), so nothing here consults
+//     allowed for it.
 func rebuildStatements(statements []map[string]any, allowed map[string]bool) []any {
 	var out []any
 	for _, stmt := range statements {
 		effect := stmt["Effect"]
-		switch canonicalPermissionType(effect) {
-		case "":
-			continue
-		case "Deny":
-			out = append(out, stmt)
+		permissionType := canonicalPermissionType(effect)
+		if permissionType == "" {
 			continue
 		}
 
 		actions := toStringSlice(stmt["Action"])
 		resources := toStringSlice(stmt["Resource"])
 		for _, resource := range resources {
-			survivors := survivingActions(actions, resource, allowed)
+			var survivors []string
+			if permissionType == "Deny" {
+				survivors = expandDistinctActions(actions, resource)
+			} else {
+				survivors = survivingActions(actions, resource, allowed)
+			}
 			if len(survivors) == 0 {
 				continue
 			}
@@ -333,11 +366,15 @@ func rebuildStatements(statements []map[string]any, allowed map[string]bool) []a
 	return out
 }
 
-// survivingActions expands actions against one resource (expandAction) and
-// keeps only the concrete actions allowed reports as effectively allowed
-// for that (action, resource) pair, deduped and in a stable (sorted, via
-// expandAction) order.
-func survivingActions(actions []string, resource string, allowed map[string]bool) []string {
+// expandDistinctActions expands a statement's actions against one resource
+// (expandAction) into the deduped set of concrete kafka-cluster actions
+// they denote for it, in a stable (first-seen) order. An action with no
+// kafka-cluster meaning for this resource (expandAction returns nil)
+// contributes nothing — this is the same expansion Allow grants go through
+// before being checked, factored out so Deny statements (which skip the
+// check step entirely) agree with Allow and with translateStatements on
+// what a wildcard denotes.
+func expandDistinctActions(actions []string, resource string) []string {
 	seen := make(map[string]bool)
 	var out []string
 	for _, action := range actions {
@@ -345,12 +382,23 @@ func survivingActions(actions []string, resource string, allowed map[string]bool
 			if seen[concrete] {
 				continue
 			}
-			if !allowed[concrete+"|"+resource] {
-				continue
-			}
 			seen[concrete] = true
 			out = append(out, concrete)
 		}
+	}
+	return out
+}
+
+// survivingActions is expandDistinctActions' Allow counterpart: it expands
+// actions against one resource and keeps only the concrete actions allowed
+// reports as effectively allowed for that (action, resource) pair.
+func survivingActions(actions []string, resource string, allowed map[string]bool) []string {
+	var out []string
+	for _, concrete := range expandDistinctActions(actions, resource) {
+		if !allowed[concrete+"|"+resource] {
+			continue
+		}
+		out = append(out, concrete)
 	}
 	return out
 }

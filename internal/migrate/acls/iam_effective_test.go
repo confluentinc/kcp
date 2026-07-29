@@ -362,6 +362,87 @@ func TestFilterEffective_CheckerError(t *testing.T) {
 	require.ErrorContains(t, err, "simulate boom")
 }
 
+// TestFilterEffective_DenyOnlyPrincipal_Survives is the Critical-review fix
+// case: a principal whose ONLY statement is a Deny on a kafka-cluster action
+// — no Allow anywhere — must NOT be dropped. A source IAM Deny translates to
+// a Kafka DENY ACL (translateStatements), and a Kafka DENY overrides a
+// broader Allow, so losing it would make the target LESS restrictive than
+// the source: a security regression. The checker must not be asked about
+// this Deny's own pair (only Allow pairs are ever verified) — with no Allow
+// pairs at all, no checker call should happen either.
+func TestFilterEffective_DenyOnlyPrincipal_Survives(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName:     "p",
+			PolicyDocument: inlineDoc(stmt("Deny", "kafka-cluster:ReadData", topicA)),
+		}},
+	}}
+	checker := &capturingChecker{}
+
+	got, err := FilterEffective(context.Background(), checker.check, pps)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "a Deny-only principal must survive filtering")
+	require.Empty(t, checker.calls, "no Allow pairs exist, so the checker must never be called")
+
+	acls := TranslatePrincipalPolicies(effCluster, got)
+	require.Equal(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Deny"},
+	}, acls)
+}
+
+// TestFilterEffective_DenyOnlyPrincipal_WildcardSurvives is the
+// kafka-cluster:* variant of the Deny-only case: every expanded topic
+// operation should come through as a DENY ACL, none silently dropped.
+func TestFilterEffective_DenyOnlyPrincipal_WildcardSurvives(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName:     "p",
+			PolicyDocument: inlineDoc(stmt("Deny", "kafka-cluster:*", topicA)),
+		}},
+	}}
+	checker := &capturingChecker{}
+
+	got, err := FilterEffective(context.Background(), checker.check, pps)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Empty(t, checker.calls)
+
+	acls := TranslatePrincipalPolicies(effCluster, got)
+	require.ElementsMatch(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Alter", PermissionType: "Deny"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "AlterConfigs", PermissionType: "Deny"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Create", PermissionType: "Deny"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Delete", PermissionType: "Deny"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Describe", PermissionType: "Deny"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "DescribeConfigs", PermissionType: "Deny"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Deny"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Write", PermissionType: "Deny"},
+	}, acls)
+}
+
+// TestFilterEffective_DenyOnlyNonKafkaAction_StillDropped guards the other
+// side of the fix: a principal whose only statement is a Deny on a
+// NON-kafka-cluster action (e.g. s3:*) carries no migratable grant either —
+// it must still be dropped, not kept alive by the mere presence of a Deny
+// statement.
+func TestFilterEffective_DenyOnlyNonKafkaAction_StillDropped(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName:     "p",
+			PolicyDocument: inlineDoc(stmt("Deny", "s3:GetObject", "arn:aws:s3:::bucket/*")),
+		}},
+	}}
+	checker := &capturingChecker{}
+
+	got, err := FilterEffective(context.Background(), checker.check, pps)
+	require.NoError(t, err)
+	require.Empty(t, got)
+	require.Empty(t, checker.calls)
+}
+
 // TestFilterEffective_NoKafkaClusterGrants_PrincipalDropped covers a
 // principal whose only statements are non-kafka-cluster (irrelevant)
 // actions: there is nothing to check and nothing translateStatements would
