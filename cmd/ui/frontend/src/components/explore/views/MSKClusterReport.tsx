@@ -118,12 +118,7 @@ export const MSKClusterReport = () => {
             <div className="min-w-0 max-w-full">
               <ClusterConnectors
                 connectors={cluster.aws_client_information?.connectors || []}
-                selfManagedConnectors={
-                  cluster.kafka_admin_client_information?.self_managed_connectors?.connectors || []
-                }
-                connectMetrics={
-                  cluster.kafka_admin_client_information?.self_managed_connectors?.metrics
-                }
+                connectClusters={cluster.kafka_admin_client_information?.connect_clusters || []}
                 clusterId={getClusterArn(cluster) || cluster.arn || undefined}
                 sourceType="msk"
               />

@@ -8,6 +8,8 @@ interface ConnectMetricsFetchConfig {
   sourceType: 'msk' | 'osk'
   startDate: Date | undefined
   endDate: Date | undefined
+  connectRestURL?: string
+  connectorName?: string
 }
 
 interface ConnectMetricsFetchReturn {
@@ -25,6 +27,8 @@ export const useConnectMetricsFetch = ({
   sourceType,
   startDate,
   endDate,
+  connectRestURL,
+  connectorName,
 }: ConnectMetricsFetchConfig): ConnectMetricsFetchReturn => {
   const sessionId = useSessionId()
   const [isLoading, setIsLoading] = useState(false)
@@ -42,10 +46,14 @@ export const useConnectMetricsFetch = ({
       setError(null)
 
       try {
-        const data = await apiClient.metrics.getConnectMetrics(sourceType, clusterId, sessionId, {
-          startDate,
-          endDate,
-        })
+        const data = await apiClient.metrics.getConnectMetrics(
+          sourceType,
+          clusterId,
+          sessionId,
+          { startDate, endDate },
+          connectRestURL,
+          connectorName
+        )
         setMetricsResponse(data)
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to fetch Connect metrics')
@@ -55,7 +63,7 @@ export const useConnectMetricsFetch = ({
     }
 
     fetchMetrics()
-  }, [clusterId, sourceType, startDate, endDate, sessionId])
+  }, [clusterId, sourceType, startDate, endDate, sessionId, connectRestURL, connectorName])
 
   return {
     metricsResponse,

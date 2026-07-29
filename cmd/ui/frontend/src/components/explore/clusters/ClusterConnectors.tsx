@@ -1,65 +1,21 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/common/ui/button'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/common/ui/select'
 import { formatDate } from '@/lib/formatters'
 import { hasRedactedConfig } from '@/lib/redaction'
 import { CONNECTOR_TABS, REDACTED_PLACEHOLDER } from '@/constants'
 import { ConnectMetrics } from './ConnectMetrics'
-import type { ConnectorTab } from '@/types'
-
-interface Connector {
-  connector_arn: string
-  connector_name: string
-  connector_state: string
-  creation_time: string
-  kafka_cluster: {
-    BootstrapServers: string
-    Vpc: {
-      SecurityGroups: string[]
-      Subnets: string[]
-    }
-  }
-  kafka_cluster_client_authentication: {
-    AuthenticationType: string
-  }
-  capacity: {
-    AutoScaling?: {
-      MaxWorkerCount: number
-      McuCount: number
-      MinWorkerCount: number
-      ScaleInPolicy: { CpuUtilizationPercentage: number }
-      ScaleOutPolicy: { CpuUtilizationPercentage: number }
-    }
-    ProvisionedCapacity?: {
-      WorkerCount?: number
-      McuCount?: number
-    }
-  }
-  plugins: Array<{
-    CustomPlugin: {
-      CustomPluginArn: string
-      Revision: number
-    }
-  }>
-  connector_configuration: Record<string, string>
-}
-
-interface SelfManagedConnector {
-  name: string
-  config: Record<string, string>
-  state: string
-  connect_host: string
-}
+import type { Connector, ConnectCluster, ConnectorTab, MSKConnector } from '@/types'
 
 interface ClusterConnectorsProps {
-  connectors: Connector[]
-  selfManagedConnectors?: SelfManagedConnector[]
-  connectMetrics?: {
-    metadata?: {
-      start_date?: string
-      end_date?: string
-      period?: number
-    }
-  }
+  connectors: MSKConnector[]
+  connectClusters?: ConnectCluster[]
   clusterId?: string
   // Required: a Connect cluster is distribution-agnostic, so every caller must state
   // which source set the connect-metrics endpoint should search. Leaving it optional
@@ -69,13 +25,50 @@ interface ClusterConnectorsProps {
 
 export const ClusterConnectors = ({
   connectors,
-  selfManagedConnectors = [],
-  connectMetrics,
+  connectClusters = [],
   clusterId,
   sourceType,
 }: ClusterConnectorsProps) => {
   const [activeTab, setActiveTab] = useState<ConnectorTab>(CONNECTOR_TABS.MSK)
   const [copiedConnector, setCopiedConnector] = useState<string | null>(null)
+  // Clusters are keyed/selected by array INDEX, not by connect_rest_url. Multiple
+  // Connect clusters can legitimately share the same connect_rest_url (e.g. several
+  // empty "" / "(unknown endpoint)" entries), so deriving the selected cluster from
+  // the URL string would always resolve to the first match with that URL and make
+  // later duplicates unselectable. Index is the only unique handle we have here.
+  const [selectedClusterIndex, setSelectedClusterIndex] = useState<number>(0)
+  const [selectedConnectorName, setSelectedConnectorName] = useState<string>('')
+
+  const selectedCluster = connectClusters[selectedClusterIndex]
+  // Derived (not stored in state): the real endpoint string, possibly "", used
+  // wherever the underlying URL is needed (e.g. passed to ConnectMetrics).
+  const selectedConnectRestURL = selectedCluster?.connect_rest_url ?? ''
+  const selectedConnector = selectedCluster?.connectors.find(
+    (c) => c.name === selectedConnectorName
+  )
+
+  // Keep the Connect-cluster selection valid whenever the available cluster list changes
+  // (e.g. new state loaded). Falls back to index 0; out-of-range/empty list resets to 0.
+  useEffect(() => {
+    setSelectedClusterIndex((current) => {
+      if (current >= 0 && current < connectClusters.length) {
+        return current
+      }
+      return 0
+    })
+  }, [connectClusters])
+
+  // Keep the connector selection valid whenever the selected cluster's connector list
+  // changes (including when the selected cluster itself changes).
+  useEffect(() => {
+    const availableConnectors = selectedCluster?.connectors ?? []
+    setSelectedConnectorName((current) => {
+      if (availableConnectors.some((c) => c.name === current)) {
+        return current
+      }
+      return availableConnectors[0]?.name ?? ''
+    })
+  }, [selectedCluster])
 
   const handleCopyConfig = (connectorName: string, config: Record<string, string>) => {
     const configText = Object.entries(config)
@@ -86,9 +79,10 @@ export const ClusterConnectors = ({
     setTimeout(() => setCopiedConnector(null), 2000)
   }
 
-  const renderSelfManagedConnector = (connector: SelfManagedConnector) => (
+  const renderConnectorDetails = (connector: Connector) => (
     <div
       key={connector.name}
+      data-testid="connector-details"
       className="bg-card border border-border rounded-lg shadow-sm transition-colors"
     >
       {/* Connector Header */}
@@ -99,6 +93,18 @@ export const ClusterConnectors = ({
               <h4 className="text-xl font-semibold text-foreground">
                 {connector.name}
               </h4>
+            </div>
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              {connector.state && (
+                <span>
+                  State: <span className="font-medium text-foreground">{connector.state}</span>
+                </span>
+              )}
+              {connector.connect_host && (
+                <span>
+                  Worker: <span className="font-medium text-foreground">{connector.connect_host}</span>
+                </span>
+              )}
             </div>
           </div>
         </div>
@@ -125,6 +131,65 @@ export const ClusterConnectors = ({
           className="w-full h-48 p-3 text-sm font-mono bg-secondary border border-border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 dark:text-gray-100"
         />
       </div>
+    </div>
+  )
+
+  // Connector selector + per-connector metrics (or empty state) + connector details.
+  // Normally rendered as `children` of the cluster-level <ConnectMetrics> so it
+  // appears nested inside the Connect Cluster Metrics card with no dividing line.
+  // When the selected cluster has no cluster-level metrics at all (so there's no
+  // cluster card to nest inside), `standalone` renders this in its own card
+  // instead, so the connector section is never lost.
+  const renderConnectorSection = (standalone: boolean) => (
+    <div
+      className={
+        standalone
+          ? 'bg-card border border-border rounded-lg p-6 space-y-6'
+          : 'mt-6 space-y-6'
+      }
+    >
+      {/* Connector selector */}
+      {selectedCluster && (
+        <div>
+          <label className="block text-sm font-medium text-foreground mb-2">
+            Connector
+          </label>
+          <Select value={selectedConnectorName} onValueChange={setSelectedConnectorName}>
+            <SelectTrigger data-testid="connector-select" className="w-full sm:w-[420px]">
+              <SelectValue placeholder="Select a connector" />
+            </SelectTrigger>
+            <SelectContent>
+              {selectedCluster.connectors.map((connector) => (
+                <SelectItem key={connector.name} value={connector.name}>
+                  {connector.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      )}
+
+      {/* Connector metrics (or empty state) */}
+      {selectedConnector?.metrics?.metadata && clusterId ? (
+        <ConnectMetrics
+          bare
+          clusterId={clusterId}
+          sourceType={sourceType}
+          connectRestURL={selectedConnectRestURL}
+          connectorName={selectedConnectorName}
+          connectMetricsMetadata={selectedConnector.metrics.metadata}
+        />
+      ) : (
+        <div data-testid="connector-metrics-empty">
+          <h4 className="text-lg font-semibold text-foreground mb-2">Connector Metrics</h4>
+          <p className="text-sm text-muted-foreground">
+            No per-connector metrics collected for this connector.
+          </p>
+        </div>
+      )}
+
+      {/* Selected connector details */}
+      {selectedConnector && renderConnectorDetails(selectedConnector)}
     </div>
   )
 
@@ -267,7 +332,7 @@ export const ClusterConnectors = ({
   }
 
   const renderSelfManagedConnectors = () => {
-    if (!selfManagedConnectors || selfManagedConnectors.length === 0) {
+    if (!connectClusters || connectClusters.length === 0) {
       return (
         <div className="text-center py-12">
           <div className="text-muted-foreground text-lg">
@@ -280,49 +345,62 @@ export const ClusterConnectors = ({
       )
     }
 
-    // Group connectors by connect_host
-    const groupedConnectors = selfManagedConnectors.reduce((groups, connector) => {
-      const host = connector.connect_host
-      if (!groups[host]) {
-        groups[host] = []
-      }
-      groups[host].push(connector)
-      return groups
-    }, {} as Record<string, SelfManagedConnector[]>)
-
     return (
       <div className="space-y-8">
-        {connectMetrics?.metadata && clusterId && (
+        {/* Connect cluster selector */}
+        <div className="bg-card border border-border rounded-lg p-4">
+          <label className="block text-sm font-medium text-foreground mb-2">
+            Connect Cluster
+          </label>
+          <Select
+            // Radix throws if a SelectItem's value is an empty string, and connect_rest_url
+            // can legitimately be empty (see the "(unknown endpoint)" fallback below) — so
+            // clusters are keyed/selected by array index here, not by connect_rest_url
+            // itself. `selectedConnectRestURL` (derived above, possibly "") stays the
+            // source of truth used everywhere else.
+            value={String(selectedClusterIndex)}
+            onValueChange={(index) => setSelectedClusterIndex(Number(index))}
+          >
+            <SelectTrigger data-testid="connect-cluster-select" className="w-full sm:w-[420px]">
+              <SelectValue placeholder="Select a Connect cluster" />
+            </SelectTrigger>
+            <SelectContent>
+              {connectClusters.map((cluster, index) => (
+                <SelectItem key={index} value={String(index)}>
+                  {cluster.connect_rest_url || '(unknown endpoint)'}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* Cluster metrics with the connector selector/metrics/details nested
+            inside it (as children) so they read as one continuous card rather
+            than separate cards divided by a line. If the selected cluster has
+            no cluster-level metrics at all (e.g. connectors scanned without
+            --metrics), there's no cluster card to nest inside, so the
+            connector section falls back to rendering in its own card instead
+            of being lost. */}
+        {selectedCluster?.metrics?.metadata && clusterId ? (
           <ConnectMetrics
             clusterId={clusterId}
             sourceType={sourceType}
-            connectMetricsMetadata={connectMetrics.metadata}
-          />
-        )}
-
-        {Object.entries(groupedConnectors).map(([connectHost, connectors]) => (
-          <div
-            key={connectHost}
-            className="space-y-4"
+            connectRestURL={selectedConnectRestURL}
+            connectMetricsMetadata={selectedCluster.metrics.metadata}
           >
-            <div className="border-b border-border pb-2">
-              <h4 className="text-lg font-semibold text-foreground">
-                Connect Cluster URL: {connectHost}
-              </h4>
-              <p className="text-sm text-muted-foreground">
-                {connectors.length} connector{connectors.length !== 1 ? 's' : ''}
-              </p>
-            </div>
-            <div className="grid gap-4">{connectors.map(renderSelfManagedConnector)}</div>
-          </div>
-        ))}
+            {renderConnectorSection(false)}
+          </ConnectMetrics>
+        ) : (
+          renderConnectorSection(true)
+        )}
       </div>
     )
   }
 
   // Check if we have any connectors at all
   const hasMSKConnectors = connectors && connectors.length > 0
-  const hasSelfManagedConnectors = selfManagedConnectors && selfManagedConnectors.length > 0
+  const allSelfManagedConnectors = (connectClusters ?? []).flatMap((c) => c.connectors ?? [])
+  const hasSelfManagedConnectors = allSelfManagedConnectors.length > 0
 
   // Whether any displayed connector (either tab) still carries the redaction
   // placeholder and therefore needs manual secret replacement before applying.
@@ -330,7 +408,7 @@ export const ClusterConnectors = ({
   // `= []` default only covers undefined.
   const hasRedactedConnectorConfig =
     (connectors ?? []).some((c) => hasRedactedConfig(c.connector_configuration)) ||
-    (selfManagedConnectors ?? []).some((c) => hasRedactedConfig(c.config))
+    allSelfManagedConnectors.some((c) => hasRedactedConfig(c.config))
 
   if (!hasMSKConnectors && !hasSelfManagedConnectors) {
     return (
@@ -385,7 +463,7 @@ export const ClusterConnectors = ({
                 : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'
             }`}
           >
-            Self Managed Connectors ({selfManagedConnectors?.length || 0})
+            Self Managed Connectors ({allSelfManagedConnectors.length})
           </button>
         </nav>
       </div>

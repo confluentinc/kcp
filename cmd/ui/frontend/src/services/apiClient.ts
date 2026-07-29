@@ -198,6 +198,8 @@ const metrics = {
     clusterId: string,
     sessionId: string,
     params?: MetricsQueryParams,
+    connectRestURL?: string,
+    connectorName?: string,
     config?: RequestConfig
   ): Promise<MetricsApiResponse> {
     const queryParams: Record<string, string | Date | undefined> = { sessionId, clusterId }
@@ -209,6 +211,8 @@ const metrics = {
       queryParams.endDate =
         params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
     }
+    if (connectRestURL) queryParams.connectRestURL = connectRestURL
+    if (connectorName) queryParams.connectorName = connectorName
     return get<MetricsApiResponse>(
       `${API_ENDPOINTS.METRICS}/connect/${encodeURIComponent(sourceType)}`,
       queryParams,

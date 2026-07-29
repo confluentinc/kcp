@@ -18,18 +18,32 @@ import type { ApiMetadata } from '@/types/api/common'
 interface ConnectMetricsProps {
   clusterId: string
   sourceType: 'msk' | 'osk'
+  connectRestURL?: string
+  connectorName?: string
   connectMetricsMetadata?: {
     start_date?: string
     end_date?: string
     period?: number
     metrics_source?: string
   }
+  // When true, renders without its own card chrome (no bg/border/rounded/padding)
+  // so it can be nested as a sub-section inside a parent card instead of reading
+  // as its own standalone card.
+  bare?: boolean
+  // Optional content rendered inside this card, below the metrics content. Lets a
+  // parent nest additional sub-sections (e.g. the connector selector/metrics)
+  // visually inside the Connect Cluster Metrics card.
+  children?: React.ReactNode
 }
 
 export const ConnectMetrics = ({
   clusterId,
   sourceType,
+  connectRestURL,
+  connectorName,
   connectMetricsMetadata,
+  bare = false,
+  children,
 }: ConnectMetricsProps) => {
   const [startDate, setStartDate] = useState<Date | undefined>(undefined)
   const [endDate, setEndDate] = useState<Date | undefined>(undefined)
@@ -40,6 +54,8 @@ export const ConnectMetrics = ({
     sourceType,
     startDate,
     endDate,
+    connectRestURL,
+    connectorName,
   })
 
   const processedData = useMetricsDataProcessor(metricsResponse)
@@ -94,8 +110,10 @@ export const ConnectMetrics = ({
   })
 
   return (
-    <div className="bg-card rounded-lg border border-border p-6 transition-colors">
-      <h4 className="text-lg font-semibold text-foreground mb-4">Connect Cluster Metrics</h4>
+    <div className={bare ? '' : 'bg-card rounded-lg border border-border p-6 transition-colors'}>
+      <h4 className="text-lg font-semibold text-foreground mb-4">
+        {connectorName ? 'Connector Metrics' : 'Connect Cluster Metrics'}
+      </h4>
 
       <DateRangePicker
         startDate={startDate}
@@ -174,6 +192,8 @@ export const ConnectMetrics = ({
           </p>
         </div>
       )}
+
+      {children}
     </div>
   )
 }
