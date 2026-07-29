@@ -731,8 +731,21 @@ const (
 // runACLApplyIAM is like runACLApplyMSK but adds spec.acls.iam wiring: iamYAML
 // is the raw "iam:" sub-block (indented to sit under "acls:"), nativeACLs
 // seeds the fake source ACL lister, and fetcher stubs newIAMFetcher — so the
-// IAM read path is exercised with no AWS credential chain.
+// IAM read path is exercised with no AWS credential chain. It is a thin
+// wrapper over runACLApplyIAMFull for the (still very common) explicit-mode,
+// no-verify callers, which need neither the enumerator nor the effective-
+// access-checker fake.
 func runACLApplyIAM(t *testing.T, tgt *aclCaptureTarget, clusterID, iamYAML string, nativeACLs []sarama.ResourceAcls, fetcher macls.PrincipalPolicyFetcher, dryRun bool) (stdout, stderr, logs string, err error) {
+	return runACLApplyIAMFull(t, tgt, clusterID, iamYAML, nativeACLs, fetcher, nil, nil, dryRun)
+}
+
+// runACLApplyIAMFull is runACLApplyIAM plus fakes for the discoverAllRoles
+// (newRolePolicyEnumerator) and verifyEffectiveAccess (newEffectiveAccessChecker)
+// seams, so both Phase 1B slice 2 modes are exercisable with no AWS
+// credential chain. A nil enumerator/checker is fine when the manifest under
+// test doesn't exercise that mode — buildACLReconcilers never calls the
+// corresponding seam in that case.
+func runACLApplyIAMFull(t *testing.T, tgt *aclCaptureTarget, clusterID, iamYAML string, nativeACLs []sarama.ResourceAcls, fetcher macls.PrincipalPolicyFetcher, enumerator macls.RolePolicyEnumerator, checker macls.EffectiveAccessChecker, dryRun bool) (stdout, stderr, logs string, err error) {
 	t.Helper()
 	dir := t.TempDir()
 	targetCreds := filepath.Join(dir, "target.yaml")
@@ -757,12 +770,18 @@ func runACLApplyIAM(t *testing.T, tgt *aclCaptureTarget, clusterID, iamYAML stri
 	}
 	oldFetcher := newIAMFetcher
 	newIAMFetcher = func() (macls.PrincipalPolicyFetcher, error) { return fetcher, nil }
+	oldEnumerator := newRolePolicyEnumerator
+	newRolePolicyEnumerator = func() (macls.RolePolicyEnumerator, error) { return enumerator, nil }
+	oldChecker := newEffectiveAccessChecker
+	newEffectiveAccessChecker = func() (macls.EffectiveAccessChecker, error) { return checker, nil }
 	oldBase := ccIAMBaseURL
 	ccIAMBaseURL = tgt.srv.URL
 	t.Cleanup(func() {
 		newSourceReader = oldReader
 		newSourceACLLister = oldLister
 		newIAMFetcher = oldFetcher
+		newRolePolicyEnumerator = oldEnumerator
+		newEffectiveAccessChecker = oldChecker
 		ccIAMBaseURL = oldBase
 	})
 
@@ -830,35 +849,107 @@ func TestApply_ACLs_IAM_WarnLabelEmitted(t *testing.T) {
 	require.Contains(t, logs, "not verified")
 }
 
-// spec.acls.iam.discoverAllRoles is Phase 1B slice 2 — apply must refuse with
-// a clear "not yet implemented" error rather than silently no-op'ing or
-// attempting enumeration, and must not mutate the target.
-func TestApply_ACLs_IAM_DiscoverAllRoles_NotImplemented(t *testing.T) {
+// discoverAllRolesResourceArn is the in-cluster resource the enumeration
+// tests below grant kafka-cluster:ReadData on; excludedRoleResourceArn is a
+// DIFFERENT in-cluster resource an excluded role's policy grants — if
+// isExcludedIAMRole/GatherEnumerated ever regressed and let the excluded
+// role's grant through, this resource name would leak into the plan and the
+// tests would catch it.
+const (
+	discoverAllRolesResourceArn = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"
+	excludedRoleResourceArn     = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/secret-topic"
+)
+
+// fakeEnumeratedRole builds one iamservice.PrincipalPolicies with a single
+// inline-policy Allow statement, for use as a fake newRolePolicyEnumerator
+// response.
+func fakeEnumeratedRole(principalArn, principalName, action, resourceArn string) iamservice.PrincipalPolicies {
+	return iamservice.PrincipalPolicies{
+		PrincipalArn: principalArn, PrincipalName: principalName, PrincipalType: "role",
+		InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+			"Statement": []any{map[string]any{"Effect": "Allow", "Action": action, "Resource": resourceArn}},
+		}}},
+	}
+}
+
+// spec.acls.iam.discoverAllRoles now enumerates the account's IAM roles (via
+// newRolePolicyEnumerator) instead of refusing with "not yet implemented"
+// (the Phase 1B slice 1 guard is gone): a normal in-cluster workload role's
+// grant must appear in the plan, while an AWS service-linked role's grant —
+// excluded by isExcludedIAMRole/GatherEnumerated — must contribute nothing,
+// even though enumerate() returns it right alongside the workload role. This
+// also confirms discoverAllRoles no longer errors.
+func TestApply_ACLs_IAM_DiscoverAllRoles_EnumeratesAndExcludes(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam4")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      discoverAllRoles: true\n"
 
-	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam4", iamYAML, oneReadACL("User:app"), nil, true)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "spec.acls.iam.discoverAllRoles")
-	require.Contains(t, err.Error(), "not yet implemented")
-	require.Equal(t, int64(0), tgt.saPosts)
-	require.Equal(t, int64(0), tgt.aclPosts)
-	_ = logs
+	enumerator := func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return []iamservice.PrincipalPolicies{
+			fakeEnumeratedRole(testPrincipalArn, "AppRole", "kafka-cluster:ReadData", discoverAllRolesResourceArn),
+			fakeEnumeratedRole(
+				"arn:aws:iam::111122223333:role/aws-service-role/kafka.amazonaws.com/AWSServiceRoleForKafka",
+				"AWSServiceRoleForKafka", "kafka-cluster:*", excludedRoleResourceArn,
+			),
+		}, nil
+	}
+
+	out, _, logs, err := runACLApplyIAMFull(t, tgt, "lkc-acl-iam4", iamYAML, nil, nil, enumerator, nil, true)
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, out, "orders", "the enumerated in-cluster workload role's ACL must appear in the plan")
+	require.NotContains(t, out, "secret-topic", "the excluded service-linked role must contribute nothing")
+	require.Equal(t, int64(0), tgt.saPosts, "dry-run must not create service accounts")
+	require.Equal(t, int64(0), tgt.aclPosts, "dry-run must not create ACLs")
 }
 
-// spec.acls.iam.verifyEffectiveAccess is Phase 1B slice 2 — apply must refuse
-// with a clear "not yet implemented" error and must not mutate the target.
-func TestApply_ACLs_IAM_VerifyEffectiveAccess_NotImplemented(t *testing.T) {
+// spec.acls.iam.verifyEffectiveAccess now filters gathered grants through
+// newEffectiveAccessChecker instead of refusing with "not yet implemented"
+// (the Phase 1B slice 1 guard is gone): a grant the checker reports as NOT
+// effectively allowed must be dropped before translation, AND — because the
+// operator opted into verification — the "effective access ... not verified"
+// caveat must NOT be emitted (it would be actively misleading once
+// verification actually ran).
+func TestApply_ACLs_IAM_VerifyEffectiveAccess_DropsDeniedAndSuppressesCaveat(t *testing.T) {
 	tgt := startACLCaptureTarget(t, "lkc-acl-iam5")
 	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n      verifyEffectiveAccess: true\n"
+	resourceArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments"
+	fetcher := iamFetcherOne("kafka-cluster:WriteData", resourceArn)
+	// The checker denies every pair it's asked about — the identity policy
+	// nominally grants WriteData/payments, but effective access says no.
+	checker := func(ctx context.Context, principalArn string, actions, resources []string) (map[string]bool, error) {
+		return map[string]bool{}, nil
+	}
 
-	_, _, logs, err := runACLApplyIAM(t, tgt, "lkc-acl-iam5", iamYAML, oneReadACL("User:app"), nil, true)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "spec.acls.iam.verifyEffectiveAccess")
-	require.Contains(t, err.Error(), "not yet implemented")
+	out, _, logs, err := runACLApplyIAMFull(t, tgt, "lkc-acl-iam5", iamYAML, nil, fetcher, nil, checker, true)
+	require.NoError(t, err, "logs: %s", logs)
+	require.NotContains(t, out, "payments", "a denied grant must be dropped by verifyEffectiveAccess before translation")
+	require.NotContains(t, logs, "effective access", "the not-verified caveat must not fire once verification actually ran")
 	require.Equal(t, int64(0), tgt.saPosts)
 	require.Equal(t, int64(0), tgt.aclPosts)
-	_ = logs
+}
+
+// The positive counterpart to the drop case above: a grant the checker
+// reports as effectively allowed must survive verifyEffectiveAccess and
+// still translate/appear in the plan — verification is a filter, not a
+// blanket suppressor.
+func TestApply_ACLs_IAM_VerifyEffectiveAccess_KeepsAllowedGrant(t *testing.T) {
+	tgt := startACLCaptureTarget(t, "lkc-acl-iam5b")
+	iamYAML := "    iam:\n      clusterArn: " + testClusterArn + "\n      principalArns: [\"" + testPrincipalArn + "\"]\n      verifyEffectiveAccess: true\n"
+	resourceArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments"
+	fetcher := iamFetcherOne("kafka-cluster:WriteData", resourceArn)
+	checker := func(ctx context.Context, principalArn string, actions, resources []string) (map[string]bool, error) {
+		allowed := make(map[string]bool)
+		for _, a := range actions {
+			for _, r := range resources {
+				allowed[a+"|"+r] = true
+			}
+		}
+		return allowed, nil
+	}
+
+	out, _, logs, err := runACLApplyIAMFull(t, tgt, "lkc-acl-iam5b", iamYAML, nil, fetcher, nil, checker, true)
+	require.NoError(t, err, "logs: %s", logs)
+	require.Contains(t, out, "payments", "an effectively-allowed grant must survive verifyEffectiveAccess")
+	require.NotContains(t, logs, "effective access")
 }
 
 // Cross-plane dedupe (fixed — see task-6-report.md "Fix: dedupe desired ACL

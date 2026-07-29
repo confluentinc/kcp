@@ -9,6 +9,9 @@ import (
 	"sort"
 
 	"github.com/IBM/sarama"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsiam "github.com/aws/aws-sdk-go-v2/service/iam"
+	awsiamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
@@ -57,6 +60,74 @@ var newIAMFetcher = func() (macls.PrincipalPolicyFetcher, error) {
 	}
 	return func(ctx context.Context, principalArn string) (*iamservice.PrincipalPolicies, error) {
 		return iamservice.GetPrincipalPolicies(ctx, iamClient, principalArn)
+	}, nil
+}
+
+// newRolePolicyEnumerator builds the AWS IAM client and returns it wrapped
+// as a macls.RolePolicyEnumerator over iamservice.GetAllRolePolicies. It is
+// a package-level var — mirroring newIAMFetcher above — so tests can
+// substitute a fake without an AWS credential chain.
+var newRolePolicyEnumerator = func() (macls.RolePolicyEnumerator, error) {
+	iamClient, err := client.NewIAMClient()
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return iamservice.GetAllRolePolicies(ctx, iamClient)
+	}, nil
+}
+
+// newEffectiveAccessChecker builds the AWS IAM client and returns it
+// wrapped as a macls.EffectiveAccessChecker over iam:SimulatePrincipalPolicy.
+// It is a package-level var — mirroring newIAMFetcher above — so tests can
+// substitute a fake without an AWS credential chain.
+//
+// One SimulatePrincipalPolicy call batches ALL of a principal's distinct
+// actions x resources (ActionNames/ResourceArns), matching how
+// macls.FilterEffective invokes this seam. AWS returns a per-(action,
+// resource) decision in EvaluationResults[].ResourceSpecificResults
+// whenever more than one concrete resource ARN is simulated — the
+// top-level EvaluationResult.EvalResourceName/EvalDecision fields are only
+// meaningful for a "*"/single-resource simulation — so both are read here;
+// whichever the SDK actually populated wins. Results are keyed
+// action+"|"+resource to match macls.EffectiveAccessChecker's contract.
+// Pagination (IsTruncated/Marker) is followed to completion before
+// returning.
+var newEffectiveAccessChecker = func() (macls.EffectiveAccessChecker, error) {
+	iamClient, err := client.NewIAMClient()
+	if err != nil {
+		return nil, err
+	}
+	return func(ctx context.Context, principalArn string, actions, resources []string) (map[string]bool, error) {
+		out := make(map[string]bool)
+		input := &awsiam.SimulatePrincipalPolicyInput{
+			PolicySourceArn: aws.String(principalArn),
+			ActionNames:     actions,
+			ResourceArns:    resources,
+		}
+		for {
+			resp, err := iamClient.SimulatePrincipalPolicy(ctx, input)
+			if err != nil {
+				return nil, fmt.Errorf("simulating effective IAM access for principal %s: %w", principalArn, err)
+			}
+			for _, result := range resp.EvaluationResults {
+				action := aws.ToString(result.EvalActionName)
+				if len(result.ResourceSpecificResults) > 0 {
+					for _, rsr := range result.ResourceSpecificResults {
+						resource := aws.ToString(rsr.EvalResourceName)
+						out[action+"|"+resource] = rsr.EvalResourceDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+					}
+					continue
+				}
+				resource := aws.ToString(result.EvalResourceName)
+				out[action+"|"+resource] = result.EvalDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+			}
+			if !resp.IsTruncated {
+				break
+			}
+			input.Marker = resp.Marker
+		}
+		return out, nil
 	}, nil
 }
 
@@ -350,25 +421,58 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	// normalized-set boundary (dedupeACLs), which uniformly covers all three
 	// duplicate shapes — native-internal, IAM-internal, and cross-plane.
 	if iam := m.Spec.ACLs.IAM; iam != nil {
+		// GATHER: either enumerate every account role (discoverAllRoles) or
+		// fetch the fixed, explicitly-named principals — mutually exclusive
+		// per manifest validation (internal/manifest/validate.go), so only
+		// the seam the selected mode actually needs is built.
+		var pps []iamservice.PrincipalPolicies
 		if iam.DiscoverAllRoles {
-			return nil, fmt.Errorf("spec.acls.iam.discoverAllRoles: enumeration mode is not yet implemented (Phase 1B slice 2)")
+			enumerate, err := newRolePolicyEnumerator()
+			if err != nil {
+				return nil, fmt.Errorf("building IAM client for role enumeration: %w", err)
+			}
+			pps, err = macls.GatherEnumerated(cmd.Context(), enumerate)
+			if err != nil {
+				return nil, fmt.Errorf("enumerating IAM account roles: %w", err)
+			}
+		} else {
+			fetch, err := newIAMFetcher()
+			if err != nil {
+				return nil, fmt.Errorf("building IAM client: %w", err)
+			}
+			pps, err = macls.GatherExplicit(cmd.Context(), fetch, iam.PrincipalArns)
+			if err != nil {
+				return nil, fmt.Errorf("reading IAM-derived ACLs: %w", err)
+			}
 		}
+
+		// VERIFY (optional): drop grants SimulatePrincipalPolicy reports as
+		// not effectively allowed (SCP/permission-boundary/deny elsewhere in
+		// the account), for BOTH gather modes.
 		if iam.VerifyEffectiveAccess {
-			return nil, fmt.Errorf("spec.acls.iam.verifyEffectiveAccess: not yet implemented (Phase 1B slice 2)")
+			check, err := newEffectiveAccessChecker()
+			if err != nil {
+				return nil, fmt.Errorf("building IAM client for effective-access verification: %w", err)
+			}
+			pps, err = macls.FilterEffective(cmd.Context(), check, pps)
+			if err != nil {
+				return nil, fmt.Errorf("verifying effective IAM access: %w", err)
+			}
 		}
-		fetch, err := newIAMFetcher()
-		if err != nil {
-			return nil, fmt.Errorf("building IAM client: %w", err)
-		}
-		iamAcls, err := macls.ReadIAMACLs(cmd.Context(), fetch, iam.PrincipalArns, iam.ClusterArn)
-		if err != nil {
-			return nil, fmt.Errorf("reading IAM-derived ACLs: %w", err)
-		}
-		if len(iam.PrincipalArns) > 0 && len(iamAcls) == 0 {
-			slog.Warn("⚠️ spec.acls.iam matched zero ACLs — no kafka-cluster grants for the given principalArns scoped to clusterArn; check the ARNs and clusterArn")
+
+		// TRANSLATE: the surviving principal policies into their ACL
+		// equivalents, cluster-scoped.
+		iamAcls := macls.TranslatePrincipalPolicies(iam.ClusterArn, pps)
+		if len(iamAcls) == 0 {
+			slog.Warn("⚠️ spec.acls.iam matched zero ACLs — no kafka-cluster grants found for the source principals scoped to clusterArn; check principalArns/discoverAllRoles scope and clusterArn")
 		}
 		raw = append(raw, iamAcls...)
-		slog.Warn("⚠️ IAM-derived ACLs are granted by identity policy; effective access (SCP/permission-boundary/deny) not verified — set spec.acls.iam.verifyEffectiveAccess to confirm")
+		// The "effective access not verified" caveat only applies when
+		// verification did NOT run; once verifyEffectiveAccess actually ran,
+		// repeating it would be misleading.
+		if !iam.VerifyEffectiveAccess {
+			slog.Warn("⚠️ IAM-derived ACLs are granted by identity policy; effective access (SCP/permission-boundary/deny) not verified — set spec.acls.iam.verifyEffectiveAccess to confirm")
+		}
 	}
 
 	// Filter by spec.acls include/exclude (glob against principal and resource
