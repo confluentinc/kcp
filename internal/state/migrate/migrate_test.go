@@ -130,17 +130,31 @@ func TestUpgradeEraBv073ToC(t *testing.T) {
 
 func TestUpgradeUnrecognizedIsNotSpecialCased(t *testing.T) {
 	// A pre-v0.4.0 region-scan file (or any unrelated JSON) is NOT detected or migrated
-	// (spec N5): no Era A branch exists, so it resolves to the current shape and Upgrade
-	// passes it through UNCHANGED with no error. The generic failure happens later, at the
-	// strict decode in NewStateFromBytes — exactly as for an unrelated JSON file. Upgrade
-	// must not raise ErrUnsupportedLegacy (which would wrongly advise `kcp state upgrade`).
+	// (spec N5): no Era A branch exists, so it defaults to era C with schemaVersion 0 and
+	// now runs the ordinary upcaster chain (era-C-unversioned is no longer a special-cased
+	// passthrough — that block was removed so genuine era-C-unversioned files carrying
+	// self_managed_connectors get upcasted too). Every step is self-gating and no-ops on
+	// fields this foreign shape doesn't have, so `applied` still ends up true (schema_version
+	// gets stamped to CurrentSchemaVersion) and Upgrade must NOT raise ErrUnsupportedLegacy
+	// (which would wrongly advise `kcp state upgrade`). The foreign fields (clusters, region,
+	// vpc_connections) survive untouched, so the generic failure still happens later, at the
+	// strict decode in NewStateFromBytes — exactly as for any unrelated JSON file.
 	data := `{"clusters":[],"region":"us-east-1","vpc_connections":[]}`
 	got, _, err := Upgrade([]byte(data))
 	if err != nil {
 		t.Fatalf("unrecognised JSON must not error in Upgrade, got %v", err)
 	}
-	if string(got) != data {
-		t.Errorf("unrecognised JSON must pass through unchanged.\n got: %s\nwant: %s", got, data)
+	var doc map[string]any
+	if err := json.Unmarshal(got, &doc); err != nil {
+		t.Fatalf("Upgrade output must be valid JSON: %v", err)
+	}
+	for _, field := range []string{"clusters", "region", "vpc_connections"} {
+		if _, ok := doc[field]; !ok {
+			t.Errorf("foreign field %q should survive unchanged, got %s", field, got)
+		}
+	}
+	if doc["schema_version"].(float64) != CurrentSchemaVersion {
+		t.Errorf("schema_version should be stamped to current, got %v", doc["schema_version"])
 	}
 }
 
@@ -183,6 +197,51 @@ func TestUpgradeArraySchemaRegistriesNonConfluentErrors(t *testing.T) {
 
 func TestUpgrade_V1SelfManagedConnectorsToConnectClusters(t *testing.T) {
 	in, err := os.ReadFile("testdata/era-c-v1-self-managed-connectors.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := Upgrade(in)
+	if err != nil {
+		t.Fatalf("Upgrade: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(out, &doc); err != nil {
+		t.Fatal(err)
+	}
+	osk := doc["osk_sources"].(map[string]any)
+	clusters := osk["clusters"].([]any)
+	admin := clusters[0].(map[string]any)["kafka_admin_client_information"].(map[string]any)
+	if _, gone := admin["self_managed_connectors"]; gone {
+		t.Fatalf("self_managed_connectors should be removed")
+	}
+	ccs, ok := admin["connect_clusters"].([]any)
+	if !ok || len(ccs) != 1 {
+		t.Fatalf("want 1 connect_cluster, got %v", admin["connect_clusters"])
+	}
+	cc := ccs[0].(map[string]any)
+	if cc["connect_rest_url"] != "" {
+		t.Fatalf("legacy connect_rest_url should be empty placeholder, got %v", cc["connect_rest_url"])
+	}
+	if len(cc["connectors"].([]any)) != 1 {
+		t.Fatalf("connector not carried over: %v", cc["connectors"])
+	}
+	if doc["schema_version"].(float64) != 2 {
+		t.Fatalf("schema_version not bumped to 2: %v", doc["schema_version"])
+	}
+}
+
+func TestUpgrade_EraCUnversionedSelfManagedConnectorsToConnectClusters(t *testing.T) {
+	// Regression test: an era-C file (osk_sources/msk_sources shape) with NO schema_version
+	// at all — an early v0.8.x file, written before schema_version was introduced for era C —
+	// can still carry self_managed_connectors. Upgrade used to special-case
+	// "schemaVersion == 0 && era == C" as an already-current passthrough, which skipped the
+	// v1->v2 nesting step entirely and let self_managed_connectors survive untouched; the
+	// strict (DisallowUnknownFields) decode in types.NewStateFromBytes then rejected the file
+	// with "unknown field \"self_managed_connectors\"" (see TestLoadFixtures in internal/types
+	// for that half of the regression proof — this fixture is asserted there too). The guard
+	// on the nesting step must fire for era C at ANY schemaVersion below current (schemaVersion
+	// < 2), not just schemaVersion == 1.
+	in, err := os.ReadFile("testdata/era-c-v0-self-managed-connectors.json")
 	if err != nil {
 		t.Fatal(err)
 	}

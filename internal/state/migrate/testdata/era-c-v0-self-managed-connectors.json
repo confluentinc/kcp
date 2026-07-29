@@ -1,0 +1,23 @@
+{
+  "osk_sources": {
+    "clusters": [
+      {
+        "id": "c1",
+        "kafka_admin_client_information": {
+          "cluster_id": "c1",
+          "self_managed_connectors": {
+            "connectors": [
+              { "name": "test-heartbeat", "config": { "connector.class": "x", "tasks.max": "1" }, "state": "RUNNING", "connect_host": "localhost:8083" }
+            ],
+            "metrics": {
+              "metadata": { "start_date": "2026-07-07T15:00:26Z", "end_date": "2026-07-07T15:00:56Z", "period": 10, "metrics_source": "jolokia" },
+              "results": [ { "start": "2026-07-07T15:00:26Z", "end": "2026-07-07T15:00:36Z", "label": "task-count", "value": 1 } ],
+              "aggregates": {},
+              "query_info": []
+            }
+          }
+        }
+      }
+    ]
+  }
+}

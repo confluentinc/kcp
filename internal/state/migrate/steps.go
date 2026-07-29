@@ -76,7 +76,7 @@ var steps = []step{
 		// era. wrap() is self-gating (no-op when self_managed_connectors is absent/nil), so
 		// broadening the guard to era B is safe for era-B files that never had the field.
 		name:        "C v1->v2: nest self_managed_connectors under connect_clusters",
-		appliesWhen: func(schemaVersion int, era, _ string) bool { return era == "B" || (schemaVersion == 1 && era == "C") },
+		appliesWhen: func(schemaVersion int, era, _ string) bool { return era == "B" || (era == "C" && schemaVersion < 2) },
 		transform: func(in map[string]any) (map[string]any, error) {
 			wrap := func(admin map[string]any) {
 				smc, ok := admin["self_managed_connectors"].(map[string]any)

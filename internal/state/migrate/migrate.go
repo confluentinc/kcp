@@ -60,17 +60,6 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 		slog.Debug("⏭️ state file already at current schema, no migration needed", "schema_version", schemaVersion)
 		return data, fmt.Sprintf("schema_version=%d", schemaVersion), nil
 	}
-	// Era C file without an explicit schema_version is the current shape. A pre-v0.4.0
-	// region-scan file or unrelated JSON also lands here (era defaults to C, spec N5):
-	// it passes through unchanged and fails later at the strict decode, like any foreign file.
-	if schemaVersion == 0 && era == "C" {
-		label := "era=C"
-		if buildVersion != "" {
-			label = "kcp_build_info.version=" + buildVersion
-		}
-		slog.Debug("⏭️ state file has current-era shape without an explicit schema_version, treating as current", "label", label)
-		return data, label, nil
-	}
 
 	// Legacy file: run the ordered upcaster chain.
 	// Decode with UseNumber so every JSON number survives as its exact literal
