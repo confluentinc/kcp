@@ -105,7 +105,15 @@ var newEffectiveAccessChecker = func() (macls.EffectiveAccessChecker, error) {
 			ActionNames:     actions,
 			ResourceArns:    resources,
 		}
-		for {
+		// maxPages bounds the loop against a misbehaving server that keeps
+		// returning IsTruncated=true with a nil/unchanged Marker, rather than
+		// spinning forever. Mirrors the same guard in
+		// internal/migrate/serviceaccounts/ccclient.go (NumericToResourceID).
+		const maxPages = 10000
+		for page := 0; ; page++ {
+			if page >= maxPages {
+				return nil, fmt.Errorf("SimulatePrincipalPolicy pagination exceeded %d pages for principal %s", maxPages, principalArn)
+			}
 			resp, err := iamClient.SimulatePrincipalPolicy(ctx, input)
 			if err != nil {
 				return nil, fmt.Errorf("simulating effective IAM access for principal %s: %w", principalArn, err)
@@ -404,10 +412,12 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 		return nil, fmt.Errorf("reading source ACLs: %w", err)
 	}
 
-	// READ (IAM plane, Phase 1B slice 1): union in the IAM-derived ACL
-	// equivalents for the explicitly-named principals. Only the explicit
-	// principalArns mode is implemented here; discoverAllRoles (enumeration)
-	// and verifyEffectiveAccess (SimulatePrincipalPolicy) are Phase 1B slice 2.
+	// READ (IAM plane): union in the IAM-derived ACL equivalents for the
+	// source principals. Two mutually-exclusive gather modes are supported —
+	// explicit spec.acls.iam.principalArns, or spec.acls.iam.discoverAllRoles
+	// (whole-account role enumeration via GetAccountAuthorizationDetails) —
+	// plus an optional spec.acls.iam.verifyEffectiveAccess filter
+	// (SimulatePrincipalPolicy) that applies to either gather mode's results.
 	//
 	// A cross-plane duplicate tuple (native and IAM-derived ACLs resolving to
 	// the identical types.Acls value), or a within-plane duplicate (e.g. two

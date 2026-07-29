@@ -130,8 +130,16 @@ func GetAllRolePolicies(ctx context.Context, iamClient *iam.Client) ([]Principal
 	var roleDetails []iamtypes.RoleDetail
 	var managedPolicies []iamtypes.ManagedPolicyDetail
 
+	// maxPages bounds the loop against a misbehaving server that keeps
+	// returning IsTruncated=true with a nil/unchanged Marker, rather than
+	// spinning forever. Mirrors the same guard in
+	// internal/migrate/serviceaccounts/ccclient.go (NumericToResourceID).
+	const maxPages = 10000
 	var marker *string
-	for {
+	for page := 0; ; page++ {
+		if page >= maxPages {
+			return nil, fmt.Errorf("GetAccountAuthorizationDetails pagination exceeded %d pages", maxPages)
+		}
 		output, err := iamClient.GetAccountAuthorizationDetails(ctx, &iam.GetAccountAuthorizationDetailsInput{
 			Filter: []iamtypes.EntityType{iamtypes.EntityTypeRole},
 			Marker: marker,
@@ -167,6 +175,10 @@ func buildRolePrincipalPolicies(roleDetail iamtypes.RoleDetail, managedPolicies 
 		policyName := aws.ToString(pd.PolicyName)
 		policyDocument, err := parsePolicyDocument(aws.ToString(pd.PolicyDocument))
 		if err != nil {
+			// Deliberately skip-and-log rather than hard-fail (unlike explicit-mode
+			// getInlinePolicies below): this runs across an entire account sweep, so
+			// one unparsable policy on one role must not abort enumeration of every
+			// other role.
 			slog.Warn("⚠️ skipping unparsable inline role policy", "role_arn", roleArn, "policy_name", policyName, "error", err)
 			continue
 		}
