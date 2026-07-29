@@ -115,10 +115,13 @@ func GetPrincipalPolicies(ctx context.Context, iamClient *iam.Client, principalA
 }
 
 // GetAllRolePolicies enumerates every IAM role in the account via
-// GetAccountAuthorizationDetails (filtered to roles), paginating on
-// IsTruncated/Marker, and returns one PrincipalPolicies per role with its
-// inline policies decoded and its attached managed policies resolved to
-// their default-version document.
+// GetAccountAuthorizationDetails (filtered to Role plus both managed-policy
+// entity types — the latter two are required so AWS populates the
+// response's top-level Policies list with attached-policy documents; Role
+// alone leaves it empty and every attached managed policy would fail the
+// join below), paginating on IsTruncated/Marker, and returns one
+// PrincipalPolicies per role with its inline policies decoded and its
+// attached managed policies resolved to their default-version document.
 //
 // This is a thin AWS wrapper: it does no exclusion/scoping (that lives in
 // the migrate layer). A role whose attached managed policy cannot be
@@ -140,8 +143,19 @@ func GetAllRolePolicies(ctx context.Context, iamClient *iam.Client) ([]Principal
 		if page >= maxPages {
 			return nil, fmt.Errorf("GetAccountAuthorizationDetails pagination exceeded %d pages", maxPages)
 		}
+		// Filter must include the managed-policy entity types (not just
+		// Role) or AWS leaves the response's top-level Policies list empty,
+		// so every attached managed policy fails the ARN join below and is
+		// skipped as "unresolvable" (per AWS docs for
+		// GetAccountAuthorizationDetails). RoleDetailList is unaffected by
+		// the extra filter values — it still comes back as every role in
+		// the account.
 		output, err := iamClient.GetAccountAuthorizationDetails(ctx, &iam.GetAccountAuthorizationDetailsInput{
-			Filter: []iamtypes.EntityType{iamtypes.EntityTypeRole},
+			Filter: []iamtypes.EntityType{
+				iamtypes.EntityTypeRole,
+				iamtypes.EntityTypeLocalManagedPolicy,
+				iamtypes.EntityTypeAWSManagedPolicy,
+			},
 			Marker: marker,
 		})
 		if err != nil {
