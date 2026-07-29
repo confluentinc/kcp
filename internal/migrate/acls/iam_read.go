@@ -107,6 +107,75 @@ func TranslatePrincipalPolicies(clusterArn string, pps []iamservice.PrincipalPol
 	return out
 }
 
+// RolePolicyEnumerator yields ALL of an AWS account's IAM roles as
+// PrincipalPolicies (PrincipalArn set to the role's own ARN, with its
+// inline and attached policy documents already fetched) — the enumeration
+// counterpart to PrincipalPolicyFetcher's fixed-list lookup. Constructing an
+// AWS IAM client and paging ListRoles/policies is the command's job (a later
+// task); this package must stay testable without ever talking to AWS.
+type RolePolicyEnumerator func(ctx context.Context) ([]iamservice.PrincipalPolicies, error)
+
+// GatherEnumerated fetches every account role's policies via enumerate, then
+// drops roles isExcludedIAMRole identifies as non-workload (AWS
+// service-linked roles, SSO-provisioned roles) — a customer's account
+// always carries these, and neither can ever hold a customer-authored Kafka
+// grant worth migrating.
+//
+// Cluster-scoping is deliberately NOT applied here: a survivor may still
+// carry only out-of-cluster grants, which translateStatements/
+// clusterArnMatches (via TranslatePrincipalPolicies, reused verbatim from
+// GatherExplicit's pipeline) will translate to nothing. GatherEnumerated's
+// only job is filtering out roles that were never workload roles to begin
+// with.
+func GatherEnumerated(ctx context.Context, enumerate RolePolicyEnumerator) ([]iamservice.PrincipalPolicies, error) {
+	all, err := enumerate(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to enumerate IAM account roles: %w", err)
+	}
+
+	var out []iamservice.PrincipalPolicies
+	for _, pp := range all {
+		if isExcludedIAMRole(pp.PrincipalArn) {
+			continue
+		}
+		out = append(out, pp)
+	}
+
+	return out, nil
+}
+
+// isExcludedIAMRole reports whether an IAM role ARN denotes a non-workload
+// role that enumeration must never surface as a migration candidate,
+// regardless of what its policies grant:
+//
+//   - an AWS service-linked role, whose path carries the
+//     "aws-service-role/" segment AWS itself reserves for these (e.g.
+//     "arn:...:role/aws-service-role/kafka.amazonaws.com/AWSServiceRoleForKafka");
+//   - an AWS IAM Identity Center (SSO) provisioned role, identified by
+//     EITHER its reserved "aws-reserved/sso.amazonaws.com/" path segment, OR
+//     its role name (the final "/"-delimited ARN segment) starting with the
+//     "AWSReservedSSO_" prefix SSO always assigns — some accounts provision
+//     these outside the reserved path, so the name-prefix check is
+//     independent of, not gated by, the path check.
+//
+// A normal workload role — including one that merely has an
+// MSK-Connect-suggestive name at an ordinary path, or a role name that
+// happens to CONTAIN "aws-reserved"/"aws-service-role" as a substring
+// without actually sitting under that reserved path segment — is never
+// excluded.
+func isExcludedIAMRole(principalArn string) bool {
+	if strings.Contains(principalArn, ":role/aws-service-role/") {
+		return true
+	}
+	if strings.Contains(principalArn, ":role/aws-reserved/sso.amazonaws.com/") {
+		return true
+	}
+
+	parts := strings.Split(principalArn, "/")
+	roleName := parts[len(parts)-1]
+	return strings.HasPrefix(roleName, "AWSReservedSSO_")
+}
+
 // ReadIAMACLs reads the IAM-derived ACL equivalents for a fixed set of
 // explicitly-named principals against one source cluster: GatherExplicit
 // fetches each principal's policies, then TranslatePrincipalPolicies

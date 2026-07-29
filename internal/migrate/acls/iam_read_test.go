@@ -249,3 +249,205 @@ func TestNormalizePrincipalARNs_DedupePreservesOrder(t *testing.T) {
 		"arn:aws:iam::111122223333:role/OtherRole",
 	}, got)
 }
+
+// --- GatherEnumerated ---
+
+// TestGatherEnumerated_NormalRoleSurvivesAndTranslates covers a normal
+// workload role with an in-cluster kafka-cluster:ReadData topic grant: it
+// must survive GatherEnumerated's exclusion filter, and (fed into
+// TranslatePrincipalPolicies, the same translate Task 1 built) produce the
+// expected canonical ACL tuple.
+func TestGatherEnumerated_NormalRoleSurvivesAndTranslates(t *testing.T) {
+	roleArn := "arn:aws:iam::111122223333:role/AppRole"
+	enumerate := func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return []iamservice.PrincipalPolicies{
+			{
+				PrincipalArn: roleArn, PrincipalName: "AppRole", PrincipalType: "role",
+				InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+					"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData",
+						"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"}},
+				}}},
+			},
+		}, nil
+	}
+
+	got, err := GatherEnumerated(context.Background(), enumerate)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, roleArn, got[0].PrincipalArn)
+
+	translated := TranslatePrincipalPolicies(testCluster, got)
+	require.Equal(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+	}, translated)
+}
+
+// TestGatherEnumerated_ExcludesServiceLinkedRole covers a service-linked
+// role (path segment "aws-service-role/"): it must be dropped by
+// GatherEnumerated before it ever reaches translation, regardless of what
+// grants its policies carry.
+func TestGatherEnumerated_ExcludesServiceLinkedRole(t *testing.T) {
+	enumerate := func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return []iamservice.PrincipalPolicies{
+			{
+				PrincipalArn:  "arn:aws:iam::111122223333:role/aws-service-role/kafka.amazonaws.com/AWSServiceRoleForKafka",
+				PrincipalName: "AWSServiceRoleForKafka", PrincipalType: "role",
+				InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+					"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData",
+						"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"}},
+				}}},
+			},
+		}, nil
+	}
+
+	got, err := GatherEnumerated(context.Background(), enumerate)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+// TestGatherEnumerated_ExcludesSSORoles covers both SSO exclusion signals:
+// the reserved SSO path segment, and a bare-name AWSReservedSSO_* role that
+// doesn't happen to sit under that path (isExcludedIAMRole must catch both
+// independently).
+func TestGatherEnumerated_ExcludesSSORoles(t *testing.T) {
+	enumerate := func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return []iamservice.PrincipalPolicies{
+			{
+				PrincipalArn:  "arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/us-east-1/AWSReservedSSO_Admin_abc",
+				PrincipalName: "AWSReservedSSO_Admin_abc", PrincipalType: "role",
+			},
+			{
+				PrincipalArn:  "arn:aws:iam::111122223333:role/AWSReservedSSO_Developer_def",
+				PrincipalName: "AWSReservedSSO_Developer_def", PrincipalType: "role",
+			},
+		}, nil
+	}
+
+	got, err := GatherEnumerated(context.Background(), enumerate)
+	require.NoError(t, err)
+	require.Empty(t, got)
+}
+
+// TestGatherEnumerated_DifferentClusterSurvivesButTranslatesToNothing covers
+// a role whose only grant targets a DIFFERENT cluster: GatherEnumerated
+// itself does no cluster scoping (that's translateStatements/
+// clusterArnMatches's job downstream), so the role must survive here, but
+// translating it against testCluster must yield no ACLs.
+func TestGatherEnumerated_DifferentClusterSurvivesButTranslatesToNothing(t *testing.T) {
+	roleArn := "arn:aws:iam::111122223333:role/OtherClusterRole"
+	enumerate := func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return []iamservice.PrincipalPolicies{
+			{
+				PrincipalArn: roleArn, PrincipalName: "OtherClusterRole", PrincipalType: "role",
+				InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+					"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData",
+						"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/othermsk/xyz-9/orders"}},
+				}}},
+			},
+		}, nil
+	}
+
+	got, err := GatherEnumerated(context.Background(), enumerate)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, roleArn, got[0].PrincipalArn)
+
+	translated := TranslatePrincipalPolicies(testCluster, got)
+	require.Empty(t, translated)
+}
+
+// TestGatherEnumerated_MSKConnectStyleRoleNotExcluded covers a normal role
+// whose name happens to look MSK-Connect-related, sitting at an ordinary
+// (non-reserved) path: it must NOT be excluded, since it is a genuine
+// workload role, not a service-linked or SSO one.
+func TestGatherEnumerated_MSKConnectStyleRoleNotExcluded(t *testing.T) {
+	roleArn := "arn:aws:iam::111122223333:role/MSKConnectExecutionRole"
+	enumerate := func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return []iamservice.PrincipalPolicies{
+			{
+				PrincipalArn: roleArn, PrincipalName: "MSKConnectExecutionRole", PrincipalType: "role",
+				InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+					"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:WriteData",
+						"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/connect-configs"}},
+				}}},
+			},
+		}, nil
+	}
+
+	got, err := GatherEnumerated(context.Background(), enumerate)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, roleArn, got[0].PrincipalArn)
+}
+
+// TestGatherEnumerated_EnumerateError asserts an enumerate failure fails the
+// whole gather (wrapped), mirroring GatherExplicit's fetch-error contract.
+func TestGatherEnumerated_EnumerateError(t *testing.T) {
+	enumerate := func(ctx context.Context) ([]iamservice.PrincipalPolicies, error) {
+		return nil, errors.New("access denied")
+	}
+
+	_, err := GatherEnumerated(context.Background(), enumerate)
+	require.ErrorContains(t, err, "access denied")
+}
+
+// --- isExcludedIAMRole ---
+
+// TestIsExcludedIAMRole covers each exclusion pattern individually, plus
+// normal roles that must NOT be excluded — including a guard against
+// substring over-matching (a role literally named "my-aws-reserved-thing"
+// that isn't actually under the reserved path must survive).
+func TestIsExcludedIAMRole(t *testing.T) {
+	tests := []struct {
+		name     string
+		arn      string
+		excluded bool
+	}{
+		{
+			name:     "service-linked role",
+			arn:      "arn:aws:iam::111122223333:role/aws-service-role/kafka.amazonaws.com/AWSServiceRoleForKafka",
+			excluded: true,
+		},
+		{
+			name:     "SSO role by reserved path",
+			arn:      "arn:aws:iam::111122223333:role/aws-reserved/sso.amazonaws.com/us-east-1/AWSReservedSSO_Admin_abc",
+			excluded: true,
+		},
+		{
+			name:     "SSO role by bare name, non-reserved path",
+			arn:      "arn:aws:iam::111122223333:role/AWSReservedSSO_Developer_def",
+			excluded: true,
+		},
+		{
+			name:     "normal workload role",
+			arn:      "arn:aws:iam::111122223333:role/AppRole",
+			excluded: false,
+		},
+		{
+			name:     "MSK-Connect-looking role, ordinary path",
+			arn:      "arn:aws:iam::111122223333:role/MSKConnectExecutionRole",
+			excluded: false,
+		},
+		{
+			name:     "role name merely contains 'aws-reserved' as a substring, not the reserved path",
+			arn:      "arn:aws:iam::111122223333:role/my-aws-reserved-thing",
+			excluded: false,
+		},
+		{
+			name:     "role name merely contains 'aws-service-role' as a substring, not the reserved path",
+			arn:      "arn:aws:iam::111122223333:role/my-aws-service-role-thing",
+			excluded: false,
+		},
+		{
+			name:     "role name contains AWSReservedSSO_ only as a mid-string substring, not a prefix of the final segment",
+			arn:      "arn:aws:iam::111122223333:role/NotAWSReservedSSO_Prefixed",
+			excluded: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.excluded, isExcludedIAMRole(tt.arn))
+		})
+	}
+}
