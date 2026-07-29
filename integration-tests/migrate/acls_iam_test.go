@@ -12,10 +12,14 @@
 // "read" side exercises internal/migrate/acls' ReadIAMACLs/translateStatements
 // instead of ReadNativeACLs.
 //
-// Slice scope: only the explicit principalArns path (spec.acls.iam.principalArns)
-// is exercised. discoverAllRoles (enumeration) and verifyEffectiveAccess
-// (SimulatePrincipalPolicy) are Phase 1B Slice 2 and return a
-// "not yet implemented" error from cmd/migrate/apply — out of scope here.
+// Slice scope: TestACLsLive_IAMPlane_ExplicitPrincipal below covers the
+// explicit principalArns path (Slice 1). TestACLsLive_IAMPlane_DiscoverAllRoles
+// and TestACLsLive_IAMPlane_VerifyEffectiveAccess (Slice 2) cover
+// discoverAllRoles (enumeration — internal/migrate/acls' GatherEnumerated/
+// isExcludedIAMRole, backed by iamservice.GetAllRolePolicies) and
+// verifyEffectiveAccess (SimulatePrincipalPolicy — FilterEffective)
+// respectively. Both are now wired through cmd/migrate/apply
+// (buildACLReconcilers): "not yet implemented" no longer applies to either.
 //
 // Env-gating: loadCloudConfig + requireCloudKeys, the same CC_*/MSK_* gate as
 // the rest of the live suite, PLUS a new MSK_CLUSTER_ARN (this file's own
@@ -27,6 +31,14 @@
 // live test in this package is unaffected: MSK_CLUSTER_ARN is read by this
 // file alone and defaults to "" (skip) everywhere else, including
 // `make test-go`.
+//
+// Extra AWS IAM permissions beyond Slice 1's (GetRolePolicy/
+// ListRolePolicies/ListAttachedRolePolicies/GetPolicy/GetPolicyVersion, plus
+// CreateRole/PutRolePolicy/DeleteRolePolicy/DeleteRole for seeding): the
+// operator running TestACLsLive_IAMPlane_DiscoverAllRoles additionally needs
+// iam:GetAccountAuthorizationDetails (GetAllRolePolicies' account-wide
+// sweep); the operator running TestACLsLive_IAMPlane_VerifyEffectiveAccess
+// additionally needs iam:SimulatePrincipalPolicy.
 package migrate
 
 import (
@@ -99,6 +111,24 @@ func newTestIAMClient(t *testing.T) *iam.Client {
 // this never needs to invent either.
 func mskResourceArn(clusterArn, restype, resourceName string) string {
 	return strings.Replace(clusterArn, ":cluster/", ":"+restype+"/", 1) + "/" + resourceName
+}
+
+// otherClusterArn builds a resource ARN of the given restype naming a
+// FABRICATED cluster identity (name "kcpmanual-other-cluster-<token>", a
+// fixed nil-like uuid) that can never equal the real source cluster's
+// identity — used by TestACLsLive_IAMPlane_DiscoverAllRoles to prove
+// discoverAllRoles' per-grant clusterArn scoping (clusterArnMatches,
+// iam_translate.go) excludes a grant on a genuinely different MSK cluster,
+// even though GatherEnumerated itself performs no cluster-scoping (that
+// happens later, in TranslatePrincipalPolicies). Region/account are
+// inherited from clusterArn — immaterial to clusterArnMatches, which keys
+// only on cluster name+uuid (see mskResourceArn's doc comment) — so this
+// never needs a second real cluster ARN, just a resource ARN whose
+// name+uuid segment differs from clusterArn's own.
+func otherClusterArn(clusterArn, restype, resourceName, token string) string {
+	idx := strings.Index(clusterArn, ":cluster/")
+	prefix := clusterArn[:idx]
+	return prefix + ":" + restype + "/kcpmanual-other-cluster-" + token + "/00000000-0000-0000-0000-000000000000/" + resourceName
 }
 
 // seedIAMRole creates a run-unique throwaway IAM role carrying one inline
@@ -191,6 +221,12 @@ type iamACLManifestOpts struct {
 	include       []string
 	clusterArn    string
 	principalArns []string
+	// discoverAllRoles/verifyEffectiveAccess opt into Phase 1B Slice 2's two
+	// spec.acls.iam knobs. discoverAllRoles and principalArns are mutually
+	// exclusive per manifest validation (internal/manifest/validate.go): the
+	// discoverAllRoles scenario leaves principalArns nil/empty.
+	discoverAllRoles      bool
+	verifyEffectiveAccess bool
 }
 
 // writeIAMACLManifest writes a source-read-only (no cluster link) MSK→CC
@@ -229,6 +265,12 @@ func writeIAMACLManifest(t *testing.T, dir, name string, cfg cloudConfig, source
 	b.WriteString(fmt.Sprintf("  serviceAccounts:\n    autoCreate: %v\n", opts.autoCreate))
 	b.WriteString("  acls:\n    include: " + yamlList(opts.include) + "\n")
 	b.WriteString("    iam:\n      clusterArn: " + yq(opts.clusterArn) + "\n      principalArns: " + yamlList(opts.principalArns) + "\n")
+	if opts.discoverAllRoles {
+		b.WriteString("      discoverAllRoles: true\n")
+	}
+	if opts.verifyEffectiveAccess {
+		b.WriteString("      verifyEffectiveAccess: true\n")
+	}
 
 	mf := filepath.Join(dir, name+".yaml")
 	require.NoError(t, os.WriteFile(mf, []byte(b.String()), 0600))
@@ -381,6 +423,312 @@ func TestACLsLive_IAMPlane_ExplicitPrincipal(t *testing.T) {
 	// 4. Idempotent re-apply: proves the product recognises its own
 	// previously-created (CC-numeric) ACLs on the IAM plane too; the test
 	// itself never resolves numeric<->sa.
+	out, err = runKCP(t, mf)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "serviceAccounts: 0 created, 1 unchanged, 0 drift, 0 failed", out)
+	require.Contains(t, out, "acls: 0 created, 8 unchanged, 0 drift, 0 failed", out)
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2: discoverAllRoles (enumeration).
+// ---------------------------------------------------------------------------
+
+// TestACLsLive_IAMPlane_DiscoverAllRoles is Slice 2's live proof of the
+// enumeration path (spec.acls.iam.discoverAllRoles, no principalArns):
+// GatherEnumerated (internal/migrate/acls/iam_read.go) sweeps EVERY IAM role
+// in the account via iamservice.GetAllRolePolicies
+// (iam:GetAccountAuthorizationDetails), drops non-workload roles via
+// isExcludedIAMRole, and hands the survivors to the same
+// TranslatePrincipalPolicies pipeline GatherExplicit uses — so the
+// per-resource-type "kafka-cluster:*" expansion and implication-dedup math
+// are IDENTICAL to TestACLsLive_IAMPlane_ExplicitPrincipal above (one topic
+// grant -> 6 surviving ops, one group grant -> 2 surviving ops).
+//
+// Three run-unique throwaway roles are seeded to prove enumeration is
+// correctly SCOPED, not just that it runs:
+//   - roleInScope: a normal workload role granting kafka-cluster:* on this
+//     run's topic+group, scoped to the REAL playground clusterArn. Its 8
+//     ACLs (6 topic + 2 group) are the only ones expected to survive to the
+//     target.
+//   - roleOtherScope: an otherwise-identical workload role, but its grant
+//     names resource ARNs under a FABRICATED, different cluster identity
+//     (otherClusterArn) — proving TranslatePrincipalPolicies' clusterArn
+//     scoping (clusterArnMatches) excludes an in-account role whose grant is
+//     simply on a different MSK cluster. GatherEnumerated itself does not
+//     cluster-scope (see its doc comment); this is the downstream filter
+//     that must catch it.
+//   - roleSSOExcluded: a role named with the "AWSReservedSSO_" prefix
+//     isExcludedIAMRole treats as a non-workload identity, granting on the
+//     REAL clusterArn (so, absent the exclusion, its ACLs would otherwise
+//     survive translation) — proving GatherEnumerated's own exclusion filter
+//     runs, independent of cluster scoping.
+//
+// Isolation from the rest of the AWS account (which may hold arbitrarily
+// many other IAM roles, some of which may legitimately grant kafka-cluster
+// access on the SAME playground cluster): spec.acls.include is scoped to
+// "*<token>*", matching this run's unique principal/resource names only
+// (filterACLs matches include globs against Principal OR ResourceName —
+// cmd/migrate/apply's filterACLs). Enumeration itself still sweeps the whole
+// account (that is the feature under test), but only this run's own ACLs
+// can pass the include filter and reach the command's reported counts —
+// which is what lets this test assert an EXACT "acls: 8 created" rather
+// than merely "at least 8": any leak from roleOtherScope or
+// roleSSOExcluded, or from unrelated account roles matching the token by
+// sheer coincidence, would push the total above 8 and fail the assertion.
+func TestACLsLive_IAMPlane_DiscoverAllRoles(t *testing.T) {
+	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
+	clusterArn := requireMSKClusterArn(t)
+
+	dir := t.TempDir()
+	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
+
+	iamClient := newTestIAMClient(t)
+	token := uniqueACLToken()
+
+	// roleInScope: normal grant, real cluster, expected to survive.
+	roleInScope := "kcpmanual-iam-inscope-" + token
+	topicNameA := "kcpmanual-iam-topic-a-" + token
+	groupNameA := "kcpmanual-iam-group-a-" + token
+	topicArnA := mskResourceArn(clusterArn, "topic", topicNameA)
+	groupArnA := mskResourceArn(clusterArn, "group", groupNameA)
+	// The role's ARN is discarded: discoverAllRoles takes no principalArns,
+	// so enumeration looks roles up by sweeping the account, never by ARN.
+	seedIAMRole(t, iamClient, roleInScope, topicArnA, groupArnA)
+	principalA := "User:" + roleInScope
+
+	// roleOtherScope: normal grant, FABRICATED different cluster — expected
+	// to contribute nothing (clusterArn scoping).
+	roleOtherScope := "kcpmanual-iam-otherscope-" + token
+	topicNameB := "kcpmanual-iam-topic-b-" + token
+	groupNameB := "kcpmanual-iam-group-b-" + token
+	topicArnB := otherClusterArn(clusterArn, "topic", topicNameB, token)
+	groupArnB := otherClusterArn(clusterArn, "group", groupNameB, token)
+	seedIAMRole(t, iamClient, roleOtherScope, topicArnB, groupArnB)
+	principalB := "User:" + roleOtherScope
+
+	// roleSSOExcluded: grant on the REAL cluster, but a role identity
+	// isExcludedIAMRole must drop before translation ever sees it — expected
+	// to contribute nothing (non-workload-role exclusion).
+	roleSSOExcluded := "AWSReservedSSO_" + token
+	topicNameC := "kcpmanual-iam-topic-c-" + token
+	groupNameC := "kcpmanual-iam-group-c-" + token
+	topicArnC := mskResourceArn(clusterArn, "topic", topicNameC)
+	groupArnC := mskResourceArn(clusterArn, "group", groupNameC)
+	seedIAMRole(t, iamClient, roleSSOExcluded, topicArnC, groupArnC)
+	principalC := "User:" + roleSSOExcluded
+
+	wantTopicOps := []string{"Alter", "AlterConfigs", "Create", "Delete", "Read", "Write"}
+	wantGroupOps := []string{"Read", "Delete"}
+
+	// CC-side teardown for ALL THREE principals (not just the one expected to
+	// survive): if isExcludedIAMRole or the clusterArn scoping ever regressed
+	// and roleOtherScope/roleSSOExcluded's grants leaked through, this still
+	// cleans them up rather than leaving orphaned SAs/ACLs on the shared
+	// target. Deferred before the run so it executes even on failure (design
+	// §9.9). The seeded AWS IAM roles/policies are torn down separately via
+	// t.Cleanup inside seedIAMRole.
+	cleanupPrincipal := func(principal, topicName, groupName string) {
+		sa, ok := cc.tryFindSAForPrincipal(t, principal)
+		if !ok || sa == nil {
+			return
+		}
+		for _, op := range wantTopicOps {
+			a := types.Acls{ResourceType: "Topic", ResourceName: topicName, ResourcePatternType: "Literal", Principal: "User:" + sa.ID, Host: "*", Operation: op, PermissionType: "Allow"}
+			if err := deleteCCACL(context.Background(), cc.hc, cc.auth, cc.restEndpoint, cc.clusterID, a); err != nil {
+				t.Logf("cleanup: delete CC acl %+v: %v", a, err)
+			}
+		}
+		for _, op := range wantGroupOps {
+			a := types.Acls{ResourceType: "Group", ResourceName: groupName, ResourcePatternType: "Literal", Principal: "User:" + sa.ID, Host: "*", Operation: op, PermissionType: "Allow"}
+			if err := deleteCCACL(context.Background(), cc.hc, cc.auth, cc.restEndpoint, cc.clusterID, a); err != nil {
+				t.Logf("cleanup: delete CC acl %+v: %v", a, err)
+			}
+		}
+		if err := deleteCCServiceAccount(context.Background(), cc.saHC, cc.saAuth, sa.ID); err != nil {
+			t.Logf("cleanup: delete CC service account %s: %v", sa.ID, err)
+		}
+	}
+	defer func() {
+		cleanupPrincipal(principalA, topicNameA, groupNameA)
+		cleanupPrincipal(principalB, topicNameB, groupNameB)
+		cleanupPrincipal(principalC, topicNameC, groupNameC)
+	}()
+
+	mf := writeIAMACLManifest(t, dir, uniqueLinkName("kcpmanual-iam-enum"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, iamACLManifestOpts{
+		autoCreate:       true,
+		cloudCreds:       cloudCreds,
+		include:          []string{"*" + token + "*"},
+		clusterArn:       clusterArn,
+		discoverAllRoles: true,
+	})
+
+	// 1. Apply — command's own reported create counts. An EXACT "8 created"
+	// (not "at least 8") is only safe to assert because spec.acls.include
+	// scopes the result to this run's token (see doc comment above); it is
+	// itself part of what proves roleOtherScope/roleSSOExcluded contributed
+	// zero ACLs — either leaking would push this above 8.
+	out, err := runKCP(t, mf)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "serviceAccounts: 1 created, 0 unchanged, 0 drift, 0 failed", out)
+	require.Contains(t, out, "acls: 8 created, 0 unchanged, 0 drift, 0 failed", out)
+
+	// 2. Only roleInScope gets an auto-created service account.
+	sa := cc.findSAForPrincipal(t, principalA)
+	require.NotNil(t, sa, "expected a service account for in-scope IAM principal %q", principalA)
+	_, okB := cc.tryFindSAForPrincipal(t, principalB)
+	require.False(t, okB, "roleOtherScope (different cluster) must not get a service account — its grant should have translated to zero ACLs")
+	_, okC := cc.tryFindSAForPrincipal(t, principalC)
+	require.False(t, okC, "roleSSOExcluded (non-workload role name) must not get a service account — isExcludedIAMRole should have dropped it before translation")
+
+	// 3. Concrete read-back: roleInScope's exact op sets survive...
+	topicACLs := cc.aclsOnResource(t, topicNameA)
+	require.Len(t, topicACLs, len(wantTopicOps), "topic %q: unexpected ACL count", topicNameA)
+	require.ElementsMatch(t, wantTopicOps, opsOf(topicACLs))
+	groupACLs := cc.aclsOnResource(t, groupNameA)
+	require.Len(t, groupACLs, len(wantGroupOps), "group %q: unexpected ACL count", groupNameA)
+	require.ElementsMatch(t, wantGroupOps, opsOf(groupACLs))
+
+	// ...while roleOtherScope's and roleSSOExcluded's resources carry NOTHING
+	// on the target — the direct, per-resource proof of exclusion underneath
+	// the aggregate count assertion in step 1.
+	require.Empty(t, cc.aclsOnResource(t, topicNameB), "roleOtherScope's topic must carry no ACLs (different-cluster grant excluded)")
+	require.Empty(t, cc.aclsOnResource(t, groupNameB), "roleOtherScope's group must carry no ACLs (different-cluster grant excluded)")
+	require.Empty(t, cc.aclsOnResource(t, topicNameC), "roleSSOExcluded's topic must carry no ACLs (non-workload role excluded)")
+	require.Empty(t, cc.aclsOnResource(t, groupNameC), "roleSSOExcluded's group must carry no ACLs (non-workload role excluded)")
+
+	// 4. Idempotent re-apply.
+	out, err = runKCP(t, mf)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "serviceAccounts: 0 created, 1 unchanged, 0 drift, 0 failed", out)
+	require.Contains(t, out, "acls: 0 created, 8 unchanged, 0 drift, 0 failed", out)
+}
+
+// ---------------------------------------------------------------------------
+// Slice 2: verifyEffectiveAccess (SimulatePrincipalPolicy).
+// ---------------------------------------------------------------------------
+
+// TestACLsLive_IAMPlane_VerifyEffectiveAccess is Slice 2's live proof of the
+// verifyEffectiveAccess path (explicit-mode, to keep the scenario simple —
+// discoverAllRoles is already covered above): it seeds a normally-granted
+// role identical in shape to TestACLsLive_IAMPlane_ExplicitPrincipal's, runs
+// with spec.acls.iam.verifyEffectiveAccess: true, and asserts the
+// legitimately-granted set survives unchanged.
+//
+// This does NOT re-prove SCP/permission-boundary/explicit-deny filtering —
+// that FilterEffective logic (internal/migrate/acls/iam_effective.go) is
+// covered hermetically in Task 4 with fake EffectiveAccessCheckers exercising
+// every drop path (Deny-only survivor, partial resource denial, kafka-cluster:*
+// expansion agreement, etc.). What ONLY a live run can prove is the
+// iam:SimulatePrincipalPolicy ROUND-TRIP itself: that
+// newEffectiveAccessChecker (cmd/migrate/apply/cmd_migrate_apply.go) calls
+// the real AWS API, correctly reads back its response shape, and that a role
+// with no SCP/boundary/deny anywhere in this AWS test account keeps its
+// grants — i.e. verifyEffectiveAccess does not spuriously drop a legitimate
+// grant.
+//
+// IMPORTANT LIVE-RUN NOTE on ResourceSpecificResults (see
+// newEffectiveAccessChecker's doc comment): this scenario's principal has
+// kafka-cluster:* grants on TWO distinct resource ARNs (the topic and the
+// group), so FilterEffective's one-call-per-principal (distinctActionsAndResources)
+// batches >1 resource into a SINGLE SimulatePrincipalPolicy call. AWS returns
+// a per-(action,resource) decision for a multi-resource simulation via
+// EvaluationResults[].ResourceSpecificResults — NOT via the top-level
+// EvalResourceName/EvalDecision fields, which are only meaningful for a
+// single-resource ("*" or one ARN) simulation. This is the ONLY place in the
+// whole test suite (hermetic or live) that exercises AWS's real multi-
+// resource response shape; the hermetic FilterEffective tests use a fake
+// EffectiveAccessChecker that never round-trips AWS's actual
+// ResourceSpecificResults encoding. There is no direct assertion possible
+// from this test (the parsing happens inside the closure built by
+// newEffectiveAccessChecker, not exposed to the test) — the operator running
+// this live should additionally confirm (e.g. via a temporary log line or a
+// debugger breakpoint in newEffectiveAccessChecker) that resp.EvaluationResults[0].ResourceSpecificResults
+// is non-empty for this call, closing the loop on the checker's top-level-
+// decision fallback branch, which is otherwise untested end-to-end.
+func TestACLsLive_IAMPlane_VerifyEffectiveAccess(t *testing.T) {
+	cfg := loadCloudConfig(t)
+	requireCloudKeys(t, cfg)
+	clusterArn := requireMSKClusterArn(t)
+
+	dir := t.TempDir()
+	target, _, sourceRead := writeCloudCreds(t, dir, cfg, "iam")
+	cloudCreds := writeCloudCredsFile(t, dir, cfg)
+	cc := newACLTargetClients(t, cfg, target, cloudCreds)
+
+	iamClient := newTestIAMClient(t)
+	token := uniqueACLToken()
+	roleName := "kcpmanual-iam-verify-" + token
+	topicName := "kcpmanual-iam-topic-verify-" + token
+	groupName := "kcpmanual-iam-group-verify-" + token
+	topicArn := mskResourceArn(clusterArn, "topic", topicName)
+	groupArn := mskResourceArn(clusterArn, "group", groupName)
+
+	roleArn := seedIAMRole(t, iamClient, roleName, topicArn, groupArn)
+	principal := "User:" + roleName
+
+	wantTopicOps := []string{"Alter", "AlterConfigs", "Create", "Delete", "Read", "Write"}
+	wantGroupOps := []string{"Read", "Delete"}
+
+	defer func() {
+		sa, ok := cc.tryFindSAForPrincipal(t, principal)
+		if !ok || sa == nil {
+			return
+		}
+		for _, op := range wantTopicOps {
+			a := types.Acls{ResourceType: "Topic", ResourceName: topicName, ResourcePatternType: "Literal", Principal: "User:" + sa.ID, Host: "*", Operation: op, PermissionType: "Allow"}
+			if err := deleteCCACL(context.Background(), cc.hc, cc.auth, cc.restEndpoint, cc.clusterID, a); err != nil {
+				t.Logf("cleanup: delete CC acl %+v: %v", a, err)
+			}
+		}
+		for _, op := range wantGroupOps {
+			a := types.Acls{ResourceType: "Group", ResourceName: groupName, ResourcePatternType: "Literal", Principal: "User:" + sa.ID, Host: "*", Operation: op, PermissionType: "Allow"}
+			if err := deleteCCACL(context.Background(), cc.hc, cc.auth, cc.restEndpoint, cc.clusterID, a); err != nil {
+				t.Logf("cleanup: delete CC acl %+v: %v", a, err)
+			}
+		}
+		if err := deleteCCServiceAccount(context.Background(), cc.saHC, cc.saAuth, sa.ID); err != nil {
+			t.Logf("cleanup: delete CC service account %s: %v", sa.ID, err)
+		}
+	}()
+
+	mf := writeIAMACLManifest(t, dir, uniqueLinkName("kcpmanual-iam-verify"), cfg, splitCSV(cfg.mskIAMBootstrap), sourceRead, target, iamACLManifestOpts{
+		autoCreate:            true,
+		cloudCreds:            cloudCreds,
+		include:               []string{"User:" + roleName + "*"},
+		clusterArn:            clusterArn,
+		principalArns:         []string{roleArn},
+		verifyEffectiveAccess: true,
+	})
+
+	t.Logf("verifyEffectiveAccess live run: principal=%s simulates kafka-cluster:* against topicArn=%s groupArn=%s in ONE SimulatePrincipalPolicy call (2 distinct resources) — confirm ResourceSpecificResults is populated in the AWS response for this call (see test doc comment); the hermetic suite never exercises AWS's real multi-resource response shape.", principal, topicArn, groupArn)
+
+	// 1. Apply — same expected shape as the explicit-mode (non-verifying)
+	// test: a role with no SCP/boundary/deny in this account keeps every
+	// grant, so verifyEffectiveAccess must not change the created counts.
+	out, err := runKCP(t, mf)
+	require.NoError(t, err, out)
+	require.Contains(t, out, "serviceAccounts: 1 created, 0 unchanged, 0 drift, 0 failed", out)
+	require.Contains(t, out, "acls: 8 created, 0 unchanged, 0 drift, 0 failed", out)
+
+	// 2. The auto-created service account exists.
+	sa := cc.findSAForPrincipal(t, principal)
+	require.NotNil(t, sa, "expected a service account for IAM principal %q", principal)
+
+	// 3. Concrete read-back: the legitimately-granted set is NOT dropped by
+	// verifyEffectiveAccess.
+	topicACLs := cc.aclsOnResource(t, topicName)
+	require.Len(t, topicACLs, len(wantTopicOps), "topic %q: verifyEffectiveAccess must not drop a legitimately-granted op", topicName)
+	require.ElementsMatch(t, wantTopicOps, opsOf(topicACLs))
+	groupACLs := cc.aclsOnResource(t, groupName)
+	require.Len(t, groupACLs, len(wantGroupOps), "group %q: verifyEffectiveAccess must not drop a legitimately-granted op", groupName)
+	require.ElementsMatch(t, wantGroupOps, opsOf(groupACLs))
+
+	// 4. Idempotent re-apply (proves FilterEffective's rebuilt statements are
+	// re-simulated and re-translated to the SAME target-visible ACL set on a
+	// second run, not merely "ran once without error").
 	out, err = runKCP(t, mf)
 	require.NoError(t, err, out)
 	require.Contains(t, out, "serviceAccounts: 0 created, 1 unchanged, 0 drift, 0 failed", out)
