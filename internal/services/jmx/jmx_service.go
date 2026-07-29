@@ -2,6 +2,7 @@ package jmx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -113,6 +114,16 @@ type JMXService struct {
 	// so warning per-poll would flood the console (this caveat is Warn+). Safe without
 	// a mutex: collectRawSample is called sequentially from CollectOverDuration.
 	warnedControllerMissing map[string]bool
+
+	// warnedMetricIssue dedupes per-metric read-failure logging (keyed by metric
+	// name) to once per scan, for the same reason as warnedControllerMissing:
+	// collectRawSample polls every interval for the whole scan duration, and a
+	// read failure (missing MBean, timeout, auth error) is typically a persistent
+	// condition, not a transient blip — logging it on every poll would flood the
+	// console/log. Not present at all is expected/normal on some clusters (e.g. no
+	// sink connectors) so is logged at Debug; other errors (timeout, auth,
+	// connection) are logged at Warn.
+	warnedMetricIssue map[string]bool
 }
 
 // NewJMXService creates a new JMX service with Jolokia clients for each endpoint.
@@ -127,6 +138,28 @@ func NewJMXService(endpoints []string, defs MetricDefinitions, entityName string
 		metrics:                 defs,
 		entityName:              entityName,
 		warnedControllerMissing: make(map[string]bool),
+		warnedMetricIssue:       make(map[string]bool),
+	}
+}
+
+// logMetricReadErrorOnce logs a metric-read failure at most once per metric
+// name for the lifetime of the JMXService (mirrors warnedControllerMissing —
+// collectRawSample polls every interval, so per-poll logging would flood the
+// console/log for a persistent condition). An MBean/instance that simply
+// isn't present (e.g. no sink connectors on this cluster) is expected/normal
+// and logged at Debug; any other error (timeout, auth, connection) is logged
+// at Warn.
+func (s *JMXService) logMetricReadErrorOnce(metricName, msg string, err error) {
+	if s.warnedMetricIssue[metricName] {
+		return
+	}
+	s.warnedMetricIssue[metricName] = true
+
+	switch {
+	case errors.Is(err, client.ErrJolokiaMBeanNotFound):
+		slog.Debug(msg, "mbean", metricName, "error", err)
+	default:
+		slog.Warn(msg, "mbean", metricName, "error", err)
 	}
 }
 
@@ -157,7 +190,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
-				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
+				s.logMetricReadErrorOnce(mb.Name, "Failed to read MBean", err)
 				continue
 			}
 			if v, ok := value[mb.ValueKey]; ok {
@@ -197,7 +230,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		for _, brokerClient := range s.clients {
 			val, err := brokerClient.ReadMBeanAggregate(ctx, amb.MBean, amb.Attribute)
 			if err != nil {
-				slog.Warn("Failed to read aggregate MBean", "mbean", amb.Name, "error", err)
+				s.logMetricReadErrorOnce(amb.Name, "Failed to read aggregate MBean", err)
 				continue
 			}
 			total += val
@@ -210,7 +243,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		for _, brokerClient := range s.clients {
 			byLabel, err := brokerClient.ReadMBeanAggregateByLabel(ctx, amb.MBean, amb.Attribute, "connector")
 			if err != nil {
-				slog.Warn("Failed to read per-connector aggregate MBean", "mbean", amb.Name, "error", err)
+				s.logMetricReadErrorOnce(amb.Name, "Failed to read per-connector aggregate MBean", err)
 				continue
 			}
 			for connector, v := range byLabel {

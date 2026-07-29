@@ -176,7 +176,7 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 			dataPoints += len(r.Values)
 		}
 		if dataPoints == 0 {
-			slog.Warn("Prometheus query returned no data points", "label", mq.Label, "query", query)
+			slog.Debug("Prometheus query returned no data points", "label", mq.Label, "query", query)
 		}
 
 		for _, result := range results {

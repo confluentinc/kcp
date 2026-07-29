@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,21 @@ import (
 	"strings"
 	"time"
 )
+
+// ErrJolokiaMBeanNotFound is a sentinel error indicating the requested MBean
+// or instance does not exist on the target JVM (HTTP 404, Jolokia status 404,
+// or an InstanceNotFoundException from the JMX layer). Callers can use
+// errors.Is to distinguish this expected/normal condition (e.g. a sink-task
+// MBean pattern on a source-only Connect cluster) from real failures such as
+// connection timeouts or auth errors.
+var ErrJolokiaMBeanNotFound = errors.New("jolokia: MBean/instance not found")
+
+// isMBeanNotFoundError reports whether a Jolokia status code and error text
+// indicate the target MBean/instance is simply absent, rather than a real
+// failure (timeout, auth, connection error, etc).
+func isMBeanNotFoundError(status int, errText string) bool {
+	return status == http.StatusNotFound || strings.Contains(errText, "InstanceNotFoundException")
+}
 
 // JolokiaClient is an HTTP client for querying Jolokia REST endpoints
 type JolokiaClient struct {
@@ -121,6 +137,9 @@ func (c *JolokiaClient) ReadMBean(ctx context.Context, mbeanPath string) (map[st
 
 	// Handle HTTP-level errors (401, 404, 500, etc.)
 	if resp.StatusCode != http.StatusOK {
+		if isMBeanNotFoundError(resp.StatusCode, string(body)) {
+			return nil, fmt.Errorf("%w: jolokia error: status %d: %s", ErrJolokiaMBeanNotFound, resp.StatusCode, string(body))
+		}
 		return nil, fmt.Errorf("HTTP error: status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -132,6 +151,9 @@ func (c *JolokiaClient) ReadMBean(ctx context.Context, mbeanPath string) (map[st
 
 	// Check Jolokia status (200 = success, other = error)
 	if jolokiaResp.Status != 200 {
+		if isMBeanNotFoundError(jolokiaResp.Status, jolokiaResp.Error) {
+			return nil, fmt.Errorf("%w: jolokia error: status %d: %s", ErrJolokiaMBeanNotFound, jolokiaResp.Status, jolokiaResp.Error)
+		}
 		return nil, fmt.Errorf("jolokia error: status %d: %s", jolokiaResp.Status, jolokiaResp.Error)
 	}
 
@@ -165,6 +187,9 @@ func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern str
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if isMBeanNotFoundError(resp.StatusCode, string(body)) {
+			return 0, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, string(body))
+		}
 		return 0, fmt.Errorf("HTTP error: status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -179,6 +204,9 @@ func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern str
 	}
 
 	if raw.Status != 200 {
+		if isMBeanNotFoundError(raw.Status, raw.Error) {
+			return 0, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, raw.Error)
+		}
 		return 0, fmt.Errorf("jolokia error: status %d: %s", raw.Status, raw.Error)
 	}
 
@@ -224,6 +252,9 @@ func (c *JolokiaClient) ReadMBeanAggregateByLabel(ctx context.Context, mbeanPatt
 		return nil, fmt.Errorf("failed to read response: %w", err)
 	}
 	if resp.StatusCode != http.StatusOK {
+		if isMBeanNotFoundError(resp.StatusCode, string(body)) {
+			return nil, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, string(body))
+		}
 		return nil, fmt.Errorf("HTTP error: status %d: %s", resp.StatusCode, string(body))
 	}
 	var raw struct {
@@ -235,6 +266,9 @@ func (c *JolokiaClient) ReadMBeanAggregateByLabel(ctx context.Context, mbeanPatt
 		return nil, fmt.Errorf("failed to parse JSON response: %w", err)
 	}
 	if raw.Status != 200 {
+		if isMBeanNotFoundError(raw.Status, raw.Error) {
+			return nil, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, raw.Error)
+		}
 		return nil, fmt.Errorf("jolokia error: status %d: %s", raw.Status, raw.Error)
 	}
 	out := map[string]float64{}

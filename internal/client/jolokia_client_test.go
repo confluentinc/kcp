@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -100,6 +101,30 @@ func TestJolokiaClient_ReadMBean_ServerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "jolokia error")
 	assert.Contains(t, err.Error(), "404")
 	assert.Contains(t, err.Error(), "javax.management.InstanceNotFoundException")
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound), "404/InstanceNotFoundException should wrap ErrJolokiaMBeanNotFound")
+}
+
+// TestJolokiaClient_ReadMBean_NotFoundWrapsSentinel is a regression test for the
+// noisy-warning fix: a 404/InstanceNotFoundException response (e.g. reading a
+// sink-task MBean pattern on a source-only Connect cluster) must be
+// distinguishable via errors.Is(err, ErrJolokiaMBeanNotFound) from other
+// failures like timeouts, so callers can log it at Debug instead of Warn.
+func TestJolokiaClient_ReadMBean_NotFoundWrapsSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]any{
+			"status": 404,
+			"error":  "javax.management.InstanceNotFoundException: kafka.connect:type=sink-task-metrics,connector=*,task=*",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := NewJolokiaClient(server.URL)
+	_, err := client.ReadMBean(context.Background(), "kafka.connect:type=sink-task-metrics,connector=*,task=*")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound))
 }
 
 func TestJolokiaClient_ReadMBean_ConnectionRefused(t *testing.T) {
@@ -301,6 +326,37 @@ func TestJolokiaClient_ReadMBeanAggregate_ServerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "InstanceNotFoundException")
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound), "404/InstanceNotFoundException should wrap ErrJolokiaMBeanNotFound")
+}
+
+// TestJolokiaClient_ReadMBeanAggregate_ConnectionRefusedNotSentinel is a
+// regression guard: real failures (connection refused, timeout, auth) must
+// NOT be classified as ErrJolokiaMBeanNotFound, since collectRawSample logs
+// those at Warn (not Debug) precisely because they indicate a real problem
+// rather than an expected-absent metric.
+func TestJolokiaClient_ReadMBeanAggregate_ConnectionRefusedNotSentinel(t *testing.T) {
+	client := NewJolokiaClient("http://localhost:1")
+	_, err := client.ReadMBeanAggregate(context.Background(), "test:*", "Value")
+
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrJolokiaMBeanNotFound), "connection errors must not be classified as MBean-not-found")
+}
+
+func TestJolokiaClient_ReadMBeanAggregateByLabel_NotFoundWrapsSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 404,
+			"error":  "javax.management.InstanceNotFoundException: kafka.connect:type=sink-task-metrics,connector=*,task=*",
+		})
+	}))
+	defer server.Close()
+
+	client := NewJolokiaClient(server.URL)
+	_, err := client.ReadMBeanAggregateByLabel(context.Background(),
+		"kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-read-rate", "connector")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound), "404/InstanceNotFoundException should wrap ErrJolokiaMBeanNotFound")
 }
 
 func TestReadMBeanAggregateByLabel_GroupsByConnector(t *testing.T) {
