@@ -61,21 +61,16 @@ func NormalizePrincipalARNs(in []string) []string {
 	return out
 }
 
-// ReadIAMACLs reads the IAM-derived ACL equivalents for a fixed set of
-// explicitly-named principals against one source cluster: it normalizes
-// principalArns, then for each principal fetches its policies and runs
-// translateStatements (iam_translate.go) over every inline and attached
-// policy document, concatenating all results.
+// GatherExplicit fetches the IAM policies for a fixed set of
+// explicitly-named principals: it normalizes principalArns, then fetches
+// each principal's policies via fetch.
 //
 // principalArns is not deduplicated by any implicit discovery step upstream
 // (unlike the native ACL reader) — an operator names these explicitly in the
 // migration manifest, so a fetch failure for any one of them fails the whole
-// read rather than being silently skipped. Cross-principal duplicate ACLs
-// (or duplicates against the natively-read ACLs) are left for the
-// reconciler's map[types.Acls]struct{} dedupe stage; ReadIAMACLs itself
-// performs no deduplication.
-func ReadIAMACLs(ctx context.Context, fetch PrincipalPolicyFetcher, principalArns []string, clusterArn string) ([]types.Acls, error) {
-	var out []types.Acls
+// gather rather than being silently skipped.
+func GatherExplicit(ctx context.Context, fetch PrincipalPolicyFetcher, principalArns []string) ([]iamservice.PrincipalPolicies, error) {
+	var out []iamservice.PrincipalPolicies
 
 	for _, principalArn := range NormalizePrincipalARNs(principalArns) {
 		policies, err := fetch(ctx, principalArn)
@@ -83,13 +78,45 @@ func ReadIAMACLs(ctx context.Context, fetch PrincipalPolicyFetcher, principalArn
 			return nil, fmt.Errorf("failed to fetch IAM policies for principal %s: %w", principalArn, err)
 		}
 
-		for _, policy := range policies.InlinePolicies {
-			out = append(out, translateStatements(principalArn, clusterArn, policy.PolicyDocument)...)
-		}
-		for _, policy := range policies.AttachedPolicies {
-			out = append(out, translateStatements(principalArn, clusterArn, policy.PolicyDocument)...)
-		}
+		out = append(out, *policies)
 	}
 
 	return out, nil
+}
+
+// TranslatePrincipalPolicies runs translateStatements (iam_translate.go)
+// over every inline and attached policy document of each gathered
+// PrincipalPolicies, concatenating all results.
+//
+// Cross-principal duplicate ACLs (or duplicates against the
+// natively-read ACLs) are left for the reconciler's
+// map[types.Acls]struct{} dedupe stage; TranslatePrincipalPolicies itself
+// performs no deduplication.
+func TranslatePrincipalPolicies(clusterArn string, pps []iamservice.PrincipalPolicies) []types.Acls {
+	var out []types.Acls
+
+	for _, pp := range pps {
+		for _, policy := range pp.InlinePolicies {
+			out = append(out, translateStatements(pp.PrincipalArn, clusterArn, policy.PolicyDocument)...)
+		}
+		for _, policy := range pp.AttachedPolicies {
+			out = append(out, translateStatements(pp.PrincipalArn, clusterArn, policy.PolicyDocument)...)
+		}
+	}
+
+	return out
+}
+
+// ReadIAMACLs reads the IAM-derived ACL equivalents for a fixed set of
+// explicitly-named principals against one source cluster: GatherExplicit
+// fetches each principal's policies, then TranslatePrincipalPolicies
+// translates every inline and attached policy document into its ACL
+// equivalents, concatenating all results.
+func ReadIAMACLs(ctx context.Context, fetch PrincipalPolicyFetcher, principalArns []string, clusterArn string) ([]types.Acls, error) {
+	pps, err := GatherExplicit(ctx, fetch, principalArns)
+	if err != nil {
+		return nil, err
+	}
+
+	return TranslatePrincipalPolicies(clusterArn, pps), nil
 }

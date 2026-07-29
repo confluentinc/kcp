@@ -113,6 +113,109 @@ func TestReadIAMACLs_FetchError(t *testing.T) {
 	require.ErrorContains(t, err, "access denied")
 }
 
+// TestGatherExplicit_NormalizesAndFetches covers the gather stage in
+// isolation: principal ARNs are normalized before fetching, and the fetched
+// PrincipalPolicies are returned verbatim (no translation happens here).
+func TestGatherExplicit_NormalizesAndFetches(t *testing.T) {
+	var gotArns []string
+	fake := func(ctx context.Context, arn string) (*iamservice.PrincipalPolicies, error) {
+		gotArns = append(gotArns, arn)
+		return &iamservice.PrincipalPolicies{
+			PrincipalArn: arn, PrincipalName: "AppRole", PrincipalType: "role",
+			InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+				"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData",
+					"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"}},
+			}}},
+		}, nil
+	}
+
+	got, err := GatherExplicit(context.Background(), fake, []string{
+		"arn:aws:sts::111122223333:assumed-role/AppRole/i-0abc",
+	})
+
+	require.NoError(t, err)
+	require.Equal(t, []string{"arn:aws:iam::111122223333:role/AppRole"}, gotArns)
+	require.Equal(t, []iamservice.PrincipalPolicies{
+		{
+			PrincipalArn: "arn:aws:iam::111122223333:role/AppRole", PrincipalName: "AppRole", PrincipalType: "role",
+			InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+				"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData",
+					"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"}},
+			}}},
+		},
+	}, got)
+}
+
+// TestGatherExplicit_FetchError asserts a fetch failure for any one principal
+// fails the whole gather (wrapped) rather than being silently skipped.
+func TestGatherExplicit_FetchError(t *testing.T) {
+	fake := func(ctx context.Context, arn string) (*iamservice.PrincipalPolicies, error) {
+		return nil, errors.New("access denied")
+	}
+
+	_, err := GatherExplicit(context.Background(), fake, []string{"arn:aws:iam::1:role/R"})
+
+	require.ErrorContains(t, err, "access denied")
+}
+
+// TestTranslatePrincipalPolicies_InlineAndAttached covers the translate
+// stage in isolation: given already-gathered PrincipalPolicies (one
+// principal, one inline + one attached policy), it must run
+// translateStatements over every document and concatenate the results —
+// the same tuples TestReadIAMACLs_InlineAndAttachedPolicies asserts via the
+// full pipeline.
+func TestTranslatePrincipalPolicies_InlineAndAttached(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{
+		{
+			PrincipalArn: "arn:aws:iam::111122223333:role/AppRole", PrincipalName: "AppRole",
+			InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "inline", PolicyDocument: map[string]any{
+				"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData",
+					"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"}},
+			}}},
+			AttachedPolicies: []iamservice.AttachedPolicy{{PolicyName: "attached", PolicyArn: "arn:aws:iam::111122223333:policy/attached", PolicyDocument: map[string]any{
+				"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:WriteData",
+					"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments"}},
+			}}},
+		},
+	}
+
+	got := TranslatePrincipalPolicies(testCluster, pps)
+
+	require.ElementsMatch(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+		{ResourceType: "Topic", ResourceName: "payments", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Write", PermissionType: "Allow"},
+	}, got)
+}
+
+// TestTranslatePrincipalPolicies_MultiplePrincipals covers two distinct
+// already-gathered principals: each is translated independently and results
+// are concatenated (no dedupe).
+func TestTranslatePrincipalPolicies_MultiplePrincipals(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{
+		{
+			PrincipalArn: "arn:aws:iam::111122223333:role/AppRole", PrincipalName: "AppRole",
+			InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+				"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:ReadData",
+					"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders"}},
+			}}},
+		},
+		{
+			PrincipalArn: "arn:aws:iam::111122223333:user/AppUser", PrincipalName: "AppUser",
+			InlinePolicies: []iamservice.InlinePolicy{{PolicyName: "p", PolicyDocument: map[string]any{
+				"Statement": []any{map[string]any{"Effect": "Allow", "Action": "kafka-cluster:WriteData",
+					"Resource": "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/payments"}},
+			}}},
+		},
+	}
+
+	got := TranslatePrincipalPolicies(testCluster, pps)
+
+	require.ElementsMatch(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+		{ResourceType: "Topic", ResourceName: "payments", ResourcePatternType: "Literal", Principal: "User:AppUser", Host: "*", Operation: "Write", PermissionType: "Allow"},
+	}, got)
+}
+
 // TestNormalizePrincipalARNs mirrors create-asset's evaluatePrincipal:
 // STS assumed-role ARNs normalize to their iam role-arn form, and an
 // already-normalized duplicate is deduped away.
