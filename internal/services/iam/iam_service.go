@@ -40,7 +40,7 @@ type AttachedPolicy struct {
 	Description    string         `json:"description,omitempty"`
 }
 
-func GetRolePolicies(ctx context.Context, iamClient *iam.Client, roleArn string) (*RolePolicies, error) {
+func GetRolePolicies(ctx context.Context, iamClient iamAPI, roleArn string) (*RolePolicies, error) {
 	roleName, err := extractRoleNameFromArn(roleArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract role name from ARN: %v", err)
@@ -68,7 +68,7 @@ func GetRolePolicies(ctx context.Context, iamClient *iam.Client, roleArn string)
 	return result, nil
 }
 
-func GetPrincipalPolicies(ctx context.Context, iamClient *iam.Client, principalArn string) (*PrincipalPolicies, error) {
+func GetPrincipalPolicies(ctx context.Context, iamClient iamAPI, principalArn string) (*PrincipalPolicies, error) {
 	principalName, principalType, err := extractPrincipalFromArn(principalArn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract principal from ARN: %v", err)
@@ -129,7 +129,7 @@ func GetPrincipalPolicies(ctx context.Context, iamClient *iam.Client, principalA
 // version present) is logged and skipped rather than failing the sweep,
 // since a single unresolvable policy should not block enumeration of every
 // other role.
-func GetAllRolePolicies(ctx context.Context, iamClient *iam.Client) ([]PrincipalPolicies, error) {
+func GetAllRolePolicies(ctx context.Context, iamClient iamAPI) ([]PrincipalPolicies, error) {
 	var roleDetails []iamtypes.RoleDetail
 	var managedPolicies []iamtypes.ManagedPolicyDetail
 
@@ -278,7 +278,7 @@ func extractPrincipalFromArn(principalArn string) (string, string, error) {
 	return "", "", fmt.Errorf("unsupported principal type in ARN: %s (must be role or user)", principalArn)
 }
 
-func getInlinePolicies(ctx context.Context, iamClient *iam.Client, roleName string) ([]InlinePolicy, error) {
+func getInlinePolicies(ctx context.Context, iamClient iamAPI, roleName string) ([]InlinePolicy, error) {
 	var inlinePolicies []InlinePolicy
 
 	listInput := &iam.ListRolePoliciesInput{
@@ -315,7 +315,7 @@ func getInlinePolicies(ctx context.Context, iamClient *iam.Client, roleName stri
 	return inlinePolicies, nil
 }
 
-func getAttachedPolicies(ctx context.Context, iamClient *iam.Client, roleName string) ([]AttachedPolicy, error) {
+func getAttachedPolicies(ctx context.Context, iamClient iamAPI, roleName string) ([]AttachedPolicy, error) {
 	listInput := &iam.ListAttachedRolePoliciesInput{
 		RoleName: aws.String(roleName),
 	}
@@ -327,7 +327,7 @@ func getAttachedPolicies(ctx context.Context, iamClient *iam.Client, roleName st
 	return buildAttachedPoliciesDetails(ctx, iamClient, listOutput.AttachedPolicies)
 }
 
-func getUserInlinePolicies(ctx context.Context, iamClient *iam.Client, userName string) ([]InlinePolicy, error) {
+func getUserInlinePolicies(ctx context.Context, iamClient iamAPI, userName string) ([]InlinePolicy, error) {
 	var inlinePolicies []InlinePolicy
 
 	listInput := &iam.ListUserPoliciesInput{
@@ -364,7 +364,7 @@ func getUserInlinePolicies(ctx context.Context, iamClient *iam.Client, userName 
 	return inlinePolicies, nil
 }
 
-func getUserAttachedPolicies(ctx context.Context, iamClient *iam.Client, userName string) ([]AttachedPolicy, error) {
+func getUserAttachedPolicies(ctx context.Context, iamClient iamAPI, userName string) ([]AttachedPolicy, error) {
 	listInput := &iam.ListAttachedUserPoliciesInput{
 		UserName: aws.String(userName),
 	}
@@ -380,7 +380,7 @@ func getUserAttachedPolicies(ctx context.Context, iamClient *iam.Client, userNam
 // populated AttachedPolicy values by fetching policy metadata and default version documents.
 func buildAttachedPoliciesDetails(
 	ctx context.Context,
-	iamClient *iam.Client,
+	iamClient iamAPI,
 	summaries []iamtypes.AttachedPolicy,
 ) ([]AttachedPolicy, error) {
 	var detailedPolicies []AttachedPolicy
@@ -462,7 +462,7 @@ func decodePolicyDocument(encodedDocument string) (string, error) {
 // This is a thin AWS wrapper (GetRole → GetPolicy → GetPolicyVersion), like
 // GetAllRolePolicies above: not unit-tested here, validated against a live
 // boundary-attached role instead.
-func GetRolePermissionsBoundaryDoc(ctx context.Context, iamClient *iam.Client, roleName string) (string, bool, error) {
+func GetRolePermissionsBoundaryDoc(ctx context.Context, iamClient iamAPI, roleName string) (string, bool, error) {
 	roleOutput, err := iamClient.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
 	if err != nil {
 		return "", false, fmt.Errorf("failed to get role %s: %v", roleName, err)
