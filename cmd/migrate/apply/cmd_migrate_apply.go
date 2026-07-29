@@ -119,60 +119,126 @@ var newEffectiveAccessChecker = func() (macls.EffectiveAccessChecker, error) {
 	}
 	return func(ctx context.Context, principalArn string, actions, resources []string) (map[string]bool, error) {
 		out := make(map[string]bool)
-		input := &awsiam.SimulatePrincipalPolicyInput{
-			PolicySourceArn: aws.String(principalArn),
-			ActionNames:     actions,
-			ResourceArns:    resources,
-		}
 
-		// Resolve the role's permissions boundary (if any) and pass it into
-		// the simulation. Skip entirely for a non-role principal (e.g. a
-		// user ARN) — see the doc comment above for why that's an accepted
-		// gap. A fetch error fails the whole check rather than proceeding
-		// without the boundary, which would under-restrict (report a
-		// boundary-capped grant as allowed).
+		// Resolve the role's permissions boundary (if any) ONCE, outside the
+		// bucket loop below — it's identical for every bucket (only
+		// ResourceArns differs per bucket). Skip entirely for a non-role
+		// principal (e.g. a user ARN) — see the doc comment above for why
+		// that's an accepted gap. A fetch error fails the whole check rather
+		// than proceeding without the boundary, which would under-restrict
+		// (report a boundary-capped grant as allowed).
+		var boundaryInputList []string
 		if roleName, ok := roleNameFromRoleArn(principalArn); ok {
 			boundaryDoc, present, err := iamservice.GetRolePermissionsBoundaryDoc(ctx, iamClient, roleName)
 			if err != nil {
 				return nil, fmt.Errorf("fetching permissions boundary for role %s: %w", roleName, err)
 			}
 			if present {
-				input.PermissionsBoundaryPolicyInputList = []string{boundaryDoc}
+				boundaryInputList = []string{boundaryDoc}
 			}
 		}
 
-		// maxPages bounds the loop against a misbehaving server that keeps
-		// returning IsTruncated=true with a nil/unchanged Marker, rather than
-		// spinning forever. Mirrors the same guard in
-		// internal/migrate/serviceaccounts/ccclient.go (NumericToResourceID).
-		const maxPages = 10000
-		for page := 0; ; page++ {
-			if page >= maxPages {
-				return nil, fmt.Errorf("SimulatePrincipalPolicy pagination exceeded %d pages for principal %s", maxPages, principalArn)
+		// AWS's SimulatePrincipalPolicy rejects a ResourceArns list mixing
+		// the bare "*" wildcard with individual resource ARNs ("you cannot
+		// include both * and individual resources in the resource list").
+		// splitResourceArnsForSimulation partitions resources into at most
+		// two buckets — the bare "*" (if present) and everything else — so
+		// each bucket can be simulated in its own call. ActionNames and the
+		// permissions-boundary input are identical across buckets; only
+		// ResourceArns differs. Every bucket's ResourceSpecificResults is
+		// merged into the same out map.
+		for _, bucket := range splitResourceArnsForSimulation(resources) {
+			input := &awsiam.SimulatePrincipalPolicyInput{
+				PolicySourceArn:                    aws.String(principalArn),
+				ActionNames:                        actions,
+				ResourceArns:                       bucket,
+				PermissionsBoundaryPolicyInputList: boundaryInputList,
 			}
-			resp, err := iamClient.SimulatePrincipalPolicy(ctx, input)
-			if err != nil {
-				return nil, fmt.Errorf("simulating effective IAM access for principal %s: %w", principalArn, err)
-			}
-			for _, result := range resp.EvaluationResults {
-				action := aws.ToString(result.EvalActionName)
-				if len(result.ResourceSpecificResults) > 0 {
-					for _, rsr := range result.ResourceSpecificResults {
-						resource := aws.ToString(rsr.EvalResourceName)
-						out[action+"|"+resource] = rsr.EvalResourceDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
-					}
-					continue
+
+			// maxPages bounds the loop against a misbehaving server that
+			// keeps returning IsTruncated=true with a nil/unchanged Marker,
+			// rather than spinning forever. Mirrors the same guard in
+			// internal/migrate/serviceaccounts/ccclient.go
+			// (NumericToResourceID).
+			const maxPages = 10000
+			for page := 0; ; page++ {
+				if page >= maxPages {
+					return nil, fmt.Errorf("SimulatePrincipalPolicy pagination exceeded %d pages for principal %s", maxPages, principalArn)
 				}
-				resource := aws.ToString(result.EvalResourceName)
-				out[action+"|"+resource] = result.EvalDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+				resp, err := iamClient.SimulatePrincipalPolicy(ctx, input)
+				if err != nil {
+					return nil, fmt.Errorf("simulating effective IAM access for principal %s: %w", principalArn, err)
+				}
+				for _, result := range resp.EvaluationResults {
+					action := aws.ToString(result.EvalActionName)
+					if len(result.ResourceSpecificResults) > 0 {
+						for _, rsr := range result.ResourceSpecificResults {
+							resource := aws.ToString(rsr.EvalResourceName)
+							out[action+"|"+resource] = rsr.EvalResourceDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+						}
+						continue
+					}
+					resource := aws.ToString(result.EvalResourceName)
+					out[action+"|"+resource] = result.EvalDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+				}
+				if !resp.IsTruncated {
+					break
+				}
+				input.Marker = resp.Marker
 			}
-			if !resp.IsTruncated {
-				break
-			}
-			input.Marker = resp.Marker
 		}
 		return out, nil
 	}, nil
+}
+
+// splitResourceArnsForSimulation partitions a principal's distinct resource
+// ARNs into the buckets newEffectiveAccessChecker must simulate in SEPARATE
+// SimulatePrincipalPolicyInput.ResourceArns calls: AWS forbids a single
+// ResourceArns list from containing BOTH the bare wildcard "*" and any
+// individual resource ARN ("you cannot include both * and individual
+// resources in the resource list").
+//
+// Only the LITERAL string "*" is the special bare wildcard; an ARN that
+// merely contains a "*" as part of its own value (e.g. a topic-name-prefix
+// wildcard like "arn:...:topic/.../foo-*") is an individual resource ARN and
+// stays in the specifics bucket — AWS's restriction is about the bare
+// wildcard resource, not about the character.
+//
+// Returns:
+//   - [["*"], [specific...]] when resources contains the bare "*" AND at
+//     least one other (specific) resource,
+//   - [[resources...]] unchanged (one bucket) when there is no bare "*" —
+//     this is the pre-existing, unchanged behaviour,
+//   - [["*"]] when resources is exactly the bare wildcard alone,
+//   - nil for an empty/nil input.
+//
+// Specifics are returned in their original input order (stable, not
+// resorted) — determinism here comes from resources itself already being
+// the deduped, sorted output of distinctActionsAndResources
+// (internal/migrate/acls/iam_effective.go), not from any reordering in this
+// function.
+func splitResourceArnsForSimulation(resources []string) [][]string {
+	if len(resources) == 0 {
+		return nil
+	}
+
+	hasWildcard := false
+	specifics := make([]string, 0, len(resources))
+	for _, r := range resources {
+		if r == "*" {
+			hasWildcard = true
+			continue
+		}
+		specifics = append(specifics, r)
+	}
+
+	if !hasWildcard {
+		return [][]string{resources}
+	}
+	if len(specifics) == 0 {
+		return [][]string{{"*"}}
+	}
+	return [][]string{{"*"}, specifics}
 }
 
 // roleNameFromRoleArn reports whether principalArn is an IAM role ARN
@@ -516,7 +582,7 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 			if err != nil {
 				return nil, fmt.Errorf("building IAM client for effective-access verification: %w", err)
 			}
-			pps, err = macls.FilterEffective(cmd.Context(), check, pps)
+			pps, err = macls.FilterEffective(cmd.Context(), check, iam.ClusterArn, pps)
 			if err != nil {
 				return nil, fmt.Errorf("verifying effective IAM access: %w", err)
 			}

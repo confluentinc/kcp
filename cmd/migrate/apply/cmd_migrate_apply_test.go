@@ -1064,3 +1064,45 @@ func TestEnsureMSKScramMechanism(t *testing.T) {
 	iam := types.KafkaSourceConn{AuthMethod: types.AuthMethodConfig{IAM: &types.IAMConfig{Use: true, Region: "us-east-1"}}}
 	require.NoError(t, ensureMSKScramMechanism(iam, manifest.SourceMSK, "f"))
 }
+
+// TestSplitResourceArnsForSimulation exercises the pure partition helper
+// newEffectiveAccessChecker's inner func uses to keep the bare "*" wildcard
+// out of the same SimulatePrincipalPolicy ResourceArns list as any specific
+// ARN — AWS's SimulatePrincipalPolicy rejects a ResourceArns list that mixes
+// the two ("you cannot include both * and individual resources in the
+// resource list"). Only the LITERAL "*" string is special; an ARN that
+// merely CONTAINS a "*" wildcard segment (e.g. a topic-name prefix wildcard)
+// is an individual resource and belongs in the specifics bucket, not split
+// out on its own.
+func TestSplitResourceArnsForSimulation(t *testing.T) {
+	const (
+		specificA = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-a"
+		specificB = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-b"
+	)
+
+	t.Run("bare wildcard plus specifics splits into two buckets", func(t *testing.T) {
+		got := splitResourceArnsForSimulation([]string{"*", specificA, specificB})
+		require.Equal(t, [][]string{{"*"}, {specificA, specificB}}, got)
+	})
+
+	t.Run("no bare wildcard is a single bucket of all resources", func(t *testing.T) {
+		got := splitResourceArnsForSimulation([]string{specificA})
+		require.Equal(t, [][]string{{specificA}}, got)
+	})
+
+	t.Run("bare wildcard alone is a single bucket", func(t *testing.T) {
+		got := splitResourceArnsForSimulation([]string{"*"})
+		require.Equal(t, [][]string{{"*"}}, got)
+	})
+
+	t.Run("empty input yields no buckets", func(t *testing.T) {
+		require.Empty(t, splitResourceArnsForSimulation(nil))
+		require.Empty(t, splitResourceArnsForSimulation([]string{}))
+	})
+
+	t.Run("a wildcard-containing ARN is an individual resource, not the bare wildcard", func(t *testing.T) {
+		wildcardTopicArn := "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/foo-*"
+		got := splitResourceArnsForSimulation([]string{"*", wildcardTopicArn})
+		require.Equal(t, [][]string{{"*"}, {wildcardTopicArn}}, got)
+	})
+}

@@ -77,44 +77,66 @@ type EffectiveAccessChecker func(ctx context.Context, principalArn string, actio
 // Allow pairs" before rebuildStatements has had a chance to find a
 // surviving Deny.
 //
-// One check call is made per principal — the union of all its Allow
-// statements' distinct actions and resources — never one call per pair. A
-// principal with no Allow pairs at all skips the call entirely (nothing
-// for it to verify) rather than invoking check with empty lists.
+// One check call is made per principal — the union of all its IN-CLUSTER
+// Allow statements' distinct actions and resources — never one call per
+// pair. A principal with no in-cluster Allow pairs at all skips the call
+// entirely (nothing for it to verify) rather than invoking check with empty
+// lists. This is also what keeps a principal whose kafka-cluster grants are
+// entirely on some OTHER cluster (e.g. an irrelevant account role) from ever
+// reaching check at all — clusterArn scoping happens BEFORE simulation, not
+// after (see the "scope-before-verify" note below).
 //
 // Per principal, Allow statements are rebuilt to keep only the (action,
 // resource) combos check reports allowed: a statement with N resources
 // becomes up to N statements (one per resource, since a wildcard action's
 // surviving set can differ per resource), each carrying only its surviving
-// concrete actions; a resource with no surviving actions contributes no
-// statement at all. Deny statements are rebuilt the same way but WITHOUT
-// consulting check — every concrete kafka-cluster (action, resource) pair
-// the statement denotes (post kafka-cluster:* expansion) survives
-// unconditionally; a resource with no kafka-cluster actions at all (e.g. a
-// Deny naming only non-kafka-cluster actions) contributes no statement,
-// same as an all-denied Allow. A principal left with no statements across
-// all its policies (inline and attached) is dropped from the result
-// entirely — whether that's because every Allow was denied, every
-// statement named no kafka-cluster action, or both. A principal whose
-// grants all pass is still returned — its statements are re-expressed
-// (wildcards resolved to explicit actions, one statement per resource) but
-// denote the identical (action, resource) set, so
-// TranslatePrincipalPolicies derives the same ACLs as it would without
-// filtering.
-func FilterEffective(ctx context.Context, check EffectiveAccessChecker, pps []iamservice.PrincipalPolicies) ([]iamservice.PrincipalPolicies, error) {
+// concrete actions; a resource with no surviving actions, OR that is not
+// in-cluster, contributes no statement at all. Deny statements are rebuilt
+// the same way but WITHOUT consulting check — every concrete kafka-cluster
+// (action, resource) pair the statement denotes (post kafka-cluster:*
+// expansion) survives unconditionally PROVIDED the resource is in-cluster;
+// a resource with no kafka-cluster actions at all (e.g. a Deny naming only
+// non-kafka-cluster actions), or that is off-cluster, contributes no
+// statement, same as an all-denied Allow. A principal left with no
+// statements across all its policies (inline and attached) is dropped from
+// the result entirely — whether that's because every Allow was denied,
+// every remaining resource was off-cluster, every statement named no
+// kafka-cluster action, or some combination. A principal whose grants all
+// pass is still returned — its statements are re-expressed (wildcards
+// resolved to explicit actions, one statement per resource) but denote the
+// identical (action, resource) set, so TranslatePrincipalPolicies derives
+// the same ACLs as it would without filtering.
+//
+// scope-before-verify: clusterArn is the target source cluster ARN, and
+// BOTH extractAllowPairs (what gets sent to check) and rebuildStatements
+// (what's kept in the output) scope resources through the SAME predicate
+// TranslatePrincipalPolicies itself uses (clusterArnMatches,
+// iam_translate.go) — moving that scoping to before simulation rather than
+// after it (translate has always scoped this way; only when it runs
+// relative to check is new). This is provably equivalent to scoping after
+// translate: SimulatePrincipalPolicy evaluates each resource independently,
+// so a resource's allowed/denied decision never depends on which OTHER
+// resources shared its batch — scoping first just means fewer resources
+// (and, for a principal with no in-cluster grants at all, zero calls) ever
+// reach check, with the identical survivors. clusterArnMatches("*",
+// clusterArn) is true (a bare Resource: "*" grant is inherently
+// cluster-agnostic, so it counts as in-cluster) — it is still simulated as
+// the literal "*" resource string.
+func FilterEffective(ctx context.Context, check EffectiveAccessChecker, clusterArn string, pps []iamservice.PrincipalPolicies) ([]iamservice.PrincipalPolicies, error) {
 	out := make([]iamservice.PrincipalPolicies, 0, len(pps))
 
 	for _, pp := range pps {
-		pairs := extractAllowPairs(pp)
+		pairs := extractAllowPairs(pp, clusterArn)
 
-		// allowed stays an empty (nil-safe) map when there are no Allow
-		// pairs to verify — no pointless check call — but rebuildStatements
-		// still runs: a Deny-only principal's kafka-cluster Deny statements
-		// must get their chance to survive (see FilterEffective's doc
-		// comment). allowed[anything] then reads false for every key, so an
-		// Allow statement's own pairs (if extractAllowPairs somehow found
-		// none but rebuildStatements still sees one — it can't, but this
-		// keeps the invariant explicit) never survive without a real check.
+		// allowed stays an empty (nil-safe) map when there are no in-cluster
+		// Allow pairs to verify — no pointless check call — but
+		// rebuildStatements still runs: a Deny-only principal's in-cluster
+		// kafka-cluster Deny statements must get their chance to survive
+		// (see FilterEffective's doc comment). allowed[anything] then reads
+		// false for every key, so an Allow statement's own pairs (if
+		// extractAllowPairs somehow found none but rebuildStatements still
+		// sees one — it can't, but this keeps the invariant explicit) never
+		// survive without a real check.
 		allowed := map[string]bool{}
 		if len(pairs) > 0 {
 			actions, resources := distinctActionsAndResources(pairs)
@@ -126,8 +148,8 @@ func FilterEffective(ctx context.Context, check EffectiveAccessChecker, pps []ia
 		}
 
 		filtered := pp
-		filtered.InlinePolicies = rebuildInlinePolicies(pp.InlinePolicies, allowed)
-		filtered.AttachedPolicies = rebuildAttachedPolicies(pp.AttachedPolicies, allowed)
+		filtered.InlinePolicies = rebuildInlinePolicies(pp.InlinePolicies, allowed, clusterArn)
+		filtered.AttachedPolicies = rebuildAttachedPolicies(pp.AttachedPolicies, allowed, clusterArn)
 
 		if len(filtered.InlinePolicies) == 0 && len(filtered.AttachedPolicies) == 0 {
 			continue
@@ -190,8 +212,10 @@ func expandAction(action, resourceArn string) []string {
 // inline and attached policy documents, with kafka-cluster:* already
 // expanded via expandAction. Deny statements and statements with an
 // unrecognized Effect are not visited: see FilterEffective's doc comment
-// for why.
-func extractAllowPairs(pp iamservice.PrincipalPolicies) []pair {
+// for why. A resource that does not satisfy clusterArnMatches(resource,
+// clusterArn) is skipped entirely — off-cluster grants must never reach the
+// checker (scope-before-verify, see FilterEffective's doc comment).
+func extractAllowPairs(pp iamservice.PrincipalPolicies, clusterArn string) []pair {
 	seen := make(map[pair]bool)
 	var out []pair
 
@@ -204,6 +228,9 @@ func extractAllowPairs(pp iamservice.PrincipalPolicies) []pair {
 			resources := toStringSlice(stmt["Resource"])
 			for _, action := range actions {
 				for _, resource := range resources {
+					if !clusterArnMatches(resource, clusterArn) {
+						continue
+					}
 					for _, concrete := range expandAction(action, resource) {
 						p := pair{action: concrete, resource: resource}
 						if seen[p] {
@@ -268,10 +295,10 @@ func sortedKeys(set map[string]bool) []string {
 
 // rebuildInlinePolicies rebuilds each inline policy's Statement list via
 // rebuildStatements, dropping any policy left with none.
-func rebuildInlinePolicies(policies []iamservice.InlinePolicy, allowed map[string]bool) []iamservice.InlinePolicy {
+func rebuildInlinePolicies(policies []iamservice.InlinePolicy, allowed map[string]bool, clusterArn string) []iamservice.InlinePolicy {
 	var out []iamservice.InlinePolicy
 	for _, policy := range policies {
-		statements := rebuildStatements(statementsOf(policy.PolicyDocument), allowed)
+		statements := rebuildStatements(statementsOf(policy.PolicyDocument), allowed, clusterArn)
 		if len(statements) == 0 {
 			continue
 		}
@@ -286,10 +313,10 @@ func rebuildInlinePolicies(policies []iamservice.InlinePolicy, allowed map[strin
 // rebuildAttachedPolicies is rebuildInlinePolicies' AttachedPolicy
 // counterpart (same rebuild, different struct shape to preserve — PolicyArn
 // and Description alongside PolicyName).
-func rebuildAttachedPolicies(policies []iamservice.AttachedPolicy, allowed map[string]bool) []iamservice.AttachedPolicy {
+func rebuildAttachedPolicies(policies []iamservice.AttachedPolicy, allowed map[string]bool, clusterArn string) []iamservice.AttachedPolicy {
 	var out []iamservice.AttachedPolicy
 	for _, policy := range policies {
-		statements := rebuildStatements(statementsOf(policy.PolicyDocument), allowed)
+		statements := rebuildStatements(statementsOf(policy.PolicyDocument), allowed, clusterArn)
 		if len(statements) == 0 {
 			continue
 		}
@@ -321,21 +348,26 @@ func withStatements(doc map[string]any, statements []any) map[string]any {
 //
 //   - A statement whose Effect canonicalizes to "" (unrecognized) is
 //     dropped: translateStatements would produce nothing from it either.
+//   - A resource that does not satisfy clusterArnMatches(resource,
+//     clusterArn) is skipped entirely — for BOTH Allow and Deny — so the
+//     rebuilt output only ever names in-cluster resources (scope-before-
+//     verify, see FilterEffective's doc comment).
 //   - Both Allow and Deny statements are split into up to len(resources)
-//     replacement statements, one per original resource, each keeping only
-//     that resource's surviving concrete kafka-cluster actions, with
-//     "Effect" preserved from the original. A resource with zero surviving
-//     actions contributes no replacement statement — including when the
-//     resource's actions were never kafka-cluster actions to begin with
-//     (e.g. a Deny naming only "s3:*"), which is what keeps a non-kafka-
-//     grant statement from single-handedly keeping a principal alive.
+//     replacement statements, one per original IN-CLUSTER resource, each
+//     keeping only that resource's surviving concrete kafka-cluster
+//     actions, with "Effect" preserved from the original. A resource with
+//     zero surviving actions contributes no replacement statement —
+//     including when the resource's actions were never kafka-cluster
+//     actions to begin with (e.g. a Deny naming only "s3:*"), which is what
+//     keeps a non-kafka-grant statement from single-handedly keeping a
+//     principal alive.
 //   - Allow's surviving actions are those check reported effectively
 //     allowed (survivingActions). Deny's surviving actions are every
 //     concrete kafka-cluster action the statement denotes at all
 //     (expandDistinctActions) — Deny is never simulated or filtered (see
 //     FilterEffective's doc comment for why), so nothing here consults
 //     allowed for it.
-func rebuildStatements(statements []map[string]any, allowed map[string]bool) []any {
+func rebuildStatements(statements []map[string]any, allowed map[string]bool, clusterArn string) []any {
 	var out []any
 	for _, stmt := range statements {
 		effect := stmt["Effect"]
@@ -347,6 +379,9 @@ func rebuildStatements(statements []map[string]any, allowed map[string]bool) []a
 		actions := toStringSlice(stmt["Action"])
 		resources := toStringSlice(stmt["Resource"])
 		for _, resource := range resources {
+			if !clusterArnMatches(resource, clusterArn) {
+				continue
+			}
 			var survivors []string
 			if permissionType == "Deny" {
 				survivors = expandDistinctActions(actions, resource)

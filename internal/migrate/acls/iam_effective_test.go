@@ -84,7 +84,7 @@ func TestFilterEffective_AllowedAndDeniedPair(t *testing.T) {
 		"kafka-cluster:WriteData|" + topicB: false,
 	}}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 
@@ -109,7 +109,7 @@ func TestFilterEffective_AllDenied_PrincipalDropped(t *testing.T) {
 		"kafka-cluster:ReadData|" + topicA: false,
 	}}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Empty(t, got)
 
@@ -130,7 +130,7 @@ func TestFilterEffective_MissingKeyDeniedByDefault(t *testing.T) {
 	}}
 	checker := &capturingChecker{allowed: map[string]bool{}} // no entries at all
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Empty(t, got)
 }
@@ -154,7 +154,7 @@ func TestFilterEffective_CallsCheckerWithActualPairs(t *testing.T) {
 		"kafka-cluster:WriteData|" + topicB: true,
 	}}
 
-	_, err := FilterEffective(context.Background(), checker.check, pps)
+	_, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 
 	require.Len(t, checker.calls, 1, "expected exactly one batched check call for the principal")
@@ -192,7 +192,7 @@ func TestFilterEffective_WildcardExpansion_AgreesWithTranslate(t *testing.T) {
 	allowed["kafka-cluster:DeleteTopic|"+topicA] = false // the one denied op
 	checker := &capturingChecker{allowed: allowed}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 
@@ -232,7 +232,7 @@ func TestFilterEffective_AllPass_UnchangedTranslation(t *testing.T) {
 		"kafka-cluster:WriteData|" + topicB: true,
 	}}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 
 	wantUnfiltered := TranslatePrincipalPolicies(effCluster, pps)
@@ -261,7 +261,7 @@ func TestFilterEffective_DenyStatementPassesThroughUnfiltered(t *testing.T) {
 		"kafka-cluster:ReadData|" + topicA: true,
 	}}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 
 	// The Deny pair must never have been asked about.
@@ -301,7 +301,7 @@ func TestFilterEffective_MultiplePrincipals_OneCallEach(t *testing.T) {
 		"kafka-cluster:WriteData|" + topicB: true,
 	}}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Len(t, got, 2)
 	require.Len(t, checker.calls, 2)
@@ -333,7 +333,7 @@ func TestFilterEffective_AttachedPolicy(t *testing.T) {
 		"kafka-cluster:ReadData|" + topicA: true,
 	}}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Len(t, got[0].AttachedPolicies, 1)
@@ -355,7 +355,7 @@ func TestFilterEffective_CheckerError(t *testing.T) {
 	}}
 	checker := &capturingChecker{err: errors.New("simulate boom")}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.Error(t, err)
 	require.Nil(t, got)
 	require.Contains(t, err.Error(), principalA)
@@ -380,7 +380,7 @@ func TestFilterEffective_DenyOnlyPrincipal_Survives(t *testing.T) {
 	}}
 	checker := &capturingChecker{}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Len(t, got, 1, "a Deny-only principal must survive filtering")
 	require.Empty(t, checker.calls, "no Allow pairs exist, so the checker must never be called")
@@ -404,7 +404,7 @@ func TestFilterEffective_DenyOnlyPrincipal_WildcardSurvives(t *testing.T) {
 	}}
 	checker := &capturingChecker{}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	require.Empty(t, checker.calls)
@@ -437,7 +437,7 @@ func TestFilterEffective_DenyOnlyNonKafkaAction_StillDropped(t *testing.T) {
 	}}
 	checker := &capturingChecker{}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Empty(t, got)
 	require.Empty(t, checker.calls)
@@ -458,8 +458,181 @@ func TestFilterEffective_NoKafkaClusterGrants_PrincipalDropped(t *testing.T) {
 	}}
 	checker := &capturingChecker{}
 
-	got, err := FilterEffective(context.Background(), checker.check, pps)
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
 	require.NoError(t, err)
 	require.Empty(t, got)
 	require.Empty(t, checker.calls)
+}
+
+// offClusterTopic denotes a resource on a DIFFERENT MSK cluster (different
+// name+uuid) than effCluster — clusterArnMatches(offClusterTopic, effCluster)
+// is false, so grants naming it must never reach the checker nor survive.
+const offClusterTopic = "arn:aws:kafka:us-east-1:111122223333:topic/othermsk/xyz-9/topic-c"
+
+// TestFilterEffective_OffClusterAllow_NeverSentToCheckerOrOutput is the
+// scope-before-verify change: an Allow grant on a resource that belongs to a
+// DIFFERENT cluster must never be included in the checker call (only the
+// in-cluster resource set gets simulated) and must never survive into the
+// output, regardless of what the checker would have said about it.
+func TestFilterEffective_OffClusterAllow_NeverSentToCheckerOrOutput(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName: "p",
+			PolicyDocument: inlineDoc(
+				stmt("Allow", "kafka-cluster:ReadData", topicA),
+				stmt("Allow", "kafka-cluster:ReadData", offClusterTopic),
+			),
+		}},
+	}}
+	// The checker would allow BOTH if asked — proving any survival of
+	// offClusterTopic is due to it having been sent to check, not denied.
+	checker := &capturingChecker{allowed: map[string]bool{
+		"kafka-cluster:ReadData|" + topicA:          true,
+		"kafka-cluster:ReadData|" + offClusterTopic: true,
+	}}
+
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
+	require.NoError(t, err)
+
+	require.Len(t, checker.calls, 1)
+	require.Equal(t, []string{topicA}, checker.calls[0].resources, "only the in-cluster resource must be simulated")
+
+	acls := TranslatePrincipalPolicies(effCluster, got)
+	require.Equal(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+	}, acls, "the off-cluster grant must not appear in the output")
+}
+
+// TestFilterEffective_PrincipalOnlyOffCluster_DroppedNoCheckerCall is the
+// glennstest shape from the brief: a principal whose ONLY kafka-cluster
+// grants are on a different cluster must be dropped entirely, and the
+// checker must never be called for it at all (not even with an empty
+// resource list) — irrelevant roles must never hit the API.
+func TestFilterEffective_PrincipalOnlyOffCluster_DroppedNoCheckerCall(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName:     "p",
+			PolicyDocument: inlineDoc(stmt("Allow", "kafka-cluster:*", offClusterTopic)),
+		}},
+	}}
+	checker := &capturingChecker{}
+
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
+	require.NoError(t, err)
+	require.Empty(t, got, "a principal with no in-cluster kafka-cluster grants must be dropped")
+	require.Empty(t, checker.calls, "an irrelevant (off-cluster-only) principal must never reach the checker")
+}
+
+// TestFilterEffective_BareWildcardResource_TreatedAsInCluster documents that
+// clusterArnMatches("*", clusterArn) == true (brief "Why this is equivalent"
+// section): a bare Resource: "*" Allow grant is in-cluster, is passed to the
+// checker as "*", and survives when the checker allows it — even alongside a
+// specific in-cluster ARN in the SAME principal, which is exactly the shape
+// that requires split A downstream in the real checker.
+func TestFilterEffective_BareWildcardResource_TreatedAsInCluster(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName: "p",
+			PolicyDocument: inlineDoc(
+				stmt("Allow", "kafka-cluster:ReadData", "*"),
+				stmt("Allow", "kafka-cluster:WriteData", topicA),
+			),
+		}},
+	}}
+	checker := &capturingChecker{allowed: map[string]bool{
+		"kafka-cluster:ReadData|*":          true,
+		"kafka-cluster:WriteData|" + topicA: true,
+	}}
+
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
+	require.NoError(t, err)
+
+	require.Len(t, checker.calls, 1)
+	require.Contains(t, checker.calls[0].resources, "*", "the bare wildcard is in-cluster and must be simulated")
+	require.Contains(t, checker.calls[0].resources, topicA)
+
+	acls := TranslatePrincipalPolicies(effCluster, got)
+	require.ElementsMatch(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "*", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Write", PermissionType: "Allow"},
+	}, acls)
+}
+
+// TestFilterEffective_OffClusterDeny_DroppedInClusterDenyOnlySurvives covers
+// both halves of B's Deny-scoping requirement: an off-cluster Deny must be
+// dropped from the output (never carried over just because it's a Deny), and
+// a principal whose only IN-cluster statement is a Deny (no Allow anywhere)
+// must still survive — the existing Deny-preservation invariant, now
+// exercised alongside cluster scoping.
+func TestFilterEffective_OffClusterDeny_DroppedInClusterDenyOnlySurvives(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName: "p",
+			PolicyDocument: inlineDoc(
+				stmt("Deny", "kafka-cluster:WriteData", offClusterTopic),
+				stmt("Deny", "kafka-cluster:ReadData", topicA),
+			),
+		}},
+	}}
+	checker := &capturingChecker{}
+
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
+	require.NoError(t, err)
+	require.Len(t, got, 1, "the in-cluster Deny-only principal must survive")
+	require.Empty(t, checker.calls, "no Allow pairs exist anywhere, so the checker must never be called")
+
+	acls := TranslatePrincipalPolicies(effCluster, got)
+	require.Equal(t, []types.Acls{
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Deny"},
+	}, acls, "the off-cluster Deny must not appear in the output; the in-cluster Deny must")
+}
+
+// TestFilterEffective_MixedInOutOfCluster_EquivalentToScopingAfterTranslate
+// is the brief's equivalence spot-check: for a principal with BOTH in- and
+// out-of-cluster resources, scoping before simulation (what FilterEffective
+// now does) must produce the identical surviving ACL set as scoping AFTER
+// translate would (in-cluster ∩ allowed for Allow, in-cluster for Deny) —
+// proving the reorder changes nothing observable except which resources get
+// simulated.
+func TestFilterEffective_MixedInOutOfCluster_EquivalentToScopingAfterTranslate(t *testing.T) {
+	pps := []iamservice.PrincipalPolicies{{
+		PrincipalArn: principalA,
+		InlinePolicies: []iamservice.InlinePolicy{{
+			PolicyName: "p",
+			PolicyDocument: inlineDoc(
+				stmt("Allow", "kafka-cluster:ReadData", topicA),
+				stmt("Allow", "kafka-cluster:WriteData", offClusterTopic),
+				stmt("Deny", "kafka-cluster:AlterTopicDynamicConfiguration", topicB),
+				stmt("Deny", "kafka-cluster:AlterTopicDynamicConfiguration", offClusterTopic),
+			),
+		}},
+	}}
+	// The checker would allow the off-cluster Allow pair too, if it were ever
+	// asked — proving its absence from the output is due to cluster scoping,
+	// not a checker denial.
+	checker := &capturingChecker{allowed: map[string]bool{
+		"kafka-cluster:ReadData|" + topicA:           true,
+		"kafka-cluster:WriteData|" + offClusterTopic: true,
+	}}
+
+	got, err := FilterEffective(context.Background(), checker.check, effCluster, pps)
+	require.NoError(t, err)
+
+	// Scoping-after equivalent: translate the UNFILTERED input, then keep
+	// only what's both in-cluster AND (for Allow) checker-allowed.
+	wantACLs := []types.Acls{
+		{ResourceType: "Topic", ResourceName: "topic-a", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+		{ResourceType: "Topic", ResourceName: "topic-b", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "AlterConfigs", PermissionType: "Deny"},
+	}
+
+	acls := TranslatePrincipalPolicies(effCluster, got)
+	require.ElementsMatch(t, wantACLs, acls)
+
+	// The checker itself must never have seen the off-cluster resource.
+	require.Len(t, checker.calls, 1)
+	require.NotContains(t, checker.calls[0].resources, offClusterTopic)
 }
