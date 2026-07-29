@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,9 @@ import (
 	"testing"
 
 	"github.com/IBM/sarama"
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsiam "github.com/aws/aws-sdk-go-v2/service/iam"
+	awsiamtypes "github.com/aws/aws-sdk-go-v2/service/iam/types"
 	"github.com/confluentinc/kcp/internal/manifest"
 	migrate "github.com/confluentinc/kcp/internal/migrate"
 	macls "github.com/confluentinc/kcp/internal/migrate/acls"
@@ -1105,4 +1109,304 @@ func TestSplitResourceArnsForSimulation(t *testing.T) {
 		got := splitResourceArnsForSimulation([]string{"*", wildcardTopicArn})
 		require.Equal(t, [][]string{{"*"}, {wildcardTopicArn}}, got)
 	})
+}
+
+// fakePrincipalPolicySimulator is a hermetic principalPolicySimulator double
+// for simulateEffectiveAccess. It fails the enclosing test outright — via
+// t.Errorf, so the failure surfaces at the right call site — if any single
+// call's ResourceArns mixes the bare "*" wildcard with a specific ARN, which
+// is exactly the AWS 400 InvalidInput splitResourceArnsForSimulation exists
+// to avoid ("you cannot include both * and individual resources in the
+// resource list"). It also returns an error mimicking that AWS error in that
+// case, so a test that doesn't expect the mix still sees a clear failure
+// mode rather than a nil-pointer panic on a canned response it never set up.
+//
+// Otherwise it serves canned, per-bucket paginated responses: pages is keyed
+// by the bucket's ResourceArns (order-sensitive, joined with ","), and each
+// call against a given bucket pops the next entry off that bucket's queue —
+// this lets a test give one bucket two pages (to exercise pagination) while
+// another bucket gets only one.
+type fakePrincipalPolicySimulator struct {
+	t *testing.T
+
+	// pages maps a bucket key (strings.Join(ResourceArns, ",")) to the
+	// ordered list of responses to return for successive calls against that
+	// bucket.
+	pages map[string][]*awsiam.SimulatePrincipalPolicyOutput
+
+	// calls records every request this fake has seen, in call order, so
+	// tests can assert on what simulateEffectiveAccess actually sent (e.g.
+	// boundary pass-through, Marker sequencing).
+	calls []*awsiam.SimulatePrincipalPolicyInput
+
+	// alwaysTruncated, when set, makes every call return IsTruncated=true
+	// with a fixed Marker regardless of pages — used only by the maxPages
+	// guard test, which must never terminate the loop on its own.
+	alwaysTruncated bool
+}
+
+func fakeSimBucketKey(arns []string) string { return strings.Join(arns, ",") }
+
+func (f *fakePrincipalPolicySimulator) SimulatePrincipalPolicy(ctx context.Context, in *awsiam.SimulatePrincipalPolicyInput, optFns ...func(*awsiam.Options)) (*awsiam.SimulatePrincipalPolicyOutput, error) {
+	// simulateEffectiveAccess reuses the same *SimulatePrincipalPolicyInput
+	// pointer across pages of one bucket, mutating Marker in place before
+	// the next call. Record a snapshot copy, not the live pointer, so each
+	// entry in f.calls reflects what THAT call actually saw rather than
+	// aliasing a later mutation.
+	snapshot := *in
+	f.calls = append(f.calls, &snapshot)
+
+	hasWildcard, hasSpecific := false, false
+	for _, r := range in.ResourceArns {
+		if r == "*" {
+			hasWildcard = true
+		} else {
+			hasSpecific = true
+		}
+	}
+	if hasWildcard && hasSpecific {
+		f.t.Errorf("SimulatePrincipalPolicy called with ResourceArns mixing bare \"*\" and a specific ARN: %v", in.ResourceArns)
+		return nil, fmt.Errorf("InvalidInput: cannot include both * and individual resources in the resource list")
+	}
+
+	if f.alwaysTruncated {
+		return &awsiam.SimulatePrincipalPolicyOutput{
+			IsTruncated: true,
+			Marker:      aws.String("keeps-truncating"),
+		}, nil
+	}
+
+	key := fakeSimBucketKey(in.ResourceArns)
+	queue := f.pages[key]
+	if len(queue) == 0 {
+		f.t.Fatalf("fakePrincipalPolicySimulator: no canned page left for bucket %v", in.ResourceArns)
+	}
+	resp := queue[0]
+	f.pages[key] = queue[1:]
+	return resp, nil
+}
+
+func evalResult(action, resource string, allowed bool) awsiamtypes.EvaluationResult {
+	decision := awsiamtypes.PolicyEvaluationDecisionTypeImplicitDeny
+	if allowed {
+		decision = awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+	}
+	return awsiamtypes.EvaluationResult{
+		EvalActionName:   aws.String(action),
+		EvalResourceName: aws.String(resource),
+		EvalDecision:     decision,
+	}
+}
+
+func evalResultWithResourceSpecifics(action string, resources map[string]bool) awsiamtypes.EvaluationResult {
+	rsrs := make([]awsiamtypes.ResourceSpecificResult, 0, len(resources))
+	for resource, allowed := range resources {
+		decision := awsiamtypes.PolicyEvaluationDecisionTypeImplicitDeny
+		if allowed {
+			decision = awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+		}
+		rsrs = append(rsrs, awsiamtypes.ResourceSpecificResult{
+			EvalResourceName:     aws.String(resource),
+			EvalResourceDecision: decision,
+		})
+	}
+	return awsiamtypes.EvaluationResult{
+		EvalActionName:          aws.String(action),
+		EvalResourceName:        aws.String("*"),
+		ResourceSpecificResults: rsrs,
+	}
+}
+
+// TestSimulateEffectiveAccess_SplitsWildcardAndSpecificsIntoSeparateBuckets
+// gives simulateEffectiveAccess a resource set that contains BOTH the bare
+// "*" wildcard and a specific ARN, and asserts it completes without ever
+// tripping the fake's mixed-ResourceArns check — proving
+// splitResourceArnsForSimulation's buckets are actually simulated in
+// separate calls, not just partitioned and then recombined.
+func TestSimulateEffectiveAccess_SplitsWildcardAndSpecificsIntoSeparateBuckets(t *testing.T) {
+	const specificA = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-a"
+
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{"*"}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{evalResult("kafka-cluster:Connect", "*", true)}},
+			},
+			fakeSimBucketKey([]string{specificA}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{evalResult("kafka-cluster:ReadData", specificA, false)}},
+			},
+		},
+	}
+
+	got, err := simulateEffectiveAccess(context.Background(), sim, "arn:aws:iam::111122223333:role/r", []string{"kafka-cluster:Connect", "kafka-cluster:ReadData"}, []string{"*", specificA}, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		"kafka-cluster:Connect|*":             true,
+		"kafka-cluster:ReadData|" + specificA: false,
+	}, got)
+}
+
+// TestSimulateEffectiveAccess_ResourceSpecificResultsParse asserts a result
+// with per-resource ResourceSpecificResults maps each to the right
+// action|resource key with the right bool, per macls.EffectiveAccessChecker's
+// contract.
+func TestSimulateEffectiveAccess_ResourceSpecificResultsParse(t *testing.T) {
+	const (
+		topicA = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-a"
+		topicB = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-b"
+	)
+
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{topicA, topicB}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{
+					evalResultWithResourceSpecifics("kafka-cluster:ReadData", map[string]bool{
+						topicA: true,
+						topicB: false,
+					}),
+				}},
+			},
+		},
+	}
+
+	got, err := simulateEffectiveAccess(context.Background(), sim, "arn:aws:iam::111122223333:role/r", []string{"kafka-cluster:ReadData"}, []string{topicA, topicB}, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		"kafka-cluster:ReadData|" + topicA: true,
+		"kafka-cluster:ReadData|" + topicB: false,
+	}, got)
+}
+
+// TestSimulateEffectiveAccess_TopLevelFallbackWhenResourceSpecificResultsEmpty
+// asserts a result with empty ResourceSpecificResults falls back to the
+// top-level EvalResourceName/EvalDecision — the case AWS uses for a "*" or
+// single-resource simulation.
+func TestSimulateEffectiveAccess_TopLevelFallbackWhenResourceSpecificResultsEmpty(t *testing.T) {
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{"*"}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{evalResult("kafka-cluster:Connect", "*", true)}},
+			},
+		},
+	}
+
+	got, err := simulateEffectiveAccess(context.Background(), sim, "arn:aws:iam::111122223333:role/r", []string{"kafka-cluster:Connect"}, []string{"*"}, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"kafka-cluster:Connect|*": true}, got)
+}
+
+// TestSimulateEffectiveAccess_PerBucketMergeIsLossless asserts that when
+// resources split into the "*" bucket and a specifics bucket, BOTH buckets'
+// decisions land in the returned map with no collision or overwrite between
+// them.
+func TestSimulateEffectiveAccess_PerBucketMergeIsLossless(t *testing.T) {
+	const specificA = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-a"
+
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{"*"}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{
+					evalResult("kafka-cluster:Connect", "*", true),
+				}},
+			},
+			fakeSimBucketKey([]string{specificA}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{
+					evalResult("kafka-cluster:ReadData", specificA, true),
+					evalResult("kafka-cluster:WriteData", specificA, false),
+				}},
+			},
+		},
+	}
+
+	got, err := simulateEffectiveAccess(context.Background(), sim, "arn:aws:iam::111122223333:role/r",
+		[]string{"kafka-cluster:Connect", "kafka-cluster:ReadData", "kafka-cluster:WriteData"},
+		[]string{"*", specificA}, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		"kafka-cluster:Connect|*":              true,
+		"kafka-cluster:ReadData|" + specificA:  true,
+		"kafka-cluster:WriteData|" + specificA: false,
+	}, got)
+	require.Len(t, got, 3, "no key should be dropped or overwritten across the bucket merge")
+}
+
+// TestSimulateEffectiveAccess_PaginationWithinBucket_MarkerCarriesForwardNotAcrossBuckets
+// gives the "*" bucket two pages (IsTruncated+Marker then a final page) and
+// the specifics bucket one page, then asserts: the second page's request for
+// the "*" bucket carries the Marker the first page returned; results from
+// both pages merge; and the specifics bucket's FIRST call starts with a nil
+// Marker — i.e. the "*" bucket's Marker never bleeds into the next bucket's
+// fresh SimulatePrincipalPolicyInput.
+func TestSimulateEffectiveAccess_PaginationWithinBucket_MarkerCarriesForwardNotAcrossBuckets(t *testing.T) {
+	const specificA = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-a"
+
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{"*"}): {
+				{
+					EvaluationResults: []awsiamtypes.EvaluationResult{evalResult("kafka-cluster:Connect", "*", true)},
+					IsTruncated:       true,
+					Marker:            aws.String("page-2-marker"),
+				},
+				{
+					EvaluationResults: []awsiamtypes.EvaluationResult{evalResult("kafka-cluster:AlterCluster", "*", false)},
+				},
+			},
+			fakeSimBucketKey([]string{specificA}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{evalResult("kafka-cluster:ReadData", specificA, true)}},
+			},
+		},
+	}
+
+	got, err := simulateEffectiveAccess(context.Background(), sim, "arn:aws:iam::111122223333:role/r",
+		[]string{"kafka-cluster:Connect", "kafka-cluster:AlterCluster", "kafka-cluster:ReadData"},
+		[]string{"*", specificA}, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{
+		"kafka-cluster:Connect|*":             true,
+		"kafka-cluster:AlterCluster|*":        false,
+		"kafka-cluster:ReadData|" + specificA: true,
+	}, got)
+
+	require.Len(t, sim.calls, 3, "wildcard bucket page 1 + page 2, then the specifics bucket's single call")
+	require.Nil(t, sim.calls[0].Marker, "first call of the \"*\" bucket must start with a nil Marker")
+	require.Equal(t, "page-2-marker", aws.ToString(sim.calls[1].Marker), "second page of the \"*\" bucket must carry the Marker its first page returned")
+	require.Nil(t, sim.calls[2].Marker, "the specifics bucket's first call must start with a nil Marker, not the \"*\" bucket's leftover Marker")
+}
+
+// TestSimulateEffectiveAccess_BoundaryPolicyDocsPassThrough asserts that when
+// boundaryPolicyDocs is non-empty, the fake sees it verbatim on every call's
+// PermissionsBoundaryPolicyInputList.
+func TestSimulateEffectiveAccess_BoundaryPolicyDocsPassThrough(t *testing.T) {
+	boundaryDoc := `{"Version":"2012-10-17","Statement":[]}`
+
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{"*"}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{evalResult("kafka-cluster:Connect", "*", true)}},
+			},
+		},
+	}
+
+	_, err := simulateEffectiveAccess(context.Background(), sim, "arn:aws:iam::111122223333:role/r", []string{"kafka-cluster:Connect"}, []string{"*"}, []string{boundaryDoc})
+	require.NoError(t, err)
+	require.Len(t, sim.calls, 1)
+	require.Equal(t, []string{boundaryDoc}, sim.calls[0].PermissionsBoundaryPolicyInputList)
+}
+
+// TestSimulateEffectiveAccess_MaxPagesGuard_ReturnsErrorInsteadOfLoopingForever
+// gives a fake that ALWAYS returns IsTruncated=true (a misbehaving server
+// that never actually terminates pagination) and asserts simulateEffectiveAccess
+// errors out — bounded by the maxPages guard — instead of looping forever.
+func TestSimulateEffectiveAccess_MaxPagesGuard_ReturnsErrorInsteadOfLoopingForever(t *testing.T) {
+	sim := &fakePrincipalPolicySimulator{t: t, alwaysTruncated: true}
+
+	_, err := simulateEffectiveAccess(context.Background(), sim, "arn:aws:iam::111122223333:role/r", []string{"kafka-cluster:Connect"}, []string{"*"}, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "pagination exceeded")
 }
