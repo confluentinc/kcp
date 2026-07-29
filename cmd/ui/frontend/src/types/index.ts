@@ -57,7 +57,9 @@ export type {
   KafkaAdminInfo,
   Topic,
   TopicsInfo,
-  SelfManagedConnector,
+  ConnectCluster,
+  Connector,
+  ConnectMetrics,
   MSKConfiguration,
   RegionData,
 } from './aws/msk'

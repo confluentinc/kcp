@@ -87,7 +87,7 @@ func TestEndToEnd_ConsumerReadsRedactedConnectorsAfterRoundTrip(t *testing.T) {
 	}
 	cluster, err := st.GetClusterByArn(testClusterArn)
 	require.NoError(t, err)
-	cluster.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "sm-c", Config: smCfg}})
+	cluster.KafkaAdminClientInformation.SetConnectCluster("http://connect:8083", []types.Connector{{Name: "sm-c", Config: smCfg}})
 
 	stateFile := filepath.Join(t.TempDir(), "kcp-state.json")
 	require.NoError(t, st.PersistStateFile(stateFile))
@@ -102,8 +102,8 @@ func TestEndToEnd_ConsumerReadsRedactedConnectorsAfterRoundTrip(t *testing.T) {
 	require.Len(t, rc.AWSClientInformation.Connectors, 1)
 	assert.Equal(t, redact.Placeholder, rc.AWSClientInformation.Connectors[0].ConnectorConfiguration["connection.password"])
 
-	// Self-managed connector access path (cluster.KafkaAdminClientInformation.SelfManagedConnectors).
-	require.NotNil(t, rc.KafkaAdminClientInformation.SelfManagedConnectors)
-	require.Len(t, rc.KafkaAdminClientInformation.SelfManagedConnectors.Connectors, 1)
-	assert.Equal(t, redact.Placeholder, rc.KafkaAdminClientInformation.SelfManagedConnectors.Connectors[0].Config["database.password"])
+	// Self-managed connector access path (cluster.KafkaAdminClientInformation.ConnectClusters).
+	require.Len(t, rc.KafkaAdminClientInformation.ConnectClusters, 1)
+	require.Len(t, rc.KafkaAdminClientInformation.ConnectClusters[0].Connectors, 1)
+	assert.Equal(t, redact.Placeholder, rc.KafkaAdminClientInformation.ConnectClusters[0].Connectors[0].Config["database.password"])
 }

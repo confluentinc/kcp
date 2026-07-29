@@ -5,13 +5,30 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 )
+
+// ErrJolokiaMBeanNotFound is a sentinel error indicating the requested MBean
+// or instance does not exist on the target JVM (HTTP 404, Jolokia status 404,
+// or an InstanceNotFoundException from the JMX layer). Callers can use
+// errors.Is to distinguish this expected/normal condition (e.g. a sink-task
+// MBean pattern on a source-only Connect cluster) from real failures such as
+// connection timeouts or auth errors.
+var ErrJolokiaMBeanNotFound = errors.New("jolokia: MBean/instance not found")
+
+// isMBeanNotFoundError reports whether a Jolokia status code and error text
+// indicate the target MBean/instance is simply absent, rather than a real
+// failure (timeout, auth, connection error, etc).
+func isMBeanNotFoundError(status int, errText string) bool {
+	return status == http.StatusNotFound || strings.Contains(errText, "InstanceNotFoundException")
+}
 
 // JolokiaClient is an HTTP client for querying Jolokia REST endpoints
 type JolokiaClient struct {
@@ -120,6 +137,9 @@ func (c *JolokiaClient) ReadMBean(ctx context.Context, mbeanPath string) (map[st
 
 	// Handle HTTP-level errors (401, 404, 500, etc.)
 	if resp.StatusCode != http.StatusOK {
+		if isMBeanNotFoundError(resp.StatusCode, string(body)) {
+			return nil, fmt.Errorf("%w: jolokia error: status %d: %s", ErrJolokiaMBeanNotFound, resp.StatusCode, string(body))
+		}
 		return nil, fmt.Errorf("HTTP error: status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -131,6 +151,9 @@ func (c *JolokiaClient) ReadMBean(ctx context.Context, mbeanPath string) (map[st
 
 	// Check Jolokia status (200 = success, other = error)
 	if jolokiaResp.Status != 200 {
+		if isMBeanNotFoundError(jolokiaResp.Status, jolokiaResp.Error) {
+			return nil, fmt.Errorf("%w: jolokia error: status %d: %s", ErrJolokiaMBeanNotFound, jolokiaResp.Status, jolokiaResp.Error)
+		}
 		return nil, fmt.Errorf("jolokia error: status %d: %s", jolokiaResp.Status, jolokiaResp.Error)
 	}
 
@@ -164,6 +187,9 @@ func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern str
 	}
 
 	if resp.StatusCode != http.StatusOK {
+		if isMBeanNotFoundError(resp.StatusCode, string(body)) {
+			return 0, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, string(body))
+		}
 		return 0, fmt.Errorf("HTTP error: status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -178,6 +204,9 @@ func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern str
 	}
 
 	if raw.Status != 200 {
+		if isMBeanNotFoundError(raw.Status, raw.Error) {
+			return 0, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, raw.Error)
+		}
 		return 0, fmt.Errorf("jolokia error: status %d: %s", raw.Status, raw.Error)
 	}
 
@@ -196,4 +225,86 @@ func (c *JolokiaClient) ReadMBeanAggregate(ctx context.Context, mbeanPattern str
 	}
 
 	return total, nil
+}
+
+// ReadMBeanAggregateByLabel queries a wildcard MBean pattern and sums a numeric
+// attribute grouped by the value of an ObjectName property (labelKey, e.g.
+// "connector"). Unlike ReadMBeanAggregate (which collapses everything into one
+// total), this returns one summed value per distinct labelKey value, so
+// per-connector/per-task metrics can be attributed to their connector. MBeans
+// whose ObjectName lacks labelKey are skipped.
+func (c *JolokiaClient) ReadMBeanAggregateByLabel(ctx context.Context, mbeanPattern, attribute, labelKey string) (map[string]float64, error) {
+	url := fmt.Sprintf("%s/read/%s/%s", c.baseURL, mbeanPattern, attribute)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	if c.username != "" || c.password != "" {
+		req.SetBasicAuth(c.username, c.password)
+	}
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to make request: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		if isMBeanNotFoundError(resp.StatusCode, string(body)) {
+			return nil, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, string(body))
+		}
+		return nil, fmt.Errorf("HTTP error: status %d: %s", resp.StatusCode, string(body))
+	}
+	var raw struct {
+		Status int            `json:"status"`
+		Value  map[string]any `json:"value"`
+		Error  string         `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return nil, fmt.Errorf("failed to parse JSON response: %w", err)
+	}
+	if raw.Status != 200 {
+		if isMBeanNotFoundError(raw.Status, raw.Error) {
+			return nil, fmt.Errorf("%w (pattern %s): %s", ErrJolokiaMBeanNotFound, mbeanPattern, raw.Error)
+		}
+		return nil, fmt.Errorf("jolokia error: status %d: %s", raw.Status, raw.Error)
+	}
+	out := map[string]float64{}
+	for objectName, val := range raw.Value {
+		label := mbeanObjectNameProperty(objectName, labelKey)
+		if label == "" {
+			continue
+		}
+		switch v := val.(type) {
+		case float64:
+			out[label] += v
+		case map[string]any:
+			if attrVal, ok := v[attribute]; ok {
+				if f, ok := attrVal.(float64); ok {
+					out[label] += f
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
+// mbeanObjectNameProperty extracts the value of a key=value property from a JMX
+// ObjectName string, e.g. property "connector" from
+// "kafka.connect:type=source-task-metrics,connector=my-conn,task=0" → "my-conn".
+// Returns "" if the property is absent.
+func mbeanObjectNameProperty(objectName, key string) string {
+	idx := strings.Index(objectName, ":")
+	if idx < 0 {
+		return ""
+	}
+	for _, prop := range strings.Split(objectName[idx+1:], ",") {
+		kv := strings.SplitN(prop, "=", 2)
+		if len(kv) == 2 && kv[0] == key {
+			return kv[1]
+		}
+	}
+	return ""
 }

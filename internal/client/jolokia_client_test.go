@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -100,6 +101,30 @@ func TestJolokiaClient_ReadMBean_ServerError(t *testing.T) {
 	assert.Contains(t, err.Error(), "jolokia error")
 	assert.Contains(t, err.Error(), "404")
 	assert.Contains(t, err.Error(), "javax.management.InstanceNotFoundException")
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound), "404/InstanceNotFoundException should wrap ErrJolokiaMBeanNotFound")
+}
+
+// TestJolokiaClient_ReadMBean_NotFoundWrapsSentinel is a regression test for the
+// noisy-warning fix: a 404/InstanceNotFoundException response (e.g. reading a
+// sink-task MBean pattern on a source-only Connect cluster) must be
+// distinguishable via errors.Is(err, ErrJolokiaMBeanNotFound) from other
+// failures like timeouts, so callers can log it at Debug instead of Warn.
+func TestJolokiaClient_ReadMBean_NotFoundWrapsSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]any{
+			"status": 404,
+			"error":  "javax.management.InstanceNotFoundException: kafka.connect:type=sink-task-metrics,connector=*,task=*",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	client := NewJolokiaClient(server.URL)
+	_, err := client.ReadMBean(context.Background(), "kafka.connect:type=sink-task-metrics,connector=*,task=*")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound))
 }
 
 func TestJolokiaClient_ReadMBean_ConnectionRefused(t *testing.T) {
@@ -301,4 +326,112 @@ func TestJolokiaClient_ReadMBeanAggregate_ServerError(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "InstanceNotFoundException")
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound), "404/InstanceNotFoundException should wrap ErrJolokiaMBeanNotFound")
+}
+
+// TestJolokiaClient_ReadMBeanAggregate_ConnectionRefusedNotSentinel is a
+// regression guard: real failures (connection refused, timeout, auth) must
+// NOT be classified as ErrJolokiaMBeanNotFound, since collectRawSample logs
+// those at Warn (not Debug) precisely because they indicate a real problem
+// rather than an expected-absent metric.
+func TestJolokiaClient_ReadMBeanAggregate_ConnectionRefusedNotSentinel(t *testing.T) {
+	client := NewJolokiaClient("http://localhost:1")
+	_, err := client.ReadMBeanAggregate(context.Background(), "test:*", "Value")
+
+	require.Error(t, err)
+	assert.False(t, errors.Is(err, ErrJolokiaMBeanNotFound), "connection errors must not be classified as MBean-not-found")
+}
+
+func TestJolokiaClient_ReadMBeanAggregateByLabel_NotFoundWrapsSentinel(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 404,
+			"error":  "javax.management.InstanceNotFoundException: kafka.connect:type=sink-task-metrics,connector=*,task=*",
+		})
+	}))
+	defer server.Close()
+
+	client := NewJolokiaClient(server.URL)
+	_, err := client.ReadMBeanAggregateByLabel(context.Background(),
+		"kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-read-rate", "connector")
+
+	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrJolokiaMBeanNotFound), "404/InstanceNotFoundException should wrap ErrJolokiaMBeanNotFound")
+}
+
+func TestReadMBeanAggregateByLabel_GroupsByConnector(t *testing.T) {
+	body := `{"status":200,"value":{
+		"kafka.connect:type=source-task-metrics,connector=c1,task=0":{"source-record-write-rate":1.0},
+		"kafka.connect:type=source-task-metrics,connector=c1,task=1":{"source-record-write-rate":2.0},
+		"kafka.connect:type=source-task-metrics,connector=c2,task=0":{"source-record-write-rate":5.0}
+	}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	c := NewJolokiaClient(srv.URL)
+	got, err := c.ReadMBeanAggregateByLabel(context.Background(),
+		"kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate", "connector")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["c1"] != 3.0 || got["c2"] != 5.0 || len(got) != 2 {
+		t.Fatalf("group-by-connector wrong: %+v", got)
+	}
+}
+
+func TestReadMBeanAggregateByLabel_DirectValues(t *testing.T) {
+	// Jolokia wildcard response where values are bare numbers (not nested attribute maps)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 200,
+			"value": map[string]any{
+				"kafka.connect:type=source-task-metrics,connector=c1,task=0": 4.0,
+				"kafka.connect:type=source-task-metrics,connector=c1,task=1": 6.0,
+				"kafka.connect:type=source-task-metrics,connector=c2,task=0": 2.0,
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewJolokiaClient(server.URL)
+	got, err := client.ReadMBeanAggregateByLabel(context.Background(),
+		"kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate", "connector")
+
+	require.NoError(t, err)
+	assert.Equal(t, 10.0, got["c1"])
+	assert.Equal(t, 2.0, got["c2"])
+	assert.Equal(t, 2, len(got))
+}
+
+func TestReadMBeanAggregateByLabel_SkipsMissingLabel(t *testing.T) {
+	// Response with mixed MBeans: some with connector property, some without
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 200,
+			"value": map[string]any{
+				"kafka.connect:type=source-task-metrics,connector=c1,task=0": map[string]any{
+					"source-record-write-rate": 5.0,
+				},
+				"kafka.connect:type=connect-worker-metrics": map[string]any{
+					"source-record-write-rate": 9.0,
+				},
+				"kafka.connect:type=source-task-metrics,connector=c2,task=0": map[string]any{
+					"source-record-write-rate": 3.0,
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	client := NewJolokiaClient(server.URL)
+	got, err := client.ReadMBeanAggregateByLabel(context.Background(),
+		"kafka.connect:type=*", "source-record-write-rate", "connector")
+
+	require.NoError(t, err)
+	assert.Equal(t, 5.0, got["c1"])
+	assert.Equal(t, 3.0, got["c2"])
+	assert.Equal(t, 2, len(got))
+	// Verify no empty key (MBean without connector property should be skipped)
+	assert.NotContains(t, got, "")
 }

@@ -571,39 +571,44 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 		{
 			name: "old connectors preserved when new has empty connectors",
 			current: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{}, // empty slice
-				},
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors:     []Connector{}, // empty slice
+				}},
 			},
 			other: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{{Name: "old-connector"}},
-				},
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors:     []Connector{{Name: "old-connector"}},
+				}},
 			},
 			expected: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{{Name: "old-connector"}}, // old preserved
-				},
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors:     []Connector{{Name: "old-connector"}}, // old preserved
+				}},
 			},
 		},
 		{
 			// Regression test for the post-refactor shape. A fresh
 			// `KafkaAdminClientInformation` returned from ScanKafkaResources has
-			// SelfManagedConnectors == nil (not an empty slice). The merge must
+			// ConnectClusters == nil (not an empty slice). The merge must
 			// preserve connectors that already exist in state. Locks in R6.
 			name: "old connectors preserved when new is nil (post-refactor scan-clusters shape)",
 			current: KafkaAdminClientInformation{
-				SelfManagedConnectors: nil,
+				ConnectClusters: nil,
 			},
 			other: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{{Name: "rest-discovered-connector", State: "RUNNING"}},
-				},
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors:     []Connector{{Name: "rest-discovered-connector", State: "RUNNING"}},
+				}},
 			},
 			expected: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{{Name: "rest-discovered-connector", State: "RUNNING"}},
-				},
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors:     []Connector{{Name: "rest-discovered-connector", State: "RUNNING"}},
+				}},
 			},
 		},
 		{
@@ -659,29 +664,32 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 		{
 			name: "connectors are merged by name",
 			current: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors: []Connector{
 						{Name: "connector-a", State: "RUNNING"},
 						{Name: "connector-c", State: "PAUSED"},
 					},
-				},
+				}},
 			},
 			other: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors: []Connector{
 						{Name: "connector-a", State: "PAUSED"},  // old state
 						{Name: "connector-b", State: "RUNNING"}, // preserved
 					},
-				},
+				}},
 			},
 			expected: KafkaAdminClientInformation{
-				SelfManagedConnectors: &SelfManagedConnectors{
-					Connectors: []SelfManagedConnector{
+				ConnectClusters: []ConnectCluster{{
+					ConnectRestURL: "u1",
+					Connectors: []Connector{
 						{Name: "connector-a", State: "RUNNING"}, // new takes precedence
 						{Name: "connector-b", State: "RUNNING"}, // preserved from old
 						{Name: "connector-c", State: "PAUSED"},  // added from new
 					},
-				},
+				}},
 			},
 		},
 	}
@@ -733,23 +741,39 @@ func TestKafkaAdminClientInformation_MergeFrom(t *testing.T) {
 				}
 			}
 
-			// Check SelfManagedConnectors (order-independent)
-			if (current.SelfManagedConnectors == nil) != (tt.expected.SelfManagedConnectors == nil) {
-				t.Errorf("MergeFrom() SelfManagedConnectors nil mismatch")
-			} else if current.SelfManagedConnectors != nil && tt.expected.SelfManagedConnectors != nil {
-				if len(current.SelfManagedConnectors.Connectors) != len(tt.expected.SelfManagedConnectors.Connectors) {
-					t.Errorf("MergeFrom() SelfManagedConnectors.Connectors length = %d, want %d",
-						len(current.SelfManagedConnectors.Connectors), len(tt.expected.SelfManagedConnectors.Connectors))
-				} else {
+			// Check ConnectClusters (order-independent, per endpoint)
+			switch {
+			case (current.ConnectClusters == nil) != (tt.expected.ConnectClusters == nil):
+				t.Errorf("MergeFrom() ConnectClusters nil mismatch")
+			case len(current.ConnectClusters) != len(tt.expected.ConnectClusters):
+				t.Errorf("MergeFrom() ConnectClusters length = %d, want %d", len(current.ConnectClusters), len(tt.expected.ConnectClusters))
+			default:
+				currentByURL := make(map[string]ConnectCluster)
+				for _, cc := range current.ConnectClusters {
+					currentByURL[cc.ConnectRestURL] = cc
+				}
+				for _, expectedCC := range tt.expected.ConnectClusters {
+					actualCC, exists := currentByURL[expectedCC.ConnectRestURL]
+					if !exists {
+						t.Errorf("MergeFrom() missing expected ConnectCluster %q", expectedCC.ConnectRestURL)
+						continue
+					}
+					if len(actualCC.Connectors) != len(expectedCC.Connectors) {
+						t.Errorf("MergeFrom() ConnectCluster %q Connectors length = %d, want %d",
+							expectedCC.ConnectRestURL, len(actualCC.Connectors), len(expectedCC.Connectors))
+						continue
+					}
 					// Check all expected connectors are present with correct state
-					connectorsByName := make(map[string]SelfManagedConnector)
-					for _, c := range current.SelfManagedConnectors.Connectors {
+					connectorsByName := make(map[string]Connector)
+					for _, c := range actualCC.Connectors {
 						connectorsByName[c.Name] = c
 					}
-					for _, expectedConn := range tt.expected.SelfManagedConnectors.Connectors {
-						if actualConn, exists := connectorsByName[expectedConn.Name]; !exists {
+					for _, expectedConn := range expectedCC.Connectors {
+						actualConn, exists := connectorsByName[expectedConn.Name]
+						switch {
+						case !exists:
 							t.Errorf("MergeFrom() missing expected connector %q", expectedConn.Name)
-						} else if actualConn.State != expectedConn.State {
+						case actualConn.State != expectedConn.State:
 							t.Errorf("MergeFrom() connector %q state = %q, want %q", expectedConn.Name, actualConn.State, expectedConn.State)
 						}
 					}

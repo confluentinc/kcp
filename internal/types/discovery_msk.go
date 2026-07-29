@@ -43,7 +43,7 @@ func mergeClusterPreservingAdminInfo(existing, newCluster DiscoveredCluster) Dis
 }
 
 // mergeConnectors merges MSK connectors, with new taking precedence for duplicates
-// (by ConnectorName). Mirrors mergeSelfManagedConnectors: a nil/empty new set preserves
+// (by ConnectorName). Mirrors mergeConnectorList: a nil/empty new set preserves
 // the old set (so a denied/empty re-run does not wipe prior connectors), and a nil/empty
 // old set yields the new set.
 func mergeConnectors(newConns, oldConns []ConnectorSummary) []ConnectorSummary {
