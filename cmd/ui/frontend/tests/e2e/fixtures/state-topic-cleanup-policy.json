@@ -1,0 +1,110 @@
+{
+  "msk_sources": {
+    "regions": [
+      {
+        "name": "us-east-1",
+        "configurations": [],
+        "costs": null,
+        "clusters": [
+          {
+            "name": "cleanup-policy-test-cluster",
+            "arn": "arn:aws:kafka:us-east-1:123456789012:cluster/cleanup-policy-test-cluster/00000000-0000-0000-0000-000000000099",
+            "region": "us-east-1",
+            "aws_client_information": {
+              "bootstrap_brokers": {},
+              "msk_cluster_config": {
+                "ClusterName": "cleanup-policy-test-cluster",
+                "ClusterArn": "arn:aws:kafka:us-east-1:123456789012:cluster/cleanup-policy-test-cluster/00000000-0000-0000-0000-000000000099",
+                "ClusterType": "PROVISIONED",
+                "CreationTime": "2026-01-01T00:00:00Z",
+                "CurrentVersion": "K1",
+                "Provisioned": {
+                  "NumberOfBrokerNodes": 3,
+                  "CurrentBrokerSoftwareInfo": { "KafkaVersion": "3.8.x" },
+                  "BrokerNodeGroupInfo": {
+                    "InstanceType": "kafka.m5.large",
+                    "StorageInfo": { "EbsStorageInfo": { "VolumeSize": 100 } }
+                  }
+                }
+              },
+              "nodes": [],
+              "cluster_networking": {},
+              "cluster_operations": [],
+              "client_vpc_connections": [],
+              "connectors": [],
+              "ScramSecrets": []
+            },
+            "kafka_admin_client_information": {
+              "topics": {
+                "summary": {
+                  "topics": 4,
+                  "total_partitions": 12,
+                  "internal_topics": 1,
+                  "compact_topics": 3
+                },
+                "details": [
+                  {
+                    "name": "orders-events",
+                    "partitions": 3,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "delete",
+                      "retention.ms": "604800000"
+                    }
+                  },
+                  {
+                    "name": "ktable-changelog",
+                    "partitions": 3,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "compact",
+                      "retention.ms": "604800000"
+                    }
+                  },
+                  {
+                    "name": "audit-log",
+                    "partitions": 3,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "compact,delete",
+                      "retention.ms": "604800000"
+                    }
+                  },
+                  {
+                    "name": "reversed-policy-topic",
+                    "partitions": 3,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "delete,compact",
+                      "retention.ms": "604800000"
+                    }
+                  },
+                  {
+                    "name": "__consumer_offsets",
+                    "partitions": 50,
+                    "replication_factor": 3,
+                    "configurations": {
+                      "cleanup.policy": "compact",
+                      "retention.ms": "604800000"
+                    }
+                  }
+                ]
+              },
+              "acls": []
+            },
+            "metrics": {
+              "metadata": { "instance_type": "kafka.m5.large", "broker_type": "kafka.m5.large", "period": 86400 },
+              "results": [],
+              "query_info": []
+            },
+            "discovered_clients": []
+          }
+        ]
+      }
+    ]
+  },
+  "osk_sources": {},
+  "schema_registries": null,
+  "kcp_build_info": { "version": "test", "commit": "test", "date": "2026-07-20T00:00:00Z" },
+  "timestamp": "2026-07-20T00:00:00Z"
+}

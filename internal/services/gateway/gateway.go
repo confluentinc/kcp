@@ -34,6 +34,7 @@ type Service interface {
 	ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
+	WaitForGatewayObservedGeneration(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
 	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
@@ -194,6 +195,83 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 	return nil
 }
 
+// WaitForGatewayObservedGeneration blocks until the CFK operator has observed
+// the current Gateway CR spec — status.observedGeneration >= metadata.generation
+// — or ctx is cancelled. timeout == 0 means no deadline (consistent with the
+// other gateway waits).
+//
+// This is the guard that makes a downstream "no rollout detected" trustworthy
+// when unrouted-producer detection is enabled. Applying the fenced CR bumps the
+// Gateway's metadata.generation; until the operator reconciles it (and, for a
+// real spec change, begins the pod rollout) observedGeneration lags. Without
+// this wait, WaitForGatewayPods' detection window could expire before the
+// operator even starts the rollout, concluding "no restart required" while the
+// old, still-unfenced pod is live — the exact false positive the fence-drain
+// exists to close. A no-op apply (e.g. a resume re-applying an already-fenced
+// CR) does not bump generation, so observedGeneration already satisfies the
+// check and this returns immediately.
+func (s *K8sService) WaitForGatewayObservedGeneration(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return fmt.Errorf("failed to build config: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	return waitForGatewayObservedGeneration(ctx, dynamicClient, namespace, gatewayName, pollInterval, timeout)
+}
+
+// waitForGatewayObservedGeneration is the inner orchestration used by
+// WaitForGatewayObservedGeneration. Split from the method so unit tests can
+// inject a fake dynamic client.
+func waitForGatewayObservedGeneration(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
+	gatewayGVR := schema.GroupVersionResource{
+		Group:    GatewayGroup,
+		Version:  GatewayVersion,
+		Resource: GatewayResourcePlural,
+	}
+
+	noDeadline := timeout <= 0
+	deadline := time.Now().Add(timeout)
+
+	for noDeadline || time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		gw, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+		if err != nil {
+			return fmt.Errorf("failed to get gateway for reconcile check: %w", err)
+		}
+
+		generation := gw.GetGeneration()
+		// Before the operator writes any status, observedGeneration is absent
+		// (found == false) — treat that as not-yet-reconciled and keep waiting.
+		observed, found, err := unstructured.NestedInt64(gw.Object, "status", "observedGeneration")
+		if err != nil {
+			return fmt.Errorf("failed to read gateway status.observedGeneration: %w", err)
+		}
+		if found && observed >= generation {
+			slog.Debug("gateway reconciled by operator", "gateway", gatewayName, "generation", generation, "observedGeneration", observed)
+			return nil
+		}
+		slog.Debug("waiting for gateway reconcile", "gateway", gatewayName, "generation", generation, "observedGeneration", observed, "statusPresent", found)
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+
+	return fmt.Errorf("timed out waiting for gateway %q to be observed by the operator (timeout: %s)", gatewayName, timeout)
+}
+
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
 // This should be called BEFORE patching the gateway to capture the initial pod state.
 func (s *K8sService) GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error) {
@@ -248,6 +326,12 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		return fmt.Errorf("failed to create clientset: %w", err)
 	}
 
+	return waitForGatewayPods(ctx, clientset, namespace, gatewayName, initialPodUIDs, pollInterval, timeout, onProgress)
+}
+
+// waitForGatewayPods is the inner orchestration used by WaitForGatewayPods.
+// Split from the method so unit tests can inject a fake clientset.
+func waitForGatewayPods(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error {
 	// Confluent CFK labels gateway pods with app=<gateway-crd-name>
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
 
@@ -255,8 +339,8 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 	initialPodCount := len(initialPodUIDs)
 	slog.Debug("waiting for gateway pod rollout", "namespace", namespace, "gateway", gatewayName, "initialPodCount", initialPodCount)
 
-	// Phase 1: Wait for rollout to start (10 second detection window)
-	changeDetectionDeadline := time.Now().Add(10 * time.Second)
+	// Phase 1: Wait for rollout to start (detection window)
+	changeDetectionDeadline := time.Now().Add(gatewayReadinessDetectionWindow)
 	rolloutDetected := false
 
 	for time.Now().Before(changeDetectionDeadline) {
@@ -295,7 +379,7 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 	}
 
 	if !rolloutDetected {
-		slog.Debug("no rollout detected within 10 seconds, assuming config change did not require pod restart")
+		slog.Debug("no rollout detected within detection window, assuming config change did not require pod restart")
 		if onProgress != nil {
 			onProgress(PodRolloutProgress{
 				InitialPodCount:  initialPodCount,
@@ -307,12 +391,16 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		return nil
 	}
 
-	// Phase 2: Wait for all pods to be completely replaced
+	// Phase 2: Wait for all pods to be completely replaced. A timeout of 0
+	// means no deadline — poll until the old pods are gone or ctx is cancelled.
+	// This matches WaitForGatewayReady, whose caller (FenceGateway) passes the
+	// same rolloutTimeout, which defaults to 0.
 	slog.Debug("rollout detected, waiting for complete pod replacement")
 
+	noDeadline := timeout <= 0
 	deadline := time.Now().Add(timeout)
 
-	for time.Now().Before(deadline) {
+	for noDeadline || time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -329,9 +417,28 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 		newPodsReady := countNewReadyPods(pods.Items, initialPodUIDs)
 		oldPodsRemaining := countOldPods(pods.Items, initialPodUIDs)
 
+		// Completion gates on two independent signals:
+		//   1. every pod captured before the patch is gone (oldPodsRemaining == 0)
+		//      — the guarantee WaitForGatewayReady cannot give, since the old
+		//      unfenced pod must actually stop serving; and
+		//   2. the Deployment reports a complete rollout — the right number of
+		//      new pods are Ready and steady.
+		// We deliberately do NOT require newPodsReady to reach the pod count
+		// captured before the patch: if that capture raced an in-flight rollout
+		// (a surge left 2 pods where the desired count is 1), the captured count
+		// is inflated and newPodsReady can never reach it — deadlocking the wait.
+		// deploymentRolloutComplete reads the Deployment's own desired/ready
+		// replica counts, which are immune to that race.
+		dep, err := resolveGatewayDeployment(ctx, clientset, namespace, gatewayName)
+		if err != nil {
+			return err
+		}
+		rolloutComplete := deploymentRolloutComplete(dep)
+
 		slog.Debug("pod rollout progress",
-			"newPodsReady", fmt.Sprintf("%d/%d", newPodsReady, initialPodCount),
-			"oldPodsRemaining", oldPodsRemaining)
+			"newPodsReady", newPodsReady,
+			"oldPodsRemaining", oldPodsRemaining,
+			"deploymentRolloutComplete", rolloutComplete)
 
 		if onProgress != nil {
 			onProgress(PodRolloutProgress{
@@ -342,9 +449,8 @@ func (s *K8sService) WaitForGatewayPods(ctx context.Context, namespace, gatewayN
 			})
 		}
 
-		// Check completion: all old pods gone, all new pods ready, correct count
-		if oldPodsRemaining == 0 && newPodsReady == initialPodCount && len(pods.Items) == initialPodCount {
-			slog.Debug("all gateway pods replaced and ready", "podCount", initialPodCount)
+		if oldPodsRemaining == 0 && rolloutComplete {
+			slog.Debug("all old gateway pods gone and deployment rollout complete")
 			return nil
 		}
 

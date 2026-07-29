@@ -15,6 +15,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -353,6 +354,28 @@ func formatLag64(n int64) string {
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
+	// When unrouted-producer detection is enabled the fence must be genuinely
+	// in effect before the detector's first source-offset snapshot. A plain
+	// readiness wait returns as soon as the new fenced pod reports Ready, but
+	// Kubernetes keeps the old, still-unfenced pod serving behind the same
+	// Service until its readiness probe scales it down (~30-40s). A legitimate
+	// producer routed through the gateway keeps landing writes on the source
+	// through that old pod for the whole window, so the detector sees source
+	// offsets rising and false-positives. Capturing the current pod set here —
+	// before the CR apply — lets us then wait for those old pods to actually
+	// terminate. Off by default: the stronger (and slower) wait only runs when
+	// detection is requested.
+	detecting := config.DetectUnroutedProducersDuration > 0
+
+	var oldPodUIDs map[k8stypes.UID]struct{}
+	if detecting {
+		var err error
+		oldPodUIDs, err = s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.InitialCrName)
+		if err != nil {
+			return fmt.Errorf("failed to capture gateway pods before fencing: %w", err)
+		}
+	}
+
 	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
@@ -360,10 +383,28 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	s.reporter.success("Fenced gateway CR applied")
 
 	s.reporter.detail("Waiting for gateway readiness...")
-	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
+	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout, "detecting", detecting)
 
-	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway readiness: %w", err)
+	// With detection on, wait until the old unfenced pods are gone, not just
+	// until the new pod is Ready — see the comment above.
+	if detecting {
+		// Guard the pod-rollout wait: first block until the operator has
+		// observed the fenced CR. Otherwise a slow operator reconcile could let
+		// WaitForGatewayPods' detection window expire before the rollout even
+		// starts — concluding "no restart required" while the old, still-
+		// unfenced pod is live and reopening the false positive. A no-op
+		// re-apply (resume of an already-fenced gateway) returns immediately.
+		s.reporter.detail("Waiting for gateway reconcile...")
+		if err := s.gatewayService.WaitForGatewayObservedGeneration(ctx, config.K8sNamespace, config.InitialCrName, 2*time.Second, s.rolloutTimeout); err != nil {
+			return fmt.Errorf("failed waiting for gateway reconcile: %w", err)
+		}
+		if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, oldPodUIDs, 5*time.Second, s.rolloutTimeout, s.printPodRolloutProgress); err != nil {
+			return fmt.Errorf("failed waiting for gateway pod rollout: %w", err)
+		}
+	} else {
+		if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
+			return fmt.Errorf("failed waiting for gateway readiness: %w", err)
+		}
 	}
 
 	slog.Debug("gateway fenced and ready")
@@ -828,6 +869,19 @@ func (s *MigrationActions) printGatewayReadinessProgress(p gateway.GatewayReadin
 	} else {
 		s.reporter.detail("gateway reconciling (elapsed %s)", formatElapsed(p.Elapsed))
 	}
+}
+
+// printPodRolloutProgress renders WaitForGatewayPods progress. Mirrors
+// printGatewayReadinessProgress but reports the pod-replacement view — how many
+// new pods are Ready and how many old (pre-fence) pods still remain — since the
+// fence wait now gates on the old pods being gone, not just new-pod readiness.
+func (s *MigrationActions) printPodRolloutProgress(p gateway.PodRolloutProgress) {
+	if !p.RolloutDetected {
+		s.reporter.success("No pod restart required")
+		return
+	}
+	s.reporter.detail("%d/%d new pods ready, %d old pods remaining",
+		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining)
 }
 
 // formatElapsed rounds the elapsed duration to whole seconds so the progress

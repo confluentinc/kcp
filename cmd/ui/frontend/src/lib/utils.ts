@@ -46,6 +46,19 @@ export const formatRetentionTime = (
 }
 
 /**
+ * Splits a Kafka `cleanup.policy` config value into its component policies.
+ * Handles combined values like "compact,delete" or "delete,compact" (order
+ * is not guaranteed by the broker), and defaults to "delete" when the config
+ * key is absent, matching Kafka's own broker default.
+ *
+ * @param {string} [cleanupPolicy] - The raw `cleanup.policy` config value
+ * @returns {string[]} The component policy tokens, e.g. ['compact', 'delete']
+ */
+export const parseCleanupPolicies = (cleanupPolicy?: string): string[] => {
+  return (cleanupPolicy ?? 'delete').split(',').map((policy) => policy.trim())
+}
+
+/**
  * Downloads data as a CSV file
  * @param csvData - The CSV content as a string
  * @param filename - The filename without extension (e.g., 'metrics-cluster-region')
