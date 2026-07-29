@@ -7,7 +7,6 @@ import (
 	"os"
 	"path"
 	"sort"
-	"strings"
 
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -98,42 +97,35 @@ var newRolePolicyEnumerator = func() (macls.RolePolicyEnumerator, error) {
 // SimulatePrincipalPolicy with only PolicySourceArn/ActionNames/ResourceArns
 // evaluates ONLY the principal's identity-based policies — it silently
 // ignores an attached permissions boundary unless the boundary document is
-// also passed via PermissionsBoundaryPolicyInputList. When principalArn is a
-// role, its boundary (if any) is fetched and passed here, so a
-// boundary-capped grant is correctly reported as denied instead of allowed.
-// A role's permissions boundary is the primary use case verification exists
-// for; without this, verifyEffectiveAccess would silently miss it.
+// also passed via PermissionsBoundaryPolicyInputList. principalArn's boundary
+// (if any) is fetched and passed here — for BOTH role and user principals —
+// so a boundary-capped grant is correctly reported as denied instead of
+// allowed. Without this, verifyEffectiveAccess would silently miss it.
 //
-// Two caveats remain, deliberately out of scope:
-//   - A user principal's permissions boundary is not fetched (only role
-//     boundaries are resolved here) — a minor gap since IAM users are rare
-//     among MSK/Kafka principals compared to roles.
-//   - Service control policies (SCPs) are never evaluated by
-//     SimulatePrincipalPolicy at all, for either principal type — there is
-//     no API input for them. The "verified" WARN below (buildACLReconcilers)
-//     says so explicitly so this isn't mistaken for full coverage.
+// One caveat remains, deliberately out of scope: service control policies
+// (SCPs) are never evaluated by SimulatePrincipalPolicy at all, for either
+// principal type — there is no API input for them. The "verified" WARN below
+// (buildACLReconcilers) says so explicitly so this isn't mistaken for full
+// coverage.
 var newEffectiveAccessChecker = func() (macls.EffectiveAccessChecker, error) {
 	iamClient, err := client.NewIAMClient()
 	if err != nil {
 		return nil, err
 	}
 	return func(ctx context.Context, principalArn string, actions, resources []string) (map[string]bool, error) {
-		// Resolve the role's permissions boundary (if any) ONCE, before
+		// Resolve the principal's permissions boundary (if any) ONCE, before
 		// simulation — it's identical for every bucket simulateEffectiveAccess
-		// simulates (only ResourceArns differs per bucket). Skip entirely for
-		// a non-role principal (e.g. a user ARN) — see the doc comment above
-		// for why that's an accepted gap. A fetch error fails the whole check
-		// rather than proceeding without the boundary, which would
-		// under-restrict (report a boundary-capped grant as allowed).
+		// simulates (only ResourceArns differs per bucket). A fetch error
+		// fails the whole check rather than proceeding without the boundary,
+		// which would under-restrict (report a boundary-capped grant as
+		// allowed).
 		var boundaryInputList []string
-		if roleName, ok := roleNameFromRoleArn(principalArn); ok {
-			boundaryDoc, present, err := iamservice.GetRolePermissionsBoundaryDoc(ctx, iamClient, roleName)
-			if err != nil {
-				return nil, fmt.Errorf("fetching permissions boundary for role %s: %w", roleName, err)
-			}
-			if present {
-				boundaryInputList = []string{boundaryDoc}
-			}
+		boundaryDoc, present, err := iamservice.GetPrincipalPermissionsBoundaryDoc(ctx, iamClient, principalArn)
+		if err != nil {
+			return nil, fmt.Errorf("fetching permissions boundary for principal %s: %w", principalArn, err)
+		}
+		if present {
+			boundaryInputList = []string{boundaryDoc}
 		}
 
 		return simulateEffectiveAccess(ctx, iamClient, principalArn, actions, resources, boundaryInputList)
@@ -260,20 +252,6 @@ func splitResourceArnsForSimulation(resources []string) [][]string {
 		return [][]string{{"*"}}
 	}
 	return [][]string{{"*"}, specifics}
-}
-
-// roleNameFromRoleArn reports whether principalArn is an IAM role ARN
-// ("arn:aws:iam::<acct>:role/<...>/<RoleName>") and, if so, returns its role
-// name — the ARN's last "/"-delimited path element, mirroring
-// iamservice.extractRoleNameFromArn (unexported, so replicated here) and the
-// identical logic in macls.principalFromArn. Any other principal type (e.g.
-// a user ARN) returns ok=false.
-func roleNameFromRoleArn(principalArn string) (roleName string, ok bool) {
-	if !strings.Contains(principalArn, ":role/") {
-		return "", false
-	}
-	parts := strings.Split(principalArn, "/")
-	return parts[len(parts)-1], true
 }
 
 // ccIAMBaseURL is the Confluent Cloud IAM v2 API base URL used to provision

@@ -438,8 +438,8 @@ func parsePolicyDocument(encodedDocument string) (map[string]interface{}, error)
 // (GetPolicyVersion/GetRolePolicy/etc always URL-encode the JSON body). It is
 // split out from parsePolicyDocument so callers that need the raw decoded
 // JSON string — rather than an unmarshaled map — can reuse the same decode
-// step (e.g. GetRolePermissionsBoundaryDoc, whose caller needs a JSON string
-// for SimulatePrincipalPolicyInput.PermissionsBoundaryPolicyInputList).
+// step (e.g. GetPrincipalPermissionsBoundaryDoc, whose caller needs a JSON
+// string for SimulatePrincipalPolicyInput.PermissionsBoundaryPolicyInputList).
 func decodePolicyDocument(encodedDocument string) (string, error) {
 	decodedDocument, err := url.QueryUnescape(encodedDocument)
 	if err != nil {
@@ -448,10 +448,15 @@ func decodePolicyDocument(encodedDocument string) (string, error) {
 	return decodedDocument, nil
 }
 
-// GetRolePermissionsBoundaryDoc fetches the JSON document of the IAM
-// permissions boundary attached to roleName, if any. It returns
-// present=false (doc="", err=nil) when the role has no permissions boundary
-// attached — this is the common case, not an error.
+// GetPrincipalPermissionsBoundaryDoc fetches the JSON document of the IAM
+// permissions boundary attached to principalArn, if any, resolving EITHER a
+// role or a user principal. It returns present=false (doc="", err=nil) in
+// two lenient-skip cases, neither of which is an error:
+//   - principalArn doesn't parse as a supported role/user ARN
+//     (extractPrincipalFromArn fails) — matches today's behaviour where an
+//     unsupported principal simply gets no boundary.
+//   - the principal parses fine but has no permissions boundary attached —
+//     the common case.
 //
 // The returned doc is the URL-DECODED JSON string of the boundary policy's
 // default version, suitable for passing directly as one element of
@@ -459,24 +464,57 @@ func decodePolicyDocument(encodedDocument string) (string, error) {
 // wants a JSON string, not a parsed map — unlike parsePolicyDocument's
 // callers).
 //
-// This is a thin AWS wrapper (GetRole → GetPolicy → GetPolicyVersion), like
-// GetAllRolePolicies above: not unit-tested here, validated against a live
-// boundary-attached role instead.
-func GetRolePermissionsBoundaryDoc(ctx context.Context, iamClient iamAPI, roleName string) (string, bool, error) {
-	roleOutput, err := iamClient.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(roleName)})
+// This is a thin AWS wrapper (GetRole/GetUser → GetPolicy → GetPolicyVersion),
+// like GetAllRolePolicies above.
+func GetPrincipalPermissionsBoundaryDoc(ctx context.Context, iamClient iamAPI, principalArn string) (string, bool, error) {
+	name, ptype, err := extractPrincipalFromArn(principalArn)
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get role %s: %v", roleName, err)
+		return "", false, nil
 	}
 
-	boundary := roleOutput.Role.PermissionsBoundary
+	var boundary *iamtypes.AttachedPermissionsBoundary
+	switch ptype {
+	case "role":
+		roleOutput, err := iamClient.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String(name)})
+		if err != nil {
+			return "", false, fmt.Errorf("failed to get role %s: %v", name, err)
+		}
+		boundary = roleOutput.Role.PermissionsBoundary
+	case "user":
+		userOutput, err := iamClient.GetUser(ctx, &iam.GetUserInput{UserName: aws.String(name)})
+		if err != nil {
+			return "", false, fmt.Errorf("failed to get user %s: %v", name, err)
+		}
+		boundary = userOutput.User.PermissionsBoundary
+	}
+
 	if boundary == nil || aws.ToString(boundary.PermissionsBoundaryArn) == "" {
 		return "", false, nil
 	}
-	boundaryArn := aws.ToString(boundary.PermissionsBoundaryArn)
 
+	principalDesc := fmt.Sprintf("%s %s", ptype, name)
+	decodedDocument, err := boundaryDocFromArn(ctx, iamClient, aws.ToString(boundary.PermissionsBoundaryArn), principalDesc)
+	if err != nil {
+		return "", false, err
+	}
+
+	return decodedDocument, true, nil
+}
+
+// boundaryDocFromArn resolves a permissions-boundary policy ARN to its
+// decoded default-version JSON document (GetPolicy → GetPolicyVersion →
+// decodePolicyDocument). It is the shared tail of
+// GetPrincipalPermissionsBoundaryDoc's role and user branches — both
+// principal types attach their boundary the same way
+// (*iamtypes.AttachedPermissionsBoundary with a PermissionsBoundaryArn), so
+// only the lookup of that ARN (GetRole vs GetUser) differs between them.
+// principalDesc (e.g. "role kafka-migration-role") is used only to make
+// wrapped errors identify which principal the failing boundary lookup was
+// for.
+func boundaryDocFromArn(ctx context.Context, iamClient iamAPI, boundaryArn, principalDesc string) (string, error) {
 	getPolicyOutput, err := iamClient.GetPolicy(ctx, &iam.GetPolicyInput{PolicyArn: aws.String(boundaryArn)})
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get permissions boundary policy %s for role %s: %v", boundaryArn, roleName, err)
+		return "", fmt.Errorf("failed to get permissions boundary policy %s for %s: %v", boundaryArn, principalDesc, err)
 	}
 
 	getPolicyVersionOutput, err := iamClient.GetPolicyVersion(ctx, &iam.GetPolicyVersionInput{
@@ -484,15 +522,15 @@ func GetRolePermissionsBoundaryDoc(ctx context.Context, iamClient iamAPI, roleNa
 		VersionId: getPolicyOutput.Policy.DefaultVersionId,
 	})
 	if err != nil {
-		return "", false, fmt.Errorf("failed to get permissions boundary policy version for %s (role %s): %v", boundaryArn, roleName, err)
+		return "", fmt.Errorf("failed to get permissions boundary policy version for %s (%s): %v", boundaryArn, principalDesc, err)
 	}
 
 	decodedDocument, err := decodePolicyDocument(aws.ToString(getPolicyVersionOutput.PolicyVersion.Document))
 	if err != nil {
-		return "", false, fmt.Errorf("failed to decode permissions boundary policy document for %s (role %s): %v", boundaryArn, roleName, err)
+		return "", fmt.Errorf("failed to decode permissions boundary policy document for %s (%s): %v", boundaryArn, principalDesc, err)
 	}
 
-	return decodedDocument, true, nil
+	return decodedDocument, nil
 }
 
 func PrintRolePolicies(policies *RolePolicies) {

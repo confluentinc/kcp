@@ -24,6 +24,7 @@ type fakeIAMAPI struct {
 	getPolicyFn                      func(ctx context.Context, params *iam.GetPolicyInput) (*iam.GetPolicyOutput, error)
 	getPolicyVersionFn               func(ctx context.Context, params *iam.GetPolicyVersionInput) (*iam.GetPolicyVersionOutput, error)
 	getRoleFn                        func(ctx context.Context, params *iam.GetRoleInput) (*iam.GetRoleOutput, error)
+	getUserFn                        func(ctx context.Context, params *iam.GetUserInput) (*iam.GetUserOutput, error)
 	simulatePrincipalPolicyFn        func(ctx context.Context, params *iam.SimulatePrincipalPolicyInput) (*iam.SimulatePrincipalPolicyOutput, error)
 }
 
@@ -97,6 +98,13 @@ func (f *fakeIAMAPI) GetRole(ctx context.Context, params *iam.GetRoleInput, _ ..
 		return nil, fmt.Errorf("not expected: GetRole call")
 	}
 	return f.getRoleFn(ctx, params)
+}
+
+func (f *fakeIAMAPI) GetUser(ctx context.Context, params *iam.GetUserInput, _ ...func(*iam.Options)) (*iam.GetUserOutput, error) {
+	if f.getUserFn == nil {
+		return nil, fmt.Errorf("not expected: GetUser call")
+	}
+	return f.getUserFn(ctx, params)
 }
 
 func (f *fakeIAMAPI) SimulatePrincipalPolicy(ctx context.Context, params *iam.SimulatePrincipalPolicyInput, _ ...func(*iam.Options)) (*iam.SimulatePrincipalPolicyOutput, error) {
