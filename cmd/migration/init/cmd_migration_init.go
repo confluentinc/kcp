@@ -34,6 +34,7 @@ var (
 	fencedCrYamlPath      string
 	switchoverCrYamlPath  string
 	insecureSkipTLSVerify bool
+	clusterRestCaCert     string
 
 	useSaslIam                  bool
 	useSaslScram                bool
@@ -122,8 +123,9 @@ All flags can be provided via environment variables using uppercase names with u
 	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
 	optionalFlags.BoolVar(&pauseConsumerOffsetSync, "pause-consumer-offset-sync", false, "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.")
 	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
-	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to migrate (comma separated list or repeated flag).")
+	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to cut over (comma separated list or repeated flag).")
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
+	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
 	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -160,7 +162,7 @@ All flags can be provided via environment variables using uppercase names with u
 	// TLS credential flags.
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the source broker's TLS server certificate. Applies to any TLS-fronted source auth method (SASL/SCRAM, SASL/PLAIN over TLS, TLS/mTLS, unauthenticated-TLS); supply it only for a private/internal CA.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
 	migrationInitCmd.Flags().AddFlagSet(tlsFlags)
@@ -205,10 +207,13 @@ All flags can be provided via environment variables using uppercase names with u
 	// and would silently leave the cluster link disabled after switchover.
 	migrationInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
 
-	// If any credential in a pair/trio is set, the whole set must be set.
+	// If any credential in a pair is set, the whole pair must be set.
 	migrationInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
 	migrationInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
-	migrationInitCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
+	// The mTLS client identity is a pair; --tls-ca-cert is deliberately NOT
+	// grouped in, so it can be supplied on its own to trust a private CA on the
+	// SASL/SCRAM, SASL/PLAIN-over-TLS, and unauthenticated-TLS source paths.
+	migrationInitCmd.MarkFlagsRequiredTogether("tls-client-cert", "tls-client-key")
 
 	return migrationInitCmd
 }
@@ -229,7 +234,8 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 
 	if useTls {
-		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		// --tls-ca-cert is NOT required: mTLS against a public/system-trusted CA
+		// works with system roots. It stays optional, for a private/internal CA.
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
@@ -314,13 +320,14 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationInitializerOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationInitializerOpts {
+func parseMigrationInitializerOpts(state migration.MigrationState, config migration.MigrationConfig) MigrationInitializerOpts {
 	return MigrationInitializerOpts{
 		MigrationStateFile:    migrationStateFile,
-		MigrationState:        migrationState,
+		MigrationState:        state,
 		MigrationConfig:       config,
 		ClusterApiKey:         clusterApiKey,
 		ClusterApiSecret:      clusterApiSecret,
+		ClusterRestCACert:     clusterRestCaCert,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 	}
 }

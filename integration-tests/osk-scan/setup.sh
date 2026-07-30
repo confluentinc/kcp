@@ -137,7 +137,29 @@ echo "Waiting for Prometheus seeders..."
 docker wait kcp-test-osk-prometheus-seeder kcp-test-osk-prometheus-auth-seeder kcp-test-osk-prometheus-tls-seeder > /dev/null
 echo "Restarting Prometheus instances to load seeded TSDB blocks..."
 docker restart kcp-test-osk-prometheus kcp-test-osk-prometheus-auth kcp-test-osk-prometheus-tls > /dev/null
-sleep 3
+
+# After a restart, Prometheus must come back up AND reload its on-disk TSDB
+# blocks before it can answer range queries. Poll /-/ready on each instance
+# (Prometheus reports ready only once storage is loaded) rather than sleeping a
+# fixed interval — a fixed sleep raced the slower TLS instance in CI, so its
+# range queries returned empty and the metrics scan collected no data.
+wait_prometheus_ready() {
+    local name="$1" url="$2"
+    shift 2
+    local waited=0
+    until curl -sf -o /dev/null "$@" "$url"; do
+        if [ "$waited" -ge 60 ]; then
+            echo "ERROR: $name not ready after 60s ($url)" >&2
+            exit 1
+        fi
+        sleep 2
+        waited=$((waited + 2))
+    done
+    echo "  $name ready"
+}
+wait_prometheus_ready "prometheus"      "http://localhost:9290/-/ready"
+wait_prometheus_ready "prometheus-auth" "http://localhost:9291/-/ready" -u promuser:prompass
+wait_prometheus_ready "prometheus-tls"  "https://localhost:9292/-/ready" -k -u promuser:prompass
 echo "Prometheus data ready."
 
 # Give producer/consumer time to generate JMX traffic before the scan runs

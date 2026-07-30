@@ -18,6 +18,7 @@ type SchemaRegistryAuthType string
 const (
 	SchemaRegistryAuthTypeUnauthenticated SchemaRegistryAuthType = "Unauthenticated"
 	SchemaRegistryAuthTypeBasicAuth       SchemaRegistryAuthType = "BasicAuth"
+	SchemaRegistryAuthTypeMTLS            SchemaRegistryAuthType = "MTLS"
 )
 
 func (a AuthType) IsValid() bool {

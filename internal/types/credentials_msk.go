@@ -196,6 +196,7 @@ func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
 	// Only preserve existing configs if the auth method still exists in the new discovery
 	if amc.UnauthenticatedTLS != nil && existing.UnauthenticatedTLS != nil {
 		amc.UnauthenticatedTLS.Use = existing.UnauthenticatedTLS.Use
+		amc.UnauthenticatedTLS.CACert = existing.UnauthenticatedTLS.CACert
 	}
 
 	if amc.UnauthenticatedPlaintext != nil && existing.UnauthenticatedPlaintext != nil {
@@ -218,12 +219,14 @@ func (amc *AuthMethodConfig) MergeWith(existing AuthMethodConfig) {
 		amc.SASLScram.Username = existing.SASLScram.Username
 		amc.SASLScram.Password = existing.SASLScram.Password
 		amc.SASLScram.Mechanism = existing.SASLScram.Mechanism
+		amc.SASLScram.CACert = existing.SASLScram.CACert
 	}
 
 	if amc.SASLPlain != nil && existing.SASLPlain != nil {
 		amc.SASLPlain.Use = existing.SASLPlain.Use
 		amc.SASLPlain.Username = existing.SASLPlain.Username
 		amc.SASLPlain.Password = existing.SASLPlain.Password
+		amc.SASLPlain.CACert = existing.SASLPlain.CACert
 	}
 }
 
@@ -232,11 +235,16 @@ type UnauthenticatedPlaintextConfig struct {
 }
 
 type UnauthenticatedTLSConfig struct {
-	Use bool `yaml:"use"`
+	Use    bool   `yaml:"use"`
+	CACert string `yaml:"ca_cert,omitempty"`
 }
 
 type IAMConfig struct {
 	Use bool `yaml:"use"`
+	// Region is the AWS region used for MSK IAM SigV4 token signing. Populated by
+	// the migrate credentials path (iam.region); the scan path sources region
+	// elsewhere and leaves this empty.
+	Region string `yaml:"region,omitempty"`
 }
 
 type TLSConfig struct {
@@ -251,6 +259,7 @@ type SASLScramConfig struct {
 	Username  string `yaml:"username"`
 	Password  string `yaml:"password"`
 	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512". MSK requires "SHA512", Apache Kafka commonly uses "SHA256"
+	CACert    string `yaml:"ca_cert,omitempty"`   // optional CA cert path for SASL_SSL link truststore
 }
 
 // NormalizeSaslMechanism converts shorthand mechanism values (e.g. "SHA256")
@@ -271,4 +280,11 @@ type SASLPlainConfig struct {
 	Use      bool   `yaml:"use"`
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
+	CACert   string `yaml:"ca_cert,omitempty"` // optional CA cert path; its presence selects SASL_SSL (TLS) for both the source connection and the link truststore
+	// UseTLS is an explicit, opt-in TLS signal that selects SASL_SSL when NO
+	// ca_cert is supplied — a public/system-CA listener (e.g. Confluent Cloud)
+	// trusted by the system trust store. ca_cert implies TLS on its own; UseTLS
+	// covers the public-CA case where there is no custom CA to point at. Default
+	// false preserves the historical rule (no ca_cert ⇒ SASL_PLAINTEXT).
+	UseTLS bool `yaml:"tls,omitempty"`
 }
