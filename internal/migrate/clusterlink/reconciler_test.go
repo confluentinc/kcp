@@ -357,7 +357,8 @@ func TestSourceInitiated_Apply_DoesNotRetryOtherErrors(t *testing.T) {
 func TestSourceInitiated_BothPresent_AllPresent(t *testing.T) {
 	log := &createLog{}
 	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log,
-		existing: &svclink.ClusterLink{LinkName: "src-to-dest"}}
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest"},
+		liveConfigs: map[string]string{"consumer.offset.sync.enable": "true"}}
 	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log,
 		existing:    &svclink.ClusterLink{LinkName: "src-to-dest"},
 		liveConfigs: map[string]string{"consumer.offset.sync.enable": "true"}}
@@ -377,7 +378,8 @@ func TestSourceInitiated_BothPresent_AllPresent(t *testing.T) {
 func TestSourceInitiated_OnlyDestPresent_CreatesSourceOnly(t *testing.T) {
 	log := &createLog{}
 	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log,
-		existing: &svclink.ClusterLink{LinkName: "src-to-dest"}}
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest"},
+		liveConfigs: map[string]string{"consumer.offset.sync.enable": "true"}}
 	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log} // absent
 	r := newSourceInitiated(fakeSource{id: "src-1"}, dest, srcLink)
 
@@ -411,6 +413,36 @@ func TestSourceInitiated_OnlySourcePresent_CreatesDestOnly(t *testing.T) {
 	require.Equal(t, "dest", log.entries[0].side, "only the missing (destination) side is created")
 	require.Equal(t, "DESTINATION", log.entries[0].req.LinkMode)
 	require.Equal(t, "INBOUND", log.entries[0].req.ConnectionMode)
+}
+
+// The destination (INBOUND) link is healthy but its live config (e.g.
+// cluster.link.prefix) differs from the manifest — the source-initiated
+// destination side must report drift just like the destination-initiated
+// and source-initiated source-side paths already do (report-only, never
+// altered).
+func TestSourceInitiated_DestConfigDrift_IsDrift(t *testing.T) {
+	log := &createLog{}
+	dest := &recordingTarget{clusterID: "dest-1", side: "dest", log: log,
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest"},
+		liveConfigs: map[string]string{"consumer.offset.sync.enable": "false"}}
+	srcLink := &recordingTarget{clusterID: "src-1", side: "src", log: log,
+		existing:    &svclink.ClusterLink{LinkName: "src-to-dest"},
+		liveConfigs: map[string]string{"consumer.offset.sync.enable": "true"}}
+	r := newSourceInitiated(fakeSource{id: "src-1"}, dest, srcLink)
+
+	plan, err := r.Plan(context.Background())
+	require.NoError(t, err)
+	changes := plan.Changes()
+	require.Len(t, changes, 2)
+	require.Equal(t, reconcile.ActionDrift, changes[0].Action, "dest-side config drift must be reported, not silently Present")
+	require.Contains(t, changes[0].Detail, "consumer.offset.sync.enable")
+	require.Equal(t, reconcile.ActionPresent, changes[1].Action)
+	require.True(t, plan.Empty(), "drift is report-only, never a create")
+
+	out, err := r.Apply(context.Background(), plan)
+	require.NoError(t, err)
+	require.Len(t, out.Drift, 1)
+	require.Empty(t, log.entries, "config drift must never create/alter")
 }
 
 func TestSourceInitiated_CheckPreconditions_RequiresSourceTarget(t *testing.T) {

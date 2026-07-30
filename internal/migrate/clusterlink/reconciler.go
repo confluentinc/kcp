@@ -235,7 +235,11 @@ func (r *Reconciler) planSourceInitiated(ctx context.Context, sourceID string) (
 	case !linkHealthy(destActual):
 		steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionDrift, Summary: destSummary, Detail: unhealthyLinkDetail(destActual)}})
 	default:
-		steps = append(steps, step{Change: reconcile.Change{Action: reconcile.ActionPresent, Summary: destSummary}})
+		change := reconcile.Change{Action: reconcile.ActionPresent, Summary: destSummary}
+		if detail := r.configDrift(ctx, r.tgt, r.cfg.LinkName); detail != "" {
+			change = reconcile.Change{Action: reconcile.ActionDrift, Summary: destSummary, Detail: detail}
+		}
+		steps = append(steps, step{Change: change})
 	}
 
 	// Source side second.
