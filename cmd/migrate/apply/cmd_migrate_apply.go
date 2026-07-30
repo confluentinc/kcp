@@ -278,6 +278,32 @@ func NewMigrateApplyCmd() *cobra.Command {
 	return cmd
 }
 
+// aclSetupFailed is a reconcile.Reconciler that carries a captured
+// ACL-track setup error. buildACLReconcilers does eager live I/O (source
+// native-ACL read, AWS IAM gather/verify/translate, the CC numeric-principal
+// map) during track assembly — before eng.Run. A failure there must NOT abort
+// the whole command, because that would skip the independent clusterLink/topics
+// track (engine.Run's cross-track isolation only covers failures INSIDE
+// eng.Run). Modelling the setup failure as a one-reconciler track whose
+// precondition fails lets the engine run the other track regardless while still
+// surfacing this error (non-zero exit) via its joined error.
+//
+// The engine prefixes the returned error as "acls: precondition failed: %w", so
+// CheckPreconditions returns the raw captured error (no double-wrap). Plan and
+// Apply return it too, defensively — they are never reached because the engine
+// stops the track at the failed precondition.
+type aclSetupFailed struct{ err error }
+
+func (aclSetupFailed) Name() string { return "acls" }
+
+func (f aclSetupFailed) CheckPreconditions(context.Context) error { return f.err }
+
+func (f aclSetupFailed) Plan(context.Context) (reconcile.Plan, error) { return nil, f.err }
+
+func (f aclSetupFailed) Apply(context.Context, reconcile.Plan) (reconcile.Outcome, error) {
+	return reconcile.Outcome{}, f.err
+}
+
 func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	data, err := os.ReadFile(file)
 	if err != nil {
@@ -497,9 +523,16 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	if m.Spec.ACLs != nil {
 		aclRecs, err := buildACLReconcilers(cmd, m, srcCluster, tgtClient, tgtCreds)
 		if err != nil {
-			return err
+			// buildACLReconcilers does eager live I/O during track assembly. A
+			// setup failure here must NOT abort the command and skip the
+			// independent clusterLink/topics track — so model it as its own
+			// track whose single reconciler fails its precondition. eng.Run's
+			// per-track isolation then runs track A regardless, while its joined
+			// error still surfaces this failure (non-zero exit).
+			tracks = append(tracks, []reconcile.Reconciler{aclSetupFailed{err}})
+		} else {
+			tracks = append(tracks, aclRecs)
 		}
-		tracks = append(tracks, aclRecs)
 	}
 
 	eng := reconcile.NewEngine(cmd.OutOrStdout())

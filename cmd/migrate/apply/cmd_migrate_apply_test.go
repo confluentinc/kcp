@@ -1053,6 +1053,96 @@ func TestApply_ACLs_IAM_NonZeroMatch_NoZeroMatchWarning(t *testing.T) {
 	require.NotContains(t, logs, "matched zero ACLs")
 }
 
+// TestApply_ACLTrackSetupFailure_DoesNotSkipClusterLinkTrack is the regression
+// guard for the track-independence bug: buildACLReconcilers does eager live I/O
+// (source native-ACL read, IAM gather, CC numeric-principal map) during track
+// assembly, BEFORE eng.Run. Previously a setup failure there aborted runApply
+// early (return err), so the independent clusterLink/topics track — which needs
+// none of that — never ran. The engine's cross-track isolation only covers
+// failures INSIDE eng.Run, so the fix models the ACL-setup failure as a track-B
+// reconciler that fails its precondition, letting eng.Run run track A regardless.
+//
+// Here the source ACL read (newSourceACLLister) fails; the assertion that
+// matters is that the clusterLink track STILL creates the link (track A ran),
+// while the command still exits non-zero surfacing the ACL setup error.
+func TestApply_ACLTrackSetupFailure_DoesNotSkipClusterLinkTrack(t *testing.T) {
+	lkc := "lkc-track"
+	linkCreated := false
+	mux := http.NewServeMux()
+	mux.HandleFunc("/kafka/v3/clusters/"+lkc+"/links/src-to-cc", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound) // link absent -> clusterLink reconciler plans a create
+	})
+	mux.HandleFunc("/kafka/v3/clusters/"+lkc+"/links/", func(w http.ResponseWriter, _ *http.Request) {
+		linkCreated = true
+		w.WriteHeader(http.StatusCreated)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	dir := t.TempDir()
+	targetCreds := filepath.Join(dir, "t.yaml")
+	require.NoError(t, os.WriteFile(targetCreds, []byte("api_key: k\napi_secret: s\n"), 0600))
+	cloudCreds := filepath.Join(dir, "cloud.yaml")
+	require.NoError(t, os.WriteFile(cloudCreds, []byte("api_key: ck\napi_secret: cs\n"), 0600))
+	sourceCreds := filepath.Join(dir, "s.yaml")
+	require.NoError(t, os.WriteFile(sourceCreds, []byte("unauthenticated_plaintext: {}\n"), 0600))
+	mf := filepath.Join(dir, "m.yaml")
+	require.NoError(t, os.WriteFile(mf, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: t\nspec:\n"+
+			"  source:\n    type: apache-kafka\n    bootstrapServers: [\"source:29092\"]\n    credentials: "+sourceCreds+"\n"+
+			"  target:\n    type: confluent-cloud\n    clusterId: "+lkc+"\n    clusterCredentials: "+targetCreds+"\n    cloudCredentials: "+cloudCreds+"\n    kafka:\n      restEndpoint: "+srv.URL+"\n"+
+			"  clusterLink:\n    name: src-to-cc\n    source:\n      bootstrapServers: [\"source:29092\"]\n      credentials: "+sourceCreds+"\n"+
+			"  acls:\n    include: [\"*\"]\n"), 0600))
+
+	oldReader := newSourceReader
+	newSourceReader = func(types.KafkaSourceConn) migrate.Source { return staticSource("src-1") }
+	// The ACL track's very first setup step (source native-ACL read) fails here.
+	oldLister := newSourceACLLister
+	newSourceACLLister = func(types.KafkaSourceConn) (sourceACLLister, error) {
+		return nil, fmt.Errorf("boom: source admin unavailable")
+	}
+	t.Cleanup(func() {
+		newSourceReader = oldReader
+		newSourceACLLister = oldLister
+	})
+
+	cmd := NewMigrateApplyCmd()
+	var out, errb bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&errb)
+	cmd.SetArgs([]string{"-f", mf})
+	err := cmd.Execute()
+
+	// The command still exits non-zero, surfacing the ACL setup failure through
+	// the engine's per-track error (prefixed "acls: precondition failed:").
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "acls: precondition failed")
+	require.Contains(t, err.Error(), "boom: source admin unavailable")
+
+	// The independent clusterLink track must NOT have been skipped: the link was
+	// created and rendered even though ACL-track setup failed.
+	require.True(t, linkCreated, "clusterLink track must run even when ACL-track setup fails")
+	require.Contains(t, out.String(), "cluster link \"src-to-cc\"")
+	require.Contains(t, out.String(), "1 created")
+}
+
+// TestACLSetupFailed_ReconcilerCarriesError is a focused unit test of the
+// aclSetupFailed reconciler: CheckPreconditions returns the captured error
+// verbatim (the engine adds the "acls: precondition failed:" prefix, so it must
+// not be double-wrapped), Name is the "acls" track label, and Plan/Apply are
+// defensively safe (they return the same error and are never reached because
+// the engine stops the track at the failed precondition).
+func TestACLSetupFailed_ReconcilerCarriesError(t *testing.T) {
+	sentinel := fmt.Errorf("setup boom")
+	r := aclSetupFailed{err: sentinel}
+	require.Equal(t, "acls", r.Name())
+	require.ErrorIs(t, r.CheckPreconditions(context.Background()), sentinel)
+	_, planErr := r.Plan(context.Background())
+	require.ErrorIs(t, planErr, sentinel)
+	_, applyErr := r.Apply(context.Background(), nil)
+	require.ErrorIs(t, applyErr, sentinel)
+}
+
 func TestEnsureMSKScramMechanism(t *testing.T) {
 	scram := func(mech string) types.KafkaSourceConn {
 		return types.KafkaSourceConn{AuthMethod: types.AuthMethodConfig{
