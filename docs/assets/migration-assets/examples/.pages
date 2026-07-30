@@ -3,3 +3,7 @@ nav:
   - new-topics
   - mirror-topics
   - source-initiated
+  - acls-native
+  - acls-iam-explicit
+  - acls-iam-discover
+  - acls-native-and-iam

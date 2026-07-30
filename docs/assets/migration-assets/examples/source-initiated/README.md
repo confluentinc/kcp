@@ -22,7 +22,7 @@ Source mode replaces `clusterLink.source` with two slots:
 | `spec.source.credentials` | Kafka | [SASL/SCRAM](../../credentials/kafka-sasl-scram.yaml) | reads the CP cluster id |
 | `spec.clusterLink.sourceRest.credentials` | REST | [Basic](../../credentials/rest-basic.yaml) | KCP → CP MDS (creates the link) |
 | `spec.clusterLink.destination.credentials` | Kafka | [SASL/SCRAM](../../credentials/kafka-sasl-scram.yaml) | source-side link → Confluent Cloud |
-| `spec.target.credentials` | REST | [API key](../../credentials/rest-api-key.yaml) | Confluent Cloud Admin API |
+| `spec.target.clusterCredentials` | REST | [API key](../../credentials/rest-api-key.yaml) | Confluent Cloud Admin API |
 
 See the full [credential catalog](../../credentials/README.md) for every auth method.
 

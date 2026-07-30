@@ -15,7 +15,8 @@ There are two credential families, matched to the kind of endpoint a slot talks 
 | `spec.source.credentials` | both | source Kafka (reads the cluster id) | **Kafka** |
 | `spec.clusterLink.source.credentials` | destination | the link → source Kafka | **Kafka** |
 | `spec.clusterLink.destination.credentials` | source | the source-side link → destination Kafka | **Kafka** |
-| `spec.target.credentials` | both | target Kafka Admin REST | **REST** |
+| `spec.target.clusterCredentials` | both | target Kafka Admin REST (`/kafka/v3`: cluster link, topics, ACLs) | **REST** |
+| `spec.target.cloudCredentials` | both | Confluent Cloud Cloud/Global API — required when `spec.acls` is present (CC only) | **REST** |
 | `spec.clusterLink.sourceRest.credentials` | source | the source's Admin REST (creates the outbound link) | **REST** |
 
 ## Kafka credentials

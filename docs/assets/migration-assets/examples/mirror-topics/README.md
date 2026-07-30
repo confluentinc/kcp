@@ -15,7 +15,7 @@ so the source must be reachable from the destination.
 |---|---|---|---|
 | `spec.source.credentials` | Kafka | [IAM](../../credentials/kafka-iam.yaml) | reads the MSK cluster id |
 | `spec.clusterLink.source.credentials` | Kafka | [SASL/SCRAM](../../credentials/kafka-sasl-scram.yaml) | the link dials MSK — Confluent Cloud cannot present IAM, so SCRAM |
-| `spec.target.credentials` | REST | [API key](../../credentials/rest-api-key.yaml) | Confluent Cloud Admin API |
+| `spec.target.clusterCredentials` | REST | [API key](../../credentials/rest-api-key.yaml) | Confluent Cloud Admin API |
 
 This shows three different credential files in one migration. See the full
 [credential catalog](../../credentials/README.md) for the other auth methods.

@@ -1,40 +1,44 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
-# migration.yaml — describes the desired end state of a migration.
-# Apply with: kcp migrate validate -f migration.yaml   (then, later phases, apply/status)
+# migration.yaml — describes the desired end state of a migration (MSK → Confluent Cloud).
+# Validate with: kcp migrate validate -f migration.yaml
+# Preview with:  kcp migrate apply -f migration.yaml --dry-run   (changes nothing)
+# Apply with:    kcp migrate apply -f migration.yaml
 apiVersion: kcp.confluent.io/v1alpha1
 kind: Migration
 metadata:
   name: msk-prod-to-confluent-cloud
 spec:
   source:
-    type: apache-kafka
-    bootstrapServers: ["broker1:9092", "broker2:9092"]   # source Kafka address (not a secret)
-    credentials: ./source-creds.yaml                     # auth-only; no secrets in this manifest
+    type: msk                                            # msk | apache-kafka | confluent-platform
+    bootstrapServers: ["b-1.msk.amazonaws.com:9098", "b-2.msk.amazonaws.com:9098"]   # source Kafka address (not a secret)
+    credentials: ./source-creds.yaml                     # Kafka creds; reads the source cluster id
 
   target:
-    type: confluent-cloud                  # or: confluent-platform
-    clusterId: lkc-xxxxx
+    type: confluent-cloud                  # confluent-cloud | confluent-platform
+    clusterId: lkc-xxxxx                    # required for confluent-cloud; forbidden for confluent-platform
     clusterCredentials: ./target-creds.yaml  # Kafka cluster API key — /kafka/v3 REST (cluster link, topics, ACLs)
-    cloudCredentials: ./cloud-creds.yaml     # CC Cloud/Global API key — required for spec.acls on a CC target (IAM v2 + numeric-principal reconciliation)
+    cloudCredentials: ./cloud-creds.yaml     # CC Cloud/Global API key — required whenever spec.acls is present
     kafka:
-      restEndpoint: https://pkc-1n6m13.us-east-1.aws.confluent.cloud:443
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
 
   clusterLink:
-    name: source-to-cc
+    name: msk-to-cc
     mode: destination                      # destination (default) | source
     source:                                # link→source Kafka connection (destination mode)
-      bootstrapServers: ["broker1:9092"]   # link dials this address
-      credentials: ./source-creds.yaml    # auth-only credentials for the link
-    # prefix: "clusterA."                  # optional; cluster.link.prefix — mirror names become prefix+source (immutable once created)
-    consumerOffsetSync:                    # migrate consumer offsets (enabled by default)
+      bootstrapServers: ["b-1.msk.amazonaws.com:9096", "b-2.msk.amazonaws.com:9096"]   # link dials this address
+      credentials: ./link-source-creds.yaml   # Kafka creds; the link dials MSK via SCRAM (CC cannot present IAM)
+    # prefix: "msk."                       # optional; cluster.link.prefix — mirror names become prefix+source (immutable once created)
+    consumerOffsetSync:                    # migrate consumer offsets (enabled by default, all groups)
       enable: true
-      # intervalMs: 30000                  # optional; omit for server default (30s)
+      # intervalMs: 30000                  # optional; omit or 0 for server default
       # groupFilters:                      # optional; omit → all groups synced
       #   - { name: "*", patternType: LITERAL, filterType: INCLUDE }
     # topicConfigSync:
-    #   intervalMs: 30000                  # optional; omit for server default
-    # Source-initiated alternative — for a private/firewalled Confluent source the
-    # destination cannot reach inbound (requires spec.source.type: confluent-platform).
+    #   intervalMs: 30000                  # optional; omit or 0 for server default
+    # configs:                             # optional; arbitrary link configs (managed keys are rejected)
+    #   replica.fetch.max.bytes: "1048576"
+    # Source-initiated alternative — for a private/firewalled source the destination
+    # cannot reach inbound (requires spec.source.type: confluent-platform or confluent-cloud).
     # Replace the clusterLink block above with:
     #   mode: source
     #   sourceRest:                              # KCP → source REST (creates the source-side link)
@@ -49,14 +53,23 @@ spec:
     # mirror: create read-only mirror topics on the cluster link (requires spec.clusterLink).
     #         Mirror names are <clusterLink.prefix>+<sourceName> (no prefix → same name).
     # new:    create plain topics directly on the target, reproducing the source topic's
-    #         partition count, replication factor, and explicitly-set configs. Needs NO link.
+    #         partition count and explicitly-set configs (target default RF applies). Needs NO link.
     #         For mode: new, drop the clusterLink block and use, e.g.:
     #           topics: { mode: new, include: ["orders.*"], exclude: ["*.tmp"] }
     include: ["*"]                          # globs (path.Match) matched against the live source topic list
     exclude: ["*.internal"]                 # optional globs; internal topics (names starting with "_") are always auto-excluded
 
-  acls:
-    include: ["*"]
+  serviceAccounts:                          # optional; confluent-cloud target only — resolves ACL principals to CC identities
+    autoCreate: true                        # find-or-create a CC service account per unmapped principal (needs cloudCredentials)
+    mapping:                                # optional; explicit source principal → target id (wins over autoCreate)
+      "User:analytics": sa-abc123           # value is a sa-/u-/pool- id, optionally User:-prefixed
 
-  schemas:
-    include: ["*"]
+  acls:                                     # optional; confluent-cloud target only
+    include: ["*"]                          # globs matched against an ACL's principal OR resource name
+    exclude: ["User:ANONYMOUS"]             # optional; exclude always wins
+    iam:                                    # optional; AWS MSK IAM authorization plane (requires spec.source.type: msk)
+      clusterArn: arn:aws:kafka:us-east-1:123456789012:cluster/prod/abcd1234-ef56-7890-abcd-ef1234567890
+      principalArns:                        # named IAM role/user ARNs to translate (mutually exclusive with discoverAllRoles)
+        - arn:aws:iam::123456789012:role/kafka-producer
+      # discoverAllRoles: true              # alternative to principalArns: enumerate every workload IAM role in the account
+      verifyEffectiveAccess: true           # simulate identity policies + permissions boundary; migrate only effectively-allowed grants
