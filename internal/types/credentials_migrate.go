@@ -47,10 +47,13 @@ type MigrateSASLScram struct {
 }
 
 // MigrateSASLPlain is the SASL/PLAIN auth block for migrate credentials (no use: flag).
+// Transport: ca_cert present ⇒ SASL_SSL (trusting that CA); tls: true ⇒ SASL_SSL
+// over the system/public trust store (no custom CA); neither ⇒ SASL_PLAINTEXT.
 type MigrateSASLPlain struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	CACert   string `yaml:"ca_cert,omitempty"`
+	UseTLS   bool   `yaml:"tls,omitempty"`
 }
 
 // MigrateMTLS is the mutual-TLS auth block for migrate credentials (client cert +
@@ -118,6 +121,7 @@ func (c MigrateClusterCredentials) authMethodConfig() AuthMethodConfig {
 			Username: c.SASLPlain.Username,
 			Password: c.SASLPlain.Password,
 			CACert:   c.SASLPlain.CACert,
+			UseTLS:   c.SASLPlain.UseTLS,
 		}
 	case c.MTLS != nil:
 		amc.TLS = &TLSConfig{

@@ -44,6 +44,38 @@ func TestLoadMigrateClusterCredentials_SASLScram(t *testing.T) {
 	require.Equal(t, "SHA256", conn.AuthMethod.SASLScram.Mechanism)
 }
 
+// TestLoadMigrateClusterCredentials_SASLPlainTLS verifies a migrate sasl_plain
+// creds file with `tls: true` (no ca_cert) loads and maps onto the shared
+// SASLPlainConfig with UseTLS == true — the explicit public/system-CA SASL_SSL
+// signal (#2). Without the flag, UseTLS defaults to false (SASL_PLAINTEXT).
+func TestLoadMigrateClusterCredentials_SASLPlainTLS(t *testing.T) {
+	dir := t.TempDir()
+
+	p := filepath.Join(dir, "creds-tls.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"sasl_plain: { username: admin, password: secret, tls: true }\n"), 0600))
+	creds, errs := LoadMigrateClusterCredentials(p)
+	require.Empty(t, errs)
+	require.NotNil(t, creds.SASLPlain)
+	require.True(t, creds.SASLPlain.UseTLS)
+
+	conn := MigrateConn([]string{"b:9092"}, creds)
+	require.NotNil(t, conn.AuthMethod.SASLPlain)
+	require.True(t, conn.AuthMethod.SASLPlain.Use)
+	require.True(t, conn.AuthMethod.SASLPlain.UseTLS, "tls: true must map onto SASLPlainConfig.UseTLS")
+
+	// Default (no tls:) → UseTLS false (SASL_PLAINTEXT), behaviour unchanged.
+	p2 := filepath.Join(dir, "creds-plain.yaml")
+	require.NoError(t, os.WriteFile(p2, []byte(
+		"sasl_plain: { username: admin, password: secret }\n"), 0600))
+	creds2, errs2 := LoadMigrateClusterCredentials(p2)
+	require.Empty(t, errs2)
+	require.NotNil(t, creds2.SASLPlain)
+	require.False(t, creds2.SASLPlain.UseTLS)
+	conn2 := MigrateConn([]string{"b:9092"}, creds2)
+	require.False(t, conn2.AuthMethod.SASLPlain.UseTLS)
+}
+
 // TestLoadMigrateClusterCredentials_SCRAMMechanismRequired verifies migrate creds
 // require an explicit, valid SCRAM mechanism (no silent SHA256 default — that is
 // wrong for MSK, which is SHA-512-only).

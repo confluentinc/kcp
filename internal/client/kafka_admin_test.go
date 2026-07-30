@@ -482,6 +482,71 @@ func TestAdminOptionForAuth_SASLPlainWithCACertEnablesTLS(t *testing.T) {
 	require.Equal(t, string(sarama.SASLTypePlaintext), string(sc.Net.SASL.Mechanism))
 }
 
+// Regression for #2: a sasl_plain credential with an explicit tls signal (UseTLS)
+// but NO ca_cert must connect over SASL_SSL trusting the SYSTEM roots — the
+// public-CA SASL_SSL listener case (e.g. Confluent Cloud) that ca_cert-only
+// routing could not express.
+func TestAdminOptionForAuth_SASLPlainUseTLSSystemRoots(t *testing.T) {
+	amc := types.AuthMethodConfig{
+		SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p", UseTLS: true},
+	}
+
+	cfg := &AdminConfig{}
+	opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, amc, false)
+	require.NoError(t, err)
+	opt(cfg)
+
+	// Routing: UseTLS present (no ca_cert) → TLS variant, no custom CA captured.
+	require.Equal(t, types.AuthTypeSASLPlain, cfg.authType)
+	require.False(t, cfg.disableTLS, "tls signal must select the TLS (SASL_SSL) variant")
+	require.Equal(t, "", cfg.caCertFile, "no ca_cert supplied → system roots")
+
+	// End-to-end: TLS enabled, and RootCAs nil means the system trust store is used.
+	sc := sarama.NewConfig()
+	err = configureSASLTypePlainAuthentication(sc, cfg.username, cfg.password, !cfg.disableTLS, cfg.caCertFile, cfg.insecureSkipTLSVerify)
+	require.NoError(t, err)
+	require.True(t, sc.Net.TLS.Enable, "SASL/PLAIN + tls must enable TLS")
+	require.NotNil(t, sc.Net.TLS.Config)
+	require.Nil(t, sc.Net.TLS.Config.RootCAs, "empty ca_cert must fall back to the system trust store")
+	require.True(t, sc.Net.SASL.Enable)
+	require.Equal(t, string(sarama.SASLTypePlaintext), string(sc.Net.SASL.Mechanism))
+}
+
+// Additive-guarantee for #2: the UseTLS signal must not perturb the two existing
+// transport decisions that every shipped caller (migrate source-read, cutover,
+// MSK/OSK scan) relies on today. Those callers never set UseTLS, so:
+//   - neither ca_cert nor tls  → SASL_PLAINTEXT (unchanged)
+//   - ca_cert set (no tls)     → SASL_SSL       (unchanged)
+//
+// Only the new (no-ca_cert, tls:true) combination selects SASL_SSL.
+func TestAdminOptionForAuth_SASLPlainTransportMatrix(t *testing.T) {
+	caCertFile, _, _ := createTestCertificates(t)
+	tests := []struct {
+		name        string
+		caCert      string
+		useTLS      bool
+		wantDisable bool // true => SASL_PLAINTEXT, false => SASL_SSL
+	}{
+		{name: "no_signal_plaintext_unchanged", caCert: "", useTLS: false, wantDisable: true},
+		{name: "ca_cert_ssl_unchanged", caCert: caCertFile, useTLS: false, wantDisable: false},
+		{name: "tls_signal_ssl_new", caCert: "", useTLS: true, wantDisable: false},
+		{name: "both_ssl", caCert: caCertFile, useTLS: true, wantDisable: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			amc := types.AuthMethodConfig{
+				SASLPlain: &types.SASLPlainConfig{Use: true, Username: "u", Password: "p", CACert: tc.caCert, UseTLS: tc.useTLS},
+			}
+			opt, err := AdminOptionForAuthMethod(types.AuthTypeSASLPlain, amc, false)
+			require.NoError(t, err)
+			cfg := &AdminConfig{}
+			opt(cfg)
+			require.Equal(t, tc.wantDisable, cfg.disableTLS)
+			require.Equal(t, tc.caCert, cfg.caCertFile)
+		})
+	}
+}
+
 // A bad ca_cert path must surface an error rather than silently connecting in
 // cleartext — proving the CA is actually read on the SASL/PLAIN + ca_cert path.
 func TestAdminOptionForAuth_SASLPlainBadCACertErrors(t *testing.T) {

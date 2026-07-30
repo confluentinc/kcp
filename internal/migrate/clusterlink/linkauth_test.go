@@ -75,6 +75,18 @@ func TestLinkAuthFromSource(t *testing.T) {
 			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
 			wantCA:    "/certs/ca.pem",
 		},
+		{
+			// sasl_plain_use_tls (#2): an explicit tls signal (no ca_cert) selects
+			// SASL_SSL against a public/system-CA listener — the link carries no
+			// truststore (system roots), matching the source-read path. Without the
+			// signal (default) the link stays SASL_PLAINTEXT, as the case above shows.
+			name:      "sasl_plain_use_tls_no_ca",
+			auth:      types.AuthMethodConfig{SASLPlain: &types.SASLPlainConfig{Use: true, Username: "admin", Password: "admin-secret", UseTLS: true}},
+			wantProto: "SASL_SSL",
+			wantMech:  "PLAIN",
+			jaasHas:   `PlainLoginModule required username="admin" password="admin-secret"`,
+			wantCA:    "",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -151,4 +163,19 @@ func TestLinkAuth_LoadTLS_MTLS(t *testing.T) {
 func TestLinkAuth_LoadTLS_MissingFile(t *testing.T) {
 	_, err := LinkAuth{CACertPath: "/no/such/ca.crt"}.LoadTLS()
 	require.Error(t, err)
+}
+
+// #11: a username/password containing a double-quote or backslash must be
+// escaped (backslash first, then double-quote) so the interpolated JAAS string
+// stays well-formed rather than terminating the quoted value early.
+func TestScramJaas_EscapesSpecialChars(t *testing.T) {
+	got := scramJaas(`us"er`, `p\a"ss`)
+	want := `org.apache.kafka.common.security.scram.ScramLoginModule required username="us\"er" password="p\\a\"ss";`
+	require.Equal(t, want, got)
+}
+
+func TestPlainJaas_EscapesSpecialChars(t *testing.T) {
+	got := plainJaas(`us"er`, `p\a"ss`)
+	want := `org.apache.kafka.common.security.plain.PlainLoginModule required username="us\"er" password="p\\a\"ss";`
+	require.Equal(t, want, got)
 }

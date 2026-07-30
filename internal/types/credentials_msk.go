@@ -281,4 +281,10 @@ type SASLPlainConfig struct {
 	Username string `yaml:"username"`
 	Password string `yaml:"password"`
 	CACert   string `yaml:"ca_cert,omitempty"` // optional CA cert path; its presence selects SASL_SSL (TLS) for both the source connection and the link truststore
+	// UseTLS is an explicit, opt-in TLS signal that selects SASL_SSL when NO
+	// ca_cert is supplied — a public/system-CA listener (e.g. Confluent Cloud)
+	// trusted by the system trust store. ca_cert implies TLS on its own; UseTLS
+	// covers the public-CA case where there is no custom CA to point at. Default
+	// false preserves the historical rule (no ca_cert ⇒ SASL_PLAINTEXT).
+	UseTLS bool `yaml:"tls,omitempty"`
 }

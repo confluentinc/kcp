@@ -136,11 +136,15 @@ func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConf
 		if auth.SASLPlain == nil {
 			return nil, fmt.Errorf("auth type %q selected but sasl_plain config is nil", authType)
 		}
-		// SASL/PLAIN over TLS (SASL_SSL) when the credential supplies a ca_cert;
-		// otherwise SASL_PLAINTEXT. The presence of ca_cert is the model's signal
-		// that the listener is TLS-wrapped — without it we'd silently transmit the
-		// password in cleartext and ignore the CA the user provided.
-		if auth.SASLPlain.CACert != "" {
+		// SASL/PLAIN over TLS (SASL_SSL) when the credential supplies a ca_cert OR
+		// sets the explicit tls signal (UseTLS); otherwise SASL_PLAINTEXT. ca_cert
+		// signals a TLS listener with a custom CA to trust; UseTLS signals a TLS
+		// listener whose CA is in the system trust store (public CA, e.g. Confluent
+		// Cloud) — CACert stays "" there so WithSASLPlainAuth falls back to system
+		// roots (utils.OptionalCACertPool("") → nil pool → system roots). Neither
+		// signal (the default for every existing scan/cutover/migrate config, which
+		// never sets UseTLS) → SASL_PLAINTEXT, exactly as before.
+		if auth.SASLPlain.CACert != "" || auth.SASLPlain.UseTLS {
 			return WithSASLPlainAuth(auth.SASLPlain.Username, auth.SASLPlain.Password, auth.SASLPlain.CACert, skipTLSVerify), nil
 		}
 		return WithSASLPlainAuthNoTLS(auth.SASLPlain.Username, auth.SASLPlain.Password), nil

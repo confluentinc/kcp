@@ -29,7 +29,7 @@ selects it (no `auth_method:` wrapper, no `use:` flag). An optional top-level
 |---|---|---|
 | [`kafka-iam.yaml`](kafka-iam.yaml) | `iam` | MSK source read only; CC can't present IAM (links to MSK use SCRAM) |
 | [`kafka-sasl-scram.yaml`](kafka-sasl-scram.yaml) | `sasl_scram` | always TLS (SASL_SSL); `mechanism` required (SHA256/SHA512) |
-| [`kafka-sasl-plain.yaml`](kafka-sasl-plain.yaml) | `sasl_plain` | `ca_cert` present ⇒ SASL_SSL; absent ⇒ SASL_PLAINTEXT |
+| [`kafka-sasl-plain.yaml`](kafka-sasl-plain.yaml) | `sasl_plain` | `ca_cert` present ⇒ SASL_SSL (that CA); `tls: true` ⇒ SASL_SSL (system/public roots); neither ⇒ SASL_PLAINTEXT |
 | [`kafka-mtls.yaml`](kafka-mtls.yaml) | `mtls` | client cert + key (client is authenticated) |
 | [`kafka-unauthenticated-tls.yaml`](kafka-unauthenticated-tls.yaml) | `unauthenticated_tls` | one-way TLS; client not authenticated |
 | [`kafka-unauthenticated-plaintext.yaml`](kafka-unauthenticated-plaintext.yaml) | `unauthenticated_plaintext` | no auth, no TLS; test/lab only |
@@ -38,7 +38,9 @@ selects it (no `auth_method:` wrapper, no `use:` flag). An optional top-level
 path used to verify the broker's TLS certificate, and is honoured on **both** the
 source read and the cluster-link truststore. Supply it only for a **private/internal
 CA**; public-CA brokers (AWS MSK, Confluent Cloud) validate against the system trust
-store and need no `ca_cert`.
+store and need no `ca_cert`. For `sasl_plain` on a **public-CA** listener, set
+`tls: true` (with no `ca_cert`) to select SASL_SSL over the system trust store —
+otherwise `sasl_plain` without either signal is SASL_PLAINTEXT (cleartext).
 
 > This is **not** the `kcp scan` `apache-kafka-credentials.yaml` format. The scan
 > format lists multiple `clusters:`, each with its own `bootstrap_servers`, an

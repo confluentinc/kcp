@@ -3,6 +3,7 @@ package clusterlink
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	svclink "github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/types"
@@ -79,17 +80,18 @@ func LinkAuthFromSource(c types.KafkaSourceConn) (LinkAuth, error) {
 			CACertPath:       c.AuthMethod.SASLScram.CACert,
 		}, nil
 	case types.AuthTypeSASLPlain:
-		// SASL/PLAIN over SASL_SSL when the source supplies a ca_cert (truststore),
-		// otherwise SASL_PLAINTEXT. Mirrors KCP's source read path
-		// (AdminOptionForAuth) so the link and the scan agree on transport.
+		// SASL/PLAIN over SASL_SSL when the source supplies a ca_cert (custom-CA
+		// truststore) OR sets the explicit tls signal (UseTLS → public/system-CA,
+		// no truststore); otherwise SASL_PLAINTEXT. Mirrors KCP's source read path
+		// (AdminOptionForAuthMethod) so the link and the scan agree on transport.
 		la := LinkAuth{
 			SecurityProtocol: "SASL_PLAINTEXT",
 			SaslMechanism:    "PLAIN",
 			SaslJaasConfig:   plainJaas(c.AuthMethod.SASLPlain.Username, c.AuthMethod.SASLPlain.Password),
 		}
-		if c.AuthMethod.SASLPlain.CACert != "" {
+		if c.AuthMethod.SASLPlain.CACert != "" || c.AuthMethod.SASLPlain.UseTLS {
 			la.SecurityProtocol = "SASL_SSL"
-			la.CACertPath = c.AuthMethod.SASLPlain.CACert
+			la.CACertPath = c.AuthMethod.SASLPlain.CACert // "" for public-CA (system roots)
 		}
 		return la, nil
 	case types.AuthTypeTLS: // mTLS
@@ -105,9 +107,19 @@ func LinkAuthFromSource(c types.KafkaSourceConn) (LinkAuth, error) {
 }
 
 func scramJaas(u, p string) string {
-	return fmt.Sprintf(`org.apache.kafka.common.security.scram.ScramLoginModule required username="%s" password="%s";`, u, p)
+	return fmt.Sprintf(`org.apache.kafka.common.security.scram.ScramLoginModule required username="%s" password="%s";`, escapeJaas(u), escapeJaas(p))
 }
 
 func plainJaas(u, p string) string {
-	return fmt.Sprintf(`org.apache.kafka.common.security.plain.PlainLoginModule required username="%s" password="%s";`, u, p)
+	return fmt.Sprintf(`org.apache.kafka.common.security.plain.PlainLoginModule required username="%s" password="%s";`, escapeJaas(u), escapeJaas(p))
+}
+
+// escapeJaas escapes a value interpolated into a double-quoted JAAS field so a
+// credential containing `\` or `"` cannot terminate the quoted value early or
+// otherwise malform the login-module string. Order matters: escape the
+// backslash first, then the double-quote (`\` → `\\`, then `"` → `\"`).
+func escapeJaas(s string) string {
+	s = strings.ReplaceAll(s, `\`, `\\`)
+	s = strings.ReplaceAll(s, `"`, `\"`)
+	return s
 }
