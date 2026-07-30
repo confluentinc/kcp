@@ -88,10 +88,16 @@ func (c *ccClient) FindByDisplayName(ctx context.Context, name string) (*Service
 		return nil, fmt.Errorf("failed to find service account %q: %w", name, err)
 	}
 
-	if len(response.Data) == 0 {
-		return nil, nil
+	// The server's ?display_name= filter is not guaranteed to be an exact
+	// match (and Data can otherwise contain more than one entry); trusting
+	// Data[0] risks returning the wrong account. Scan for the exact
+	// DisplayName match instead, and report not-found if none matches.
+	for i := range response.Data {
+		if response.Data[i].DisplayName == name {
+			return &response.Data[i], nil
+		}
 	}
-	return &response.Data[0], nil
+	return nil, nil
 }
 
 // Create implements CCClient.

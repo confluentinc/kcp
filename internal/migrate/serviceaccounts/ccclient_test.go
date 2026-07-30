@@ -55,6 +55,52 @@ func TestCCClient_FindAndCreate(t *testing.T) {
 	require.Equal(t, "sa-abc123", sa.ID)
 }
 
+// TestCCClient_FindByDisplayName_FiltersClientSideForExactMatch guards
+// against trusting the CC IAM v2 list endpoint's ?display_name= filter as an
+// exact match. The server here returns MULTIPLE accounts with the wanted one
+// NOT first (and a non-matching entry first) — a Data[0] implementation
+// would incorrectly return the wrong account. FindByDisplayName must scan
+// Data for the entry whose DisplayName is an exact match.
+func TestCCClient_FindByDisplayName_FiltersClientSideForExactMatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
+		// A real CC list response can return more entries than an exact
+		// ?display_name= match would suggest (e.g. prefix-matching or stale
+		// index behaviour server-side); the client must not assume Data[0]
+		// is the exact match.
+		_, _ = io.WriteString(w, `{"data":[
+			{"id":"sa-other","display_name":"app-consumer-other"},
+			{"id":"sa-wanted","display_name":"app-consumer"}
+		]}`)
+	}))
+	defer srv.Close()
+
+	c := NewCCClient(srv.URL, srv.Client(), testAuth)
+	got, err := c.FindByDisplayName(context.Background(), "app-consumer")
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	require.Equal(t, "sa-wanted", got.ID, "must return the exact DisplayName match, not Data[0]")
+}
+
+// TestCCClient_FindByDisplayName_NoExactMatch_ReturnsNotFound covers the
+// converse: Data is non-empty but none of its entries is an EXACT
+// DisplayName match — FindByDisplayName must report not-found (nil, nil)
+// rather than returning a near-miss.
+func TestCCClient_FindByDisplayName_NoExactMatch_ReturnsNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requireAuthHeader(t, r)
+		_, _ = io.WriteString(w, `{"data":[
+			{"id":"sa-other","display_name":"app-consumer-other"}
+		]}`)
+	}))
+	defer srv.Close()
+
+	c := NewCCClient(srv.URL, srv.Client(), testAuth)
+	got, err := c.FindByDisplayName(context.Background(), "app-consumer")
+	require.NoError(t, err)
+	require.Nil(t, got, "no exact DisplayName match must report not-found, not a near-miss")
+}
+
 // TestCCClient_Create_409ThenFound covers the fallback path where the POST
 // returns a 409 conflict and the follow-up GET finds the existing service
 // account. Create should return that account with no error.
