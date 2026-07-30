@@ -99,6 +99,10 @@ func translateStatements(principalArn, clusterArn string, doc map[string]any) []
 				if !found {
 					continue
 				}
+				resourceType, matchAll := arnDenotedResourceType(resourceArn)
+				if !matchAll && resourceType != mapping.ResourceType {
+					continue
+				}
 				out = append(out, buildAcl(principalArn, resourceArn, mapping, permissionType))
 			}
 		}

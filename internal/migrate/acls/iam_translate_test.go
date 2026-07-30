@@ -149,6 +149,46 @@ func TestTranslateStatements(t *testing.T) {
 				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Write", PermissionType: "Allow"},
 			},
 		},
+		{
+			// Critical bug (over-grant): an explicit action's AclMap ResourceType
+			// (ReadData -> Topic) does not match the resource ARN's own denoted
+			// type (a "group/" ARN). MSK IAM grants nothing when an action is
+			// paired with a mismatched resource type, so this must translate to
+			// ZERO ACLs — not a spurious Topic ResourceName:"*" grant (which is
+			// what happens without the arnDenotedResourceType guard mirrored
+			// from the "kafka-cluster:*" branch).
+			name: "explicit action on a mismatched resource type yields no ACL (over-grant guard)",
+			doc:  stmt("Allow", "kafka-cluster:ReadData", "arn:aws:kafka:us-east-1:111122223333:group/mymsk/abc-5/my-group"),
+			want: nil,
+		},
+		{
+			// Cross-product statement: one statement listing both topic and
+			// group actions AND both a topic and a group resource ARN. Only the
+			// type-matched (action, resource) tuples may translate; the
+			// mismatched pairs (ReadData x group ARN, DescribeGroup x topic ARN)
+			// must be dropped, not emitted as all-"*" grants.
+			name: "cross-product statement translates only type-matched action/resource pairs",
+			doc: stmt("Allow",
+				[]any{"kafka-cluster:ReadData", "kafka-cluster:DescribeGroup"},
+				[]any{
+					"arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/orders",
+					"arn:aws:kafka:us-east-1:111122223333:group/mymsk/abc-5/my-group",
+				},
+			),
+			want: []types.Acls{
+				{ResourceType: "Topic", ResourceName: "orders", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"},
+				{ResourceType: "Group", ResourceName: "my-group", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Describe", PermissionType: "Allow"},
+			},
+		},
+		{
+			// Preserved valid case: an explicit action on the bare wildcard "*"
+			// resource ARN legitimately becomes an all-<type> grant, since
+			// arnDenotedResourceType reports matchAll=true for "*" — the guard
+			// must not suppress this.
+			name: "explicit action on bare wildcard resource still expands to all-<type> grant (matchAll)",
+			doc:  stmt("Allow", "kafka-cluster:ReadData", "*"),
+			want: []types.Acls{{ResourceType: "Topic", ResourceName: "*", ResourcePatternType: "Literal", Principal: "User:AppRole", Host: "*", Operation: "Read", PermissionType: "Allow"}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
