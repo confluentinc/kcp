@@ -150,6 +150,14 @@ wait_prometheus_ready() {
     until curl -sf -o /dev/null "$@" "$url"; do
         if [ "$waited" -ge 60 ]; then
             echo "ERROR: $name not ready after 60s ($url)" >&2
+            # Diagnostics (only on failure): surface why the instance never
+            # became ready — container state + its own logs + its seeder's logs.
+            echo "=== docker ps -a ===" >&2
+            docker ps -a >&2 2>&1 || true
+            echo "=== docker logs kcp-test-osk-$name (tail 150) ===" >&2
+            docker logs --tail 150 "kcp-test-osk-$name" >&2 2>&1 || true
+            echo "=== docker logs kcp-test-osk-$name-seeder (tail 80) ===" >&2
+            docker logs --tail 80 "kcp-test-osk-$name-seeder" >&2 2>&1 || true
             exit 1
         fi
         sleep 2
