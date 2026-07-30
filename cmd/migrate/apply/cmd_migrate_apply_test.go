@@ -1489,6 +1489,115 @@ func TestSimulateEffectiveAccess_BoundaryPolicyDocsPassThrough(t *testing.T) {
 	require.Equal(t, []string{boundaryDoc}, sim.calls[0].PermissionsBoundaryPolicyInputList)
 }
 
+// evalResultWithMissingContext builds a top-level EvaluationResult (no
+// ResourceSpecificResults — the "*"/single-resource simulation shape) that
+// carries MissingContextValues, mimicking AWS's response when a matched
+// policy statement's Condition depends on a context key (tag/sourceIp/MFA/…)
+// that SimulatePrincipalPolicy was never given.
+func evalResultWithMissingContext(action, resource string, allowed bool, missing []string) awsiamtypes.EvaluationResult {
+	decision := awsiamtypes.PolicyEvaluationDecisionTypeImplicitDeny
+	if allowed {
+		decision = awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+	}
+	return awsiamtypes.EvaluationResult{
+		EvalActionName:       aws.String(action),
+		EvalResourceName:     aws.String(resource),
+		EvalDecision:         decision,
+		MissingContextValues: missing,
+	}
+}
+
+// TestSimulateEffectiveAccess_MissingContextValues_WarnsButDoesNotChangeDecision
+// asserts the review finding's fix: a result whose decision depended on an
+// unprovided condition key (MissingContextValues non-empty) surfaces a
+// slog.Warn diagnostic naming the principal, action, and the missing keys —
+// but the returned action|resource -> allowed map is unaffected either way
+// (this is a diagnostic only, never a decision override). A normal result
+// (no MissingContextValues) must not trigger the warning.
+func TestSimulateEffectiveAccess_MissingContextValues_WarnsButDoesNotChangeDecision(t *testing.T) {
+	const principalArn = "arn:aws:iam::111122223333:role/r"
+
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{"*"}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{
+					evalResultWithMissingContext("kafka-cluster:Connect", "*", true, []string{"aws:PrincipalTag/team", "aws:SourceIp"}),
+					evalResult("kafka-cluster:DescribeCluster", "*", true),
+				}},
+			},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	got, err := simulateEffectiveAccess(context.Background(), sim, principalArn, []string{"kafka-cluster:Connect", "kafka-cluster:DescribeCluster"}, []string{"*"}, nil)
+	require.NoError(t, err)
+
+	// Decision map is unchanged by the diagnostic — both results keep their
+	// AWS-reported decision regardless of MissingContextValues.
+	require.Equal(t, map[string]bool{
+		"kafka-cluster:Connect|*":         true,
+		"kafka-cluster:DescribeCluster|*": true,
+	}, got)
+
+	logs := logBuf.String()
+	require.Contains(t, logs, "WARN")
+	require.Contains(t, logs, "⚠️")
+	require.Contains(t, logs, principalArn)
+	require.Contains(t, logs, "kafka-cluster:Connect")
+	require.Contains(t, logs, "aws:PrincipalTag/team")
+	require.Contains(t, logs, "aws:SourceIp")
+	require.Equal(t, 1, strings.Count(logs, "⚠️"), "only the result with MissingContextValues warns — the normal result must not")
+}
+
+// TestSimulateEffectiveAccess_MissingContextValues_ResourceSpecific covers the
+// other shape AWS uses: when ResourceArns lists specific resources (not the
+// bare "*"), MissingContextValues is reported per ResourceSpecificResult
+// rather than on the top-level EvaluationResult. The fix must inspect that
+// path too.
+func TestSimulateEffectiveAccess_MissingContextValues_ResourceSpecific(t *testing.T) {
+	const principalArn = "arn:aws:iam::111122223333:role/r"
+	const topicA = "arn:aws:kafka:us-east-1:111122223333:topic/mymsk/abc-5/topic-a"
+
+	rsr := awsiamtypes.ResourceSpecificResult{
+		EvalResourceName:     aws.String(topicA),
+		EvalResourceDecision: awsiamtypes.PolicyEvaluationDecisionTypeAllowed,
+		MissingContextValues: []string{"kafka-cluster:TopicTag/env"},
+	}
+	result := awsiamtypes.EvaluationResult{
+		EvalActionName:          aws.String("kafka-cluster:ReadData"),
+		EvalResourceName:        aws.String("*"),
+		ResourceSpecificResults: []awsiamtypes.ResourceSpecificResult{rsr},
+	}
+
+	sim := &fakePrincipalPolicySimulator{
+		t: t,
+		pages: map[string][]*awsiam.SimulatePrincipalPolicyOutput{
+			fakeSimBucketKey([]string{topicA}): {
+				{EvaluationResults: []awsiamtypes.EvaluationResult{result}},
+			},
+		},
+	}
+
+	var logBuf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	defer slog.SetDefault(prev)
+
+	got, err := simulateEffectiveAccess(context.Background(), sim, principalArn, []string{"kafka-cluster:ReadData"}, []string{topicA}, nil)
+	require.NoError(t, err)
+	require.Equal(t, map[string]bool{"kafka-cluster:ReadData|" + topicA: true}, got, "decision unaffected by the diagnostic")
+
+	logs := logBuf.String()
+	require.Contains(t, logs, "WARN")
+	require.Contains(t, logs, "kafka-cluster:TopicTag/env")
+	require.Contains(t, logs, "kafka-cluster:ReadData")
+}
+
 // TestSimulateEffectiveAccess_MaxPagesGuard_ReturnsErrorInsteadOfLoopingForever
 // gives a fake that ALWAYS returns IsTruncated=true (a misbehaving server
 // that never actually terminates pagination) and asserts simulateEffectiveAccess

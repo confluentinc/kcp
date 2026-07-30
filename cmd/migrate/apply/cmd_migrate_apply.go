@@ -189,11 +189,13 @@ func simulateEffectiveAccess(ctx context.Context, sim principalPolicySimulator, 
 					for _, rsr := range result.ResourceSpecificResults {
 						resource := aws.ToString(rsr.EvalResourceName)
 						out[action+"|"+resource] = rsr.EvalResourceDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+						warnMissingContextValues(principalArn, action, resource, rsr.MissingContextValues)
 					}
 					continue
 				}
 				resource := aws.ToString(result.EvalResourceName)
 				out[action+"|"+resource] = result.EvalDecision == awsiamtypes.PolicyEvaluationDecisionTypeAllowed
+				warnMissingContextValues(principalArn, action, resource, result.MissingContextValues)
 			}
 			if !resp.IsTruncated {
 				break
@@ -202,6 +204,26 @@ func simulateEffectiveAccess(ctx context.Context, sim principalPolicySimulator, 
 		}
 	}
 	return out, nil
+}
+
+// warnMissingContextValues surfaces AWS's MissingContextValues as a
+// diagnostic: a non-empty list means a matched policy statement's Condition
+// depended on a context key (e.g. a tag, aws:SourceIp, MFA) that
+// SimulatePrincipalPolicy was never given, so the returned decision for this
+// action+resource is condition-dependent and effectively unverified — the
+// operator should confirm it manually rather than trust it at face value.
+// This is diagnostic only: it never changes the decision recorded in
+// simulateEffectiveAccess's returned map. A nil/empty missing list is a no-op.
+func warnMissingContextValues(principalArn, action, resource string, missing []string) {
+	if len(missing) == 0 {
+		return
+	}
+	slog.Warn("⚠️ effective-access decision depends on unprovided context values; treat as unverified and confirm manually",
+		"principal", principalArn,
+		"action", action,
+		"resource", resource,
+		"missingContextValues", missing,
+	)
 }
 
 // splitResourceArnsForSimulation partitions a principal's distinct resource
