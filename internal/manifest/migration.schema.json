@@ -1,0 +1,485 @@
+{
+  "type": "object",
+  "properties": {
+    "apiVersion": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "msk",
+                "apache-kafka",
+                "confluent-platform"
+              ]
+            },
+            "bootstrapServers": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "credentials": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "type",
+            "bootstrapServers",
+            "credentials"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "enum": [
+                "confluent-cloud",
+                "confluent-platform"
+              ]
+            },
+            "clusterCredentials": {
+              "type": "string"
+            },
+            "cloudCredentials": {
+              "type": "string"
+            },
+            "clusterId": {
+              "type": "string"
+            },
+            "kafka": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "restEndpoint": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "restEndpoint"
+              ],
+              "additionalProperties": false
+            },
+            "schemaRegistry": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            },
+            "connect": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "url": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "url"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "clusterCredentials"
+          ],
+          "additionalProperties": false
+        },
+        "serviceAccounts": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "autoCreate": {
+              "type": "boolean"
+            },
+            "mapping": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        "clusterLink": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "destination",
+                "source"
+              ]
+            },
+            "source": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "bootstrapServers": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "credentials": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "bootstrapServers",
+                "credentials"
+              ],
+              "additionalProperties": false
+            },
+            "sourceRest": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "endpoint": {
+                  "type": "string"
+                },
+                "credentials": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "endpoint",
+                "credentials"
+              ],
+              "additionalProperties": false
+            },
+            "destination": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "bootstrapServers": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "credentials": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "bootstrapServers",
+                "credentials"
+              ],
+              "additionalProperties": false
+            },
+            "prefix": {
+              "type": "string"
+            },
+            "consumerOffsetSync": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "enable": {
+                  "type": [
+                    "null",
+                    "boolean"
+                  ]
+                },
+                "intervalMs": {
+                  "type": "integer"
+                },
+                "groupFilters": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "patternType": {
+                        "type": "string",
+                        "enum": [
+                          "LITERAL",
+                          "PREFIXED"
+                        ]
+                      },
+                      "filterType": {
+                        "type": "string",
+                        "enum": [
+                          "INCLUDE",
+                          "EXCLUDE"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "patternType",
+                      "filterType"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
+            "topicConfigSync": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "intervalMs": {
+                  "type": "integer"
+                }
+              },
+              "additionalProperties": false
+            },
+            "configs": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "topics": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "mirror",
+                "new"
+              ]
+            },
+            "include": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "mode",
+            "include"
+          ],
+          "additionalProperties": false
+        },
+        "acls": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "include": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "unprotectedTopicPolicy": {
+              "type": "string"
+            },
+            "iam": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "clusterArn": {
+                  "type": "string"
+                },
+                "principalArns": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "discoverAllRoles": {
+                  "type": "boolean"
+                },
+                "verifyEffectiveAccess": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "clusterArn"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "additionalProperties": false
+        },
+        "schemas": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "include": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "additionalProperties": false
+        },
+        "connectors": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "include": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "exclude": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "include"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "source",
+        "target"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": false
+}
