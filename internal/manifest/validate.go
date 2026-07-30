@@ -212,6 +212,13 @@ func (m *Migration) Validate() []error {
 	if m.Spec.ACLs != nil && m.Spec.Target.Type == TargetConfluentCloud && blank(m.Spec.Target.CloudCredentials) {
 		add("spec.target.cloudCredentials: required for spec.acls on a confluent-cloud target (used to reconcile Confluent Cloud's numeric ACL principals for idempotency)")
 	}
+	// serviceAccounts.autoCreate provisions accounts via the IAM v2 API, which
+	// also needs the Cloud/Global key — required even with no spec.acls (the
+	// acls-based rule above only covers the case where acls happens to be
+	// present too).
+	if m.Spec.ServiceAccounts != nil && m.Spec.ServiceAccounts.AutoCreate && m.Spec.Target.Type == TargetConfluentCloud && blank(m.Spec.Target.CloudCredentials) {
+		add("spec.target.cloudCredentials: required for spec.serviceAccounts.autoCreate on a confluent-cloud target (used to provision accounts via IAM v2)")
+	}
 
 	if t := m.Spec.Topics; t != nil {
 		if err := validateEnum("spec.topics.mode", t.Mode, TopicModeMirror, TopicModeNew); err != nil {

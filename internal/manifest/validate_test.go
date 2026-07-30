@@ -181,6 +181,44 @@ func TestValidate_CloudCredentialsForMappingOnlyACLs_Valid(t *testing.T) {
 	require.Empty(t, m.Validate())
 }
 
+// TestValidate_CloudCredentialsRequiredForAutoCreate_NoACLs covers the
+// asymmetry the acls-only rule left untested: a CC target with
+// serviceAccounts.autoCreate:true, NO spec.acls, and no cloudCredentials
+// previously validated clean even though autoCreate provisions accounts via
+// IAM v2 (which needs the Cloud/Global key just like the acls path does).
+func TestValidate_CloudCredentialsRequiredForAutoCreate_NoACLs(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
+	require.Nil(t, m.Spec.ACLs, "this case must exercise the autoCreate-only path, not the existing acls-based rule")
+	require.True(t, errorContains(m.Validate(), "spec.target.cloudCredentials: required"))
+}
+
+// TestValidate_CloudCredentialsForAutoCreate_NoACLs_Valid confirms the same
+// autoCreate-only manifest validates clean once cloudCredentials is set.
+func TestValidate_CloudCredentialsForAutoCreate_NoACLs_Valid(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
+	require.Empty(t, m.Validate())
+}
+
+// TestValidate_CloudCredentialsNotRequiredForAutoCreateFalse confirms the new
+// rule is scoped to autoCreate:true — a mapping-only serviceAccounts block
+// (autoCreate:false) with no spec.acls must NOT require cloudCredentials.
+func TestValidate_CloudCredentialsNotRequiredForAutoCreateFalse(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: false, Mapping: map[string]string{"User:x": "sa-1"}}
+	require.Empty(t, m.Validate())
+}
+
+// TestValidate_CloudCredentialsNotRequiredWithoutServiceAccounts confirms a
+// manifest with no spec.serviceAccounts at all is unaffected by the new rule.
+func TestValidate_CloudCredentialsNotRequiredWithoutServiceAccounts(t *testing.T) {
+	m := baseCCTargetManifest(t)
+	require.Nil(t, m.Spec.ServiceAccounts)
+	require.Empty(t, m.Validate())
+}
+
 func TestValidate_TopicsModeUnsupported(t *testing.T) {
 	m := validCC()
 	m.Spec.Topics = &Topics{Mode: "copy", Include: []string{"*"}}
