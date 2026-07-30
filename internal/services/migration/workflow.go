@@ -104,12 +104,32 @@ func (s *MigrationActions) Initialize(
 	}
 	config.InitialCrYAML = initialCrYAML
 
-	// Validate all three gateway CRs are consistent
-	if err := s.gatewayService.ValidateGatewayCRs(config.InitialCrYAML, config.FencedCrYAML, config.SwitchoverCrYAML); err != nil {
+	// Validate all three gateway CRs are consistent, and that the secrets they
+	// reference exist. Report what was actually verified rather than a bare tick:
+	// the live secret check can legitimately be skipped (no RBAC to read
+	// secrets), and claiming a check ran when it did not is how a missing
+	// secretRef reached a cutover in the first place.
+	validation, err := s.gatewayService.ValidateGatewayCRs(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, config.FencedCrYAML, config.SwitchoverCrYAML)
+	for _, warning := range validation.Warnings {
+		s.reporter.warn("%s", warning)
+	}
+	if err != nil {
 		return fmt.Errorf("gateway CR validation failed: %w", err)
 	}
-	slog.Debug("gateway CRs validated")
-	s.reporter.success("Gateway CRs validated")
+	slog.Debug("gateway CRs validated", "secretRefsChecked", validation.SecretRefsChecked, "secretCheckSkipped", validation.SecretCheckSkipped)
+
+	switch {
+	case validation.SecretCheckSkipped != "":
+		// A check that could not run gets ⚠️ and a Warn in kcp.log, not a green
+		// tick at Info. An operator scanning a wall of ticks minutes before
+		// cutover must be able to see that the live check never happened — that
+		// is the whole premise of this validation.
+		s.reporter.warn("Gateway CRs validated, but secret references were NOT checked: %s", validation.SecretCheckSkipped)
+	case validation.SecretRefsChecked > 0:
+		s.reporter.success("Gateway CRs validated (%d secret reference(s) present in %s)", validation.SecretRefsChecked, config.K8sNamespace)
+	default:
+		s.reporter.success("Gateway CRs validated (no secret references)")
+	}
 
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
