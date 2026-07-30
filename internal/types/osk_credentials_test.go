@@ -1,6 +1,7 @@
 package types
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -362,6 +363,46 @@ func TestOSKCredentials_Validate_TLSClientKeyNotFound(t *testing.T) {
 	if valid {
 		t.Error("expected validation to fail when TLS client key file does not exist")
 	}
+}
+
+func TestOSKCredentials_Validate_JolokiaTLSCACertNotFound(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod:       AuthMethodConfig{UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true}},
+				Jolokia: &JolokiaConfig{
+					Endpoints: []string{"http://localhost:8778"},
+					TLS:       &JolokiaTLSConfig{CACert: "/nonexistent/ca.pem"},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	require.False(t, valid, "expected validation to fail when Jolokia TLS ca_cert file does not exist")
+	require.Contains(t, fmt.Sprintf("%v", errs), "ca_cert")
+}
+
+func TestOSKCredentials_Validate_PrometheusTLSCACertNotFound(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod:       AuthMethodConfig{UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true}},
+				Prometheus: &PrometheusConfig{
+					URL: "http://localhost:9090",
+					TLS: &PrometheusTLSConfig{CACert: "/nonexistent/ca.pem"},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	require.False(t, valid, "expected validation to fail when Prometheus TLS ca_cert file does not exist")
+	require.Contains(t, fmt.Sprintf("%v", errs), "ca_cert")
 }
 
 func TestOSKCredentials_Validate_UnauthenticatedTLS(t *testing.T) {
@@ -856,6 +897,10 @@ func TestOSKCredentials_Validate_JolokiaWithAuth(t *testing.T) {
 }
 
 func TestOSKCredentials_Validate_JolokiaWithTLS(t *testing.T) {
+	tmpDir := t.TempDir()
+	caFile := filepath.Join(tmpDir, "ca.pem")
+	require.NoError(t, os.WriteFile(caFile, []byte("ca"), 0644))
+
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -867,7 +912,7 @@ func TestOSKCredentials_Validate_JolokiaWithTLS(t *testing.T) {
 				Jolokia: &JolokiaConfig{
 					Endpoints: []string{"https://broker1:8778/jolokia"},
 					TLS: &JolokiaTLSConfig{
-						CACert:             "/path/to/ca.pem",
+						CACert:             caFile,
 						InsecureSkipVerify: false,
 					},
 				},
@@ -975,6 +1020,10 @@ func TestOSKCredentials_Validate_PrometheusWithAuth(t *testing.T) {
 }
 
 func TestOSKCredentials_Validate_PrometheusWithTLS(t *testing.T) {
+	tmpDir := t.TempDir()
+	caFile := filepath.Join(tmpDir, "ca.pem")
+	require.NoError(t, os.WriteFile(caFile, []byte("ca"), 0644))
+
 	creds := &OSKCredentials{
 		Clusters: []OSKClusterAuth{
 			{
@@ -986,7 +1035,7 @@ func TestOSKCredentials_Validate_PrometheusWithTLS(t *testing.T) {
 				Prometheus: &PrometheusConfig{
 					URL: "https://prometheus:9090",
 					TLS: &PrometheusTLSConfig{
-						CACert:             "/path/to/ca.pem",
+						CACert:             caFile,
 						InsecureSkipVerify: false,
 					},
 				},

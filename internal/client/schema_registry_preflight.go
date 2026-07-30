@@ -49,6 +49,14 @@ func ValidateConfluentSchemaRegistryURL(rawURL string, opts ...SchemaRegistryOpt
 		req.SetBasicAuth(cfg.username, cfg.password)
 	}
 
+	// The probe must negotiate TLS exactly like the real client (custom CA,
+	// insecure-skip, mTLS client cert), or it would reject endpoints the scan
+	// can actually reach.
+	transport, err := cfg.tlsTransport()
+	if err != nil {
+		return err
+	}
+
 	httpClient := &http.Client{
 		Timeout: probeTimeout,
 		// Refuse redirects: a real Schema Registry /config responds directly, so a
@@ -58,6 +66,11 @@ func ValidateConfluentSchemaRegistryURL(rawURL string, opts ...SchemaRegistryOpt
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
+	}
+	// Assign only when non-nil: a nil *http.Transport stored in the interface
+	// field is not "unset" — the client would call through it and panic.
+	if transport != nil {
+		httpClient.Transport = transport
 	}
 
 	resp, err := httpClient.Do(req)

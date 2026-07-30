@@ -2,14 +2,11 @@ package self_managed_connectors
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
@@ -30,7 +27,7 @@ type HTTPConnectClient struct {
 	baseURL    string
 	httpClient *http.Client
 	authMethod types.ConnectAuthMethod
-	saslAuth   types.ConnectSaslScramAuth
+	basicAuth  types.ConnectBasicAuth
 }
 
 type SelfManagedConnectorsScannerOpts struct {
@@ -41,7 +38,7 @@ type SelfManagedConnectorsScannerOpts struct {
 	ClusterArn     string
 	ClusterID      string
 	AuthMethod     types.ConnectAuthMethod
-	SaslScramAuth  types.ConnectSaslScramAuth
+	BasicAuth      types.ConnectBasicAuth
 	TlsAuth        types.ConnectTlsAuth
 
 	MetricsSource       string
@@ -76,7 +73,7 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 		baseURL:    opts.ConnectRestURL,
 		httpClient: httpClient,
 		authMethod: opts.AuthMethod,
-		saslAuth:   opts.SaslScramAuth,
+		basicAuth:  opts.BasicAuth,
 	}
 
 	return &SelfManagedConnectorsScanner{
@@ -95,36 +92,22 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 }
 
 func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectTlsAuth) (*http.Client, error) {
-	client := &http.Client{
-		Timeout: 15 * time.Second,
+	// Trust a supplied CA (private/internal CA) on ANY auth method when the Connect
+	// REST endpoint is HTTPS — not only mTLS. Empty CA → system trust roots.
+	pool, err := utils.OptionalCACertPool(tlsAuth.CACert)
+	if err != nil {
+		return nil, err
 	}
-
-	// Only configure TLS if using TLS client certificate authentication
+	tlsCfg := utils.TLSClientConfig(pool, tlsAuth.InsecureSkipVerify)
 	if authMethod == types.ConnectAuthMethodTls {
-		caCert, err := os.ReadFile(tlsAuth.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-		}
-
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
-		}
-
-		clientCert, err := tls.LoadX509KeyPair(tlsAuth.ClientCert, tlsAuth.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
-		}
-
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs:      caCertPool,
-				Certificates: []tls.Certificate{clientCert},
-			},
+		if err := utils.AppendClientCert(tlsCfg, tlsAuth.ClientCert, tlsAuth.ClientKey); err != nil {
+			return nil, err
 		}
 	}
 
-	return client, nil
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+	return &http.Client{Timeout: 15 * time.Second, Transport: transport}, nil
 }
 
 func (s *SelfManagedConnectorsScanner) Run() error {
@@ -320,11 +303,11 @@ func (c *HTTPConnectClient) GetConnectorStatus(name string) (map[string]any, err
 	return status, nil
 }
 
-// addAuthHeaders adds basic authentication for SASL/SCRAM Connect clusters on the
-// list/status/config endpoints.
+// addAuthHeaders adds HTTP Basic authentication for Basic-auth Connect clusters
+// on the list/status/config endpoints.
 func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
-	if c.authMethod == types.ConnectAuthMethodSaslScram {
-		req.SetBasicAuth(c.saslAuth.Username, c.saslAuth.Password)
+	if c.authMethod == types.ConnectAuthMethodBasicAuth {
+		req.SetBasicAuth(c.basicAuth.Username, c.basicAuth.Password)
 	}
 }
 
@@ -439,7 +422,11 @@ func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(creds.Jolokia.Auth.Username, creds.Jolokia.Auth.Password))
 	}
 	if creds.Jolokia.TLS != nil {
-		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(creds.Jolokia.TLS.CACert, creds.Jolokia.TLS.InsecureSkipVerify))
+		caPool, err := utils.OptionalCACertPool(creds.Jolokia.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
+		}
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, creds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
 	jmxService := jmx.NewJMXService(creds.Jolokia.Endpoints, jmx.ConnectMetricDefinitions(), "worker", jolokiaOpts...)
@@ -464,7 +451,11 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 		promOpts = append(promOpts, client.WithPrometheusBasicAuth(creds.Prometheus.Auth.Username, creds.Prometheus.Auth.Password))
 	}
 	if creds.Prometheus.TLS != nil {
-		promOpts = append(promOpts, client.WithPrometheusTLS(creds.Prometheus.TLS.CACert, creds.Prometheus.TLS.InsecureSkipVerify))
+		caPool, err := utils.OptionalCACertPool(creds.Prometheus.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
+		}
+		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, creds.Prometheus.TLS.InsecureSkipVerify))
 	}
 
 	var labels map[string]string
