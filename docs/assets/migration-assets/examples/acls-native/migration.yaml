@@ -1,0 +1,31 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
+#
+# Example: ACL migration, native Kafka ACLs only — Apache Kafka → Confluent Cloud.
+# The source's native ACLs (read via DescribeAcls) are migrated as-is; there is
+# no spec.acls.iam block, so no AWS IAM plane is involved. No spec.clusterLink
+# or spec.topics is needed — spec.acls alone satisfies "at least one of
+# clusterLink/topics/acls".
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: acls-native-example
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers: ["broker1:9092", "broker2:9092"]
+    credentials: ../../credentials/kafka-sasl-scram.yaml   # Kafka creds (reads the source ACLs)
+
+  target:
+    type: confluent-cloud
+    clusterId: lkc-xxxxx
+    clusterCredentials: ../../credentials/rest-api-key.yaml  # REST creds (Admin API)
+    cloudCredentials: ../../credentials/rest-api-key.yaml    # Cloud/Global API key; required whenever spec.acls is present
+    kafka:
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+
+  serviceAccounts:
+    autoCreate: true   # find-or-create a service account per unmapped ACL principal
+
+  acls:
+    include: ["*"]                  # every ACL matches on principal or resource name
+    exclude: ["User:ANONYMOUS"]     # keep excluded principals off the target
