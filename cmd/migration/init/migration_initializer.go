@@ -2,9 +2,7 @@ package init
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"net/http"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
@@ -17,6 +15,7 @@ type MigrationInitializerOpts struct {
 	MigrationConfig       migration.MigrationConfig
 	ClusterApiKey         string
 	ClusterApiSecret      string
+	ClusterRestCACert     string
 	InsecureSkipTLSVerify bool
 }
 
@@ -33,13 +32,11 @@ func NewMigrationInitializer(opts MigrationInitializerOpts) *MigrationInitialize
 func (m *MigrationInitializer) Run() error {
 	config := m.opts.MigrationConfig
 
-	httpClient := http.DefaultClient
-	if m.opts.InsecureSkipTLSVerify {
-		httpClient = &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // user-controlled flag
-			},
-		}
+	// REST client for the destination cluster-link API: trusts a private CA
+	// (--cluster-rest-ca-cert) and/or skips verification, else system roots (CC public CA).
+	httpClient, err := migration.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
+	if err != nil {
+		return fmt.Errorf("building destination REST client: %w", err)
 	}
 
 	gatewayService := gateway.NewK8sService(config.KubeConfigPath)

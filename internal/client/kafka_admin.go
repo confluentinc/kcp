@@ -3,16 +3,15 @@ package client
 import (
 	"context"
 	"crypto/tls"
-	"crypto/x509"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/aws/aws-msk-iam-sasl-signer-go/signer"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // AdminConfig holds the configuration for creating a Kafka admin client
@@ -42,19 +41,24 @@ func WithIAMAuth() AdminOption {
 
 // WithSASLSCRAMAuth configures the admin client to use SASL/SCRAM authentication.
 // Set insecureSkipTLSVerify to true only in test environments with self-signed certificates.
-func WithSASLSCRAMAuth(username, password, mechanism string, insecureSkipTLSVerify bool) AdminOption {
+func WithSASLSCRAMAuth(username, password, mechanism, caCertFile string, insecureSkipTLSVerify bool) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeSASLSCRAM
 		config.username = username
 		config.password = password
 		config.saslMechanism = mechanism
+		config.caCertFile = caCertFile
 		config.insecureSkipTLSVerify = insecureSkipTLSVerify
 	}
 }
 
-func WithUnauthenticatedTlsAuth() AdminOption {
+// WithUnauthenticatedTlsAuth configures one-way (server-only) TLS with no client
+// auth. insecureSkipTLSVerify disables certificate verification (test envs only).
+func WithUnauthenticatedTlsAuth(caCertFile string, insecureSkipTLSVerify bool) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeUnauthenticatedTLS
+		config.caCertFile = caCertFile
+		config.insecureSkipTLSVerify = insecureSkipTLSVerify
 	}
 }
 
@@ -64,26 +68,35 @@ func WithUnauthenticatedPlaintextAuth() AdminOption {
 	}
 }
 
-func WithTLSAuth(caCertFile string, clientCertFile string, clientKeyFile string) AdminOption {
+// WithTLSAuth configures mutual TLS (client cert + key). insecureSkipTLSVerify
+// disables server-certificate verification (test envs only).
+func WithTLSAuth(caCertFile string, clientCertFile string, clientKeyFile string, insecureSkipTLSVerify bool) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeTLS
 		config.caCertFile = caCertFile
 		config.clientCertFile = clientCertFile
 		config.clientKeyFile = clientKeyFile
+		config.insecureSkipTLSVerify = insecureSkipTLSVerify
 	}
 }
 
-// WithSASLPlainAuth configures SASL/PLAIN authentication (used for Confluent Cloud).
-func WithSASLPlainAuth(username, password string) AdminOption {
+// WithSASLPlainAuth configures SASL/PLAIN over TLS (SASL_SSL) — used for Confluent
+// Cloud and any TLS-wrapped SASL/PLAIN listener. insecureSkipTLSVerify disables
+// certificate verification (test envs only). For a cleartext SASL_PLAINTEXT
+// listener use WithSASLPlainAuthNoTLS.
+func WithSASLPlainAuth(username, password, caCertFile string, insecureSkipTLSVerify bool) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeSASLPlain
 		config.username = username
 		config.password = password
+		config.caCertFile = caCertFile
+		config.insecureSkipTLSVerify = insecureSkipTLSVerify
 	}
 }
 
 // WithSASLPlainAuthNoTLS configures SASL/PLAIN authentication without TLS encryption.
-// Used for source clusters using SASL_PLAINTEXT listeners.
+// Used for source clusters on SASL_PLAINTEXT listeners. For TLS-wrapped SASL/PLAIN
+// (SASL_SSL) use WithSASLPlainAuth.
 func WithSASLPlainAuthNoTLS(username, password string) AdminOption {
 	return func(config *AdminConfig) {
 		config.authType = types.AuthTypeSASLPlain
@@ -93,7 +106,9 @@ func WithSASLPlainAuthNoTLS(username, password string) AdminOption {
 	}
 }
 
-// WithInsecureSkipVerify disables TLS certificate verification.
+// WithInsecureSkipVerify disables TLS certificate verification. Prefer the
+// per-auth insecureSkipTLSVerify parameter on the With*Auth builders; this
+// standalone override remains for callers that set auth and skip separately.
 func WithInsecureSkipVerify() AdminOption {
 	return func(config *AdminConfig) {
 		config.insecureSkipTLSVerify = true
@@ -101,8 +116,13 @@ func WithInsecureSkipVerify() AdminOption {
 }
 
 // AdminOptionForAuthMethod maps an auth type + method config to the corresponding
-// AdminOption. skipTLSVerify applies to SASL/SCRAM (MSK passes false — AWS-managed
-// certs; Apache Kafka passes its InsecureSkipTLSVerify).
+// AdminOption. skipTLSVerify is threaded into EVERY TLS-bearing path (SASL/SCRAM,
+// SASL/PLAIN-over-TLS, unauthenticated-TLS, mTLS) so a caller does not need a
+// separate WithInsecureSkipVerify() override; IAM is MSK-only (AWS public CA), so
+// it never skips. A supplied ca_cert is plumbed through so a custom CA is trusted
+// on the source connection itself — not only in the cluster-link truststore. IAM
+// lives here, in the client package — never in the osk package (Apache Kafka has
+// no IAM).
 func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConfig, skipTLSVerify bool) (AdminOption, error) {
 	switch authType {
 	case types.AuthTypeIAM:
@@ -111,55 +131,75 @@ func AdminOptionForAuthMethod(authType types.AuthType, auth types.AuthMethodConf
 		if auth.SASLScram == nil {
 			return nil, fmt.Errorf("auth type %q selected but sasl_scram config is nil", authType)
 		}
-		return WithSASLSCRAMAuth(auth.SASLScram.Username, auth.SASLScram.Password, auth.SASLScram.Mechanism, skipTLSVerify), nil
+		return WithSASLSCRAMAuth(auth.SASLScram.Username, auth.SASLScram.Password, auth.SASLScram.Mechanism, auth.SASLScram.CACert, skipTLSVerify), nil
 	case types.AuthTypeSASLPlain:
 		if auth.SASLPlain == nil {
 			return nil, fmt.Errorf("auth type %q selected but sasl_plain config is nil", authType)
 		}
+		// SASL/PLAIN over TLS (SASL_SSL) when the credential supplies a ca_cert OR
+		// sets the explicit tls signal (UseTLS); otherwise SASL_PLAINTEXT. ca_cert
+		// signals a TLS listener with a custom CA to trust; UseTLS signals a TLS
+		// listener whose CA is in the system trust store (public CA, e.g. Confluent
+		// Cloud) — CACert stays "" there so WithSASLPlainAuth falls back to system
+		// roots (utils.OptionalCACertPool("") → nil pool → system roots). Neither
+		// signal (the default for every existing scan/cutover/migrate config, which
+		// never sets UseTLS) → SASL_PLAINTEXT, exactly as before.
+		if auth.SASLPlain.CACert != "" || auth.SASLPlain.UseTLS {
+			return WithSASLPlainAuth(auth.SASLPlain.Username, auth.SASLPlain.Password, auth.SASLPlain.CACert, skipTLSVerify), nil
+		}
 		return WithSASLPlainAuthNoTLS(auth.SASLPlain.Username, auth.SASLPlain.Password), nil
 	case types.AuthTypeUnauthenticatedTLS:
-		return WithUnauthenticatedTlsAuth(), nil
+		if auth.UnauthenticatedTLS == nil {
+			return nil, fmt.Errorf("auth type %q selected but unauthenticated_tls config is nil", authType)
+		}
+		return WithUnauthenticatedTlsAuth(auth.UnauthenticatedTLS.CACert, skipTLSVerify), nil
 	case types.AuthTypeUnauthenticatedPlaintext:
 		return WithUnauthenticatedPlaintextAuth(), nil
 	case types.AuthTypeTLS:
 		if auth.TLS == nil {
 			return nil, fmt.Errorf("auth type %q selected but tls config is nil", authType)
 		}
-		return WithTLSAuth(auth.TLS.CACert, auth.TLS.ClientCert, auth.TLS.ClientKey), nil
+		return WithTLSAuth(auth.TLS.CACert, auth.TLS.ClientCert, auth.TLS.ClientKey, skipTLSVerify), nil
 	default:
 		return nil, fmt.Errorf("auth type %q not supported", authType)
 	}
 }
 
-// AdminOptionForAuth maps a credential auth type to the corresponding AdminOption.
-// Retained for callers keyed to types.ClusterAuth; delegates to AdminOptionForAuthMethod.
-func AdminOptionForAuth(authType types.AuthType, clusterAuth types.ClusterAuth) AdminOption {
-	opt, err := AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
-	if err != nil {
-		slog.Warn("could not resolve auth option, defaulting to IAM", "authType", authType, "error", err)
-		return WithIAMAuth()
-	}
-	return opt
-}
-
 func configureSASLTypeOAuthAuthentication(config *sarama.Config, region string, insecureSkipVerify bool) {
 	slog.Debug("🔍 configuring SASL/OAuth (IAM) authentication")
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+	// MSK presents Amazon's public CA, so no custom CA pool — just honor skip-verify.
+	config.Net.TLS.Config = utils.TLSClientConfig(nil, insecureSkipVerify)
 	config.Net.SASL.Enable = true
 	config.Net.SASL.Mechanism = sarama.SASLTypeOAuth
 	config.Net.SASL.TokenProvider = &MSKAccessTokenProvider{region: region}
 }
 
-func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string, insecureSkipTLSVerify bool) error {
+// tlsConfigWithCA builds a *tls.Config trusting the given CA PEM file (system
+// roots when caCertFile is empty), honoring insecureSkipVerify. Shared by the
+// SASL/SCRAM, SASL/PLAIN (TLS), unauthenticated-TLS, and mTLS paths so a custom
+// CA (self-managed/OSK SASL_SSL) is trusted on the source connection — not only
+// in the cluster-link truststore. MSK uses Amazon's public CA, so caCertFile is
+// empty there and this falls back to system roots.
+func tlsConfigWithCA(caCertFile string, insecureSkipVerify bool) (*tls.Config, error) {
+	pool, err := utils.OptionalCACertPool(caCertFile)
+	if err != nil {
+		return nil, err
+	}
+	return utils.TLSClientConfig(pool, insecureSkipVerify), nil
+}
+
+func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string, password string, mechanism string, caCertFile string, insecureSkipTLSVerify bool) error {
 	slog.Debug("configuring SASL/SCRAM authentication", "mechanism", mechanism, "insecure_skip_tls_verify", insecureSkipTLSVerify)
 	if insecureSkipTLSVerify {
 		slog.Warn("TLS certificate verification is disabled - this should only be used in test environments with self-signed certificates")
 	}
-	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tls.Config{
-		InsecureSkipVerify: insecureSkipTLSVerify, //nolint:gosec // Only true when explicitly set in credentials for test environments
+	tlsCfg, err := tlsConfigWithCA(caCertFile, insecureSkipTLSVerify)
+	if err != nil {
+		return err
 	}
+	config.Net.TLS.Enable = true
+	config.Net.TLS.Config = tlsCfg
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
@@ -184,49 +224,48 @@ func configureSASLTypeSCRAMAuthentication(config *sarama.Config, username string
 	return nil
 }
 
-func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string, withTLSEncryption bool, insecureSkipVerify bool) {
+func configureSASLTypePlainAuthentication(config *sarama.Config, username string, password string, withTLSEncryption bool, caCertFile string, insecureSkipVerify bool) error {
 	slog.Debug("configuring SASL/PLAIN authentication", "enableTlsEncryption", withTLSEncryption)
 	if !withTLSEncryption {
 		slog.Warn("SASL/PLAIN without TLS: credentials will be transmitted in cleartext over the network")
 	}
 	config.Net.TLS.Enable = withTLSEncryption
 	if withTLSEncryption {
-		config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+		tlsCfg, err := tlsConfigWithCA(caCertFile, insecureSkipVerify)
+		if err != nil {
+			return err
+		}
+		config.Net.TLS.Config = tlsCfg
 	}
 	config.Net.SASL.Enable = true
 	config.Net.SASL.User = username
 	config.Net.SASL.Password = password
 	config.Net.SASL.Mechanism = sarama.SASLTypePlaintext
+	return nil
 }
 
-func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool, insecureSkipVerify bool) {
+func configureUnauthenticatedAuthentication(config *sarama.Config, withTLSEncryption bool, caCertFile string, insecureSkipVerify bool) error {
 	slog.Debug("🔍 enabling TLS encryption", "enableTlsEncryption", withTLSEncryption)
 	config.Net.TLS.Enable = withTLSEncryption
-	config.Net.TLS.Config = &tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
+	tlsCfg, err := tlsConfigWithCA(caCertFile, insecureSkipVerify)
+	if err != nil {
+		return err
+	}
+	config.Net.TLS.Config = tlsCfg
+	return nil
 }
 
 func configureTLSAuth(config *sarama.Config, caCertFile string, clientCertFile string, clientKeyFile string, insecureSkipVerify bool) error {
-	tlsConfig := tls.Config{InsecureSkipVerify: insecureSkipVerify} //nolint:gosec // user-controlled flag
-
-	cert, err := tls.LoadX509KeyPair(clientCertFile, clientKeyFile)
+	tlsConfig, err := tlsConfigWithCA(caCertFile, insecureSkipVerify)
 	if err != nil {
-		return fmt.Errorf("failed to load client certificate: %v", err)
+		return err
 	}
-	tlsConfig.Certificates = []tls.Certificate{cert}
-
-	caCert, err := os.ReadFile(caCertFile)
-	if err != nil {
-		return fmt.Errorf("failed to read CA certificate file: %v", err)
+	if err := utils.AppendClientCert(tlsConfig, clientCertFile, clientKeyFile); err != nil {
+		return err
 	}
-
-	caCertPool := x509.NewCertPool()
-	if !caCertPool.AppendCertsFromPEM(caCert) {
-		return fmt.Errorf("failed to append CA certificate to pool")
-	}
-	tlsConfig.RootCAs = caCertPool
 
 	config.Net.TLS.Enable = true
-	config.Net.TLS.Config = &tlsConfig
+	config.Net.TLS.Config = tlsConfig
 	return nil
 }
 
@@ -257,6 +296,7 @@ type ClusterKafkaMetadata struct {
 // KafkaAdmin interface defines the Kafka admin operations we need
 type KafkaAdmin interface {
 	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error)
 	GetClusterKafkaMetadata() (*ClusterKafkaMetadata, error)
 	DescribeConfig() ([]sarama.ConfigEntry, error)
 	ListAcls() ([]sarama.ResourceAcls, error)
@@ -290,6 +330,25 @@ instead of just overridden configs. This was done to reduce the number of reques
 https://github.com/IBM/sarama/blob/main/admin.go#L349
 */
 func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
+	// Include ALL configs without filtering (no default/sensitive filtering)
+	return k.listTopicsWithConfigs(func(*sarama.ConfigEntry) bool { return true })
+}
+
+// ListTopicsWithNonDefaultConfigs is like ListTopicsWithConfigs but ConfigEntries
+// contains only configs explicitly set at the topic level (DYNAMIC_TOPIC_CONFIG,
+// sarama.SourceTopic), not server/broker/static defaults — the set faithful for
+// recreating a topic.
+func (k *KafkaAdminClient) ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error) {
+	// keep only configs explicitly set at the topic level
+	return k.listTopicsWithConfigs(func(entry *sarama.ConfigEntry) bool {
+		return entry.Source == sarama.SourceTopic
+	})
+}
+
+// listTopicsWithConfigs is the shared controller + metadata + DescribeConfigs flow
+// used by ListTopicsWithConfigs and ListTopicsWithNonDefaultConfigs. The keep
+// predicate decides which config entries are retained on each topic.
+func (k *KafkaAdminClient) listTopicsWithConfigs(keep func(*sarama.ConfigEntry) bool) (map[string]sarama.TopicDetail, error) {
 	// Get controller to use as a connection broker to avoid opening a new broker connection
 	controller, err := k.admin.Controller()
 	if err != nil {
@@ -354,8 +413,11 @@ func (k *KafkaAdminClient) ListTopicsWithConfigs() (map[string]sarama.TopicDetai
 		topicDetails.ConfigEntries = make(map[string]*string)
 
 		for _, entry := range resource.Configs {
-			// Include ALL configs without filtering (no default/sensitive filtering)
-			topicDetails.ConfigEntries[entry.Name] = &entry.Value
+			if !keep(entry) {
+				continue
+			}
+			v := entry.Value
+			topicDetails.ConfigEntries[entry.Name] = &v
 		}
 
 		topicsDetailsMap[resource.Name] = topicDetails
@@ -459,13 +521,21 @@ func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption
 	case types.AuthTypeIAM:
 		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipTLSVerify)
 	case types.AuthTypeSASLSCRAM:
-		_ = configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.insecureSkipTLSVerify)
+		if err := configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure SASL/SCRAM authentication: %w", err)
+		}
 	case types.AuthTypeSASLPlain:
-		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.insecureSkipTLSVerify)
+		if err := configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure SASL/PLAIN authentication: %w", err)
+		}
 	case types.AuthTypeUnauthenticatedTLS:
-		configureUnauthenticatedAuthentication(saramaConfig, true, config.insecureSkipTLSVerify)
+		if err := configureUnauthenticatedAuthentication(saramaConfig, true, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure unauthenticated TLS authentication: %w", err)
+		}
 	case types.AuthTypeUnauthenticatedPlaintext:
-		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipTLSVerify)
+		if err := configureUnauthenticatedAuthentication(saramaConfig, false, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure unauthenticated plaintext authentication: %w", err)
+		}
 	case types.AuthTypeTLS:
 		if err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile, config.insecureSkipTLSVerify); err != nil {
 			return nil, fmt.Errorf("failed to configure TLS authentication: %w", err)
@@ -506,19 +576,25 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 	case types.AuthTypeIAM:
 		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipTLSVerify)
 	case types.AuthTypeSASLSCRAM:
-		if err := configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.insecureSkipTLSVerify); err != nil {
+		if err := configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
 			return nil, fmt.Errorf("failed to configure SASL/SCRAM authentication: %w", err)
 		}
 	case types.AuthTypeSASLPlain:
-		configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.insecureSkipTLSVerify)
+		if err := configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure SASL/PLAIN authentication: %w", err)
+		}
 	case types.AuthTypeUnauthenticatedTLS:
-		configureUnauthenticatedAuthentication(saramaConfig, true, config.insecureSkipTLSVerify)
+		if err := configureUnauthenticatedAuthentication(saramaConfig, true, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure unauthenticated TLS authentication: %w", err)
+		}
 	case types.AuthTypeUnauthenticatedPlaintext:
-		configureUnauthenticatedAuthentication(saramaConfig, false, config.insecureSkipTLSVerify)
+		if err := configureUnauthenticatedAuthentication(saramaConfig, false, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
+			return nil, fmt.Errorf("failed to configure unauthenticated plaintext authentication: %w", err)
+		}
 	case types.AuthTypeTLS:
 		err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile, config.insecureSkipTLSVerify)
 		if err != nil {
-			return nil, fmt.Errorf("failed to configure TLS authentication: %v", err)
+			return nil, fmt.Errorf("failed to configure TLS authentication: %w", err)
 		}
 	default:
 		return nil, fmt.Errorf("auth type: %v not yet supported", config.authType)
