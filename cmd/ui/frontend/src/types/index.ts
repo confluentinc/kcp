@@ -1,4 +1,4 @@
-import type { MSKClusterConfig, MSKConnector, KafkaAdminInfo, MSKConfiguration, ClusterNetworking, Nodes } from './aws/msk'
+import type { MSKClusterConfig, MSKConnector, KafkaAdminInfo, MSKConfiguration, ClusterNetworking, Nodes, ConnectClusterMetrics } from './aws/msk'
 import type { CostsApiResponse } from './api/costs'
 import type { ApiMetadata } from './api/common'
 
@@ -21,6 +21,7 @@ export interface Cluster {
     msk_cluster_config?: MSKClusterConfig
     nodes?: Nodes
     connectors?: MSKConnector[]
+    connector_metrics?: ConnectClusterMetrics
     bootstrap_brokers?: {
       [key: string]: string | null
     }
@@ -60,6 +61,7 @@ export type {
   SelfManagedConnector,
   MSKConfiguration,
   RegionData,
+  ConnectClusterMetrics,
 } from './aws/msk'
 
 // Re-export OSK types for convenience

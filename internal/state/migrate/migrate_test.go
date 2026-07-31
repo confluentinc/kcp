@@ -87,16 +87,37 @@ func TestUpgradeForwardIncompatibleDevStamped(t *testing.T) {
 }
 
 func TestUpgradeCurrentIsIdentity(t *testing.T) {
-	data := `{"schema_version":1,"msk_sources":{},"kcp_build_info":{"version":"0.8.5"}}`
+	data := `{"schema_version":2,"msk_sources":{},"kcp_build_info":{"version":"0.9.0"}}`
 	got, from, err := Upgrade([]byte(data))
+	if err != nil {
+		t.Fatalf("Upgrade error: %v", err)
+	}
+	if from != "schema_version=2" {
+		t.Errorf("from label = %q, want schema_version=2", from)
+	}
+	if string(got) != data {
+		t.Errorf("current-version data must pass through unchanged.\n got: %s\nwant: %s", got, data)
+	}
+}
+
+func TestUpgradeEraCv1IsAdditivePassthrough(t *testing.T) {
+	// A released schema_version=1 era-C file predates the additive connector_metrics
+	// field (schema_version 2). Because the field is additive + omitempty, the v1 file is
+	// already a structurally-valid current file: Upgrade must pass it through UNCHANGED
+	// (no upcaster, no error) and label it by its source schema_version.
+	data, err := os.ReadFile(filepath.Join("testdata", "era-c-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, from, err := Upgrade(data)
 	if err != nil {
 		t.Fatalf("Upgrade error: %v", err)
 	}
 	if from != "schema_version=1" {
 		t.Errorf("from label = %q, want schema_version=1", from)
 	}
-	if string(got) != data {
-		t.Errorf("current-version data must pass through unchanged.\n got: %s\nwant: %s", got, data)
+	if string(got) != string(data) {
+		t.Errorf("additive-only older era-C file must pass through unchanged.\n got: %s\nwant: %s", got, data)
 	}
 }
 
