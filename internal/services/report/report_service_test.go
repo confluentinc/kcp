@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	costexplorertypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,6 +67,22 @@ func TestCalculateCostAggregates(t *testing.T) {
 		assertServiceTotal(t, aggregates.AWSCertificateManager, 1.0)
 	})
 
+	t.Run("routes MSK Connect costs into their own aggregate bucket", func(t *testing.T) {
+		costs := []ProcessedCost{
+			{
+				Start: "2025-01-01", End: "2025-01-02",
+				Service: types.ServiceMSKConnect, UsageType: "USE1-Kafka.mcu.general",
+				Values: ProcessedCostBreakdown{UnblendedCost: 4.0},
+			},
+		}
+
+		aggregates := rs.calculateCostAggregates(costs)
+
+		assertHasUsageType(t, aggregates.MSKConnect, "USE1-Kafka.mcu.general")
+		assertServiceTotal(t, aggregates.MSKConnect, 4.0)
+		assert.Empty(t, aggregates.AmazonManagedStreamingForApacheKafka.UnblendedCost)
+	})
+
 	t.Run("aggregates multiple entries for same service and usage type", func(t *testing.T) {
 		costs := []ProcessedCost{
 			{
@@ -100,7 +118,59 @@ func TestForService(t *testing.T) {
 	assert.Equal(t, &aggregates.AmazonVPC, aggregates.ForService(types.ServiceVPC))
 	assert.Equal(t, &aggregates.EC2Other, aggregates.ForService(types.ServiceEC2Other))
 	assert.Equal(t, &aggregates.AWSCertificateManager, aggregates.ForService(types.ServiceAWSCertificateManager))
+	assert.Equal(t, &aggregates.MSKConnect, aggregates.ForService(types.ServiceMSKConnect))
 	assert.Nil(t, aggregates.ForService("Unknown Service"))
+}
+
+func TestFlattenCosts_LabelsMSKConnectUsageSeparately(t *testing.T) {
+	rs := NewReportService()
+
+	region := types.DiscoveredRegion{
+		Name: "us-east-1",
+		Costs: types.CostInformation{
+			CostResults: []costexplorertypes.ResultByTime{
+				{
+					TimePeriod: &costexplorertypes.DateInterval{
+						Start: aws.String("2026-06-01"),
+						End:   aws.String("2026-06-02"),
+					},
+					Groups: []costexplorertypes.Group{
+						{
+							Keys: []string{types.ServiceMSK, "USE1-Kafka.mcu.general"},
+							Metrics: map[string]costexplorertypes.MetricValue{
+								"UnblendedCost": {Amount: aws.String("10.00")},
+							},
+						},
+						{
+							Keys: []string{types.ServiceMSK, "USE1-Kafka.m5.large"},
+							Metrics: map[string]costexplorertypes.MetricValue{
+								"UnblendedCost": {Amount: aws.String("20.00")},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	processed := rs.flattenCosts(region)
+
+	require.Len(t, processed.Results, 2)
+
+	var connectRow, brokerRow *ProcessedCost
+	for i := range processed.Results {
+		switch processed.Results[i].UsageType {
+		case "USE1-Kafka.mcu.general":
+			connectRow = &processed.Results[i]
+		case "USE1-Kafka.m5.large":
+			brokerRow = &processed.Results[i]
+		}
+	}
+
+	require.NotNil(t, connectRow, "expected a row for the mcu.general usage type")
+	require.NotNil(t, brokerRow, "expected a row for the broker usage type")
+	assert.Equal(t, types.ServiceMSKConnect, connectRow.Service)
+	assert.Equal(t, types.ServiceMSK, brokerRow.Service)
 }
 
 func assertHasUsageType(t *testing.T, svc ServiceCostAggregates, usageType string) {

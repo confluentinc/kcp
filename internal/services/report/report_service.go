@@ -672,6 +672,14 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) ProcessedRe
 			service := aws.ToString(&group.Keys[0])
 			lineItem := aws.ToString(&group.Keys[1])
 
+			// MSK Connect has no distinct Cost Explorer SERVICE dimension - it bills
+			// under ServiceMSK with USAGE_TYPE "<region>-Kafka.mcu.general". Relabel
+			// those rows so Connect cost surfaces as its own category instead of
+			// hiding inside broker cost.
+			if service == types.ServiceMSK && strings.HasSuffix(lineItem, "-Kafka.mcu.general") {
+				service = types.ServiceMSKConnect
+			}
+
 			var costBreakdown ProcessedCostBreakdown
 
 			if metric, exists := group.Metrics["UnblendedCost"]; exists && metric.Amount != nil {

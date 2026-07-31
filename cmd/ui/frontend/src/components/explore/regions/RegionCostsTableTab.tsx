@@ -1,11 +1,4 @@
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/common/ui/select'
-import {
   Table,
   TableBody,
   TableCell,
@@ -23,64 +16,33 @@ interface ProcessedData {
     total: number
   }>
   uniqueDates: string[]
-  services: string[]
 }
 
 interface RegionCostsTableTabProps {
   processedData: ProcessedData
   selectedCostType: string
-  selectedTableService: string
-  setSelectedTableService: (service: string) => void
 }
 
 export const RegionCostsTableTab = ({
   processedData,
   selectedCostType,
-  selectedTableService,
-  setSelectedTableService,
 }: RegionCostsTableTabProps) => {
   return (
     <>
-      {/* Service Filter for Table */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-4">
-          <label className="text-sm font-medium text-foreground">
-            Filter by Service:
-          </label>
-          <Select
-            value={selectedTableService}
-            onValueChange={setSelectedTableService}
-          >
-            <SelectTrigger className="w-[300px]">
-              <SelectValue placeholder="Choose a service to filter" />
-            </SelectTrigger>
-            <SelectContent>
-              {processedData.services.map((service) => (
-                <SelectItem
-                  key={service}
-                  value={service}
-                >
-                  {service}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
-
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-muted-foreground">
-              Total ({formatCostTypeLabel(selectedCostType)}):
-            </span>
-            <span className="text-lg font-bold text-green-600 dark:text-green-400">
-              $
-              {(
-                processedData.filteredTableData?.reduce((sum, row) => {
-                  return sum + (row.total || 0)
-                }, 0) || 0
-              ).toFixed(2)}
-            </span>
-          </div>
+      {/* Table filters by the Service selected above the tabs */}
+      <div className="flex items-center justify-end mb-4">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-muted-foreground">
+            Total ({formatCostTypeLabel(selectedCostType)}):
+          </span>
+          <span className="text-lg font-bold text-green-600 dark:text-green-400">
+            $
+            {(
+              processedData.filteredTableData?.reduce((sum, row) => {
+                return sum + (row.total || 0)
+              }, 0) || 0
+            ).toFixed(2)}
+          </span>
         </div>
       </div>
 

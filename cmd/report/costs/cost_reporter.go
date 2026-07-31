@@ -127,6 +127,7 @@ func (r *CostReporter) addRegionSection(md *markdown.Markdown, regionName string
 
 	// Add aggregate cost summaries for each service
 	r.addServiceAggregates(md, types.ServiceMSK, regionCosts.Aggregates.AmazonManagedStreamingForApacheKafka)
+	r.addServiceAggregates(md, types.ServiceMSKConnect, regionCosts.Aggregates.MSKConnect)
 	r.addServiceAggregates(md, types.ServiceELB, regionCosts.Aggregates.ElasticLoadBalancing)
 	r.addServiceAggregates(md, types.ServiceVPC, regionCosts.Aggregates.AmazonVPC)
 	r.addServiceAggregates(md, types.ServiceEC2Other, regionCosts.Aggregates.EC2Other)
@@ -295,6 +296,7 @@ func (r *CostReporter) calculateRegionTotalsAllTypes(regionData report.Processed
 
 	services := []report.ServiceCostAggregates{
 		regionData.Aggregates.AmazonManagedStreamingForApacheKafka,
+		regionData.Aggregates.MSKConnect,
 		regionData.Aggregates.ElasticLoadBalancing,
 		regionData.Aggregates.AmazonVPC,
 		regionData.Aggregates.EC2Other,
