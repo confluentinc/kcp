@@ -63,10 +63,17 @@ var steps = []step{
 		},
 	},
 	{
-		// v1 (era C) → v2: self_managed_connectors {connectors, metrics} becomes
+		// -> v3: self_managed_connectors {connectors, metrics} becomes
 		// connect_clusters: [{connect_rest_url:"", connectors:[...], metrics:{...}}].
 		// Legacy files never persisted the Connect REST URL, so it is left empty.
 		// connect_host on each connector is carried through unchanged.
+		//
+		// Fires for era C at any schemaVersion below current — this covers both a v1 file
+		// (predates connect_clusters) and a v2 file (has the additive connector_metrics
+		// field but still predates connect_clusters) identically, since wrap() only
+		// touches self_managed_connectors/connect_clusters and leaves connector_metrics
+		// (a sibling field on aws_client_information, not kafka_admin_client_information)
+		// untouched either way.
 		//
 		// Also fires for era B: self_managed_connectors was introduced (commit 0c02c469)
 		// while files still had the top-level `regions` shape (v0.5.0-v0.7.3, no
@@ -75,8 +82,8 @@ var steps = []step{
 		// so msk_sources.regions[].clusters[] exists for eachAdminInfo to walk regardless of
 		// era. wrap() is self-gating (no-op when self_managed_connectors is absent/nil), so
 		// broadening the guard to era B is safe for era-B files that never had the field.
-		name:        "C v1->v2: nest self_managed_connectors under connect_clusters",
-		appliesWhen: func(schemaVersion int, era, _ string) bool { return era == "B" || (era == "C" && schemaVersion < 2) },
+		name:        "-> v3: nest self_managed_connectors under connect_clusters",
+		appliesWhen: func(schemaVersion int, era, _ string) bool { return era == "B" || (era == "C" && schemaVersion < 3) },
 		transform: func(in map[string]any) (map[string]any, error) {
 			wrap := func(admin map[string]any) {
 				smc, ok := admin["self_managed_connectors"].(map[string]any)
@@ -96,7 +103,7 @@ var steps = []step{
 				admin["connect_clusters"] = []any{cc}
 			}
 			eachAdminInfo(in, wrap) // walks MSK regions[].clusters[] and OSK clusters[]
-			in["schema_version"] = 2
+			in["schema_version"] = 3
 			return in, nil
 		},
 	},
