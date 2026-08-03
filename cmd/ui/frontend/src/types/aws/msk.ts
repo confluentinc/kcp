@@ -320,36 +320,43 @@ export interface TopicsInfo {
 }
 
 /**
- * Self-Managed Connector
+ * Connect Metrics
  */
-export interface SelfManagedConnector {
-  name: string
-  config: Record<string, string>
-  state: string
-  connect_host: string
+export interface ConnectMetrics {
+  metadata?: {
+    start_date?: string
+    end_date?: string
+    period?: number
+    metrics_source?: string
+  }
+  results?: Array<{
+    start: string
+    end: string
+    label: string
+    value: number | null
+  }>
+  aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
+  query_info?: import('@/types/api/metrics').MetricQueryInfo[]
 }
 
 /**
- * Self-Managed Connectors
+ * Connector
  */
-export interface SelfManagedConnectors {
-  connectors: SelfManagedConnector[]
-  metrics?: {
-    metadata?: {
-      start_date?: string
-      end_date?: string
-      period?: number
-      metrics_source?: string
-    }
-    results?: Array<{
-      start: string
-      end: string
-      label: string
-      value: number | null
-    }>
-    aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
-    query_info?: import('@/types/api/metrics').MetricQueryInfo[]
-  }
+export interface Connector {
+  name: string
+  state?: string
+  config: Record<string, string>
+  connect_host?: string
+  metrics?: ConnectMetrics
+}
+
+/**
+ * Connect Cluster
+ */
+export interface ConnectCluster {
+  connect_rest_url: string
+  metrics?: ConnectMetrics
+  connectors: Connector[]
 }
 
 /**
@@ -383,7 +390,7 @@ export interface KafkaAdminInfo {
   sasl_mechanism?: string
   topics?: TopicsInfo
   acls?: KafkaACL[]
-  self_managed_connectors?: SelfManagedConnectors
+  connect_clusters?: ConnectCluster[]
   [key: string]: unknown
 }
 

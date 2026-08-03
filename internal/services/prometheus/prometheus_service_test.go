@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -316,5 +317,169 @@ func TestApplyLabelFilter(t *testing.T) {
 			result := applyLabelFilter(tt.query, tt.metricName, tt.labels)
 			assert.Equal(t, tt.expected, result)
 		})
+	}
+}
+
+// newMockPrometheusServerPerConnector returns an httptest server that responds to
+// range queries containing metricName with two matrix series, each carrying a
+// distinct "connector" label, so per-connector grouping behavior can be exercised.
+func newMockPrometheusServerPerConnector(t *testing.T, metricName string, connectorValues map[string][]float64) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query := r.URL.Query().Get("query")
+
+		result := []map[string]interface{}{}
+		if strings.Contains(query, metricName) {
+			// Sort connector names for deterministic output across test runs.
+			connectors := make([]string, 0, len(connectorValues))
+			for c := range connectorValues {
+				connectors = append(connectors, c)
+			}
+			sort.Strings(connectors)
+
+			baseTime := float64(1710000000)
+			for _, connector := range connectors {
+				var matrixValues [][]interface{}
+				for i, v := range connectorValues[connector] {
+					matrixValues = append(matrixValues, []interface{}{
+						baseTime + float64(i)*3600,
+						fmt.Sprintf("%f", v),
+					})
+				}
+				metric := map[string]string{"__name__": metricName}
+				if connector != "" {
+					metric["connector"] = connector
+				}
+				result = append(result, map[string]interface{}{
+					"metric": metric,
+					"values": matrixValues,
+				})
+			}
+		}
+
+		resp := map[string]interface{}{
+			"status": "success",
+			"data": map[string]interface{}{
+				"resultType": "matrix",
+				"result":     result,
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+}
+
+func TestPrometheusService_CollectMetrics_GroupByConnector(t *testing.T) {
+	server := newMockPrometheusServerPerConnector(t, "kafka_connect_source_task_source_record_write_rate", map[string][]float64{
+		"c1": {1.0, 2.0},
+		"c2": {3.0, 4.0},
+	})
+	defer server.Close()
+
+	promClient := client.NewPrometheusClient(server.URL)
+	queries := []MetricQuery{
+		{
+			Label:            "source-record-write-rate",
+			Query:            "sum by (connector) (kafka_connect_source_task_source_record_write_rate)",
+			PrometheusMetric: "kafka_connect_source_task_source_record_write_rate",
+			GroupByConnector: true,
+		},
+	}
+	svc := NewPrometheusService(promClient, queries, nil)
+
+	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	labels := map[string]int{}
+	for _, m := range result.Metrics {
+		labels[m.Label]++
+	}
+
+	assert.Equal(t, 2, labels["source-record-write-rate (c1)"])
+	assert.Equal(t, 2, labels["source-record-write-rate (c2)"])
+	assert.NotContains(t, labels, "source-record-write-rate")
+
+	c1Agg, ok := result.Aggregates["source-record-write-rate (c1)"]
+	require.True(t, ok)
+	assert.InDelta(t, 1.0, *c1Agg.Minimum, 0.001)
+	assert.InDelta(t, 2.0, *c1Agg.Maximum, 0.001)
+
+	c2Agg, ok := result.Aggregates["source-record-write-rate (c2)"]
+	require.True(t, ok)
+	assert.InDelta(t, 3.0, *c2Agg.Minimum, 0.001)
+	assert.InDelta(t, 4.0, *c2Agg.Maximum, 0.001)
+
+	// query_info stays one entry per MetricQuery, keyed by the base label.
+	require.Len(t, result.QueryInfo, 1)
+	assert.Equal(t, "source-record-write-rate", result.QueryInfo[0].MetricName)
+}
+
+func TestPrometheusService_CollectMetrics_GroupByConnector_MissingConnectorLabelSkipsSeries(t *testing.T) {
+	// A series with no "connector" label at all (e.g. a misbehaving exporter or a
+	// query that isn't actually grouped) must be skipped, not merged into a bare label.
+	server := newMockPrometheusServerPerConnector(t, "kafka_connect_source_task_source_record_write_rate", map[string][]float64{
+		"":   {99.0},
+		"c1": {1.0, 2.0},
+	})
+	defer server.Close()
+
+	promClient := client.NewPrometheusClient(server.URL)
+	queries := []MetricQuery{
+		{
+			Label:            "source-record-write-rate",
+			Query:            "sum by (connector) (kafka_connect_source_task_source_record_write_rate)",
+			PrometheusMetric: "kafka_connect_source_task_source_record_write_rate",
+			GroupByConnector: true,
+		},
+	}
+	svc := NewPrometheusService(promClient, queries, nil)
+
+	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	labels := map[string]int{}
+	for _, m := range result.Metrics {
+		labels[m.Label]++
+	}
+
+	assert.Equal(t, 2, labels["source-record-write-rate (c1)"])
+	assert.NotContains(t, labels, "source-record-write-rate")
+	// Total metrics should only reflect the c1 series (2 points); the unlabeled
+	// series (1 point) must have been skipped entirely.
+	assert.Len(t, result.Metrics, 2)
+}
+
+func TestConnectQueryDefinitions_GroupByConnector(t *testing.T) {
+	defs := ConnectQueryDefinitions()
+
+	grouped := map[string]MetricQuery{}
+	for _, mq := range defs {
+		if mq.GroupByConnector {
+			grouped[mq.Label] = mq
+		}
+	}
+
+	expectedGrouped := []string{
+		"source-record-write-rate",
+		"source-record-poll-rate",
+		"sink-record-read-rate",
+		"sink-record-send-rate",
+	}
+	for _, label := range expectedGrouped {
+		mq, ok := grouped[label]
+		require.True(t, ok, "expected %s to be a GroupByConnector query", label)
+		assert.Contains(t, mq.Query, "sum by (connector)")
+	}
+	assert.Len(t, grouped, len(expectedGrouped))
+
+	// Worker/client-level queries remain plain sum(...) without grouping.
+	for _, mq := range defs {
+		if mq.GroupByConnector {
+			continue
+		}
+		assert.Contains(t, mq.Query, "sum(")
+		assert.NotContains(t, mq.Query, "by (connector)")
 	}
 }

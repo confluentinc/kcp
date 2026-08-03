@@ -79,10 +79,10 @@ func TestMergeMSKResults_RescanPreservesOldDataOnEmpty(t *testing.T) {
 
 func TestMergeMSKResults_RescanPreservesSelfManagedConnectors(t *testing.T) {
 	// Locks in the connector-preservation guarantee: `kcp scan clusters`
-	// returns SelfManagedConnectors=nil, so a re-scan must NOT wipe connectors
+	// returns ConnectClusters=nil, so a re-scan must NOT wipe connect clusters
 	// that already exist in state. Sequence under test:
 	//   1. scan clusters   (writes nil)
-	//   2. connectors populated in state by other means
+	//   2. connect clusters populated in state by other means
 	//   3. scan clusters   (returns nil — must preserve step 2)
 	const arn = "arn:aws:kafka:us-east-1:123:cluster/test/abc-1"
 
@@ -95,9 +95,12 @@ func TestMergeMSKResults_RescanPreservesSelfManagedConnectors(t *testing.T) {
 						{
 							Arn: arn,
 							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
-								SelfManagedConnectors: &types.SelfManagedConnectors{
-									Connectors: []types.SelfManagedConnector{
-										{Name: "rest-discovered", State: "RUNNING", ConnectHost: "worker-1:8083"},
+								ConnectClusters: []types.ConnectCluster{
+									{
+										ConnectRestURL: "http://connect:8083",
+										Connectors: []types.Connector{
+											{Name: "rest-discovered", State: "RUNNING", ConnectHost: "worker-1:8083"},
+										},
 									},
 								},
 							},
@@ -113,9 +116,9 @@ func TestMergeMSKResults_RescanPreservesSelfManagedConnectors(t *testing.T) {
 		Clusters: []sources.ClusterScanResult{
 			{
 				Identifier: sources.ClusterIdentifier{UniqueID: arn},
-				// Post-refactor scan-clusters shape: SelfManagedConnectors is nil.
+				// Post-refactor scan-clusters shape: ConnectClusters is nil.
 				KafkaAdminInfo: &types.KafkaAdminClientInformation{
-					SelfManagedConnectors: nil,
+					ConnectClusters: nil,
 				},
 			},
 		},
@@ -125,11 +128,11 @@ func TestMergeMSKResults_RescanPreservesSelfManagedConnectors(t *testing.T) {
 	require.NoError(t, err)
 
 	merged := state.MSKSources.Regions[0].Clusters[0].KafkaAdminClientInformation
-	require.NotNil(t, merged.SelfManagedConnectors, "REST-discovered connectors must survive a scan-clusters re-run")
-	require.Len(t, merged.SelfManagedConnectors.Connectors, 1)
-	assert.Equal(t, "rest-discovered", merged.SelfManagedConnectors.Connectors[0].Name)
-	assert.Equal(t, "RUNNING", merged.SelfManagedConnectors.Connectors[0].State)
-	assert.Equal(t, "worker-1:8083", merged.SelfManagedConnectors.Connectors[0].ConnectHost)
+	require.Len(t, merged.ConnectClusters, 1, "REST-discovered connect clusters must survive a scan-clusters re-run")
+	require.Len(t, merged.ConnectClusters[0].Connectors, 1)
+	assert.Equal(t, "rest-discovered", merged.ConnectClusters[0].Connectors[0].Name)
+	assert.Equal(t, "RUNNING", merged.ConnectClusters[0].Connectors[0].State)
+	assert.Equal(t, "worker-1:8083", merged.ConnectClusters[0].Connectors[0].ConnectHost)
 }
 
 func TestMergeMSKResults_NewDataTakesPrecedence(t *testing.T) {
@@ -216,8 +219,11 @@ func TestMergeMSKResults_UnscannedClustersUntouched(t *testing.T) {
 							Arn: skippedArn,
 							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
 								ClusterID: "skipped-id",
-								SelfManagedConnectors: &types.SelfManagedConnectors{
-									Connectors: []types.SelfManagedConnector{{Name: "untouched"}},
+								ConnectClusters: []types.ConnectCluster{
+									{
+										ConnectRestURL: "http://connect:8083",
+										Connectors:     []types.Connector{{Name: "untouched"}},
+									},
 								},
 							},
 						},
@@ -250,6 +256,6 @@ func TestMergeMSKResults_UnscannedClustersUntouched(t *testing.T) {
 
 	skipped := clusters[1]
 	assert.Equal(t, "skipped-id", skipped.KafkaAdminClientInformation.ClusterID)
-	require.NotNil(t, skipped.KafkaAdminClientInformation.SelfManagedConnectors)
-	assert.Equal(t, "untouched", skipped.KafkaAdminClientInformation.SelfManagedConnectors.Connectors[0].Name)
+	require.Len(t, skipped.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.Equal(t, "untouched", skipped.KafkaAdminClientInformation.ConnectClusters[0].Connectors[0].Name)
 }

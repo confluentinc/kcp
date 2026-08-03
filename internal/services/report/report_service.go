@@ -356,7 +356,13 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState ProcessedState, 
 // which source set to search (and which identifier to match: MSK by ARN, OSK by cluster ID).
 // Each branch searches only its own source set, so a cluster identifier never resolves across
 // source types.
-func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID string, sourceType string, kind string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+//
+// connectRestURL and connectorName only apply to the self-managed path: connectRestURL selects
+// which of the cluster's ConnectClusters to read (falling back to the first one when empty, for
+// back-compat with single-endpoint callers); connectorName, when set, narrows further to that
+// connector's own metrics instead of the Connect cluster's. Both are ignored for kind "managed",
+// since MSK-managed connectors have no ConnectClusters concept.
+func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID, sourceType, kind, connectRestURL, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
 	if kind == "" {
 		kind = "self-managed"
 	}
@@ -406,26 +412,49 @@ func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clu
 		return nil, fmt.Errorf("cluster '%s' not found in %s sources", clusterID, sourceType)
 	}
 
-	smc := adminInfo.SelfManagedConnectors
-	if smc == nil || smc.Metrics == nil {
-		// The cluster exists but no Connect metrics were ever collected. Signal this
-		// distinctly from the empty date-filtered result returned below, so the API
-		// layer shows the "run a scan" hint only when there is genuinely nothing to
-		// collect — not when the user simply picked a window with no data points.
+	// Resolve the target ConnectCluster: by URL when given, else the first one.
+	var cc *types.ConnectCluster
+	for i := range adminInfo.ConnectClusters {
+		if connectRestURL == "" || adminInfo.ConnectClusters[i].ConnectRestURL == connectRestURL {
+			cc = &adminInfo.ConnectClusters[i]
+			break
+		}
+	}
+	if cc == nil {
 		return nil, ErrNoConnectMetricsCollected
 	}
 
-	filteredMetrics := rs.filterMetricsByDateRange(smc.Metrics.Metrics, startTime, endTime)
+	// Pick the metrics source: a named connector's own metrics, else the cluster's.
+	var metrics *types.ConnectClusterMetrics
+	if connectorName != "" {
+		for i := range cc.Connectors {
+			if cc.Connectors[i].Name == connectorName {
+				metrics = cc.Connectors[i].Metrics
+				break
+			}
+		}
+	} else {
+		metrics = cc.Metrics
+	}
+	if metrics == nil {
+		// The cluster (or connector) exists but no Connect metrics were ever collected.
+		// Signal this distinctly from the empty date-filtered result returned below, so
+		// the API layer shows the "run a scan" hint only when there is genuinely nothing
+		// to collect — not when the user simply picked a window with no data points.
+		return nil, ErrNoConnectMetricsCollected
+	}
+
+	filteredMetrics := rs.filterMetricsByDateRange(metrics.Metrics, startTime, endTime)
 	aggregates := CalculateMetricsAggregates(filteredMetrics)
 
 	// Connect metrics carry their own metadata (start/end/period/metrics_source);
 	// region/cluster_arn and the broker-only fields have no meaning here and are
 	// intentionally not part of the Connect shape.
 	return &types.ConnectClusterMetrics{
-		Metadata:   smc.Metrics.Metadata,
+		Metadata:   metrics.Metadata,
 		Metrics:    filteredMetrics,
 		Aggregates: aggregates,
-		QueryInfo:  smc.Metrics.QueryInfo,
+		QueryInfo:  metrics.QueryInfo,
 	}, nil
 }
 
@@ -697,6 +726,14 @@ func (rs *ReportService) flattenCosts(region types.DiscoveredRegion) ProcessedRe
 
 			service := aws.ToString(&group.Keys[0])
 			lineItem := aws.ToString(&group.Keys[1])
+
+			// MSK Connect has no distinct Cost Explorer SERVICE dimension - it bills
+			// under ServiceMSK with USAGE_TYPE "<region>-Kafka.mcu.general". Relabel
+			// those rows so Connect cost surfaces as its own category instead of
+			// hiding inside broker cost.
+			if service == types.ServiceMSK && strings.HasSuffix(lineItem, "-Kafka.mcu.general") {
+				service = types.ServiceMSKConnect
+			}
 
 			var costBreakdown ProcessedCostBreakdown
 

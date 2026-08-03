@@ -79,12 +79,7 @@ export const OSKClusterReport = () => {
           {activeTab === 'connectors' && (
             <ClusterConnectors
               connectors={[]}
-              selfManagedConnectors={
-                cluster.kafka_admin_client_information?.self_managed_connectors?.connectors
-              }
-              connectMetrics={
-                cluster.kafka_admin_client_information?.self_managed_connectors?.metrics
-              }
+              connectClusters={cluster.kafka_admin_client_information?.connect_clusters || []}
               clusterId={selectedOSKClusterId ?? undefined}
               sourceType="osk"
             />
