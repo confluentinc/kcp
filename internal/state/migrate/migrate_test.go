@@ -87,16 +87,48 @@ func TestUpgradeForwardIncompatibleDevStamped(t *testing.T) {
 }
 
 func TestUpgradeCurrentIsIdentity(t *testing.T) {
-	data := `{"schema_version":2,"msk_sources":{},"kcp_build_info":{"version":"0.8.5"}}`
+	data := `{"schema_version":3,"msk_sources":{},"kcp_build_info":{"version":"0.9.0"}}`
 	got, from, err := Upgrade([]byte(data))
 	if err != nil {
 		t.Fatalf("Upgrade error: %v", err)
 	}
-	if from != "schema_version=2" {
-		t.Errorf("from label = %q, want schema_version=2", from)
+	if from != "schema_version=3" {
+		t.Errorf("from label = %q, want schema_version=3", from)
 	}
 	if string(got) != data {
 		t.Errorf("current-version data must pass through unchanged.\n got: %s\nwant: %s", got, data)
+	}
+}
+
+func TestUpgradeEraCv1WithoutSelfManagedConnectorsIsVersionBumpOnly(t *testing.T) {
+	// A released schema_version=1 era-C file predates both the additive connector_metrics
+	// field (schema_version 2) and the connect_clusters restructuring (schema_version 3).
+	// This fixture has no kafka_admin_client_information at all, so the connect_clusters
+	// upcaster step is a no-op (self-gating) and the only observable change is the
+	// schema_version stamp — everything else must be carried through unchanged.
+	data, err := os.ReadFile(filepath.Join("testdata", "era-c-v1.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, from, err := Upgrade(data)
+	if err != nil {
+		t.Fatalf("Upgrade error: %v", err)
+	}
+	if from != "kcp_build_info.version=0.9.0" {
+		t.Errorf("from label = %q, want kcp_build_info.version=0.9.0", from)
+	}
+	var gotDoc, wantDoc map[string]any
+	if err := json.Unmarshal(got, &gotDoc); err != nil {
+		t.Fatalf("Upgrade output must be valid JSON: %v", err)
+	}
+	if err := json.Unmarshal(data, &wantDoc); err != nil {
+		t.Fatal(err)
+	}
+	wantDoc["schema_version"] = float64(CurrentSchemaVersion)
+	gotJSON, _ := json.Marshal(gotDoc)
+	wantJSON, _ := json.Marshal(wantDoc)
+	if string(gotJSON) != string(wantJSON) {
+		t.Errorf("only schema_version should change.\n got: %s\nwant: %s", gotJSON, wantJSON)
 	}
 }
 
@@ -225,8 +257,8 @@ func TestUpgrade_V1SelfManagedConnectorsToConnectClusters(t *testing.T) {
 	if len(cc["connectors"].([]any)) != 1 {
 		t.Fatalf("connector not carried over: %v", cc["connectors"])
 	}
-	if doc["schema_version"].(float64) != 2 {
-		t.Fatalf("schema_version not bumped to 2: %v", doc["schema_version"])
+	if doc["schema_version"].(float64) != 3 {
+		t.Fatalf("schema_version not bumped to 3: %v", doc["schema_version"])
 	}
 }
 
@@ -270,8 +302,8 @@ func TestUpgrade_EraCUnversionedSelfManagedConnectorsToConnectClusters(t *testin
 	if len(cc["connectors"].([]any)) != 1 {
 		t.Fatalf("connector not carried over: %v", cc["connectors"])
 	}
-	if doc["schema_version"].(float64) != 2 {
-		t.Fatalf("schema_version not bumped to 2: %v", doc["schema_version"])
+	if doc["schema_version"].(float64) != 3 {
+		t.Fatalf("schema_version not bumped to 3: %v", doc["schema_version"])
 	}
 }
 
@@ -323,7 +355,7 @@ func TestUpgrade_EraBSelfManagedConnectorsToConnectClusters(t *testing.T) {
 	if len(cc["connectors"].([]any)) != 1 {
 		t.Fatalf("connector not carried over: %v", cc["connectors"])
 	}
-	if doc["schema_version"].(float64) != 2 {
-		t.Fatalf("schema_version not bumped to 2: %v", doc["schema_version"])
+	if doc["schema_version"].(float64) != 3 {
+		t.Fatalf("schema_version not bumped to 3: %v", doc["schema_version"])
 	}
 }

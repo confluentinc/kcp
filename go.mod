@@ -20,6 +20,7 @@ require (
 	github.com/creativeprojects/go-selfupdate v1.5.2
 	github.com/fatih/color v1.18.0
 	github.com/goccy/go-yaml v1.19.1
+	github.com/google/jsonschema-go v0.4.3
 	github.com/gruntwork-io/terratest v1.0.0
 	github.com/hashicorp/hcl/v2 v2.24.0
 	github.com/labstack/echo/v4 v4.13.4
@@ -143,7 +144,7 @@ require (
 	github.com/jcmturner/gofork v1.7.6 // indirect
 	github.com/jcmturner/gokrb5/v8 v8.4.4 // indirect
 	github.com/jcmturner/rpc/v2 v2.0.3 // indirect
-	github.com/klauspost/compress v1.18.2 // indirect
+	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/labstack/gommon v0.4.2 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect

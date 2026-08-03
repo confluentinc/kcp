@@ -198,11 +198,12 @@ const metrics = {
     clusterId: string,
     sessionId: string,
     params?: MetricsQueryParams,
+    kind: 'self-managed' | 'managed' = 'self-managed',
     connectRestURL?: string,
     connectorName?: string,
     config?: RequestConfig
   ): Promise<MetricsApiResponse> {
-    const queryParams: Record<string, string | Date | undefined> = { sessionId, clusterId }
+    const queryParams: Record<string, string | Date | undefined> = { sessionId, clusterId, kind }
     if (params?.startDate) {
       queryParams.startDate =
         params.startDate instanceof Date ? params.startDate : new Date(params.startDate)

@@ -8,6 +8,7 @@ interface ConnectMetricsFetchConfig {
   sourceType: 'msk' | 'osk'
   startDate: Date | undefined
   endDate: Date | undefined
+  kind?: 'self-managed' | 'managed'
   connectRestURL?: string
   connectorName?: string
 }
@@ -27,6 +28,7 @@ export const useConnectMetricsFetch = ({
   sourceType,
   startDate,
   endDate,
+  kind,
   connectRestURL,
   connectorName,
 }: ConnectMetricsFetchConfig): ConnectMetricsFetchReturn => {
@@ -51,6 +53,7 @@ export const useConnectMetricsFetch = ({
           clusterId,
           sessionId,
           { startDate, endDate },
+          kind ?? 'self-managed',
           connectRestURL,
           connectorName
         )
@@ -63,7 +66,7 @@ export const useConnectMetricsFetch = ({
     }
 
     fetchMetrics()
-  }, [clusterId, sourceType, startDate, endDate, sessionId, connectRestURL, connectorName])
+  }, [clusterId, sourceType, startDate, endDate, sessionId, kind, connectRestURL, connectorName])
 
   return {
     metricsResponse,

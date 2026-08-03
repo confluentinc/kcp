@@ -119,6 +119,7 @@ export const MSKClusterReport = () => {
               <ClusterConnectors
                 connectors={cluster.aws_client_information?.connectors || []}
                 connectClusters={cluster.kafka_admin_client_information?.connect_clusters || []}
+                managedConnectMetrics={cluster.aws_client_information?.connector_metrics}
                 clusterId={getClusterArn(cluster) || cluster.arn || undefined}
                 sourceType="msk"
               />

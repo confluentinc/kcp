@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { generateMetricsFilename } from '@/lib/utils'
+import { scopeConnectMetricsToConnector } from '@/lib/connectMetrics'
 import { useMetricsDataProcessor } from '@/hooks/useMetricsDataProcessor'
 import { useDateFilters } from '@/hooks/useDateFilters'
 import { useMetricSelection } from '@/hooks/useMetricSelection'
@@ -18,7 +19,10 @@ import type { ApiMetadata } from '@/types/api/common'
 interface ConnectMetricsProps {
   clusterId: string
   sourceType: 'msk' | 'osk'
+  kind?: 'self-managed' | 'managed'
   connectRestURL?: string
+  // When set, scope the metrics view to this connector and (for MSK-managed) strip
+  // the connector suffix from metric labels.
   connectorName?: string
   connectMetricsMetadata?: {
     start_date?: string
@@ -39,6 +43,7 @@ interface ConnectMetricsProps {
 export const ConnectMetrics = ({
   clusterId,
   sourceType,
+  kind = 'self-managed',
   connectRestURL,
   connectorName,
   connectMetricsMetadata,
@@ -49,14 +54,35 @@ export const ConnectMetrics = ({
   const [endDate, setEndDate] = useState<Date | undefined>(undefined)
   const [activeTab, setActiveTab] = useState<TabId>(TAB_IDS.CHART)
 
-  const { metricsResponse, isLoading, error } = useConnectMetricsFetch({
+  const { metricsResponse: rawResponse, isLoading, error } = useConnectMetricsFetch({
     clusterId,
     sourceType,
     startDate,
     endDate,
+    kind,
     connectRestURL,
     connectorName,
   })
+
+  // For MSK-managed metrics, scope the (all-connectors) response to the selected
+  // connector and strip the " (connector)" label suffix so every downstream view
+  // (chart/table/query, JSON/CSV, aggregates) is connector-specific with bare
+  // metric names. Self-managed passes no connectorName → response unchanged.
+  const metricsResponse = useMemo(
+    () =>
+      connectorName && rawResponse
+        ? scopeConnectMetricsToConnector(rawResponse, connectorName)
+        : rawResponse,
+    [rawResponse, connectorName]
+  )
+
+  // MSK-managed is scoped to a single connector, so it's "Connector Metrics";
+  // self-managed is worker-level, so it stays "Connect Cluster Metrics".
+  const heading = kind === 'managed' || connectorName ? 'Connector Metrics' : 'Connect Cluster Metrics'
+  const scanCommandHint =
+    kind === 'managed'
+      ? 'kcp scan msk-connectors --metrics-granularity 1d'
+      : 'kcp scan self-managed-connectors --metrics jolokia'
 
   const processedData = useMetricsDataProcessor(metricsResponse)
 
@@ -106,14 +132,12 @@ export const ConnectMetrics = ({
   const { handleDownloadCSV, handleDownloadJSON } = useDownloadHandlers({
     csvData: processedData.csvData,
     jsonData: metricsResponse,
-    filename: generateMetricsFilename(`${clusterId}-connect`, ''),
+    filename: generateMetricsFilename(`${connectorName ?? clusterId}-connect`, ''),
   })
 
   return (
     <div className={bare ? '' : 'bg-card rounded-lg border border-border p-6 transition-colors'}>
-      <h4 className="text-lg font-semibold text-foreground mb-4">
-        {connectorName ? 'Connector Metrics' : 'Connect Cluster Metrics'}
-      </h4>
+      <h4 className="text-lg font-semibold text-foreground mb-4">{heading}</h4>
 
       <DateRangePicker
         startDate={startDate}
@@ -180,15 +204,27 @@ export const ConnectMetrics = ({
       {!metricsResponse && !error && !isLoading && (
         <div className="text-center py-8">
           <p className="text-muted-foreground">
-            No Connect metrics data available. Run{' '}
-            <code className="px-1.5 py-0.5 rounded bg-secondary text-sm">
-              kcp scan self-managed-connectors --metrics jolokia
-            </code>{' '}
-            or{' '}
-            <code className="px-1.5 py-0.5 rounded bg-secondary text-sm">
-              --metrics prometheus
-            </code>{' '}
-            to collect Connect metrics.
+            {kind === 'managed' ? (
+              <>
+                No Connect metrics data available. Run{' '}
+                <code className="px-1.5 py-0.5 rounded bg-secondary text-sm">
+                  {scanCommandHint}
+                </code>{' '}
+                to collect Connect metrics.
+              </>
+            ) : (
+              <>
+                No Connect metrics data available. Run{' '}
+                <code className="px-1.5 py-0.5 rounded bg-secondary text-sm">
+                  kcp scan self-managed-connectors --metrics jolokia
+                </code>{' '}
+                or{' '}
+                <code className="px-1.5 py-0.5 rounded bg-secondary text-sm">
+                  --metrics prometheus
+                </code>{' '}
+                to collect Connect metrics.
+              </>
+            )}
           </p>
         </div>
       )}

@@ -14,6 +14,9 @@ echo "=========================================="
 echo "  Schema Registry Test Setup"
 echo "=========================================="
 
+echo "Generating TLS certificates..."
+bash generate-certs.sh
+
 # ── Start containers ──────────────────────────────────────────────────────────
 echo ""
 echo "Starting Schema Registry environment..."
@@ -56,15 +59,10 @@ SR_PASSWORD="schemapass"
 
 register_schema() {
     local url=$1
-    local auth=$2
+    local curl_opts=$2   # raw curl auth/TLS args, e.g. "-u user:pass" or "--cacert certs/ca-cert.pem --cert ... --key ..."
     local subject=$3
     local schema=$4
     local schema_type=$5
-
-    local auth_flag=""
-    if [ -n "$auth" ]; then
-        auth_flag="-u $auth"
-    fi
 
     local body
     if [ "$schema_type" = "JSON" ]; then
@@ -74,7 +72,8 @@ register_schema() {
     fi
 
     local response
-    response=$(curl -s -w "\n%{http_code}" $auth_flag \
+    # shellcheck disable=SC2086 # curl_opts is a space-separated arg list, intentionally word-split
+    response=$(curl -s -w "\n%{http_code}" $curl_opts \
         -X POST "$url/subjects/$subject/versions" \
         -H "Content-Type: application/vnd.schemaregistry.v1+json" \
         -d "$body")
@@ -145,10 +144,52 @@ register_schema "$SR_UNAUTH" "" "test-topic-1-value" "$TEST_TOPIC_1_SCHEMA" "AVR
 
 echo ""
 echo "Registering schemas on basic auth Schema Registry..."
-register_schema "$SR_BASIC_AUTH" "$SR_USERNAME:$SR_PASSWORD" "orders-value" "$ORDERS_SCHEMA" "AVRO"
-register_schema "$SR_BASIC_AUTH" "$SR_USERNAME:$SR_PASSWORD" "orders-key" "$ORDERS_KEY_SCHEMA" "AVRO"
-register_schema "$SR_BASIC_AUTH" "$SR_USERNAME:$SR_PASSWORD" "events-value" "$EVENTS_SCHEMA" "JSON"
-register_schema "$SR_BASIC_AUTH" "$SR_USERNAME:$SR_PASSWORD" "test-topic-1-value" "$TEST_TOPIC_1_SCHEMA" "AVRO"
+BASIC_OPTS="-u $SR_USERNAME:$SR_PASSWORD"
+register_schema "$SR_BASIC_AUTH" "$BASIC_OPTS" "orders-value" "$ORDERS_SCHEMA" "AVRO"
+register_schema "$SR_BASIC_AUTH" "$BASIC_OPTS" "orders-key" "$ORDERS_KEY_SCHEMA" "AVRO"
+register_schema "$SR_BASIC_AUTH" "$BASIC_OPTS" "events-value" "$EVENTS_SCHEMA" "JSON"
+register_schema "$SR_BASIC_AUTH" "$BASIC_OPTS" "test-topic-1-value" "$TEST_TOPIC_1_SCHEMA" "AVRO"
+
+# ── HTTPS + Basic-auth SR (:8443) and mTLS SR (:8444) ─────────────────────────
+SR_BASIC_TLS="https://localhost:8443"
+SR_MTLS="https://localhost:8444"
+BASIC_TLS_OPTS="--cacert certs/ca-cert.pem -u $SR_USERNAME:$SR_PASSWORD"
+MTLS_OPTS="--cacert certs/ca-cert.pem --cert certs/client-cert.pem --key certs/client-key.pem"
+
+echo ""
+echo "Waiting for Schema Registry (basic-tls, :8443) to be ready..."
+for i in $(seq 1 60); do
+    # shellcheck disable=SC2086
+    if curl -s $BASIC_TLS_OPTS "$SR_BASIC_TLS/subjects" > /dev/null 2>&1; then
+        echo "  Schema Registry (basic-tls) is ready"; break
+    fi
+    [ "$i" = "60" ] && { echo "  Timeout waiting for basic-tls SR"; exit 1; }
+    sleep 2
+done
+
+echo "Waiting for Schema Registry (mtls, :8444) to be ready..."
+for i in $(seq 1 60); do
+    # shellcheck disable=SC2086
+    if curl -s $MTLS_OPTS "$SR_MTLS/subjects" > /dev/null 2>&1; then
+        echo "  Schema Registry (mtls) is ready"; break
+    fi
+    [ "$i" = "60" ] && { echo "  Timeout waiting for mtls SR"; exit 1; }
+    sleep 2
+done
+
+echo ""
+echo "Registering schemas on HTTPS basic-auth Schema Registry (:8443)..."
+register_schema "$SR_BASIC_TLS" "$BASIC_TLS_OPTS" "orders-value" "$ORDERS_SCHEMA" "AVRO"
+register_schema "$SR_BASIC_TLS" "$BASIC_TLS_OPTS" "orders-key" "$ORDERS_KEY_SCHEMA" "AVRO"
+register_schema "$SR_BASIC_TLS" "$BASIC_TLS_OPTS" "events-value" "$EVENTS_SCHEMA" "JSON"
+register_schema "$SR_BASIC_TLS" "$BASIC_TLS_OPTS" "test-topic-1-value" "$TEST_TOPIC_1_SCHEMA" "AVRO"
+
+echo ""
+echo "Registering schemas on mTLS Schema Registry (:8444)..."
+register_schema "$SR_MTLS" "$MTLS_OPTS" "orders-value" "$ORDERS_SCHEMA" "AVRO"
+register_schema "$SR_MTLS" "$MTLS_OPTS" "orders-key" "$ORDERS_KEY_SCHEMA" "AVRO"
+register_schema "$SR_MTLS" "$MTLS_OPTS" "events-value" "$EVENTS_SCHEMA" "JSON"
+register_schema "$SR_MTLS" "$MTLS_OPTS" "test-topic-1-value" "$TEST_TOPIC_1_SCHEMA" "AVRO"
 
 # ── Summary ───────────────────────────────────────────────────────────────────
 echo ""

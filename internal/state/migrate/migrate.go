@@ -11,9 +11,16 @@ import (
 )
 
 // CurrentSchemaVersion is the schema_version this build reads and writes.
-// Bump in lockstep with any breaking change to the kcp-state.json shape, and
-// add the matching upcaster to steps (see internal/state/migrate/steps.go).
-const CurrentSchemaVersion = 2
+// Bump in lockstep with any change to the kcp-state.json shape, and add the
+// matching upcaster to steps (see internal/state/migrate/steps.go).
+//
+// v2 added the additive, omitempty connector_metrics field to each MSK cluster's
+// aws_client_information — no upcaster needed, since an older file is already a
+// structurally-valid v2 file. v3 is NOT additive: it restructures self-managed
+// Connect's kafka_admin_client_information.self_managed_connectors into
+// connect_clusters, so every file below v3 runs the real "nest self_managed_connectors
+// under connect_clusters" upcaster (self-gating: a no-op for files without it).
+const CurrentSchemaVersion = 3
 
 // ErrNewerSchema means the file was written by a newer (released) KCP than this build can model.
 var ErrNewerSchema = errors.New("state file schema is newer than this KCP build supports")
