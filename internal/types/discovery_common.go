@@ -6,12 +6,12 @@ import (
 )
 
 type KafkaAdminClientInformation struct {
-	ClusterID             string                 `json:"cluster_id"`
-	DiscoveredBrokers     []string               `json:"discovered_brokers,omitempty"`
-	SaslMechanism         string                 `json:"sasl_mechanism,omitempty"`
-	Topics                *Topics                `json:"topics"`
-	Acls                  []Acls                 `json:"acls"`
-	SelfManagedConnectors *SelfManagedConnectors `json:"self_managed_connectors"`
+	ClusterID         string           `json:"cluster_id"`
+	DiscoveredBrokers []string         `json:"discovered_brokers,omitempty"`
+	SaslMechanism     string           `json:"sasl_mechanism,omitempty"`
+	Topics            *Topics          `json:"topics"`
+	Acls              []Acls           `json:"acls"`
+	ConnectClusters   []ConnectCluster `json:"connect_clusters,omitempty"`
 }
 
 // MergeFrom merges values from another KafkaAdminClientInformation
@@ -33,8 +33,9 @@ func (c *KafkaAdminClientInformation) MergeFrom(other KafkaAdminClientInformatio
 	// Merge ACLs: combine both, deduplicate
 	c.Acls = mergeAcls(c.Acls, other.Acls)
 
-	// Merge SelfManagedConnectors: new connectors take precedence, old preserved if not re-discovered
-	c.SelfManagedConnectors = mergeSelfManagedConnectors(c.SelfManagedConnectors, other.SelfManagedConnectors)
+	// Merge ConnectClusters: match by ConnectRestURL, then connectors by name (new wins);
+	// endpoints not seen this run are preserved.
+	c.ConnectClusters = mergeConnectClusters(c.ConnectClusters, other.ConnectClusters)
 }
 
 func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
@@ -51,16 +52,29 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 	}
 }
 
-func (c *KafkaAdminClientInformation) SetSelfManagedConnectors(connectors []SelfManagedConnector) {
-	// Preserve existing metrics when updating connectors
-	var existingMetrics *ConnectClusterMetrics
-	if c.SelfManagedConnectors != nil {
-		existingMetrics = c.SelfManagedConnectors.Metrics
+// SetConnectCluster finds-or-creates the ConnectCluster for connectRestURL and
+// replaces its Connectors (a scan returns the complete listing for one endpoint),
+// preserving that entry's own Metrics.
+func (c *KafkaAdminClientInformation) SetConnectCluster(connectRestURL string, connectors []Connector) {
+	for i := range c.ConnectClusters {
+		if c.ConnectClusters[i].ConnectRestURL == connectRestURL {
+			c.ConnectClusters[i].Connectors = connectors
+			return
+		}
 	}
-	c.SelfManagedConnectors = &SelfManagedConnectors{
-		Connectors: connectors,
-		Metrics:    existingMetrics,
+	c.ConnectClusters = append(c.ConnectClusters, ConnectCluster{ConnectRestURL: connectRestURL, Connectors: connectors})
+}
+
+// SetConnectClusterMetrics finds-or-creates the ConnectCluster for connectRestURL
+// and sets its cluster-level Metrics, leaving Connectors untouched.
+func (c *KafkaAdminClientInformation) SetConnectClusterMetrics(connectRestURL string, metrics *ConnectClusterMetrics) {
+	for i := range c.ConnectClusters {
+		if c.ConnectClusters[i].ConnectRestURL == connectRestURL {
+			c.ConnectClusters[i].Metrics = metrics
+			return
+		}
 	}
+	c.ConnectClusters = append(c.ConnectClusters, ConnectCluster{ConnectRestURL: connectRestURL, Metrics: metrics})
 }
 
 // mergeTopics merges two Topics, with newTopics taking precedence for duplicates (by name)
@@ -127,55 +141,65 @@ func mergeAcls(newAcls, oldAcls []Acls) []Acls {
 	return merged
 }
 
-// mergeSelfManagedConnectors merges connectors, with new taking precedence for duplicates (by name)
-func mergeSelfManagedConnectors(newConnectors, oldConnectors *SelfManagedConnectors) *SelfManagedConnectors {
-	// Metrics are resolved up front (prefer-new-fall-back-to-old) so neither
-	// early return below can silently drop a previously-collected metrics set
-	// when one side reports zero connectors (R9).
-	metrics := preferConnectorMetrics(newConnectors, oldConnectors)
-
-	if oldConnectors == nil || len(oldConnectors.Connectors) == 0 {
-		if newConnectors == nil {
-			if metrics == nil {
-				return nil
-			}
-			return &SelfManagedConnectors{Metrics: metrics}
+// mergeConnectClusters merges by ConnectRestURL: new entries added, existing entries'
+// connectors merged by name (new wins) and metrics prefer-new-fall-back-to-old;
+// endpoints absent from newClusters are preserved untouched.
+func mergeConnectClusters(newClusters, oldClusters []ConnectCluster) []ConnectCluster {
+	if oldClusters == nil {
+		return newClusters
+	}
+	if newClusters == nil {
+		return oldClusters
+	}
+	oldByURL := make(map[string]ConnectCluster, len(oldClusters))
+	for _, cc := range oldClusters {
+		oldByURL[cc.ConnectRestURL] = cc
+	}
+	merged := make([]ConnectCluster, 0, len(oldClusters)+len(newClusters))
+	seen := make(map[string]bool)
+	for _, newCC := range newClusters {
+		seen[newCC.ConnectRestURL] = true
+		oldCC, existed := oldByURL[newCC.ConnectRestURL]
+		if !existed {
+			merged = append(merged, newCC)
+			continue
 		}
-		newConnectors.Metrics = metrics
-		return newConnectors
+		merged = append(merged, ConnectCluster{
+			ConnectRestURL: newCC.ConnectRestURL,
+			Connectors:     mergeConnectorList(newCC.Connectors, oldCC.Connectors),
+			Metrics:        preferMetrics(newCC.Metrics, oldCC.Metrics),
+		})
 	}
-	if newConnectors == nil || len(newConnectors.Connectors) == 0 {
-		oldConnectors.Metrics = metrics
-		return oldConnectors
+	for _, oldCC := range oldClusters {
+		if !seen[oldCC.ConnectRestURL] {
+			merged = append(merged, oldCC)
+		}
 	}
-
-	connectorsByName := make(map[string]SelfManagedConnector)
-	for _, c := range oldConnectors.Connectors {
-		connectorsByName[c.Name] = c
-	}
-	for _, c := range newConnectors.Connectors {
-		connectorsByName[c.Name] = c // new takes precedence
-	}
-
-	merged := make([]SelfManagedConnector, 0, len(connectorsByName))
-	for _, c := range connectorsByName {
-		merged = append(merged, c)
-	}
-
-	return &SelfManagedConnectors{Connectors: merged, Metrics: metrics}
+	return merged
 }
 
-// preferConnectorMetrics returns the metrics to keep when merging two
-// SelfManagedConnectors: the new run's metrics if present, otherwise the old
-// run's, otherwise nil.
-func preferConnectorMetrics(newConnectors, oldConnectors *SelfManagedConnectors) *ConnectClusterMetrics {
-	if newConnectors != nil && newConnectors.Metrics != nil {
-		return newConnectors.Metrics
+// mergeConnectorList merges connectors by Name, new taking precedence.
+func mergeConnectorList(newConnectors, oldConnectors []Connector) []Connector {
+	byName := make(map[string]Connector, len(oldConnectors)+len(newConnectors))
+	for _, c := range oldConnectors {
+		byName[c.Name] = c
 	}
-	if oldConnectors != nil && oldConnectors.Metrics != nil {
-		return oldConnectors.Metrics
+	for _, c := range newConnectors {
+		byName[c.Name] = c
 	}
-	return nil
+	merged := make([]Connector, 0, len(byName))
+	for _, c := range byName {
+		merged = append(merged, c)
+	}
+	return merged
+}
+
+// preferMetrics keeps the new run's metrics if present, else the old run's.
+func preferMetrics(newMetrics, oldMetrics *ConnectClusterMetrics) *ConnectClusterMetrics {
+	if newMetrics != nil {
+		return newMetrics
+	}
+	return oldMetrics
 }
 
 type DiscoveredClient struct {

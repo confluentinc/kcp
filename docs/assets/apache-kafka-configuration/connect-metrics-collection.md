@@ -71,17 +71,19 @@ JVM — no additional configuration is required beyond the Jolokia agent.
 | `task-count`              | `sum(kafka_connect_worker_task_count)`                        |
 | `source-record-write-rate`| `sum(kafka_connect_source_task_source_record_write_rate)`     |
 | `source-record-poll-rate` | `sum(kafka_connect_source_task_source_record_poll_rate)`      |
-| `incoming-byte-rate`      | `sum(kafka_connect_network_io_incoming_byte_rate)`            |
-| `outgoing-byte-rate`      | `sum(kafka_connect_network_io_outgoing_byte_rate)`            |
-| `connection-count`        | `sum(kafka_connect_network_io_connection_count)`              |
-| `request-rate`            | `sum(kafka_connect_network_io_request_rate)`                  |
+| `incoming-byte-rate`      | `sum(kafka_connect_metrics_incoming_byte_rate)`              |
+| `outgoing-byte-rate`      | `sum(kafka_connect_metrics_outgoing_byte_rate)`             |
+| `connection-count`        | `sum(kafka_connect_metrics_connection_count)`               |
+| `request-rate`            | `sum(kafka_connect_metrics_request_rate)`                   |
 
 These metric names are produced by the Prometheus JMX Exporter with standard
 Kafka Connect JMX rules. The worker-level and task-level metrics
 (`kafka_connect_worker_*`, `kafka_connect_source_task_*`) are typically exported
-by default. The client-level metrics (`kafka_connect_network_io_*`) require the
-JMX exporter to whitelist the `kafka.connect:client-id=*,type=connect-metrics`
-MBean pattern — if these are not exported, `kcp` logs a warning and continues
+by default. The client-level metrics (`kafka_connect_metrics_*`) require the
+JMX exporter to whitelist the `kafka.connect:type=connect-metrics,client-id=*`
+MBean pattern **and** a rule that captures the `client-id` key (a rule matching
+only `type=connect-metrics` with no `client-id` will not match the real
+ObjectName) — if these are not exported, `kcp` logs a warning and continues
 collecting the remaining metrics.
 
 ## Credentials file

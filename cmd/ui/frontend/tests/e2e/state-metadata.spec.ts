@@ -18,7 +18,7 @@ test.describe('State file metadata popover', () => {
     await expect(trigger).toBeVisible({ timeout: 10000 })
     await trigger.click()
 
-    await expect(page.getByTestId('meta-schema')).toHaveText('1')
+    await expect(page.getByTestId('meta-schema')).toHaveText('3')
     await expect(page.getByTestId('meta-build')).toHaveText('0.8.5')
     await expect(page.getByTestId('meta-upgraded')).toHaveText('kcp_build_info.version=0.7.3')
     await expect(page.getByTestId('meta-created')).toBeVisible()
