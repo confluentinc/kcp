@@ -293,6 +293,48 @@ func TestFindNewRejection_DetectsNewlyTransitionedApplyFailed(t *testing.T) {
 	assert.Equal(t, ConditionClusterReady, rejection.ConditionType)
 }
 
+// TestFindNewRejection_HonoursFailedNamingConvention covers refusals CFK reports
+// with a reason outside the catalogue. Without the <Verb>Failed rule these
+// produce no verdict at all, and the caller cannot tell that from an operator
+// still working — so the refusal costs the whole wait instead of one poll.
+func TestFindNewRejection_HonoursFailedNamingConvention(t *testing.T) {
+	for _, reason := range []string{"ValidationFailed", "CreateFailed", "UpdateFailed"} {
+		t.Run(reason, func(t *testing.T) {
+			before := snapshotConditions([]gatewayCondition{{
+				Type:               ConditionClusterReady,
+				Status:             "True",
+				Reason:             "Reconciled",
+				LastTransitionTime: mustTime(t, staleClusterReadyAt),
+			}})
+
+			after, err := gatewayConditions(gatewayObj(
+				cond(ConditionClusterReady, "False", reason, crashedHotReloadAt),
+			))
+			require.NoError(t, err)
+
+			rejection := findNewRejection(after, before)
+			require.NotNil(t, rejection, "a <Verb>Failed reason is a refusal")
+			assert.Equal(t, reason, rejection.Reason)
+		})
+	}
+}
+
+// TestFindNewRejection_FailedNamingConventionStillNeedsToBeNew is what makes the
+// naming rule safe to apply at all: widening which reasons are read must not
+// widen what counts as evidence. A days-old ValidationFailed is as much history
+// as a days-old ApplyFailed.
+func TestFindNewRejection_FailedNamingConventionStillNeedsToBeNew(t *testing.T) {
+	// Snapshot and re-read the same condition: the refusal was already there when
+	// we applied, so nothing about it dates it to our apply.
+	conds, err := gatewayConditions(gatewayObj(
+		cond(ConditionClusterReady, "False", "ValidationFailed", staleClusterReadyAt),
+	))
+	require.NoError(t, err)
+
+	assert.Nil(t, findNewRejection(conds, snapshotConditions(conds)),
+		"unchanged since the baseline, so it says nothing about this apply")
+}
+
 // cluster-ready goes False transiently while the operator reconciles, so only
 // the failure reasons should fast-fail.
 func TestFindNewRejection_IgnoresClusterReadyFalseWithoutAFailureReason(t *testing.T) {
@@ -342,6 +384,62 @@ func TestFindNewRejection_EmptyBaselineNeverRejects(t *testing.T) {
 		"no baseline means no way to date a condition, so nothing is actionable")
 	assert.Nil(t, findNewRejection(conds, ConditionSnapshot{}),
 		"an empty snapshot is the same as no snapshot")
+}
+
+// --- findStaleRejection -----------------------------------------------------
+
+// findStaleRejection is the mirror of findNewRejection and is never a verdict —
+// it exists so a wait that ran out can name the condition the operator was
+// reporting throughout, which is the only diagnosis available when a repeat
+// refusal is indistinguishable from the baseline.
+func TestFindStaleRejection_ReturnsTheUnchangedFailure(t *testing.T) {
+	conds, err := gatewayConditions(gatewayObj(
+		cond(ConditionClusterReady, "False", "ApplyFailed", staleClusterReadyAt),
+	))
+	require.NoError(t, err)
+	before := snapshotConditions(conds)
+
+	stale := findStaleRejection(conds, before)
+	require.NotNil(t, stale)
+	assert.Equal(t, "ApplyFailed", stale.Reason)
+	assert.Equal(t, ConditionClusterReady, stale.ConditionType)
+}
+
+func TestFindStaleRejection_IgnoresAFailureThatMoved(t *testing.T) {
+	before := snapshotConditions([]gatewayCondition{{
+		Type:               ConditionClusterReady,
+		Status:             "False",
+		Reason:             "ApplyFailed",
+		LastTransitionTime: mustTime(t, staleClusterReadyAt),
+	}})
+
+	// Transitioned after the baseline: that is findNewRejection's business, and
+	// reporting it here as well would double-count it.
+	after, err := gatewayConditions(gatewayObj(
+		cond(ConditionClusterReady, "False", "ApplyFailed", crashedHotReloadAt),
+	))
+	require.NoError(t, err)
+
+	assert.Nil(t, findStaleRejection(after, before))
+}
+
+func TestFindStaleRejection_NoBaselineYieldsNothing(t *testing.T) {
+	conds, err := gatewayConditions(healthyGatewayConditions())
+	require.NoError(t, err)
+
+	assert.Nil(t, findStaleRejection(conds, nil),
+		"without a baseline there is nothing to call unchanged")
+}
+
+func TestFindStaleRejection_IgnoresHealthyConditions(t *testing.T) {
+	conds, err := gatewayConditions(gatewayObj(
+		cond(ConditionClusterReady, "True", "Reconciled", staleClusterReadyAt),
+		cond(ConditionGarbageCollecting, "False", "Garbage Collection not triggered", staleGarbageCollectAt),
+	))
+	require.NoError(t, err)
+
+	assert.Nil(t, findStaleRejection(conds, snapshotConditions(conds)),
+		"garbage-collecting sits False on a healthy gateway and must never be reported")
 }
 
 // GatewayRejection is returned up through the wait as an error.

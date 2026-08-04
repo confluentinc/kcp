@@ -650,26 +650,55 @@ func TestWaitForGatewayAccepted_NoBaseline_DisablesRejectionCheck(t *testing.T) 
 // observedGeneration and never produces a verdict, so the default timeout of 0
 // would wait forever on precisely the outcome this wait exists to catch.
 func TestWaitForGatewayAccepted_NoBaselineAndNoDeadline_StillTerminates(t *testing.T) {
-	original := blindAcceptanceTimeout
-	blindAcceptanceTimeout = 60 * time.Millisecond
-	t.Cleanup(func() { blindAcceptanceTimeout = original })
+	shortenAcceptanceBackstop(t, 60*time.Millisecond)
 
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
 
-	// timeout 0 — the default, and unbounded when a baseline is present.
 	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, nil, 5*time.Millisecond, 0)
 	require.Error(t, err, "a blind wait must not poll indefinitely")
 	assert.Contains(t, err.Error(), "timed out")
 }
 
-// TestWaitForGatewayAccepted_CallerTimeoutBeatsBlindBound ensures the fallback
-// only fills in for the no-deadline default and never overrides an explicit
+// TestWaitForGatewayAccepted_RepeatRejectionAndNoDeadline_StillTerminates is the
+// same no-hang guarantee for the case a baseline does not rescue: a re-run
+// against an unfixed cause.
+//
+// Run 1 is refused and fails fast. The operator re-runs execute without fixing
+// it, so run 2 snapshots the already-failed condition as its own baseline and
+// re-applies the same bytes: generation does not move, observedGeneration stays
+// behind it, and CFK rewrites nothing — status, reason, message and the sticky
+// lastTransitionTime all match the baseline, so no condition ever "changes".
+// There is no verdict to be had, and the backstop is the only thing that ends it.
+func TestWaitForGatewayAccepted_RepeatRejectionAndNoDeadline_StillTerminates(t *testing.T) {
+	shortenAcceptanceBackstop(t, 60*time.Millisecond)
+
+	ns, gw := "test-ns", "test-gw"
+	// Byte-identical to acceptedBaseline's condition, including the timestamp.
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
+		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", missingSecretMessage, condBaseline),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
+	require.Error(t, err, "an unrecognisable repeat rejection must not poll indefinitely")
+	assert.Contains(t, err.Error(), "timed out")
+
+	// The operator's own diagnosis is the one thing a bare timeout cannot
+	// reconstruct, so the message has to carry the standing condition.
+	assert.Contains(t, err.Error(), "ApplyFailed")
+	assert.Contains(t, err.Error(), missingSecretMessage)
+	assert.ErrorIs(t, err, errUnconfirmedGatewayRejection)
+
+	var rejected *GatewayRejection
+	assert.NotErrorAs(t, err, &rejected,
+		"a condition kcp cannot date is a suspicion, not the confirmed rejection callers branch on")
+}
+
+// TestWaitForGatewayAccepted_CallerTimeoutBeatsBackstop ensures the fallback only
+// fills in for the no-deadline default and never overrides an explicit
 // --rollout-timeout.
-func TestWaitForGatewayAccepted_CallerTimeoutBeatsBlindBound(t *testing.T) {
-	original := blindAcceptanceTimeout
-	blindAcceptanceTimeout = time.Hour
-	t.Cleanup(func() { blindAcceptanceTimeout = original })
+func TestWaitForGatewayAccepted_CallerTimeoutBeatsBackstop(t *testing.T) {
+	shortenAcceptanceBackstop(t, time.Hour)
 
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
@@ -677,7 +706,15 @@ func TestWaitForGatewayAccepted_CallerTimeoutBeatsBlindBound(t *testing.T) {
 	start := time.Now()
 	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, nil, 5*time.Millisecond, 60*time.Millisecond)
 	require.Error(t, err)
-	assert.Less(t, time.Since(start), time.Minute, "the caller's timeout must win over the blind bound")
+	assert.Less(t, time.Since(start), time.Minute, "the caller's timeout must win over the backstop")
+}
+
+// shortenAcceptanceBackstop replaces the 5-minute backstop for one test.
+func shortenAcceptanceBackstop(t *testing.T, d time.Duration) {
+	t.Helper()
+	original := acceptanceBackstopTimeout
+	acceptanceBackstopTimeout = d
+	t.Cleanup(func() { acceptanceBackstopTimeout = original })
 }
 
 // TestWaitForGatewayAccepted_Rejected_FailsImmediately pins the single rejection
@@ -688,7 +725,7 @@ func TestWaitForGatewayAccepted_CallerTimeoutBeatsBlindBound(t *testing.T) {
 // briefly publish a failure it then retries out of. Nothing measured showed that
 // happening, the two waits disagreed about it, and it delayed the one thing the
 // check exists for — a canary crash CFK announces at +5.8s — by half a minute.
-// The narrow reason whitelist in findNewRejection is what keeps this safe.
+// Comparing against the pre-apply baseline is what keeps this safe.
 func TestWaitForGatewayAccepted_Rejected_FailsImmediately(t *testing.T) {
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
@@ -700,6 +737,29 @@ func TestWaitForGatewayAccepted_Rejected_FailsImmediately(t *testing.T) {
 
 	var rejected *GatewayRejection
 	require.ErrorAs(t, err, &rejected)
+}
+
+// TestWaitForGatewayAccepted_UncataloguedFailedReason_IsAVerdict is the
+// regression test for a refusal reported with a reason other than ApplyFailed.
+// Recognising only the catalogued one left every other refusal without a verdict,
+// and since observedGeneration never advances either, the wait had nothing to
+// conclude and polled to its deadline with the rejected spec live.
+func TestWaitForGatewayAccepted_UncataloguedFailedReason_IsAVerdict(t *testing.T) {
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
+		withGatewayCondition(clusterReadyCondition, "False", "ValidationFailed", "spec.routes[0].streamingDomain not found", condAfterApply),
+	))
+
+	start := time.Now()
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), time.Second, "a refusal must not be waited out")
+
+	var rejected *GatewayRejection
+	require.ErrorAs(t, err, &rejected, "CFK's <Verb>Failed convention must produce a verdict, not a timeout")
+	assert.Equal(t, "ValidationFailed", rejected.Reason)
+	assert.Contains(t, err.Error(), "spec.routes[0].streamingDomain not found",
+		"the operator's own message is the point of failing fast")
 }
 
 // TestWaitForGatewayAccepted_UnknownReason_KeepsWaiting ensures an unrecognised

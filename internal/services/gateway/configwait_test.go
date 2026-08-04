@@ -50,6 +50,31 @@ func (f *fakeResponseWrapper) Stream(context.Context) (io.ReadCloser, error) {
 	return io.NopCloser(bytes.NewReader(f.body)), nil
 }
 
+// blockingResponseWrapper models a pod that accepts the proxied request and then
+// never answers. It honours ctx so the wait can only escape it by putting its
+// deadline on the context it passes down.
+type blockingResponseWrapper struct {
+	body  []byte
+	block time.Duration
+}
+
+func (b *blockingResponseWrapper) DoRaw(ctx context.Context) ([]byte, error) {
+	select {
+	case <-time.After(b.block):
+		return b.body, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func (b *blockingResponseWrapper) Stream(ctx context.Context) (io.ReadCloser, error) {
+	raw, err := b.DoRaw(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return io.NopCloser(bytes.NewReader(raw)), nil
+}
+
 // proxyStub answers GET /config per pod, tracking how many times each pod has
 // been asked so tests can converge deterministically on the Nth poll instead of
 // racing a wall clock.
@@ -543,6 +568,61 @@ func TestWaitForGatewayConfigApplied_ZeroTimeoutMeansNoDeadline(t *testing.T) {
 		5*time.Millisecond, 0, nil)
 
 	require.NoError(t, err)
+}
+
+// TestWaitForGatewayConfigApplied_TimeoutBoundsAnUnansweredProbe is the
+// always-bounded guarantee, which the timeout being a loop condition did not
+// deliver: it was only ever tested between ticks, and nothing bounded a request
+// inside one — the kubeconfig-derived client carries no timeout and the API server
+// exempts pods/proxy from its own. A pod that accepts the proxied connection and
+// never answers is not hypothetical; it is the licence-gate failure mode (CFK
+// promotes the shared ConfigMap while the gateway's file watcher never starts)
+// that this wait is the only backstop for.
+func TestWaitForGatewayConfigApplied_TimeoutBoundsAnUnansweredProbe(t *testing.T) {
+	objs := append(readyPods("gw-a"), gatewayDeployment(1))
+	cs := fakeCS(objs...)
+	cs.PrependProxyReactor("pods", func(ktesting.Action) (bool, rest.ResponseWrapper, error) {
+		return true, &blockingResponseWrapper{block: 10 * time.Second}, nil
+	})
+
+	timeout := 100 * time.Millisecond
+	start := time.Now()
+	err := waitForGatewayConfigApplied(context.Background(), cs, newFakeDynamicClient(healthyCR()),
+		testNamespace, testGateway, "fence-101", snapshotConditions(nil), testPort,
+		5*time.Millisecond, timeout, nil)
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out", "expiry must still read as this wait's own timeout")
+	assert.NotErrorIs(t, err, context.DeadlineExceeded,
+		"the caller needs the pod-level reason, not a bare context error")
+	assert.Less(t, elapsed, 2*time.Second, "a %s timeout must not wait on a hung pod; took %s", timeout, elapsed)
+}
+
+// TestWaitForGatewayConfigApplied_CancellationBeatsTimeoutOnAHungProbe pins the
+// other half: the deadline now lives on the same context as the caller's
+// cancellation, so the two must stay distinguishable. Ctrl-C during a wedged
+// probe is cancellation, not a verification timeout.
+func TestWaitForGatewayConfigApplied_CancellationBeatsTimeoutOnAHungProbe(t *testing.T) {
+	objs := append(readyPods("gw-a"), gatewayDeployment(1))
+	cs := fakeCS(objs...)
+	cs.PrependProxyReactor("pods", func(ktesting.Action) (bool, rest.ResponseWrapper, error) {
+		return true, &blockingResponseWrapper{block: 10 * time.Second}, nil
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+
+	err := waitForGatewayConfigApplied(ctx, cs, newFakeDynamicClient(healthyCR()),
+		testNamespace, testGateway, "fence-101", snapshotConditions(nil), testPort,
+		5*time.Millisecond, 10*time.Second, nil)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, context.Canceled)
+	assert.NotContains(t, err.Error(), "timed out")
 }
 
 // --- SnapshotGatewayConditions ---------------------------------------------

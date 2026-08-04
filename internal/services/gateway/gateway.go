@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -218,18 +219,31 @@ func applyGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, name
 	return storedConfigID, nil
 }
 
-// blindAcceptanceTimeout bounds the acceptance wait when no condition baseline
-// was captured, since without one a rejection cannot be recognised at all and
-// the no-deadline default would poll forever. Generous relative to the ~1.2s
-// reconcile measured on a healthy gateway: this is a backstop against hanging,
-// not a latency budget, and it must not fire on a merely slow operator.
-// var so tests can shorten it.
-var blindAcceptanceTimeout = 5 * time.Minute
+// acceptanceBackstopTimeout bounds the acceptance wait whenever the caller
+// supplies no deadline of its own.
+//
+// It applies with or without a condition baseline, because a baseline does not
+// guarantee a verdict. Three ways the wait can have nothing to conclude:
+// no baseline at all (the rejection check is off), a refusal reported on a
+// condition or with a reason we do not recognise, and — the one no vocabulary
+// can fix — a repeat refusal whose condition is byte-identical to the baseline,
+// which is what a re-run against an unfixed cause produces. In each case
+// observedGeneration never advances and no condition ever "changes", so an
+// unbounded wait would poll forever on precisely the outcome this wait exists to
+// catch, with the rejected spec live and clients fenced.
+//
+// Generous relative to the ~1.2s reconcile measured on a healthy gateway: this is
+// a backstop against hanging, not a latency budget, and it must not fire on a
+// merely slow operator. The waits that can legitimately take a long time (pod
+// rollout, readiness) are still unbounded by default. var so tests can shorten it.
+var acceptanceBackstopTimeout = 5 * time.Minute
 
 // WaitForGatewayAccepted blocks until the CFK operator has accepted the current
 // Gateway CR spec — status.observedGeneration >= metadata.generation — or
-// returns a *GatewayRejection if the operator refuses it. timeout == 0
-// means no deadline (consistent with the other gateway waits).
+// returns a *GatewayRejection if the operator refuses it. timeout == 0 falls
+// back to acceptanceBackstopTimeout — unlike the rollout waits, this one is
+// always bounded, because a refusal it cannot recognise never terminates on its
+// own.
 //
 // This is the guard that makes a downstream "no rollout detected" trustworthy.
 // Applying a CR bumps the Gateway's metadata.generation; until the operator
@@ -243,10 +257,9 @@ var blindAcceptanceTimeout = 5 * time.Minute
 // satisfies the check and this returns immediately.
 //
 // Watching observedGeneration alone is not enough: when the operator *rejects*
-// the spec, observedGeneration never advances, so with the default timeout of 0
-// the wait would block indefinitely. Polling status.conditions alongside it
-// turns that hang into a fast, actionable error carrying the operator's own
-// message.
+// the spec, observedGeneration never advances, so on its own the wait would run
+// to its deadline on every refusal. Polling status.conditions alongside it turns
+// that into a fast, actionable error carrying the operator's own message.
 //
 // conditionsBefore is the condition baseline captured immediately before the
 // apply, and is what makes acting on a condition safe at all: Gateway conditions
@@ -275,23 +288,27 @@ func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gate
 // WaitForGatewayAccepted. Split from the method so unit tests can inject a
 // fake dynamic client.
 func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, conditionsBefore ConditionSnapshot, pollInterval, timeout time.Duration) error {
-	// Running unbounded is only safe while we can still recognise a rejection.
-	// Without a baseline the condition check is off (see findNewRejection), so a
-	// refused spec never advances observedGeneration and never produces a
-	// verdict — the wait would poll forever on the one outcome it exists to
-	// catch. Falling back to a bound turns that into a timeout the caller can
-	// report. A caller-supplied timeout always wins; this only fills in for the
-	// no-deadline default.
-	if timeout <= 0 && len(conditionsBefore) == 0 {
-		timeout = blindAcceptanceTimeout
-		slog.Warn("⚠️ no gateway condition baseline; cannot detect a rejected spec, so bounding the reconcile wait",
+	// Running unbounded is only safe while a rejection is guaranteed to produce a
+	// verdict, and it never is — see acceptanceBackstopTimeout. So the no-deadline
+	// default is always backstopped here. A caller-supplied timeout wins.
+	if timeout <= 0 {
+		timeout = acceptanceBackstopTimeout
+		slog.Debug("no reconcile deadline supplied; applying the acceptance backstop",
+			"gateway", gatewayName, "timeout", timeout, "haveConditionBaseline", len(conditionsBefore) > 0)
+	}
+	if len(conditionsBefore) == 0 {
+		slog.Warn("⚠️ no gateway condition baseline; kcp cannot recognise a rejected spec, so the reconcile wait can only time out",
 			"gateway", gatewayName, "timeout", timeout)
 	}
 
-	noDeadline := timeout <= 0
 	deadline := time.Now().Add(timeout)
 
-	for noDeadline || time.Now().Before(deadline) {
+	// A failure condition that has not changed since the baseline is not a
+	// verdict — it may predate the apply by days — but it is the best thing we
+	// know if the wait runs out, so keep the last one seen for the timeout message.
+	var unchangedFailure *GatewayRejection
+
+	for time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -329,6 +346,7 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 				"generation", generation, "observedGeneration", observed)
 			return rejectedGatewayError(gatewayName, generation, observed, rejection)
 		}
+		unchangedFailure = findStaleRejection(conds, conditionsBefore)
 
 		slog.Debug("waiting for gateway reconcile", "gateway", gatewayName, "generation", generation, "observedGeneration", observed, "statusPresent", found)
 
@@ -339,8 +357,30 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		}
 	}
 
-	return fmt.Errorf("timed out waiting for gateway %q to be observed by the operator (timeout: %s)", gatewayName, timeout)
+	return acceptanceTimeoutError(gatewayName, timeout, unchangedFailure)
 }
+
+// acceptanceTimeoutError reports a reconcile wait that ran out, naming the
+// operator's own failure condition when one was standing.
+//
+// The plain timeout says only that observedGeneration never caught up, which is
+// equally true of a slow operator and of a refusal kcp could not date. When a
+// failure condition is sitting there unchanged, the second reading is the likely
+// one and the message has to carry it — that diagnosis is the whole reason this
+// wait polls conditions at all, and a resume against an unfixed cause is exactly
+// the case where it cannot be recognised as new.
+func acceptanceTimeoutError(gatewayName string, timeout time.Duration, unchangedFailure *GatewayRejection) error {
+	if unchangedFailure == nil {
+		return fmt.Errorf("timed out waiting for gateway %q to be observed by the operator (timeout: %s)", gatewayName, timeout)
+	}
+	return fmt.Errorf("timed out waiting for gateway %q to be observed by the operator (timeout: %s); throughout the wait %s reported %s: %s — unchanged since before this apply, so kcp cannot tell a repeat refusal from an older one, but the operator has not accepted the spec: %w",
+		gatewayName, timeout, unchangedFailure.ConditionType, unchangedFailure.Reason, unchangedFailure.Message, errUnconfirmedGatewayRejection)
+}
+
+// errUnconfirmedGatewayRejection marks an acceptance timeout that ran with a
+// failure condition standing. Deliberately not a *GatewayRejection: callers
+// branch on that type to report a confirmed refusal, and this is a suspicion.
+var errUnconfirmedGatewayRejection = errors.New("gateway may have refused the config change")
 
 // rejectedGatewayError pairs a condition-level rejection with the reconcile
 // state that produced it. The *GatewayRejection stays reachable via errors.As,

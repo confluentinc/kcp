@@ -136,7 +136,24 @@ func (s *K8sService) WaitForGatewayConfigApplied(ctx context.Context, namespace,
 func waitForGatewayConfigApplied(ctx context.Context, clientset kubernetes.Interface, dynamicClient dynamic.Interface, namespace, gatewayName, targetConfigID string, conditionsBefore ConditionSnapshot, port string, pollInterval, timeout time.Duration, onProgress func(ConfigApplyProgress)) error {
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
 
+	// The timeout has to bound the requests, not just the gaps between ticks.
+	// Nothing else bounds them: the kubeconfig-derived rest.Config carries no
+	// client timeout, and the API server treats pods/proxy as a long-running
+	// subresource, so it does not apply its own request timeout either. A pod that
+	// accepts the connection and never answers — the licence-gate failure mode this
+	// wait exists to catch — would otherwise hang inside a single tick, straight
+	// through a deadline that is only ever tested at the top of the loop.
+	//
+	// parent is kept so a cancelled parent (Ctrl-C) still reports cancellation
+	// rather than being reported as this wait's own timeout.
+	parent := ctx
 	noDeadline := timeout <= 0
+	if !noDeadline {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
+
 	deadline := time.Now().Add(timeout)
 	start := time.Now()
 
@@ -145,15 +162,32 @@ func waitForGatewayConfigApplied(ctx context.Context, clientset kubernetes.Inter
 
 	lastReason := "no polls completed"
 
+	// ended says why the wait stopped. Now that the deadline lives on the context,
+	// expiry and caller cancellation both arrive as ctx.Done(), and a raw ctx.Err()
+	// would report "context deadline exceeded" where the caller needs the pod-level
+	// reason kcp gave up on. Cancellation still surfaces as cancellation.
+	ended := func() error {
+		if err := parent.Err(); err != nil {
+			return err
+		}
+		return fmt.Errorf("timed out waiting for gateway %q pods to apply configId %q: %s (timeout: %s)",
+			gatewayName, targetConfigID, lastReason, timeout)
+	}
+
 	for noDeadline || time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return ended()
 		default:
 		}
 
 		podList, err := clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: labelSelector})
 		if err != nil {
+			// A List that failed because the deadline expired mid-request is this
+			// wait timing out, not a broken API server.
+			if ctx.Err() != nil {
+				return ended()
+			}
 			return fmt.Errorf("failed to list gateway pods for config verification: %w", err)
 		}
 		eligible := eligiblePods(podList.Items)
@@ -166,6 +200,13 @@ func waitForGatewayConfigApplied(ctx context.Context, clientset kubernetes.Inter
 		// of it would suggest the config is the problem rather than the RBAC.
 		if denied := configAccessDenied(results); denied != nil {
 			return denied
+		}
+
+		// Probes torn down by the deadline say nothing about what the pods are
+		// serving, so stop here rather than reporting "0 of 3 applied" from a tick
+		// that never finished asking.
+		if ctx.Err() != nil {
+			return ended()
 		}
 
 		done, reason := converged(results, targetConfigID, wantReplicas)
@@ -209,13 +250,12 @@ func waitForGatewayConfigApplied(ctx context.Context, clientset kubernetes.Inter
 
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return ended()
 		case <-time.After(pollInterval):
 		}
 	}
 
-	return fmt.Errorf("timed out waiting for gateway %q pods to apply configId %q: %s (timeout: %s)",
-		gatewayName, targetConfigID, lastReason, timeout)
+	return ended()
 }
 
 // expectedGatewayReplicas reports the Deployment's ready-replica count, or 0

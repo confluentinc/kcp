@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -47,16 +48,25 @@ const conditionStatusFalse = "False"
 // otherwise fail every apply.
 var rejectionPrecedence = []string{ConditionHotReloadStatus, ConditionClusterReady}
 
-// clusterReadyFailureReasons are the cluster-ready reasons worth aborting on.
-// cluster-ready also goes False transiently while the operator reconciles, so
-// this is deliberately a whitelist rather than "any False".
+// clusterReadyFailureReasons are the cluster-ready reasons known to mean the
+// operator processed the spec and refused it. ApplyFailed is the one observed
+// against a real CFK operator: a switchover CR referencing a missing k8s secret
+// produced cluster-ready False/ApplyFailed with "secretRef ... not found" while
+// observedGeneration stayed one behind generation.
 //
-// The bias is intentional: a missed fast-fail only costs the wait its full
-// timeout, whereas a false fast-fail aborts a migration that was fine. The
-// per-pod /config poll remains the actual gate.
+// cluster-ready also goes False transiently while the operator reconciles, so
+// this is a catalogue plus a naming rule (see isRejectionReason), not "any
+// False".
 var clusterReadyFailureReasons = map[string]struct{}{
 	"ApplyFailed": {},
 }
+
+// failedReasonSuffix is CFK's naming convention for a refusal — ApplyFailed,
+// CreateFailed, ValidationFailed. Honouring the convention beyond the catalogue
+// is what keeps an uncatalogued refusal from consuming the whole wait: the
+// alternative is no verdict at all, and the acceptance wait cannot distinguish
+// that from an operator still working.
+const failedReasonSuffix = "Failed"
 
 // gatewayCondition is one entry of a Gateway CR's status.conditions.
 // Deliberately not metav1.Condition: CFK's entries carry lastProbeTime and
@@ -224,7 +234,29 @@ func findNewRejection(conds []gatewayCondition, before ConditionSnapshot) *Gatew
 	if len(before) == 0 {
 		return nil
 	}
+	return findRejection(conds, before, true)
+}
 
+// findStaleRejection returns a failure condition that was already there before
+// the apply — the mirror image of findNewRejection, and never a verdict.
+// Unchanged means exactly that nothing ties it to this apply.
+//
+// It exists for the timeout message. A wait that gives up while the gateway sits
+// at cluster-ready False/ApplyFailed has most likely been refused for that same
+// reason again — CFK keeps both the status and the sticky lastTransitionTime, and
+// rewrites nothing, so a repeat refusal for an unfixed cause is indistinguishable
+// from the original. Naming the condition is then the only way the operator's own
+// diagnosis reaches the user at all; a bare "timed out" throws it away.
+func findStaleRejection(conds []gatewayCondition, before ConditionSnapshot) *GatewayRejection {
+	if len(before) == 0 {
+		return nil
+	}
+	return findRejection(conds, before, false)
+}
+
+// findRejection scans in precedence order for a False condition with a fatal
+// reason whose changed-since-baseline state matches wantChanged.
+func findRejection(conds []gatewayCondition, before ConditionSnapshot, wantChanged bool) *GatewayRejection {
 	byType := make(map[string]gatewayCondition, len(conds))
 	for _, c := range conds {
 		byType[c.Type] = c
@@ -238,7 +270,7 @@ func findNewRejection(conds []gatewayCondition, before ConditionSnapshot) *Gatew
 		if !isRejectionReason(condType, c.Reason) {
 			continue
 		}
-		if !before.changed(c) {
+		if before.changed(c) != wantChanged {
 			continue
 		}
 		return &GatewayRejection{
@@ -254,14 +286,23 @@ func findNewRejection(conds []gatewayCondition, before ConditionSnapshot) *Gatew
 // isRejectionReason decides whether a False condition's reason is fatal.
 // A False hot-reload-status is always fatal — the condition exists only to
 // report the outcome of a hot reload. cluster-ready is narrower, since it also
-// dips False during ordinary reconciliation.
+// dips False during ordinary reconciliation: it takes a catalogued reason or
+// CFK's <Verb>Failed convention.
+//
+// Recognising a reason only decides whether it is *worth reading*; whether it
+// says anything about our apply is decided separately, by comparing it against
+// the pre-apply baseline (see findNewRejection). That gate is what makes the
+// naming rule safe here — it is the reason a days-stale ApplyFailed is ignored,
+// so widening the vocabulary cannot resurrect one.
 func isRejectionReason(condType, reason string) bool {
 	switch condType {
 	case ConditionHotReloadStatus:
 		return true
 	case ConditionClusterReady:
-		_, fatal := clusterReadyFailureReasons[reason]
-		return fatal
+		if _, fatal := clusterReadyFailureReasons[reason]; fatal {
+			return true
+		}
+		return strings.HasSuffix(reason, failedReasonSuffix)
 	default:
 		return false
 	}

@@ -466,7 +466,8 @@ func (s *MigrationActions) reportGatewayRejection(config *MigrationConfig, err e
 // The wait runs without a deadline by default on the rollout path — the
 // operator drives convergence and the user can Ctrl-C if a rollout wedges. An
 // optional per-workflow rolloutTimeout caps it (via SetRolloutTimeout); the
-// per-pod config wait is bounded either way, see gatewayConfigTimeout.
+// per-pod config wait is bounded either way, see gatewayConfigTimeout, and so is
+// the reconcile step, which cannot always recognise a refusal.
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
@@ -509,11 +510,11 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// refused the spec" on its own — see waitForGatewayAccepted.
 	//
 	// The per-pod proof is deliberately not gated on it. /config is a strictly
-	// stronger statement about the same apply, it is bounded, and it fast-fails on
-	// the operator's own rejection from inside its poll loop. The acceptance wait
-	// is unbounded by default and cannot recognise a rejection that leaves a
-	// condition's status unchanged, so putting it in front would let the weaker
-	// signal hang the migration ahead of the only sound gate.
+	// stronger statement about the same apply, and it fast-fails on the operator's
+	// own rejection from inside its own poll loop. The acceptance wait cannot
+	// recognise a rejection that leaves a condition's fingerprint unchanged, so
+	// putting it in front would spend its backstop timeout ahead of the only sound
+	// gate, for a verdict /config reaches sooner and more directly.
 	if tier != gateway.TierPerPodConfigID {
 		if err := s.waitForGatewayAccepted(ctx, config, apply, "fence"); err != nil {
 			return err
