@@ -364,3 +364,88 @@ func TestMigrationState_WriteToFile_TightensExistingLooseFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "existing 0644 file should be tightened to 0600")
 }
+
+// ===========================================================================
+// Gateway config-revision records
+// ===========================================================================
+
+// TestMigrationConfig_GatewayConfigIds_RoundTrip verifies the three per-stage
+// config revisions survive Write+Read independently — a shared field would make
+// an unfence indistinguishable from the fence it undid.
+func TestMigrationConfig_GatewayConfigIds_RoundTrip(t *testing.T) {
+	state := NewMigrationState()
+	state.Migrations = []MigrationConfig{
+		{
+			MigrationId:        "mig-cfgid-001",
+			CurrentState:       "fenced",
+			FenceConfigId:      "kcp-1754300000-000001-a1b2c3d4",
+			SwitchoverConfigId: "kcp-1754300100-000002-e5f6a7b8",
+			UnfenceConfigId:    "kcp-1754300200-000003-c9d0e1f2",
+		},
+	}
+
+	filePath := filepath.Join(t.TempDir(), "migration-state.json")
+	require.NoError(t, state.WriteToFile(filePath))
+
+	loaded, err := NewMigrationStateFromFile(filePath)
+	require.NoError(t, err)
+	require.Len(t, loaded.Migrations, 1)
+
+	assert.Equal(t, "kcp-1754300000-000001-a1b2c3d4", loaded.Migrations[0].FenceConfigId)
+	assert.Equal(t, "kcp-1754300100-000002-e5f6a7b8", loaded.Migrations[0].SwitchoverConfigId)
+	assert.Equal(t, "kcp-1754300200-000003-c9d0e1f2", loaded.Migrations[0].UnfenceConfigId)
+}
+
+// TestMigrationConfig_GatewayConfigIds_BackwardCompat verifies a state file
+// written before per-pod verification existed still loads, with all three
+// revisions empty — which is exactly the signal to mint fresh ones.
+func TestMigrationConfig_GatewayConfigIds_BackwardCompat(t *testing.T) {
+	legacyJSON := `{
+  "migrations": [
+    {
+      "migration_id": "mig-legacy-cfgid",
+      "current_state": "initialized",
+      "kube_config_path": "/home/user/.kube/config",
+      "source_bootstrap": "source-broker:9092",
+      "cluster_bootstrap": "dest-broker:9092",
+      "cluster_id": "lkc-legacy",
+      "cluster_link_name": "legacy-link",
+      "topics": ["orders"],
+      "initial_cr_name": "gw-cr",
+      "k8s_namespace": "confluent"
+    }
+  ],
+  "kcp_build_info": {"version": "", "commit": "", "date": ""},
+  "timestamp": "2026-01-01T00:00:00Z"
+}`
+
+	filePath := filepath.Join(t.TempDir(), "legacy-state.json")
+	require.NoError(t, os.WriteFile(filePath, []byte(legacyJSON), 0644))
+
+	loaded, err := NewMigrationStateFromFile(filePath)
+	require.NoError(t, err, "loading a pre-feature state file must succeed")
+	require.Len(t, loaded.Migrations, 1)
+
+	assert.Empty(t, loaded.Migrations[0].FenceConfigId)
+	assert.Empty(t, loaded.Migrations[0].SwitchoverConfigId)
+	assert.Empty(t, loaded.Migrations[0].UnfenceConfigId)
+}
+
+// TestMigrationConfig_GatewayConfigIds_ForwardCompat verifies the keys are
+// written even when empty, so "this gateway had no per-pod handle" is visible in
+// the file rather than inferred from an absence.
+func TestMigrationConfig_GatewayConfigIds_ForwardCompat(t *testing.T) {
+	state := NewMigrationState()
+	state.Migrations = []MigrationConfig{{MigrationId: "mig-no-cfgid"}}
+
+	filePath := filepath.Join(t.TempDir(), "migration-state.json")
+	require.NoError(t, state.WriteToFile(filePath))
+
+	data, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+	contents := string(data)
+
+	assert.Contains(t, contents, `"fence_config_id"`)
+	assert.Contains(t, contents, `"switchover_config_id"`)
+	assert.Contains(t, contents, `"unfence_config_id"`)
+}

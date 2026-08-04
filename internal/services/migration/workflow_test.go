@@ -1008,7 +1008,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 			unwantedCall = "WaitForGatewayPods"
 			return nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			acceptedCalled = true
 			return nil
 		},
@@ -1044,7 +1044,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
@@ -1075,7 +1075,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			callOrder = append(callOrder, "apply")
 			return nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			callOrder = append(callOrder, "reconcile")
 			return nil
 		},
@@ -1249,15 +1249,17 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 // rejectionError builds the error the gateway service returns when the CFK
 // operator refuses a spec, matching the rejection observed on 2026-07-27 while
 // setting up the live-cluster e2e test infrastructure.
-func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
-	return &gateway.GatewayRejectedError{
-		Gateway:            gatewayName,
-		ConditionType:      "platform.confluent.io/cluster-ready",
-		Reason:             "ApplyFailed",
-		Message:            "secretRef kcp-perf-plain-jaas not found",
-		Generation:         4,
-		ObservedGeneration: 3,
-	}
+//
+// Wrapped the way WaitForGatewayAccepted wraps it, so these tests exercise the
+// real shape: the generation pair sits in the message and the typed rejection is
+// reachable only through errors.As.
+func rejectionError(gatewayName string) error {
+	return fmt.Errorf("gateway %q was rejected by the Confluent operator (generation: %d, observedGeneration: %d): %w",
+		gatewayName, 4, 3, &gateway.GatewayRejection{
+			ConditionType: "platform.confluent.io/cluster-ready",
+			Reason:        "ApplyFailed",
+			Message:       "secretRef kcp-perf-plain-jaas not found",
+		})
 }
 
 // TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage is the
@@ -1270,7 +1272,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 	waitReadyCalled := false
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
@@ -1285,7 +1287,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 	require.Error(t, err, "a switchover the operator rejected must not be reported as a success")
 	assert.False(t, waitReadyCalled, "must abort before the Deployment wait that would report 'No pod restart required'")
 
-	var rejected *gateway.GatewayRejectedError
+	var rejected *gateway.GatewayRejection
 	require.ErrorAs(t, err, &rejected, "the typed rejection must survive to the caller")
 	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found")
 	assert.Contains(t, err.Error(), "ApplyFailed")
@@ -1301,7 +1303,7 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 			callOrder = append(callOrder, "apply")
 			return nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
@@ -1322,7 +1324,7 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			return fmt.Errorf("kube unreachable")
 		},
 	}
@@ -1333,7 +1335,7 @@ func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed waiting for gateway reconcile during switchover")
 	assert.Contains(t, err.Error(), "kube unreachable")
-	var rejected *gateway.GatewayRejectedError
+	var rejected *gateway.GatewayRejection
 	assert.NotErrorAs(t, err, &rejected, "a transport failure is not an operator rejection")
 }
 
@@ -1343,7 +1345,7 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ time.Duration, timeout time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _ time.Duration, timeout time.Duration) error {
 			observedTimeout = timeout
 			return nil
 		},
@@ -1363,7 +1365,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte) error { return nil },
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
@@ -1389,7 +1391,7 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 			callOrder = append(callOrder, "apply")
 			return nil
 		},
-		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
+		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},

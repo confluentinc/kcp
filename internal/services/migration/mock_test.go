@@ -16,10 +16,14 @@ type mockGatewayService struct {
 	validateGatewayCRsFn     func(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error)
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte) error
-	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, conditionsBefore gateway.ConditionSnapshot, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
 	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+
+	detectGatewayVerificationTierFn func(ctx context.Context, namespace, name string, initialYAML, candidateYAML []byte) (gateway.VerificationTier, error)
+	snapshotGatewayConditionsFn     func(ctx context.Context, namespace, name string) (gateway.ConditionSnapshot, error)
+	waitForGatewayConfigAppliedFn   func(ctx context.Context, namespace, name, targetConfigID string, conditionsBefore gateway.ConditionSnapshot, port string, pollInterval, timeout time.Duration, onProgress func(gateway.ConfigApplyProgress)) error
 }
 
 func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -50,9 +54,9 @@ func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, na
 	return fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
 }
 
-func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
+func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, conditionsBefore gateway.ConditionSnapshot, pollInterval, timeout time.Duration) error {
 	if m.waitForGatewayAcceptedFn != nil {
-		return m.waitForGatewayAcceptedFn(ctx, namespace, name, pollInterval, timeout)
+		return m.waitForGatewayAcceptedFn(ctx, namespace, name, conditionsBefore, pollInterval, timeout)
 	}
 	return nil
 }
@@ -74,6 +78,32 @@ func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, 
 func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 	if m.waitForGatewayReadyFn != nil {
 		return m.waitForGatewayReadyFn(ctx, namespace, name, pollInterval, timeout, onProgress)
+	}
+	return nil
+}
+
+// The hot-reload verification trio. Their unset defaults deliberately describe
+// the pre-hot-reload world — pod-rollout tier, no condition baseline, a wait
+// that passes — so every test written before tier selection existed keeps
+// exercising the path it was written for.
+
+func (m *mockGatewayService) DetectGatewayVerificationTier(ctx context.Context, namespace, name string, initialYAML, candidateYAML []byte) (gateway.VerificationTier, error) {
+	if m.detectGatewayVerificationTierFn != nil {
+		return m.detectGatewayVerificationTierFn(ctx, namespace, name, initialYAML, candidateYAML)
+	}
+	return gateway.TierPodRollout, nil
+}
+
+func (m *mockGatewayService) SnapshotGatewayConditions(ctx context.Context, namespace, name string) (gateway.ConditionSnapshot, error) {
+	if m.snapshotGatewayConditionsFn != nil {
+		return m.snapshotGatewayConditionsFn(ctx, namespace, name)
+	}
+	return nil, nil
+}
+
+func (m *mockGatewayService) WaitForGatewayConfigApplied(ctx context.Context, namespace, name, targetConfigID string, conditionsBefore gateway.ConditionSnapshot, port string, pollInterval, timeout time.Duration, onProgress func(gateway.ConfigApplyProgress)) error {
+	if m.waitForGatewayConfigAppliedFn != nil {
+		return m.waitForGatewayConfigAppliedFn(ctx, namespace, name, targetConfigID, conditionsBefore, port, pollInterval, timeout, onProgress)
 	}
 	return nil
 }

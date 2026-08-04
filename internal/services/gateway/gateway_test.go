@@ -496,7 +496,7 @@ func TestWaitForGatewayAccepted_AlreadyReconciled_ReturnsImmediately(t *testing.
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 3, 3, true))
 
 	start := time.Now()
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 20*time.Millisecond, 2*time.Second)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 20*time.Millisecond, 2*time.Second)
 	require.NoError(t, err)
 	assert.Less(t, time.Since(start), 20*time.Millisecond, "observedGeneration>=generation should return without polling")
 }
@@ -512,7 +512,7 @@ func TestWaitForGatewayAccepted_WaitsUntilReconciled(t *testing.T) {
 	}()
 
 	start := time.Now()
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 10*time.Millisecond, 2*time.Second)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 10*time.Millisecond, 2*time.Second)
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), 60*time.Millisecond, "must wait until the operator observes the new generation")
 }
@@ -522,7 +522,7 @@ func TestWaitForGatewayAccepted_NoStatus_TimesOut(t *testing.T) {
 	// Generation bumped but the operator has written no status yet.
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 2, 0, false))
 
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 10*time.Millisecond, 80*time.Millisecond)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 10*time.Millisecond, 80*time.Millisecond)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out")
 }
@@ -533,7 +533,7 @@ func TestWaitForGatewayAccepted_ContextCancelled_Propagates(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() { time.Sleep(30 * time.Millisecond); cancel() }()
-	err := waitForGatewayAccepted(ctx, cs, ns, gw, 10*time.Millisecond, 0)
+	err := waitForGatewayAccepted(ctx, cs, ns, gw, acceptedBaseline(), 10*time.Millisecond, 0)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -545,14 +545,29 @@ func TestWaitForGatewayAccepted_ContextCancelled_Propagates(t *testing.T) {
 // clusterReadyCondition is the condition type CFK publishes on the Gateway CR.
 const clusterReadyCondition = "platform.confluent.io/cluster-ready"
 
+// condBaseline is the instant the caller snapshots the conditions, immediately
+// before applying; condAfterApply is a transition the operator publishes after
+// that. A condition still stamped condBaseline is history and says nothing about
+// the apply — the distinction the whole rejection check rests on.
+var (
+	condBaseline   = time.Date(2026, 7, 27, 10, 0, 0, 0, time.UTC)
+	condAfterApply = condBaseline.Add(time.Minute)
+)
+
+// acceptedBaseline is what a caller passes: the condition transition times as
+// they stood immediately before the apply.
+func acceptedBaseline() ConditionSnapshot {
+	return ConditionSnapshot{clusterReadyCondition: metav1.NewTime(condBaseline)}
+}
+
 // rejectedGatewayCR reproduces the CR observed on 2026-07-27 while setting up
 // the live-cluster e2e test infrastructure: the switchover spec referenced a k8s
 // secret that did not exist, so the operator refused it — generation advanced to
 // 4, observedGeneration stayed at 3, and the cluster-ready condition carried
-// ApplyFailed.
+// ApplyFailed, published after the apply.
 func rejectedGatewayCR(name, namespace string) *unstructured.Unstructured {
 	return newGatewayCR(name, namespace, 4, 3, true,
-		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "secretRef kcp-perf-plain-jaas not found"),
+		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "secretRef kcp-perf-plain-jaas not found", condAfterApply),
 	)
 }
 
@@ -565,17 +580,57 @@ func TestWaitForGatewayAccepted_Rejected_ReturnsTypedErrorWithOperatorMessage(t 
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
 
 	// timeout 0 — the default. Before this guard existed the wait blocked forever.
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 0)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
 	require.Error(t, err)
 
-	var rejected *GatewayRejectedError
+	var rejected *GatewayRejection
 	require.ErrorAs(t, err, &rejected, "callers must be able to distinguish rejection from a timeout")
 	assert.Equal(t, "ApplyFailed", rejected.Reason)
 	assert.Equal(t, "secretRef kcp-perf-plain-jaas not found", rejected.Message)
 	assert.Equal(t, clusterReadyCondition, rejected.ConditionType)
-	assert.Equal(t, int64(4), rejected.Generation)
-	assert.Equal(t, int64(3), rejected.ObservedGeneration)
-	assert.Contains(t, err.Error(), "secretRef kcp-perf-plain-jaas not found (reason: ApplyFailed")
+	// The generation pair is what says the operator never got past this spec, and
+	// the wrapper is the only thing carrying it.
+	assert.Contains(t, err.Error(), "generation: 4, observedGeneration: 3")
+	assert.Contains(t, err.Error(), "ApplyFailed: secretRef kcp-perf-plain-jaas not found")
+}
+
+// TestWaitForGatewayAccepted_StaleRejection_IsNotAVerdict is the guard the
+// baseline exists for. A Gateway carries failure conditions long after the
+// failure they describe — an ApplyFailed was observed still present 6 days and 13
+// generations later on a healthy 3/3 gateway. Acting on one because it happens to
+// be present while the operator is merely slow would abort a migration that was
+// fine, so a condition that has not transitioned since the pre-apply baseline
+// must be ignored even though it looks exactly like a live rejection.
+func TestWaitForGatewayAccepted_StaleRejection_IsNotAVerdict(t *testing.T) {
+	shortenRejectionSettleWindow(t, 10*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	// Same failing condition as rejectedGatewayCR, but stamped at the baseline:
+	// it was already there when we applied.
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
+		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "secretRef kcp-perf-plain-jaas not found", condBaseline),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 80*time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out", "a stale condition must leave the wait waiting, not abort it")
+	var rejected *GatewayRejection
+	assert.NotErrorAs(t, err, &rejected, "a condition older than the apply is history, not a rejection")
+}
+
+// TestWaitForGatewayAccepted_NoBaseline_DisablesRejectionCheck covers the
+// degraded path: when the pre-apply snapshot could not be captured there is no
+// way to tell a fresh rejection from a stale one, so the check switches off
+// rather than guessing, and the timeout does the work.
+func TestWaitForGatewayAccepted_NoBaseline_DisablesRejectionCheck(t *testing.T) {
+	shortenRejectionSettleWindow(t, 10*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, nil, 5*time.Millisecond, 80*time.Millisecond)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "timed out")
+	var rejected *GatewayRejection
+	assert.NotErrorAs(t, err, &rejected, "without a baseline there is nothing to compare against")
 }
 
 // TestWaitForGatewayAccepted_Rejected_HonoursSettleWindow ensures a failing
@@ -586,7 +641,7 @@ func TestWaitForGatewayAccepted_Rejected_HonoursSettleWindow(t *testing.T) {
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
 
 	start := time.Now()
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 0)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
 	require.Error(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond,
 		"must not abort before the settle window — a transient failure deserves the chance to clear")
@@ -605,7 +660,7 @@ func TestWaitForGatewayAccepted_TransientFailureThenAccepted_ReturnsNil(t *testi
 		updateGatewayCR(t, cs, newGatewayCR(gw, ns, 4, 4, true))
 	}()
 
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 0)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
 	require.NoError(t, err, "a failure the operator recovers from within the settle window is not a rejection")
 }
 
@@ -630,7 +685,7 @@ func TestWaitForGatewayAccepted_ClearedConditionResetsSettleTimer(t *testing.T) 
 		updateGatewayCR(t, cs, newGatewayCR(gw, ns, 4, 4, true)) // finally accepted
 	}()
 
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 0)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
 	require.NoError(t, err, "the settle timer must reset when the failure condition clears")
 }
 
@@ -641,13 +696,13 @@ func TestWaitForGatewayAccepted_UnknownReason_KeepsWaiting(t *testing.T) {
 	shortenRejectionSettleWindow(t, 10*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
-		withGatewayCondition(clusterReadyCondition, "False", "Reconciling", "rolling out new pods"),
+		withGatewayCondition(clusterReadyCondition, "False", "Reconciling", "rolling out new pods", condAfterApply),
 	))
 
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 80*time.Millisecond)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 80*time.Millisecond)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out")
-	var rejected *GatewayRejectedError
+	var rejected *GatewayRejection
 	assert.NotErrorAs(t, err, &rejected, "an unrecognised reason must not be reported as a rejection")
 }
 
@@ -658,10 +713,10 @@ func TestWaitForGatewayAccepted_TrueConditionWithFailedReason_NotARejection(t *t
 	shortenRejectionSettleWindow(t, 10*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
-		withGatewayCondition(clusterReadyCondition, "True", "ApplyFailed", "stale message"),
+		withGatewayCondition(clusterReadyCondition, "True", "ApplyFailed", "stale message", condAfterApply),
 	))
 
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 60*time.Millisecond)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 60*time.Millisecond)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "timed out")
 }
@@ -674,46 +729,32 @@ func TestWaitForGatewayAccepted_TimeoutShorterThanSettleWindow_ReportsRejection(
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
 
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, 60*time.Millisecond)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 60*time.Millisecond)
 	require.Error(t, err)
-	var rejected *GatewayRejectedError
+	var rejected *GatewayRejection
 	require.ErrorAs(t, err, &rejected, "a pending rejection beats a bare timeout")
 	assert.Equal(t, "ApplyFailed", rejected.Reason)
 }
 
 // TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil ensures
-// acceptance is checked first: once observedGeneration catches up, a lingering
-// failure condition is the operator's business, not a reason to abort.
+// acceptance is checked first: once observedGeneration catches up, a failure
+// condition is the operator's business, not a reason to abort. The condition here
+// is freshly transitioned, so this pins the precedence rather than relying on the
+// staleness rule to do the work.
 func TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil(t *testing.T) {
 	shortenRejectionSettleWindow(t, time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 4, true,
-		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "stale from a previous generation"),
+		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "reconciled, then something else failed", condAfterApply),
 	))
 
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, time.Second)
 	require.NoError(t, err)
 }
 
-func TestIsFatalGatewayConditionReason(t *testing.T) {
-	tests := []struct {
-		reason string
-		fatal  bool
-	}{
-		{"ApplyFailed", true},  // catalogued; observed against a real CFK operator
-		{"CreateFailed", true}, // <Verb>Failed convention
-		{"ValidationFailed", true},
-		{"Reconciling", false},
-		{"Pending", false},
-		{"", false},
-		{"FailedButNotSuffixed", false}, // convention is a suffix, not a substring
-	}
-	for _, tt := range tests {
-		t.Run(tt.reason, func(t *testing.T) {
-			assert.Equal(t, tt.fatal, isFatalGatewayConditionReason(tt.reason))
-		})
-	}
-}
+// Which reasons count as a rejection is decided by findNewRejection and covered
+// in conditions_test.go, which owns that rule for both callers of it — this wait
+// and the per-pod /config wait.
 
 // ===========================================================================
 // Helpers
@@ -799,14 +840,19 @@ type gatewayCROption func(*unstructured.Unstructured)
 // withGatewayCondition appends a status condition to a Gateway CR, mirroring
 // what the CFK operator publishes (e.g. the ApplyFailed / cluster-ready
 // condition raised when a switchover CR references a missing secret).
-func withGatewayCondition(condType, status, reason, message string) gatewayCROption {
+//
+// transitionedAt is not decoration: whether a condition counts as a verdict on
+// the apply is decided entirely by comparing it against the pre-apply baseline,
+// so every call site has to say when the operator published it.
+func withGatewayCondition(condType, status, reason, message string, transitionedAt time.Time) gatewayCROption {
 	return func(obj *unstructured.Unstructured) {
 		existing, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
 		existing = append(existing, map[string]any{
-			"type":    condType,
-			"status":  status,
-			"reason":  reason,
-			"message": message,
+			"type":               condType,
+			"status":             status,
+			"reason":             reason,
+			"message":            message,
+			"lastTransitionTime": transitionedAt.UTC().Format(time.RFC3339),
 		})
 		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
 	}

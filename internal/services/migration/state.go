@@ -105,6 +105,23 @@ type MigrationConfig struct {
 	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
 	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
 
+	// Gateway config revisions kcp stamped and verified, one per apply.
+	//
+	// Recorded so a resume re-verifies the same revision instead of minting a
+	// fresh one. That is safe because the gateway CRs are captured at init and
+	// never re-read, so the same id always means byte-identical bytes: CFK
+	// treats the re-apply as a no-op rather than running another hot reload and
+	// canary. Minting a new id each time would work too, but would make an
+	// idempotent resume bump the gateway's generation every run.
+	//
+	// Each stage keeps its own id — an unfence has to be distinguishable from
+	// the fence it undoes. All three are empty on a gateway that does not
+	// support spec.configId, and on every migration created before per-pod
+	// verification existed.
+	FenceConfigId      string `json:"fence_config_id"`
+	SwitchoverConfigId string `json:"switchover_config_id"`
+	UnfenceConfigId    string `json:"unfence_config_id"`
+
 	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
 	// safety check that verifies source offsets are not still increasing before
 	// promoting mirror topics. A value of 0 skips the check. An increasing offset

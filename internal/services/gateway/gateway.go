@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/goccy/go-yaml"
@@ -36,10 +35,19 @@ type Service interface {
 	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
-	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
+	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, conditionsBefore ConditionSnapshot, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
 	WaitForGatewayReady(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration, onProgress func(GatewayReadinessProgress)) error
+
+	// Hot-reload verification. Under spec.hotReload.enabled a config change
+	// applies in place, so every Kubernetes-side signal above — rollout, pod
+	// replacement, observedGeneration — reports success without proving the
+	// pods serve the new config. These three select and drive the verification
+	// that does prove it.
+	DetectGatewayVerificationTier(ctx context.Context, namespace, gatewayName string, initialYAML, candidateYAML []byte) (VerificationTier, error)
+	SnapshotGatewayConditions(ctx context.Context, namespace, gatewayName string) (ConditionSnapshot, error)
+	WaitForGatewayConfigApplied(ctx context.Context, namespace, gatewayName, targetConfigID string, conditionsBefore ConditionSnapshot, port string, pollInterval, timeout time.Duration, onProgress func(ConfigApplyProgress)) error
 }
 
 // PodRolloutProgress reports the current state of a pod rollout
@@ -179,7 +187,7 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 	start := time.Now()
 	_, err = dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Apply(ctx, gatewayName, &obj, metav1.ApplyOptions{
-			FieldManager: "kcp-migration",
+			FieldManager: gatewayFieldManager,
 			Force:        true,
 		})
 	if err != nil {
@@ -190,65 +198,21 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 	return nil
 }
 
-// GatewayRejectedError reports that the CFK operator processed the applied
-// Gateway CR and refused it. It carries the operator's own condition so the
-// caller can surface the actual cause (a missing secretRef, an invalid spec)
-// instead of a bare timeout.
+// gatewayRejectionSettleWindow is how long a *newly transitioned* failure
+// condition must persist before WaitForGatewayAccepted aborts the migration on
+// it. The operator can briefly publish a failure while it retries, and on this
+// path the rejection is the gate — nothing stronger runs behind it to catch a
+// false one — so the failure has to hold before we act.
 //
-// This is a terminal outcome, not a transient one: observedGeneration will
-// never catch up to generation until the underlying problem is fixed and the
-// CR re-applied, so waiting longer cannot help.
-type GatewayRejectedError struct {
-	Gateway            string
-	ConditionType      string
-	Reason             string
-	Message            string
-	Generation         int64
-	ObservedGeneration int64
-}
-
-func (e *GatewayRejectedError) Error() string {
-	return fmt.Sprintf("gateway %q was rejected by the Confluent operator: %s (reason: %s, condition: %s, generation: %d, observedGeneration: %d)",
-		e.Gateway, e.Message, e.Reason, e.ConditionType, e.Generation, e.ObservedGeneration)
-}
-
-// gatewayRejectionSettleWindow is how long a failing condition must persist
-// before WaitForGatewayAccepted treats it as a rejection rather than a
-// transient reconcile state. The operator can briefly publish a failure while
-// it retries (and a condition left over from the previous generation's
-// reconcile can be momentarily stale), so we require the failure to hold
-// before aborting a migration on it. var so tests can shorten it.
+// This deliberately differs from the per-pod /config wait, which acts on a
+// rejection immediately (see gatewayRejectionSince): there /config remains the
+// real gate, so a premature fast-fail costs only latency, not correctness.
+// var so tests can shorten it.
 var gatewayRejectionSettleWindow = 30 * time.Second
-
-// gatewayFatalConditionReasons are Gateway condition reasons known to mean the
-// operator processed the spec and refused it. ApplyFailed is the one observed
-// against a real CFK operator: a switchover CR referencing a missing k8s secret produced
-// {"type":"platform.confluent.io/cluster-ready","status":"False",
-// "reason":"ApplyFailed","message":"secretRef ... not found"} while
-// observedGeneration stayed one behind generation.
-//
-// Adding a reason here makes kcp abort a migration on it — a deliberate call,
-// not a drive-by. Reasons outside this set (and outside the <Verb>Failed
-// convention below) are treated as "still reconciling" and waited on.
-var gatewayFatalConditionReasons = map[string]struct{}{
-	"ApplyFailed": {},
-}
-
-// isFatalGatewayConditionReason reports whether a False condition's reason
-// means the operator refused the spec. Beyond the catalogued reasons it honours
-// CFK's <Verb>Failed naming convention (ApplyFailed, CreateFailed,
-// ValidationFailed, ...) so an uncatalogued failure still fails fast with the
-// operator's message rather than hanging.
-func isFatalGatewayConditionReason(reason string) bool {
-	if _, ok := gatewayFatalConditionReasons[reason]; ok {
-		return true
-	}
-	return strings.HasSuffix(reason, "Failed")
-}
 
 // WaitForGatewayAccepted blocks until the CFK operator has accepted the current
 // Gateway CR spec — status.observedGeneration >= metadata.generation — or
-// returns a *GatewayRejectedError if the operator refuses it. timeout == 0
+// returns a *GatewayRejection if the operator refuses it. timeout == 0
 // means no deadline (consistent with the other gateway waits).
 //
 // This is the guard that makes a downstream "no rollout detected" trustworthy.
@@ -267,7 +231,14 @@ func isFatalGatewayConditionReason(reason string) bool {
 // the wait would block indefinitely. Polling status.conditions alongside it
 // turns that hang into a fast, actionable error carrying the operator's own
 // message.
-func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
+//
+// conditionsBefore is the condition baseline captured immediately before the
+// apply, and is what makes acting on a condition safe at all: Gateway conditions
+// carry no observedGeneration and go stale for days, so only one that has
+// transitioned since the baseline says anything about this apply — see
+// conditions.go. An empty baseline therefore disables the rejection check rather
+// than guessing, degrading to waiting out the timeout.
+func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, conditionsBefore ConditionSnapshot, pollInterval, timeout time.Duration) error {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
@@ -278,13 +249,13 @@ func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gate
 		return fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	return waitForGatewayAccepted(ctx, dynamicClient, namespace, gatewayName, pollInterval, timeout)
+	return waitForGatewayAccepted(ctx, dynamicClient, namespace, gatewayName, conditionsBefore, pollInterval, timeout)
 }
 
 // waitForGatewayAccepted is the inner orchestration used by
 // WaitForGatewayAccepted. Split from the method so unit tests can inject a
 // fake dynamic client.
-func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, pollInterval, timeout time.Duration) error {
+func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, conditionsBefore ConditionSnapshot, pollInterval, timeout time.Duration) error {
 	gatewayGVR := schema.GroupVersionResource{
 		Group:    GatewayGroup,
 		Version:  GatewayVersion,
@@ -294,12 +265,12 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 	noDeadline := timeout <= 0
 	deadline := time.Now().Add(timeout)
 
-	// A failing condition only aborts once it has held for the settle window.
-	// firstFailureAt marks the start of the current unbroken run of failure
-	// observations; it resets the moment the operator stops reporting one.
+	// A newly transitioned failure condition only aborts once it has held for the
+	// settle window. firstFailureAt marks the start of the current unbroken run of
+	// failure observations; it resets the moment the operator stops reporting one.
 	var (
 		firstFailureAt time.Time
-		pending        *GatewayRejectedError
+		pending        error
 	)
 
 	for noDeadline || time.Now().Before(deadline) {
@@ -327,24 +298,28 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		}
 
 		// Not accepted yet — is the operator telling us why it never will be?
-		rejection, err := findGatewayRejection(gw, gatewayName, generation, observed)
+		// Only a condition that transitioned after conditionsBefore was captured
+		// counts; an ApplyFailed left over from a previous generation is history,
+		// not a verdict on this apply.
+		conds, err := gatewayConditions(gw.Object)
 		if err != nil {
-			return err
+			return fmt.Errorf("failed to read gateway status.conditions: %w", err)
 		}
+		rejection := findNewRejection(conds, conditionsBefore)
 		switch {
 		case rejection != nil && firstFailureAt.IsZero():
 			firstFailureAt = time.Now()
-			pending = rejection
+			pending = rejectedGatewayError(gatewayName, generation, observed, rejection)
 			slog.Warn("⚠️ gateway condition reports a failure; waiting to see whether the operator recovers",
 				"gateway", gatewayName, "reason", rejection.Reason, "message", rejection.Message,
 				"settleWindow", gatewayRejectionSettleWindow)
 		case rejection != nil:
-			pending = rejection
+			pending = rejectedGatewayError(gatewayName, generation, observed, rejection)
 			if time.Since(firstFailureAt) >= gatewayRejectionSettleWindow {
 				slog.Error("❌ gateway spec rejected by the operator", "gateway", gatewayName,
 					"reason", rejection.Reason, "message", rejection.Message,
 					"generation", generation, "observedGeneration", observed)
-				return rejection
+				return pending
 			}
 		default:
 			if !firstFailureAt.IsZero() {
@@ -372,44 +347,14 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 	return fmt.Errorf("timed out waiting for gateway %q to be observed by the operator (timeout: %s)", gatewayName, timeout)
 }
 
-// findGatewayRejection scans the Gateway CR's status.conditions for a condition
-// reporting that the operator refused the spec, returning nil when none is
-// present. Only status=="False" conditions with a fatal reason qualify — a
-// False condition with an unrecognised reason is normal mid-reconcile noise.
-func findGatewayRejection(gw *unstructured.Unstructured, gatewayName string, generation, observed int64) (*GatewayRejectedError, error) {
-	conditions, found, err := unstructured.NestedSlice(gw.Object, "status", "conditions")
-	if err != nil {
-		return nil, fmt.Errorf("failed to read gateway status.conditions: %w", err)
-	}
-	if !found {
-		return nil, nil
-	}
-
-	for _, raw := range conditions {
-		condition, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		status, _ := condition["status"].(string)
-		if status != string(metav1.ConditionFalse) {
-			continue
-		}
-		reason, _ := condition["reason"].(string)
-		if !isFatalGatewayConditionReason(reason) {
-			continue
-		}
-		message, _ := condition["message"].(string)
-		conditionType, _ := condition["type"].(string)
-		return &GatewayRejectedError{
-			Gateway:            gatewayName,
-			ConditionType:      conditionType,
-			Reason:             reason,
-			Message:            message,
-			Generation:         generation,
-			ObservedGeneration: observed,
-		}, nil
-	}
-	return nil, nil
+// rejectedGatewayError pairs a condition-level rejection with the reconcile
+// state that produced it. The *GatewayRejection stays reachable via errors.As,
+// so callers still branch on the type; the wrapper only adds the generation
+// pair, which is what tells a reader whether the operator ever got as far as
+// looking at this spec.
+func rejectedGatewayError(gatewayName string, generation, observed int64, r *GatewayRejection) error {
+	return fmt.Errorf("gateway %q was rejected by the Confluent operator (generation: %d, observedGeneration: %d): %w",
+		gatewayName, generation, observed, r)
 }
 
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.

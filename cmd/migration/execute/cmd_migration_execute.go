@@ -2,8 +2,10 @@ package execute
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -41,6 +43,8 @@ var (
 	detectUnroutedProducersDuration time.Duration
 	consumerOffsetSyncDrainDuration time.Duration
 	promoteBatchSize                int
+	gatewayConfigPort               string
+	gatewayConfigTimeout            time.Duration
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -99,6 +103,8 @@ the migration state file and must be provided each time.`,
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
 	optionalFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.")
+	optionalFlags.StringVar(&gatewayConfigPort, "gateway-config-port", gateway.DefaultGatewayConfigPort, "Port serving the gateway's config endpoint, used to confirm every gateway pod applied a config change on a hot-reload-enabled gateway. Reached through the Kubernetes API-server pod proxy, so it needs no direct network route to the pods and no Service.")
+	optionalFlags.DurationVar(&gatewayConfigTimeout, "gateway-config-timeout", 0, "Maximum time to wait for every gateway pod to report a new config revision. 0 (the default) uses --rollout-timeout if set, otherwise 90s. Unlike a pod rollout, a hot reload that has not landed is broken rather than slow, so this wait is always bounded.")
 	optionalFlags.DurationVar(&consumerOffsetSyncDrainDuration, "consumer-offset-sync-drain-duration", 0, "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless the migration was initialised with --pause-consumer-offset-sync. 0 (the default) disables the wait.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
@@ -224,6 +230,20 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--consumer-offset-sync-drain-duration must not be negative (got %s). Use 0 to disable the drain", consumerOffsetSyncDrainDuration)
 	}
 
+	// Validate the port here rather than at fence time: an unreachable /config
+	// endpoint surfaces as a verification timeout minutes into a migration, with
+	// the gateway already fenced.
+	if gatewayConfigPort != "" {
+		port, err := strconv.Atoi(gatewayConfigPort)
+		if err != nil || port < 1 || port > 65535 {
+			return fmt.Errorf("--gateway-config-port must be a port number between 1 and 65535 (got %q)", gatewayConfigPort)
+		}
+	}
+
+	if gatewayConfigTimeout < 0 {
+		return fmt.Errorf("--gateway-config-timeout must not be negative (got %s). Use 0 to fall back to --rollout-timeout, or to the built-in default", gatewayConfigTimeout)
+	}
+
 	return nil
 }
 
@@ -297,5 +317,7 @@ func parseMigrationExecutorOpts(state migration.MigrationState, config migration
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 		RolloutTimeout:        rolloutTimeout,
 		PromoteBatchSize:      promoteBatchSize,
+		GatewayConfigPort:     gatewayConfigPort,
+		GatewayConfigTimeout:  gatewayConfigTimeout,
 	}
 }

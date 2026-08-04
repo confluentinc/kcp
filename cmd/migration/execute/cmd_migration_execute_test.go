@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -622,4 +623,139 @@ func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_BindFromEnvVar(t *test
 
 	assert.Equal(t, 90*time.Second, consumerOffsetSyncDrainDuration,
 		"CONSUMER_OFFSET_SYNC_DRAIN_DURATION env var should populate the flag")
+}
+
+// ===========================================================================
+// --gateway-config-port / --gateway-config-timeout
+// ===========================================================================
+
+func TestMigrationExecute_GatewayConfigPort_DefaultsToGatewayEndpoint(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+	}))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, gateway.DefaultGatewayConfigPort, opts.GatewayConfigPort)
+	assert.Equal(t, time.Duration(0), opts.GatewayConfigTimeout, "0 defers to --rollout-timeout, then the built-in default")
+}
+
+func TestMigrationExecute_GatewayConfigFlags_ExplicitValuesParsed(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--gateway-config-port", "19180",
+		"--gateway-config-timeout", "45s",
+	}))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, "19180", opts.GatewayConfigPort)
+	assert.Equal(t, 45*time.Second, opts.GatewayConfigTimeout)
+}
+
+// Validate at parse time, not at fence time: a bad port would otherwise surface
+// as a verification timeout minutes in, with the gateway already fenced.
+func TestMigrationExecute_GatewayConfigPort_NonNumericRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--gateway-config-port", "not-a-port",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--gateway-config-port")
+}
+
+func TestMigrationExecute_GatewayConfigPort_OutOfRangeRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--gateway-config-port", "70000",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "between 1 and 65535")
+}
+
+func TestMigrationExecute_GatewayConfigTimeout_NegativeRejected(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--gateway-config-timeout", "-5s",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--gateway-config-timeout")
+}
+
+// A valid port must reach the state-file load, not be rejected by validation.
+func TestMigrationExecute_GatewayConfigPort_ValidPortPassesValidation(t *testing.T) {
+	resetAuthFlags()
+
+	cmd := NewMigrationExecuteCmd()
+	cmd.SetArgs([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+		"--gateway-config-port", "9180",
+	})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration state file", "should fail on the missing state file, not on port validation")
+}
+
+func TestMigrationExecute_GatewayConfigFlags_BindFromEnvVar(t *testing.T) {
+	resetAuthFlags()
+	t.Setenv("GATEWAY_CONFIG_PORT", "19181")
+	t.Setenv("GATEWAY_CONFIG_TIMEOUT", "2m")
+
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.ParseFlags([]string{
+		"--migration-id", "test",
+		"--lag-threshold", "1",
+		"--cluster-api-key", "key",
+		"--cluster-api-secret", "secret",
+		"--use-unauthenticated-plaintext",
+	}))
+	require.NoError(t, cmd.PreRunE(cmd, nil))
+
+	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
+	assert.Equal(t, "19181", opts.GatewayConfigPort)
+	assert.Equal(t, 2*time.Minute, opts.GatewayConfigTimeout)
 }
