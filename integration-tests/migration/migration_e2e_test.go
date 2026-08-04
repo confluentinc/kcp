@@ -235,6 +235,32 @@ func assertGatewaySpec(t *testing.T, dynClient dynamic.Interface, namespace, nam
 	require.True(t, ok, "expected streaming domain to be a map")
 	domainName, _, _ := unstructured.NestedString(domain, "name")
 	assert.Equal(t, wantDomain, domainName, "Gateway CR must point at the %s streaming domain", wantDomain)
+
+	assertGatewayAccepted(t, cr)
+}
+
+// assertGatewayAccepted asserts the CFK operator actually accepted the CR's
+// current spec, rather than merely that the spec was written.
+//
+// Spec assertions alone cannot catch a rejected apply: server-side apply
+// succeeds and bumps metadata.generation regardless, and the operator signals
+// refusal only by leaving status.observedGeneration behind and publishing a
+// False condition. The backing Deployment stays healthy on the old generation
+// throughout, so a refused switchover looks identical to a completed one from
+// the spec's point of view. That is exactly how the e2e suite passed for
+// scenarios whose switchover CR referenced secrets setup.sh never created.
+func assertGatewayAccepted(t *testing.T, cr *unstructured.Unstructured) {
+	t.Helper()
+
+	generation := cr.GetGeneration()
+	observed, found, err := unstructured.NestedInt64(cr.Object, "status", "observedGeneration")
+	require.NoError(t, err)
+	require.True(t, found, "Gateway CR has no status.observedGeneration — operator has not reconciled it at all")
+
+	conditions, _, _ := unstructured.NestedSlice(cr.Object, "status", "conditions")
+	assert.GreaterOrEqual(t, observed, generation,
+		"operator has not accepted the applied Gateway spec (generation=%d observedGeneration=%d) — conditions: %v",
+		generation, observed, conditions)
 }
 
 func getGatewayPodUIDs(t *testing.T, clientset kubernetes.Interface, namespace, gatewayName string) map[string]struct{} {
@@ -740,6 +766,11 @@ func TestMigrationE2E(t *testing.T) {
 		require.True(t, ok, "expected streaming domain to be a map")
 		domainName, _, _ := unstructured.NestedString(domain, "name")
 		assert.Equal(t, "destination-kafka-cluster", domainName, "switchover should point to destination streaming domain")
+
+		// Everything above reads spec, which a *rejected* apply still updates —
+		// server-side apply succeeds and bumps metadata.generation even when the
+		// operator then refuses to reconcile it. Assert acceptance directly.
+		assertGatewayAccepted(t, cr)
 	})
 
 	if t.Failed() {
