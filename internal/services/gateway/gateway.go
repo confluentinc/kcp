@@ -210,6 +210,14 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 // var so tests can shorten it.
 var gatewayRejectionSettleWindow = 30 * time.Second
 
+// blindAcceptanceTimeout bounds the acceptance wait when no condition baseline
+// was captured, since without one a rejection cannot be recognised at all and
+// the no-deadline default would poll forever. Generous relative to the ~1.2s
+// reconcile measured on a healthy gateway: this is a backstop against hanging,
+// not a latency budget, and it must not fire on a merely slow operator.
+// var so tests can shorten it.
+var blindAcceptanceTimeout = 5 * time.Minute
+
 // WaitForGatewayAccepted blocks until the CFK operator has accepted the current
 // Gateway CR spec — status.observedGeneration >= metadata.generation — or
 // returns a *GatewayRejection if the operator refuses it. timeout == 0
@@ -260,6 +268,19 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		Group:    GatewayGroup,
 		Version:  GatewayVersion,
 		Resource: GatewayResourcePlural,
+	}
+
+	// Running unbounded is only safe while we can still recognise a rejection.
+	// Without a baseline the condition check is off (see findNewRejection), so a
+	// refused spec never advances observedGeneration and never produces a
+	// verdict — the wait would poll forever on the one outcome it exists to
+	// catch. Falling back to a bound turns that into a timeout the caller can
+	// report. A caller-supplied timeout always wins; this only fills in for the
+	// no-deadline default.
+	if timeout <= 0 && len(conditionsBefore) == 0 {
+		timeout = blindAcceptanceTimeout
+		slog.Warn("⚠️ no gateway condition baseline; cannot detect a rejected spec, so bounding the reconcile wait",
+			"gateway", gatewayName, "timeout", timeout)
 	}
 
 	noDeadline := timeout <= 0

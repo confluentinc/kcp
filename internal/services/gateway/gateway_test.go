@@ -633,6 +633,42 @@ func TestWaitForGatewayAccepted_NoBaseline_DisablesRejectionCheck(t *testing.T) 
 	assert.NotErrorAs(t, err, &rejected, "without a baseline there is nothing to compare against")
 }
 
+// TestWaitForGatewayAccepted_NoBaselineAndNoDeadline_StillTerminates is the
+// no-hang guarantee. Unbounded polling is only safe while a rejection is
+// recognisable; with the check disabled a refused spec never advances
+// observedGeneration and never produces a verdict, so the default timeout of 0
+// would wait forever on precisely the outcome this wait exists to catch.
+func TestWaitForGatewayAccepted_NoBaselineAndNoDeadline_StillTerminates(t *testing.T) {
+	original := blindAcceptanceTimeout
+	blindAcceptanceTimeout = 60 * time.Millisecond
+	t.Cleanup(func() { blindAcceptanceTimeout = original })
+
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
+
+	// timeout 0 — the default, and unbounded when a baseline is present.
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, nil, 5*time.Millisecond, 0)
+	require.Error(t, err, "a blind wait must not poll indefinitely")
+	assert.Contains(t, err.Error(), "timed out")
+}
+
+// TestWaitForGatewayAccepted_CallerTimeoutBeatsBlindBound ensures the fallback
+// only fills in for the no-deadline default and never overrides an explicit
+// --rollout-timeout.
+func TestWaitForGatewayAccepted_CallerTimeoutBeatsBlindBound(t *testing.T) {
+	original := blindAcceptanceTimeout
+	blindAcceptanceTimeout = time.Hour
+	t.Cleanup(func() { blindAcceptanceTimeout = original })
+
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
+
+	start := time.Now()
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, nil, 5*time.Millisecond, 60*time.Millisecond)
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), time.Minute, "the caller's timeout must win over the blind bound")
+}
+
 // TestWaitForGatewayAccepted_Rejected_HonoursSettleWindow ensures a failing
 // condition is given the settle window to clear before it aborts a migration.
 func TestWaitForGatewayAccepted_Rejected_HonoursSettleWindow(t *testing.T) {

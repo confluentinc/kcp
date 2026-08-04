@@ -617,7 +617,7 @@ func (s *MigrationActions) stampConfigID(tier gateway.VerificationTier, crYAML [
 func (s *MigrationActions) snapshotGatewayConditions(ctx context.Context, config *MigrationConfig) gateway.ConditionSnapshot {
 	snapshot, err := s.gatewayService.SnapshotGatewayConditions(ctx, config.K8sNamespace, config.InitialCrName)
 	if err != nil {
-		slog.Warn("⚠️ could not snapshot gateway conditions; a rejected config change will take the full timeout to surface", "gateway", config.InitialCrName, "error", err)
+		slog.Warn("⚠️ could not snapshot gateway conditions; kcp cannot recognise a rejected config change, so the waits fall back to bounded timeouts rather than the operator's own error", "gateway", config.InitialCrName, "error", err)
 		return nil
 	}
 	return snapshot
