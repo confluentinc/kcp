@@ -9,8 +9,8 @@ metadata:
 spec:
   replicas: 1
   image:
-    application: confluentinc/confluent-gateway-for-cloud:1.2.0-1-ubi9
-    init: confluentinc/confluent-init-container:3.2.1
+    application: __GATEWAY_IMAGE__
+    init: __INIT_IMAGE__
   podTemplate:
     envVars:
       - name: GATEWAY_ROOT_LOG_LEVEL
