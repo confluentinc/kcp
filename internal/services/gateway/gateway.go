@@ -198,18 +198,6 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 	return nil
 }
 
-// gatewayRejectionSettleWindow is how long a *newly transitioned* failure
-// condition must persist before WaitForGatewayAccepted aborts the migration on
-// it. The operator can briefly publish a failure while it retries, and on this
-// path the rejection is the gate — nothing stronger runs behind it to catch a
-// false one — so the failure has to hold before we act.
-//
-// This deliberately differs from the per-pod /config wait, which acts on a
-// rejection immediately (see gatewayRejectionSince): there /config remains the
-// real gate, so a premature fast-fail costs only latency, not correctness.
-// var so tests can shorten it.
-var gatewayRejectionSettleWindow = 30 * time.Second
-
 // blindAcceptanceTimeout bounds the acceptance wait when no condition baseline
 // was captured, since without one a rejection cannot be recognised at all and
 // the no-deadline default would poll forever. Generous relative to the ~1.2s
@@ -242,10 +230,13 @@ var blindAcceptanceTimeout = 5 * time.Minute
 //
 // conditionsBefore is the condition baseline captured immediately before the
 // apply, and is what makes acting on a condition safe at all: Gateway conditions
-// carry no observedGeneration and go stale for days, so only one that has
-// transitioned since the baseline says anything about this apply — see
-// conditions.go. An empty baseline therefore disables the rejection check rather
-// than guessing, degrading to waiting out the timeout.
+// carry no observedGeneration and go stale for days, so only one that differs
+// from the baseline says anything about this apply — see conditions.go. An empty
+// baseline therefore disables the rejection check rather than guessing,
+// degrading to waiting out the timeout.
+//
+// A rejection is acted on as soon as it is seen. The per-pod /config wait uses
+// the same rule, so the two agree on what counts as a refused spec.
 func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, conditionsBefore ConditionSnapshot, pollInterval, timeout time.Duration) error {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
@@ -286,14 +277,6 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 	noDeadline := timeout <= 0
 	deadline := time.Now().Add(timeout)
 
-	// A newly transitioned failure condition only aborts once it has held for the
-	// settle window. firstFailureAt marks the start of the current unbroken run of
-	// failure observations; it resets the moment the operator stops reporting one.
-	var (
-		firstFailureAt time.Time
-		pending        error
-	)
-
 	for noDeadline || time.Now().Before(deadline) {
 		select {
 		case <-ctx.Done():
@@ -326,28 +309,11 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		if err != nil {
 			return fmt.Errorf("failed to read gateway status.conditions: %w", err)
 		}
-		rejection := findNewRejection(conds, conditionsBefore)
-		switch {
-		case rejection != nil && firstFailureAt.IsZero():
-			firstFailureAt = time.Now()
-			pending = rejectedGatewayError(gatewayName, generation, observed, rejection)
-			slog.Warn("⚠️ gateway condition reports a failure; waiting to see whether the operator recovers",
-				"gateway", gatewayName, "reason", rejection.Reason, "message", rejection.Message,
-				"settleWindow", gatewayRejectionSettleWindow)
-		case rejection != nil:
-			pending = rejectedGatewayError(gatewayName, generation, observed, rejection)
-			if time.Since(firstFailureAt) >= gatewayRejectionSettleWindow {
-				slog.Error("❌ gateway spec rejected by the operator", "gateway", gatewayName,
-					"reason", rejection.Reason, "message", rejection.Message,
-					"generation", generation, "observedGeneration", observed)
-				return pending
-			}
-		default:
-			if !firstFailureAt.IsZero() {
-				slog.Debug("gateway failure condition cleared; resuming reconcile wait", "gateway", gatewayName)
-			}
-			firstFailureAt = time.Time{}
-			pending = nil
+		if rejection := findNewRejection(conds, conditionsBefore); rejection != nil {
+			slog.Error("❌ gateway spec rejected by the operator", "gateway", gatewayName,
+				"reason", rejection.Reason, "message", rejection.Message,
+				"generation", generation, "observedGeneration", observed)
+			return rejectedGatewayError(gatewayName, generation, observed, rejection)
 		}
 
 		slog.Debug("waiting for gateway reconcile", "gateway", gatewayName, "generation", generation, "observedGeneration", observed, "statusPresent", found)
@@ -359,12 +325,6 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		}
 	}
 
-	// A rejection seen but not yet settled is still the most useful thing we
-	// know — surface it rather than a bare timeout. Reached when the caller's
-	// timeout is shorter than the settle window.
-	if pending != nil {
-		return pending
-	}
 	return fmt.Errorf("timed out waiting for gateway %q to be observed by the operator (timeout: %s)", gatewayName, timeout)
 }
 

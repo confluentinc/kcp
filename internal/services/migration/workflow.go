@@ -428,15 +428,27 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 		return nil
 	}
 
-	var rejected *gateway.GatewayRejection
-	if errors.As(err, &rejected) {
-		// The rejection itself is rendered once upstream from the returned
-		// error; only add what the error cannot carry — how to go look.
-		s.reporter.remediation("Confluent operator rejected the %s gateway spec. Inspect its view of the gateway:\n"+
-			"   kubectl -n %s get gateway %s -o jsonpath='{.status.conditions}'", step, config.K8sNamespace, config.InitialCrName)
+	if s.reportGatewayRejection(config, err, step) {
 		return err
 	}
 	return fmt.Errorf("failed waiting for gateway reconcile during %s: %w", step, err)
+}
+
+// reportGatewayRejection prints where to look when the operator refused a spec,
+// reporting whether err was in fact a rejection.
+//
+// The rejection itself is rendered once upstream from the returned error; this
+// only adds what the error cannot carry — how to go look. Both the acceptance
+// wait and the per-pod /config wait can surface one, so the hint lives here
+// rather than at either call site.
+func (s *MigrationActions) reportGatewayRejection(config *MigrationConfig, err error, step string) bool {
+	var rejected *gateway.GatewayRejection
+	if !errors.As(err, &rejected) {
+		return false
+	}
+	s.reporter.remediation("Confluent operator rejected the %s gateway spec. Inspect its view of the gateway:\n"+
+		"   kubectl -n %s get gateway %s -o jsonpath='{.status.conditions}'", step, config.K8sNamespace, config.InitialCrName)
+	return true
 }
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic and then
@@ -492,11 +504,20 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	slog.Debug("fenced gateway CR applied")
 	s.reporter.success("Fenced gateway CR applied")
 
-	// Gate every proof below on the operator having accepted the fenced spec.
-	// None of them can tell "nothing needed to change" apart from "the operator
-	// refused the spec" on their own — see waitForGatewayAccepted.
-	if err := s.waitForGatewayAccepted(ctx, config, apply, "fence"); err != nil {
-		return err
+	// Gate the Deployment-based proofs on the operator having accepted the fenced
+	// spec. Neither can tell "nothing needed to change" apart from "the operator
+	// refused the spec" on its own — see waitForGatewayAccepted.
+	//
+	// The per-pod proof is deliberately not gated on it. /config is a strictly
+	// stronger statement about the same apply, it is bounded, and it fast-fails on
+	// the operator's own rejection from inside its poll loop. The acceptance wait
+	// is unbounded by default and cannot recognise a rejection that leaves a
+	// condition's status unchanged, so putting it in front would let the weaker
+	// signal hang the migration ahead of the only sound gate.
+	if tier != gateway.TierPerPodConfigID {
+		if err := s.waitForGatewayAccepted(ctx, config, apply, "fence"); err != nil {
+			return err
+		}
 	}
 
 	slog.Debug("waiting for the fence to take effect", "tier", string(tier), "rolloutTimeout", s.rolloutTimeout, "detecting", detecting)
@@ -507,6 +528,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		if err := s.gatewayService.WaitForGatewayConfigApplied(ctx, config.K8sNamespace, config.InitialCrName,
 			apply.configID, apply.conditionsBefore, s.resolveGatewayConfigPort(),
 			gatewayConfigPollInterval, s.resolveGatewayConfigTimeout(), s.printConfigApplyProgress); err != nil {
+			s.reportGatewayRejection(config, err, "fence")
 			return fmt.Errorf("failed verifying gateway pods applied the fence: %w", err)
 		}
 
@@ -719,10 +741,13 @@ func (s *MigrationActions) prepareGatewayApply(ctx context.Context, config *Migr
 func (s *MigrationActions) verifyGatewayApply(ctx context.Context, config *MigrationConfig, apply gatewayApply, rollsPods bool, stage string) error {
 	slog.Debug("verifying gateway apply", "stage", stage, "tier", string(apply.tier), "rollsPods", rollsPods, "rolloutTimeout", s.rolloutTimeout)
 
-	// Nothing below is meaningful until the operator has taken the spec — see
-	// waitForGatewayAccepted.
-	if err := s.waitForGatewayAccepted(ctx, config, apply, stage); err != nil {
-		return err
+	// The Deployment-based proofs are meaningless until the operator has taken the
+	// spec — see waitForGatewayAccepted. The per-pod proof supersedes it and is
+	// deliberately not gated on it; see the same reasoning in FenceGateway.
+	if apply.tier != gateway.TierPerPodConfigID {
+		if err := s.waitForGatewayAccepted(ctx, config, apply, stage); err != nil {
+			return err
+		}
 	}
 
 	if rollsPods || apply.tier == gateway.TierPodRollout {
@@ -738,6 +763,7 @@ func (s *MigrationActions) verifyGatewayApply(ctx context.Context, config *Migra
 		if err := s.gatewayService.WaitForGatewayConfigApplied(ctx, config.K8sNamespace, config.InitialCrName,
 			apply.configID, apply.conditionsBefore, s.resolveGatewayConfigPort(),
 			gatewayConfigPollInterval, s.resolveGatewayConfigTimeout(), s.printConfigApplyProgress); err != nil {
+			s.reportGatewayRejection(config, err, stage)
 			return fmt.Errorf("failed verifying gateway pods applied the %s: %w", stage, err)
 		}
 

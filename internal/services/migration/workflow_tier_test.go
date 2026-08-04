@@ -214,13 +214,19 @@ func TestFenceGateway_TierA_SnapshotsConditionsBeforeApply(t *testing.T) {
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
 
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitConfig"}, probe.calls)
+	assert.Equal(t, []string{"detect", "snapshot", "apply", "waitConfig"}, probe.calls)
 	assert.Equal(t, gateway.ConditionSnapshot{"platform.confluent.io/cluster-ready": {}}, probe.waitSnapshot,
 		"the pre-apply snapshot must reach the wait")
 }
 
-// Under hot reload no pods roll, so the rollout waits prove nothing and must
-// not be the gate.
+// Under hot reload no pods roll, so the rollout waits prove nothing and must not
+// be the gate.
+//
+// Nor may the acceptance wait be. It is unbounded by default and cannot see a
+// rejection that leaves a condition's status unchanged, so gating /config behind
+// it would let the weaker signal hang the migration in front of the only sound
+// proof. /config subsumes it: it is bounded, and it fast-fails on the operator's
+// own rejection from inside its poll loop.
 func TestFenceGateway_TierA_DoesNotUseRolloutWaits(t *testing.T) {
 	probe := &fenceProbe{}
 	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
@@ -229,9 +235,8 @@ func TestFenceGateway_TierA_DoesNotUseRolloutWaits(t *testing.T) {
 
 	assert.Zero(t, probe.readyWaitCalls, "Tier A must not gate on WaitForGatewayReady")
 	assert.Zero(t, probe.waitPodsCalls, "Tier A must not gate on pod replacement")
-	// The acceptance wait is not a rollout wait and does run here: /config proves
-	// what the pods serve, but only the operator can say it took the spec at all.
-	assert.Contains(t, probe.calls, "reconcile")
+	assert.NotContains(t, probe.calls, "reconcile",
+		"Tier A must not gate the per-pod proof behind the unbounded acceptance wait")
 }
 
 // Losing the baseline costs the wait its fast-fail, not its correctness, so it
@@ -321,7 +326,7 @@ func TestFenceGateway_TierA_DetectingAlsoDrainsOldPods(t *testing.T) {
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
 
-	assert.Equal(t, []string{"detect", "snapshot", "getUIDs", "apply", "reconcile", "waitConfig", "waitPods"}, probe.calls,
+	assert.Equal(t, []string{"detect", "snapshot", "getUIDs", "apply", "waitConfig", "waitPods"}, probe.calls,
 		"the pre-fence pod set must be captured before the apply and drained after verification")
 	assert.Equal(t, map[k8stypes.UID]struct{}{"old-pod": {}}, probe.waitPodUIDs)
 }
@@ -501,7 +506,7 @@ func TestSwitchGateway_TierA_SettlesPodsThenVerifiesPerPod(t *testing.T) {
 	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), switchTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitReady", "waitConfig"}, probe.calls)
+	assert.Equal(t, []string{"detect", "snapshot", "apply", "waitReady", "waitConfig"}, probe.calls)
 }
 
 func TestSwitchGateway_TierA_StampedIDMatchesVerifiedID(t *testing.T) {
@@ -615,7 +620,7 @@ func TestUnfenceGateway_TierA_VerifiesPerPodWithoutRolloutWait(t *testing.T) {
 	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), unfenceTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitConfig"}, probe.calls)
+	assert.Equal(t, []string{"detect", "snapshot", "apply", "waitConfig"}, probe.calls)
 	assert.Zero(t, probe.readyWaitCalls)
 }
 

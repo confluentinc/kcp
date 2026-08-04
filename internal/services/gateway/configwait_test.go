@@ -168,6 +168,19 @@ func fakeCS(objs ...runtime.Object) *kubernetesfake.Clientset {
 	return kubernetesfake.NewSimpleClientset(objs...) //nolint:staticcheck // SA1019: matches newFakeClientset
 }
 
+// baselineOf snapshots a Gateway CR's conditions the way the production caller
+// does — off the live object, immediately before the apply.
+//
+// Building the baseline by hand invites a fixture that is not actually a snapshot
+// of anything: leave a field out and it reads as "changed" against the very CR it
+// claims to describe, so a test can pass while proving nothing.
+func baselineOf(t *testing.T, cr *unstructured.Unstructured) ConditionSnapshot {
+	t.Helper()
+	conds, err := gatewayConditions(cr.Object)
+	require.NoError(t, err)
+	return snapshotConditions(conds)
+}
+
 // --- happy path -------------------------------------------------------------
 
 func TestWaitForGatewayConfigApplied_ConvergesAfterSeveralTicks(t *testing.T) {
@@ -272,15 +285,14 @@ func TestWaitForGatewayConfigApplied_FastFailsOnNewRejection(t *testing.T) {
 	stub := newProxyStub(func(string, int) (string, error) { return configBody("old-000"), nil })
 	stub.install(cs)
 
-	// The operator publishes ContainerCrashed after the apply.
+	// Snapshot the gateway as it stood before the apply, then have the operator
+	// publish ContainerCrashed. cluster-ready keeps its stale ApplyFailed
+	// throughout, so only hot-reload-status is a verdict on this apply.
+	before := baselineOf(t, healthyCR())
 	crashed := gatewayCRWithConditions(
 		cond(ConditionHotReloadStatus, "False", "ContainerCrashed", crashedHotReloadAt),
 		cond(ConditionClusterReady, "False", "ApplyFailed", staleClusterReadyAt),
 	)
-	before := snapshotConditions([]gatewayCondition{
-		{Type: ConditionHotReloadStatus, LastTransitionTime: mustTime(t, staleHotReloadAt)},
-		{Type: ConditionClusterReady, LastTransitionTime: mustTime(t, staleClusterReadyAt)},
-	})
 
 	start := time.Now()
 	err := waitForGatewayConfigApplied(context.Background(), cs, newFakeDynamicClient(crashed),
@@ -302,11 +314,10 @@ func TestWaitForGatewayConfigApplied_DoesNotFastFailOnStaleCondition(t *testing.
 	stub := newProxyStub(func(string, int) (string, error) { return configBody("old-000"), nil })
 	stub.install(cs)
 
-	// cluster-ready has been False/ApplyFailed since before the apply.
-	before := snapshotConditions([]gatewayCondition{
-		{Type: ConditionClusterReady, LastTransitionTime: mustTime(t, staleClusterReadyAt)},
-		{Type: ConditionHotReloadStatus, LastTransitionTime: mustTime(t, staleHotReloadAt)},
-	})
+	// cluster-ready has been False/ApplyFailed since before the apply, and the
+	// gateway is re-read unchanged: same status, same reason, same message, same
+	// timestamp. Nothing about it is a verdict on what we just applied.
+	before := baselineOf(t, healthyCR())
 
 	err := waitForGatewayConfigApplied(context.Background(), cs, newFakeDynamicClient(healthyCR()),
 		testNamespace, testGateway, "fence-101", before, testPort,
@@ -542,12 +553,13 @@ func TestSnapshotGatewayConditions(t *testing.T) {
 	snap, err := snapshotGatewayConditions(context.Background(), dyn, testNamespace, testGateway)
 	require.NoError(t, err)
 
-	assert.Equal(t, mustTime(t, staleClusterReadyAt), snap[ConditionClusterReady])
-	assert.Equal(t, mustTime(t, staleHotReloadAt), snap[ConditionHotReloadStatus])
+	assert.Equal(t, mustTime(t, staleClusterReadyAt), snap[ConditionClusterReady].LastTransitionTime)
+	assert.Equal(t, mustTime(t, staleHotReloadAt), snap[ConditionHotReloadStatus].LastTransitionTime)
+	assert.Equal(t, "ApplyFailed", snap[ConditionClusterReady].Reason)
 
 	// And it behaves as the guard: the stale condition reads as unchanged.
-	assert.False(t, snap.Changed(ConditionClusterReady, mustTime(t, staleClusterReadyAt)))
-	assert.True(t, snap.Changed(ConditionHotReloadStatus, mustTime(t, crashedHotReloadAt)))
+	assert.False(t, snap.changed(condAt(t, ConditionClusterReady, "False", "ApplyFailed", staleClusterReadyAt)))
+	assert.True(t, snap.changed(condAt(t, ConditionHotReloadStatus, "False", "ContainerCrashed", crashedHotReloadAt)))
 }
 
 func TestSnapshotGatewayConditions_MissingGateway(t *testing.T) {

@@ -123,33 +123,69 @@ func TestGatewayConditions_UnparseableTimestampYieldsZeroTime(t *testing.T) {
 	assert.True(t, conds[0].LastTransitionTime.IsZero())
 }
 
-// --- ConditionSnapshot.Changed ----------------------------------------------
+// --- ConditionSnapshot.changed ----------------------------------------------
+
+// condAt rebuilds one of healthyGatewayConditions' entries with an overridden
+// timestamp, so a test can vary exactly one field of the fingerprint.
+func condAt(t *testing.T, condType, status, reason, at string) gatewayCondition {
+	t.Helper()
+	return gatewayCondition{
+		Type:               condType,
+		Status:             status,
+		Reason:             reason,
+		Message:            reason + " detail", // matches cond()
+		LastTransitionTime: mustTime(t, at),
+	}
+}
 
 func TestConditionSnapshot_Changed(t *testing.T) {
 	conds, err := gatewayConditions(healthyGatewayConditions())
 	require.NoError(t, err)
 	before := snapshotConditions(conds)
 
-	t.Run("same timestamp is not changed", func(t *testing.T) {
-		assert.False(t, before.Changed(ConditionClusterReady, mustTime(t, staleClusterReadyAt)),
-			"a condition still carrying its pre-apply timestamp is stale, not new")
+	t.Run("identical condition is not changed", func(t *testing.T) {
+		assert.False(t, before.changed(condAt(t, ConditionClusterReady, "False", "ApplyFailed", staleClusterReadyAt)),
+			"a condition still carrying its pre-apply values is stale, not new")
 	})
 
 	t.Run("advanced timestamp is changed", func(t *testing.T) {
-		assert.True(t, before.Changed(ConditionHotReloadStatus, mustTime(t, crashedHotReloadAt)))
+		assert.True(t, before.changed(condAt(t, ConditionHotReloadStatus, "True", "Succeeded", crashedHotReloadAt)))
 	})
 
-	t.Run("earlier timestamp is not changed", func(t *testing.T) {
-		assert.False(t, before.Changed(ConditionHotReloadStatus, mustTime(t, staleGarbageCollectAt)))
+	t.Run("earlier timestamp is changed", func(t *testing.T) {
+		// Any difference counts. A timestamp moving backwards is not something a
+		// real operator does, and inventing a rule for it would only add a way to
+		// miss a genuine change.
+		assert.True(t, before.changed(condAt(t, ConditionHotReloadStatus, "True", "Succeeded", staleGarbageCollectAt)))
 	})
 
 	t.Run("condition absent from snapshot counts as changed", func(t *testing.T) {
-		assert.True(t, before.Changed("platform.confluent.io/brand-new", mustTime(t, crashedHotReloadAt)),
+		assert.True(t, before.changed(condAt(t, "platform.confluent.io/brand-new", "False", "Whatever", crashedHotReloadAt)),
 			"a condition type the operator only just started reporting is new information")
 	})
 
-	t.Run("zero timestamp against a known condition is not changed", func(t *testing.T) {
-		assert.False(t, before.Changed(ConditionClusterReady, metav1.Time{}))
+	// The sticky-timestamp hole. Kubernetes only moves lastTransitionTime when a
+	// condition's status flips, so a gateway already sitting at False/ApplyFailed
+	// that refuses another apply reports the same status at the same instant — and
+	// the E14 gateway held exactly that for 6 days. A time-only comparison goes
+	// blind there; the reason and message are what still move.
+	t.Run("same timestamp with a new reason is changed", func(t *testing.T) {
+		assert.True(t, before.changed(condAt(t, ConditionClusterReady, "False", "ValidationFailed", staleClusterReadyAt)),
+			"a fresh failure reason at an unchanged timestamp is still a fresh failure")
+	})
+
+	t.Run("same timestamp and reason with a new message is changed", func(t *testing.T) {
+		c := condAt(t, ConditionClusterReady, "False", "ApplyFailed", staleClusterReadyAt)
+		c.Message = "secretRef kcp-perf-plain-jaas not found"
+		assert.True(t, before.changed(c),
+			"the operator rewrites the message per failure, so a new one is a new report")
+	})
+
+	t.Run("zero timestamp against a known condition is changed", func(t *testing.T) {
+		// An unparseable timestamp used to be silently ignored. It is a difference
+		// from the baseline like any other, and the reason/message still carry the
+		// verdict.
+		assert.True(t, before.changed(condAt(t, ConditionClusterReady, "False", "ApplyFailed", "1970-01-01T00:00:00Z")))
 	})
 }
 
@@ -159,7 +195,7 @@ func TestSnapshotConditions_EmptyInput(t *testing.T) {
 
 	// Everything is "new" against an empty snapshot, which is the safe default:
 	// we would rather act on a failure than miss one.
-	assert.True(t, s.Changed(ConditionHotReloadStatus, mustTime(t, crashedHotReloadAt)))
+	assert.True(t, s.changed(condAt(t, ConditionHotReloadStatus, "False", "ContainerCrashed", crashedHotReloadAt)))
 }
 
 // --- findNewRejection -------------------------------------------------------

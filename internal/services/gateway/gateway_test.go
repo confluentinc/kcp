@@ -554,10 +554,24 @@ var (
 	condAfterApply = condBaseline.Add(time.Minute)
 )
 
-// acceptedBaseline is what a caller passes: the condition transition times as
-// they stood immediately before the apply.
+// missingSecretMessage is the operator's own message from that incident. Shared
+// so the pre-apply baseline can carry the identical fingerprint: the whole
+// staleness rule turns on whether a condition differs from the baseline, so a
+// test that wants "unchanged" has to match every field, not just the timestamp.
+const missingSecretMessage = "secretRef kcp-perf-plain-jaas not found"
+
+// acceptedBaseline is what a caller passes: the conditions exactly as they stood
+// immediately before the apply. The gateway is already carrying a failed
+// cluster-ready condition here — that is the realistic case, and the one the
+// staleness rule exists for.
 func acceptedBaseline() ConditionSnapshot {
-	return ConditionSnapshot{clusterReadyCondition: metav1.NewTime(condBaseline)}
+	return snapshotConditions([]gatewayCondition{{
+		Type:               clusterReadyCondition,
+		Status:             "False",
+		Reason:             "ApplyFailed",
+		Message:            missingSecretMessage,
+		LastTransitionTime: metav1.NewTime(condBaseline),
+	}})
 }
 
 // rejectedGatewayCR reproduces the CR observed on 2026-07-27 while setting up
@@ -567,7 +581,7 @@ func acceptedBaseline() ConditionSnapshot {
 // ApplyFailed, published after the apply.
 func rejectedGatewayCR(name, namespace string) *unstructured.Unstructured {
 	return newGatewayCR(name, namespace, 4, 3, true,
-		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "secretRef kcp-perf-plain-jaas not found", condAfterApply),
+		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", missingSecretMessage, condAfterApply),
 	)
 }
 
@@ -575,7 +589,6 @@ func rejectedGatewayCR(name, namespace string) *unstructured.Unstructured {
 // the regression test for the switchover-verification gap: a rejected spec must
 // produce the operator's own diagnosis, not a hang and not a silent success.
 func TestWaitForGatewayAccepted_Rejected_ReturnsTypedErrorWithOperatorMessage(t *testing.T) {
-	shortenRejectionSettleWindow(t, 30*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
 
@@ -602,7 +615,6 @@ func TestWaitForGatewayAccepted_Rejected_ReturnsTypedErrorWithOperatorMessage(t 
 // fine, so a condition that has not transitioned since the pre-apply baseline
 // must be ignored even though it looks exactly like a live rejection.
 func TestWaitForGatewayAccepted_StaleRejection_IsNotAVerdict(t *testing.T) {
-	shortenRejectionSettleWindow(t, 10*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	// Same failing condition as rejectedGatewayCR, but stamped at the baseline:
 	// it was already there when we applied.
@@ -622,7 +634,6 @@ func TestWaitForGatewayAccepted_StaleRejection_IsNotAVerdict(t *testing.T) {
 // way to tell a fresh rejection from a stale one, so the check switches off
 // rather than guessing, and the timeout does the work.
 func TestWaitForGatewayAccepted_NoBaseline_DisablesRejectionCheck(t *testing.T) {
-	shortenRejectionSettleWindow(t, 10*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
 
@@ -669,67 +680,32 @@ func TestWaitForGatewayAccepted_CallerTimeoutBeatsBlindBound(t *testing.T) {
 	assert.Less(t, time.Since(start), time.Minute, "the caller's timeout must win over the blind bound")
 }
 
-// TestWaitForGatewayAccepted_Rejected_HonoursSettleWindow ensures a failing
-// condition is given the settle window to clear before it aborts a migration.
-func TestWaitForGatewayAccepted_Rejected_HonoursSettleWindow(t *testing.T) {
-	shortenRejectionSettleWindow(t, 100*time.Millisecond)
+// TestWaitForGatewayAccepted_Rejected_FailsImmediately pins the single rejection
+// policy shared with the per-pod /config wait: a failure condition that differs
+// from the pre-apply baseline is acted on at once.
+//
+// There used to be a 30s settle window here, on the theory that the operator may
+// briefly publish a failure it then retries out of. Nothing measured showed that
+// happening, the two waits disagreed about it, and it delayed the one thing the
+// check exists for — a canary crash CFK announces at +5.8s — by half a minute.
+// The narrow reason whitelist in findNewRejection is what keeps this safe.
+func TestWaitForGatewayAccepted_Rejected_FailsImmediately(t *testing.T) {
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
 
 	start := time.Now()
 	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
 	require.Error(t, err)
-	assert.GreaterOrEqual(t, time.Since(start), 100*time.Millisecond,
-		"must not abort before the settle window — a transient failure deserves the chance to clear")
-}
+	assert.Less(t, time.Since(start), time.Second, "a rejection must not wait out a settle window")
 
-// TestWaitForGatewayAccepted_TransientFailureThenAccepted_ReturnsNil is the
-// false-failure guard: the operator publishing a failure it then recovers from
-// must not fail the migration.
-func TestWaitForGatewayAccepted_TransientFailureThenAccepted_ReturnsNil(t *testing.T) {
-	shortenRejectionSettleWindow(t, 5*time.Second) // long: recovery must win the race
-	ns, gw := "test-ns", "test-gw"
-	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
-
-	go func() {
-		time.Sleep(40 * time.Millisecond)
-		updateGatewayCR(t, cs, newGatewayCR(gw, ns, 4, 4, true))
-	}()
-
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
-	require.NoError(t, err, "a failure the operator recovers from within the settle window is not a rejection")
-}
-
-// TestWaitForGatewayAccepted_ClearedConditionResetsSettleTimer verifies the
-// settle window measures one unbroken run of failures, not cumulative time: a
-// condition that clears and returns must restart the clock. Without the reset,
-// an operator flapping while it converges would eventually accrue enough total
-// failure observations to abort a healthy migration.
-func TestWaitForGatewayAccepted_ClearedConditionResetsSettleTimer(t *testing.T) {
-	shortenRejectionSettleWindow(t, 120*time.Millisecond)
-	ns, gw := "test-ns", "test-gw"
-	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
-
-	go func() {
-		// Clear the condition before the window elapses, then re-raise it. Total
-		// failure time exceeds the window; no single unbroken run does.
-		time.Sleep(80 * time.Millisecond)
-		updateGatewayCR(t, cs, newGatewayCR(gw, ns, 4, 3, true))
-		time.Sleep(40 * time.Millisecond)
-		updateGatewayCR(t, cs, rejectedGatewayCR(gw, ns))
-		time.Sleep(40 * time.Millisecond)
-		updateGatewayCR(t, cs, newGatewayCR(gw, ns, 4, 4, true)) // finally accepted
-	}()
-
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 0)
-	require.NoError(t, err, "the settle timer must reset when the failure condition clears")
+	var rejected *GatewayRejection
+	require.ErrorAs(t, err, &rejected)
 }
 
 // TestWaitForGatewayAccepted_UnknownReason_KeepsWaiting ensures an unrecognised
 // False condition is treated as mid-reconcile noise rather than a rejection —
 // the wait keeps going and ends in a timeout, not a spurious rejection.
 func TestWaitForGatewayAccepted_UnknownReason_KeepsWaiting(t *testing.T) {
-	shortenRejectionSettleWindow(t, 10*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
 		withGatewayCondition(clusterReadyCondition, "False", "Reconciling", "rolling out new pods", condAfterApply),
@@ -746,7 +722,6 @@ func TestWaitForGatewayAccepted_UnknownReason_KeepsWaiting(t *testing.T) {
 // guards the status check: a condition the operator has resolved (status True)
 // must not be read as a rejection just because its reason names a failure.
 func TestWaitForGatewayAccepted_TrueConditionWithFailedReason_NotARejection(t *testing.T) {
-	shortenRejectionSettleWindow(t, 10*time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 3, true,
 		withGatewayCondition(clusterReadyCondition, "True", "ApplyFailed", "stale message", condAfterApply),
@@ -757,28 +732,12 @@ func TestWaitForGatewayAccepted_TrueConditionWithFailedReason_NotARejection(t *t
 	assert.Contains(t, err.Error(), "timed out")
 }
 
-// TestWaitForGatewayAccepted_TimeoutShorterThanSettleWindow_ReportsRejection
-// covers --rollout-timeout set below the settle window: the pending rejection is
-// more useful than a bare timeout, so it wins.
-func TestWaitForGatewayAccepted_TimeoutShorterThanSettleWindow_ReportsRejection(t *testing.T) {
-	shortenRejectionSettleWindow(t, 10*time.Second)
-	ns, gw := "test-ns", "test-gw"
-	cs := newFakeDynamicClient(rejectedGatewayCR(gw, ns))
-
-	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, acceptedBaseline(), 5*time.Millisecond, 60*time.Millisecond)
-	require.Error(t, err)
-	var rejected *GatewayRejection
-	require.ErrorAs(t, err, &rejected, "a pending rejection beats a bare timeout")
-	assert.Equal(t, "ApplyFailed", rejected.Reason)
-}
-
 // TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil ensures
 // acceptance is checked first: once observedGeneration catches up, a failure
 // condition is the operator's business, not a reason to abort. The condition here
 // is freshly transitioned, so this pins the precedence rather than relying on the
 // staleness rule to do the work.
 func TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil(t *testing.T) {
-	shortenRejectionSettleWindow(t, time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 4, true,
 		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "reconciled, then something else failed", condAfterApply),
@@ -892,15 +851,6 @@ func withGatewayCondition(condType, status, reason, message string, transitioned
 		})
 		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
 	}
-}
-
-// shortenRejectionSettleWindow swaps the package-level settle window for a
-// shorter test value and restores it on teardown.
-func shortenRejectionSettleWindow(t *testing.T, d time.Duration) {
-	t.Helper()
-	original := gatewayRejectionSettleWindow
-	gatewayRejectionSettleWindow = d
-	t.Cleanup(func() { gatewayRejectionSettleWindow = original })
 }
 
 // newFakeDynamicClient seeds a fake dynamic client with the given Gateway CRs.

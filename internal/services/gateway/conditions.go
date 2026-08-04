@@ -17,12 +17,16 @@ import (
 // ApplyFailed condition was observed still present 6 days and 13 generations
 // after the failure it described, on a healthy 3/3 gateway.
 //
-// So a condition is only actionable when it has *transitioned since our own
-// apply*. Comparing lastTransitionTime against a kcp-side timestamp would work
-// but introduces laptop-vs-cluster clock skew; instead we snapshot the
-// conditions immediately before applying and compare each condition against
-// its own previous value. Both timestamps are written by the cluster, so skew
-// is structurally impossible.
+// So a condition is only actionable when it *differs from what was there before
+// our own apply*. Comparing lastTransitionTime against a kcp-side timestamp
+// would work but introduces laptop-vs-cluster clock skew; instead we snapshot
+// the conditions immediately before applying and compare each condition against
+// its own previous value. Both timestamps are written by the cluster, so skew is
+// structurally impossible.
+//
+// The comparison is over the whole condition, not just the timestamp — see
+// conditionFingerprint for why the timestamp alone goes blind on a repeat
+// failure.
 
 // Gateway condition types reported by CFK.
 const (
@@ -65,33 +69,59 @@ type gatewayCondition struct {
 	LastTransitionTime metav1.Time
 }
 
-// ConditionSnapshot records each condition's lastTransitionTime as it stood at
-// a point in time — captured immediately before an apply.
-type ConditionSnapshot map[string]metav1.Time
+// conditionFingerprint is everything about a condition that can distinguish a
+// fresh report from the one that was already there.
+//
+// lastTransitionTime alone is not enough. Kubernetes convention is that the
+// timestamp only moves when a condition's *status* flips, so a gateway already
+// sitting at cluster-ready False/ApplyFailed that refuses another apply keeps
+// both its status and its timestamp — and the E14 gateway (ApplyFailed unchanged
+// for 6 days and 13 generations) is direct evidence the timestamp really is
+// sticky. Comparing on time alone therefore goes blind on exactly the clusters
+// most likely to reject something. Reason and message do move, because the
+// operator rewrites them per failure, so they carry the signal the timestamp
+// drops.
+type conditionFingerprint struct {
+	LastTransitionTime metav1.Time
+	Status             string
+	Reason             string
+	Message            string
+}
 
-// Changed reports whether a condition has transitioned since the snapshot, and
-// therefore whether it says anything about the apply made after it.
+// ConditionSnapshot records each condition as it stood at a point in time —
+// captured immediately before an apply.
+type ConditionSnapshot map[string]conditionFingerprint
+
+// changed reports whether a condition differs from the snapshot, and therefore
+// whether it says anything about the apply made after it.
 //
 // A condition type absent from the snapshot counts as changed: the operator has
 // started reporting something it was not reporting before, which is new
-// information. A zero timestamp never counts, as it is evidence of nothing.
-func (s ConditionSnapshot) Changed(condType string, t metav1.Time) bool {
-	if t.IsZero() {
-		return false
-	}
-	prev, seen := s[condType]
+// information.
+func (s ConditionSnapshot) changed(c gatewayCondition) bool {
+	prev, seen := s[c.Type]
 	if !seen {
 		return true
 	}
-	return t.After(prev.Time)
+	return fingerprint(c) != prev
 }
 
-// snapshotConditions captures the current transition times, to be passed to a
-// later findNewRejection call.
+// fingerprint reduces a condition to its comparable identity.
+func fingerprint(c gatewayCondition) conditionFingerprint {
+	return conditionFingerprint{
+		LastTransitionTime: c.LastTransitionTime,
+		Status:             c.Status,
+		Reason:             c.Reason,
+		Message:            c.Message,
+	}
+}
+
+// snapshotConditions captures the current conditions, to be passed to a later
+// findNewRejection call.
 func snapshotConditions(conds []gatewayCondition) ConditionSnapshot {
 	snapshot := make(ConditionSnapshot, len(conds))
 	for _, c := range conds {
-		snapshot[c.Type] = c.LastTransitionTime
+		snapshot[c.Type] = fingerprint(c)
 	}
 	return snapshot
 }
@@ -180,12 +210,12 @@ func condTime(entry map[string]any, key string) metav1.Time {
 	return metav1.NewTime(parsed)
 }
 
-// findNewRejection returns a rejection only when a failure condition has
-// transitioned since before was captured. A condition still carrying its
-// pre-apply timestamp says nothing about the apply, however alarming it looks.
+// findNewRejection returns a rejection only when a failure condition differs
+// from what before recorded. A condition still carrying its pre-apply values
+// says nothing about the apply, however alarming it looks.
 //
 // An empty baseline disables the check entirely rather than treating everything
-// as new. This is not merely a shortcut: Changed counts an unseen condition type
+// as new. This is not merely a shortcut: changed counts an unseen condition type
 // as changed — correct for a real snapshot, where a type appearing for the first
 // time is new information — so without the guard a missing baseline would turn
 // every days-old ApplyFailed into an instant rejection, which is the precise
@@ -208,7 +238,7 @@ func findNewRejection(conds []gatewayCondition, before ConditionSnapshot) *Gatew
 		if !isRejectionReason(condType, c.Reason) {
 			continue
 		}
-		if !before.Changed(c.Type, c.LastTransitionTime) {
+		if !before.changed(c) {
 			continue
 		}
 		return &GatewayRejection{

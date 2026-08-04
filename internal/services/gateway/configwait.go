@@ -317,8 +317,8 @@ func appliedCount(results []podConfig, target string) int {
 	return count
 }
 
-// gatewayRejectionSince reports a rejection only if a failure condition has
-// transitioned since conditionsBefore was captured.
+// gatewayRejectionSince reports a rejection only if a failure condition differs
+// from what conditionsBefore recorded.
 //
 // A CR that cannot be read or parsed yields no rejection rather than an error:
 // /config is the gate, and this check exists only to fail fast on a rejection
