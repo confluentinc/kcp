@@ -27,12 +27,13 @@ const (
 	GatewayGroup          = "platform.confluent.io"
 	GatewayVersion        = "v1beta1"
 	GatewayResourcePlural = "gateways"
+	GatewayKind           = "Gateway"
 )
 
 // Service defines gateway operations
 type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
-	ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error
+	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
@@ -108,13 +109,6 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 
 	slog.Debug("fetched gateway CR", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlBytes))
 	return yamlBytes, nil
-}
-
-// ValidateGatewayCRs validates that the initial, fenced, and switchover gateway CRs are consistent
-func (s *K8sService) ValidateGatewayCRs(initialYAML, fencedYAML, switchoverYAML []byte) error {
-	// TODO: implement cross-CR validation
-	slog.Warn("⚠️ gateway CR validation not yet implemented, skipping")
-	return nil
 }
 
 // CheckPermissions checks if the user has the required Kubernetes permissions

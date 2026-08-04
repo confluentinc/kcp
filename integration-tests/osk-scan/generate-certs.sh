@@ -116,6 +116,14 @@ openssl req -new -x509 -nodes -keyout prometheus-server.key -out prometheus-serv
     -days 365 -subj "/CN=localhost" \
     -addext "subjectAltName=DNS:localhost,DNS:osk-prometheus-tls,IP:127.0.0.1" 2>/dev/null
 
+# openssl writes the key mode 0600 (host-owned). The prom/prometheus image runs
+# as a non-root user, which cannot read a 0600 host-owned key when the file is
+# bind-mounted on Linux (CI) — Prometheus then fails to start its TLS listener
+# ("permission denied" reading key_file) and prometheus-tls never comes up. Make
+# this throwaway test key/cert world-readable so the container can read them.
+# (macOS Docker Desktop file-sharing masks this, so it only bites in Linux CI.)
+chmod 0644 prometheus-server.key prometheus-server.crt
+
 # Clean up intermediate files
 rm -f server-cert-req.pem client-cert-req.pem ca-key.pem ca-cert.srl client.p12 server-cert-extensions.cnf client-cert.pem
 

@@ -33,6 +33,7 @@ var (
 	saslPlainPassword string
 
 	tlsCaCert                       string
+	clusterRestCaCert               string
 	tlsClientCert                   string
 	tlsClientKey                    string
 	insecureSkipTLSVerify           bool
@@ -94,6 +95,7 @@ the migration state file and must be provided each time.`,
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
+	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
 	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
 	optionalFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.")
@@ -140,7 +142,7 @@ the migration state file and must be provided each time.`,
 	// TLS credential flags.
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the TLS CA certificate for the source MSK cluster.")
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to the CA certificate that verifies the source broker's TLS server certificate. Applies to any TLS-fronted source auth method (SASL/SCRAM, SASL/PLAIN over TLS, TLS/mTLS, unauthenticated-TLS); supply it only for a private/internal CA.")
 	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
 	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
 	migrationExecuteCmd.Flags().AddFlagSet(tlsFlags)
@@ -171,10 +173,13 @@ the migration state file and must be provided each time.`,
 	migrationExecuteCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 	migrationExecuteCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
 
-	// If any credential in a pair/trio is set, the whole set must be set.
+	// If any credential in a pair is set, the whole pair must be set.
 	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
 	migrationExecuteCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
-	migrationExecuteCmd.MarkFlagsRequiredTogether("tls-ca-cert", "tls-client-cert", "tls-client-key")
+	// The mTLS client identity is a pair; --tls-ca-cert is deliberately NOT
+	// grouped in, so it can be supplied on its own to trust a private CA on the
+	// SASL/SCRAM, SASL/PLAIN-over-TLS, and unauthenticated-TLS source paths.
+	migrationExecuteCmd.MarkFlagsRequiredTogether("tls-client-cert", "tls-client-key")
 
 	return migrationExecuteCmd
 }
@@ -205,7 +210,8 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 	}
 
 	if useTls {
-		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		// --tls-ca-cert is NOT required: mTLS against a public/system-trusted CA
+		// works with system roots. It stays optional, for a private/internal CA.
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
@@ -223,13 +229,13 @@ func preRunMigrationExecute(cmd *cobra.Command, args []string) error {
 
 func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// Load migration state (following established pattern)
-	migrationState, err := migration.NewMigrationStateFromFile(migrationStateFile)
+	state, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init' to create a new migration first", migrationStateFile, err)
 	}
 
 	// Get MigrationConfig by ID with two-level error handling
-	config, err := migrationState.GetMigrationById(migrationId)
+	config, err := state.GetMigrationById(migrationId)
 	if err != nil {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", migrationId, migrationStateFile)
 	}
@@ -238,7 +244,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	config.DetectUnroutedProducersDuration = detectUnroutedProducersDuration
 	config.ConsumerOffsetSyncDrainDuration = consumerOffsetSyncDrainDuration
 
-	opts := parseMigrationExecutorOpts(*migrationState, *config)
+	opts := parseMigrationExecutorOpts(*state, *config)
 
 	migrationExecutor := NewMigrationExecutor(opts)
 	if err := migrationExecutor.Run(); err != nil {
@@ -267,10 +273,10 @@ func resolveAuthType() types.AuthType {
 	}
 }
 
-func parseMigrationExecutorOpts(migrationState migration.MigrationState, config migration.MigrationConfig) MigrationExecutorOpts {
+func parseMigrationExecutorOpts(state migration.MigrationState, config migration.MigrationConfig) MigrationExecutorOpts {
 	return MigrationExecutorOpts{
 		MigrationStateFile:    migrationStateFile,
-		MigrationState:        migrationState,
+		MigrationState:        state,
 		MigrationConfig:       config,
 		LagThreshold:          lagThreshold,
 		ClusterApiKey:         clusterApiKey,
@@ -285,6 +291,7 @@ func parseMigrationExecutorOpts(migrationState migration.MigrationState, config 
 		SaslPlainUsername:     saslPlainUsername,
 		SaslPlainPassword:     saslPlainPassword,
 		TlsCaCert:             tlsCaCert,
+		ClusterRestCACert:     clusterRestCaCert,
 		TlsClientCert:         tlsClientCert,
 		TlsClientKey:          tlsClientKey,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,

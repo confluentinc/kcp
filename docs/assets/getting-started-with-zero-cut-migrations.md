@@ -48,7 +48,7 @@ For public product documentation, see the [Confluent Cloud Gateway Overview](htt
 
 KCP expects three things to already exist and be reachable: the CC Gateway deployed in Kubernetes with Confluent for Kubernetes, a Confluent Cloud destination cluster (Dedicated or Enterprise) with Cluster Linking enabled, and a network path from wherever KCP runs to both the source cluster brokers and the CC REST API.
 
-The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before migration init.
+The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before cutover init.
 
 KCP itself needs credentials to the source cluster's cloud provider in the standard credential chain and a kubeconfig pointing at the Kubernetes cluster hosting the gateway. Full permissions required are in §7.
 
@@ -91,7 +91,7 @@ Clients using AWS IAM must complete a pre-migration step to SASL/SCRAM or mTLS b
 
 ### 5.2 IAM Pre-Migration Path
 
-IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS before the gateway onboarding step. This is a client configuration change (not a migration cutover) and happens before any KCP migration commands are run. The broad steps are:
+IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS before the gateway onboarding step. This is a client configuration change (not a migration cutover) and happens before any KCP cutover commands are run. The broad steps are:
 
 1. Provision a corresponding SCRAM user in the source cluster for each IAM principal.
 2. Update each client's auth config from `sasl.mechanism=AWS_MSK_IAM` to `sasl.mechanism=SCRAM-SHA-512` with the new SCRAM credentials. The bootstrap URL continues to point at the source cluster (or gateway, if they onboard directly).
@@ -127,7 +127,7 @@ One important configuration best practice from the official docs: each client sh
 
 ## 6. Cluster Linking
 
-Cluster Linking must be configured before running any KCP migration commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
+Cluster Linking must be configured before running any KCP cutover commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
 
 KCP's `kcp migration init` validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.
 

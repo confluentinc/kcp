@@ -1,27 +1,15 @@
 package discover
 
 import (
-	"fmt"
-
 	"github.com/confluentinc/kcp/internal/utils"
 )
 
 // regionsFromClusterArns returns the distinct AWS regions parsed from the given MSK
 // cluster ARNs, preserving first-seen order. Returns an error if any ARN is malformed.
+// Thin wrapper over utils.RegionsFromClusterArns, kept so callers in this package read
+// naturally; the shared implementation lives in internal/utils.
 func regionsFromClusterArns(clusterArns []string) ([]string, error) {
-	seen := map[string]bool{}
-	regions := []string{}
-	for _, arn := range clusterArns {
-		region, err := utils.ExtractRegionFromArn(arn)
-		if err != nil {
-			return nil, fmt.Errorf("invalid cluster ARN %q: %w", arn, err)
-		}
-		if !seen[region] {
-			seen[region] = true
-			regions = append(regions, region)
-		}
-	}
-	return regions, nil
+	return utils.RegionsFromClusterArns(clusterArns)
 }
 
 // filterArnsToDiscover returns the subset of regionArns that appear in targetArns.

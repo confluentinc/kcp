@@ -35,8 +35,8 @@ All flags can be provided via environment variables (uppercase, with underscores
 		Example:       `  kcp migration lag-check --rest-endpoint https://... --cluster-id lkc-xxx --cluster-link-name my-link --cluster-api-key xxx --cluster-api-secret xxx`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationLagCheck,
-		RunE:          runMigrationLagCheck,
+		PreRunE:       preRunMigrationLag,
+		RunE:          runMigrationLag,
 	}
 
 	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
@@ -70,11 +70,11 @@ All flags can be provided via environment variables (uppercase, with underscores
 	return cmd
 }
 
-func preRunMigrationLagCheck(cmd *cobra.Command, args []string) error {
+func preRunMigrationLag(cmd *cobra.Command, args []string) error {
 	return utils.BindEnvToFlags(cmd)
 }
 
-func runMigrationLagCheck(cmd *cobra.Command, args []string) error {
+func runMigrationLag(cmd *cobra.Command, args []string) error {
 	interval := max(pollInterval, 1)
 	interval = min(interval, 60)
 

@@ -31,22 +31,26 @@ type DiscoveredRegion struct {
 //
 // MSK connectors live on AWSClientInformation, which MergeFrom does not reach, so they are
 // merged explicitly here: a denied or empty ListConnectors re-run must not wipe connectors
-// already in state. Only Connectors is merge-preserved; every other AWSClientInformation
+// already in state. Connectors and ConnectorMetrics are merge-preserved; every other AWSClientInformation
 // field keeps its wholesale-replace semantics.
 func mergeClusterPreservingAdminInfo(existing, newCluster DiscoveredCluster) DiscoveredCluster {
 	newCluster.KafkaAdminClientInformation.MergeFrom(existing.KafkaAdminClientInformation)
-	newCluster.AWSClientInformation.Connectors = mergeConnectors(
+	newCluster.AWSClientInformation.Connectors = MergeConnectors(
 		newCluster.AWSClientInformation.Connectors,
 		existing.AWSClientInformation.Connectors,
 	)
+	// ConnectorMetrics (managed-connector CloudWatch metrics) live on AWSClientInformation
+	// like Connectors; a metrics-less re-scan must not wipe previously collected metrics.
+	if newCluster.AWSClientInformation.ConnectorMetrics == nil {
+		newCluster.AWSClientInformation.ConnectorMetrics = existing.AWSClientInformation.ConnectorMetrics
+	}
 	return newCluster
 }
 
-// mergeConnectors merges MSK connectors, with new taking precedence for duplicates
-// (by ConnectorName). Mirrors mergeSelfManagedConnectors: a nil/empty new set preserves
-// the old set (so a denied/empty re-run does not wipe prior connectors), and a nil/empty
-// old set yields the new set.
-func mergeConnectors(newConns, oldConns []ConnectorSummary) []ConnectorSummary {
+// MergeConnectors merges MSK connectors, with new taking precedence for duplicates
+// (by ConnectorName). A nil/empty new set preserves the old set (so a denied/empty
+// re-run does not wipe prior connectors), and a nil/empty old set yields the new set.
+func MergeConnectors(newConns, oldConns []ConnectorSummary) []ConnectorSummary {
 	if len(newConns) == 0 {
 		return oldConns
 	}
@@ -119,6 +123,7 @@ type AWSClientInformation struct {
 	CompatibleVersions   kafka.GetCompatibleKafkaVersionsOutput `json:"compatible_versions"`
 	ClusterNetworking    ClusterNetworking                      `json:"cluster_networking"`
 	Connectors           []ConnectorSummary                     `json:"connectors"`
+	ConnectorMetrics     *ConnectClusterMetrics                 `json:"connector_metrics,omitempty"`
 }
 
 // Returns only one bootstrap broker per authentication type.
