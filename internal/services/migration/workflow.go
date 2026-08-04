@@ -474,7 +474,6 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	if err != nil {
 		return fmt.Errorf("failed to prepare the fenced gateway CR: %w", err)
 	}
-	tier := apply.tier
 
 	// When unrouted-producer detection is enabled the fence must be genuinely
 	// in effect before the detector's first source-offset snapshot. A plain
@@ -498,9 +497,10 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		}
 	}
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, apply.crYAML); err != nil {
+	if err := s.apply(ctx, config, &apply); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
+	tier := apply.tier
 	slog.Debug("fenced gateway CR applied")
 	s.reporter.success("Fenced gateway CR applied")
 
@@ -576,39 +576,46 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	return nil
 }
 
-// detectGatewayTier classifies how a config change to this gateway can be
-// verified, degrading rather than aborting.
+// gatewayHotReloads reports whether this gateway applies config changes in
+// place, degrading rather than aborting.
 //
-// A classification failure must not stop a fence: the fallback the detector
-// returns is never worse than not knowing, and on the pod-rollout fallback it is
-// exactly the behaviour that shipped before tier selection existed. But it is a
-// real loss of assurance, so it is reported rather than swallowed.
-func (s *MigrationActions) detectGatewayTier(ctx context.Context, config *MigrationConfig, candidateYAML []byte) gateway.VerificationTier {
-	tier, err := s.gatewayService.DetectGatewayVerificationTier(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, candidateYAML)
+// This is the one fact that has to be settled before writing to the CR, because
+// it decides whether kcp may stamp a spec.configId: with hot reload off, CFK
+// folds the field into the pod-template config-revision-hash and a bump rolls
+// every gateway pod — measured as a full rolling restart, which would turn an
+// idempotent re-apply into a client-visible outage.
+//
+// So an unreadable answer degrades to false, the choice that never writes one.
+// That is exactly the behaviour that shipped before hot-reload verification
+// existed, but it is a real loss of assurance, so it is reported rather than
+// swallowed.
+func (s *MigrationActions) gatewayHotReloads(config *MigrationConfig) bool {
+	hotReload, err := gateway.HotReloadEnabled(config.InitialCrYAML)
 	if err != nil {
-		slog.Warn("⚠️ could not determine how to verify the gateway config change", "gateway", config.InitialCrName, "fallbackTier", string(tier), "error", err)
-		s.reporter.warn("Could not determine how to verify this gateway's config change (%v); falling back to %s verification.", err, tier)
-		return tier
+		slog.Warn("⚠️ could not read spec.hotReload.enabled from the gateway CR; assuming config changes roll the pods",
+			"gateway", config.InitialCrName, "error", err)
+		s.reporter.warn("Could not tell whether this gateway hot-reloads config changes (%v); falling back to %s verification.", err, gateway.TierPodRollout)
+		return false
 	}
-	slog.Debug("selected gateway verification tier", "gateway", config.InitialCrName, "tier", string(tier))
-	return tier
+	slog.Debug("read gateway hot-reload setting", "gateway", config.InitialCrName, "hotReload", hotReload)
+	return hotReload
 }
 
-// stampConfigID injects a fresh spec.configId when the tier supports per-pod
-// verification, returning the CR to apply and the id to verify against.
+// stampConfigID injects a fresh spec.configId when the gateway hot-reloads,
+// returning the CR to apply and the id to verify against.
 //
-// On every other tier the CR is returned untouched and the id is empty. That is
-// not merely an optimisation: with hot reload off, CFK folds configId into the
-// pod-template config-revision-hash, so stamping one rolls every gateway pod —
-// measured as a full rolling restart, which would turn an idempotent re-apply
-// into a client-visible outage.
+// Stamping on a hot-reload gateway is unconditional even though the CRD may prune
+// the field: a pruned configId is inert, and whether it survived is read back off
+// the apply response rather than probed for beforehand (see
+// gateway.ResolveVerificationTier). With hot reload off the CR is returned
+// untouched — see gatewayHotReloads.
 //
 // existingID is the revision a previous run of this same stage recorded, if any.
 // Reusing it makes a resume re-apply byte-identical bytes, which CFK treats as a
 // no-op; that is only sound because the gateway CRs are captured at init and
 // never re-read, so an id can never be paired with changed content.
-func (s *MigrationActions) stampConfigID(tier gateway.VerificationTier, crYAML []byte, existingID string) ([]byte, string, error) {
-	if !tier.InjectsConfigID() {
+func (s *MigrationActions) stampConfigID(hotReload bool, crYAML []byte, existingID string) ([]byte, string, error) {
+	if !hotReload {
 		return crYAML, "", nil
 	}
 
@@ -675,52 +682,76 @@ func (s *MigrationActions) resolveGatewayConfigPort() string {
 	return gateway.DefaultGatewayConfigPort
 }
 
-// gatewayApply carries what a tier-aware apply needs from preparation through
-// to verification: the tier that was detected, the CR bytes to send (which may
-// differ from the caller's if a configId was stamped), the id to verify against,
-// and the condition baseline captured before the apply.
+// gatewayApply carries what a tier-aware apply needs from preparation through to
+// verification: the CR bytes to send (which may differ from the caller's if a
+// configId was stamped), the id to verify against, the condition baseline
+// captured before the apply, and — once the apply has happened — the tier that
+// says how to verify it.
+//
+// tier is deliberately empty until apply() has run. The verification strategy
+// depends on whether the server kept the configId, which only the apply response
+// can say.
 type gatewayApply struct {
 	tier             gateway.VerificationTier
+	hotReload        bool
 	crYAML           []byte
 	configID         string
 	conditionsBefore gateway.ConditionSnapshot
+	persistedID      *string
 }
 
-// prepareGatewayApply classifies the gateway, stamps a configId when the tier
-// supports one, and captures the pre-apply condition baseline.
-//
-// The tier is re-detected per apply rather than resolved once per migration.
-// That costs one dry-run round trip (~120ms measured) and buys a verdict on the
-// exact document about to be sent — which matters because the fenced, switchover
-// and initial CRs are three different documents, and only the one being applied
-// can tell us whether this cluster will keep a configId on it.
+// prepareGatewayApply stamps a configId when the gateway hot-reloads and captures
+// the pre-apply condition baseline. It makes no cluster call beyond the snapshot.
 //
 // persistedID points at the MigrationConfig field recording this stage's config
-// revision. It is read before stamping, so a resume re-verifies the revision the
-// previous run applied, and written after, so the record survives to the next
-// run. Passing the field by pointer keeps the stage-to-field mapping at the call
-// site, where it is obvious which apply is being prepared.
+// revision. It is read here, so a resume re-verifies the revision the previous
+// run applied, and written by apply once the server confirms it kept the field.
+// Passing the field by pointer keeps the stage-to-field mapping at the call site,
+// where it is obvious which apply is being prepared.
 func (s *MigrationActions) prepareGatewayApply(ctx context.Context, config *MigrationConfig, crYAML []byte, persistedID *string) (gatewayApply, error) {
-	tier := s.detectGatewayTier(ctx, config, crYAML)
+	hotReload := s.gatewayHotReloads(config)
 
-	stamped, configID, err := s.stampConfigID(tier, crYAML, *persistedID)
+	stamped, configID, err := s.stampConfigID(hotReload, crYAML, *persistedID)
 	if err != nil {
 		return gatewayApply{}, err
 	}
 
-	// Never clear an existing record. A tier that stopped supporting configId
-	// mid-migration (a CFK downgrade) yields an empty id here, and erasing what
-	// an earlier run verified would lose support-facing history for no gain.
-	if configID != "" {
-		*persistedID = configID
-	}
-
 	return gatewayApply{
-		tier:             tier,
+		hotReload:        hotReload,
 		crYAML:           stamped,
 		configID:         configID,
 		conditionsBefore: s.snapshotGatewayConditions(ctx, config),
+		persistedID:      persistedID,
 	}, nil
+}
+
+// apply sends the prepared CR and resolves how the change can be verified.
+//
+// The tier lands here rather than before the apply because the question it turns
+// on — did this cluster keep the spec.configId we sent? — is answered by the
+// apply response. A structural CRD schema prunes an undeclared field silently, so
+// nothing short of writing it and looking is authoritative.
+//
+// The recorded revision is only updated once the server confirms it stored the
+// field, so a recorded id always means a revision that was verifiable. An
+// existing record is never cleared: a cluster that stopped keeping configId
+// mid-migration (a CFK downgrade) would otherwise erase what an earlier run
+// verified, for no gain.
+func (s *MigrationActions) apply(ctx context.Context, config *MigrationConfig, a *gatewayApply) error {
+	stored, err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, a.crYAML)
+	if err != nil {
+		return err
+	}
+
+	a.tier = gateway.ResolveVerificationTier(a.hotReload, a.configID, stored)
+	if a.tier == gateway.TierPerPodConfigID {
+		*a.persistedID = a.configID
+	}
+
+	slog.Debug("resolved gateway verification tier from the apply response",
+		"gateway", config.InitialCrName, "tier", string(a.tier),
+		"hotReload", a.hotReload, "sentConfigId", a.configID, "storedConfigId", stored)
+	return nil
 }
 
 // verifyGatewayApply blocks until an applied gateway CR is proven to be in
@@ -782,8 +813,8 @@ func (s *MigrationActions) verifyGatewayApply(ctx context.Context, config *Migra
 //
 // This is not cosmetic: client-go's dynamic Apply rejects an object carrying
 // managedFields client-side, before any request leaves the process, so an
-// unstripped CR fails deterministically — for the tier probe's dry run exactly
-// as much as for the real apply.
+// unstripped CR fails deterministically — and the rollback is the one path where
+// a deterministic failure is least affordable.
 func strippedInitialCR(initialCrYAML []byte) ([]byte, error) {
 	var obj map[string]interface{}
 	if err := yaml.Unmarshal(initialCrYAML, &obj); err != nil {
@@ -816,8 +847,9 @@ func strippedInitialCR(initialCrYAML []byte) ([]byte, error) {
 // Removing the fence from an existing route is a hot-reloadable change (the
 // exact inverse of the fence), so no pod roll is expected.
 func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
-	// Strip before preparing, not after: the tier probe dry-runs this document,
-	// and an unstripped CR is refused client-side. See strippedInitialCR.
+	// Strip before preparing, not after: the stripped document is what gets
+	// stamped and applied, and an unstripped CR is refused client-side. See
+	// strippedInitialCR.
 	cleanYAML, err := strippedInitialCR(config.InitialCrYAML)
 	if err != nil {
 		return err
@@ -828,7 +860,7 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 		return fmt.Errorf("failed to prepare the initial gateway CR: %w", err)
 	}
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, apply.crYAML); err != nil {
+	if err := s.apply(ctx, config, &apply); err != nil {
 		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
 	}
 	slog.Debug("initial gateway CR applied")
@@ -1229,7 +1261,7 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 		return fmt.Errorf("failed to prepare the switchover gateway CR: %w", err)
 	}
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, apply.crYAML); err != nil {
+	if err := s.apply(ctx, config, &apply); err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	slog.Debug("switchover gateway CR applied")

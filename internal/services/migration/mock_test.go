@@ -15,15 +15,14 @@ type mockGatewayService struct {
 	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
 	validateGatewayCRsFn     func(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error)
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte) error
+	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte) (string, error)
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, conditionsBefore gateway.ConditionSnapshot, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
 	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 
-	detectGatewayVerificationTierFn func(ctx context.Context, namespace, name string, initialYAML, candidateYAML []byte) (gateway.VerificationTier, error)
-	snapshotGatewayConditionsFn     func(ctx context.Context, namespace, name string) (gateway.ConditionSnapshot, error)
-	waitForGatewayConfigAppliedFn   func(ctx context.Context, namespace, name, targetConfigID string, conditionsBefore gateway.ConditionSnapshot, port string, pollInterval, timeout time.Duration, onProgress func(gateway.ConfigApplyProgress)) error
+	snapshotGatewayConditionsFn   func(ctx context.Context, namespace, name string) (gateway.ConditionSnapshot, error)
+	waitForGatewayConfigAppliedFn func(ctx context.Context, namespace, name, targetConfigID string, conditionsBefore gateway.ConditionSnapshot, port string, pollInterval, timeout time.Duration, onProgress func(gateway.ConfigApplyProgress)) error
 }
 
 func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -47,11 +46,11 @@ func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resourc
 	return true, nil
 }
 
-func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, name string, yaml []byte) error {
+func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 	if m.applyGatewayYAMLFn != nil {
 		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml)
 	}
-	return fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
+	return "", fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
 }
 
 func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, conditionsBefore gateway.ConditionSnapshot, pollInterval, timeout time.Duration) error {
@@ -82,17 +81,11 @@ func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace,
 	return nil
 }
 
-// The hot-reload verification trio. Their unset defaults deliberately describe
-// the pre-hot-reload world — pod-rollout tier, no condition baseline, a wait
-// that passes — so every test written before tier selection existed keeps
-// exercising the path it was written for.
-
-func (m *mockGatewayService) DetectGatewayVerificationTier(ctx context.Context, namespace, name string, initialYAML, candidateYAML []byte) (gateway.VerificationTier, error) {
-	if m.detectGatewayVerificationTierFn != nil {
-		return m.detectGatewayVerificationTierFn(ctx, namespace, name, initialYAML, candidateYAML)
-	}
-	return gateway.TierPodRollout, nil
-}
+// The hot-reload verification pair. Their unset defaults deliberately describe
+// the pre-hot-reload world — no condition baseline, a wait that passes — so every
+// test written before hot-reload verification existed keeps exercising the path it
+// was written for. The tier itself is not mockable: it is derived from the
+// gateway CR's hotReload flag and the configId ApplyGatewayYAML echoes back.
 
 func (m *mockGatewayService) SnapshotGatewayConditions(ctx context.Context, namespace, name string) (gateway.ConditionSnapshot, error) {
 	if m.snapshotGatewayConditionsFn != nil {

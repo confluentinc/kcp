@@ -9,7 +9,6 @@ import (
 
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
@@ -91,7 +90,7 @@ func (s *K8sService) SnapshotGatewayConditions(ctx context.Context, namespace, g
 // SnapshotGatewayConditions. Split from the method so unit tests can inject a
 // fake dynamic client.
 func snapshotGatewayConditions(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string) (ConditionSnapshot, error) {
-	gw, err := dynamicClient.Resource(gatewayConfigGVR()).Namespace(namespace).
+	gw, err := dynamicClient.Resource(gatewayGVR()).Namespace(namespace).
 		Get(ctx, gatewayName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get gateway for condition snapshot: %w", err)
@@ -219,16 +218,6 @@ func waitForGatewayConfigApplied(ctx context.Context, clientset kubernetes.Inter
 		gatewayName, targetConfigID, lastReason, timeout)
 }
 
-// gatewayConfigGVR returns the Gateway CR's GVR. Kept local so this file does
-// not depend on edits elsewhere in the package.
-func gatewayConfigGVR() schema.GroupVersionResource {
-	return schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
-	}
-}
-
 // expectedGatewayReplicas reports the Deployment's ready-replica count, or 0
 // when it cannot be determined.
 //
@@ -336,7 +325,7 @@ func gatewayRejectionSince(ctx context.Context, dynamicClient dynamic.Interface,
 		return nil
 	}
 
-	gw, err := dynamicClient.Resource(gatewayConfigGVR()).Namespace(namespace).
+	gw, err := dynamicClient.Resource(gatewayGVR()).Namespace(namespace).
 		Get(ctx, gatewayName, metav1.GetOptions{})
 	if err != nil {
 		slog.Debug("could not read gateway CR for rejection check",

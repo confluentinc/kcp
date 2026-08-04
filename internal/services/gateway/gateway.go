@@ -34,7 +34,7 @@ type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
 	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
+	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) (storedConfigID string, err error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, conditionsBefore ConditionSnapshot, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
@@ -43,9 +43,9 @@ type Service interface {
 	// Hot-reload verification. Under spec.hotReload.enabled a config change
 	// applies in place, so every Kubernetes-side signal above — rollout, pod
 	// replacement, observedGeneration — reports success without proving the
-	// pods serve the new config. These three select and drive the verification
-	// that does prove it.
-	DetectGatewayVerificationTier(ctx context.Context, namespace, gatewayName string, initialYAML, candidateYAML []byte) (VerificationTier, error)
+	// pods serve the new config. These two drive the verification that does
+	// prove it; which one to use comes from ResolveVerificationTier, which needs
+	// no cluster call of its own.
 	SnapshotGatewayConditions(ctx context.Context, namespace, gatewayName string) (ConditionSnapshot, error)
 	WaitForGatewayConfigApplied(ctx context.Context, namespace, gatewayName, targetConfigID string, conditionsBefore ConditionSnapshot, port string, pollInterval, timeout time.Duration, onProgress func(ConfigApplyProgress)) error
 }
@@ -74,6 +74,15 @@ type GatewayReadinessProgress struct {
 // yet begun. var so tests can shorten it.
 var gatewayReadinessDetectionWindow = 10 * time.Second
 
+// gatewayGVR returns the Gateway CR's GroupVersionResource.
+func gatewayGVR() schema.GroupVersionResource {
+	return schema.GroupVersionResource{
+		Group:    GatewayGroup,
+		Version:  GatewayVersion,
+		Resource: GatewayResourcePlural,
+	}
+}
+
 // K8sService implements gateway operations using Kubernetes clients
 type K8sService struct {
 	kubeConfigPath string
@@ -98,13 +107,7 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	gatewayGVR := schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
-	}
-
-	gateway, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+	gateway, err := dynamicClient.Resource(gatewayGVR()).Namespace(namespace).
 		Get(ctx, gatewayName, metav1.GetOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Gateway: %w", err)
@@ -155,28 +158,36 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 	return response.Status.Allowed, nil
 }
 
-// ApplyGatewayYAML applies a complete gateway CR YAML to the cluster using server-side apply
-func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error {
+// ApplyGatewayYAML applies a complete gateway CR YAML to the cluster using
+// server-side apply, returning the spec.configId the server actually stored.
+//
+// That return value is how kcp learns whether per-pod verification is available:
+// a structural CRD schema prunes an undeclared field silently, so a configId that
+// was sent can simply not be there afterwards, and the apply response is what
+// says which happened. It is empty when nothing was stamped or the field was
+// pruned. See ResolveVerificationTier.
+func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) (string, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
+		return "", fmt.Errorf("failed to build config: %w", err)
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
+		return "", fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	gatewayGVR := schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
-	}
+	return applyGatewayYAML(ctx, dynamicClient, namespace, gatewayName, yamlData)
+}
 
+// applyGatewayYAML is the inner orchestration used by ApplyGatewayYAML. Split
+// from the method so unit tests can inject a fake dynamic client — the configId
+// read-back decides how the change gets verified, so it needs direct coverage.
+func applyGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, yamlData []byte) (string, error) {
 	// Parse YAML into unstructured object
 	var obj unstructured.Unstructured
 	if err := yaml.Unmarshal(yamlData, &obj.Object); err != nil {
-		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+		return "", fmt.Errorf("failed to parse gateway YAML: %w", err)
 	}
 
 	// Ensure metadata matches the expected resource
@@ -185,17 +196,26 @@ func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayNam
 
 	slog.Debug("🔍 applying gateway CR (server-side apply)", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlData))
 	start := time.Now()
-	_, err = dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+	applied, err := dynamicClient.Resource(gatewayGVR()).Namespace(namespace).
 		Apply(ctx, gatewayName, &obj, metav1.ApplyOptions{
 			FieldManager: gatewayFieldManager,
 			Force:        true,
 		})
 	if err != nil {
-		return fmt.Errorf("failed to apply gateway YAML: %w", err)
+		return "", fmt.Errorf("failed to apply gateway YAML: %w", err)
 	}
 
-	slog.Debug("applied gateway CR", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
-	return nil
+	storedConfigID := ""
+	if applied != nil {
+		// A non-string configId is as unusable as an absent one, so the error is
+		// deliberately discarded into the empty string rather than failing an apply
+		// that in fact succeeded.
+		storedConfigID, _, _ = unstructured.NestedString(applied.Object, "spec", "configId")
+	}
+
+	slog.Debug("applied gateway CR", "namespace", namespace, "gateway", gatewayName,
+		"storedConfigId", storedConfigID, "ms", time.Since(start).Milliseconds())
+	return storedConfigID, nil
 }
 
 // blindAcceptanceTimeout bounds the acceptance wait when no condition baseline
@@ -255,12 +275,6 @@ func (s *K8sService) WaitForGatewayAccepted(ctx context.Context, namespace, gate
 // WaitForGatewayAccepted. Split from the method so unit tests can inject a
 // fake dynamic client.
 func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, conditionsBefore ConditionSnapshot, pollInterval, timeout time.Duration) error {
-	gatewayGVR := schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
-	}
-
 	// Running unbounded is only safe while we can still recognise a rejection.
 	// Without a baseline the condition check is off (see findNewRejection), so a
 	// refused spec never advances observedGeneration and never produces a
@@ -284,7 +298,7 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		default:
 		}
 
-		gw, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+		gw, err := dynamicClient.Resource(gatewayGVR()).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
 		if err != nil {
 			return fmt.Errorf("failed to get gateway for reconcile check: %w", err)
 		}

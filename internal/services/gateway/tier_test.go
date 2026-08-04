@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	ktesting "k8s.io/client-go/testing"
 )
@@ -20,8 +19,8 @@ import (
 // fixtures
 // ===========================================================================
 
-// hotReloadCRYAML mirrors the live rig's gateway: the shape the tier probe has
-// to navigate, status and all, not a minimal two-key document.
+// hotReloadCRYAML mirrors the live rig's gateway: the shape the hot-reload read
+// has to navigate, status and all, not a minimal two-key document.
 const hotReloadCRYAML = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 metadata:
@@ -81,11 +80,11 @@ spec:
 `
 
 // ===========================================================================
-// dry-run apply recorder
+// apply recorder
 // ===========================================================================
 
 // applyRecorder intercepts server-side-apply patches against the Gateway GVR so
-// tests control the read-back exactly. The real question the probe asks — does
+// tests control the read-back exactly. The question that decides the tier — does
 // this CRD keep spec.configId or silently prune it — is a property of the
 // cluster's CRD schema, which no fake can reproduce, so it is scripted here.
 type applyRecorder struct {
@@ -122,8 +121,8 @@ func (r *applyRecorder) calls() []ktesting.PatchActionImpl {
 	return append([]ktesting.PatchActionImpl(nil), r.actions...)
 }
 
-// echoPatch answers an apply by returning the patched object verbatim — the
-// Tier A behaviour, where the API server keeps spec.configId.
+// echoPatch answers an apply by returning the patched object verbatim — a CRD
+// that declares spec.configId and therefore keeps it.
 func echoPatch(t *testing.T, patch []byte) *unstructured.Unstructured {
 	t.Helper()
 	obj := &unstructured.Unstructured{}
@@ -131,9 +130,8 @@ func echoPatch(t *testing.T, patch []byte) *unstructured.Unstructured {
 	return obj
 }
 
-// prunePatch answers an apply by returning the patched object with
-// spec.configId stripped — the Tier B behaviour of a structural CRD schema
-// that does not declare the field.
+// prunePatch answers an apply by returning the patched object with spec.configId
+// stripped — a structural CRD schema that does not declare the field.
 func prunePatch(t *testing.T, patch []byte) *unstructured.Unstructured {
 	t.Helper()
 	obj := echoPatch(t, patch)
@@ -150,26 +148,26 @@ func newApplyProbeClient(rec *applyRecorder) *dynamicfake.FakeDynamicClient {
 }
 
 // ===========================================================================
-// hotReloadEnabled tests (pure logic)
+// HotReloadEnabled tests (pure logic)
 // ===========================================================================
 
 func TestHotReloadEnabled_True(t *testing.T) {
-	enabled, err := hotReloadEnabled([]byte(hotReloadCRYAML))
+	enabled, err := HotReloadEnabled([]byte(hotReloadCRYAML))
 	require.NoError(t, err)
 	assert.True(t, enabled)
 }
 
 func TestHotReloadEnabled_ExplicitFalse(t *testing.T) {
 	cr := strings.Replace(hotReloadCRYAML, "enabled: true", "enabled: false", 1)
-	enabled, err := hotReloadEnabled([]byte(cr))
+	enabled, err := HotReloadEnabled([]byte(cr))
 	require.NoError(t, err)
 	assert.False(t, enabled)
 }
 
 // The overwhelmingly common shape: no hotReload block at all. This must be a
-// clean false, not an error, or every existing gateway fails tier detection.
+// clean false, not an error, or every existing gateway fails to classify.
 func TestHotReloadEnabled_BlockAbsent(t *testing.T) {
-	enabled, err := hotReloadEnabled([]byte(coldCRYAML))
+	enabled, err := HotReloadEnabled([]byte(coldCRYAML))
 	require.NoError(t, err)
 	assert.False(t, enabled)
 }
@@ -180,7 +178,7 @@ kind: Gateway
 spec:
   hotReload: {}
 `
-	enabled, err := hotReloadEnabled([]byte(cr))
+	enabled, err := HotReloadEnabled([]byte(cr))
 	require.NoError(t, err)
 	assert.False(t, enabled)
 }
@@ -191,7 +189,7 @@ kind: Gateway
 metadata:
   name: migration-gateway
 `
-	_, err := hotReloadEnabled([]byte(cr))
+	_, err := HotReloadEnabled([]byte(cr))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "spec")
 }
@@ -206,18 +204,18 @@ spec:
   hotReload:
     enabled: "true"
 `
-	_, err := hotReloadEnabled([]byte(cr))
+	_, err := HotReloadEnabled([]byte(cr))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hotReload.enabled")
 }
 
 func TestHotReloadEnabled_MalformedYAML(t *testing.T) {
-	_, err := hotReloadEnabled([]byte("spec:\n\tnot: [valid"))
+	_, err := HotReloadEnabled([]byte("spec:\n\tnot: [valid"))
 	require.Error(t, err)
 }
 
 func TestHotReloadEnabled_EmptyInput(t *testing.T) {
-	_, err := hotReloadEnabled(nil)
+	_, err := HotReloadEnabled(nil)
 	require.Error(t, err)
 }
 
@@ -225,340 +223,164 @@ func TestHotReloadEnabled_EmptyInput(t *testing.T) {
 // the type assertion.
 func TestHotReloadEnabled_BlockIsScalar(t *testing.T) {
 	cr := "spec:\n  hotReload: true\n"
-	_, err := hotReloadEnabled([]byte(cr))
+	_, err := HotReloadEnabled([]byte(cr))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "hotReload")
 }
 
 // ===========================================================================
-// dryRunSupportsConfigID tests
+// ResolveVerificationTier (pure logic)
+//
+// This replaced an SSA dry-run probe that asked the cluster, before the apply,
+// whether it would keep a spec.configId. The probe cost a round trip per apply
+// and could not be authoritative about anything the apply response does not
+// already say — pruning is a property of the CRD schema, and the response is
+// where it shows up. What genuinely had to be decided beforehand is only whether
+// to stamp at all, and that is the hot-reload flag alone.
 // ===========================================================================
 
-func TestDryRunSupportsConfigID_Echoed(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
+func TestResolveVerificationTier_HotReloadAndConfigIDKept(t *testing.T) {
+	assert.Equal(t, TierPerPodConfigID, ResolveVerificationTier(true, "kcp-1-a", "kcp-1-a"))
+}
+
+func TestResolveVerificationTier_HotReloadButConfigIDPruned(t *testing.T) {
+	// The public-latest CFK window: hot reload works, the CRD does not declare
+	// configId, so the field silently vanishes and no per-pod handle exists.
+	assert.Equal(t, TierHotReloadOnly, ResolveVerificationTier(true, "kcp-1-a", ""))
+}
+
+func TestResolveVerificationTier_HotReloadButConfigIDAltered(t *testing.T) {
+	// Not a usable handle: /config could never confirm a revision the server did
+	// not store under the name we asked for.
+	assert.Equal(t, TierHotReloadOnly, ResolveVerificationTier(true, "kcp-1-a", "something-else"))
+}
+
+// The E7 guard, at the level that decides it: with hot reload off nothing is
+// stamped, so there is no id to compare and the rollout wait is the real gate.
+func TestResolveVerificationTier_NoHotReloadIsAlwaysRollout(t *testing.T) {
+	assert.Equal(t, TierPodRollout, ResolveVerificationTier(false, "", ""))
+
+	// Even if a configId somehow round-tripped, hot reload off means the pods
+	// rolled — the rollout wait is what proves that, not /config.
+	assert.Equal(t, TierPodRollout, ResolveVerificationTier(false, "kcp-1-a", "kcp-1-a"))
+}
+
+// A gateway that hot-reloads but was never stamped cannot be verified per pod:
+// every pod would report an id that matches nothing we asked for.
+func TestResolveVerificationTier_HotReloadWithNoStampedID(t *testing.T) {
+	assert.Equal(t, TierHotReloadOnly, ResolveVerificationTier(true, "", ""))
+	assert.Equal(t, TierHotReloadOnly, ResolveVerificationTier(true, "", "kcp-leftover"),
+		"an id we did not send proves nothing about this apply")
+}
+
+func TestVerificationTier_WireValues(t *testing.T) {
+	assert.Equal(t, "per-pod-configid", string(TierPerPodConfigID))
+	assert.Equal(t, "hot-reload-only", string(TierHotReloadOnly))
+	assert.Equal(t, "pod-rollout", string(TierPodRollout))
+}
+
+// ===========================================================================
+// applyGatewayYAML configId read-back
+//
+// The read-back is what selects the verification strategy, so it needs the same
+// coverage the dry-run probe used to have. Whether a CRD keeps or prunes an
+// undeclared field is a property no fake reproduces, so it is scripted.
+// ===========================================================================
+
+func TestApplyGatewayYAML_ReturnsStoredConfigID(t *testing.T) {
+	rec := &applyRecorder{answer: func(_ int, patch []byte) (*unstructured.Unstructured, error) {
 		return echoPatch(t, patch), nil
 	}}
 	cs := newApplyProbeClient(rec)
 
-	supported, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
+	stamped, err := injectConfigID([]byte(candidateCRYAML), "kcp-123-abc")
 	require.NoError(t, err)
-	assert.True(t, supported)
-	assert.Len(t, rec.calls(), 1, "a successful probe must not need a second apply")
+
+	stored, err := applyGatewayYAML(context.Background(), cs, testNamespace, testGateway, stamped)
+	require.NoError(t, err)
+	assert.Equal(t, "kcp-123-abc", stored)
 }
 
-func TestDryRunSupportsConfigID_Pruned(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
+func TestApplyGatewayYAML_PrunedConfigIDComesBackEmpty(t *testing.T) {
+	rec := &applyRecorder{answer: func(_ int, patch []byte) (*unstructured.Unstructured, error) {
 		return prunePatch(t, patch), nil
 	}}
 	cs := newApplyProbeClient(rec)
 
-	supported, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
+	stamped, err := injectConfigID([]byte(candidateCRYAML), "kcp-123-abc")
 	require.NoError(t, err)
-	assert.False(t, supported)
+
+	stored, err := applyGatewayYAML(context.Background(), cs, testNamespace, testGateway, stamped)
+	require.NoError(t, err, "a pruned field is inert, not an apply failure")
+	assert.Empty(t, stored, "a pruned configId must not be reported as stored")
 }
 
-// The probe must never mutate the cluster. Non-persistence is an API-server
-// guarantee of dryRun=All (verified live), so what is checkable here is that we
-// actually ask for it — along with the same field manager the real apply uses,
-// so ownership conflicts surface at probe time rather than at fence time.
-func TestDryRunSupportsConfigID_UsesDryRunApplyOptions(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
+// An unstamped apply is the hot-reload-off path, and it must not invent an id.
+func TestApplyGatewayYAML_UnstampedCRReturnsEmpty(t *testing.T) {
+	rec := &applyRecorder{answer: func(_ int, patch []byte) (*unstructured.Unstructured, error) {
 		return echoPatch(t, patch), nil
 	}}
 	cs := newApplyProbeClient(rec)
 
-	_, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
+	stored, err := applyGatewayYAML(context.Background(), cs, testNamespace, testGateway, []byte(coldCRYAML))
 	require.NoError(t, err)
-
-	calls := rec.calls()
-	require.Len(t, calls, 1)
-	assert.Equal(t, types.ApplyPatchType, calls[0].PatchType)
-	assert.Equal(t, []string{"All"}, calls[0].PatchOptions.DryRun)
-	assert.Equal(t, gatewayFieldManager, calls[0].PatchOptions.FieldManager)
-	require.NotNil(t, calls[0].PatchOptions.Force)
-	assert.True(t, *calls[0].PatchOptions.Force)
+	assert.Empty(t, stored)
 }
 
-// The id sent to the cluster must satisfy the CRD's own constraints, or a
-// pruned-vs-rejected verdict is really just a verdict on a malformed id.
-func TestDryRunSupportsConfigID_ProbeIDIsCRDValid(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		return echoPatch(t, patch), nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	_, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
-	require.NoError(t, err)
-
-	calls := rec.calls()
-	require.Len(t, calls, 1)
-	sent := echoPatch(t, calls[0].Patch)
-	id, found, err := unstructured.NestedString(sent.Object, "spec", "configId")
-	require.NoError(t, err)
-	require.True(t, found, "the probe must actually carry a configId")
-	assert.True(t, strings.HasPrefix(id, configIDPrefix), "probe id should be attributable to kcp: %q", id)
-	assert.LessOrEqual(t, len(id), maxConfigIDLength)
-	assert.Regexp(t, configIDPattern, id)
-}
-
-// The unvalidated live case: a CRD that rejects the unknown field rather than
-// pruning it. Re-applying without configId succeeds, which attributes the
-// failure to configId alone and yields Tier B rather than a hard error.
-func TestDryRunSupportsConfigID_RejectedButBaseCRValid(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		if nth == 1 {
-			return nil, errors.New(`Gateway in version "v1beta1" cannot be handled: strict decoding error: unknown field "spec.configId"`)
-		}
-		return echoPatch(t, patch), nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	supported, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
-	require.NoError(t, err)
-	assert.False(t, supported)
-
-	calls := rec.calls()
-	require.Len(t, calls, 2, "a rejection must be re-tested without configId")
-
-	// The control apply must carry no configId, or it proves nothing.
-	control := echoPatch(t, calls[1].Patch)
-	_, found, err := unstructured.NestedString(control.Object, "spec", "configId")
-	require.NoError(t, err)
-	assert.False(t, found)
-}
-
-// When the CR is rejected with and without configId, the CR itself is the
-// problem: the real apply is going to fail too, so surface it now rather than
-// mislabelling the cluster as Tier B.
-func TestDryRunSupportsConfigID_BaseCRAlsoInvalid(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		return nil, errors.New("admission webhook denied the request: streamingDomain not found")
-	}}
-	cs := newApplyProbeClient(rec)
-
-	_, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "streamingDomain not found")
-	assert.Len(t, rec.calls(), 2)
-}
-
-// A field that comes back holding something other than what we sent is not a
-// usable per-pod handle, whatever the reason.
-func TestDryRunSupportsConfigID_EchoedDifferentValue(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		obj := echoPatch(t, patch)
-		require.NoError(t, unstructured.SetNestedField(obj.Object, "someone-elses-id", "spec", "configId"))
-		return obj, nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	supported, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
-	require.NoError(t, err)
-	assert.False(t, supported)
-}
-
-// A non-string configId in the read-back is not a handle we can compare.
-func TestDryRunSupportsConfigID_EchoedNonString(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
+// A non-string configId is as unusable as an absent one, and must not fail an
+// apply that in fact succeeded.
+func TestApplyGatewayYAML_NonStringConfigIDReturnsEmpty(t *testing.T) {
+	rec := &applyRecorder{answer: func(_ int, patch []byte) (*unstructured.Unstructured, error) {
 		obj := echoPatch(t, patch)
 		require.NoError(t, unstructured.SetNestedField(obj.Object, int64(42), "spec", "configId"))
 		return obj, nil
 	}}
 	cs := newApplyProbeClient(rec)
 
-	supported, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
+	stamped, err := injectConfigID([]byte(candidateCRYAML), "kcp-123-abc")
 	require.NoError(t, err)
-	assert.False(t, supported)
+
+	stored, err := applyGatewayYAML(context.Background(), cs, testNamespace, testGateway, stamped)
+	require.NoError(t, err)
+	assert.Empty(t, stored)
 }
 
-// An apply that somehow returns no object cannot be read back, so it cannot
-// claim support.
-func TestDryRunSupportsConfigID_NilResponse(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		return nil, nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	supported, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
-	require.Error(t, err)
-	assert.False(t, supported)
-}
-
-func TestDryRunSupportsConfigID_MalformedCRYAML(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		t.Fatal("must not reach the cluster with an unparseable CR")
-		return nil, nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	_, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte("spec: [unterminated"))
-	require.Error(t, err)
-	assert.Empty(t, rec.calls())
-}
-
-// Mirrors ApplyGatewayYAML: the requested name and namespace win over whatever
-// the file says, so a probe cannot be aimed at the wrong object.
-func TestDryRunSupportsConfigID_ForcesNameAndNamespace(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
+func TestApplyGatewayYAML_ForcesNameAndNamespace(t *testing.T) {
+	rec := &applyRecorder{answer: func(_ int, patch []byte) (*unstructured.Unstructured, error) {
 		return echoPatch(t, patch), nil
 	}}
 	cs := newApplyProbeClient(rec)
 
-	cr := strings.Replace(candidateCRYAML, "kind: Gateway\n",
-		"kind: Gateway\nmetadata:\n  name: wrong-name\n  namespace: wrong-ns\n", 1)
-
-	_, err := dryRunSupportsConfigID(context.Background(), cs, testNamespace, testGateway, []byte(cr))
+	// candidateCRYAML carries no metadata at all, which is how the user-supplied
+	// fenced and switchover files come.
+	_, err := applyGatewayYAML(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
 	require.NoError(t, err)
 
 	calls := rec.calls()
 	require.Len(t, calls, 1)
 	assert.Equal(t, testGateway, calls[0].Name)
 	assert.Equal(t, testNamespace, calls[0].Namespace)
-
-	sent := echoPatch(t, calls[0].Patch)
-	assert.Equal(t, testGateway, sent.GetName())
-	assert.Equal(t, testNamespace, sent.GetNamespace())
 }
 
-// A cancelled probe must not be re-run as a CR validation check: the retry
-// would fail for the same reason and report a perfectly good CR as invalid.
-func TestDryRunSupportsConfigID_CancellationIsNotBlamedOnTheCR(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		return nil, context.Canceled
-	}}
-	cs := newApplyProbeClient(rec)
-
-	_, err := dryRunSupportsConfigID(ctx, cs, testNamespace, testGateway, []byte(candidateCRYAML))
-	require.Error(t, err)
-	assert.ErrorIs(t, err, context.Canceled)
-	assert.NotContains(t, err.Error(), "failed a dry-run apply")
-	assert.Len(t, rec.calls(), 1, "a cancelled probe must not be retried")
-}
-
-// ===========================================================================
-// detectGatewayVerificationTier tests
-// ===========================================================================
-
-func TestDetectTier_A_HotReloadAndConfigID(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
+func TestApplyGatewayYAML_MalformedYAML(t *testing.T) {
+	rec := &applyRecorder{answer: func(_ int, patch []byte) (*unstructured.Unstructured, error) {
 		return echoPatch(t, patch), nil
 	}}
 	cs := newApplyProbeClient(rec)
 
-	tier, err := detectGatewayVerificationTier(context.Background(), cs, testNamespace, testGateway,
-		[]byte(hotReloadCRYAML), []byte(candidateCRYAML))
-	require.NoError(t, err)
-	assert.Equal(t, TierPerPodConfigID, tier)
-}
-
-func TestDetectTier_B_HotReloadWithoutConfigID(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		return prunePatch(t, patch), nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	tier, err := detectGatewayVerificationTier(context.Background(), cs, testNamespace, testGateway,
-		[]byte(hotReloadCRYAML), []byte(candidateCRYAML))
-	require.NoError(t, err)
-	assert.Equal(t, TierHotReloadOnly, tier)
-}
-
-// Tier C must cost nothing and touch nothing: with hot reload off, a configId
-// bump rolls every gateway pod, so the probe is not merely useless, it must not
-// happen.
-func TestDetectTier_C_NoHotReloadSkipsProbe(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		t.Fatal("Tier C must not probe for configId support")
-		return nil, nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	tier, err := detectGatewayVerificationTier(context.Background(), cs, testNamespace, testGateway,
-		[]byte(coldCRYAML), []byte(candidateCRYAML))
-	require.NoError(t, err)
-	assert.Equal(t, TierPodRollout, tier)
-	assert.Empty(t, rec.calls())
-}
-
-// Corollary of the short circuit: on Tier C the candidate CR is never parsed by
-// detection at all, so a candidate kcp cannot inject into is not a detection
-// failure.
-func TestDetectTier_C_IgnoresUnparseableCandidate(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		t.Fatal("Tier C must not probe for configId support")
-		return nil, nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	tier, err := detectGatewayVerificationTier(context.Background(), cs, testNamespace, testGateway,
-		[]byte(coldCRYAML), []byte("spec: [unterminated"))
-	require.NoError(t, err)
-	assert.Equal(t, TierPodRollout, tier)
-}
-
-// An unreadable hot-reload flag leaves us not knowing whether injection would
-// roll the pods, so the fallback is the tier that never injects.
-func TestDetectTier_UnreadableHotReloadFallsBackToC(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		t.Fatal("must not probe when the initial CR could not be read")
-		return nil, nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	tier, err := detectGatewayVerificationTier(context.Background(), cs, testNamespace, testGateway,
-		[]byte("spec: [unterminated"), []byte(candidateCRYAML))
+	_, err := applyGatewayYAML(context.Background(), cs, testNamespace, testGateway, []byte("\tnot: [valid"))
 	require.Error(t, err)
-	assert.Equal(t, TierPodRollout, tier)
+	assert.Empty(t, rec.calls(), "a document that will not parse must not reach the cluster")
 }
 
-// Once hot reload is known to be on, a failed probe must never drop to Tier C:
-// C's rollout wait reports success when no rollout happens, which is exactly
-// the false positive hot reload creates. B is blind but honest about it.
-func TestDetectTier_ProbeFailureFallsBackToB(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		return nil, errors.New("connection reset by peer")
+func TestApplyGatewayYAML_ApplyErrorPropagates(t *testing.T) {
+	rec := &applyRecorder{answer: func(_ int, _ []byte) (*unstructured.Unstructured, error) {
+		return nil, errors.New("admission webhook denied the request")
 	}}
 	cs := newApplyProbeClient(rec)
 
-	tier, err := detectGatewayVerificationTier(context.Background(), cs, testNamespace, testGateway,
-		[]byte(hotReloadCRYAML), []byte(candidateCRYAML))
+	stored, err := applyGatewayYAML(context.Background(), cs, testNamespace, testGateway, []byte(candidateCRYAML))
 	require.Error(t, err)
-	assert.Equal(t, TierHotReloadOnly, tier)
-}
-
-func TestDetectTier_ExplicitFalseHotReloadIsTierC(t *testing.T) {
-	rec := &applyRecorder{answer: func(nth int, patch []byte) (*unstructured.Unstructured, error) {
-		t.Fatal("Tier C must not probe for configId support")
-		return nil, nil
-	}}
-	cs := newApplyProbeClient(rec)
-
-	cr := strings.Replace(hotReloadCRYAML, "enabled: true", "enabled: false", 1)
-	tier, err := detectGatewayVerificationTier(context.Background(), cs, testNamespace, testGateway,
-		[]byte(cr), []byte(candidateCRYAML))
-	require.NoError(t, err)
-	assert.Equal(t, TierPodRollout, tier)
-}
-
-// ===========================================================================
-// tier semantics
-// ===========================================================================
-
-// The one property the rest of the wiring depends on, stated once: only Tier A
-// may stamp a configId.
-func TestVerificationTier_OnlyTierAInjectsConfigID(t *testing.T) {
-	assert.True(t, TierPerPodConfigID.InjectsConfigID())
-	assert.False(t, TierHotReloadOnly.InjectsConfigID())
-	assert.False(t, TierPodRollout.InjectsConfigID())
-	assert.False(t, VerificationTier("").InjectsConfigID(), "an unset tier must not inject")
-}
-
-// Tiers reach state files and log lines, so their wire values are fixed.
-func TestVerificationTier_WireValues(t *testing.T) {
-	assert.Equal(t, "per-pod-configid", string(TierPerPodConfigID))
-	assert.Equal(t, "hot-reload-only", string(TierHotReloadOnly))
-	assert.Equal(t, "pod-rollout", string(TierPodRollout))
+	assert.Contains(t, err.Error(), "admission webhook denied the request")
+	assert.Empty(t, stored)
 }

@@ -20,14 +20,14 @@ import (
 //
 // The defect these cover: with spec.hotReload.enabled the config applies in
 // place, so WaitForGatewayReady reports "no pod restart required" and passes
-// without the fence reaching a single pod. Verification must therefore be
-// chosen by tier, and the tier must decide whether kcp writes a configId at
+// without the fence reaching a single pod. Verification must therefore be chosen
+// by tier, and the hot-reload flag must decide whether kcp writes a configId at
 // all — stamping one on a non-hot-reload gateway rolls every pod.
 // ===========================================================================
 
 // testFencedCR is a parseable fenced CR, unlike the []byte("fenced") sentinel
-// the pre-tier tests use: Tier A rewrites this document, so it has to have a
-// spec to rewrite.
+// the pre-tier tests use: a hot-reload gateway gets this document rewritten, so
+// it has to have a spec to rewrite.
 const testFencedCR = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 spec:
@@ -46,6 +46,17 @@ spec:
   replicas: 3
   hotReload:
     enabled: true
+  routes:
+    - name: route-1
+      streamingDomain: sd-1
+`
+
+// testInitialCRNoHotReload is the shape of every gateway CR this repo generates
+// today, and of every gateway predating the feature.
+const testInitialCRNoHotReload = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+spec:
+  replicas: 3
   routes:
     - name: route-1
       streamingDomain: sd-1
@@ -98,9 +109,6 @@ type fenceProbe struct {
 	appliedYAML   []byte
 	waitConfigIDs []string
 
-	detectInitialYAML   []byte
-	detectCandidateYAML []byte
-
 	waitConfigID   string
 	waitSnapshot   gateway.ConditionSnapshot
 	waitPort       string
@@ -111,17 +119,20 @@ type fenceProbe struct {
 	readyWaitCalls int
 }
 
-// newTierMock wires a gateway mock that records into probe and reports the
-// given tier. Every method is populated so an unexpected call is visible in the
-// recorded sequence rather than silently defaulted.
-func newTierMock(probe *fenceProbe, tier gateway.VerificationTier, tierErr error) *mockGatewayService {
+// newTierMock wires a gateway mock that records into probe and produces the given
+// tier. Every method is populated so an unexpected call is visible in the recorded
+// sequence rather than silently defaulted.
+//
+// The tier is not injected, because production no longer asks anyone for it: it
+// falls out of the gateway CR's hotReload flag (supplied by the config — see
+// tierTestConfig and rolloutTierConfig) and the spec.configId the apply echoes
+// back. So this mock's job is to behave like a cluster of the requested kind:
+//
+//	per-pod-configid  keep the configId  -> echo it back
+//	hot-reload-only   prune the configId -> echo nothing back
+//	pod-rollout       nothing was stamped in the first place
+func newTierMock(probe *fenceProbe, tier gateway.VerificationTier) *mockGatewayService {
 	return &mockGatewayService{
-		detectGatewayVerificationTierFn: func(_ context.Context, _, _ string, initialYAML, candidateYAML []byte) (gateway.VerificationTier, error) {
-			probe.calls = append(probe.calls, "detect")
-			probe.detectInitialYAML = initialYAML
-			probe.detectCandidateYAML = candidateYAML
-			return tier, tierErr
-		},
 		snapshotGatewayConditionsFn: func(_ context.Context, _, _ string) (gateway.ConditionSnapshot, error) {
 			probe.calls = append(probe.calls, "snapshot")
 			return gateway.ConditionSnapshot{"platform.confluent.io/cluster-ready": {}}, nil
@@ -130,10 +141,14 @@ func newTierMock(probe *fenceProbe, tier gateway.VerificationTier, tierErr error
 			probe.calls = append(probe.calls, "getUIDs")
 			return map[k8stypes.UID]struct{}{"old-pod": {}}, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, y []byte) error {
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, y []byte) (string, error) {
 			probe.calls = append(probe.calls, "apply")
 			probe.appliedYAML = y
-			return nil
+			if tier != gateway.TierPerPodConfigID {
+				return "", nil
+			}
+			sent, _ := specConfigIDOf(y)
+			return sent, nil
 		},
 		waitForGatewayConfigAppliedFn: func(_ context.Context, _, _, targetConfigID string, before gateway.ConditionSnapshot, port string, poll, timeout time.Duration, onProgress func(gateway.ConfigApplyProgress)) error {
 			probe.calls = append(probe.calls, "waitConfig")
@@ -167,6 +182,8 @@ func newTierMock(probe *fenceProbe, tier gateway.VerificationTier, tierErr error
 	}
 }
 
+// tierTestConfig is a hot-reload gateway: the tier it ends up on is decided by
+// whether the cluster keeps the configId (see newTierMock).
 func tierTestConfig() *MigrationConfig {
 	return &MigrationConfig{
 		K8sNamespace:  "ns",
@@ -176,11 +193,28 @@ func tierTestConfig() *MigrationConfig {
 	}
 }
 
+// rolloutTierConfig is a gateway with hot reload off, which is the whole of what
+// puts a migration on the rollout tier — no cluster round trip is involved.
+func rolloutTierConfig() *MigrationConfig {
+	c := tierTestConfig()
+	c.InitialCrYAML = []byte(testInitialCRNoHotReload)
+	return c
+}
+
 // specConfigID reads spec.configId out of an applied CR document.
 func specConfigID(t *testing.T, crYAML []byte) (string, bool) {
 	t.Helper()
+	id, found := specConfigIDOf(crYAML)
+	return id, found
+}
+
+// specConfigIDOf is the same read without a *testing.T, for use inside the mock's
+// apply — which stands in for the API server deciding whether to keep the field.
+func specConfigIDOf(crYAML []byte) (string, bool) {
 	var obj map[string]any
-	require.NoError(t, yaml.Unmarshal(crYAML, &obj))
+	if err := yaml.Unmarshal(crYAML, &obj); err != nil {
+		return "", false
+	}
 	spec, ok := obj["spec"].(map[string]any)
 	if !ok {
 		return "", false
@@ -197,7 +231,7 @@ func specConfigID(t *testing.T, crYAML []byte) (string, bool) {
 // verifies. A mismatch would poll forever for a value no pod can ever report.
 func TestFenceGateway_TierA_StampedIDMatchesVerifiedID(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
 
@@ -210,11 +244,11 @@ func TestFenceGateway_TierA_StampedIDMatchesVerifiedID(t *testing.T) {
 // The condition baseline is only meaningful if it predates the apply.
 func TestFenceGateway_TierA_SnapshotsConditionsBeforeApply(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
 
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "waitConfig"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "apply", "waitConfig"}, probe.calls)
 	assert.Equal(t, gateway.ConditionSnapshot{"platform.confluent.io/cluster-ready": {}}, probe.waitSnapshot,
 		"the pre-apply snapshot must reach the wait")
 }
@@ -229,7 +263,7 @@ func TestFenceGateway_TierA_SnapshotsConditionsBeforeApply(t *testing.T) {
 // own rejection from inside its poll loop.
 func TestFenceGateway_TierA_DoesNotUseRolloutWaits(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
 
@@ -243,7 +277,7 @@ func TestFenceGateway_TierA_DoesNotUseRolloutWaits(t *testing.T) {
 // must not abort a fence.
 func TestFenceGateway_TierA_SnapshotFailureIsNonFatal(t *testing.T) {
 	probe := &fenceProbe{}
-	gw := newTierMock(probe, gateway.TierPerPodConfigID, nil)
+	gw := newTierMock(probe, gateway.TierPerPodConfigID)
 	gw.snapshotGatewayConditionsFn = func(_ context.Context, _, _ string) (gateway.ConditionSnapshot, error) {
 		probe.calls = append(probe.calls, "snapshot")
 		return nil, errors.New("403 forbidden")
@@ -257,7 +291,7 @@ func TestFenceGateway_TierA_SnapshotFailureIsNonFatal(t *testing.T) {
 
 func TestFenceGateway_TierA_ConfigWaitErrorAborts(t *testing.T) {
 	probe := &fenceProbe{}
-	gw := newTierMock(probe, gateway.TierPerPodConfigID, nil)
+	gw := newTierMock(probe, gateway.TierPerPodConfigID)
 	gw.waitForGatewayConfigAppliedFn = func(_ context.Context, _, _, _ string, _ gateway.ConditionSnapshot, _ string, _, _ time.Duration, _ func(gateway.ConfigApplyProgress)) error {
 		return fmt.Errorf("timed out waiting for gateway pods: 1 of 3 gateway pods have applied the new config")
 	}
@@ -278,7 +312,7 @@ func TestFenceGateway_TierA_RejectionIsRecoverable(t *testing.T) {
 		Reason:        "ContainerCrashed",
 		Message:       "canary exited 1",
 	}
-	gw := newTierMock(probe, gateway.TierPerPodConfigID, nil)
+	gw := newTierMock(probe, gateway.TierPerPodConfigID)
 	gw.waitForGatewayConfigAppliedFn = func(_ context.Context, _, _, _ string, _ gateway.ConditionSnapshot, _ string, _, _ time.Duration, _ func(gateway.ConfigApplyProgress)) error {
 		return rejection
 	}
@@ -296,7 +330,7 @@ func TestFenceGateway_TierA_RejectionIsRecoverable(t *testing.T) {
 // slow, so this wait is bounded even when the rollout waits are not.
 func TestFenceGateway_TierA_ConfigWaitIsBoundedByDefault(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
 
@@ -308,7 +342,7 @@ func TestFenceGateway_TierA_ConfigWaitIsBoundedByDefault(t *testing.T) {
 
 func TestFenceGateway_TierA_ExplicitRolloutTimeoutWins(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	wf.SetRolloutTimeout(5 * time.Minute)
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
@@ -320,13 +354,13 @@ func TestFenceGateway_TierA_ExplicitRolloutTimeoutWins(t *testing.T) {
 // longer counts it. When detection was requested, close that gap too.
 func TestFenceGateway_TierA_DetectingAlsoDrainsOldPods(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	config := tierTestConfig()
 	config.DetectUnroutedProducersDuration = 10 * time.Second
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
 
-	assert.Equal(t, []string{"detect", "snapshot", "getUIDs", "apply", "waitConfig", "waitPods"}, probe.calls,
+	assert.Equal(t, []string{"snapshot", "getUIDs", "apply", "waitConfig", "waitPods"}, probe.calls,
 		"the pre-fence pod set must be captured before the apply and drained after verification")
 	assert.Equal(t, map[k8stypes.UID]struct{}{"old-pod": {}}, probe.waitPodUIDs)
 }
@@ -336,7 +370,7 @@ func TestFenceGateway_TierA_DetectingAlsoDrainsOldPods(t *testing.T) {
 // actually landed. Fail before touching the cluster instead.
 func TestFenceGateway_TierA_StampFailureAbortsBeforeApply(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	config := tierTestConfig()
 	config.FencedCrYAML = []byte("fenced") // a scalar: no spec to stamp
 
@@ -352,15 +386,16 @@ func TestFenceGateway_TierA_StampFailureAbortsBeforeApply(t *testing.T) {
 
 func TestFenceGateway_TierB_NoConfigIDAndNoPerPodWait(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
 
-	assert.Equal(t, []byte(testFencedCR), probe.appliedYAML, "Tier B must apply the CR byte-for-byte")
-	_, found := specConfigID(t, probe.appliedYAML)
-	assert.False(t, found, "a configId is useless on Tier B and must not be written")
-	assert.NotContains(t, probe.calls, "waitConfig")
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile"}, probe.calls)
+	// The CR was stamped — on a hot-reload gateway that is how we find out whether
+	// the field sticks, and a pruned one is inert. What must not happen is polling
+	// /config for an id no pod can report.
+	assert.NotContains(t, probe.calls, "waitConfig",
+		"there is no per-pod handle on Tier B, so nothing may wait on one")
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile"}, probe.calls)
 }
 
 // TestFenceGateway_TierB_SnapshotsConditionsForTheAcceptanceWait: the baseline is
@@ -370,7 +405,7 @@ func TestFenceGateway_TierB_NoConfigIDAndNoPerPodWait(t *testing.T) {
 // its fast-fail on exactly the tier that has no other proof.
 func TestFenceGateway_TierB_SnapshotsConditionsForTheAcceptanceWait(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
 	// That it lands *before* the apply — the property that makes it a baseline at
@@ -381,7 +416,7 @@ func TestFenceGateway_TierB_SnapshotsConditionsForTheAcceptanceWait(t *testing.T
 
 func TestFenceGateway_TierB_ReconcileErrorAborts(t *testing.T) {
 	probe := &fenceProbe{}
-	gw := newTierMock(probe, gateway.TierHotReloadOnly, nil)
+	gw := newTierMock(probe, gateway.TierHotReloadOnly)
 	gw.waitForGatewayAcceptedFn = func(_ context.Context, _, _ string, _ gateway.ConditionSnapshot, _, _ time.Duration) error {
 		return errors.New("operator never reconciled")
 	}
@@ -394,12 +429,12 @@ func TestFenceGateway_TierB_ReconcileErrorAborts(t *testing.T) {
 
 func TestFenceGateway_TierB_DetectingDrainsOldPods(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
 	config := tierTestConfig()
 	config.DetectUnroutedProducersDuration = 10 * time.Second
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
-	assert.Equal(t, []string{"detect", "snapshot", "getUIDs", "apply", "reconcile", "waitPods"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "getUIDs", "apply", "reconcile", "waitPods"}, probe.calls)
 }
 
 // ---------------------------------------------------------------------------
@@ -411,9 +446,9 @@ func TestFenceGateway_TierB_DetectingDrainsOldPods(t *testing.T) {
 // turning an idempotent re-apply into a client-visible outage.
 func TestFenceGateway_TierC_NeverStampsConfigID(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
 
-	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
+	require.NoError(t, wf.FenceGateway(context.Background(), rolloutTierConfig()))
 
 	assert.Equal(t, []byte(testFencedCR), probe.appliedYAML, "Tier C must apply the CR byte-for-byte")
 	_, found := specConfigID(t, probe.appliedYAML)
@@ -422,60 +457,77 @@ func TestFenceGateway_TierC_NeverStampsConfigID(t *testing.T) {
 
 func TestFenceGateway_TierC_DetectionOff_UnchangedBehaviour(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
 
-	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
+	require.NoError(t, wf.FenceGateway(context.Background(), rolloutTierConfig()))
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
 }
 
 func TestFenceGateway_TierC_DetectionOn_UnchangedBehaviour(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
-	config := tierTestConfig()
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
+	config := rolloutTierConfig()
 	config.DetectUnroutedProducersDuration = 10 * time.Second
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
 
-	assert.Equal(t, []string{"detect", "snapshot", "getUIDs", "apply", "reconcile", "waitPods"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "getUIDs", "apply", "reconcile", "waitPods"}, probe.calls)
 	assert.Equal(t, 1, probe.waitPodsCalls, "the drain add-on must not double up on the rollout tier")
 }
 
 // ---------------------------------------------------------------------------
-// Detection failure
+// Unreadable hot-reload setting
 // ---------------------------------------------------------------------------
 
-// Refusing to fence because the gateway could not be classified would be worse
-// than fencing with the verification that shipped before tiers existed.
-func TestFenceGateway_DetectFailure_StillFencesOnFallbackTier(t *testing.T) {
+// Refusing to fence because the hot-reload setting could not be read would be
+// worse than fencing with the verification that shipped before hot reload was
+// handled at all. It falls back to the rollout tier, which is also the only
+// fallback that cannot roll a production gateway by stamping a configId blind.
+func TestFenceGateway_UnreadableHotReloadSetting_StillFencesOnRolloutTier(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, errors.New("connection reset")), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
+	config := tierTestConfig()
+	config.InitialCrYAML = []byte("not-a-cr") // a scalar: no spec to read hotReload from
 
-	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
+	require.NoError(t, wf.FenceGateway(context.Background(), config))
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
 	_, found := specConfigID(t, probe.appliedYAML)
-	assert.False(t, found, "an unclassified gateway must never be stamped")
+	assert.False(t, found, "a gateway of unknown kind must never be stamped")
 }
 
-// A probe that failed after establishing hot reload is on must not drop to the
-// rollout path, whose wait passes without proving anything under hot reload.
-func TestFenceGateway_DetectFailure_HotReloadFallbackUsesTierB(t *testing.T) {
+// Hot reload on but the configId pruned is Tier B: the acceptance gate is the
+// whole of the verification, and the rollout waits must not run — under hot reload
+// they pass without proving anything.
+func TestFenceGateway_ConfigIDPruned_UsesTierB(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly, errors.New("probe failed")), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile"}, probe.calls)
 	assert.Zero(t, probe.readyWaitCalls)
+
+	// The CR was still stamped — a pruned configId is inert, and writing it is how
+	// we find out whether it survives.
+	_, found := specConfigID(t, probe.appliedYAML)
+	assert.True(t, found, "a hot-reload gateway is stamped before we know whether the field sticks")
 }
 
-// The detector needs the live CR for the hot-reload flag and the candidate for
-// the configId probe; swapping them would classify the wrong document.
-func TestFenceGateway_DetectReceivesInitialAndFencedCRs(t *testing.T) {
+// A server that echoes back a different configId is not a usable handle either:
+// /config could never confirm the revision kcp is waiting on.
+func TestFenceGateway_ConfigIDAltered_UsesTierB(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	gw := newTierMock(probe, gateway.TierPerPodConfigID)
+	gw.applyGatewayYAMLFn = func(_ context.Context, _, _ string, y []byte) (string, error) {
+		probe.calls = append(probe.calls, "apply")
+		probe.appliedYAML = y
+		return "kcp-something-else", nil
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
 
 	require.NoError(t, wf.FenceGateway(context.Background(), tierTestConfig()))
-	assert.Equal(t, []byte(testInitialCR), probe.detectInitialYAML)
-	assert.Equal(t, []byte(testFencedCR), probe.detectCandidateYAML)
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile"}, probe.calls)
+	assert.NotContains(t, probe.calls, "waitConfig",
+		"kcp must not poll for a revision the server did not store")
 }
 
 // ===========================================================================
@@ -503,15 +555,15 @@ func switchTestConfig() *MigrationConfig {
 // interrogate pods that are about to be deleted.
 func TestSwitchGateway_TierA_SettlesPodsThenVerifiesPerPod(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), switchTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "waitReady", "waitConfig"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "apply", "waitReady", "waitConfig"}, probe.calls)
 }
 
 func TestSwitchGateway_TierA_StampedIDMatchesVerifiedID(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), switchTestConfig()))
 
@@ -531,39 +583,43 @@ func TestSwitchGateway_TierA_StampedIDMatchesVerifiedID(t *testing.T) {
 // false success into the operator's own error.
 func TestSwitchGateway_TierB_AcceptanceGatesReadiness(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), switchTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
 }
 
 func TestSwitchGateway_TierC_UnchangedBehaviour(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
 
-	require.NoError(t, wf.SwitchGateway(context.Background(), switchTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
+	config := switchTestConfig()
+	config.InitialCrYAML = []byte(testInitialCRNoHotReload)
+
+	require.NoError(t, wf.SwitchGateway(context.Background(), config))
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
 	assert.Equal(t, []byte(testSwitchoverCR), probe.appliedYAML, "Tier C must apply the CR byte-for-byte")
 	_, found := specConfigID(t, probe.appliedYAML)
 	assert.False(t, found, "stamping a configId with hot reload off rolls every gateway pod")
 }
 
-// The switchover CR is the candidate for the configId probe, not the fenced one:
-// they are different documents and only the one being applied can be classified.
-func TestSwitchGateway_DetectReceivesSwitchoverCR(t *testing.T) {
+// The switchover applies the switchover CR, not the fenced one. They are
+// different documents, and sending the wrong one would fence the gateway again
+// under the banner of switching it over.
+func TestSwitchGateway_AppliesTheSwitchoverCR(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), switchTestConfig()))
-	assert.Equal(t, []byte(testSwitchoverCR), probe.detectCandidateYAML)
-	assert.Equal(t, []byte(testInitialCR), probe.detectInitialYAML)
+	assert.Contains(t, string(probe.appliedYAML), "sd-cc", "the switchover CR's streamingDomain must reach the cluster")
+	assert.NotContains(t, string(probe.appliedYAML), "fence", "the fenced CR must not be re-applied as a switchover")
 }
 
 // All three gateway applies could otherwise fail with the same bare
 // "failed waiting for gateway readiness".
 func TestSwitchGateway_ErrorsNameTheStage(t *testing.T) {
 	probe := &fenceProbe{}
-	gw := newTierMock(probe, gateway.TierPodRollout, nil)
+	gw := newTierMock(probe, gateway.TierPodRollout)
 	gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 		return errors.New("pods never became ready")
 	}
@@ -577,7 +633,7 @@ func TestSwitchGateway_ErrorsNameTheStage(t *testing.T) {
 
 func TestSwitchGateway_TierA_ConfigWaitErrorNamesTheStage(t *testing.T) {
 	probe := &fenceProbe{}
-	gw := newTierMock(probe, gateway.TierPerPodConfigID, nil)
+	gw := newTierMock(probe, gateway.TierPerPodConfigID)
 	gw.waitForGatewayConfigAppliedFn = func(_ context.Context, _, _, _ string, _ gateway.ConditionSnapshot, _ string, _, _ time.Duration, _ func(gateway.ConfigApplyProgress)) error {
 		return errors.New("2 of 3 gateway pods have applied the new config")
 	}
@@ -590,7 +646,7 @@ func TestSwitchGateway_TierA_ConfigWaitErrorNamesTheStage(t *testing.T) {
 
 func TestSwitchGateway_StampFailureAbortsBeforeApply(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	config := switchTestConfig()
 	config.SwitchoverCrYAML = []byte("switchover") // a scalar: no spec to stamp
 
@@ -617,10 +673,10 @@ func unfenceTestConfig() *MigrationConfig {
 // required" and prove nothing.
 func TestUnfenceGateway_TierA_VerifiesPerPodWithoutRolloutWait(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), unfenceTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "waitConfig"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "apply", "waitConfig"}, probe.calls)
 	assert.Zero(t, probe.readyWaitCalls)
 }
 
@@ -628,7 +684,7 @@ func TestUnfenceGateway_TierA_VerifiesPerPodWithoutRolloutWait(t *testing.T) {
 // recovered — the migration would look rolled back while the fence still held.
 func TestUnfenceGateway_TierA_ConfigWaitErrorNamesTheStage(t *testing.T) {
 	probe := &fenceProbe{}
-	gw := newTierMock(probe, gateway.TierPerPodConfigID, nil)
+	gw := newTierMock(probe, gateway.TierPerPodConfigID)
 	gw.waitForGatewayConfigAppliedFn = func(_ context.Context, _, _, _ string, _ gateway.ConditionSnapshot, _ string, _, _ time.Duration, _ func(gateway.ConfigApplyProgress)) error {
 		return errors.New("0 of 3 gateway pods have applied the new config")
 	}
@@ -643,7 +699,7 @@ func TestUnfenceGateway_TierA_ConfigWaitErrorNamesTheStage(t *testing.T) {
 // migrations must not collide.
 func TestUnfenceGateway_TierA_MintsAnIDWhenNoneRecorded(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), unfenceTestConfig()))
 	require.NoError(t, wf.unfenceGateway(context.Background(), unfenceTestConfig()))
@@ -655,44 +711,47 @@ func TestUnfenceGateway_TierA_MintsAnIDWhenNoneRecorded(t *testing.T) {
 }
 
 // The load-bearing one. client-go's dynamic Apply rejects managedFields
-// client-side, before any request leaves the process, so probing the CR as
-// fetched would fail deterministically and silently downgrade the tier.
-func TestUnfenceGateway_ProbesTheStrippedCR(t *testing.T) {
+// client-side, before any request leaves the process, so applying the CR as
+// fetched would fail deterministically — and the rollback is the one path where a
+// deterministic failure is least affordable.
+func TestUnfenceGateway_AppliesTheStrippedCR(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), unfenceTestConfig()))
 
-	candidate := string(probe.detectCandidateYAML)
-	require.NotEmpty(t, candidate)
+	applied := string(probe.appliedYAML)
+	require.NotEmpty(t, applied)
 	for _, field := range []string{"managedFields", "resourceVersion", "uid:", "creationTimestamp", "generation", "status"} {
-		assert.NotContains(t, candidate, field, "the probed CR must be stripped of %s", field)
+		assert.NotContains(t, applied, field, "the applied CR must be stripped of %s", field)
 	}
-	assert.Contains(t, candidate, "hotReload", "stripping must not damage the spec")
+	assert.Contains(t, applied, "hotReload", "stripping must not damage the spec")
 }
 
 func TestUnfenceGateway_TierB_ReconcilesWithoutReadinessWait(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), unfenceTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile"}, probe.calls)
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile"}, probe.calls)
 	assert.Zero(t, probe.readyWaitCalls)
 }
 
 func TestUnfenceGateway_TierC_UnchangedBehaviour(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
+	config := unfenceTestConfig()
+	config.InitialCrYAML = []byte(testInitialCRNoHotReload)
 
-	require.NoError(t, wf.unfenceGateway(context.Background(), unfenceTestConfig()))
-	assert.Equal(t, []string{"detect", "snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
+	require.NoError(t, wf.unfenceGateway(context.Background(), config))
+	assert.Equal(t, []string{"snapshot", "apply", "reconcile", "waitReady"}, probe.calls)
 	_, found := specConfigID(t, probe.appliedYAML)
 	assert.False(t, found, "stamping a configId with hot reload off rolls every gateway pod")
 }
 
-func TestUnfenceGateway_MalformedInitialCRFailsBeforeDetect(t *testing.T) {
+func TestUnfenceGateway_MalformedInitialCRFailsBeforeAnyClusterCall(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
 	config := unfenceTestConfig()
 	config.InitialCrYAML = []byte("metadata: [unterminated")
 
@@ -747,7 +806,7 @@ func TestStrippedInitialCR_NoMetadataIsNotAnError(t *testing.T) {
 
 func TestFenceGateway_TierA_RecordsTheVerifiedRevision(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	config := tierTestConfig()
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
@@ -762,7 +821,7 @@ func TestFenceGateway_TierA_RecordsTheVerifiedRevision(t *testing.T) {
 // re-apply is byte-identical and CFK does not bump the generation again.
 func TestFenceGateway_TierA_ReusesTheRecordedRevision(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	config := tierTestConfig()
 	config.FenceConfigId = "kcp-1754300000-000001-deadbeef"
 
@@ -781,7 +840,7 @@ func TestFenceGateway_TierA_ReusesTheRecordedRevision(t *testing.T) {
 // unfence distinguishable from the fence it undid.
 func TestGatewayApplies_ReusePerStageAndSeparateAcrossStages(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	config := switchTestConfig()
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
@@ -798,7 +857,7 @@ func TestGatewayApplies_ReusePerStageAndSeparateAcrossStages(t *testing.T) {
 
 func TestUnfenceGateway_TierA_RecordsAndReusesItsOwnRevision(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	config := unfenceTestConfig()
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
@@ -814,26 +873,42 @@ func TestUnfenceGateway_TierA_RecordsAndReusesItsOwnRevision(t *testing.T) {
 // either — an id in the file would imply a verification that never happened.
 func TestFenceGateway_TierC_RecordsNoRevision(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
-	config := tierTestConfig()
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout), &mockClusterLinkService{})
+	config := rolloutTierConfig()
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
 	assert.Empty(t, config.FenceConfigId)
 }
 
-// A CFK downgrade mid-migration drops the gateway to a lower tier, which stamps
-// nothing. Erasing what an earlier run verified would lose support history for
-// no gain.
+// A CFK downgrade mid-migration stops the cluster keeping the configId, so the
+// apply no longer confirms a revision. Erasing what an earlier run verified would
+// lose support history for no gain.
 func TestFenceGateway_TierDowngrade_KeepsTheEarlierRecord(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPodRollout, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
 	config := tierTestConfig()
 	config.FenceConfigId = "kcp-1754300000-000001-deadbeef"
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
-	assert.Equal(t, "kcp-1754300000-000001-deadbeef", config.FenceConfigId, "an earlier record must survive a tier downgrade")
-	_, found := specConfigID(t, probe.appliedYAML)
-	assert.False(t, found, "the downgraded tier must still not stamp the CR")
+	assert.Equal(t, "kcp-1754300000-000001-deadbeef", config.FenceConfigId,
+		"an earlier record must survive the cluster ceasing to keep configId")
+
+	// The recorded id is reused rather than regenerated, so the downgrade cannot
+	// silently strand the revision an earlier run verified.
+	stamped, found := specConfigID(t, probe.appliedYAML)
+	require.True(t, found)
+	assert.Equal(t, "kcp-1754300000-000001-deadbeef", stamped)
+}
+
+// A revision is only recorded once the server confirms it kept the field, so a
+// recorded id always names a revision that was actually verifiable.
+func TestFenceGateway_ConfigIDPruned_RecordsNoRevision(t *testing.T) {
+	probe := &fenceProbe{}
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierHotReloadOnly), &mockClusterLinkService{})
+	config := tierTestConfig()
+
+	require.NoError(t, wf.FenceGateway(context.Background(), config))
+	assert.Empty(t, config.FenceConfigId, "a pruned configId was never a usable revision handle")
 }
 
 // ===========================================================================
@@ -862,7 +937,7 @@ func TestResolveGatewayConfigPort_DefaultAndOverride(t *testing.T) {
 // The resolved values have to actually reach the wait, not just resolve.
 func TestFenceGateway_TierA_HonoursGatewayConfigOverrides(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	wf.SetGatewayConfigPort("19180")
 	wf.SetGatewayConfigTimeout(45 * time.Second)
 
@@ -873,7 +948,7 @@ func TestFenceGateway_TierA_HonoursGatewayConfigOverrides(t *testing.T) {
 
 func TestSwitchGateway_TierA_HonoursGatewayConfigOverrides(t *testing.T) {
 	probe := &fenceProbe{}
-	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID, nil), &mockClusterLinkService{})
+	wf := NewMigrationActions(newTierMock(probe, gateway.TierPerPodConfigID), &mockClusterLinkService{})
 	wf.SetGatewayConfigPort("19180")
 	wf.SetGatewayConfigTimeout(45 * time.Second)
 
@@ -888,7 +963,7 @@ func TestGatewayApplies_AccessDenialStaysUnwrappable(t *testing.T) {
 	denial := &gateway.GatewayConfigAccessDeniedError{Namespace: "confluent"}
 
 	newDenyingMock := func(probe *fenceProbe) *mockGatewayService {
-		gw := newTierMock(probe, gateway.TierPerPodConfigID, nil)
+		gw := newTierMock(probe, gateway.TierPerPodConfigID)
 		gw.waitForGatewayConfigAppliedFn = func(_ context.Context, _, _, _ string, _ gateway.ConditionSnapshot, _ string, _, _ time.Duration, _ func(gateway.ConfigApplyProgress)) error {
 			return denial
 		}
