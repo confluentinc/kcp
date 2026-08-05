@@ -65,7 +65,11 @@ var steps = []step{
 	{
 		// -> v3: self_managed_connectors {connectors, metrics} becomes
 		// connect_clusters: [{connect_rest_url:"", connectors:[...], metrics:{...}}].
-		// Legacy files never persisted the Connect REST URL, so it is left empty.
+		// Legacy files never persisted the Connect REST URL, so it is left empty: the pre-v3
+		// schema only ever recorded connect_host (a connector's own internal worker address
+		// from the Connect /status API — not the REST endpoint used to scan), and the
+		// --connect-rest-url passed at scan time was never saved anywhere. This is a one-way
+		// gap: there is no way to recover it retroactively.
 		// connect_host on each connector is carried through unchanged.
 		//
 		// Fires for era C at any schemaVersion below current — this covers both a v1 file
