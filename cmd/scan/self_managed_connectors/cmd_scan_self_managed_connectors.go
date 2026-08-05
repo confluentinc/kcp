@@ -3,6 +3,7 @@ package self_managed_connectors
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -12,6 +13,12 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
+
+// embeddedCredentialsRe matches a URL with RFC 3986 userinfo (user[:pass]@)
+// in its authority component - e.g. https://admin:pw@connect:8083. It anchors
+// on scheme:// and only looks for an @ before the first /, ?, or #, so an @ in
+// a path segment (https://host/foo@bar) is not flagged.
+var embeddedCredentialsRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#]*@`)
 
 var (
 	stateFile      string
@@ -159,6 +166,15 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
+	}
+
+	// R.. secret leak guard: --connect-rest-url must not carry embedded HTTP
+	// Basic credentials (https://admin:pw@host). That's valid URL syntax, so a
+	// successful scan would persist the password verbatim into connect_rest_url
+	// in the state file. --use-basic-auth --username --password is the correct,
+	// already-supported way to authenticate.
+	if embeddedCredentialsRe.MatchString(normaliseConnectURL(connectRestURL)) {
+		return fmt.Errorf("--connect-rest-url must not embed credentials (user:pass@); use --use-basic-auth --username --password instead")
 	}
 
 	if useBasicAuth {
