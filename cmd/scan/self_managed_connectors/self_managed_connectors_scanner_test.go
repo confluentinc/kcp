@@ -88,8 +88,8 @@ func TestScanner_RedactsConfigBeforePersist(t *testing.T) {
 
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	require.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
-	conns := cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors
+	require.Len(t, cluster.KafkaAdminClientInformation.ConnectClusters, 1)
+	conns := cluster.KafkaAdminClientInformation.ConnectClusters[0].Connectors
 	require.Len(t, conns, 1)
 	assert.Equal(t, redact.Placeholder, conns[0].Config["database.password"], "secret redacted before persist")
 	assert.Equal(t, "3", conns[0].Config["tasks.max"], "benign config preserved")
@@ -188,25 +188,49 @@ func TestScanner_GetConnectorDetails_NonStringWorkerID(t *testing.T) {
 func TestScanner_UpdateStateWithConnectors_OSK_Success(t *testing.T) {
 	st := stateWithOSKCluster()
 	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeOSK, ClusterID: testOSKID}
-	require.NoError(t, s.updateStateWithConnectors([]types.SelfManagedConnector{{Name: "c1"}}))
+	require.NoError(t, s.updateStateWithConnectors([]types.Connector{{Name: "c1"}}))
 
 	cl, err := st.GetOSKClusterByID(testOSKID)
 	require.NoError(t, err)
-	require.NotNil(t, cl.KafkaAdminClientInformation.SelfManagedConnectors)
-	assert.Len(t, cl.KafkaAdminClientInformation.SelfManagedConnectors.Connectors, 1)
+	require.Len(t, cl.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.Len(t, cl.KafkaAdminClientInformation.ConnectClusters[0].Connectors, 1)
 }
 
 func TestScanner_UpdateStateWithConnectors_OSK_NotFound(t *testing.T) {
 	s := &SelfManagedConnectorsScanner{State: stateWithOSKCluster(), SourceType: types.SourceTypeOSK, ClusterID: "no-such-cluster"}
-	err := s.updateStateWithConnectors([]types.SelfManagedConnector{{Name: "c1"}})
+	err := s.updateStateWithConnectors([]types.Connector{{Name: "c1"}})
 	require.Error(t, err)
 }
 
 func TestScanner_UpdateStateWithConnectors_UnsupportedSourceType(t *testing.T) {
 	s := &SelfManagedConnectorsScanner{State: stateWithCluster(), SourceType: types.SourceType("bogus"), ClusterArn: testArn}
-	err := s.updateStateWithConnectors([]types.SelfManagedConnector{{Name: "c1"}})
+	err := s.updateStateWithConnectors([]types.Connector{{Name: "c1"}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unsupported source type")
+}
+
+// TestUpdateStateWithConnectors_GroupsUnderConnectRestURL is the Task 1.3 TDD
+// anchor: a scan that discovers connectors then attaches metrics must land
+// both under a single ConnectCluster keyed by the scan's --connect-rest-url.
+func TestUpdateStateWithConnectors_GroupsUnderConnectRestURL(t *testing.T) {
+	st := &types.State{OSKSources: &types.OSKSourcesState{Clusters: []types.OSKDiscoveredCluster{{ID: "c1"}}}}
+	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeOSK, ClusterID: "c1", connectRestURL: "http://connect:8083"}
+	if err := s.updateStateWithConnectors([]types.Connector{{Name: "a"}, {Name: "b"}}); err != nil {
+		t.Fatal(err)
+	}
+	info := &st.OSKSources.Clusters[0].KafkaAdminClientInformation
+	if len(info.ConnectClusters) != 1 || info.ConnectClusters[0].ConnectRestURL != "http://connect:8083" {
+		t.Fatalf("grouping wrong: %+v", info.ConnectClusters)
+	}
+	if len(info.ConnectClusters[0].Connectors) != 2 {
+		t.Fatalf("want 2 connectors, got %d", len(info.ConnectClusters[0].Connectors))
+	}
+	if err := s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{}); err != nil {
+		t.Fatal(err)
+	}
+	if info.ConnectClusters[0].Metrics == nil {
+		t.Fatalf("metrics not attached to the connect cluster")
+	}
 }
 
 // --- updateStateWithConnectMetrics: MSK/OSK routing (restored from 6a99cb8f) ---
@@ -215,20 +239,35 @@ func TestScanner_UpdateStateWithConnectMetrics_MSK_Success(t *testing.T) {
 	st := stateWithCluster()
 	cl, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	cl.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "c1"}})
+	cl.KafkaAdminClientInformation.SetConnectCluster("", []types.Connector{{Name: "c1"}})
 
 	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeMSK, ClusterArn: testArn}
 	metrics := &types.ConnectClusterMetrics{}
 	require.NoError(t, s.updateStateWithConnectMetrics(metrics))
 
 	cl2, _ := st.GetClusterByArn(testArn)
-	assert.Same(t, metrics, cl2.KafkaAdminClientInformation.SelfManagedConnectors.Metrics)
+	require.Len(t, cl2.KafkaAdminClientInformation.ConnectClusters, 1)
+	// Since Task 2.4, updateStateWithConnectMetrics routes the input through
+	// splitConnectMetrics, which returns a new cluster-level object rather than
+	// the same pointer; assert on the preserved content instead of identity.
+	got := cl2.KafkaAdminClientInformation.ConnectClusters[0].Metrics
+	require.NotNil(t, got)
+	assert.Equal(t, metrics.Metadata, got.Metadata)
+	assert.Empty(t, got.Metrics)
 }
 
+// SetConnectClusterMetrics find-or-creates the ConnectCluster entry (Task 1.3),
+// so attaching metrics with no prior connectors write now succeeds instead of
+// erroring.
 func TestScanner_UpdateStateWithConnectMetrics_MSK_NoConnectors(t *testing.T) {
-	s := &SelfManagedConnectorsScanner{State: stateWithCluster(), SourceType: types.SourceTypeMSK, ClusterArn: testArn}
-	err := s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{})
-	require.Error(t, err, "metrics with no prior connectors in state is an error")
+	st := stateWithCluster()
+	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeMSK, ClusterArn: testArn}
+	require.NoError(t, s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{}))
+
+	cl, err := st.GetClusterByArn(testArn)
+	require.NoError(t, err)
+	require.Len(t, cl.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.NotNil(t, cl.KafkaAdminClientInformation.ConnectClusters[0].Metrics)
 }
 
 func TestScanner_UpdateStateWithConnectMetrics_MSK_ClusterNotFound(t *testing.T) {
@@ -241,14 +280,21 @@ func TestScanner_UpdateStateWithConnectMetrics_OSK_Success(t *testing.T) {
 	st := stateWithOSKCluster()
 	cl, err := st.GetOSKClusterByID(testOSKID)
 	require.NoError(t, err)
-	cl.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "c1"}})
+	cl.KafkaAdminClientInformation.SetConnectCluster("", []types.Connector{{Name: "c1"}})
 
 	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeOSK, ClusterID: testOSKID}
 	metrics := &types.ConnectClusterMetrics{}
 	require.NoError(t, s.updateStateWithConnectMetrics(metrics))
 
 	cl2, _ := st.GetOSKClusterByID(testOSKID)
-	assert.Same(t, metrics, cl2.KafkaAdminClientInformation.SelfManagedConnectors.Metrics)
+	require.Len(t, cl2.KafkaAdminClientInformation.ConnectClusters, 1)
+	// Since Task 2.4, updateStateWithConnectMetrics routes the input through
+	// splitConnectMetrics, which returns a new cluster-level object rather than
+	// the same pointer; assert on the preserved content instead of identity.
+	got := cl2.KafkaAdminClientInformation.ConnectClusters[0].Metrics
+	require.NotNil(t, got)
+	assert.Equal(t, metrics.Metadata, got.Metadata)
+	assert.Empty(t, got.Metrics)
 }
 
 // --- collectConnectMetrics: guard rails (no network) ---
@@ -284,8 +330,8 @@ func TestScanner_Run_OSK_PersistsConnectors(t *testing.T) {
 
 	cl, err := st.GetOSKClusterByID(testOSKID)
 	require.NoError(t, err)
-	require.NotNil(t, cl.KafkaAdminClientInformation.SelfManagedConnectors)
-	assert.Len(t, cl.KafkaAdminClientInformation.SelfManagedConnectors.Connectors, 1)
+	require.Len(t, cl.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.Len(t, cl.KafkaAdminClientInformation.ConnectClusters[0].Connectors, 1)
 }
 
 func TestScanner_Run_PartialFailure(t *testing.T) {
@@ -306,8 +352,8 @@ func TestScanner_Run_PartialFailure(t *testing.T) {
 	require.NoError(t, s.Run(), "a single connector failure must not fail the whole scan")
 
 	cl, _ := st.GetClusterByArn(testArn)
-	require.NotNil(t, cl.KafkaAdminClientInformation.SelfManagedConnectors)
-	assert.Len(t, cl.KafkaAdminClientInformation.SelfManagedConnectors.Connectors, 2, "only the healthy connectors are recorded")
+	require.Len(t, cl.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.Len(t, cl.KafkaAdminClientInformation.ConnectClusters[0].Connectors, 2, "only the healthy connectors are recorded")
 }
 
 // A metrics-collection failure must never abort the connector scan: connectors
@@ -330,13 +376,21 @@ func TestScanner_Run_MetricsFailureDoesNotAbortScan(t *testing.T) {
 	require.NoError(t, s.Run(), "metrics collection failure must not abort the scan")
 
 	cl, _ := st.GetClusterByArn(testArn)
-	require.NotNil(t, cl.KafkaAdminClientInformation.SelfManagedConnectors)
-	assert.Len(t, cl.KafkaAdminClientInformation.SelfManagedConnectors.Connectors, 1, "connectors persisted despite metrics failure")
+	require.Len(t, cl.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.Len(t, cl.KafkaAdminClientInformation.ConnectClusters[0].Connectors, 1, "connectors persisted despite metrics failure")
 }
 
+// SetConnectClusterMetrics find-or-creates the ConnectCluster entry (Task 1.3),
+// so this no longer errors.
 func TestScanner_UpdateStateWithConnectMetrics_OSK_NoConnectors(t *testing.T) {
-	s := &SelfManagedConnectorsScanner{State: stateWithOSKCluster(), SourceType: types.SourceTypeOSK, ClusterID: testOSKID}
-	require.Error(t, s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{}))
+	st := stateWithOSKCluster()
+	s := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeOSK, ClusterID: testOSKID}
+	require.NoError(t, s.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{}))
+
+	cl, err := st.GetOSKClusterByID(testOSKID)
+	require.NoError(t, err)
+	require.Len(t, cl.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.NotNil(t, cl.KafkaAdminClientInformation.ConnectClusters[0].Metrics)
 }
 
 func TestScanner_UpdateStateWithConnectMetrics_OSK_ClusterNotFound(t *testing.T) {
@@ -460,19 +514,27 @@ func TestCmd_TLSDoesNotRequireCACert(t *testing.T) {
 
 // --- U2a: updateStateWithConnectMetrics (MSK-only attachment) ---
 
-func TestUpdateStateWithConnectMetrics_NoConnectors_Errors(t *testing.T) {
-	// The cluster has no SelfManagedConnectors object yet — attaching metrics
-	// must fail clearly rather than panic on a nil dereference.
-	scanner := &SelfManagedConnectorsScanner{State: stateWithCluster(), SourceType: types.SourceTypeMSK, ClusterArn: testArn}
+// SetConnectClusterMetrics find-or-creates the ConnectCluster entry (Task 1.3),
+// so attaching metrics with no prior connectors write no longer errors — it
+// creates the entry with only Metrics populated.
+func TestUpdateStateWithConnectMetrics_NoConnectors_CreatesEntry(t *testing.T) {
+	st := stateWithCluster()
+	scanner := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeMSK, ClusterArn: testArn}
 	err := scanner.updateStateWithConnectMetrics(&types.ConnectClusterMetrics{})
-	require.Error(t, err)
+	require.NoError(t, err)
+
+	cluster, err := st.GetClusterByArn(testArn)
+	require.NoError(t, err)
+	require.Len(t, cluster.KafkaAdminClientInformation.ConnectClusters, 1)
+	assert.NotNil(t, cluster.KafkaAdminClientInformation.ConnectClusters[0].Metrics)
+	assert.Empty(t, cluster.KafkaAdminClientInformation.ConnectClusters[0].Connectors)
 }
 
 func TestUpdateStateWithConnectMetrics_AttachesMetrics(t *testing.T) {
 	st := stateWithCluster()
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	cluster.KafkaAdminClientInformation.SetSelfManagedConnectors([]types.SelfManagedConnector{{Name: "pg-sink"}})
+	cluster.KafkaAdminClientInformation.SetConnectCluster("", []types.Connector{{Name: "pg-sink"}})
 
 	scanner := &SelfManagedConnectorsScanner{State: st, SourceType: types.SourceTypeMSK, ClusterArn: testArn}
 	m := &types.ConnectClusterMetrics{}
@@ -480,7 +542,14 @@ func TestUpdateStateWithConnectMetrics_AttachesMetrics(t *testing.T) {
 
 	got, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	require.Same(t, m, got.KafkaAdminClientInformation.SelfManagedConnectors.Metrics, "metrics attached to the connectors object")
+	require.Len(t, got.KafkaAdminClientInformation.ConnectClusters, 1)
+	// Since Task 2.4, updateStateWithConnectMetrics routes the input through
+	// splitConnectMetrics, which returns a new cluster-level object rather than
+	// the same pointer; assert on the preserved content instead of identity.
+	gotMetrics := got.KafkaAdminClientInformation.ConnectClusters[0].Metrics
+	require.NotNil(t, gotMetrics, "metrics attached to the connect cluster")
+	assert.Equal(t, m.Metadata, gotMetrics.Metadata)
+	assert.Empty(t, gotMetrics.Metrics)
 }
 
 // --- U2b: collectConnectMetrics dispatch + collector guards ---
@@ -637,8 +706,8 @@ func TestRun_JolokiaMetricsAttached(t *testing.T) {
 
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	conns := cluster.KafkaAdminClientInformation.SelfManagedConnectors
-	require.NotNil(t, conns)
+	require.Len(t, cluster.KafkaAdminClientInformation.ConnectClusters, 1)
+	conns := cluster.KafkaAdminClientInformation.ConnectClusters[0]
 	require.Len(t, conns.Connectors, 1)
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
@@ -663,8 +732,8 @@ func TestRun_PrometheusMetricsAttached(t *testing.T) {
 
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	conns := cluster.KafkaAdminClientInformation.SelfManagedConnectors
-	require.NotNil(t, conns)
+	require.Len(t, cluster.KafkaAdminClientInformation.ConnectClusters, 1)
+	conns := cluster.KafkaAdminClientInformation.ConnectClusters[0]
 	require.NotNil(t, conns.Metrics, "Connect metrics collected and attached")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
 	// End-to-end: the boundary mapper records the producing backend (U3/R2).
@@ -681,8 +750,8 @@ func TestRun_NoMetrics_MetricsNil(t *testing.T) {
 
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	require.NotNil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors)
-	require.Nil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors.Metrics)
+	require.Len(t, cluster.KafkaAdminClientInformation.ConnectClusters, 1)
+	require.Nil(t, cluster.KafkaAdminClientInformation.ConnectClusters[0].Metrics)
 }
 
 // R10: an unreachable metrics endpoint must not fail the scan; connectors persist.
@@ -784,15 +853,16 @@ func TestRun_JolokiaTLSHonored(t *testing.T) {
 
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	conns := cluster.KafkaAdminClientInformation.SelfManagedConnectors
+	require.Len(t, cluster.KafkaAdminClientInformation.ConnectClusters, 1)
+	conns := cluster.KafkaAdminClientInformation.ConnectClusters[0]
 	require.NotNil(t, conns.Metrics, "HTTPS collection succeeded ⇒ TLS option applied")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
 }
 
 // R9 / AE3 (scanner path): a metrics run followed by a re-run WITHOUT --metrics
 // must leave previously-collected metrics intact through a real persist→reload
-// cycle. The scanner path preserves via SetSelfManagedConnectors (it loads full
-// state and mutates in place), distinct from the mergeSelfManagedConnectors path
+// cycle. The scanner path preserves via SetConnectCluster (it loads full
+// state and mutates in place), distinct from the mergeConnectClusters path
 // exercised in internal/types.
 func TestRun_ReRunWithoutMetrics_PreservesMetrics(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(connectJolokiaHandler))
@@ -815,7 +885,8 @@ func TestRun_ReRunWithoutMetrics_PreservesMetrics(t *testing.T) {
 	require.NoError(t, err)
 	c2, err := st2.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	require.NotNil(t, c2.KafkaAdminClientInformation.SelfManagedConnectors.Metrics, "run 1 collected metrics")
+	require.Len(t, c2.KafkaAdminClientInformation.ConnectClusters, 1)
+	require.NotNil(t, c2.KafkaAdminClientInformation.ConnectClusters[0].Metrics, "run 1 collected metrics")
 
 	// Run 2: re-scan WITHOUT --metrics on the reloaded state.
 	scanner2 := &SelfManagedConnectorsScanner{
@@ -827,7 +898,8 @@ func TestRun_ReRunWithoutMetrics_PreservesMetrics(t *testing.T) {
 	require.NoError(t, err)
 	c3, err := st3.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	require.NotNil(t, c3.KafkaAdminClientInformation.SelfManagedConnectors.Metrics,
+	require.Len(t, c3.KafkaAdminClientInformation.ConnectClusters, 1)
+	require.NotNil(t, c3.KafkaAdminClientInformation.ConnectClusters[0].Metrics,
 		"metrics preserved across a re-run without --metrics (R9/AE3)")
 }
 
@@ -854,8 +926,8 @@ func TestRun_ZeroConnectorsWithMetrics_SkipsMetrics(t *testing.T) {
 
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	require.Nil(t, cluster.KafkaAdminClientInformation.SelfManagedConnectors,
-		"no connectors object created, so no metrics attached")
+	require.Empty(t, cluster.KafkaAdminClientInformation.ConnectClusters,
+		"no connect cluster entry created, so no metrics attached")
 }
 
 // Abuse (R12): symmetric TLS-honored check for the Prometheus backend.
@@ -879,7 +951,8 @@ func TestRun_PrometheusTLSHonored(t *testing.T) {
 
 	cluster, err := st.GetClusterByArn(testArn)
 	require.NoError(t, err)
-	conns := cluster.KafkaAdminClientInformation.SelfManagedConnectors
+	require.Len(t, cluster.KafkaAdminClientInformation.ConnectClusters, 1)
+	conns := cluster.KafkaAdminClientInformation.ConnectClusters[0]
 	require.NotNil(t, conns.Metrics, "HTTPS collection succeeded ⇒ TLS option applied")
 	require.Contains(t, conns.Metrics.Aggregates, "connector-count")
 }
