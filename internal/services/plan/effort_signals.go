@@ -191,11 +191,9 @@ func signalSelfManagedConnectFleets(clusters []report.ProcessedCluster) EffortSi
 	// mixed-units max, treat the count as a floor.
 	scannerConnectorCount := 0
 	for _, c := range clusters {
-		smc := c.KafkaAdminClientInformation.SelfManagedConnectors
-		if smc == nil {
-			continue
+		for _, cc := range c.KafkaAdminClientInformation.ConnectClusters {
+			scannerConnectorCount += len(cc.Connectors)
 		}
-		scannerConnectorCount += len(smc.Connectors)
 	}
 	count := fleetsByTopic
 	if scannerConnectorCount > count {

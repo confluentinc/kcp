@@ -48,8 +48,11 @@ test.describe('Region Costs', () => {
     const tableTab = page.locator('button:has-text("Table")')
     await tableTab.click()
 
-    // Table should show cost data with service names
-    await expect(page.locator('text=Amazon Managed Streaming for Apache Kafka')).toBeVisible({
+    // Table should show cost data with service names. The Service selector above the
+    // tabs also displays this same text (it now drives both the chart and the table,
+    // per the shared-selector consolidation), so scope to the table cell specifically
+    // (its title attribute) rather than a page-wide text match.
+    await expect(page.getByTitle('Amazon Managed Streaming for Apache Kafka', { exact: true })).toBeVisible({
       timeout: 5000,
     })
   })

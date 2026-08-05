@@ -64,18 +64,17 @@ interface ProcessedData {
  * and avoid frontend calculation discrepancies.
  *
  * @param {CostsApiResponse | null | undefined} costsResponse - Raw cost data from API
- * @param {string} selectedTableService - Currently selected service for table filtering (empty string = show all)
  * @param {string} selectedCostType - Cost type to display (e.g., 'unblended_cost', 'amortized_cost')
+ * @param {string} selectedService - Currently selected service; drives both the chart series and the table filter (empty string = show all in the table)
  * @returns {ProcessedData} Processed cost data for UI components
  */
 export const useRegionCostsData = (
   costsResponse: CostsApiResponse | null | undefined,
-  selectedTableService: string,
   selectedCostType: string,
-  selectedChartService: string
+  selectedService: string
 ): ProcessedData => {
   // Base memo: expensive grouping work that depends only on raw data and cost type.
-  // Does NOT depend on selectedTableService or selectedChartService.
+  // Does NOT depend on selectedService.
   const baseData = useMemo(() => {
     if (!costsResponse?.results || !Array.isArray(costsResponse.results)) {
       return {
@@ -249,7 +248,7 @@ export const useRegionCostsData = (
   }, [costsResponse, selectedCostType])
 
   // Derived memo: cheap computation for chart data (slim, selected service only) and table filter.
-  // Depends on selectedChartService and selectedTableService but NOT on the raw data.
+  // Depends on selectedService but NOT on the raw data.
   return useMemo(() => {
     const {
       costsByServiceAndUsage,
@@ -262,12 +261,12 @@ export const useRegionCostsData = (
       getUsageTypesForService,
     } = baseData
 
-    // Filter table data by selected service
-    const filteredTableData = selectedTableService
-      ? tableData.filter((row) => row.service === selectedTableService)
+    // Filter table data by the selected service
+    const filteredTableData = selectedService
+      ? tableData.filter((row) => row.service === selectedService)
       : tableData
 
-    // Build slim chart data with only the selected chart service's usage type keys
+    // Build slim chart data with only the selected service's usage type keys
     const chartData: ProcessedData['chartData'] = uniqueDates.map((date) => {
       const dateObj = new Date(date)
       const dataPoint: ProcessedData['chartData'][number] = {
@@ -276,23 +275,23 @@ export const useRegionCostsData = (
         epochTime: dateObj.getTime(),
       }
 
-      if (selectedChartService) {
+      if (selectedService) {
         // Add service-level total for the selected service
         let serviceCostForDate = 0
-        if (costsByServiceAndUsage[selectedChartService]) {
-          Object.keys(costsByServiceAndUsage[selectedChartService]).forEach((usageType) => {
+        if (costsByServiceAndUsage[selectedService]) {
+          Object.keys(costsByServiceAndUsage[selectedService]).forEach((usageType) => {
             serviceCostForDate +=
-              costsByServiceAndUsage[selectedChartService][usageType][date] || 0
+              costsByServiceAndUsage[selectedService][usageType][date] || 0
           })
         }
-        dataPoint[selectedChartService] = serviceCostForDate
+        dataPoint[selectedService] = serviceCostForDate
 
         // Add individual usage type keys for the selected service only
-        if (costsByServiceAndUsage[selectedChartService]) {
-          Object.keys(costsByServiceAndUsage[selectedChartService]).forEach((usageType) => {
-            const usageKey = `${selectedChartService}:${usageType}`
+        if (costsByServiceAndUsage[selectedService]) {
+          Object.keys(costsByServiceAndUsage[selectedService]).forEach((usageType) => {
+            const usageKey = `${selectedService}:${usageType}`
             dataPoint[usageKey] =
-              costsByServiceAndUsage[selectedChartService][usageType][date] || 0
+              costsByServiceAndUsage[selectedService][usageType][date] || 0
           })
         }
       } else {
@@ -322,5 +321,5 @@ export const useRegionCostsData = (
       services,
       serviceTotals,
     }
-  }, [baseData, selectedChartService, selectedTableService])
+  }, [baseData, selectedService])
 }
