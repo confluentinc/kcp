@@ -24,7 +24,7 @@ import (
 // orchestratorOverrides allows tests to customize mock behavior before construction.
 type orchestratorOverrides struct {
 	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
-	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
+	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) (string, error)
 	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
@@ -60,8 +60,8 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	getGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
 		return []byte("initial-yaml"), nil
 	}
-	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte) error {
-		return nil
+	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
+		return "", nil
 	}
 
 	// Track promoted topics so ListMirrorTopics can model the realistic
@@ -278,8 +278,8 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 
 func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-			return fmt.Errorf("apply gateway failed: forbidden")
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
+			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
 
@@ -304,13 +304,13 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	var appliedYAMLs []string
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			// Record every applied CR so the unfence (the round-tripped initial
 			// CR, distinct from the literal fenced-yaml) can be asserted below.
 			mu.Lock()
 			appliedYAMLs = append(appliedYAMLs, string(yaml))
 			mu.Unlock()
-			return nil
+			return "", nil
 		},
 	}
 
@@ -373,14 +373,14 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 	var applyCallCount int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			n := atomic.AddInt64(&applyCallCount, 1)
 			if n == 1 {
 				// First apply is the fence — succeed
-				return nil
+				return "", nil
 			}
 			// Second apply is the unfence — fail
-			return fmt.Errorf("k8s API unavailable")
+			return "", fmt.Errorf("k8s API unavailable")
 		},
 	}
 
@@ -590,11 +590,11 @@ func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T
 			var mu sync.Mutex
 			var appliedYAMLs []string
 			overrides := orchestratorOverrides{
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 					mu.Lock()
 					appliedYAMLs = append(appliedYAMLs, string(yaml))
 					mu.Unlock()
-					return nil
+					return "", nil
 				},
 			}
 
@@ -625,13 +625,13 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 	var stateDir string
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			if atomic.AddInt64(&applyCalls, 1) == 2 {
 				// The unfence apply: remove the state directory so every
 				// subsequent persist fails while the unfence itself succeeds.
 				require.NoError(t, os.RemoveAll(stateDir))
 			}
-			return nil
+			return "", nil
 		},
 	}
 
@@ -674,9 +674,9 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 	}
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			record("apply")
-			return nil
+			return "", nil
 		},
 	}
 
@@ -750,9 +750,9 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 	var applyCalls, waitCalls, alterCalls int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
-			return nil
+			return "", nil
 		},
 		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			atomic.AddInt64(&waitCalls, 1)
@@ -799,12 +799,12 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	var applyCalls int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 2 {
-				return fmt.Errorf("k8s API unavailable") // the unfence attempt
+				return "", fmt.Errorf("k8s API unavailable") // the unfence attempt
 			}
-			return nil // fence (run 1), and the re-run's fence/switch applies
+			return "", nil // fence (run 1), and the re-run's fence/switch applies
 		},
 	}
 
@@ -857,13 +857,13 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(c context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(c context.Context, namespace, name string, yaml []byte) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 1 {
-				return nil // fence
+				return "", nil // fence
 			}
 			cancel() // ctx dies mid-unfence
-			return c.Err()
+			return "", c.Err()
 		},
 	}
 
@@ -906,9 +906,9 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 	}
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			record("apply")
-			return nil
+			return "", nil
 		},
 		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			record("wait-ready")
@@ -1120,11 +1120,11 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 				// unfence applies the round-tripped initial CR carrying
 				// "kind: Gateway". Failing only the latter cancels abort_fence,
 				// so the FSM honestly rests at offset_sync_paused.
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 					if strings.Contains(string(yaml), "kind: Gateway") {
-						return fmt.Errorf("k8s API unavailable")
+						return "", fmt.Errorf("k8s API unavailable")
 					}
-					return nil
+					return "", nil
 				},
 			},
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
@@ -1180,11 +1180,11 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			overrides: orchestratorOverrides{
 				// Fence and switchover both apply; only the switchover CR fails,
 				// leaving the FSM at promoted (switch failures do not roll back).
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 					if strings.Contains(string(yaml), "switchover") {
-						return fmt.Errorf("switchover apply failed")
+						return "", fmt.Errorf("switchover apply failed")
 					}
-					return nil
+					return "", nil
 				},
 			},
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
@@ -1432,9 +1432,9 @@ func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
 	// Re-running execute resumes from offset_sync_paused and retries verification.
 	var applyCalls int64
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
-			return nil
+			return "", nil
 		},
 	}
 

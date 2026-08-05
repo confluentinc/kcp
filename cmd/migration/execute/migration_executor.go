@@ -45,6 +45,14 @@ type MigrationExecutorOpts struct {
 	// synchronous batches of this size, waiting for each batch to reach
 	// STOPPED before promoting the next.
 	PromoteBatchSize int
+	// GatewayConfigPort is the port serving the gateway's config endpoint, used
+	// to confirm each pod applied a config change on a hot-reload-enabled
+	// gateway. Empty keeps the default.
+	GatewayConfigPort string
+	// GatewayConfigTimeout bounds that per-pod verification. A value of 0 falls
+	// back to RolloutTimeout, then to a built-in default — unlike the rollout
+	// waits, this one is never unbounded.
+	GatewayConfigTimeout time.Duration
 }
 
 type MigrationExecutor struct {
@@ -87,6 +95,8 @@ func (m *MigrationExecutor) Run() error {
 	actions := migration.NewMigrationActionsWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 	actions.SetRolloutTimeout(m.opts.RolloutTimeout)
 	actions.SetPromoteBatchSize(m.opts.PromoteBatchSize)
+	actions.SetGatewayConfigPort(m.opts.GatewayConfigPort)
+	actions.SetGatewayConfigTimeout(m.opts.GatewayConfigTimeout)
 
 	// The orchestrator is the single writer for migration state. Build it up
 	// front so its PersistState can back the offset-sync bookends too, rather

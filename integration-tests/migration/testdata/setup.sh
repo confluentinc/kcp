@@ -13,6 +13,24 @@ INIT_CONTAINER_TAG="${INIT_CONTAINER_TAG:-3.2.1}"
 GATEWAY_TAG="${GATEWAY_TAG:-1.2.0-1-ubi9}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
+# Images the gateway templates are rendered with. These exist because the tags
+# above previously fed only the docker pre-pull: the deployed tag was hardcoded
+# in manifests/templates/gateway-*.yaml, so overriding GATEWAY_TAG pre-pulled one
+# image and then ran a different one.
+GATEWAY_IMAGE="${GATEWAY_IMAGE:-confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}}"
+INIT_IMAGE="${INIT_IMAGE:-confluentinc/confluent-init-container:${INIT_CONTAINER_TAG}}"
+
+# Hot-reload scenario, opt-in. Requires a CFK chart that has
+# spec.hotReload.enabled — 0.1718.10 or later — because the default pin
+# (0.1514.19) does not have the field at all, and a Gateway CR carrying one the
+# CRD does not declare is at best silently pruned. Enable both together:
+#
+#   CFK_CHART_VERSION=0.1718.10 KCP_E2E_HOT_RELOAD=1 make test-migration
+#
+# The Go test skips itself when the scenario was not provisioned, so leaving this
+# unset costs nothing.
+HOT_RELOAD_ENABLED="${KCP_E2E_HOT_RELOAD:-0}"
+
 # wait_for_pods waits until at least one pod matching the label exists, then
 # waits for all matching pods to be Ready, printing status every 15s.
 wait_for_pods() {
@@ -171,6 +189,15 @@ wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup
 #   link     : e2e-link-<scenario>
 #   gateway  : migration-gateway-<scenario>
 SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters" "pause-sync-rogue" "pause-sync-drift" "pause-sync-drain" "batch" "rogue-producer" "rogue-producer-false-positive")
+
+# hot-reload is appended rather than listed inline so that the default run — on a
+# chart with no hotReload field — provisions exactly the scenarios it did before.
+HOT_RELOAD_SCENARIO="hot-reload"
+if [ "${HOT_RELOAD_ENABLED}" = "1" ]; then
+  SCENARIOS+=("${HOT_RELOAD_SCENARIO}")
+  echo "Hot-reload scenario ENABLED (CFK chart ${CFK_CHART_VERSION} must support spec.hotReload.enabled)"
+fi
+
 TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
 rm -rf "${RENDERED_DIR}"
@@ -207,10 +234,25 @@ render_scenario() {
   local link="e2e-link-${scenario}"
   local topic="e2e-test-topic-${scenario}"
   local out="${RENDERED_DIR}/$(basename "${template}" .yaml)-${scenario}.yaml"
+  # Image placeholders use | as the sed delimiter: the values contain slashes.
   sed -e "s/__GATEWAY_NAME__/${gateway}/g" \
       -e "s/__CLUSTER_LINK_NAME__/${link}/g" \
       -e "s/__TOPIC_NAME__/${topic}/g" \
+      -e "s|__GATEWAY_IMAGE__|${GATEWAY_IMAGE}|g" \
+      -e "s|__INIT_IMAGE__|${INIT_IMAGE}|g" \
       "${template}" > "${out}"
+
+  # Only the hot-reload scenario gets spec.hotReload. Appending it here rather
+  # than substituting a placeholder in the template keeps every other scenario's
+  # CR byte-identical to before, and avoids emitting a field the default chart's
+  # CRD does not declare.
+  if [ "${scenario}" = "${HOT_RELOAD_SCENARIO}" ]; then
+    cat >> "${out}" <<'EOF'
+  hotReload:
+    enabled: true
+EOF
+  fi
+
   printf '%s\n' "${out}"
 }
 

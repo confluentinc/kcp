@@ -77,7 +77,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-hotreload test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -110,6 +110,17 @@ test-migration: test-migration-setup ## Run full migration E2E lifecycle (setup,
 	@trap 'echo ""; echo "Tearing down migration E2E infrastructure..."; bash integration-tests/migration/testdata/teardown.sh' EXIT; \
 	echo "Running migration E2E tests..."; \
 	go test -v -tags=e2e -timeout 40m ./integration-tests/migration/...
+
+test-migration-hotreload: ## Run migration E2E incl. the hot-reload scenario (needs a CFK chart with spec.hotReload.enabled)
+	@CFK_CHART_VERSION=$(CFK_HOTRELOAD_CHART) KCP_E2E_HOT_RELOAD=1 bash integration-tests/migration/testdata/setup.sh
+	@trap 'echo ""; echo "Tearing down migration E2E infrastructure..."; bash integration-tests/migration/testdata/teardown.sh' EXIT; \
+	echo "Running migration E2E tests (hot-reload scenario enabled, CFK $(CFK_HOTRELOAD_CHART))..."; \
+	go test -v -tags=e2e -timeout 40m ./integration-tests/migration/...
+
+# Earliest CFK chart with spec.hotReload.enabled. Note this only reaches the
+# plan's "Tier B": spec.configId — and so per-pod verification — needs an
+# internal-registry chart, which this target cannot pull.
+CFK_HOTRELOAD_CHART ?= 0.1718.10
 
 test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
 	@bash integration-tests/migration/testdata/setup.sh
