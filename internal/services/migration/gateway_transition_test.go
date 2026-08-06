@@ -50,7 +50,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			verified = configID
 			return nil
 		}
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			t.Fatal("must not fall back to the rollout wait when a configId was applied")
 			return nil
 		}
@@ -72,7 +72,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		readyCalled := false
-		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			readyCalled = true
 			return nil
 		}
@@ -97,7 +97,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		// never be satisfied. Per-pod verification is the stronger guarantee.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			t.Fatal("the pod-replacement wait can never be satisfied by a hot-reload")
 			return nil
 		}
@@ -123,7 +123,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{"uid-1": {}}, nil
 		}
-		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			podsCalled = true
 			return nil
 		}

@@ -20,8 +20,9 @@ type mockGatewayService struct {
 	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
-	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
+	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 }
 
 func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -83,16 +84,26 @@ func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, n
 	return nil, fmt.Errorf("mockGatewayService.GetGatewayPodUIDs not configured")
 }
 
-func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+// GetGatewayDeploymentGeneration defaults to 0 — the "could not read it"
+// baseline, which the rollout waits treat as "any generation counts as a bump".
+// Tests that care about the baseline set getDeploymentGenFn.
+func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {
+	if m.getDeploymentGenFn != nil {
+		return m.getDeploymentGenFn(ctx, namespace, name)
+	}
+	return 0, nil
+}
+
+func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 	if m.waitForGatewayPodsFn != nil {
-		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, pollInterval, timeout, onProgress)
+		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
 	}
 	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
 }
 
-func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 	if m.waitForGatewayReadyFn != nil {
-		return m.waitForGatewayReadyFn(ctx, namespace, name, pollInterval, timeout, onProgress)
+		return m.waitForGatewayReadyFn(ctx, namespace, name, baselineGeneration, pollInterval, timeout, onProgress)
 	}
 	return nil
 }

@@ -25,7 +25,7 @@ import (
 type orchestratorOverrides struct {
 	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
 	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
-	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
@@ -87,7 +87,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	}
 
 	// Default nil → mock returns success
-	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 
 	// Apply overrides if provided
 	if len(overrides) > 0 {
@@ -116,7 +116,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 				"uid-2": {},
 			}, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return nil
 		},
 		waitForGatewayReadyFn: waitForGatewayReadyFn,
@@ -426,7 +426,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		// (the builder's default, which succeeds), so WaitForGatewayReady is
 		// reached only by the unfence rollout — fail it to exercise the
 		// "unfence never converges" path.
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			atomic.AddInt64(&waitCallCount, 1)
 			return fmt.Errorf("gateway pods did not converge")
 		},
@@ -754,7 +754,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 			atomic.AddInt64(&applyCalls, 1)
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			atomic.AddInt64(&waitCalls, 1)
 			return nil
 		},
@@ -910,7 +910,7 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 			record("apply")
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			record("wait-ready")
 			return nil
 		},

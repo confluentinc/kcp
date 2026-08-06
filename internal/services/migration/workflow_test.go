@@ -978,7 +978,7 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 			callOrder = append(callOrder, "apply")
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "wait")
 			if onProgress != nil {
 				onProgress(gateway.GatewayReadinessProgress{InitialPodCount: 3, PodsReady: 3, Elapsed: 2 * time.Second, RolloutDetected: true, Ready: true})
@@ -1004,7 +1004,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 			unwantedCall = "GetGatewayPodUIDs"
 			return nil, nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
 			unwantedCall = "WaitForGatewayPods"
 			return nil
 		},
@@ -1015,7 +1015,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1047,7 +1047,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1079,7 +1079,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			callOrder = append(callOrder, "reconcile")
 			return nil
 		},
-		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		waitForGatewayPodsFn: func(_ context.Context, _, _ string, initialPodUIDs map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			callOrder = append(callOrder, "waitPods")
 			passedUIDs = initialPodUIDs
 			if onProgress != nil {
@@ -1087,7 +1087,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			}
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1129,7 +1129,7 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
 		},
 	}
@@ -1148,7 +1148,7 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			<-ctx.Done()
 			return ctx.Err()
 		},
@@ -1171,7 +1171,7 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
@@ -1190,7 +1190,7 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			observedTimeout = timeout
 			return nil
 		},
@@ -1211,7 +1211,7 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 			callOrder = append(callOrder, fmt.Sprintf("apply:%s", string(yaml)))
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "wait")
 			return nil
 		},
@@ -1228,7 +1228,7 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("kube unreachable")
 		},
 	}
@@ -1273,7 +1273,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1305,7 +1305,7 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
@@ -1366,7 +1366,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
 			return nil
 		},
@@ -1393,7 +1393,7 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 			callOrder = append(callOrder, "accepted")
 			return nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "ready")
 			return nil
 		},
@@ -1660,7 +1660,7 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 			applyCalled = true
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, namespace, name string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, namespace, name string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitCalled = true
 			assert.True(t, applyCalled, "readiness wait must happen after the CR is applied")
 			assert.Equal(t, "confluent", namespace)
@@ -1687,7 +1687,7 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
 			return "", nil
 		},
-		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
 		},
 	}
