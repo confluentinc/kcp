@@ -35,7 +35,7 @@ type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
 	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error
+	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	WaitForGatewayPods(ctx context.Context, namespace, gatewayName string, initialPodUIDs map[types.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(PodRolloutProgress)) error
@@ -147,47 +147,74 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 	return response.Status.Allowed, nil
 }
 
-// ApplyGatewayYAML applies a complete gateway CR YAML to the cluster using server-side apply
-func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte) error {
+// ApplyGatewayYAML applies a complete gateway CR YAML to the cluster using
+// server-side apply.
+//
+// configID, when non-empty, is written to spec.configId so the transition can be
+// verified per-pod via GET /config. Pass an empty string on clusters whose CRD
+// does not declare the field — see Capability.InjectsConfigID. The returned
+// string is the configId the API server actually stored (empty when none was
+// injected).
+func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
-		return fmt.Errorf("failed to build config: %w", err)
+		return "", fmt.Errorf("failed to build config: %w", err)
 	}
 
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
-		return fmt.Errorf("failed to create dynamic client: %w", err)
+		return "", fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	return applyGatewayYAML(ctx, dynamicClient, namespace, gatewayName, yamlData, configID)
+}
+
+// applyGatewayYAML is the inner orchestration used by ApplyGatewayYAML. Split
+// from the method so unit tests can inject a fake dynamic client.
+func applyGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, yamlData []byte, configID string) (string, error) {
 	gatewayGVR := schema.GroupVersionResource{
 		Group:    GatewayGroup,
 		Version:  GatewayVersion,
 		Resource: GatewayResourcePlural,
 	}
 
-	// Parse YAML into unstructured object
-	var obj unstructured.Unstructured
-	if err := yaml.Unmarshal(yamlData, &obj.Object); err != nil {
-		return fmt.Errorf("failed to parse gateway YAML: %w", err)
+	obj, err := prepareGatewayApply(yamlData, namespace, gatewayName, configID)
+	if err != nil {
+		return "", err
 	}
 
-	// Ensure metadata matches the expected resource
-	obj.SetName(gatewayName)
-	obj.SetNamespace(namespace)
-
-	slog.Debug("🔍 applying gateway CR (server-side apply)", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlData))
+	slog.Debug("🔍 applying gateway CR (server-side apply)", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlData), "configId", configID)
 	start := time.Now()
-	_, err = dynamicClient.Resource(gatewayGVR).Namespace(namespace).
-		Apply(ctx, gatewayName, &obj, metav1.ApplyOptions{
+	applied, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Apply(ctx, gatewayName, obj, metav1.ApplyOptions{
 			FieldManager: "kcp-migration",
 			Force:        true,
 		})
 	if err != nil {
-		return fmt.Errorf("failed to apply gateway YAML: %w", err)
+		return "", fmt.Errorf("failed to apply gateway YAML: %w", err)
 	}
 
 	slog.Debug("applied gateway CR", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
-	return nil
+
+	if configID == "" {
+		return "", nil
+	}
+
+	// Confirm the server kept the field. A silently dropped configId would leave
+	// every subsequent GET /config poll waiting for a revision that will never
+	// appear, so fail here with the cause rather than later with a timeout.
+	if applied == nil {
+		return "", fmt.Errorf("gateway %q apply returned no object; cannot confirm the applied configId", gatewayName)
+	}
+	stored, found, err := unstructured.NestedString(applied.Object, "spec", gatewayConfigIDField)
+	if err != nil {
+		return "", fmt.Errorf("failed to read back spec.configId on gateway %q: %w", gatewayName, err)
+	}
+	if !found || stored != configID {
+		return "", fmt.Errorf("gateway %q did not retain the applied spec.configId; the installed CFK operator's CRD may not declare it", gatewayName)
+	}
+
+	return stored, nil
 }
 
 // GatewayRejectedError reports that the CFK operator processed the applied

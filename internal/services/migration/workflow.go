@@ -434,7 +434,9 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		}
 	}
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
+	// configID is empty until the capability gate and per-pod verification land;
+	// an empty id leaves spec.configId untouched, preserving today's behaviour.
+	if _, err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML, ""); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
@@ -496,7 +498,7 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
 	}
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML); err != nil {
+	if _, err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML, ""); err != nil {
 		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
 	}
 	slog.Debug("initial gateway CR applied")
@@ -904,7 +906,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {
+	if _, err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML, ""); err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	slog.Debug("switchover gateway CR applied")

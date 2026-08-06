@@ -15,7 +15,7 @@ type mockGatewayService struct {
 	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
 	validateGatewayCRsFn     func(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error)
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte) error
+	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
@@ -43,11 +43,11 @@ func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resourc
 	return true, nil
 }
 
-func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, name string, yaml []byte) error {
+func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
 	if m.applyGatewayYAMLFn != nil {
-		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml)
+		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml, configID)
 	}
-	return fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
+	return "", fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
 }
 
 func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
