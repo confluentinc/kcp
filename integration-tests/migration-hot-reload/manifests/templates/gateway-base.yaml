@@ -1,0 +1,87 @@
+# Base Gateway for the hot-reload suite. setup.sh renders the three transition
+# CRs from this file by substituting __ROUTE_EXTRA__ and __ROUTE_DOMAIN__.
+#
+# Deliberately self-contained: PLAINTEXT streaming domains and a passthrough
+# route, so it depends on no pre-existing secrets except the licence. The Kafka
+# backends are never contacted — CFK's readiness probe hits /livez on the admin
+# port, not the broker — so the pods go Ready regardless and GET /config is fully
+# exercisable without standing up any Kafka.
+#
+# BOTH streaming domains are declared in every transition, and the only thing
+# that changes between them is the route. That is what makes this suite test what
+# it claims to: per CFK's roll-vs-hot-reload rules an in-place route edit reloads
+# in place, while adding or removing a route, a streaming domain or a TLS secret
+# rolls the pods. Keeping the domain set fixed means fence and switchover are both
+# guaranteed hot-reloads, so a pod restart here is a real failure rather than an
+# expected mechanism.
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: __GATEWAY_NAME__
+  namespace: confluent
+  labels:
+    app.kubernetes.io/name: confluent-for-kubernetes
+    app.kubernetes.io/managed-by: kcp-e2e-hot-reload
+spec:
+  replicas: __REPLICAS__
+  image:
+    # 1.3.0 is the first release serving GET /config. 1.2.x has the
+    # GATEWAY_LICENSES hook but no endpoint to verify against.
+    application: confluentinc/confluent-gateway-for-cloud:__GATEWAY_TAG__
+    init: confluentinc/confluent-init-container:__INIT_TAG__
+  # kcp overwrites spec.configId on every apply. The value here is only the
+  # starting revision, and is deliberately NOT one kcp would generate (kcp-<hex>)
+  # so a test asserting the id changed cannot pass by coincidence.
+  configId: e2e-initial
+  hotReload:
+    enabled: true
+  podTemplate:
+    envVars:
+      - name: GATEWAY_ROOT_LOG_LEVEL
+        value: DEBUG
+      # Read by /etc/confluent/docker/configure, written to
+      # ${GATEWAY_TMP_DIR}/licenses.txt and passed as -l by docker/run. Without a
+      # valid Enterprise licence the gateway applies trial feature limits and
+      # never starts its config-file watcher — CFK still reports success, so the
+      # whole suite would pass its Kubernetes assertions and silently prove
+      # nothing. See VerifyHotReloadCapability.
+      - name: GATEWAY_LICENSES
+        valueFrom:
+          secretKeyRef:
+            name: gateway-license
+            key: license.txt
+  streamingDomains:
+    - name: source-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: SOURCE
+            endpoint: PLAINTEXT://source.kafka.invalid:9092
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 0
+    - name: destination-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: DESTINATION
+            endpoint: PLAINTEXT://destination.kafka.invalid:9092
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 0
+  routes:
+    - name: migration-route
+      endpoint: __GATEWAY_NAME__.confluent.svc.cluster.local:9595
+__ROUTE_EXTRA__
+      brokerIdentificationStrategy:
+        type: port
+      streamingDomain:
+        name: __ROUTE_DOMAIN__
+        bootstrapServerId: __ROUTE_BOOTSTRAP__
+      security:
+        client:
+          authentication:
+            type: none
+        auth: passthrough
