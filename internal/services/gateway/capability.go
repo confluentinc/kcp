@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -60,6 +61,7 @@ const (
 const (
 	advisoryNoConfigIDSupport = "the installed CFK operator's Gateway CRD does not declare spec.configId — this state transition will be verified by pod rollout"
 	advisoryHotReloadDisabled = "spec.hotReload.enabled is not set or disabled — this state transition will roll gateway pods"
+	advisoryNoConfigEndpoint  = "the gateway image does not expose /config — this state transition will be verified by pod rollout"
 )
 
 // Capability records what the live cluster supports, and therefore how kcp will
@@ -78,6 +80,11 @@ type Capability struct {
 	// spec.hotReload.enabled: true.
 	HotReloadEnabled bool
 
+	// ConfigEndpointServed reports whether the running gateway pods serve
+	// GET /config. Only meaningful when the two gates above passed, since the
+	// endpoint is not probed otherwise.
+	ConfigEndpointServed bool
+
 	// Advisory is a non-empty explanation whenever Mode is not
 	// VerifyPerPodConfigID, suitable for showing to the operator verbatim.
 	Advisory string
@@ -93,8 +100,9 @@ func (c Capability) InjectsConfigID() bool {
 }
 
 // DetectCapability determines how Gateway state transitions can be verified on
-// the live cluster.
-func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayName string) (Capability, error) {
+// the live cluster. port is the port serving GET /config; 0 selects
+// DefaultGatewayConfigPort.
+func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayName string, port int) (Capability, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return Capability{}, fmt.Errorf("failed to build config: %w", err)
@@ -105,7 +113,17 @@ func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayNam
 		return Capability{}, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
-	return detectCapability(ctx, dynamicClient, namespace, gatewayName)
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return Capability{}, fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	probe := func(ctx context.Context, endpoint GatewayPodEndpoint) (ProbeResult, error) {
+		return probeGatewayConfig(ctx, newConfigProbeClient(configProbeRequestTimeout),
+			gatewayConfigAddr(endpoint.IP, port))
+	}
+
+	return detectCapability(ctx, dynamicClient, clientset, probe, namespace, gatewayName)
 }
 
 // detectCapability is the inner orchestration used by DetectCapability. Split
@@ -116,7 +134,7 @@ func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayNam
 // gates that need the network (endpoint reachability, and whether a configId
 // bump actually propagates) are left to the caller, so an operator who never
 // wanted hot-reload never sees a network error.
-func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string) (Capability, error) {
+func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string) (Capability, error) {
 	if err := ctx.Err(); err != nil {
 		return Capability{}, err
 	}
@@ -167,14 +185,95 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, name
 		detected.Mode = VerifyRollout
 		detected.Advisory = advisoryHotReloadDisabled
 	default:
-		detected.Mode = VerifyPerPodConfigID
+		// Gate 3: do the running pods actually serve GET /config? The operator
+		// and the gateway are versioned separately, so a CRD that declares
+		// configId says nothing about the image the pods are running. Only this
+		// gate needs the network, which is why it is last: an operator who never
+		// wanted hot-reload never reaches it.
+		served, err := configEndpointServed(ctx, clientset, probe, namespace, gatewayName)
+		if err != nil {
+			return Capability{}, err
+		}
+		detected.ConfigEndpointServed = served
+		if served {
+			detected.Mode = VerifyPerPodConfigID
+		} else {
+			detected.Mode = VerifyRollout
+			detected.Advisory = advisoryNoConfigEndpoint
+		}
 	}
 
 	slog.Debug("resolved gateway verification mode",
 		"gateway", gatewayName, "namespace", namespace, "mode", detected.Mode,
-		"crdSupportsConfigId", detected.CRDSupportsConfigID, "hotReloadEnabled", detected.HotReloadEnabled)
+		"crdSupportsConfigId", detected.CRDSupportsConfigID, "hotReloadEnabled", detected.HotReloadEnabled,
+		"configEndpointServed", detected.ConfigEndpointServed)
 
 	return detected, nil
+}
+
+// configEndpointServed reports whether the gateway pods serve GET /config.
+//
+// The distinction this draws is between a capability problem and an environment
+// problem, and it is the reason a single call is enough:
+//
+//   - every ready pod answers 404 → the image predates the endpoint (it arrived
+//     in gateway 1.3.0). A supported cluster, verified by rollout instead.
+//   - any pod answers 200 → the endpoint is live. A mixed answer means an image
+//     change is mid-flight, which is itself a rollout; treating that as capable is
+//     right, because by the time kcp verifies anything the new pods are serving.
+//   - nothing is reachable → the pod network is not routable from here. That is
+//     an error, not a downgrade: kcp cannot reach the pods it would need to
+//     verify, and silently falling back would hide it until a switchover.
+//
+// Returning an error here is safe because every caller runs before fencing.
+func configEndpointServed(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string) (bool, error) {
+	endpoints, err := listGatewayPodEndpoints(ctx, clientset, namespace, gatewayName)
+	if err != nil {
+		return false, err
+	}
+
+	var ready, absent, reachable int
+	var firstFailure error
+	for _, endpoint := range endpoints {
+		if !endpoint.Ready {
+			continue
+		}
+		ready++
+
+		result, err := probe(ctx, endpoint)
+		if err != nil {
+			// Reserved for context cancellation; every per-pod condition comes
+			// back as a ProbeResult.
+			return false, err
+		}
+
+		switch result.Outcome {
+		case ProbeEndpointAbsent:
+			absent++
+		case ProbeApplied, ProbeNeverSet:
+			reachable++
+		default:
+			if firstFailure == nil {
+				firstFailure = result.Err
+			}
+		}
+	}
+
+	switch {
+	case ready == 0:
+		return false, fmt.Errorf("gateway %q has no ready pods to verify against", gatewayName)
+	case reachable > 0:
+		return true, nil
+	case absent == ready:
+		slog.Debug("no gateway pod serves the config endpoint; verifying by rollout",
+			"gateway", gatewayName, "readyPods", ready)
+		return false, nil
+	}
+
+	// Reached only when no pod was reachable and at least one failed outright.
+	// Counts only — pod names and IPs belong in the log, not the error.
+	return false, fmt.Errorf("could not reach the config endpoint on any of the %d ready gateway pods "+
+		"(this environment may not route pod IPs from where kcp is running): %w", ready, firstFailure)
 }
 
 // crdSupportsConfigID reports whether any served version of the Gateway CRD

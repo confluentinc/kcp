@@ -109,7 +109,12 @@ func (s *MigrationActions) SetHotReloadTimeout(d time.Duration) {
 // upgraded — or rolled back — in between, and the value that governs the run has
 // to reflect the cluster as it is now rather than as it was at init.
 func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
-	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName)
+	// Settle the port first: the last gate probes /config, so detection needs it.
+	if config.GatewayConfigPort == 0 {
+		config.GatewayConfigPort = gateway.DefaultGatewayConfigPort
+	}
+
+	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config))
 	if err != nil {
 		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
 	}
@@ -118,9 +123,6 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 	s.gatewayCapability = capability
 	config.GatewayVerificationMode = string(capability.Mode)
 	config.GatewayHotReloadEnabled = capability.HotReloadEnabled
-	if config.GatewayConfigPort == 0 {
-		config.GatewayConfigPort = gateway.DefaultGatewayConfigPort
-	}
 
 	// A change since init is worth saying out loud either way: it means the
 	// cluster moved under the migration.
@@ -194,16 +196,32 @@ func (s *MigrationActions) applyGatewayCR(ctx context.Context, config *Migration
 	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
 }
 
-// waitForGatewayConfigApplied blocks until every ready gateway pod reports
-// configID. This is the mechanism-agnostic check: it holds whether CFK chose a
-// hot-reload or a pod roll, so kcp never has to predict which.
-func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, config *MigrationConfig, configID, step string) error {
+// waitForGatewayConfigApplied blocks until every ready gateway pod reports the
+// applied configId. This is the mechanism-agnostic check: it holds whether CFK
+// chose a hot-reload or a pod roll, so kcp never has to predict which.
+//
+// Correctness does not depend on the mechanism, but the budget does. A
+// hot-reload converges in seconds and gets the bounded hot-reload budget; a roll
+// has to pull images and pass readiness probes, so the moment one is observed the
+// wait switches to the user's --rollout-timeout. Without that switch a
+// transition that legitimately rolls — a switchover whose CR adds a route or a
+// TLS secret, exactly the case that motivated per-pod verification — would be cut
+// off at 90s with traffic already fenced.
+func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, config *MigrationConfig, applied gatewayApplyResult, step string) error {
 	s.reporter.detail("Waiting for every gateway pod to apply the new config...")
-	slog.Debug("waiting for per-pod configId", "step", step, "configId", configID,
-		"port", gatewayConfigPort(config), "timeout", s.gatewayHotReloadTimeout())
+	slog.Debug("waiting for per-pod configId", "step", step, "configId", applied.ConfigID,
+		"port", gatewayConfigPort(config), "hotReloadTimeout", s.gatewayHotReloadTimeout(),
+		"rollTimeout", s.rolloutTimeout, "baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
 
-	err := s.gatewayService.WaitForGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName,
-		configID, gatewayConfigPort(config), 2*time.Second, s.gatewayHotReloadTimeout(), s.printConfigWaitProgress)
+	err := s.gatewayService.WaitForGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, gateway.ConfigWaitOptions{
+		ConfigID:                     applied.ConfigID,
+		Port:                         gatewayConfigPort(config),
+		BaselineDeploymentGeneration: applied.BaselineDeploymentGeneration,
+		PollInterval:                 2 * time.Second,
+		HotReloadTimeout:             s.gatewayHotReloadTimeout(),
+		RollTimeout:                  s.rolloutTimeout,
+		OnProgress:                   s.printConfigWaitProgress,
+	})
 	if err != nil {
 		return fmt.Errorf("failed waiting for the gateway to apply the %s config on every pod: %w", step, err)
 	}
@@ -217,7 +235,7 @@ func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, conf
 // config revision, so this falls back to the Deployment rollout wait.
 func (s *MigrationActions) verifyGatewayTransition(ctx context.Context, config *MigrationConfig, applied gatewayApplyResult, step string) error {
 	if applied.ConfigID != "" {
-		return s.waitForGatewayConfigApplied(ctx, config, applied.ConfigID, step)
+		return s.waitForGatewayConfigApplied(ctx, config, applied, step)
 	}
 
 	s.reporter.detail("Waiting for gateway readiness...")
@@ -275,7 +293,7 @@ func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config
 		return err
 	}
 
-	if err := s.waitForGatewayConfigApplied(ctx, config, applied.ConfigID, "hot-reload check"); err != nil {
+	if err := s.waitForGatewayConfigApplied(ctx, config, applied, "hot-reload check"); err != nil {
 		s.reporter.remediation("A configId-only change must hot-reload without restarting pods. When it never reaches the pods, the\n"+
 			"   gateway's config watcher is not running — most often because the gateway holds a trial rather than an\n"+
 			"   Enterprise licence. CFK reports success regardless, so check the gateway itself:\n"+
@@ -317,7 +335,16 @@ func (s *MigrationActions) printConfigWaitProgress(p gateway.ConfigWaitProgress)
 	if p.Converged {
 		return
 	}
-	s.reporter.detail("%d/%d gateway pods have applied the new config (elapsed %s)",
+	// Naming the mechanism explains why a wait is taking as long as it is: a
+	// roll has pods to replace, an in-place apply does not. It is only ever a
+	// description of what has been observed — the verdict comes from the pods
+	// reporting the configId, never from the mechanism.
+	if p.Mechanism == gateway.MechanismPodRoll {
+		s.reporter.detail("Gateway pods are rolling — %d/%d have applied the new config (elapsed %s)",
+			p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
+		return
+	}
+	s.reporter.detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config (elapsed %s)",
 		p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
 }
 
@@ -728,7 +755,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	switch {
 	case applied.ConfigID != "":
 		// Covers both mechanisms, and subsumes the pod-replacement wait below.
-		if err := s.waitForGatewayConfigApplied(ctx, config, applied.ConfigID, "fence"); err != nil {
+		if err := s.waitForGatewayConfigApplied(ctx, config, applied, "fence"); err != nil {
 			return err
 		}
 	case capturePods:

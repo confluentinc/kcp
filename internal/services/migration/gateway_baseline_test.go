@@ -17,7 +17,7 @@ import (
 // the generation baseline feeds.
 func rolloutVerifiedGateway() *mockGatewayService {
 	return &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string) (gateway.Capability, error) {
+		detectCapabilityFn: func(context.Context, string, string, int) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
@@ -157,6 +157,37 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 
 		require.Len(t, applied, 1)
 		assert.NotEmpty(t, applied[0])
+	})
+
+	t.Run("the configId wait receives both budgets and the baseline", func(t *testing.T) {
+		// The wait picks its deadline from whichever mechanism it observes, so it
+		// needs the roll budget as well as the hot-reload one. Passing only the
+		// latter is what would cut a legitimate rollout short after fencing.
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.getDeploymentGenFn = func(context.Context, string, string) (int64, error) {
+			return 17, nil
+		}
+
+		var got gateway.ConfigWaitOptions
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+			got = opts
+			return nil
+		}
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		actions.SetRolloutTimeout(25 * time.Minute)
+		actions.SetHotReloadTimeout(45 * time.Second)
+
+		config := hotReloadConfig()
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+		require.NoError(t, actions.FenceGateway(context.Background(), config))
+
+		assert.Equal(t, 45*time.Second, got.HotReloadTimeout)
+		assert.Equal(t, 25*time.Minute, got.RollTimeout, "the user's --rollout-timeout must govern an observed roll")
+		assert.Equal(t, int64(17), got.BaselineDeploymentGeneration)
+		assert.Equal(t, gateway.DefaultGatewayConfigPort, got.Port)
+		assert.NotEmpty(t, got.ConfigID)
 	})
 
 	t.Run("rollback carries a baseline", func(t *testing.T) {

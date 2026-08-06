@@ -45,8 +45,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			gatewayPodWithIP("gw-2", ns, gw, "uid-2", "10.0.1.2", true),
 		)
 
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, want,
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.NoError(t, err)
 	})
 
@@ -58,8 +57,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		)
 		prober := perPodProber(map[string]string{"gw-1": want}, "kcp-old")
 
-		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.Error(t, err, "one lagging pod must not be reported as converged")
 	})
 
@@ -84,8 +82,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			return ProbeResult{Outcome: ProbeApplied, ConfigID: id}, nil
 		}
 
-		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.NoError(t, err)
 	})
 
@@ -94,8 +91,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		// this would report a switchover as verified against no gateway at all.
 		cs := newFakeClientset(completeGatewayDeployment(gw, ns, 2))
 
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, want,
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.Error(t, err)
 	})
 
@@ -106,8 +102,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			gatewayPodWithIP("gw-2", ns, gw, "uid-2", "10.0.1.2", false),
 		)
 
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, want,
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.Error(t, err)
 	})
 
@@ -126,8 +121,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			gatewayPodWithIP("gw-1", ns, gw, "uid-1", "10.0.1.1", true),
 		)
 
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, want,
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.Error(t, err, "an incomplete rollout must not be reported as converged")
 	})
 
@@ -147,8 +141,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 				gatewayPodWithIP("gw-new", ns, gw, "uid-new", "10.0.1.9", true), metav1.CreateOptions{})
 		}()
 
-		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, 2*time.Second, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 2 * time.Second})
 		require.NoError(t, err)
 	})
 
@@ -164,8 +157,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		}
 
 		start := time.Now()
-		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, 10*time.Second, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 10 * time.Second})
 		require.Error(t, err)
 		assert.Less(t, time.Since(start), 2*time.Second, "must not wait out the timeout")
 		assert.Contains(t, err.Error(), "/config")
@@ -187,8 +179,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			return ProbeResult{Outcome: ProbeApplied, ConfigID: want}, nil
 		}
 
-		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, 50*time.Millisecond, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 50 * time.Millisecond})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "timed out", "a partial 404 must time out, not fail fast")
 	})
@@ -201,8 +192,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			gatewayPodWithIP("gw-1", ns, gw, "uid-1", "10.0.1.1", true),
 		)
 
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber("kcp-old"), ns, gw, want,
-			testPollInterval, 50*time.Millisecond, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber("kcp-old"), ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 50 * time.Millisecond})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "timed out")
 	})
@@ -214,8 +204,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			gatewayPodWithIP("gw-2", ns, gw, "uid-2", "10.0.1.2", true),
 		)
 
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber("kcp-old"), ns, gw, want,
-			testPollInterval, 50*time.Millisecond, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber("kcp-old"), ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 50 * time.Millisecond})
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "gw-1")
 		assert.NotContains(t, err.Error(), "10.0.1.1")
@@ -235,8 +224,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			return ProbeResult{Outcome: ProbeUnreachable, Err: fmt.Errorf("connection refused")}, nil
 		}
 
-		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, 50*time.Millisecond, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 50 * time.Millisecond})
 		require.Error(t, err)
 		assert.Greater(t, probeCount, 1, "must retry an unreachable pod")
 	})
@@ -249,8 +237,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := waitForGatewayConfigID(ctx, cs, staticProber("kcp-old"), ns, gw, want,
-			testPollInterval, 0, nil)
+		err := waitForGatewayConfigID(ctx, cs, staticProber("kcp-old"), ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: 0})
 		require.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -263,8 +250,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 			return ProbeResult{}, context.Canceled
 		}
 
-		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{ConfigID: want, PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.ErrorIs(t, err, context.Canceled)
 	})
 
@@ -277,10 +263,14 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		prober := perPodProber(map[string]string{"gw-1": want}, "kcp-old")
 
 		var got []ConfigWaitProgress
-		_ = waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
-			testPollInterval, 60*time.Millisecond, func(p ConfigWaitProgress) {
+		_ = waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, ConfigWaitOptions{
+			ConfigID:         want,
+			PollInterval:     testPollInterval,
+			HotReloadTimeout: 60 * time.Millisecond,
+			OnProgress: func(p ConfigWaitProgress) {
 				got = append(got, p)
-			})
+			},
+		})
 
 		require.NotEmpty(t, got)
 		for i, p := range got {
@@ -301,8 +291,12 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		)
 
 		var last ConfigWaitProgress
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, want,
-			testPollInterval, testWaitTimeout, func(p ConfigWaitProgress) { last = p })
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber(want), ns, gw, ConfigWaitOptions{
+			ConfigID:         want,
+			PollInterval:     testPollInterval,
+			HotReloadTimeout: testWaitTimeout,
+			OnProgress:       func(p ConfigWaitProgress) { last = p },
+		})
 		require.NoError(t, err)
 
 		assert.True(t, last.Converged)
@@ -315,8 +309,7 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		// and pass immediately.
 		cs := newFakeClientset(completeGatewayDeployment(gw, ns, 1))
 
-		err := waitForGatewayConfigID(context.Background(), cs, staticProber(""), ns, gw, "",
-			testPollInterval, testWaitTimeout, nil)
+		err := waitForGatewayConfigID(context.Background(), cs, staticProber(""), ns, gw, ConfigWaitOptions{ConfigID: "", PollInterval: testPollInterval, HotReloadTimeout: testWaitTimeout})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "configId")
 	})

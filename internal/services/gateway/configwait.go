@@ -42,6 +42,11 @@ type ConfigWaitProgress struct {
 	// RolloutComplete is the backing Deployment's rollout state.
 	RolloutComplete bool
 
+	// Mechanism is what the cluster has been observed doing so far, which
+	// selects the budget and the wording. It can change from
+	// MechanismNoRollObserved to MechanismPodRoll mid-wait, never back.
+	Mechanism RolloutMechanism
+
 	Elapsed   time.Duration
 	Converged bool
 }
@@ -50,9 +55,47 @@ type ConfigWaitProgress struct {
 // is testable without standing up an HTTP server per pod.
 type podProber func(ctx context.Context, endpoint GatewayPodEndpoint) (ProbeResult, error)
 
-// WaitForGatewayConfigID blocks until every Ready gateway pod reports configID,
-// or fails. timeout == 0 means no deadline, consistent with the other waits.
-func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, port int, pollInterval, timeout time.Duration, onProgress func(ConfigWaitProgress)) error {
+// ConfigWaitOptions parameterises a per-pod configId wait.
+//
+// The two budgets exist because the same verification covers both mechanisms but
+// they take wildly different amounts of time. A hot-reload converges in seconds,
+// so a short, always-bounded budget is right and a timeout is a real failure. A
+// roll has to pull images and pass readiness probes, and the user already has a
+// knob for how long they will tolerate that.
+type ConfigWaitOptions struct {
+	// ConfigID is the revision every Ready pod must report.
+	ConfigID string
+
+	// Port serves GET /config. 0 selects DefaultGatewayConfigPort.
+	Port int
+
+	// BaselineDeploymentGeneration is the backing Deployment's
+	// metadata.generation from immediately before the apply. A generation past
+	// it means CFK chose to replace the pods, which switches the wait to
+	// RollTimeout. 0 means it could not be read, and any generation then counts
+	// as a roll — the conservative direction, since it grants the longer budget
+	// rather than cutting a real rollout short.
+	BaselineDeploymentGeneration int64
+
+	PollInterval time.Duration
+
+	// HotReloadTimeout bounds the wait for as long as no roll has been observed.
+	// 0 selects DefaultHotReloadTimeout; it is deliberately never unbounded,
+	// because a hot-reload moves no Kubernetes signal that could be waited on
+	// instead.
+	HotReloadTimeout time.Duration
+
+	// RollTimeout replaces HotReloadTimeout the moment a roll is observed. 0
+	// means no deadline, matching --rollout-timeout's default: the operator
+	// drives a rollout to completion and the user can interrupt.
+	RollTimeout time.Duration
+
+	OnProgress func(ConfigWaitProgress)
+}
+
+// WaitForGatewayConfigID blocks until every Ready gateway pod reports
+// opts.ConfigID, or fails.
+func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return fmt.Errorf("failed to build config: %w", err)
@@ -65,10 +108,10 @@ func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gate
 
 	client := newConfigProbeClient(configProbeRequestTimeout)
 	probe := func(ctx context.Context, endpoint GatewayPodEndpoint) (ProbeResult, error) {
-		return probeGatewayConfig(ctx, client, gatewayConfigAddr(endpoint.IP, port))
+		return probeGatewayConfig(ctx, client, gatewayConfigAddr(endpoint.IP, opts.Port))
 	}
 
-	return waitForGatewayConfigID(ctx, clientset, probe, namespace, gatewayName, configID, pollInterval, timeout, onProgress)
+	return waitForGatewayConfigID(ctx, clientset, probe, namespace, gatewayName, opts)
 }
 
 // waitForGatewayConfigID is the inner orchestration used by
@@ -98,20 +141,49 @@ func (s *K8sService) WaitForGatewayConfigID(ctx context.Context, namespace, gate
 //     without this an empty or entirely unready pod set would read as success.
 //   - fresh enumeration every poll: a snapshot taken before the apply goes stale
 //     the moment a roll replaces a pod.
-func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName, want string, pollInterval, timeout time.Duration, onProgress func(ConfigWaitProgress)) error {
+//
+// The budget adapts as the mechanism reveals itself. The wait starts on the
+// hot-reload budget and switches to the roll budget the moment the Deployment's
+// generation moves past the pre-apply baseline. That check is free: the loop
+// already reads the Deployment every poll for the rollout clause.
+//
+// Doing it inside the loop rather than deciding up front matters twice over.
+// Deciding up front would mean paying the roll-confirmation window before the
+// first probe, adding ~10s to a hot-reload that converges in ~2s. And a roll is
+// not always apparent immediately — CFK can write the Deployment a moment after
+// it writes the CR status — so a wait that committed to the short budget at the
+// start could still time out mid-rollout, with traffic already fenced.
+func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string, opts ConfigWaitOptions) error {
+	want := opts.ConfigID
 	if want == "" {
 		return fmt.Errorf("cannot wait for an empty gateway configId: a gateway that has never applied a revision reports none, and would match immediately")
 	}
 
-	noDeadline := timeout <= 0
-	deadline := time.Now().Add(timeout)
+	hotReloadTimeout := opts.HotReloadTimeout
+	if hotReloadTimeout <= 0 {
+		hotReloadTimeout = DefaultHotReloadTimeout
+	}
+
 	start := time.Now()
+	mechanism := MechanismNoRollObserved
+
+	// budgetExpired reports whether the wait has run past whichever budget the
+	// currently-observed mechanism selects.
+	budgetExpired := func() bool {
+		if mechanism == MechanismPodRoll {
+			if opts.RollTimeout <= 0 {
+				return false
+			}
+			return time.Since(start) >= opts.RollTimeout
+		}
+		return time.Since(start) >= hotReloadTimeout
+	}
 
 	// Retained for the timeout message, which reports counts rather than pod
 	// identities.
 	var lastProgress ConfigWaitProgress
 
-	for noDeadline || time.Now().Before(deadline) {
+	for !budgetExpired() {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -128,6 +200,25 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 			return err
 		}
 		rolloutComplete := deploymentRolloutComplete(dep)
+
+		// A known baseline is required to widen the budget, which is the opposite
+		// of how observeRolloutMechanism treats an unknown one — deliberately.
+		// There, an unknown baseline routes to the convergence wait, which is the
+		// cautious choice because the alternative is declaring there is nothing to
+		// wait for. Here the roll budget is usually unbounded, so accepting an
+		// unknown baseline as evidence of a roll would silently convert this into
+		// a wait with no deadline — and hanging forever is precisely the outcome
+		// on a gateway whose config watcher never started, which is the failure
+		// this budget exists to surface. A live Deployment's generation is never
+		// 0, so this only excludes the case where the pre-apply read failed.
+		if mechanism == MechanismNoRollObserved &&
+			opts.BaselineDeploymentGeneration > 0 &&
+			dep.Generation > opts.BaselineDeploymentGeneration {
+			mechanism = MechanismPodRoll
+			slog.Debug("gateway deployment generation advanced during the config wait; switching to the rollout budget",
+				"gateway", gatewayName, "baselineGeneration", opts.BaselineDeploymentGeneration,
+				"generation", dep.Generation, "rollTimeout", opts.RollTimeout)
+		}
 
 		readyCount := 0
 		atWant := 0
@@ -185,26 +276,31 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 			PodsReady:       readyCount,
 			PodsAtWant:      atWant,
 			RolloutComplete: rolloutComplete,
+			Mechanism:       mechanism,
 			Elapsed:         time.Since(start),
 			Converged:       converged,
 		}
-		if onProgress != nil {
-			onProgress(lastProgress)
+		if opts.OnProgress != nil {
+			opts.OnProgress(lastProgress)
 		}
 
 		if converged {
 			slog.Debug("all ready gateway pods report the applied configId",
-				"gateway", gatewayName, "pods", readyCount, "elapsed", time.Since(start))
+				"gateway", gatewayName, "pods", readyCount, "mechanism", mechanism, "elapsed", time.Since(start))
 			return nil
 		}
 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(pollInterval):
+		case <-time.After(opts.PollInterval):
 		}
 	}
 
-	return fmt.Errorf("timed out after %s waiting for the gateway to apply the configId on every pod: %d of %d ready pods report it, deployment rollout complete=%t. Treat this as a failure rather than as still propagating — a change rejected by CFK's canary is indistinguishable from one still in flight until the deadline",
-		timeout, lastProgress.PodsAtWant, lastProgress.PodsReady, lastProgress.RolloutComplete)
+	spent := hotReloadTimeout
+	if mechanism == MechanismPodRoll {
+		spent = opts.RollTimeout
+	}
+	return fmt.Errorf("timed out after %s waiting for the gateway to apply the configId on every pod: %d of %d ready pods report it, deployment rollout complete=%t, observed mechanism=%s. Treat this as a failure rather than as still propagating — a change rejected by CFK's canary is indistinguishable from one still in flight until the deadline",
+		spent, lastProgress.PodsAtWant, lastProgress.PodsReady, lastProgress.RolloutComplete, mechanism)
 }

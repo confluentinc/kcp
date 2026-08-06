@@ -12,7 +12,29 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	"k8s.io/client-go/kubernetes"
 )
+
+// servingPods builds a clientset holding n Ready gateway pods, which is what the
+// endpoint gate enumerates before probing.
+func servingPods(namespace, gatewayName string, n int) kubernetes.Interface {
+	objs := make([]runtime.Object, 0, n)
+	for i := 0; i < n; i++ {
+		// A pod with no IP is not an endpoint the probe can reach, so the lister
+		// skips it — the IP is what makes these pods count as serving.
+		objs = append(objs, gatewayPodWithIP(
+			fmt.Sprintf("%s-%d", gatewayName, i), namespace, gatewayName,
+			fmt.Sprintf("uid-%d", i), fmt.Sprintf("10.0.1.%d", i+1), true))
+	}
+	return newFakeClientset(objs...)
+}
+
+// probeStub answers every pod with the same outcome.
+func probeStub(outcome ProbeOutcome) podProber {
+	return func(context.Context, GatewayPodEndpoint) (ProbeResult, error) {
+		return ProbeResult{Outcome: outcome, ConfigID: "rev-1"}, nil
+	}
+}
 
 var crdGVRForTest = schema.GroupVersionResource{
 	Group:    CRDGroup,
@@ -217,7 +239,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyPerPodConfigID, got.Mode)
@@ -232,7 +254,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -248,7 +270,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(false)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -264,7 +286,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, nil),
 		)
 
-		got, err := detectCapability(context.Background(), cs, ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -275,7 +297,7 @@ func TestDetectCapability(t *testing.T) {
 	t.Run("CRD absent - rollout mode, not an error", func(t *testing.T) {
 		cs := newFakeDynamicClientWithCRD(nil, newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
 
-		got, err := detectCapability(context.Background(), cs, ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.NoError(t, err, "a missing CRD means an older cluster, not a failure")
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -289,7 +311,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(false)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -303,7 +325,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRD(map[string][]string{"v1beta1": {"configId", "hotReload"}}),
 		)
 
-		_, err := detectCapability(context.Background(), cs, ns, gw)
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.Error(t, err, "we cannot decide a mode without reading the live gateway CR")
 		assert.Contains(t, err.Error(), gw)
 	})
@@ -316,7 +338,7 @@ func TestDetectCapability(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := detectCapability(ctx, cs, ns, gw)
+		_, err := detectCapability(ctx, cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
 		require.Error(t, err)
 	})
 }

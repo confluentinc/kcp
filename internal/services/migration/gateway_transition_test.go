@@ -16,7 +16,7 @@ import (
 // verification, recording every applied configId.
 func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 	return &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string) (gateway.Capability, error) {
+		detectCapabilityFn: func(context.Context, string, string, int) (gateway.Capability, error) {
 			return gateway.Capability{
 				Mode:                gateway.VerifyPerPodConfigID,
 				CRDSupportsConfigID: true,
@@ -46,7 +46,8 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 		gw := hotReloadCapableGateway(&applied)
 
 		var verified string
-		gw.waitForConfigIDFn = func(_ context.Context, _, _, configID string, _ int, _, _ time.Duration, _ func(gateway.ConfigWaitProgress)) error {
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+			configID := opts.ConfigID
 			verified = configID
 			return nil
 		}
@@ -68,7 +69,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("uses the rollout wait on a pre-hot-reload cluster", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string) (gateway.Capability, error) {
+		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		readyCalled := false
@@ -76,7 +77,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 			readyCalled = true
 			return nil
 		}
-		gw.waitForConfigIDFn = func(_ context.Context, _, _, _ string, _ int, _, _ time.Duration, _ func(gateway.ConfigWaitProgress)) error {
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			t.Fatal("must not verify by configId when the cluster cannot report one")
 			return nil
 		}
@@ -116,7 +117,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("still uses the pod-replacement wait when detecting without configId", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string) (gateway.Capability, error) {
+		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		podsCalled := false
@@ -140,7 +141,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("a configId verification failure fails the fence", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.waitForConfigIDFn = func(_ context.Context, _, _, _ string, _ int, _, _ time.Duration, _ func(gateway.ConfigWaitProgress)) error {
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out after 90s")
 		}
 
@@ -159,7 +160,8 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
 		var verified string
-		gw.waitForConfigIDFn = func(_ context.Context, _, _, configID string, _ int, _, _ time.Duration, _ func(gateway.ConfigWaitProgress)) error {
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+			configID := opts.ConfigID
 			verified = configID
 			return nil
 		}
@@ -222,7 +224,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 
 	t.Run("is a no-op on a cluster that cannot report a configId", func(t *testing.T) {
 		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string) (gateway.Capability, error) {
+			detectCapabilityFn: func(context.Context, string, string, int) (gateway.Capability, error) {
 				return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 			},
 			getGatewayYAMLFn: func(context.Context, string, string) ([]byte, error) {
@@ -245,7 +247,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		gw.getGatewayYAMLFn = func(context.Context, string, string) ([]byte, error) {
 			return []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nspec:\n  replicas: 1\n"), nil
 		}
-		gw.waitForConfigIDFn = func(_ context.Context, _, _, _ string, _ int, _, _ time.Duration, _ func(gateway.ConfigWaitProgress)) error {
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out after 90s waiting for the gateway to apply the configId")
 		}
 

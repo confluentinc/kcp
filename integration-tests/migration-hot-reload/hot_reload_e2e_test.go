@@ -152,11 +152,14 @@ func TestCapabilityIsDetected(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 
-	capability, err := e.svc.DetectCapability(ctx, e.namespace, e.gateway)
+	capability, err := e.svc.DetectCapability(ctx, e.namespace, e.gateway, gateway.DefaultGatewayConfigPort)
 	require.NoError(t, err)
 
 	assert.True(t, capability.CRDSupportsConfigID, "the installed CRD must declare spec.configId")
 	assert.True(t, capability.HotReloadEnabled, "the gateway CR must have spec.hotReload.enabled=true")
+	assert.True(t, capability.ConfigEndpointServed,
+		"the running pods must serve GET /config; the operator and the gateway are versioned separately, "+
+			"so a capable CRD alone does not imply a capable image")
 	assert.Equal(t, gateway.VerifyPerPodConfigID, capability.Mode)
 	assert.True(t, capability.InjectsConfigID())
 	assert.Empty(t, capability.Advisory, "a fully capable cluster should carry no advisory")
@@ -184,8 +187,12 @@ func TestConfigIDOnlyApplyHotReloads(t *testing.T) {
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 
 	start := time.Now()
-	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, configID,
-		gateway.DefaultGatewayConfigPort, pollInterval, convergeTimeout, nil),
+	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
+		ConfigID:         configID,
+		Port:             gateway.DefaultGatewayConfigPort,
+		PollInterval:     pollInterval,
+		HotReloadTimeout: convergeTimeout,
+	}),
 		"every pod must report the new configId — if this times out, the gateway's config watcher is not running, "+
 			"which is almost always a trial rather than Enterprise licence")
 	t.Logf("configId converged on all %d pods in %s", before.podCount, time.Since(start).Round(time.Millisecond))
@@ -210,8 +217,12 @@ func TestNoRollIsObservedForAHotReload(t *testing.T) {
 	_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, live, configID)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
-	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, configID,
-		gateway.DefaultGatewayConfigPort, pollInterval, convergeTimeout, nil))
+	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
+		ConfigID:         configID,
+		Port:             gateway.DefaultGatewayConfigPort,
+		PollInterval:     pollInterval,
+		HotReloadTimeout: convergeTimeout,
+	}))
 
 	after, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
 	require.NoError(t, err)
@@ -252,8 +263,12 @@ func TestFenceAndSwitchoverAreVerifiedPerPod(t *testing.T) {
 			require.Equal(t, configID, stored)
 
 			require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
-			require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, configID,
-				gateway.DefaultGatewayConfigPort, pollInterval, convergeTimeout, nil),
+			require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
+				ConfigID:         configID,
+				Port:             gateway.DefaultGatewayConfigPort,
+				PollInterval:     pollInterval,
+				HotReloadTimeout: convergeTimeout,
+			}),
 				"%s must be confirmed on every gateway pod", step.name)
 
 			// Both transitions are in-place route edits, so neither may roll.
@@ -276,19 +291,31 @@ func TestStaleConfigIDIsNotAcceptedAsSuccess(t *testing.T) {
 	_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, live, first)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
-	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, first,
-		gateway.DefaultGatewayConfigPort, pollInterval, convergeTimeout, nil))
+	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
+		ConfigID:         first,
+		Port:             gateway.DefaultGatewayConfigPort,
+		PollInterval:     pollInterval,
+		HotReloadTimeout: convergeTimeout,
+	}))
 
 	second, err := gateway.NewConfigID()
 	require.NoError(t, err)
 	_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, live, second)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
-	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, second,
-		gateway.DefaultGatewayConfigPort, pollInterval, convergeTimeout, nil))
+	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
+		ConfigID:         second,
+		Port:             gateway.DefaultGatewayConfigPort,
+		PollInterval:     pollInterval,
+		HotReloadTimeout: convergeTimeout,
+	}))
 
 	// The pods now report `second`. Waiting for `first` must fail.
-	err = e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, first,
-		gateway.DefaultGatewayConfigPort, pollInterval, 15*time.Second, nil)
+	err = e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
+		ConfigID:         first,
+		Port:             gateway.DefaultGatewayConfigPort,
+		PollInterval:     pollInterval,
+		HotReloadTimeout: 15 * time.Second,
+	})
 	require.Error(t, err, "waiting for a superseded configId must not report success")
 }
