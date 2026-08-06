@@ -1702,7 +1702,7 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed waiting for gateway readiness after unfence")
+	assert.Contains(t, err.Error(), "failed waiting for gateway readiness during unfence")
 	assert.Contains(t, err.Error(), "gateway pods did not converge")
 }
 

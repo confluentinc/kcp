@@ -131,6 +131,7 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 
 		readyCount := 0
 		atWant := 0
+		absentCount := 0
 		for _, endpoint := range endpoints {
 			// Not-ready pods are not probed: a pod still starting has nothing
 			// meaningful to report, and requiring it would deadlock a roll.
@@ -146,9 +147,13 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 
 			switch result.Outcome {
 			case ProbeEndpointAbsent:
-				// A 404 will never become a 200 for a running image, so waiting
-				// out the timeout would only delay the real cause.
-				return fmt.Errorf("the gateway does not serve %s (HTTP 404); the gateway image predates 1.3.0, so a configId cannot be verified per pod", GatewayConfigEndpointPath)
+				// Counted rather than failed on immediately. A 404 from *every*
+				// pod means the image does not serve /config and no amount of
+				// waiting will change that. A 404 from only some pods means a
+				// mixed-image roll is in progress — an image change is itself a
+				// rolling change — and the pods still coming up may well serve it.
+				absentCount++
+				slog.Debug("gateway pod does not serve the config endpoint", "pod", endpoint.Name, "addr", result.Addr)
 			case ProbeApplied:
 				if result.ConfigID == want {
 					atWant++
@@ -164,6 +169,12 @@ func waitForGatewayConfigID(ctx context.Context, clientset kubernetes.Interface,
 				// mid-migration wait that would flap on a transient.
 				slog.Debug("gateway config endpoint probe did not yield a configId", "pod", endpoint.Name, "outcome", result.Outcome, "error", result.Err)
 			}
+		}
+
+		// Unanimous 404: the image does not serve /config, so this will never
+		// succeed and waiting out the timeout only delays the real cause.
+		if readyCount > 0 && absentCount == readyCount {
+			return fmt.Errorf("no gateway pod serves %s (HTTP 404 from all %d ready pods); the gateway image predates 1.3.0, so a configId cannot be verified per pod", GatewayConfigEndpointPath, readyCount)
 		}
 
 		converged := rolloutComplete && readyCount > 0 && atWant == readyCount

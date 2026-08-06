@@ -111,6 +111,15 @@ func (m *MigrationExecutor) Run() error {
 		return err
 	}
 
+	// Prove hot-reload actually works before anything blocks traffic. The gateway
+	// gates its config watcher on an Enterprise licence, and when that gate is
+	// shut CFK still reports success while the gateway serves stale config — so
+	// this is the only place the failure is visible, and the only safe time to
+	// look is before fencing.
+	if err := actions.VerifyHotReloadCapability(ctx, &config); err != nil {
+		return err
+	}
+
 	// The orchestrator is the single writer for migration state. Build it up
 	// front so its PersistState can back the offset-sync bookends too, rather
 	// than a parallel write closure.

@@ -171,6 +171,28 @@ func TestWaitForGatewayConfigID(t *testing.T) {
 		assert.Contains(t, err.Error(), "/config")
 	})
 
+	t.Run("a 404 from only some pods keeps waiting", func(t *testing.T) {
+		// An image change is itself a rolling change, so mid-roll one pod can be
+		// on an image that serves /config and another on one that does not.
+		// Failing on the first 404 would abort a legitimate roll.
+		cs := newFakeClientset(
+			completeGatewayDeployment(gw, ns, 2),
+			gatewayPodWithIP("gw-old", ns, gw, "uid-1", "10.0.1.1", true),
+			gatewayPodWithIP("gw-new", ns, gw, "uid-2", "10.0.1.2", true),
+		)
+		prober := func(_ context.Context, e GatewayPodEndpoint) (ProbeResult, error) {
+			if e.Name == "gw-old" {
+				return ProbeResult{Outcome: ProbeEndpointAbsent}, nil
+			}
+			return ProbeResult{Outcome: ProbeApplied, ConfigID: want}, nil
+		}
+
+		err := waitForGatewayConfigID(context.Background(), cs, prober, ns, gw, want,
+			testPollInterval, 50*time.Millisecond, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "timed out", "a partial 404 must time out, not fail fast")
+	})
+
 	t.Run("a timeout is reported as a failure, not as still propagating", func(t *testing.T) {
 		// A rejected CFK canary is indistinguishable from in-progress until the
 		// deadline, so the message must not imply it may still succeed.
