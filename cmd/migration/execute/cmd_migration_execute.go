@@ -41,6 +41,8 @@ var (
 	detectUnroutedProducersDuration time.Duration
 	consumerOffsetSyncDrainDuration time.Duration
 	promoteBatchSize                int
+	hotReloadTimeout                time.Duration
+	gatewayConfigPort               int
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -97,6 +99,8 @@ the migration state file and must be provided each time.`,
 	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
 	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
 	optionalFlags.DurationVar(&rolloutTimeout, "rollout-timeout", 0, "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover. 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.")
+	optionalFlags.DurationVar(&hotReloadTimeout, "hot-reload-timeout", 0, "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.")
+	optionalFlags.IntVar(&gatewayConfigPort, "gateway-config-port", 0, "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses 9180.")
 	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
 	optionalFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.")
 	optionalFlags.DurationVar(&consumerOffsetSyncDrainDuration, "consumer-offset-sync-drain-duration", 0, "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless the migration was initialised with --pause-consumer-offset-sync. 0 (the default) disables the wait.")
@@ -296,6 +300,8 @@ func parseMigrationExecutorOpts(state migration.MigrationState, config migration
 		TlsClientKey:          tlsClientKey,
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 		RolloutTimeout:        rolloutTimeout,
+		HotReloadTimeout:      hotReloadTimeout,
+		GatewayConfigPort:     gatewayConfigPort,
 		PromoteBatchSize:      promoteBatchSize,
 	}
 }

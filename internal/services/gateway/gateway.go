@@ -33,6 +33,8 @@ const (
 // Service defines gateway operations
 type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
+	DetectCapability(ctx context.Context, namespace, gatewayName string) (Capability, error)
+	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string, port int, pollInterval, timeout time.Duration, onProgress func(ConfigWaitProgress)) error
 	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error)

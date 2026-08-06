@@ -40,6 +40,14 @@ type MigrationExecutorOpts struct {
 	// switch. A value of 0 means no deadline — the wait runs until the
 	// operator reports ready or the user cancels.
 	RolloutTimeout time.Duration
+	// HotReloadTimeout bounds the per-pod configId verification used when the
+	// gateway supports hot-reload. 0 means use gateway.DefaultHotReloadTimeout;
+	// it is deliberately never unbounded, since a hot-reload moves no Kubernetes
+	// signal to wait on.
+	HotReloadTimeout time.Duration
+	// GatewayConfigPort is the port serving the gateway's /config endpoint.
+	// 0 means use the persisted value, falling back to the gateway default.
+	GatewayConfigPort int
 	// PromoteBatchSize caps how many mirror topics are promoted per batch. A
 	// value of 0 means unlimited (all at once); >0 processes topics in
 	// synchronous batches of this size, waiting for each batch to reach
@@ -86,7 +94,22 @@ func (m *MigrationExecutor) Run() error {
 	clusterLinkService := clusterlink.NewConfluentCloudService(httpClient)
 	actions := migration.NewMigrationActionsWithOffsets(gatewayService, clusterLinkService, sourceOffset, destinationOffset)
 	actions.SetRolloutTimeout(m.opts.RolloutTimeout)
+	actions.SetHotReloadTimeout(m.opts.HotReloadTimeout)
 	actions.SetPromoteBatchSize(m.opts.PromoteBatchSize)
+
+	// An explicit --gateway-config-port overrides whatever init recorded.
+	if m.opts.GatewayConfigPort > 0 {
+		config.GatewayConfigPort = m.opts.GatewayConfigPort
+	}
+
+	// Re-derive the gateway verification capability against the live cluster.
+	// The mode recorded at init is only what the operator was told to expect —
+	// the cluster can be upgraded, or rolled back, in between, and a downgrade
+	// matters for correctness: writing spec.configId to a CRD that no longer
+	// declares it makes server-side apply fail outright.
+	if err := actions.ResolveGatewayCapability(ctx, &config); err != nil {
+		return err
+	}
 
 	// The orchestrator is the single writer for migration state. Build it up
 	// front so its PersistState can back the offset-sync bookends too, rather

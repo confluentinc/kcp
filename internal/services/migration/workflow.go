@@ -43,7 +43,17 @@ type MigrationActions struct {
 	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
 	// wait runs until the operator reports ready or the user cancels.
 	rolloutTimeout time.Duration
-	reporter       *reporter // user-facing terminal output
+	// hotReloadTimeout is the deadline applied to per-pod configId verification.
+	// Unlike rolloutTimeout this has a real default: a hot-reload does not move
+	// any Kubernetes signal, so without a deadline a gateway whose config
+	// watcher never started would hang forever with nothing to show for it.
+	hotReloadTimeout time.Duration
+	// gatewayCapability is how gateway transitions are verified for this run.
+	// Zero value (VerifyRollout, no configId) is deliberately the safe default:
+	// an unresolved capability behaves exactly as kcp did before hot-reload
+	// support existed.
+	gatewayCapability gateway.Capability
+	reporter          *reporter // user-facing terminal output
 }
 
 func NewMigrationActions(
@@ -80,6 +90,71 @@ func NewMigrationActionsWithOffsets(
 // A value of 0 means no deadline.
 func (s *MigrationActions) SetRolloutTimeout(d time.Duration) {
 	s.rolloutTimeout = d
+}
+
+// SetHotReloadTimeout sets the deadline for per-pod configId verification.
+// A value of 0 falls back to gateway.DefaultHotReloadTimeout — unlike the
+// rollout waits, this one is never allowed to run unbounded.
+func (s *MigrationActions) SetHotReloadTimeout(d time.Duration) {
+	s.hotReloadTimeout = d
+}
+
+// ResolveGatewayCapability determines how gateway state transitions will be
+// verified on the live cluster, adopts it for this run, and records it on the
+// migration config.
+//
+// Called twice in a migration's life, for different reasons. At init it is an
+// advisory: it tells the operator what to expect before they commit to a
+// migration. At execute it is authoritative, because the cluster may have been
+// upgraded — or rolled back — in between, and the value that governs the run has
+// to reflect the cluster as it is now rather than as it was at init.
+func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
+	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName)
+	if err != nil {
+		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
+	}
+
+	previous := config.GatewayVerificationMode
+	s.gatewayCapability = capability
+	config.GatewayVerificationMode = string(capability.Mode)
+	config.GatewayHotReloadEnabled = capability.HotReloadEnabled
+	if config.GatewayConfigPort == 0 {
+		config.GatewayConfigPort = gateway.DefaultGatewayConfigPort
+	}
+
+	// A change since init is worth saying out loud either way: it means the
+	// cluster moved under the migration.
+	if previous != "" && previous != string(capability.Mode) {
+		s.reporter.warn("Gateway verification changed since this migration was initialised: %q -> %q. Using the live cluster's capability.",
+			previous, capability.Mode)
+	}
+
+	if capability.Advisory != "" {
+		s.reporter.detail("%s", capability.Advisory)
+	}
+	slog.Debug("resolved gateway verification capability",
+		"mode", capability.Mode, "crdSupportsConfigId", capability.CRDSupportsConfigID,
+		"hotReloadEnabled", capability.HotReloadEnabled, "previousMode", previous)
+
+	return nil
+}
+
+// gatewayConfigPort returns the port to poll GET /config on, tolerating a
+// migration state file written before the field existed.
+func gatewayConfigPort(config *MigrationConfig) int {
+	if config.GatewayConfigPort <= 0 {
+		return gateway.DefaultGatewayConfigPort
+	}
+	return config.GatewayConfigPort
+}
+
+// gatewayHotReloadTimeout returns the configId verification deadline, never
+// unbounded — see the field comment.
+func (s *MigrationActions) gatewayHotReloadTimeout() time.Duration {
+	if s.hotReloadTimeout <= 0 {
+		return gateway.DefaultHotReloadTimeout
+	}
+	return s.hotReloadTimeout
 }
 
 // SetPromoteBatchSize caps how many mirror topics are promoted per batch during
@@ -129,6 +204,17 @@ func (s *MigrationActions) Initialize(
 		s.reporter.success("Gateway CRs validated (%d secret reference(s) present in %s)", validation.SecretRefsChecked, config.K8sNamespace)
 	default:
 		s.reporter.success("Gateway CRs validated (no secret references)")
+	}
+
+	// Resolve how transitions will be verified, and tell the operator now rather
+	// than mid-cutover. This is read-only — it inspects the CRD and the live CR
+	// and changes nothing — so it is safe to run before InitialCrYAML above has
+	// been used for anything. Execute re-derives it authoritatively.
+	if err := s.ResolveGatewayCapability(ctx, config); err != nil {
+		return err
+	}
+	if s.gatewayCapability.Mode == gateway.VerifyPerPodConfigID {
+		s.reporter.success("Gateway transitions will be verified per pod via %s", gateway.GatewayConfigEndpointPath)
 	}
 
 	// Validate cluster link and topics

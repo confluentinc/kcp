@@ -13,6 +13,8 @@ import (
 // mockGatewayService implements gateway.Service using function fields for test control.
 type mockGatewayService struct {
 	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
+	detectCapabilityFn       func(ctx context.Context, namespace, name string) (gateway.Capability, error)
+	waitForConfigIDFn        func(ctx context.Context, namespace, name, configID string, port int, pollInterval, timeout time.Duration, onProgress func(gateway.ConfigWaitProgress)) error
 	validateGatewayCRsFn     func(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error)
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
@@ -27,6 +29,23 @@ func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name
 		return m.getGatewayYAMLFn(ctx, namespace, name)
 	}
 	return nil, fmt.Errorf("mockGatewayService.GetGatewayYAML not configured")
+}
+
+// DetectCapability defaults to VerifyRollout — the mode every pre-hot-reload
+// cluster gets — so tests that do not care about hot-reload keep exercising the
+// pre-existing rollout path.
+func (m *mockGatewayService) DetectCapability(ctx context.Context, namespace, name string) (gateway.Capability, error) {
+	if m.detectCapabilityFn != nil {
+		return m.detectCapabilityFn(ctx, namespace, name)
+	}
+	return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+}
+
+func (m *mockGatewayService) WaitForGatewayConfigID(ctx context.Context, namespace, name, configID string, port int, pollInterval, timeout time.Duration, onProgress func(gateway.ConfigWaitProgress)) error {
+	if m.waitForConfigIDFn != nil {
+		return m.waitForConfigIDFn(ctx, namespace, name, configID, port, pollInterval, timeout, onProgress)
+	}
+	return nil
 }
 
 func (m *mockGatewayService) ValidateGatewayCRs(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error) {
