@@ -2,10 +2,17 @@
 # CRs from this file by substituting __ROUTE_EXTRA__ and __ROUTE_DOMAIN__.
 #
 # Deliberately self-contained: PLAINTEXT streaming domains and a passthrough
-# route, so it depends on no pre-existing secrets except the licence. The Kafka
-# backends are never contacted — CFK's readiness probe hits /livez on the admin
-# port, not the broker — so the pods go Ready regardless and GET /config is fully
-# exercisable without standing up any Kafka.
+# route, so it depends on no pre-existing secrets except the licence.
+#
+# The SOURCE domain points at the single-node broker in manifests/kafka-source.yaml
+# so the fence can be observed as a data-plane fact — writes stop landing — and
+# not merely as a converged configId. The DESTINATION domain is deliberately left
+# unroutable: no test produces through it, and standing up a second broker to
+# host a route nothing exercises would cost node memory for no assertion.
+#
+# CFK's readiness probe hits /livez on the admin port rather than the broker, so
+# the gateway pods still go Ready regardless of either backend, and the configId
+# assertions remain exercisable even if the broker is down.
 #
 # BOTH streaming domains are declared in every transition, and the only thing
 # that changes between them is the route. That is what makes this suite test what
@@ -56,7 +63,7 @@ spec:
       kafkaCluster:
         bootstrapServers:
           - id: SOURCE
-            endpoint: PLAINTEXT://source.kafka.invalid:9092
+            endpoint: PLAINTEXT://__SOURCE_BOOTSTRAP__
         nodeIdRanges:
           - name: pool-1
             start: 0

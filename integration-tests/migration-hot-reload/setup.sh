@@ -15,7 +15,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATES_DIR="${SCRIPT_DIR}/manifests/templates"
+MANIFESTS_DIR="${SCRIPT_DIR}/manifests"
+TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
 
 PROFILE="${PROFILE:-kcp-e2e-hotreload}"
@@ -36,6 +37,14 @@ OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
 OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
 GATEWAY_TAG="${GATEWAY_TAG:-1.3.0}"
 INIT_TAG="${INIT_TAG:-3.3.0}"
+# The broker behind the gateway's SOURCE domain. Not a version pin in the same
+# sense as the others — nothing here depends on this being 7.6.0, it just matches
+# what the other integration suites already use, so it is usually cached.
+KAFKA_IMAGE="${KAFKA_IMAGE:-confluentinc/cp-kafka:7.6.0}"
+SOURCE_BOOTSTRAP="kafka-source.${NAMESPACE}.svc.cluster.local:9092"
+# CFK publishes the route endpoint on a Service it creates for the gateway.
+GATEWAY_BOOTSTRAP="${GATEWAY_NAME}.${NAMESPACE}.svc.cluster.local:9595"
+SOURCE_TOPIC="${SOURCE_TOPIC:-kcp-hr-fence-probe}"
 
 LICENSE_SECRET_ID="${LICENSE_SECRET_ID:-kcp/e2e/gateway-license}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
@@ -46,13 +55,17 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 # rig's failure mode recurring: two m5.large nodes could not fit 3 JVMs plus a
 # canary and the kubelet was OOM-killed, which looks exactly like a hot-reload
 # that never propagated.
+#
+# The source broker is one more JVM again (capped at 512m heap / 1400Mi), hence
+# the headroom over the 8192 this ran on before it had a data plane.
 MINIKUBE_CPUS="${MINIKUBE_CPUS:-4}"
-MINIKUBE_MEMORY="${MINIKUBE_MEMORY:-8192}"
+MINIKUBE_MEMORY="${MINIKUBE_MEMORY:-10240}"
 
 echo "=== kcp hot-reload E2E setup ==="
 echo "Profile:        ${PROFILE}"
 echo "Gateway:        ${GATEWAY_NAME} (${GATEWAY_REPLICAS} replicas, +1 canary during a hot reload)"
 echo "Gateway image:  confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}"
+echo "Source broker:  ${KAFKA_IMAGE} -> ${SOURCE_BOOTSTRAP} (topic ${SOURCE_TOPIC})"
 echo "CFK chart:      ${CFK_CHART_PATH}"
 echo ""
 
@@ -132,14 +145,17 @@ if ! docker image inspect "${OPERATOR_IMAGE}" >/dev/null 2>&1; then
   echo "  Pulling operator image (amd64)..."
   docker pull --platform linux/amd64 "${OPERATOR_IMAGE}" >/dev/null
 fi
-for img in "confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" "confluentinc/confluent-init-container:${INIT_TAG}"; do
+for img in "confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" \
+           "confluentinc/confluent-init-container:${INIT_TAG}" \
+           "${KAFKA_IMAGE}"; do
   docker image inspect "$img" >/dev/null 2>&1 || { echo "  Pulling ${img}..."; docker pull "$img" >/dev/null; }
 done
 
 echo "  Loading images into ${PROFILE} (slow on first run)..."
 for img in "${OPERATOR_IMAGE}" \
            "confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" \
-           "confluentinc/confluent-init-container:${INIT_TAG}"; do
+           "confluentinc/confluent-init-container:${INIT_TAG}" \
+           "${KAFKA_IMAGE}"; do
   minikube image load "$img" --profile "${PROFILE}"
 done
 
@@ -196,6 +212,31 @@ if [ -z "$(kubectl --context "${PROFILE}" get crd gateways.platform.confluent.io
 fi
 echo "  ✓ installed CRD declares spec.configId"
 
+# --- Source Kafka ----------------------------------------------------------
+# Applied before the gateway so the upstream resolves the first time the gateway
+# builds its virtual cluster, rather than after a failed resolution.
+echo "Deploying the source Kafka broker..."
+sed -e "s|__KAFKA_IMAGE__|${KAFKA_IMAGE}|g" "${MANIFESTS_DIR}/kafka-source.yaml" \
+  | kubectl --context "${PROFILE}" apply -f -
+
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" rollout status deploy/kafka-source \
+  --timeout="${WAIT_TIMEOUT}"
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" wait --for=condition=Ready pod \
+  -l app=kafka-source --timeout="${WAIT_TIMEOUT}"
+
+# Created here rather than by auto-creation so a topic that never appears fails
+# setup loudly instead of surfacing as an unexplained produce error mid-suite.
+# The heap override matters: KAFKA_HEAP_OPTS in the pod env would otherwise give
+# this short-lived CLI JVM the broker's own 512m inside a 1400Mi container.
+echo "Creating topic ${SOURCE_TOPIC}..."
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec deploy/kafka-source -- \
+  env KAFKA_HEAP_OPTS="-Xmx192m" kafka-topics \
+    --bootstrap-server localhost:9092 \
+    --create --if-not-exists \
+    --topic "${SOURCE_TOPIC}" \
+    --partitions 1 --replication-factor 1 >/dev/null
+echo "  ✓ topic ${SOURCE_TOPIC} present"
+
 # --- Render the three transition CRs ---------------------------------------
 # fence  = the same route plus a fence block   -> in-place route edit
 # switch = the same route on the other domain  -> in-place route edit
@@ -229,6 +270,7 @@ render() {
           -e "s/__INIT_TAG__/${INIT_TAG}/g" \
           -e "s/__ROUTE_DOMAIN__/${domain}/g" \
           -e "s/__ROUTE_BOOTSTRAP__/${bootstrap}/g" \
+          -e "s|__SOURCE_BOOTSTRAP__|${SOURCE_BOOTSTRAP}|g" \
       > "${out}"
   printf '%s\n' "${out}"
 }
@@ -242,6 +284,12 @@ grep -q 'errorCode: BROKER_NOT_AVAILABLE' "${FENCED_CR}" \
   || { echo "FATAL: rendered fenced CR has no fence block" >&2; exit 1; }
 grep -q 'name: destination-domain' "${SWITCHOVER_CR}" \
   || { echo "FATAL: rendered switchover CR does not target the destination domain" >&2; exit 1; }
+# An unsubstituted placeholder would leave the source domain unroutable, and the
+# data-plane suite would then read a broken upstream as a working fence.
+for cr in "${INITIAL_CR}" "${FENCED_CR}" "${SWITCHOVER_CR}"; do
+  grep -q "${SOURCE_BOOTSTRAP}" "${cr}" \
+    || { echo "FATAL: ${cr} does not point the source domain at ${SOURCE_BOOTSTRAP}" >&2; exit 1; }
+done
 echo "Rendered transition CRs into ${RENDERED_DIR}"
 
 # --- Gateway ---------------------------------------------------------------
@@ -281,6 +329,9 @@ ENV_FILE="${SCRIPT_DIR}/.env"
   echo "KCP_HR_INITIAL_CR=${INITIAL_CR}"
   echo "KCP_HR_FENCED_CR=${FENCED_CR}"
   echo "KCP_HR_SWITCHOVER_CR=${SWITCHOVER_CR}"
+  echo "KCP_HR_SOURCE_BOOTSTRAP=${SOURCE_BOOTSTRAP}"
+  echo "KCP_HR_GATEWAY_BOOTSTRAP=${GATEWAY_BOOTSTRAP}"
+  echo "KCP_HR_TOPIC=${SOURCE_TOPIC}"
 } > "${ENV_FILE}"
 
 echo ""

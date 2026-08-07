@@ -8,6 +8,9 @@ make test-migration-hot-reload            # setup, run, teardown
 make test-migration-hot-reload-setup      # provision only
 make test-migration-hot-reload-run        # re-run against a live cluster
 make test-migration-hot-reload-teardown   # destroy
+
+# Opt-in: measure the fence settle margin instead of just asserting it exists.
+KCP_HR_SETTLE_ITERATIONS=5 make test-migration-hot-reload-run
 ```
 
 ## Why this is a separate suite
@@ -34,6 +37,44 @@ That is what lets the suite assert the strong thing: pod UIDs, container restart
 counts and the Deployment's `metadata.generation` must all be unchanged across a
 transition. A pod restart here is a failure, not an expected mechanism.
 
+## The source broker, and what it buys
+
+A single-node KRaft broker (`manifests/kafka-source.yaml`) backs the **source**
+streaming domain, so the fence can be observed as a data-plane fact — writes stop
+landing — and not merely as a converged `configId`. The **destination** domain is
+deliberately left unroutable: no test produces through it, and a second broker
+would cost node memory for no assertion.
+
+The question it answers is specific. `detectUnroutedProducers` takes its first
+offset snapshot the instant `WaitForGatewayConfigID` returns and aborts the
+migration if the source's log end offset moves afterwards, with no tolerance — a
+single message on any partition trips it. If the fence is not fully settled at
+that instant, an in-flight write lands after snapshot 1 and the migration rolls
+back for a rogue producer that does not exist.
+`TestFenceStopsSourceWritesOnceConfigIDConverges` is that invariant. The test
+binary already runs in-cluster, so it produces with sarama in-process rather than
+coordinating a separate producer pod.
+
+Keep the broker stupid. The moment it grows cluster links, mirror topics or
+promotion, this stops being a gateway rig and becomes a second migration e2e.
+
+### Two traps this rig has already hit
+
+**A NotReady broker forges the fence.** A headless Service withdraws unready
+endpoints from DNS; the gateway then cannot resolve its upstream and the producer
+sees `BROKER_NOT_AVAILABLE` — indistinguishable from a working fence, in exactly
+the measurement that matters. Hence `publishNotReadyAddresses: true`: Kubernetes
+readiness must not be able to manufacture the signal under test.
+
+**A JVM readiness probe causes the above.** `kafka-broker-api-versions` spawns a
+full JVM inside a memory-capped container on every probe period; under contention
+it times out and reports a perfectly healthy broker as NotReady. The probe is a
+`tcpSocket` check for that reason, and the one-off `kafka-topics` call in
+`setup.sh` overrides `KAFKA_HEAP_OPTS` so it does not claim the broker's own heap.
+
+Related: `kafka-console-producer` exits `0` even when its send is rejected, so
+assertions here are on offsets, never on client exit codes.
+
 ## Version pins — each is load-bearing
 
 | Component | Pin | Why |
@@ -43,6 +84,7 @@ transition. A pod restart here is a failure, not an expected mechanism.
 | Gateway | `confluent-gateway-for-cloud:1.3.0` | First release serving `GET /config`. 1.2.x has the licence hook but no endpoint. Multi-arch |
 | Init container | `confluent-init-container:3.3.0` | Matches CFK 3.3.x. Multi-arch |
 | Licence | CP **Enterprise**, non-expired | The gateway gates its config-file watcher on it |
+| Source broker | `cp-kafka:7.6.0` | Not load-bearing. Matches the other integration suites so it is usually already cached |
 
 ## The licence
 

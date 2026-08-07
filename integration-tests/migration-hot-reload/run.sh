@@ -66,4 +66,8 @@ kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${RUNNER}" -- env \
   KCP_HR_INITIAL_CR="/workspace/$(basename "${KCP_HR_INITIAL_CR}")" \
   KCP_HR_FENCED_CR="/workspace/$(basename "${KCP_HR_FENCED_CR}")" \
   KCP_HR_SWITCHOVER_CR="/workspace/$(basename "${KCP_HR_SWITCHOVER_CR}")" \
+  KCP_HR_SOURCE_BOOTSTRAP="${KCP_HR_SOURCE_BOOTSTRAP}" \
+  KCP_HR_GATEWAY_BOOTSTRAP="${KCP_HR_GATEWAY_BOOTSTRAP}" \
+  KCP_HR_TOPIC="${KCP_HR_TOPIC}" \
+  KCP_HR_SETTLE_ITERATIONS="${KCP_HR_SETTLE_ITERATIONS:-0}" \
   /workspace/hotreload.test ${GOTEST_FLAGS}
