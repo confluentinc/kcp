@@ -7,12 +7,14 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
 	"k8s.io/client-go/kubernetes"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 // servingPods builds a clientset holding n Ready gateway pods, which is what the
@@ -118,6 +120,30 @@ func newFakeDynamicClientWithCRD(crd *unstructured.Unstructured, gateways ...*un
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// forbidCRDReads makes every CRD read fail the way a namespace-scoped service
+// account's does: a 403 at the cluster scope, which is the normal shape of an
+// enterprise Kubernetes install rather than a misconfiguration.
+func forbidCRDReads(cs *dynamicfake.FakeDynamicClient) *dynamicfake.FakeDynamicClient {
+	cs.PrependReactor("get", CRDResourcePlural, func(k8stesting.Action) (bool, runtime.Object, error) {
+		return true, nil, apierrors.NewForbidden(
+			schema.GroupResource{Group: CRDGroup, Resource: CRDResourcePlural},
+			GatewayCRDName,
+			fmt.Errorf(`User "system:serviceaccount:confluent:kcp-runner" cannot get resource `+
+				`"customresourcedefinitions" in API group "apiextensions.k8s.io" at the cluster scope`))
+	})
+	return cs
+}
+
+// countCRDReads records how many times the cluster-scoped CRD read is attempted,
+// so a test can assert kcp never asks for a permission it does not need.
+func countCRDReads(cs *dynamicfake.FakeDynamicClient, reads *int) *dynamicfake.FakeDynamicClient {
+	cs.PrependReactor("get", CRDResourcePlural, func(k8stesting.Action) (bool, runtime.Object, error) {
+		*reads++
+		return false, nil, nil
+	})
+	return cs
+}
 
 func TestCRDSupportsConfigID(t *testing.T) {
 	tests := []struct {
@@ -248,20 +274,24 @@ func TestDetectCapability(t *testing.T) {
 		assert.Empty(t, got.Advisory, "no advisory when hot-reload verification is available")
 	})
 
-	t.Run("CRD lacks configId - rollout mode, advisory names the CFK version", func(t *testing.T) {
+	// The CFK version window that makes this a refusal rather than a downgrade:
+	// chart 0.1718.10 declares spec.hotReload.enabled but not spec.configId. Hot
+	// reload therefore works, no pod ever rolls, and rollout verification would
+	// pass having observed nothing.
+	t.Run("hot-reload on but CRD lacks configId - refuses rather than downgrading", func(t *testing.T) {
 		cs := newFakeDynamicClientWithCRD(
 			newGatewayCRD(map[string][]string{"v1beta1": {"replicas"}}),
 			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
-		require.NoError(t, err)
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		require.Error(t, err, "rollout verification is vacuous once hot-reload is on")
 
-		assert.Equal(t, VerifyRollout, got.Mode)
-		assert.False(t, got.CRDSupportsConfigID)
-		assert.Contains(t, got.Advisory, "spec.configId")
-		// Explains, never recommends.
-		assert.NotContains(t, got.Advisory, "enabl")
+		assert.Contains(t, err.Error(), "spec.configId")
+		assert.Contains(t, err.Error(), gw)
+		// A refusal, unlike an advisory, owes the operator a way forward.
+		assert.Contains(t, err.Error(), "upgrade CFK")
+		assert.Contains(t, err.Error(), "spec.hotReload.enabled: false")
 	})
 
 	t.Run("hotReload disabled - rollout mode, advisory names the field", func(t *testing.T) {
@@ -274,10 +304,12 @@ func TestDetectCapability(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
-		assert.True(t, got.CRDSupportsConfigID)
 		assert.False(t, got.HotReloadEnabled)
 		assert.Contains(t, got.Advisory, "spec.hotReload.enabled")
 		assert.Contains(t, got.Advisory, "roll")
+		// Left false even though this CRD does declare configId: the field is only
+		// meaningful once hot-reload is on, and the read is skipped otherwise.
+		assert.False(t, got.CRDSupportsConfigID)
 	})
 
 	t.Run("hotReload block absent entirely - rollout mode", func(t *testing.T) {
@@ -294,18 +326,54 @@ func TestDetectCapability(t *testing.T) {
 		assert.Contains(t, got.Advisory, "spec.hotReload.enabled")
 	})
 
-	t.Run("CRD absent - rollout mode, not an error", func(t *testing.T) {
+	t.Run("hot-reload on but CRD absent - refuses", func(t *testing.T) {
 		cs := newFakeDynamicClientWithCRD(nil, newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
 
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
-		require.NoError(t, err, "a missing CRD means an older cluster, not a failure")
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		require.Error(t, err)
 
-		assert.Equal(t, VerifyRollout, got.Mode)
-		assert.False(t, got.CRDSupportsConfigID)
-		assert.Contains(t, got.Advisory, "spec.configId")
+		assert.Contains(t, err.Error(), "not installed")
+		assert.Contains(t, err.Error(), "spec.hotReload.enabled: false")
 	})
 
-	t.Run("CRD gate takes precedence over hotReload gate", func(t *testing.T) {
+	// The permission case, and the reason it is not a downgrade: a namespaced
+	// service account cannot read the CRD, but that changes nothing about whether
+	// the pods will roll. Treating a 403 as "no configId support" would select
+	// rollout verification on a cluster that hot-reloads.
+	t.Run("hot-reload on but CRD read forbidden - refuses, naming the permission", func(t *testing.T) {
+		cs := forbidCRDReads(newFakeDynamicClientWithCRD(
+			newGatewayCRD(map[string][]string{"v1beta1": {"configId", "hotReload"}}),
+			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
+		))
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		require.Error(t, err, "kcp must not verify by rollout when it cannot rule out a hot-reload")
+
+		assert.Contains(t, err.Error(), "customresourcedefinitions")
+		// Both remedies, because only one of them is in a namespaced user's hands.
+		assert.Contains(t, err.Error(), "grant get on customresourcedefinitions")
+		assert.Contains(t, err.Error(), "spec.hotReload.enabled: false")
+	})
+
+	// The mirror image, and the reachability regression this fixes: with
+	// hot-reload off kcp never injects a configId, so it has no reason to ask for
+	// a cluster-scoped permission at all.
+	t.Run("hot-reload off - CRD is never read, so a 403 cannot block the migration", func(t *testing.T) {
+		reads := 0
+		cs := countCRDReads(forbidCRDReads(newFakeDynamicClientWithCRD(
+			newGatewayCRD(map[string][]string{"v1beta1": {"configId", "hotReload"}}),
+			newGatewayCRWithHotReload(gw, ns, boolPtr(false)),
+		)), &reads)
+
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		require.NoError(t, err, "a namespaced install must still be able to migrate")
+
+		assert.Equal(t, VerifyRollout, got.Mode)
+		assert.Zero(t, reads, "kcp must not require a permission it does not use")
+		assert.Contains(t, got.Advisory, "spec.hotReload.enabled")
+	})
+
+	t.Run("hotReload gate takes precedence over the CRD gate", func(t *testing.T) {
 		cs := newFakeDynamicClientWithCRD(
 			newGatewayCRD(map[string][]string{"v1beta1": {"replicas"}}),
 			newGatewayCRWithHotReload(gw, ns, boolPtr(false)),
@@ -315,9 +383,10 @@ func TestDetectCapability(t *testing.T) {
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
-		// The more fundamental gate is the one reported.
-		assert.Contains(t, got.Advisory, "spec.configId")
-		assert.NotContains(t, got.Advisory, "spec.hotReload.enabled")
+		// Hot-reload decides the mechanism, so it is the gate worth reporting; the
+		// CRD's state is not consulted and must not be implied.
+		assert.Contains(t, got.Advisory, "spec.hotReload.enabled")
+		assert.NotContains(t, got.Advisory, "spec.configId")
 	})
 
 	t.Run("gateway CR missing is an error", func(t *testing.T) {

@@ -59,23 +59,18 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 		assert.True(t, got.ConfigEndpointServed)
 	})
 
-	t.Run("unanimous 404 - rollout mode with an advisory, not an error", func(t *testing.T) {
-		// The gateway image predates 1.3.0. That is a supported cluster: it must
-		// downgrade to rollout verification rather than fail the migration, which
-		// is what happened before this gate existed.
-		got, err := detectCapability(context.Background(), capableCluster(ns, gw),
+	t.Run("unanimous 404 - refuses, because rollout verification would be vacuous", func(t *testing.T) {
+		// The gateway image predates 1.3.0 while hot-reload is on: CFK renders the
+		// new config, projects it, and reports success, but the gateway never
+		// applies it and no pod rolls. Downgrading here would verify a fence by
+		// watching for a rollout that cannot happen.
+		_, err := detectCapability(context.Background(), capableCluster(ns, gw),
 			servingPods(ns, gw, 3), probeStub(ProbeEndpointAbsent), ns, gw)
-		require.NoError(t, err, "an old gateway image is a mode selection, not a failure")
+		require.Error(t, err, "no /config and no roll leaves nothing to verify against")
 
-		assert.Equal(t, VerifyRollout, got.Mode)
-		assert.False(t, got.ConfigEndpointServed)
-		assert.Equal(t, advisoryNoConfigEndpoint, got.Advisory)
-		assert.False(t, got.InjectsConfigID(), "kcp must not write a configId it cannot verify")
-
-		// The two cheaper gates still passed, and the advisory must not misreport
-		// them as the reason.
-		assert.True(t, got.CRDSupportsConfigID)
-		assert.True(t, got.HotReloadEnabled)
+		assert.Contains(t, err.Error(), "GET /config")
+		assert.Contains(t, err.Error(), "1.3.0")
+		assert.Contains(t, err.Error(), "spec.hotReload.enabled: false")
 	})
 
 	t.Run("mixed 404 and 200 - capable, because an image change is itself a roll", func(t *testing.T) {
@@ -129,8 +124,9 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 	})
 
 	t.Run("the endpoint is not probed when a cheaper gate already failed", func(t *testing.T) {
-		// Ordering matters: an operator who never wanted hot-reload should not be
-		// shown a network error for a probe kcp had no reason to make.
+		// Ordering matters: the refusal an operator sees should name the gate that
+		// actually decided, not a network error from a probe kcp had no reason to
+		// make.
 		noConfigID := newFakeDynamicClientWithCRD(
 			newGatewayCRD(map[string][]string{"v1beta1": {"replicas"}}),
 			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
@@ -141,11 +137,10 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 			return ProbeResult{}, fmt.Errorf("probe must not run")
 		}
 
-		got, err := detectCapability(context.Background(), noConfigID, servingPods(ns, gw, 2), probe, ns, gw)
-		require.NoError(t, err)
+		_, err := detectCapability(context.Background(), noConfigID, servingPods(ns, gw, 2), probe, ns, gw)
+		require.Error(t, err)
 
-		assert.Equal(t, VerifyRollout, got.Mode)
-		assert.Equal(t, advisoryNoConfigIDSupport, got.Advisory)
+		assert.Contains(t, err.Error(), "spec.configId")
 		assert.Zero(t, probed, "the endpoint gate must not run once a cheaper gate has decided")
 	})
 

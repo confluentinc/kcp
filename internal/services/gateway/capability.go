@@ -21,6 +21,10 @@ import (
 // happens on create/update, not apply). So the CRD must be read before kcp
 // writes a configId, or `kcp migration execute` breaks on every cluster running
 // an older operator.
+//
+// Reading it needs cluster-scoped RBAC, which a namespace-scoped installation of
+// kcp may not have. That is why this read is reached only when hot-reload is
+// enabled: when it is off kcp never injects a configId, so it never needs to ask.
 const (
 	CRDGroup          = "apiextensions.k8s.io"
 	CRDVersion        = "v1"
@@ -55,14 +59,53 @@ const (
 	VerifyRollout VerificationMode = "rollout"
 )
 
-// Operator-facing advisories. These explain what kcp is going to do and why;
-// they deliberately do not recommend a configuration change. Hot-reload may be
+// Operator-facing advisory. This explains what kcp is going to do and why; it
+// deliberately does not recommend a configuration change. Hot-reload may be
 // switched off for reasons kcp cannot see.
+const advisoryHotReloadDisabled = "spec.hotReload.enabled is not set or disabled — this state transition will roll gateway pods"
+
+// Refusal text, for the case where hot-reload is enabled but the evidence kcp
+// needs to verify a transition is unavailable.
+//
+// Unlike an advisory, a refusal must name a remedy: kcp is stopping the operator,
+// so it owes them the way forward. remedyDisableHotReload is offered on every
+// refusal because it is the one remedy always in the operator's own hands, and it
+// is not a workaround — turning hot-reload off makes CFK roll the pods, which is
+// a mechanism kcp can verify.
 const (
-	advisoryNoConfigIDSupport = "the installed CFK operator's Gateway CRD does not declare spec.configId — this state transition will be verified by pod rollout"
-	advisoryHotReloadDisabled = "spec.hotReload.enabled is not set or disabled — this state transition will roll gateway pods"
-	advisoryNoConfigEndpoint  = "the gateway image does not expose /config — this state transition will be verified by pod rollout"
+	refusalPreamble = "cannot verify gateway state transitions: spec.hotReload.enabled is true on gateway %q, so CFK " +
+		"applies config changes in place and the pods never roll — pod-rollout verification would observe nothing and " +
+		"report success, while a fence may not have reached the gateway at all"
+
+	remedyDisableHotReload = "set spec.hotReload.enabled: false on the gateway for the duration of the migration"
+
+	causeCRDForbidden  = "kcp is not permitted to read the Gateway CRD, so it cannot confirm the operator declares spec.configId"
+	remedyCRDForbidden = "grant get on customresourcedefinitions.apiextensions.k8s.io at the cluster scope"
+
+	causeCRDAbsent       = "the Gateway CRD is not installed, so the operator cannot declare spec.configId"
+	causeNoConfigIDInCRD = "the installed CFK operator's Gateway CRD does not declare spec.configId"
+	remedyUpgradeCFK     = "upgrade CFK to a version whose Gateway CRD declares spec.configId"
+
+	causeNoConfigEndpoint = "the running gateway image does not serve GET /config, so kcp cannot read back the config revision it applied"
+	remedyUpgradeGateway  = "upgrade the gateway image to one that serves GET /config (it arrived in gateway 1.3.0)"
 )
+
+// unverifiableHotReloadError builds the refusal returned when hot-reload is
+// enabled but the per-pod configId evidence that verification depends on cannot
+// be obtained. err may be nil when the cause is not an API failure.
+//
+// Refusing rather than downgrading is the whole point of this path, and the cost
+// asymmetry is what settles it: a false refusal blocks a migration that says
+// exactly how to unblock it, while a false acceptance promotes mirrors against a
+// source that was never fenced.
+func unverifiableHotReloadError(gatewayName, cause, remedy string, err error) error {
+	if err != nil {
+		return fmt.Errorf(refusalPreamble+". %s: %w. To proceed, either %s, or %s",
+			gatewayName, cause, err, remedy, remedyDisableHotReload)
+	}
+	return fmt.Errorf(refusalPreamble+". %s. To proceed, either %s, or %s",
+		gatewayName, cause, remedy, remedyDisableHotReload)
+}
 
 // Capability records what the live cluster supports, and therefore how kcp will
 // verify each Gateway state transition.
@@ -72,13 +115,16 @@ type Capability struct {
 	// verifiable under VerifyPerPodConfigID.
 	Mode VerificationMode
 
-	// CRDSupportsConfigID reports whether the installed operator's Gateway CRD
-	// declares spec.configId.
-	CRDSupportsConfigID bool
-
 	// HotReloadEnabled reports whether the live Gateway CR declares
-	// spec.hotReload.enabled: true.
+	// spec.hotReload.enabled: true. This is the primary discriminator, and the
+	// only one always available: it is a namespaced read, so unlike the CRD it is
+	// never the thing an operator lacks permission for.
 	HotReloadEnabled bool
+
+	// CRDSupportsConfigID reports whether the installed operator's Gateway CRD
+	// declares spec.configId. Only meaningful when HotReloadEnabled is true,
+	// since the CRD is not read otherwise.
+	CRDSupportsConfigID bool
 
 	// ConfigEndpointServed reports whether the running gateway pods serve
 	// GET /config. Only meaningful when the two gates above passed, since the
@@ -129,32 +175,35 @@ func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayNam
 // detectCapability is the inner orchestration used by DetectCapability. Split
 // from the method so unit tests can inject a fake dynamic client.
 //
-// Gates are evaluated cheapest-first, and each failure selects a verification
-// mode rather than erroring: an older cluster is a supported cluster. Only the
-// gates that need the network (endpoint reachability, and whether a configId
-// bump actually propagates) are left to the caller, so an operator who never
-// wanted hot-reload never sees a network error.
+// spec.hotReload.enabled is the primary discriminator, and every other gate is
+// subordinate to it. The invariant this enforces:
+//
+//	kcp must never select VerifyRollout while spec.hotReload.enabled is true.
+//
+// Those two states contradict each other. VerifyRollout's only evidence is a bump
+// in the backing Deployment's metadata.generation, and a hot-reload by definition
+// does not produce one — CFK rewrites the ConfigMap and projects it into the
+// running pods without touching the pod template. So the rollout wait observes no
+// roll, concludes there is nothing to converge on, and returns success having
+// verified nothing (see observeRolloutMechanism in rollout_mechanism.go). That is
+// not a slow failure or a hang: it is a fast, silent false success, and the
+// transition it green-lights may be a fence that never reached the gateway.
+//
+// Hence the shape below. Hot-reload off: every remaining gate is irrelevant,
+// because kcp will not inject a configId, and CFK will roll the pods — so
+// VerifyRollout is correct rather than degraded, and the cluster-scoped CRD read
+// is never even attempted. Hot-reload on: every remaining gate is a hard
+// requirement, and failing one is a refusal rather than a downgrade.
+//
+// Note that failure to *confirm* configId support is treated identically to
+// confirmed absence. Keying on the conclusion rather than the reason is what
+// makes this correct: a 403 on the CRD read and a CFK build whose CRD genuinely
+// predates spec.configId (0.1718.10 declares spec.hotReload.enabled but not
+// spec.configId) leave kcp in exactly the same position — hot-reload on, no way
+// to verify — however different their remedies are.
 func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string) (Capability, error) {
 	if err := ctx.Err(); err != nil {
 		return Capability{}, err
-	}
-
-	crdGVR := schema.GroupVersionResource{
-		Group:    CRDGroup,
-		Version:  CRDVersion,
-		Resource: CRDResourcePlural,
-	}
-
-	// Gate 1: does the installed operator's CRD declare spec.configId?
-	// A missing CRD means an older or differently-installed operator, which is
-	// a mode selection, not an error.
-	crd, err := dynamicClient.Resource(crdGVR).Get(ctx, GatewayCRDName, metav1.GetOptions{})
-	switch {
-	case apierrors.IsNotFound(err):
-		slog.Debug("gateway CRD not found; treating cluster as pre-configId", "crd", GatewayCRDName)
-		crd = nil
-	case err != nil:
-		return Capability{}, fmt.Errorf("failed to get Gateway CRD %q: %w", GatewayCRDName, err)
 	}
 
 	gatewayGVR := schema.GroupVersionResource{
@@ -163,52 +212,77 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clie
 		Resource: GatewayResourcePlural,
 	}
 
-	// Gate 2: has the operator declared hot-reload on the live CR? kcp never
-	// sets this field itself — it is the user's declared intent.
+	// Gate 1: has the operator declared hot-reload on the live CR? kcp never sets
+	// this field itself — it is the user's declared intent, and the one input that
+	// decides whether the pods will roll at all. A namespaced read, so it is
+	// available wherever kcp can migrate at all.
 	gw, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
 	if err != nil {
 		return Capability{}, fmt.Errorf("failed to get gateway %q for capability detection: %w", gatewayName, err)
 	}
 
-	detected := Capability{
-		CRDSupportsConfigID: crdSupportsConfigID(crd),
-		HotReloadEnabled:    hotReloadEnabledInCR(gw),
-	}
+	detected := Capability{HotReloadEnabled: hotReloadEnabledInCR(gw)}
 
-	switch {
-	case !detected.CRDSupportsConfigID:
-		// The more fundamental gate wins: without CRD support the hotReload
-		// field cannot be honoured either, so reporting it would mislead.
-		detected.Mode = VerifyRollout
-		detected.Advisory = advisoryNoConfigIDSupport
-	case !detected.HotReloadEnabled:
+	if !detected.HotReloadEnabled {
+		// CFK will roll the pods, so a rollout is exactly what there is to observe.
 		detected.Mode = VerifyRollout
 		detected.Advisory = advisoryHotReloadDisabled
-	default:
-		// Gate 3: do the running pods actually serve GET /config? The operator
-		// and the gateway are versioned separately, so a CRD that declares
-		// configId says nothing about the image the pods are running. Only this
-		// gate needs the network, which is why it is last: an operator who never
-		// wanted hot-reload never reaches it.
-		served, err := configEndpointServed(ctx, clientset, probe, namespace, gatewayName)
-		if err != nil {
-			return Capability{}, err
-		}
-		detected.ConfigEndpointServed = served
-		if served {
-			detected.Mode = VerifyPerPodConfigID
-		} else {
-			detected.Mode = VerifyRollout
-			detected.Advisory = advisoryNoConfigEndpoint
-		}
+		logDetectedCapability(namespace, gatewayName, detected)
+		return detected, nil
 	}
 
+	crdGVR := schema.GroupVersionResource{
+		Group:    CRDGroup,
+		Version:  CRDVersion,
+		Resource: CRDResourcePlural,
+	}
+
+	// Gate 2: does the installed operator's CRD declare spec.configId? Reached
+	// only with hot-reload on, which is also the only case where kcp would write
+	// the field.
+	crd, err := dynamicClient.Resource(crdGVR).Get(ctx, GatewayCRDName, metav1.GetOptions{})
+	switch {
+	case apierrors.IsNotFound(err):
+		// Defensive: with the gates in this order, a cluster with no Gateway CRD
+		// fails the CR read above first. Kept so the branch cannot become a silent
+		// downgrade if that ordering ever changes.
+		return Capability{}, unverifiableHotReloadError(gatewayName, causeCRDAbsent, remedyUpgradeCFK, nil)
+	case apierrors.IsForbidden(err):
+		slog.Debug("not permitted to read the gateway CRD", "crd", GatewayCRDName, "error", err)
+		return Capability{}, unverifiableHotReloadError(gatewayName, causeCRDForbidden, remedyCRDForbidden, nil)
+	case err != nil:
+		return Capability{}, fmt.Errorf("failed to get Gateway CRD %q: %w", GatewayCRDName, err)
+	}
+
+	detected.CRDSupportsConfigID = crdSupportsConfigID(crd)
+	if !detected.CRDSupportsConfigID {
+		return Capability{}, unverifiableHotReloadError(gatewayName, causeNoConfigIDInCRD, remedyUpgradeCFK, nil)
+	}
+
+	// Gate 3: do the running pods actually serve GET /config? The operator and the
+	// gateway are versioned separately, so a CRD that declares configId says
+	// nothing about the image the pods are running. Only this gate needs the
+	// network, which is why it is last: an operator who never wanted hot-reload
+	// never reaches it.
+	served, err := configEndpointServed(ctx, clientset, probe, namespace, gatewayName)
+	if err != nil {
+		return Capability{}, err
+	}
+	detected.ConfigEndpointServed = served
+	if !served {
+		return Capability{}, unverifiableHotReloadError(gatewayName, causeNoConfigEndpoint, remedyUpgradeGateway, nil)
+	}
+
+	detected.Mode = VerifyPerPodConfigID
+	logDetectedCapability(namespace, gatewayName, detected)
+	return detected, nil
+}
+
+func logDetectedCapability(namespace, gatewayName string, detected Capability) {
 	slog.Debug("resolved gateway verification mode",
 		"gateway", gatewayName, "namespace", namespace, "mode", detected.Mode,
 		"crdSupportsConfigId", detected.CRDSupportsConfigID, "hotReloadEnabled", detected.HotReloadEnabled,
 		"configEndpointServed", detected.ConfigEndpointServed)
-
-	return detected, nil
 }
 
 // configEndpointServed reports whether the gateway pods serve GET /config.
@@ -217,13 +291,16 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clie
 // problem, and it is the reason a single call is enough:
 //
 //   - every ready pod answers 404 → the image predates the endpoint (it arrived
-//     in gateway 1.3.0). A supported cluster, verified by rollout instead.
+//     in gateway 1.3.0). Reported as false, which the caller turns into a refusal:
+//     this is reached only with hot-reload on, and the two together are the
+//     licence-gated case where CFK reports a successful hot-reload that the
+//     gateway never applied.
 //   - any pod answers 200 → the endpoint is live. A mixed answer means an image
 //     change is mid-flight, which is itself a rollout; treating that as capable is
 //     right, because by the time kcp verifies anything the new pods are serving.
 //   - nothing is reachable → the pod network is not routable from here. That is
-//     an error, not a downgrade: kcp cannot reach the pods it would need to
-//     verify, and silently falling back would hide it until a switchover.
+//     an error, not a false: kcp cannot reach the pods it would need to verify,
+//     and silently falling back would hide it until a switchover.
 //
 // Returning an error here is safe because every caller runs before fencing.
 func configEndpointServed(ctx context.Context, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string) (bool, error) {
