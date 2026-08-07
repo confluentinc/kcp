@@ -792,6 +792,115 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		"only the failed disable attempt — no restore call when nothing was flipped")
 }
 
+// TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR covers the state
+// that per-pod verification made reachable for the first time: the fenced CR is
+// live in the cluster but was never confirmed on the serving pods. Leaving it
+// there means either traffic blocked on part of the fleet, or a promotion still
+// in flight that lands after kcp exits. Either way kcp must put back what it
+// changed.
+func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
+	var appliedYAML [][]byte
+	var mu sync.Mutex
+	var readyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			mu.Lock()
+			appliedYAML = append(appliedYAML, yaml)
+			mu.Unlock()
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			// First call is the fence's own verification — fail it. The second is
+			// the restore's, which must succeed for the compensation to complete.
+			if atomic.AddInt64(&readyCalls, 1) == 1 {
+				return fmt.Errorf("gateway pods did not converge")
+			}
+			return nil
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Contains(t, err.Error(), "gateway pods did not converge",
+		"the original cause must survive the compensation")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, appliedYAML, 2, "the fence apply must be followed by a restoring apply")
+	assert.Equal(t, config.FencedCrYAML, appliedYAML[0])
+	assert.Contains(t, string(appliedYAML[1]), "kind: Gateway",
+		"the second apply must be the initial CR, not the fenced one")
+	assert.NotEqual(t, config.FencedCrYAML, appliedYAML[1])
+
+	// The fence transition was cancelled, so the machine never left lags_ok —
+	// which is already the truth once the fence has been undone. No transition
+	// completed, so there is nothing to persist and no state file to read.
+	assert.Equal(t, StateLagsOk, orch.fsm.Current())
+	assert.NoFileExists(t, stateFilePath,
+		"a run that completed no transition must not write state")
+}
+
+func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testing.T) {
+	// The worst case: the fence is unconfirmed AND cannot be undone. Silence here
+	// would strand an operator with a gateway that may be fencing traffic, so the
+	// surfaced error has to name both halves.
+	var applyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			if atomic.AddInt64(&applyCalls, 1) == 2 {
+				return "", fmt.Errorf("k8s API unavailable")
+			}
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("gateway pods did not converge")
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Contains(t, err.Error(), "gateway pods did not converge", "the fence failure")
+	assert.Contains(t, err.Error(), "k8s API unavailable", "the restore failure")
+	assert.Contains(t, err.Error(), "inspect it before re-running")
+
+	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls), "the restore must have been attempted")
+
+	assert.Equal(t, StateLagsOk, orch.fsm.Current())
+	assert.NoFileExists(t, stateFilePath)
+}
+
+func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
+	// The fenced CR never reached the cluster, so there is nothing to undo and
+	// kcp must not write to a gateway it did not change.
+	var applyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return "", fmt.Errorf("admission webhook denied the request")
+		},
+	}
+
+	orch, config, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"a failed fence apply must not be followed by a restoring apply")
+}
+
 func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T) {
 	// AE4: the pause failed and the unfence also fails. The rollback cancels:
 	// state stays fenced (memory and disk, honestly reflecting the gateway),

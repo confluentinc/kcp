@@ -155,6 +155,121 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	})
 }
 
+// TestFenceGateway_UnconfirmedFenceIsMarked pins which fence failures leave the
+// fenced spec live in the cluster. Everything from the apply onward does, and
+// only those may be marked: the marker is what makes the orchestrator restore
+// the initial CR, and restoring after an apply that never landed would be an
+// unnecessary write to a gateway kcp did not touch.
+func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
+	t.Run("an apply failure is not an unconfirmed fence", func(t *testing.T) {
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+			return "", fmt.Errorf("k8s API unavailable")
+		}
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		config := hotReloadConfig()
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+		err := actions.FenceGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, ErrFenceUnconfirmed,
+			"nothing reached the cluster, so there is no fenced spec to restore")
+	})
+
+	t.Run("an acceptance failure is an unconfirmed fence", func(t *testing.T) {
+		// The fenced spec is in etcd even when CFK refuses it, and a later
+		// reconcile could still act on it. Restoring the initial CR removes it.
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.waitForGatewayAcceptedFn = func(context.Context, string, string, time.Duration, time.Duration) error {
+			return fmt.Errorf("operator never reconciled")
+		}
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		config := hotReloadConfig()
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+		err := actions.FenceGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	})
+
+	t.Run("a partial configId convergence is an unconfirmed fence", func(t *testing.T) {
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+			return fmt.Errorf("timed out after 1m30s waiting for the gateway to apply the configId on every pod: 1 of 2 ready pods report it")
+		}
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		config := hotReloadConfig()
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+		err := actions.FenceGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+		assert.Contains(t, err.Error(), "1 of 2 ready pods",
+			"the underlying counts must survive the wrap — they are how an operator tells a rejected canary from a stalled rollout")
+	})
+
+	t.Run("a rollout verification failure is an unconfirmed fence", func(t *testing.T) {
+		// The pre-hot-reload path leaves the same fenced spec behind, so it earns
+		// the same restore.
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
+			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+		}
+		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("gateway pods did not converge")
+		}
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		config := hotReloadConfig()
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+		err := actions.FenceGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	})
+
+	t.Run("a pod-replacement failure under detection is an unconfirmed fence", func(t *testing.T) {
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
+			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+		}
+		gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+			return map[k8stypes.UID]struct{}{"uid-1": {}}, nil
+		}
+		gw.waitForGatewayPodsFn = func(_ context.Context, _, _ string, _ map[k8stypes.UID]struct{}, _ int64, _, _ time.Duration, _ func(gateway.PodRolloutProgress)) error {
+			return fmt.Errorf("old pods never terminated")
+		}
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		config := hotReloadConfig()
+		config.DetectUnroutedProducersDuration = 30 * time.Second
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+		err := actions.FenceGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	})
+
+	t.Run("a confirmed fence is not marked", func(t *testing.T) {
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		config := hotReloadConfig()
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+		require.NoError(t, actions.FenceGateway(context.Background(), config))
+	})
+}
+
 func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("injects and verifies a fresh configId", func(t *testing.T) {
 		var applied []string

@@ -745,7 +745,33 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	slog.Debug("fenced gateway CR applied")
 	s.reporter.success("Fenced gateway CR applied")
 
-	// Gate both waits below on the operator having accepted the fenced spec.
+	// The fenced spec is now live in the cluster, so from here on every failure
+	// leaves it there — possibly holding client traffic on some or all pods.
+	// Marking them all lets the orchestrator restore the initial CR rather than
+	// exiting with the gateway in a state kcp created and did not resolve. The
+	// apply failure above is deliberately outside the mark: nothing reached the
+	// cluster, so there is nothing to undo.
+	if err := s.confirmFence(ctx, config, applied, oldPodUIDs, capturePods); err != nil {
+		return fmt.Errorf("%w: %w", ErrFenceUnconfirmed, err)
+	}
+
+	slog.Debug("gateway fenced and ready")
+	s.reporter.success("Gateway fenced and ready")
+	return nil
+}
+
+// confirmFence blocks until the applied fenced spec is confirmed in force, by
+// whichever means the cluster supports. Split from FenceGateway so that every
+// path that can leave the fenced spec live is inside one unit its caller can
+// mark ErrFenceUnconfirmed — a failure added here cannot forget to be restorable.
+func (s *MigrationActions) confirmFence(
+	ctx context.Context,
+	config *MigrationConfig,
+	applied gatewayApplyResult,
+	oldPodUIDs map[k8stypes.UID]struct{},
+	capturePods bool,
+) error {
+	// Gate the waits below on the operator having accepted the fenced spec.
 	// The Deployment-based waits cannot tell "no restart needed" apart from
 	// "operator refused the spec" — see waitForGatewayAccepted.
 	if err := s.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
@@ -755,13 +781,11 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	switch {
 	case applied.ConfigID != "":
 		// Covers both mechanisms, and subsumes the pod-replacement wait below.
-		if err := s.waitForGatewayConfigApplied(ctx, config, applied, "fence"); err != nil {
-			return err
-		}
+		return s.waitForGatewayConfigApplied(ctx, config, applied, "fence")
 	case capturePods:
 		// With detection on and no configId to verify, wait until the old
 		// unfenced pods are gone rather than just until the new pod is Ready —
-		// see the comment above.
+		// see the comment in FenceGateway.
 		s.reporter.detail("Waiting for gateway readiness...")
 		slog.Debug("waiting for gateway pod replacement", "rolloutTimeout", s.rolloutTimeout,
 			"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
@@ -769,15 +793,10 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 			applied.BaselineDeploymentGeneration, 5*time.Second, s.rolloutTimeout, s.printPodRolloutProgress); err != nil {
 			return fmt.Errorf("failed waiting for gateway pod rollout: %w", err)
 		}
+		return nil
 	default:
-		if err := s.verifyGatewayTransition(ctx, config, applied, "fence"); err != nil {
-			return err
-		}
+		return s.verifyGatewayTransition(ctx, config, applied, "fence")
 	}
-
-	slog.Debug("gateway fenced and ready")
-	s.reporter.success("Gateway fenced and ready")
-	return nil
 }
 
 // unfenceGateway reapplies the initial gateway CR to restore normal traffic,
