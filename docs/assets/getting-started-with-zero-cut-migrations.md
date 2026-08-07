@@ -147,6 +147,15 @@ The following permissions are required specifically for the three migration comm
 - `get`, `patch`, `update` on `Gateway` resources in the gateway namespace
 - Validate with: `kubectl auth can-i patch gateways -n confluent`
 
+**Kubernetes (only when the gateway has hot reload enabled):**
+
+- `get` on `customresourcedefinitions.apiextensions.k8s.io` at the cluster scope
+- Validate with: `kubectl auth can-i get customresourcedefinitions`
+
+This one is conditional: it is required only when the Gateway CR sets `spec.hotReload.enabled: true`, and KCP does not read the CRD at all otherwise. The reason it becomes necessary is that hot reload changes what there is to observe. CFK applies the new config to the running pods in place, so no pod ever rolls, and KCP cannot confirm a fence or switchover landed by watching a rollout — it confirms instead by reading back a per-pod config revision (`spec.configId`), and it reads the CRD to check the installed CFK operator declares that field before writing it.
+
+Without the permission KCP stops at `kcp migration init` with a message naming it, rather than falling back to rollout verification: with hot reload on, that fallback would report success having observed nothing, potentially promoting topics against a source that was never fenced. If cluster-scoped read cannot be granted, set `spec.hotReload.enabled: false` on the Gateway CR for the duration of the migration. CFK then rolls the pods on each transition, which KCP can verify without reading the CRD.
+
 ---
 
 ## 8. Client Experience During Cutover
