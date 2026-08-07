@@ -16,10 +16,16 @@
 //   - a hot-reloading gateway moves no Deployment generation, so the rollout wait
 //     that a mis-detected migration would rely on observes nothing and reports
 //     success anyway;
-//   - an apply from kcp's field manager that omits spec.hotReload DELETES the field
-//     when an earlier apply from the same manager declared it, which is what makes
-//     a fenced CR that declares hot-reload plus a switchover CR that does not a
-//     silent mid-migration disable rather than a harmless inconsistency.
+//   - an apply from kcp's field manager that omits spec.hotReload does not quietly
+//     inherit whatever an earlier apply from that manager declared. Until the
+//     manager solely owns the field, omitting it is a silent no-op — some other
+//     manager still holds it. Once the manager does solely own it, omitting it
+//     fails the apply outright, because this CRD never marks spec.hotReload
+//     nullable and server-side apply can only represent removing it as a
+//     transient null. Neither outcome is the harmless inconsistency a fenced CR
+//     that declares hot-reload plus a switchover CR that does not might look
+//     like, which is why kcp refuses the mismatch rather than risk either one
+//     mid-migration.
 package hotreload
 
 import (
@@ -228,10 +234,11 @@ func TestPlannedCRThatWouldDisableHotReloadIsRefused(t *testing.T) {
 }
 
 // TestPlannedCRsMustAgreeOnMentioningHotReload is the rule that only exists
-// because of what server-side apply does, so this test proves the mechanism as
-// well as kcp's response to it: it applies a CR that declares spec.hotReload and
-// then one that omits it, both as kcp's own field manager, and shows the field is
-// deleted rather than inherited.
+// because of what server-side apply does once kcp's field manager solely owns
+// spec.hotReload, so this test proves the mechanism as well as kcp's response to
+// it: it applies a CR that declares spec.hotReload and then one that omits it,
+// both as kcp's own field manager, and shows the omission is rejected outright
+// rather than quietly inherited.
 func TestPlannedCRsMustAgreeOnMentioningHotReload(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -256,8 +263,32 @@ func TestPlannedCRsMustAgreeOnMentioningHotReload(t *testing.T) {
 	// The mechanism, proven rather than assumed. This is what the refusal above is
 	// protecting against, and if server-side apply ever stopped behaving this way
 	// the rule could be relaxed — so the claim is pinned here.
-	t.Run("omitting the field after declaring it deletes it", func(t *testing.T) {
+	//
+	// spec.hotReload starts life owned by setup.sh's plain `kubectl apply`
+	// (manager "kubectl-client-side-apply"), not kcp-migration — and a same-value
+	// Apply from kcp-migration only adds it as a co-owner. Only a value-changing
+	// apply gives kcp-migration the field outright, and only the sole owner
+	// omitting a field asks the API server to remove it. This test establishes
+	// that precondition itself (flip the value, then confirm the other manager no
+	// longer holds it) rather than relying on TestPlannedCRThatWouldEnableHotReloadIsRefused
+	// above having done so as a side effect — which previously let it pass only as
+	// part of the full suite and fail differently in isolation.
+	t.Run("omitting the field once it is solely owned fails the apply", func(t *testing.T) {
 		configID, err := gateway.NewConfigID()
+		require.NoError(t, err)
+		e.applyAndSettle(t, ctx, withHotReload(t, fenced, false), configID)
+
+		// A manager that has lost real ownership of hotReload's content can still
+		// carry an empty "f:hotReload: {}" placeholder in its fieldsV1 tree —
+		// structured-merge-diff doesn't always prune the key itself, only what it
+		// owns underneath. So the check below looks for the meaningful leaf
+		// ("enabled"), not for the field name, which would false-fail on that
+		// harmless empty node.
+		owned := e.fieldsOwnedBy(t, ctx, "kubectl-client-side-apply")
+		assert.NotContains(t, fieldsString(t, owned), "enabled",
+			"the value-changing apply above must have taken sole ownership of spec.hotReload.enabled from the rig's initial owner")
+
+		configID, err = gateway.NewConfigID()
 		require.NoError(t, err)
 		e.applyAndSettle(t, ctx, fenced, configID)
 
@@ -266,15 +297,22 @@ func TestPlannedCRsMustAgreeOnMentioningHotReload(t *testing.T) {
 		require.Equal(t, true, gw["spec"].(map[string]any)["hotReload"].(map[string]any)["enabled"],
 			"the fenced CR must have left hot-reload declared on the live gateway")
 
+		// kcp-migration is now the field's sole owner, so omitting it asks the API
+		// server to remove the only declaration of a field that is still
+		// type: object with no nullable: true in this CRD (confirmed in
+		// internal/services/gateway/testdata/gateway-crd-v0.1718.34.yaml).
+		// Server-side apply can only represent that removal as a transient null,
+		// which the CRD's structural schema rejects outright — the omission does
+		// not silently switch hot-reload off, it fails the apply. That failure,
+		// and the shared-ownership no-op the setup above starts from, are exactly
+		// what the refusal in the subtest above exists to keep a real migration
+		// from ever reaching.
 		configID, err = gateway.NewConfigID()
 		require.NoError(t, err)
-		e.applyAndSettle(t, ctx, switchoverSilent, configID)
-
-		gw, err = e.dynamicGateway(ctx)
-		require.NoError(t, err)
-		_, stillThere := gw["spec"].(map[string]any)["hotReload"]
-		assert.False(t, stillThere,
-			"server-side apply must have pruned spec.hotReload — if it survived, the presence rule can be relaxed")
+		_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, switchoverSilent, configID)
+		require.Error(t, err, "omitting an already sole-owned spec.hotReload must be rejected by the CRD, not silently applied")
+		assert.Contains(t, err.Error(), "spec.hotReload")
+		assert.Contains(t, err.Error(), "must be of type object")
 	})
 }
 
