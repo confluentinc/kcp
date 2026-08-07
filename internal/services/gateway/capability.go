@@ -1,10 +1,13 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
+	"github.com/goccy/go-yaml"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -68,16 +71,15 @@ const advisoryHotReloadDisabled = "spec.hotReload.enabled is not set or disabled
 // needs to verify a transition is unavailable.
 //
 // Unlike an advisory, a refusal must name a remedy: kcp is stopping the operator,
-// so it owes them the way forward. remedyDisableHotReload is offered on every
+// so it owes them the way forward. Disabling hot-reload is offered on every
 // refusal because it is the one remedy always in the operator's own hands, and it
 // is not a workaround — turning hot-reload off makes CFK roll the pods, which is
 // a mechanism kcp can verify.
 const (
-	refusalPreamble = "cannot verify gateway state transitions: spec.hotReload.enabled is true on gateway %q, so CFK " +
+	refusalPreamble = "cannot verify gateway state transitions: spec.hotReload.enabled is true for gateway %q " +
+		"(declared in %s), so CFK " +
 		"applies config changes in place and the pods never roll — pod-rollout verification would observe nothing and " +
 		"report success, while a fence may not have reached the gateway at all"
-
-	remedyDisableHotReload = "set spec.hotReload.enabled: false on the gateway for the duration of the migration"
 
 	causeCRDForbidden  = "kcp is not permitted to read the Gateway CRD, so it cannot confirm the operator declares spec.configId"
 	remedyCRDForbidden = "grant get on customresourcedefinitions.apiextensions.k8s.io at the cluster scope"
@@ -98,13 +100,76 @@ const (
 // asymmetry is what settles it: a false refusal blocks a migration that says
 // exactly how to unblock it, while a false acceptance promotes mirrors against a
 // source that was never fenced.
-func unverifiableHotReloadError(gatewayName, cause, remedy string, err error) error {
+//
+// sources names every CR that declares hot-reload, and is what makes the remedy
+// actionable: telling an operator to disable hot-reload "on the gateway" is the
+// wrong instruction when the declaration lives in a file kcp is about to apply,
+// because the fence apply would put it straight back.
+func unverifiableHotReloadError(gatewayName string, sources []string, cause, remedy string, err error) error {
+	declaredIn := joinPhrases(sources)
+	disable := fmt.Sprintf("set spec.hotReload.enabled: false in %s for the duration of the migration", declaredIn)
+
 	if err != nil {
 		return fmt.Errorf(refusalPreamble+". %s: %w. To proceed, either %s, or %s",
-			gatewayName, cause, err, remedy, remedyDisableHotReload)
+			gatewayName, declaredIn, cause, err, remedy, disable)
 	}
 	return fmt.Errorf(refusalPreamble+". %s. To proceed, either %s, or %s",
-		gatewayName, cause, remedy, remedyDisableHotReload)
+		gatewayName, declaredIn, cause, remedy, disable)
+}
+
+// joinPhrases renders a list of CR names as prose: "a", "a and b", "a, b and c".
+func joinPhrases(phrases []string) string {
+	switch len(phrases) {
+	case 0:
+		return "the gateway CR"
+	case 1:
+		return phrases[0]
+	default:
+		return strings.Join(phrases[:len(phrases)-1], ", ") + " and " + phrases[len(phrases)-1]
+	}
+}
+
+// checkHotReloadPresenceAgrees refuses a set of planned CRs where some mention
+// spec.hotReload and others do not, while the gateway has hot-reload on.
+//
+// This exists because "an absent declaration inherits" stops being true once kcp
+// has declared the field itself. Measured against a real CFK cluster: an apply
+// from kcp's field manager that declares spec.hotReload takes ownership of it, and
+// a later apply from the same manager that omits it *deletes* the field. So a
+// fenced CR declaring hot-reload followed by a switchover CR that omits it turns
+// hot-reload off at switchover — mid-migration, with traffic already fenced.
+//
+// Only the enabled case is checked. With hot-reload off there is nothing harmful
+// to prune: absent and false are the same behaviour, so deleting an explicit false
+// changes nothing.
+//
+// Checked symmetrically even though only one order is harmful. The safe order is
+// safe only because of when the applies happen, and a rule resting on that decays
+// the first time the sequence changes — while an operator who mentions the field
+// in one file has no reason to omit it from the other.
+func checkHotReloadPresenceAgrees(gatewayName string, liveHotReload bool, declarations map[string]hotReloadDeclaration) error {
+	if !liveHotReload {
+		return nil
+	}
+
+	var declaring, silent []string
+	for _, role := range []string{roleFenced, roleSwitchover} {
+		if declarations[role].present {
+			declaring = append(declaring, fmt.Sprintf("the %s gateway CR", role))
+			continue
+		}
+		silent = append(silent, fmt.Sprintf("the %s gateway CR", role))
+	}
+	if len(declaring) == 0 || len(silent) == 0 {
+		return nil
+	}
+
+	return fmt.Errorf("cannot start a migration that would change gateway %q's hot-reload behaviour: %s "+
+		"declares spec.hotReload while %s omits it, and the gateway has hot-reload enabled. kcp applies these CRs in "+
+		"turn, and server-side apply deletes a field an earlier apply from the same field manager declared once a later "+
+		"one leaves it out — so hot-reload would be switched off part-way through the migration. To proceed, either "+
+		"declare spec.hotReload.enabled: true in both, or omit it from both so each inherits the gateway's setting",
+		gatewayName, joinPhrases(declaring), joinPhrases(silent))
 }
 
 // Capability records what the live cluster supports, and therefore how kcp will
@@ -115,11 +180,19 @@ type Capability struct {
 	// verifiable under VerifyPerPodConfigID.
 	Mode VerificationMode
 
-	// HotReloadEnabled reports whether the live Gateway CR declares
-	// spec.hotReload.enabled: true. This is the primary discriminator, and the
-	// only one always available: it is a namespaced read, so unlike the CRD it is
-	// never the thing an operator lacks permission for.
+	// HotReloadEnabled reports whether spec.hotReload.enabled: true is declared by
+	// the live Gateway CR *or* by either of the CRs kcp will apply during the
+	// migration. This is the primary discriminator, and the only one always
+	// available: the live read is namespaced and the files are already in hand, so
+	// unlike the CRD it is never the thing an operator lacks permission for.
 	HotReloadEnabled bool
+
+	// HotReloadDeclaredIn names the CRs that declare it, as prose fragments
+	// ("the fenced gateway CR"). Empty when hot-reload is off everywhere. Carried
+	// so an advisory or a refusal can point at the file that has to change rather
+	// than at "the gateway" — which is the wrong instruction when the declaration
+	// lives in a file the fence apply would put straight back.
+	HotReloadDeclaredIn []string
 
 	// CRDSupportsConfigID reports whether the installed operator's Gateway CRD
 	// declares spec.configId. Only meaningful when HotReloadEnabled is true,
@@ -148,7 +221,7 @@ func (c Capability) InjectsConfigID() bool {
 // DetectCapability determines how Gateway state transitions can be verified on
 // the live cluster. port is the port serving GET /config; 0 selects
 // DefaultGatewayConfigPort.
-func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayName string, port int) (Capability, error) {
+func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return Capability{}, fmt.Errorf("failed to build config: %w", err)
@@ -169,7 +242,7 @@ func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayNam
 			gatewayConfigAddr(endpoint.IP, port))
 	}
 
-	return detectCapability(ctx, dynamicClient, clientset, probe, namespace, gatewayName)
+	return detectCapability(ctx, dynamicClient, clientset, probe, namespace, gatewayName, fencedYAML, switchoverYAML)
 }
 
 // detectCapability is the inner orchestration used by DetectCapability. Split
@@ -201,7 +274,7 @@ func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayNam
 // predates spec.configId (0.1718.10 declares spec.hotReload.enabled but not
 // spec.configId) leave kcp in exactly the same position — hot-reload on, no way
 // to verify — however different their remedies are.
-func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string) (Capability, error) {
+func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clientset kubernetes.Interface, probe podProber, namespace, gatewayName string, fencedYAML, switchoverYAML []byte) (Capability, error) {
 	if err := ctx.Err(); err != nil {
 		return Capability{}, err
 	}
@@ -221,7 +294,39 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clie
 		return Capability{}, fmt.Errorf("failed to get gateway %q for capability detection: %w", gatewayName, err)
 	}
 
-	detected := Capability{HotReloadEnabled: hotReloadEnabledInCR(gw)}
+	// The live gateway decides the mode, and the CRs kcp is about to apply are held
+	// to it. They are not a second opinion to be merged in: kcp applies them, so a
+	// declaration that disagrees is a behaviour change kcp would be making to the
+	// operator's running gateway. Refuse it and say which file, rather than picking.
+	liveHotReload := hotReloadEnabledInCR(gw)
+
+	var sources []string
+	if liveHotReload {
+		sources = append(sources, "the live gateway CR")
+	}
+	declarations := map[string]hotReloadDeclaration{}
+	for _, planned := range []plannedGatewayCR{{roleFenced, fencedYAML}, {roleSwitchover, switchoverYAML}} {
+		declared, err := hotReloadDeclaredInYAML(planned)
+		if err != nil {
+			return Capability{}, err
+		}
+		if declared.present && declared.enabled != liveHotReload {
+			return Capability{}, hotReloadDiscrepancyError(gatewayName, planned.role, liveHotReload, declared.enabled)
+		}
+		declarations[planned.role] = declared
+		if declared.present && declared.enabled {
+			sources = append(sources, fmt.Sprintf("the %s gateway CR", planned.role))
+		}
+	}
+
+	if err := checkHotReloadPresenceAgrees(gatewayName, liveHotReload, declarations); err != nil {
+		return Capability{}, err
+	}
+
+	detected := Capability{
+		HotReloadEnabled:    liveHotReload,
+		HotReloadDeclaredIn: sources,
+	}
 
 	if !detected.HotReloadEnabled {
 		// CFK will roll the pods, so a rollout is exactly what there is to observe.
@@ -246,17 +351,17 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clie
 		// Defensive: with the gates in this order, a cluster with no Gateway CRD
 		// fails the CR read above first. Kept so the branch cannot become a silent
 		// downgrade if that ordering ever changes.
-		return Capability{}, unverifiableHotReloadError(gatewayName, causeCRDAbsent, remedyUpgradeCFK, nil)
+		return Capability{}, unverifiableHotReloadError(gatewayName, sources, causeCRDAbsent, remedyUpgradeCFK, nil)
 	case apierrors.IsForbidden(err):
 		slog.Debug("not permitted to read the gateway CRD", "crd", GatewayCRDName, "error", err)
-		return Capability{}, unverifiableHotReloadError(gatewayName, causeCRDForbidden, remedyCRDForbidden, nil)
+		return Capability{}, unverifiableHotReloadError(gatewayName, sources, causeCRDForbidden, remedyCRDForbidden, nil)
 	case err != nil:
 		return Capability{}, fmt.Errorf("failed to get Gateway CRD %q: %w", GatewayCRDName, err)
 	}
 
 	detected.CRDSupportsConfigID = crdSupportsConfigID(crd)
 	if !detected.CRDSupportsConfigID {
-		return Capability{}, unverifiableHotReloadError(gatewayName, causeNoConfigIDInCRD, remedyUpgradeCFK, nil)
+		return Capability{}, unverifiableHotReloadError(gatewayName, sources, causeNoConfigIDInCRD, remedyUpgradeCFK, nil)
 	}
 
 	// Gate 3: do the running pods actually serve GET /config? The operator and the
@@ -270,7 +375,7 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clie
 	}
 	detected.ConfigEndpointServed = served
 	if !served {
-		return Capability{}, unverifiableHotReloadError(gatewayName, causeNoConfigEndpoint, remedyUpgradeGateway, nil)
+		return Capability{}, unverifiableHotReloadError(gatewayName, sources, causeNoConfigEndpoint, remedyUpgradeGateway, nil)
 	}
 
 	detected.Mode = VerifyPerPodConfigID
@@ -282,7 +387,7 @@ func logDetectedCapability(namespace, gatewayName string, detected Capability) {
 	slog.Debug("resolved gateway verification mode",
 		"gateway", gatewayName, "namespace", namespace, "mode", detected.Mode,
 		"crdSupportsConfigId", detected.CRDSupportsConfigID, "hotReloadEnabled", detected.HotReloadEnabled,
-		"configEndpointServed", detected.ConfigEndpointServed)
+		"hotReloadDeclaredIn", detected.HotReloadDeclaredIn, "configEndpointServed", detected.ConfigEndpointServed)
 }
 
 // configEndpointServed reports whether the gateway pods serve GET /config.
@@ -382,6 +487,78 @@ func crdSupportsConfigID(crd *unstructured.Unstructured) bool {
 	}
 
 	return false
+}
+
+// plannedGatewayCR is a CR file kcp will apply during the migration, tagged with
+// the role it plays so a finding can name the file the operator has to fix.
+type plannedGatewayCR struct {
+	role string
+	yaml []byte
+}
+
+// hotReloadDeclaration is what a planned CR says about spec.hotReload.enabled.
+//
+// Absence is tracked separately from the value because the two mean different
+// things to server-side apply. A CR that omits the field does not clear it: SSA
+// leaves fields the applier does not own alone, so the gateway keeps whatever it
+// was running. That makes an absent declaration a no-op, and a no-op is always
+// allowed. Every example under docs/assets/gateway-switchover is this shape.
+type hotReloadDeclaration struct {
+	present bool
+	enabled bool
+}
+
+// hotReloadDeclaredInYAML reads what a gateway CR file kcp is going to apply says
+// about spec.hotReload.enabled.
+//
+// NestedBool is safe on a goccy-decoded tree where NestedMap would not be: it
+// reads through without deep-copying, so the uint64 goccy produces for a positive
+// integer never reaches DeepCopyJSONValue.
+//
+// A file that cannot be parsed is an error rather than an absent declaration.
+// Absence and unreadability are different facts, and collapsing them would let an
+// unreadable CR through as though it agreed with the gateway.
+func hotReloadDeclaredInYAML(planned plannedGatewayCR) (hotReloadDeclaration, error) {
+	if len(bytes.TrimSpace(planned.yaml)) == 0 {
+		return hotReloadDeclaration{}, nil
+	}
+
+	var obj map[string]any
+	if err := yaml.Unmarshal(planned.yaml, &obj); err != nil {
+		return hotReloadDeclaration{}, fmt.Errorf("failed to read spec.hotReload.enabled from the %s gateway CR: %w", planned.role, err)
+	}
+
+	// A malformed value (a string where the CRD wants a bool) reads as absent: the
+	// API server would reject it on apply, which is a better error than anything
+	// kcp could say here, and "inherits" is the harmless interpretation.
+	enabled, found, err := unstructured.NestedBool(obj, "spec", "hotReload", "enabled")
+	if err != nil || !found {
+		return hotReloadDeclaration{}, nil
+	}
+
+	return hotReloadDeclaration{present: true, enabled: enabled}, nil
+}
+
+// hotReloadDiscrepancyError is the refusal for a planned CR that would change the
+// gateway's hot-reload behaviour.
+//
+// kcp will not make that change on the operator's behalf in either direction.
+// Enabling it converts every later transition to an in-place apply on a gateway
+// that was rolling pods; disabling it starts rolling pods on a gateway that was
+// not. Both are changes to how a running service handles traffic, decided by a
+// file kcp happens to be applying — so kcp stops and explains instead of picking.
+func hotReloadDiscrepancyError(gatewayName, role string, live, planned bool) error {
+	consequence := "start rolling the gateway pods on every transition"
+	if planned {
+		consequence = "stop CFK rolling the pods and have it apply every later change in place"
+	}
+
+	return fmt.Errorf("cannot start a migration that would change gateway %q's hot-reload behaviour: "+
+		"the %s gateway CR declares spec.hotReload.enabled: %t while the gateway has it %t. Applying that CR would %s, "+
+		"which kcp will not do on your behalf. To proceed, either omit spec.hotReload from the %s gateway CR so it "+
+		"inherits the gateway's setting, make it declare %t to match, or set spec.hotReload.enabled: %t on the gateway "+
+		"itself first",
+		gatewayName, role, planned, live, consequence, role, live, planned)
 }
 
 // hotReloadEnabledInCR reports whether the live Gateway CR declares

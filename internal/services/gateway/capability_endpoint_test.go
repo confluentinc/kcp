@@ -40,7 +40,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 
 	t.Run("endpoint served - per-pod configId", func(t *testing.T) {
 		got, err := detectCapability(context.Background(), capableCluster(ns, gw),
-			servingPods(ns, gw, 2), probeStub(ProbeApplied), ns, gw)
+			servingPods(ns, gw, 2), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyPerPodConfigID, got.Mode)
@@ -52,7 +52,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 		// configId: null means the endpoint works and no revision has been
 		// applied yet, which is exactly the state of a freshly-created gateway.
 		got, err := detectCapability(context.Background(), capableCluster(ns, gw),
-			servingPods(ns, gw, 2), probeStub(ProbeNeverSet), ns, gw)
+			servingPods(ns, gw, 2), probeStub(ProbeNeverSet), ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyPerPodConfigID, got.Mode)
@@ -65,7 +65,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 		// applies it and no pod rolls. Downgrading here would verify a fence by
 		// watching for a rollout that cannot happen.
 		_, err := detectCapability(context.Background(), capableCluster(ns, gw),
-			servingPods(ns, gw, 3), probeStub(ProbeEndpointAbsent), ns, gw)
+			servingPods(ns, gw, 3), probeStub(ProbeEndpointAbsent), ns, gw, nil, nil)
 		require.Error(t, err, "no /config and no roll leaves nothing to verify against")
 
 		assert.Contains(t, err.Error(), "GET /config")
@@ -77,7 +77,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 		got, err := detectCapability(context.Background(), capableCluster(ns, gw),
 			servingPods(ns, gw, 2),
 			mixedProber(map[string]ProbeOutcome{"test-gateway-0": ProbeEndpointAbsent}, ProbeApplied),
-			ns, gw)
+			ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyPerPodConfigID, got.Mode,
@@ -86,7 +86,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 
 	t.Run("nothing reachable - error naming pod routing", func(t *testing.T) {
 		_, err := detectCapability(context.Background(), capableCluster(ns, gw),
-			servingPods(ns, gw, 2), probeStub(ProbeUnreachable), ns, gw)
+			servingPods(ns, gw, 2), probeStub(ProbeUnreachable), ns, gw, nil, nil)
 		require.Error(t, err, "unreachable pods are an environment problem, not a reason to silently downgrade")
 
 		assert.Contains(t, err.Error(), "route pod IPs")
@@ -96,7 +96,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 
 	t.Run("no ready pods - error rather than a guess", func(t *testing.T) {
 		_, err := detectCapability(context.Background(), capableCluster(ns, gw),
-			newFakeClientset(), probeStub(ProbeApplied), ns, gw)
+			newFakeClientset(), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "no ready pods")
 	})
@@ -115,7 +115,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 		}
 
 		got, err := detectCapability(context.Background(), capableCluster(ns, gw),
-			newFakeClientset(objs...), probe, ns, gw)
+			newFakeClientset(objs...), probe, ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyPerPodConfigID, got.Mode)
@@ -137,7 +137,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 			return ProbeResult{}, fmt.Errorf("probe must not run")
 		}
 
-		_, err := detectCapability(context.Background(), noConfigID, servingPods(ns, gw, 2), probe, ns, gw)
+		_, err := detectCapability(context.Background(), noConfigID, servingPods(ns, gw, 2), probe, ns, gw, nil, nil)
 		require.Error(t, err)
 
 		assert.Contains(t, err.Error(), "spec.configId")
@@ -155,7 +155,7 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 			return ProbeResult{}, fmt.Errorf("probe must not run")
 		}
 
-		got, err := detectCapability(context.Background(), disabled, servingPods(ns, gw, 2), probe, ns, gw)
+		got, err := detectCapability(context.Background(), disabled, servingPods(ns, gw, 2), probe, ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)

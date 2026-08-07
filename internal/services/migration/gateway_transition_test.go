@@ -16,11 +16,12 @@ import (
 // verification, recording every applied configId.
 func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 	return &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int) (gateway.Capability, error) {
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{
 				Mode:                gateway.VerifyPerPodConfigID,
 				CRDSupportsConfigID: true,
 				HotReloadEnabled:    true,
+				HotReloadDeclaredIn: []string{"the live gateway CR"},
 			}, nil
 		},
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
@@ -69,7 +70,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("uses the rollout wait on a pre-hot-reload cluster", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
+		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		readyCalled := false
@@ -117,7 +118,7 @@ func TestFenceGateway_ConfigIDVerification(t *testing.T) {
 	t.Run("still uses the pod-replacement wait when detecting without configId", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
+		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		podsCalled := false
@@ -219,7 +220,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 		// the same restore.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
+		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		gw.waitForGatewayReadyFn = func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
@@ -238,7 +239,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 	t.Run("a pod-replacement failure under detection is an unconfirmed fence", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.detectCapabilityFn = func(context.Context, string, string, int) (gateway.Capability, error) {
+		gw.detectCapabilityFn = func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		}
 		gw.getGatewayPodUIDsFn = func(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
@@ -337,9 +338,13 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		assert.NotEmpty(t, applied[0])
 	})
 
+	// Note there is no case here for hot-reload arriving with a planned CR rather
+	// than being in force on the gateway. That state is refused at detection now, so
+	// the probe cannot be reached in it: whenever configId injection is on,
+	// hot-reload is already running and a configId-only apply is a pure hot-reload.
 	t.Run("is a no-op on a cluster that cannot report a configId", func(t *testing.T) {
 		gw := &mockGatewayService{
-			detectCapabilityFn: func(context.Context, string, string, int) (gateway.Capability, error) {
+			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 			},
 			getGatewayYAMLFn: func(context.Context, string, string) ([]byte, error) {

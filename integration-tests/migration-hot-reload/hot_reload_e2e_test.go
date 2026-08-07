@@ -152,7 +152,10 @@ func TestCapabilityIsDetected(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 
-	capability, err := e.svc.DetectCapability(ctx, e.namespace, e.gateway, gateway.DefaultGatewayConfigPort)
+	// No planned CRs: this asks what the live cluster alone supports, which is what
+	// the rest of this file depends on. The planned-CR inputs are exercised in
+	// hot_reload_divergent_cr_e2e_test.go, where they are the thing under test.
+	capability, err := e.svc.DetectCapability(ctx, e.namespace, e.gateway, gateway.DefaultGatewayConfigPort, nil, nil)
 	require.NoError(t, err)
 
 	assert.True(t, capability.CRDSupportsConfigID, "the installed CRD must declare spec.configId")

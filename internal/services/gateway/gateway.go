@@ -33,7 +33,7 @@ const (
 // Service defines gateway operations
 type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
-	DetectCapability(ctx context.Context, namespace, gatewayName string, port int) (Capability, error)
+	DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error)
 	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
 	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)

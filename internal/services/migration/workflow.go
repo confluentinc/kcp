@@ -114,7 +114,12 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 		config.GatewayConfigPort = gateway.DefaultGatewayConfigPort
 	}
 
-	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config))
+	// The fenced and switchover CRs are inputs to detection, not just payloads to
+	// apply later: applying one is what puts spec.hotReload into force, so a
+	// detector shown only the live gateway can pick rollout verification for a
+	// migration that will hot-reload — and then observe nothing.
+	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName,
+		gatewayConfigPort(config), config.FencedCrYAML, config.SwitchoverCrYAML)
 	if err != nil {
 		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
 	}

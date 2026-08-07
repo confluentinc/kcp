@@ -138,9 +138,10 @@ type MigrationConfig struct {
 	// (or rolled back) between init and execute.
 	GatewayVerificationMode string `json:"gateway_verification_mode"`
 
-	// GatewayHotReloadEnabled records whether the live Gateway CR declared
-	// spec.hotReload.enabled at init time. Diagnostic: it explains which gate
-	// produced GatewayVerificationMode.
+	// GatewayHotReloadEnabled records whether spec.hotReload.enabled was declared
+	// at init time by the live Gateway CR or by either of the CRs this migration
+	// will apply — the fence apply is what puts hot-reload into force, so the files
+	// count. Diagnostic: it explains which gate produced GatewayVerificationMode.
 	GatewayHotReloadEnabled bool `json:"gateway_hot_reload_enabled"`
 
 	// GatewayConfigPort is the port the gateway's GET /config endpoint is served

@@ -17,7 +17,7 @@ import (
 // the generation baseline feeds.
 func rolloutVerifiedGateway() *mockGatewayService {
 	return &mockGatewayService{
-		detectCapabilityFn: func(context.Context, string, string, int) (gateway.Capability, error) {
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {

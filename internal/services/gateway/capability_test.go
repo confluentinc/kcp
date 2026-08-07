@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -265,7 +266,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyPerPodConfigID, got.Mode)
@@ -284,7 +285,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
 		)
 
-		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.Error(t, err, "rollout verification is vacuous once hot-reload is on")
 
 		assert.Contains(t, err.Error(), "spec.configId")
@@ -300,7 +301,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(false)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -318,7 +319,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, nil),
 		)
 
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -329,7 +330,7 @@ func TestDetectCapability(t *testing.T) {
 	t.Run("hot-reload on but CRD absent - refuses", func(t *testing.T) {
 		cs := newFakeDynamicClientWithCRD(nil, newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
 
-		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.Error(t, err)
 
 		assert.Contains(t, err.Error(), "not installed")
@@ -346,7 +347,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
 		))
 
-		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.Error(t, err, "kcp must not verify by rollout when it cannot rule out a hot-reload")
 
 		assert.Contains(t, err.Error(), "customresourcedefinitions")
@@ -365,7 +366,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(false)),
 		)), &reads)
 
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.NoError(t, err, "a namespaced install must still be able to migrate")
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -379,7 +380,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRWithHotReload(gw, ns, boolPtr(false)),
 		)
 
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
@@ -394,7 +395,7 @@ func TestDetectCapability(t *testing.T) {
 			newGatewayCRD(map[string][]string{"v1beta1": {"configId", "hotReload"}}),
 		)
 
-		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.Error(t, err, "we cannot decide a mode without reading the live gateway CR")
 		assert.Contains(t, err.Error(), gw)
 	})
@@ -407,8 +408,169 @@ func TestDetectCapability(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := detectCapability(ctx, cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw)
+		_, err := detectCapability(ctx, cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw, nil, nil)
 		require.Error(t, err)
+	})
+}
+
+// plannedCRYAML renders a gateway CR file of the kind an operator hands to
+// --fenced-cr-yaml or --switchover-cr-yaml. hotReload is omitted when enabled is
+// nil, which is the common shape: most CRs say nothing about it.
+func plannedCRYAML(t *testing.T, enabled *bool) []byte {
+	t.Helper()
+	data, err := yaml.Marshal(newGatewayCRWithHotReload("test-gateway", "confluent", enabled).Object)
+	require.NoError(t, err)
+	return data
+}
+
+// kcp applies the operator's fenced and switchover files, so those files can
+// change the gateway's hot-reload behaviour — and changing it is not kcp's call to
+// make. A CR that enables hot-reload on a gateway that never had it converts every
+// later transition to an in-place apply; one that disables it on a gateway running
+// it starts rolling pods that were not rolling before. Either way the operator's
+// running gateway ends up behaving differently because of a file kcp applied on
+// their behalf, so kcp refuses and explains rather than picking a side.
+//
+// A CR that says nothing inherits, which is the shape of every example under
+// docs/assets/gateway-switchover: none of the 24 mention spec.hotReload.
+func TestDetectCapabilityRejectsHotReloadDiscrepancies(t *testing.T) {
+	const ns, gw = "confluent", "test-gateway"
+
+	capableCRD := func() *unstructured.Unstructured {
+		return newGatewayCRD(map[string][]string{"v1beta1": {"configId", "hotReload"}})
+	}
+
+	t.Run("a planned CR would enable hot-reload on a gateway that never set it", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, nil))
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, boolPtr(true)), plannedCRYAML(t, nil))
+		require.Error(t, err, "applying this CR would turn hot-reload on, which the operator did not ask for")
+
+		assert.Contains(t, err.Error(), "fenced", "the operator has to know which file to fix")
+		assert.Contains(t, err.Error(), "spec.hotReload.enabled")
+	})
+
+	t.Run("a planned CR would disable hot-reload on a gateway running it", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, boolPtr(false)), plannedCRYAML(t, boolPtr(false)))
+		require.Error(t, err, "applying this CR would start rolling pods that were not rolling before")
+
+		assert.Contains(t, err.Error(), "fenced")
+	})
+
+	t.Run("the switchover CR is checked too", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, nil))
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, nil), plannedCRYAML(t, boolPtr(true)))
+		require.Error(t, err)
+
+		assert.Contains(t, err.Error(), "switchover")
+	})
+
+	// The over-rejection guards. Both of these must keep working, or the rule
+	// refuses migrations that change nothing about the gateway.
+	t.Run("planned CRs that omit the field inherit what the gateway runs", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
+
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, nil), plannedCRYAML(t, nil))
+		require.NoError(t, err, "this is the shape of every shipped example; it must not be a refusal")
+
+		assert.Equal(t, VerifyPerPodConfigID, got.Mode)
+	})
+
+	t.Run("an explicit false agrees with a gateway that never set the field", func(t *testing.T) {
+		// Absent and false are the same behaviour, so nothing changes.
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, nil))
+
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, boolPtr(false)), plannedCRYAML(t, boolPtr(false)))
+		require.NoError(t, err)
+
+		assert.Equal(t, VerifyRollout, got.Mode)
+	})
+
+	// Measured against a real CFK cluster, not inferred: once an apply from kcp's
+	// field manager declares spec.hotReload, a later apply from the same manager
+	// that OMITS it deletes the field. So "absent inherits" stops being true after
+	// kcp has declared it once — a fenced CR that declares hot-reload followed by a
+	// switchover CR that does not would silently disable hot-reload at switchover,
+	// mid-migration, which is exactly the behaviour change kcp must not make.
+	//
+	// Enforced symmetrically rather than only in the harmful order. The safe
+	// direction (fenced omits, switchover declares) is safe only because of the
+	// order the applies happen in, and a rule that depends on that is a rule that
+	// rots; an operator who mentions the field in one file has no reason to omit it
+	// from the other.
+	t.Run("planned CRs must agree on whether they mention hot-reload at all", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, boolPtr(true)), plannedCRYAML(t, nil))
+		require.Error(t, err, "the switchover apply would prune the field the fence apply declared")
+
+		assert.Contains(t, err.Error(), "switchover")
+		assert.Contains(t, err.Error(), "spec.hotReload")
+	})
+
+	t.Run("mentioning hot-reload in the switchover CR alone is refused too", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, nil), plannedCRYAML(t, boolPtr(true)))
+		require.Error(t, err)
+
+		assert.Contains(t, err.Error(), "fenced")
+	})
+
+	// With hot-reload off there is nothing a prune could take away: absent and
+	// false are the same behaviour, so deleting an explicit false changes nothing
+	// and the files are free to disagree about mentioning it.
+	t.Run("presence may differ freely when the gateway has hot-reload off", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(false)))
+
+		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, boolPtr(false)), plannedCRYAML(t, nil))
+		require.NoError(t, err)
+
+		assert.Equal(t, VerifyRollout, got.Mode)
+	})
+
+	// A file kcp cannot read is not a file that says "hot-reload is off". Treating
+	// a parse failure as absence would let an unreadable CR through as though it
+	// agreed, and it is reachable at execute time, where these CRs come from
+	// migration-state.json rather than from the init-time validator.
+	t.Run("a planned CR that cannot be parsed is an error, not an absent declaration", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(false)))
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			[]byte("spec: [unclosed"), plannedCRYAML(t, nil))
+		require.Error(t, err, "kcp cannot confirm agreement with a file it was unable to read")
+
+		assert.Contains(t, err.Error(), "fenced")
+	})
+
+	// The gate refusals still name every CR that declares hot-reload, because the
+	// remedy has to be applied consistently: setting it false on the gateway alone
+	// would leave the files contradicting it and trade one refusal for another.
+	t.Run("a gate refusal names every CR declaring hot-reload", func(t *testing.T) {
+		cs := newFakeDynamicClientWithCRD(
+			newGatewayCRD(map[string][]string{"v1beta1": {"replicas"}}),
+			newGatewayCRWithHotReload(gw, ns, boolPtr(true)),
+		)
+
+		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
+			plannedCRYAML(t, boolPtr(true)), plannedCRYAML(t, boolPtr(true)))
+		require.Error(t, err)
+
+		for _, role := range []string{"live", "fenced", "switchover"} {
+			assert.Contains(t, err.Error(), role)
+		}
+		assert.Contains(t, err.Error(), "spec.hotReload.enabled: false")
 	})
 }
 
