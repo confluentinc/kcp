@@ -179,6 +179,27 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 			"nothing reached the cluster, so there is no fenced spec to restore")
 	})
 
+	t.Run("an apply that landed but could not be confirmed IS an unconfirmed fence", func(t *testing.T) {
+		// Unlike the case above: gateway.ApplyGatewayYAML's post-apply read-back
+		// guards run AFTER the server-side apply persists, so this error means
+		// the fenced spec IS live in the cluster — the opposite of "an apply
+		// failure" above, despite both surfacing from the same call.
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+			return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified, "gw-1")
+		}
+
+		actions := NewMigrationActions(gw, &mockClusterLinkService{})
+		config := hotReloadConfig()
+		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
+
+		err := actions.FenceGateway(context.Background(), config)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrFenceUnconfirmed,
+			"the apply reached the cluster and persisted the fenced spec — this must restore the initial CR like any other unconfirmed fence")
+	})
+
 	t.Run("an acceptance failure is an unconfirmed fence", func(t *testing.T) {
 		// The fenced spec is in etcd even when CFK refuses it, and a later
 		// reconcile could still act on it. Restoring the initial CR removes it.
@@ -309,18 +330,25 @@ func TestSwitchGateway_ConfigIDVerification(t *testing.T) {
 }
 
 func TestVerifyHotReloadCapability(t *testing.T) {
-	t.Run("re-applies the live spec with only a new configId", func(t *testing.T) {
-		// Safe at any point in a migration, including a resume: the spec applied
-		// is the spec already in force, so it cannot fence or unfence anything.
+	t.Run("applies a fresh configId alone, never the live spec", func(t *testing.T) {
+		// Safe at any point in a migration, including a resume: the only field
+		// this check ever owns is spec.configId, under its own field manager
+		// (see gateway.ApplyGatewayConfigID) — never the fence/switchover/unfence
+		// manager, so it can never leave a later apply from that manager with
+		// something to prune.
 		var applied []string
-		var appliedYAML [][]byte
 		gw := hotReloadCapableGateway(&applied)
 		gw.getGatewayYAMLFn = func(context.Context, string, string) ([]byte, error) {
-			return []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"9\"\n  uid: abc\nspec:\n  fenced: true\nstatus:\n  observedGeneration: 3\n"), nil
+			t.Fatal("must not read the live CR — the check no longer re-applies it")
+			return nil, nil
 		}
-		gw.applyGatewayYAMLFn = func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
-			applied = append(applied, configID)
-			appliedYAML = append(appliedYAML, yamlData)
+		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+			t.Fatal("must not apply a full CR — only ApplyGatewayConfigID")
+			return "", nil
+		}
+		var appliedConfigIDs []string
+		gw.applyGatewayConfigIDFn = func(_ context.Context, _, _, configID string) (string, error) {
+			appliedConfigIDs = append(appliedConfigIDs, configID)
 			return configID, nil
 		}
 
@@ -329,13 +357,9 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 		require.NoError(t, actions.VerifyHotReloadCapability(context.Background(), config))
 
-		require.Len(t, appliedYAML, 1)
-		body := string(appliedYAML[0])
-		assert.Contains(t, body, "fenced", "the live spec must be re-applied as-is")
-		assert.NotContains(t, body, "resourceVersion", "server metadata must be stripped")
-		assert.NotContains(t, body, "uid:")
-		assert.NotContains(t, body, "status")
-		assert.NotEmpty(t, applied[0])
+		require.Len(t, appliedConfigIDs, 1)
+		assert.NotEmpty(t, appliedConfigIDs[0])
+		assert.Empty(t, applied, "the fence/switchover/unfence apply path must not be touched by this check")
 	})
 
 	// Note there is no case here for hot-reload arriving with a planned CR rather
@@ -347,9 +371,9 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 			detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 				return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 			},
-			getGatewayYAMLFn: func(context.Context, string, string) ([]byte, error) {
+			applyGatewayConfigIDFn: func(context.Context, string, string, string) (string, error) {
 				t.Fatal("must not touch the cluster when hot-reload is not in use")
-				return nil, nil
+				return "", nil
 			},
 		}
 
@@ -364,9 +388,6 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		// config. This check is the only place that failure is visible.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.getGatewayYAMLFn = func(context.Context, string, string) ([]byte, error) {
-			return []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nspec:\n  replicas: 1\n"), nil
-		}
 		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
 			return fmt.Errorf("timed out after 90s waiting for the gateway to apply the configId")
 		}

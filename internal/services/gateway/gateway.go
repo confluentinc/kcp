@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -30,6 +31,29 @@ const (
 	GatewayKind           = "Gateway"
 )
 
+// Field managers. kcp uses two, deliberately kept disjoint:
+//
+//   - migrationFieldManager owns the fence, switchover and unfence CRs — the
+//     specs that actually change what the gateway does.
+//   - hotReloadCheckFieldManager owns nothing but spec.configId on the
+//     hot-reload capability check. Giving it its own manager, rather than
+//     reusing migrationFieldManager, is load-bearing: server-side apply prunes
+//     a field an earlier apply from the same manager declared once a later one
+//     omits it, so a probe that shared the migration manager and applied more
+//     than configId would make the *next* migration apply — potentially the
+//     fence, with traffic about to be blocked — a narrowing apply that could
+//     prune whatever the probe declared and the fenced CR does not repeat.
+const (
+	migrationFieldManager      = "kcp-migration"
+	hotReloadCheckFieldManager = "kcp-hot-reload-check"
+)
+
+// ErrApplyUnverified marks a server-side apply the API server accepted and
+// persisted, whose stored spec.configId kcp could not then confirm. Unlike an
+// error from the Apply call itself, the CR reached the cluster: a caller that
+// fails here must treat the apply as landed, not as a no-op.
+var ErrApplyUnverified = errors.New("gateway CR applied but the stored configId could not be confirmed")
+
 // Service defines gateway operations
 type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
@@ -38,6 +62,7 @@ type Service interface {
 	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error)
+	ApplyGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
@@ -185,7 +210,7 @@ func applyGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, name
 	start := time.Now()
 	applied, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Apply(ctx, gatewayName, obj, metav1.ApplyOptions{
-			FieldManager: "kcp-migration",
+			FieldManager: migrationFieldManager,
 			Force:        true,
 		})
 	if err != nil {
@@ -198,18 +223,88 @@ func applyGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, name
 		return "", nil
 	}
 
-	// Confirm the server kept the field. A silently dropped configId would leave
-	// every subsequent GET /config poll waiting for a revision that will never
-	// appear, so fail here with the cause rather than later with a timeout.
+	return confirmStoredConfigID(applied, gatewayName, configID)
+}
+
+// ApplyGatewayConfigID applies spec.configId alone — nothing else on the
+// gateway — under hotReloadCheckFieldManager. Used by the hot-reload
+// capability check, which must prove the gateway applies config revisions
+// without ever taking ownership of a field a later fence, switchover or
+// unfence apply (all under migrationFieldManager) would need to prune.
+//
+// The returned string is the configId the API server actually stored.
+func (s *K8sService) ApplyGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to build config: %w", err)
+	}
+
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+
+	return applyGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID)
+}
+
+// applyGatewayConfigID is the inner orchestration used by
+// ApplyGatewayConfigID. Split from the method so unit tests can inject a fake
+// dynamic client.
+func applyGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName, configID string) (string, error) {
+	gatewayGVR := schema.GroupVersionResource{
+		Group:    GatewayGroup,
+		Version:  GatewayVersion,
+		Resource: GatewayResourcePlural,
+	}
+
+	obj, err := prepareConfigIDOnlyApply(namespace, gatewayName, configID)
+	if err != nil {
+		return "", err
+	}
+
+	slog.Debug("🔍 applying gateway configId (server-side apply, hot-reload check field manager)",
+		"namespace", namespace, "gateway", gatewayName, "configId", configID)
+	start := time.Now()
+	applied, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Apply(ctx, gatewayName, obj, metav1.ApplyOptions{
+			FieldManager: hotReloadCheckFieldManager,
+			Force:        true,
+		})
+	if err != nil {
+		return "", fmt.Errorf("failed to apply gateway configId: %w", err)
+	}
+
+	slog.Debug("applied gateway configId", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
+
+	return confirmStoredConfigID(applied, gatewayName, configID)
+}
+
+// confirmStoredConfigID reads spec.configId back from a server-side apply
+// response and confirms the server kept the exact value kcp sent.
+//
+// Every failure here is wrapped in ErrApplyUnverified: by this point the
+// apply itself already succeeded, so the CR is live in the cluster whether or
+// not the confirmation below passes — callers must not treat a failure here
+// as if nothing had reached the cluster (see gateway.FenceGateway's use of
+// this same wrap).
+//
+// A silently dropped configId would otherwise leave every subsequent GET
+// /config poll waiting for a revision that never appears, so this fails here
+// with the cause rather than later with a bare timeout.
+func confirmStoredConfigID(applied *unstructured.Unstructured, gatewayName, configID string) (string, error) {
 	if applied == nil {
-		return "", fmt.Errorf("gateway %q apply returned no object; cannot confirm the applied configId", gatewayName)
+		return "", fmt.Errorf("%w: gateway %q apply returned no object; cannot confirm the applied configId", ErrApplyUnverified, gatewayName)
 	}
 	stored, found, err := unstructured.NestedString(applied.Object, "spec", gatewayConfigIDField)
 	if err != nil {
-		return "", fmt.Errorf("failed to read back spec.configId on gateway %q: %w", gatewayName, err)
+		return "", fmt.Errorf("%w: failed to read back spec.configId on gateway %q: %w", ErrApplyUnverified, gatewayName, err)
 	}
 	if !found || stored != configID {
-		return "", fmt.Errorf("gateway %q did not retain the applied spec.configId; the installed CFK operator's CRD may not declare it", gatewayName)
+		// Not "the CRD may not declare it" — server-side apply rejects an
+		// undeclared field outright rather than silently pruning it (see G1),
+		// so an accepted apply that still lost the field points at something
+		// else in the request path (a mutating webhook, a conflicting manager).
+		return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", ErrApplyUnverified, gatewayName)
 	}
 
 	return stored, nil

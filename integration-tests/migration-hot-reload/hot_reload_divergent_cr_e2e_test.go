@@ -291,3 +291,124 @@ func (e *env) dynamicGateway(ctx context.Context) (map[string]any, error) {
 	}
 	return obj, nil
 }
+
+// fieldsOwnedBy returns the raw fieldsV1 tree a given field manager owns on
+// the live gateway. nil means the manager owns nothing (yet).
+func (e *env) fieldsOwnedBy(t *testing.T, ctx context.Context, manager string) map[string]any {
+	t.Helper()
+
+	gw, err := e.dynamicGateway(ctx)
+	require.NoError(t, err)
+	metadata, ok := gw["metadata"].(map[string]any)
+	require.True(t, ok)
+	entries, ok := metadata["managedFields"].([]any)
+	if !ok {
+		return nil
+	}
+	for _, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok || entry["manager"] != manager {
+			continue
+		}
+		fields, _ := entry["fieldsV1"].(map[string]any)
+		return fields
+	}
+	return nil
+}
+
+// fieldsString renders a fieldsV1 tree for substring assertions and failure
+// messages.
+func fieldsString(t *testing.T, fields map[string]any) string {
+	t.Helper()
+	out, err := yaml.Marshal(fields)
+	require.NoError(t, err)
+	return string(out)
+}
+
+// fieldsSubset reports whether every field path recorded in sub also appears
+// in super — i.e. sub owns nothing super didn't already own. None of this
+// CR's list fields (routes, streamingDomains, envVars) declare a merge key,
+// so server-side apply records list ownership wholesale rather than per item
+// — every value in a fieldsV1 tree is itself a map, terminating in {} — which
+// is what makes a plain recursive key-presence check sufficient here.
+func fieldsSubset(sub, super map[string]any) bool {
+	for k, v := range sub {
+		superV, ok := super[k]
+		if !ok {
+			return false
+		}
+		subMap, subIsMap := v.(map[string]any)
+		if subIsMap && len(subMap) > 0 {
+			superMap, superIsMap := superV.(map[string]any)
+			if !superIsMap || !fieldsSubset(subMap, superMap) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// TestHotReloadCheckDoesNotOwnAnythingItCanLaterPrune is the regression test
+// for a mega-review finding: VerifyHotReloadCapability's probe used to
+// re-apply the ENTIRE live spec under kcp-migration before ever fencing — the
+// very field manager the fence, switchover and unfence CRs apply under.
+// TestPlannedCRsMustAgreeOnMentioningHotReload above proves the mechanism
+// that made this dangerous: a narrower apply from the same field manager
+// PRUNES a field an earlier apply from that manager declared once the later
+// one omits it. Once the probe declared the whole live spec under
+// kcp-migration, the very next apply under that manager — the fence, with
+// traffic about to be blocked — became a narrowing apply that could delete
+// anything the fenced CR doesn't repeat, e.g. spec.hotReload when the fenced
+// CR relies on inheriting it (the normal case: none of the shipped examples
+// under docs/assets/gateway-switchover mention the field).
+//
+// The fix: the check applies spec.configId alone
+// (gateway.ApplyGatewayConfigID), under its own field manager
+// (hotReloadCheckFieldManager) that owns nothing else. This test proves that
+// directly, from the managedFields the API server records, rather than by
+// fencing afterward: this rig is long-lived and kcp-migration already owns
+// spec.hotReload from earlier runs (every rendered CR under .rendered/
+// declares it), so a fence-then-check-for-pruning test would pass or fail on
+// that residual ownership regardless of what the probe itself does. Reading
+// managedFields isolates the one thing this test is actually about — whether
+// running the check changes what kcp-migration owns.
+//
+// The invariant is a one-way subset, not equality: kcp-migration is allowed
+// to LOSE ownership of a field the check's Force:true apply takes for itself
+// (see below — that is exactly what happens to spec.configId, and it is fine,
+// since the next apply under kcp-migration re-establishes it anyway). What
+// must never happen is kcp-migration GAINING ownership of something new.
+func TestHotReloadCheckDoesNotOwnAnythingItCanLaterPrune(t *testing.T) {
+	// Mirror the unexported constants of the same name in
+	// internal/services/gateway/gateway.go. Duplicated rather than imported:
+	// this suite is a separate package by design (see the package doc) and
+	// must observe the mechanism from outside kcp, not assume its internals.
+	const migrationFieldManager = "kcp-migration"
+	const hotReloadCheckFieldManager = "kcp-hot-reload-check"
+
+	ctx := context.Background()
+	e := newEnv(t)
+
+	require.True(t, e.liveHotReload(t, ctx), "the rig's gateway must be running hot-reload")
+	t.Cleanup(func() { e.restoreInitialCR(t, context.Background()) })
+
+	before := e.fieldsOwnedBy(t, ctx, migrationFieldManager)
+
+	// Run the hot-reload capability check's own apply — not a stand-in for it.
+	checkID, err := gateway.NewConfigID()
+	require.NoError(t, err)
+	stored, err := e.svc.ApplyGatewayConfigID(ctx, e.namespace, e.gateway, checkID)
+	require.NoError(t, err)
+	require.Equal(t, checkID, stored)
+	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
+
+	after := e.fieldsOwnedBy(t, ctx, migrationFieldManager)
+	assert.True(t, fieldsSubset(after, before),
+		"the hot-reload check gave kcp-migration ownership of something new — it must apply under its own field manager only\nbefore: %s\nafter:  %s",
+		fieldsString(t, before), fieldsString(t, after))
+
+	checkOwns := e.fieldsOwnedBy(t, ctx, hotReloadCheckFieldManager)
+	checkOwnsStr := fieldsString(t, checkOwns)
+	assert.Contains(t, checkOwnsStr, "configId", "the check's own field manager must own spec.configId")
+	assert.NotContains(t, checkOwnsStr, "hotReload", "the check's own field manager must own nothing but configId")
+}

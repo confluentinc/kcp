@@ -94,6 +94,30 @@ func prepareGatewayApply(yamlData []byte, namespace, gatewayName, configID strin
 	return &obj, nil
 }
 
+// prepareConfigIDOnlyApply builds the minimal Gateway object for the
+// hot-reload capability check: apiVersion, kind, name, namespace and
+// spec.configId — nothing else. Applying this instead of the live spec is
+// what lets the check run under its own field manager without ever taking
+// ownership of a field the fence, switchover or unfence CR would need to
+// prune (see hotReloadCheckFieldManager).
+func prepareConfigIDOnlyApply(namespace, gatewayName, configID string) (*unstructured.Unstructured, error) {
+	if err := validateConfigID(configID); err != nil {
+		return nil, err
+	}
+
+	return &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": GatewayGroup + "/" + GatewayVersion,
+		"kind":       GatewayKind,
+		"metadata": map[string]any{
+			"name":      gatewayName,
+			"namespace": namespace,
+		},
+		"spec": map[string]any{
+			gatewayConfigIDField: configID,
+		},
+	}}, nil
+}
+
 // injectConfigID sets spec.configId on obj, creating the spec block if needed.
 //
 // The map is written directly rather than via unstructured.SetNestedField:

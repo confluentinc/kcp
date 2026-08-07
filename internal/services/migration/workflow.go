@@ -161,6 +161,22 @@ type gatewayApplyResult struct {
 	BaselineDeploymentGeneration int64
 }
 
+// gatewayDeploymentBaseline reads the backing Deployment's generation
+// immediately before an apply, so a later rollout wait can recognise a roll
+// that apply caused. A read failure is not fatal: the baseline is only an
+// input to the rollout path, and 0 makes that path conservative rather than
+// wrong. Failing the migration here would be a regression for the configId
+// path, which never consults it.
+func (s *MigrationActions) gatewayDeploymentBaseline(ctx context.Context, config *MigrationConfig, step string) int64 {
+	baseline, err := s.gatewayService.GetGatewayDeploymentGeneration(ctx, config.K8sNamespace, config.InitialCrName)
+	if err != nil {
+		slog.Debug("could not read the gateway deployment generation before applying; "+
+			"any generation will count as a rollout", "step", step, "error", err)
+		return 0
+	}
+	return baseline
+}
+
 // applyGatewayCR applies a gateway CR, attaching a fresh config revision id when
 // the cluster supports one.
 //
@@ -179,22 +195,34 @@ func (s *MigrationActions) applyGatewayCR(ctx context.Context, config *Migration
 		}
 	}
 
-	// Read the Deployment's generation before the apply, so a rollout wait can
-	// recognise a roll this apply caused. A failure to read it is not fatal: the
-	// baseline is only an input to the rollout path, and 0 makes that path
-	// conservative rather than wrong. Failing the migration here would be a
-	// regression for the configId path, which never consults it.
-	baseline, err := s.gatewayService.GetGatewayDeploymentGeneration(ctx, config.K8sNamespace, config.InitialCrName)
-	if err != nil {
-		slog.Debug("could not read the gateway deployment generation before applying; "+
-			"any generation will count as a rollout", "step", step, "error", err)
-		baseline = 0
-	}
+	baseline := s.gatewayDeploymentBaseline(ctx, config, step)
 
 	slog.Debug("applying gateway CR", "step", step, "gateway", config.InitialCrName,
 		"configId", configID, "baselineDeploymentGeneration", baseline)
 
 	storedConfigID, err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, yamlData, configID)
+	if err != nil {
+		return gatewayApplyResult{}, err
+	}
+	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+}
+
+// applyGatewayConfigIDOnly stamps a fresh configId on the gateway without
+// applying — or owning — anything else. Used only by VerifyHotReloadCapability;
+// every other caller needs the CR's actual spec change and uses applyGatewayCR.
+// Callers must only reach this when InjectsConfigID() is true.
+func (s *MigrationActions) applyGatewayConfigIDOnly(ctx context.Context, config *MigrationConfig, step string) (gatewayApplyResult, error) {
+	configID, err := gateway.NewConfigID()
+	if err != nil {
+		return gatewayApplyResult{}, err
+	}
+
+	baseline := s.gatewayDeploymentBaseline(ctx, config, step)
+
+	slog.Debug("applying gateway configId only", "step", step, "gateway", config.InitialCrName,
+		"configId", configID, "baselineDeploymentGeneration", baseline)
+
+	storedConfigID, err := s.gatewayService.ApplyGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, configID)
 	if err != nil {
 		return gatewayApplyResult{}, err
 	}
@@ -275,11 +303,21 @@ func (s *MigrationActions) verifyGatewayTransition(ctx context.Context, config *
 // keeps serving the previous revision. Detecting that after fencing would mean
 // discovering it with traffic already blocked.
 //
-// The check is a configId-only change, which the contract guarantees is a pure
-// hot-reload that never restarts pods. It re-applies the *live* spec rather than
-// the stored initial CR, and that is what makes it safe to run at any point in a
-// migration, including a resume: the spec it applies is the spec already in
-// force, so it cannot fence, unfence or switch anything over.
+// The check applies spec.configId alone, under its own field manager
+// (gateway.ApplyGatewayConfigID) rather than re-applying the live spec under
+// kcp-migration. That used to be the design — re-apply the live CR verbatim
+// plus a fresh configId — and it was safe to run at any point in a migration
+// for the same reason it was dangerous: server-side apply shares field
+// ownership by manager, so declaring the whole live spec under the same
+// manager the fence and switchover CRs apply under pre-seeded kcp's ownership
+// of every field on the gateway. The fence apply — which typically omits
+// fields the live spec carries and the fenced CR does not repeat, e.g.
+// spec.hotReload when the fenced CR relies on inheriting it — then became a
+// narrowing apply under that same manager, and server-side apply prunes a
+// field an earlier apply from the same manager declared once a later one
+// omits it. A dedicated, disjoint field manager that owns nothing but
+// spec.configId can't create that hazard, which is what makes this safe to
+// run at any point in a migration, including a resume.
 func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config *MigrationConfig) error {
 	if !s.gatewayCapability.InjectsConfigID() {
 		return nil
@@ -287,16 +325,7 @@ func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config
 
 	s.reporter.detail("Checking the gateway applies config revisions in place...")
 
-	live, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName)
-	if err != nil {
-		return fmt.Errorf("failed to read the live gateway CR for the hot-reload check: %w", err)
-	}
-	cleanYAML, err := stripServerMetadata(live)
-	if err != nil {
-		return err
-	}
-
-	applied, err := s.applyGatewayCR(ctx, config, cleanYAML, "hot-reload check")
+	applied, err := s.applyGatewayConfigIDOnly(ctx, config, "hot-reload check")
 	if err != nil {
 		return fmt.Errorf("failed to apply the gateway hot-reload check: %w", err)
 	}
@@ -755,6 +784,14 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 
 	applied, err := s.applyGatewayCR(ctx, config, config.FencedCrYAML, "fence")
 	if err != nil {
+		if errors.Is(err, gateway.ErrApplyUnverified) {
+			// The server-side apply itself succeeded and the fenced spec is live
+			// in the cluster; only kcp's own read-back of the stored configId
+			// failed. That is exactly the state confirmFence's failures leave
+			// behind, so — unlike an apply that never reached the cluster — it
+			// earns the same restore.
+			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", ErrFenceUnconfirmed, err)
+		}
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
@@ -764,8 +801,8 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// leaves it there — possibly holding client traffic on some or all pods.
 	// Marking them all lets the orchestrator restore the initial CR rather than
 	// exiting with the gateway in a state kcp created and did not resolve. The
-	// apply failure above is deliberately outside the mark: nothing reached the
-	// cluster, so there is nothing to undo.
+	// pod-UID capture failure above is deliberately outside the mark: it runs
+	// strictly before the apply, so nothing has reached the cluster yet to undo.
 	if err := s.confirmFence(ctx, config, applied, oldPodUIDs, capturePods); err != nil {
 		return fmt.Errorf("%w: %w", ErrFenceUnconfirmed, err)
 	}
