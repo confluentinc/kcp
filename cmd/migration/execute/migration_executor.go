@@ -102,6 +102,26 @@ func (m *MigrationExecutor) Run() error {
 		config.GatewayConfigPort = m.opts.GatewayConfigPort
 	}
 
+	// The orchestrator is the single writer for migration state. Build it up
+	// front — both so its PersistState can back the offset-sync bookends, and
+	// so its FSM tells us whether there is any step left to run before
+	// anything below touches the gateway. A migration that already switched
+	// over must stay a side-effect-free no-op on re-run: without this check
+	// every re-run wrote a fresh spec.configId to the production gateway and
+	// waited on it, real cluster effects for a command that had nothing left
+	// to do.
+	orchestrator := migration.NewMigrationOrchestrator(
+		&config,
+		actions,
+		&m.opts.MigrationState,
+		m.opts.MigrationStateFile,
+	)
+
+	if !orchestrator.HasPendingWork() {
+		fmt.Printf("✅ Migration already complete: %s\n", config.MigrationId)
+		return nil
+	}
+
 	// Re-derive the gateway verification capability against the live cluster.
 	// The mode recorded at init is only what the operator was told to expect —
 	// the cluster can be upgraded, or rolled back, in between, and a downgrade
@@ -119,16 +139,6 @@ func (m *MigrationExecutor) Run() error {
 	if err := actions.VerifyHotReloadCapability(ctx, &config); err != nil {
 		return err
 	}
-
-	// The orchestrator is the single writer for migration state. Build it up
-	// front so its PersistState can back the offset-sync bookends too, rather
-	// than a parallel write closure.
-	orchestrator := migration.NewMigrationOrchestrator(
-		&config,
-		actions,
-		&m.opts.MigrationState,
-		m.opts.MigrationStateFile,
-	)
 
 	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
 

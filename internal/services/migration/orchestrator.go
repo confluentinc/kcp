@@ -502,3 +502,26 @@ func (o *MigrationOrchestrator) saveState() error {
 func (o *MigrationOrchestrator) canTransition(event string) bool {
 	return o.fsm.Can(event)
 }
+
+// HasPendingWork reports whether any canonical workflow step remains to run.
+// False means Execute would walk the whole loop without firing a single
+// event — the same per-step canTransition check it already uses, applied
+// once up front so a caller can skip cluster work entirely (gateway
+// capability resolution, the hot-reload check) on an already-completed
+// migration instead of doing it and then discovering the FSM had nothing
+// left to do.
+//
+// An unrecognized state is reported as pending rather than resolved here: the
+// caller is expected to still reach Execute, which refuses that case loudly
+// (see isKnownState) instead of it being silently read as "nothing to do".
+func (o *MigrationOrchestrator) HasPendingWork() bool {
+	if !isKnownState(o.config.CurrentState) {
+		return true
+	}
+	for _, step := range canonicalWorkflow {
+		if o.canTransition(step.Event) {
+			return true
+		}
+	}
+	return false
+}

@@ -242,6 +242,45 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 	}
 }
 
+// TestHasPendingWork pins the predicate cmd/migration/execute uses to decide
+// whether to touch the gateway at all before Execute runs — see
+// migration_executor.go. It must agree with what Execute would actually do:
+// true for every state Execute walks at least one step for, false only once
+// there is nothing left.
+func TestHasPendingWork(t *testing.T) {
+	t.Run("true for a fresh migration", func(t *testing.T) {
+		orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
+		assert.True(t, orch.HasPendingWork())
+	})
+
+	t.Run("true for every state short of switched", func(t *testing.T) {
+		for _, s := range []string{StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted} {
+			t.Run(s, func(t *testing.T) {
+				orch, _, _ := newHappyPathOrchestrator(t, s, nil)
+				assert.True(t, orch.HasPendingWork())
+			})
+		}
+	})
+
+	t.Run("false once switched", func(t *testing.T) {
+		orch, _, _ := newHappyPathOrchestrator(t, StateSwitched, nil)
+		assert.False(t, orch.HasPendingWork(),
+			"a completed migration must report no pending work, so a re-run touches nothing")
+	})
+
+	t.Run("true for an unrecognized state, deferring to Execute's own refusal", func(t *testing.T) {
+		// A corrupted file or one written by a newer kcp must fail loudly at
+		// Execute (see isKnownState), not be silently read here as "nothing to
+		// do" — that would report a bogus success instead of the refusal.
+		orch, _, _ := newHappyPathOrchestrator(t, "some-future-state", nil)
+		require.True(t, orch.HasPendingWork())
+
+		err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unrecognized migration state")
+	})
+}
+
 // --- Error handling tests ---
 
 func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
