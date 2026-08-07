@@ -217,10 +217,20 @@ func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, conf
 		ConfigID:                     applied.ConfigID,
 		Port:                         gatewayConfigPort(config),
 		BaselineDeploymentGeneration: applied.BaselineDeploymentGeneration,
-		PollInterval:                 2 * time.Second,
-		HotReloadTimeout:             s.gatewayHotReloadTimeout(),
-		RollTimeout:                  s.rolloutTimeout,
-		OnProgress:                   s.printConfigWaitProgress,
+		// Load-bearing for fence correctness, not just a latency knob. This wait
+		// returns up to one interval after the gateway actually converged, and
+		// detectUnroutedProducers takes its first offset snapshot the instant it
+		// returns — with no tolerance, so a single late message aborts the
+		// migration for a rogue producer that does not exist. Measured against a
+		// real licensed gateway (see integration-tests/migration-hot-reload), the
+		// last acknowledged write landed 0.4s-2.5s BEFORE this returned, scattered
+		// across the interval: that margin is supplied by this poll lag, not by
+		// the fence, whose own settle time looks like roughly zero. Shrinking this
+		// shrinks the margin toward zero with it.
+		PollInterval:     2 * time.Second,
+		HotReloadTimeout: s.gatewayHotReloadTimeout(),
+		RollTimeout:      s.rolloutTimeout,
+		OnProgress:       s.printConfigWaitProgress,
 	})
 	if err != nil {
 		return fmt.Errorf("failed waiting for the gateway to apply the %s config on every pod: %w", step, err)
