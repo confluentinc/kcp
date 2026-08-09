@@ -9,6 +9,8 @@ interface ConnectMetricsFetchConfig {
   startDate: Date | undefined
   endDate: Date | undefined
   kind?: 'self-managed' | 'managed'
+  connectRestURL?: string
+  connectorName?: string
 }
 
 interface ConnectMetricsFetchReturn {
@@ -27,6 +29,8 @@ export const useConnectMetricsFetch = ({
   startDate,
   endDate,
   kind,
+  connectRestURL,
+  connectorName,
 }: ConnectMetricsFetchConfig): ConnectMetricsFetchReturn => {
   const sessionId = useSessionId()
   const [isLoading, setIsLoading] = useState(false)
@@ -49,8 +53,9 @@ export const useConnectMetricsFetch = ({
           clusterId,
           sessionId,
           { startDate, endDate },
-          undefined,
-          kind ?? 'self-managed'
+          kind ?? 'self-managed',
+          connectRestURL,
+          connectorName
         )
         setMetricsResponse(data)
       } catch (err) {
@@ -61,7 +66,7 @@ export const useConnectMetricsFetch = ({
     }
 
     fetchMetrics()
-  }, [clusterId, sourceType, startDate, endDate, sessionId, kind])
+  }, [clusterId, sourceType, startDate, endDate, sessionId, kind, connectRestURL, connectorName])
 
   return {
     metricsResponse,

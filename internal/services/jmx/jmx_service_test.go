@@ -262,6 +262,46 @@ func TestBuildJMXQueryInfo(t *testing.T) {
 	assert.Nil(t, buildJMXQueryInfo([]string{}, 5*time.Minute, 10*time.Second, defs, "broker"))
 }
 
+// TestBuildJMXQueryInfo_PerConnectorAggregates guards against the Task 2.2 regression
+// where source-record-write-rate, source-record-poll-rate, sink-record-read-rate, and
+// sink-record-send-rate (moved into/added to defs.PerConnectorAggregates) silently lost
+// their MetricQueryInfo (reproducibility metadata surfaced in the UI's query tab) because
+// buildJMXQueryInfo only iterated Counters, Gauges, Controller, and Aggregates.
+func TestBuildJMXQueryInfo_PerConnectorAggregates(t *testing.T) {
+	workerURLs := []string{"http://worker1:8778/jolokia"}
+	defs := ConnectMetricDefinitions()
+	infos := buildJMXQueryInfo(workerURLs, 5*time.Minute, 10*time.Second, defs, "worker")
+
+	expectedCount := len(defs.Gauges) + len(defs.Aggregates) + len(defs.PerConnectorAggregates)
+	assert.Len(t, infos, expectedCount)
+
+	byName := make(map[string]types.MetricQueryInfo)
+	for _, info := range infos {
+		byName[info.MetricName] = info
+	}
+
+	for _, name := range []string{
+		"source-record-write-rate",
+		"source-record-poll-rate",
+		"sink-record-read-rate",
+		"sink-record-send-rate",
+	} {
+		info, ok := byName[name]
+		require.True(t, ok, "expected MetricQueryInfo for %s (per-connector aggregate)", name)
+		assert.Equal(t, types.MetricBackendJolokia, info.SourceType)
+		assert.NotEmpty(t, info.MBeanPath)
+		assert.Contains(t, info.MBeanPath, "connector=*")
+		assert.NotEmpty(t, info.JolokiaURL)
+		assert.Contains(t, info.CurlCommand, "curl")
+		assert.Contains(t, info.CurlCommand, "worker1:8778")
+		// Per-connector aggregates are broken down by connector, not summed cluster-wide.
+		assert.Contains(t, info.AggregationNote, "connector")
+		assert.NotContains(t, info.Statistic, "Sum of")
+		assert.Equal(t, int32(10), info.Period)
+		assert.Equal(t, "5m", info.QueryDuration)
+	}
+}
+
 func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	// Mock server that rejects controller MBeans (simulates non-controller broker)
 	var callCount atomic.Int64
@@ -333,6 +373,86 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	assert.True(t, queryNames["GlobalPartitionCount"], "QueryInfo should still include GlobalPartitionCount")
 }
 
+// mockSourceOnlyConnectJolokiaServer simulates a source-only Connect cluster:
+// sink-task-metrics MBeans don't exist (404 InstanceNotFoundException), while
+// everything else responds normally. This is the "no sink connectors" case
+// that used to flood the log with a Warn on every poll.
+func mockSourceOnlyConnectJolokiaServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response map[string]any
+
+		switch {
+		case strings.Contains(r.URL.Path, "connect-worker-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{"connector-count": 1.0, "task-count": 1.0}}
+		case strings.Contains(r.URL.Path, "source-task-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"kafka.connect:type=source-task-metrics,connector=c1,task=0": map[string]any{"source-record-write-rate": 1.0, "source-record-poll-rate": 1.0},
+			}}
+		case strings.Contains(r.URL.Path, "sink-task-metrics"):
+			// No sink connectors on this cluster — Jolokia reports the wildcard
+			// pattern as not found.
+			response = map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: kafka.connect:type=sink-task-metrics,connector=*,task=*"}
+		case strings.Contains(r.URL.Path, "connect-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"client1": map[string]any{"incoming-byte-rate": 100.0, "outgoing-byte-rate": 50.0, "connection-count": 1.0, "request-rate": 10.0},
+			}}
+		default:
+			response = map[string]any{"status": 404, "error": "MBean not found"}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+}
+
+// TestCollectRawSample_MissingSinkMBeanLogsDebugOnceNotWarn is a regression
+// test for the noisy-warning fix (Workstream E): a source-only Connect
+// cluster has no sink-task MBeans, so the sink-task-metrics wildcard read
+// returns 404/InstanceNotFoundException on every poll. This is an
+// expected/normal condition, not a failure, so collectRawSample must:
+//  1. complete without error and without populating sink-record-* gauges,
+//  2. log at Debug (not Warn) the one time it logs at all,
+//  3. dedupe repeated polls to a single log line via warnedMetricIssue,
+//     mirroring warnedControllerMissing.
+func TestCollectRawSample_MissingSinkMBeanLogsDebugOnceNotWarn(t *testing.T) {
+	server := mockSourceOnlyConnectJolokiaServer(t)
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	svc := NewJMXService([]string{server.URL}, ConnectMetricDefinitions(), "worker")
+
+	// Poll collectRawSample multiple times, as CollectOverDuration would on
+	// every tick, to verify the dedupe holds across repeated polls.
+	for i := 0; i < 3; i++ {
+		sample, err := svc.collectRawSample(context.Background())
+		require.NoError(t, err)
+		require.NotNil(t, sample)
+
+		// Sink metrics should simply be absent — not an error, not a zero value.
+		_, hasSinkRead := sample.gauges["sink-record-read-rate (c1)"]
+		assert.False(t, hasSinkRead)
+
+		// Source metrics (which exist) should still be collected normally.
+		assert.Equal(t, 1.0, sample.gauges["source-record-write-rate (c1)"])
+	}
+
+	logs := logBuf.String()
+	assert.NotContains(t, logs, "level=WARN", "missing sink MBeans on a source-only cluster is expected/normal — must not be a Warn")
+	// ConnectMetricDefinitions has two sink-task-metrics entries
+	// (sink-record-read-rate, sink-record-send-rate), each a distinct metric
+	// name — so each gets its own one-time Debug line (2 total), deduped
+	// across all 3 polls rather than logged once per poll (which would be 6).
+	assert.Equal(t, 2, strings.Count(logs, "Failed to read per-connector aggregate MBean"),
+		"each distinct sink metric should be logged exactly once across all 3 polls, not once per poll")
+	assert.Contains(t, logs, "level=DEBUG")
+}
+
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
 	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions(), "broker")
 	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)
@@ -352,8 +472,9 @@ func TestConnectMetricDefinitions(t *testing.T) {
 	assert.Empty(t, defs.Controller)
 	assert.Nil(t, defs.UnitConversions)
 
-	// Connect definitions should have aggregate metrics for client-level and task-level metrics
-	require.Len(t, defs.Aggregates, 6)
+	// Connect definitions should have cluster-wide aggregate metrics for client-level metrics only —
+	// source/sink task metrics are now broken down per connector (see PerConnectorAggregates below).
+	require.Len(t, defs.Aggregates, 4)
 	aggNames := make([]string, len(defs.Aggregates))
 	for i, a := range defs.Aggregates {
 		aggNames[i] = a.Name
@@ -362,6 +483,77 @@ func TestConnectMetricDefinitions(t *testing.T) {
 	assert.Contains(t, aggNames, "outgoing-byte-rate")
 	assert.Contains(t, aggNames, "connection-count")
 	assert.Contains(t, aggNames, "request-rate")
-	assert.Contains(t, aggNames, "source-record-write-rate")
-	assert.Contains(t, aggNames, "source-record-poll-rate")
+	assert.NotContains(t, aggNames, "source-record-write-rate")
+	assert.NotContains(t, aggNames, "source-record-poll-rate")
+
+	// Source-task and sink-task metrics should be broken down per connector.
+	require.Len(t, defs.PerConnectorAggregates, 4)
+	perConnectorNames := make([]string, len(defs.PerConnectorAggregates))
+	for i, a := range defs.PerConnectorAggregates {
+		perConnectorNames[i] = a.Name
+	}
+	assert.Contains(t, perConnectorNames, "source-record-write-rate")
+	assert.Contains(t, perConnectorNames, "source-record-poll-rate")
+	assert.Contains(t, perConnectorNames, "sink-record-read-rate")
+	assert.Contains(t, perConnectorNames, "sink-record-send-rate")
+}
+
+// mockConnectJolokiaServer returns a Jolokia mock for Connect worker MBeans,
+// with source-task-metrics and sink-task-metrics wildcard reads returning
+// per-connector/per-task ObjectName maps so per-connector grouping can be verified.
+func mockConnectJolokiaServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response map[string]any
+
+		switch {
+		case strings.Contains(r.URL.Path, "connect-worker-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{"connector-count": 2.0, "task-count": 3.0}}
+		case strings.Contains(r.URL.Path, "source-task-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"kafka.connect:type=source-task-metrics,connector=c1,task=0": map[string]any{"source-record-write-rate": 1.0, "source-record-poll-rate": 1.0},
+				"kafka.connect:type=source-task-metrics,connector=c1,task=1": map[string]any{"source-record-write-rate": 2.0, "source-record-poll-rate": 2.0},
+				"kafka.connect:type=source-task-metrics,connector=c2,task=0": map[string]any{"source-record-write-rate": 5.0, "source-record-poll-rate": 5.0},
+			}}
+		case strings.Contains(r.URL.Path, "sink-task-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"kafka.connect:type=sink-task-metrics,connector=c3,task=0": map[string]any{"sink-record-read-rate": 4.0, "sink-record-send-rate": 4.0},
+			}}
+		case strings.Contains(r.URL.Path, "connect-metrics"):
+			response = map[string]any{"status": 200, "value": map[string]any{
+				"client1": map[string]any{"incoming-byte-rate": 100.0, "outgoing-byte-rate": 50.0, "connection-count": 1.0, "request-rate": 10.0},
+			}}
+		default:
+			response = map[string]any{"status": 404, "error": "MBean not found"}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+}
+
+func TestCollectRawSample_PerConnectorAggregates(t *testing.T) {
+	server := mockConnectJolokiaServer(t)
+	defer server.Close()
+
+	svc := NewJMXService([]string{server.URL}, ConnectMetricDefinitions(), "worker")
+	sample, err := svc.collectRawSample(context.Background())
+
+	require.NoError(t, err)
+	require.NotNil(t, sample)
+
+	// source-task-metrics: c1 has two tasks (1.0 + 2.0 = 3.0), c2 has one task (5.0).
+	assert.Equal(t, 3.0, sample.gauges["source-record-write-rate (c1)"])
+	assert.Equal(t, 5.0, sample.gauges["source-record-write-rate (c2)"])
+	assert.Equal(t, 3.0, sample.gauges["source-record-poll-rate (c1)"])
+	assert.Equal(t, 5.0, sample.gauges["source-record-poll-rate (c2)"])
+
+	// sink-task-metrics: c3 has a single task.
+	assert.Equal(t, 4.0, sample.gauges["sink-record-read-rate (c3)"])
+	assert.Equal(t, 4.0, sample.gauges["sink-record-send-rate (c3)"])
+
+	// The cluster-wide (non-per-connector) aggregates should still be summed as before.
+	assert.Equal(t, 100.0, sample.gauges["incoming-byte-rate"])
+	assert.Equal(t, 50.0, sample.gauges["outgoing-byte-rate"])
 }
