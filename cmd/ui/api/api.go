@@ -26,7 +26,7 @@ type ReportService interface {
 	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
 	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterConnectMetrics(processedState report.ProcessedState, clusterID, sourceType, kind, connectRestURL, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID, sourceType, kind string, connectRestURL *string, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -333,7 +333,17 @@ func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 
 	processedState := ui.reportService.ProcessState(*state)
 
-	connectRestURL := c.QueryParam("connectRestURL")
+	// connectRestURL must distinguish "not passed at all" (nil - resolves to the
+	// service's back-compat default) from "passed as an empty string" (a real,
+	// addressable value for a legacy pre-v3 Connect cluster entry - see
+	// FilterConnectMetrics' doc comment). c.QueryParam alone can't tell these
+	// apart, since it returns "" for both; QueryParams().Has reports whether the
+	// key was actually present on the wire.
+	var connectRestURL *string
+	if c.QueryParams().Has("connectRestURL") {
+		v := c.QueryParam("connectRestURL")
+		connectRestURL = &v
+	}
 	connectorName := c.QueryParam("connectorName")
 
 	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, kind, connectRestURL, connectorName, startTime, endTime)

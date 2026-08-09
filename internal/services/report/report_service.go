@@ -358,11 +358,20 @@ func (rs *ReportService) filterOSKClusterMetrics(processedState ProcessedState, 
 // source types.
 //
 // connectRestURL and connectorName only apply to the self-managed path: connectRestURL selects
-// which of the cluster's ConnectClusters to read (falling back to the first one when empty, for
-// back-compat with single-endpoint callers); connectorName, when set, narrows further to that
-// connector's own metrics instead of the Connect cluster's. Both are ignored for kind "managed",
-// since MSK-managed connectors have no ConnectClusters concept.
-func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID, sourceType, kind, connectRestURL, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+// which of the cluster's ConnectClusters to read; connectorName, when set, narrows further to
+// that connector's own metrics instead of the Connect cluster's. Both are ignored for kind
+// "managed", since MSK-managed connectors have no ConnectClusters concept.
+//
+// connectRestURL is a *string, not string, so "caller didn't specify one" (nil - falls back to
+// the first ConnectCluster, for back-compat with single-endpoint callers) is distinguishable
+// from "caller specified the empty string" (non-nil pointing at "" - selects the ConnectCluster
+// whose own ConnectRestURL is "", which is a real, addressable value: a state file upgraded from
+// a pre-v3 schema nests its legacy self-managed connectors under exactly that empty-URL entry,
+// since the original REST URL was never recorded for them - see steps.go's v3 upcaster comment).
+// Collapsing that distinction into a single empty string previously made the legacy entry
+// unaddressable: any attempt to select it by its real (empty) URL was indistinguishable from
+// "unspecified" and silently fell back to whichever ConnectCluster happened to be first instead.
+func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clusterID, sourceType, kind string, connectRestURL *string, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
 	if kind == "" {
 		kind = "self-managed"
 	}
@@ -412,12 +421,20 @@ func (rs *ReportService) FilterConnectMetrics(processedState ProcessedState, clu
 		return nil, fmt.Errorf("cluster '%s' not found in %s sources", clusterID, sourceType)
 	}
 
-	// Resolve the target ConnectCluster: by URL when given, else the first one.
+	// Resolve the target ConnectCluster: by exact URL match when connectRestURL is
+	// non-nil (nil vs. pointing-at-"" is a deliberate distinction - see the doc comment
+	// above), else the first one.
 	var cc *types.ConnectCluster
-	for i := range adminInfo.ConnectClusters {
-		if connectRestURL == "" || adminInfo.ConnectClusters[i].ConnectRestURL == connectRestURL {
-			cc = &adminInfo.ConnectClusters[i]
-			break
+	if connectRestURL == nil {
+		if len(adminInfo.ConnectClusters) > 0 {
+			cc = &adminInfo.ConnectClusters[0]
+		}
+	} else {
+		for i := range adminInfo.ConnectClusters {
+			if adminInfo.ConnectClusters[i].ConnectRestURL == *connectRestURL {
+				cc = &adminInfo.ConnectClusters[i]
+				break
+			}
 		}
 	}
 	if cc == nil {

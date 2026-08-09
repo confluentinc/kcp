@@ -425,6 +425,13 @@ func ptr(v float64) *float64 {
 	return &v
 }
 
+// strPtr converts a string value to a pointer, so tests can express "caller
+// explicitly specified this exact value" (including "") as distinct from nil
+// ("caller specified nothing at all").
+func strPtr(v string) *string {
+	return &v
+}
+
 func TestFilterClusterMetrics_SourceAware(t *testing.T) {
 	rs := NewReportService()
 
@@ -1139,7 +1146,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	}
 
 	t.Run("returns Connect metrics for existing OSK cluster", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", "", "", nil, nil)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", nil, "", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 3)
@@ -1152,7 +1159,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	})
 
 	t.Run("returns Connect metrics for existing MSK cluster", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", "self-managed", "", "", nil, nil)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", "self-managed", nil, "", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 2)
@@ -1162,20 +1169,20 @@ func TestFilterConnectMetrics(t *testing.T) {
 	t.Run("filters by date range", func(t *testing.T) {
 		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", "", "", &start, &end)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", nil, "", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 2) // only Jan 1 metrics
 	})
 
 	t.Run("cluster not found returns error", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", "osk", "self-managed", "", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "nonexistent", "osk", "self-managed", nil, "", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("cluster without self-managed connectors signals never-collected", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", "osk", "self-managed", "", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateNoConnect, "osk-kafka-no-connect", "osk", "self-managed", nil, "", nil, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
@@ -1187,7 +1194,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 		// 200, so the user sees an empty chart rather than a "run a scan" message.
 		start := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
 		end := time.Date(2030, 1, 2, 0, 0, 0, 0, time.UTC)
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", "", "", &start, &end)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "osk", "self-managed", nil, "", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Empty(t, result.Metrics)
@@ -1195,7 +1202,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	})
 
 	t.Run("case-insensitive cluster ID match", func(t *testing.T) {
-		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", "osk", "self-managed", "", "", nil, nil)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, "OSK-KAFKA", "osk", "self-managed", nil, "", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 3)
@@ -1204,20 +1211,20 @@ func TestFilterConnectMetrics(t *testing.T) {
 	// Abuse case: cross-source-type bleed. A cluster identifier that exists under one
 	// source type must never resolve when queried under the other source type.
 	t.Run("OSK cluster id requested as msk does not bleed", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "msk", "self-managed", "", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "msk", "self-managed", nil, "", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
 	t.Run("MSK cluster arn requested as osk does not bleed", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "osk", "self-managed", "", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "osk", "self-managed", nil, "", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
 
 	// Abuse case: an unknown source type is rejected, not silently defaulted to a source.
 	t.Run("unknown source type returns error", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "bogus", "self-managed", "", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "osk-kafka", "bogus", "self-managed", nil, "", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "source type")
 	})
@@ -1225,7 +1232,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	// MSK-branch coverage symmetric to the OSK cases above: not-found, no-connectors,
 	// and date filtering must each be exercised through the MSK lookup path.
 	t.Run("MSK cluster not found returns error", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(stateWithConnect, "arn:aws:kafka:us-east-1:000000000000:cluster/nope/zzz", "msk", "self-managed", "", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateWithConnect, "arn:aws:kafka:us-east-1:000000000000:cluster/nope/zzz", "msk", "self-managed", nil, "", nil, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not found")
 	})
@@ -1247,7 +1254,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 				},
 			},
 		}
-		_, err := rs.FilterConnectMetrics(stateMSKNoConnect, arn, "msk", "self-managed", "", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(stateMSKNoConnect, arn, "msk", "self-managed", nil, "", nil, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
@@ -1255,7 +1262,7 @@ func TestFilterConnectMetrics(t *testing.T) {
 	t.Run("filters by date range on the MSK path", func(t *testing.T) {
 		start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 		end := time.Date(2025, 1, 1, 23, 59, 59, 0, time.UTC)
-		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", "self-managed", "", "", &start, &end)
+		result, err := rs.FilterConnectMetrics(stateWithConnect, mskArn, "msk", "self-managed", nil, "", &start, &end)
 		require.NoError(t, err)
 		require.NotNil(t, result)
 		assert.Len(t, result.Metrics, 1) // only the Jan 1 MSK metric
@@ -1319,7 +1326,7 @@ func TestFilterConnectMetrics_SelectsByURLAndConnector(t *testing.T) {
 	}
 
 	t.Run("connectRestURL selects the matching Connect cluster's own metrics", func(t *testing.T) {
-		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", "u2", "", nil, nil)
+		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", strPtr("u2"), "", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		require.Len(t, got.Metrics, 1)
@@ -1327,37 +1334,102 @@ func TestFilterConnectMetrics_SelectsByURLAndConnector(t *testing.T) {
 	})
 
 	t.Run("connectRestURL + connectorName selects that connector's own metrics", func(t *testing.T) {
-		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", "u2", "connA", nil, nil)
+		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", strPtr("u2"), "connA", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		require.Len(t, got.Metrics, 1)
 		assert.Equal(t, "sentinel-connA", got.Metrics[0].Label, "must return connA's own metrics, not u2's cluster-level metrics")
 	})
 
-	t.Run("empty connectRestURL falls back to the first Connect cluster (back-compat)", func(t *testing.T) {
-		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", "", "", nil, nil)
+	t.Run("nil connectRestURL falls back to the first Connect cluster (back-compat)", func(t *testing.T) {
+		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", nil, "", nil, nil)
 		require.NoError(t, err)
 		require.NotNil(t, got)
 		require.Len(t, got.Metrics, 1)
-		assert.Equal(t, "sentinel-u1-cluster", got.Metrics[0].Label, "empty connectRestURL must fall back to the first Connect cluster (u1)")
+		assert.Equal(t, "sentinel-u1-cluster", got.Metrics[0].Label, "nil connectRestURL must fall back to the first Connect cluster (u1)")
 	})
 
 	t.Run("unknown connectRestURL signals never-collected", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", "nonexistent-url", "", nil, nil)
+		_, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", strPtr("nonexistent-url"), "", nil, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
 
 	t.Run("unknown connectorName within a resolved cluster signals never-collected", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", "u2", "nonexistent-connector", nil, nil)
+		_, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", strPtr("u2"), "nonexistent-connector", nil, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
 	})
 
 	t.Run("connectorName on a connector without collected metrics signals never-collected", func(t *testing.T) {
-		_, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", "u1", "connX", nil, nil)
+		_, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", strPtr("u1"), "connX", nil, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrNoConnectMetricsCollected)
+	})
+}
+
+// TestFilterConnectMetrics_EmptyURLLegacyEntryIsAddressable is a regression test for
+// PR #400 review feedback (Adrian): a cluster upgraded from a pre-v3 state file has its
+// legacy self-managed connectors nested under a ConnectCluster with ConnectRestURL == ""
+// (steps.go's v3 upcaster never recorded the real REST URL for these). Before this fix,
+// connectRestURL was a plain string and "" meant "caller didn't specify one" (nil is now
+// used for that instead), so that legacy entry could never be selected on purpose - any
+// attempt to address it by its real (empty) URL fell through to the "unspecified"
+// fallback and silently resolved to whichever entry happened to be first instead.
+func TestFilterConnectMetrics_EmptyURLLegacyEntryIsAddressable(t *testing.T) {
+	rs := NewReportService()
+
+	legacyMetrics := &types.ConnectClusterMetrics{
+		Metrics: []types.ProcessedMetric{
+			{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "sentinel-legacy-empty-url", Value: ptr(1.0)},
+		},
+	}
+	realMetrics := &types.ConnectClusterMetrics{
+		Metrics: []types.ProcessedMetric{
+			{Start: "2025-01-01T00:00:00Z", End: "2025-01-01T00:01:00Z", Label: "sentinel-real-url", Value: ptr(2.0)},
+		},
+	}
+
+	ps := ProcessedState{
+		Sources: []ProcessedSource{
+			{
+				Type: types.SourceTypeOSK,
+				OSKData: &ProcessedOSKSource{
+					Clusters: []ProcessedOSKCluster{
+						{
+							ID: "c1",
+							KafkaAdminClientInformation: types.KafkaAdminClientInformation{
+								ConnectClusters: []types.ConnectCluster{
+									// A fresh scan can append its entry after the legacy one
+									// (mergeConnectClusters emits new entries first, then old
+									// ones not seen this run - discovery_common.go), so the
+									// real-URL entry is deliberately first here: selecting the
+									// legacy entry must not depend on it being at index 0.
+									{ConnectRestURL: "http://connect-b.internal:8083", Metrics: realMetrics},
+									{ConnectRestURL: "", Metrics: legacyMetrics},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	t.Run("explicit empty-string connectRestURL selects the legacy entry, not the first one", func(t *testing.T) {
+		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", strPtr(""), "", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Len(t, got.Metrics, 1)
+		assert.Equal(t, "sentinel-legacy-empty-url", got.Metrics[0].Label, "explicit \"\" must resolve to the legacy empty-URL entry, not fall back to index 0")
+	})
+
+	t.Run("nil connectRestURL still falls back to the first entry (back-compat unchanged)", func(t *testing.T) {
+		got, err := rs.FilterConnectMetrics(ps, "c1", "osk", "self-managed", nil, "", nil, nil)
+		require.NoError(t, err)
+		require.NotNil(t, got)
+		require.Len(t, got.Metrics, 1)
+		assert.Equal(t, "sentinel-real-url", got.Metrics[0].Label, "nil must still fall back to the first Connect cluster")
 	})
 }
 
@@ -1379,7 +1451,7 @@ func TestFilterConnectMetrics_Managed_MSK(t *testing.T) {
 	}}}}
 	ps := rs.ProcessState(state)
 
-	got, err := rs.FilterConnectMetrics(ps, arn, "msk", "managed", "", "", nil, nil)
+	got, err := rs.FilterConnectMetrics(ps, arn, "msk", "managed", nil, "", nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(t, types.MetricBackendCloudWatch, got.Metadata.MetricsSource)
@@ -1402,7 +1474,7 @@ func TestFilterConnectMetrics_Managed_ExistingClusterNilMetrics_SignalsNeverColl
 	}}}}
 	ps := rs.ProcessState(state)
 
-	_, err := rs.FilterConnectMetrics(ps, arn, "msk", "managed", "", "", nil, nil)
+	_, err := rs.FilterConnectMetrics(ps, arn, "msk", "managed", nil, "", nil, nil)
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoConnectMetricsCollected))
 }
@@ -1423,7 +1495,7 @@ func TestFilterConnectMetrics_Managed_NonexistentCluster_ReturnsNotFound(t *test
 	}}}}
 	ps := rs.ProcessState(state)
 
-	_, err := rs.FilterConnectMetrics(ps, "arn:aws:kafka:us-east-1:000000000000:cluster/nonexistent/uuid", "msk", "managed", "", "", nil, nil)
+	_, err := rs.FilterConnectMetrics(ps, "arn:aws:kafka:us-east-1:000000000000:cluster/nonexistent/uuid", "msk", "managed", nil, "", nil, nil)
 	require.Error(t, err)
 	assert.False(t, errors.Is(err, ErrNoConnectMetricsCollected))
 	assert.Contains(t, err.Error(), "not found")
@@ -1433,7 +1505,7 @@ func TestFilterConnectMetrics_Managed_OSKIsError(t *testing.T) {
 	rs := &ReportService{}
 	state := types.State{OSKSources: &types.OSKSourcesState{Clusters: []types.OSKDiscoveredCluster{{ID: "osk-1"}}}}
 	ps := rs.ProcessState(state)
-	_, err := rs.FilterConnectMetrics(ps, "osk-1", "osk", "managed", "", "", nil, nil)
+	_, err := rs.FilterConnectMetrics(ps, "osk-1", "osk", "managed", nil, "", nil, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "managed")
 }
@@ -1455,7 +1527,7 @@ func TestFilterConnectMetrics_SelfManaged_DefaultUnchanged(t *testing.T) {
 		}},
 	}}}}
 	ps := rs.ProcessState(state)
-	got, err := rs.FilterConnectMetrics(ps, arn, "msk", "self-managed", "", "", nil, nil)
+	got, err := rs.FilterConnectMetrics(ps, arn, "msk", "self-managed", nil, "", nil, nil)
 	require.NoError(t, err)
 	require.Len(t, got.Metrics, 1)
 }

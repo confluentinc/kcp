@@ -212,7 +212,11 @@ const metrics = {
       queryParams.endDate =
         params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
     }
-    if (connectRestURL) queryParams.connectRestURL = connectRestURL
+    // connectRestURL must distinguish "not specified" (undefined - omit the param
+    // entirely) from "specified as an empty string" (a real, addressable value for
+    // a legacy pre-v3 Connect cluster entry, see api.go's handleGetConnectMetrics).
+    // A truthy check would silently drop that "" case, since it's falsy in JS.
+    if (connectRestURL !== undefined) queryParams.connectRestURL = connectRestURL
     if (connectorName) queryParams.connectorName = connectorName
     return get<MetricsApiResponse>(
       `${API_ENDPOINTS.METRICS}/connect/${encodeURIComponent(sourceType)}`,
