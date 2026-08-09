@@ -146,9 +146,9 @@ func (cu *ConnectorUtility) buildConnectorConfigs(cluster *types.DiscoveredClust
 		}
 	}
 
-	// Self-managed connectors.
-	if cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil {
-		for _, selfManagedConnector := range cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors {
+	// Self-managed connectors (flattened across all Connect clusters).
+	for _, cc := range cluster.KafkaAdminClientInformation.ConnectClusters {
+		for _, selfManagedConnector := range cc.Connectors {
 			connectors[selfManagedConnector.Name] = ConnectorConfig{
 				Name:   selfManagedConnector.Name,
 				Config: selfManagedConnector.Config,

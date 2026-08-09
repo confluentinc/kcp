@@ -33,7 +33,7 @@ const defaultTranslateBaseURL = "https://api.confluent.cloud"
 // configuration, including nested maps/lists. Used to decide whether to warn the
 // operator that the generated assets need manual secret replacement. Count only —
 // never the connector names or field keys.
-func countRedactedConnectors(connectors []types.SelfManagedConnector) int {
+func countRedactedConnectors(connectors []types.Connector) int {
 	count := 0
 	for _, c := range connectors {
 		if redact.AnyMapContainsRedacted(c.Config) {
@@ -68,7 +68,7 @@ type MigrateSelfManagedConnectorOpts struct {
 	CcApiKey    string
 	CcApiSecret string
 
-	Connectors []types.SelfManagedConnector
+	Connectors []types.Connector
 	OutputDir  string
 }
 
@@ -79,7 +79,7 @@ type SelfManagedConnectorMigrator struct {
 	CcApiKey    string
 	CcApiSecret string
 
-	Connectors []types.SelfManagedConnector
+	Connectors []types.Connector
 	OutputDir  string
 
 	// baseURL is the host the translate endpoint is called under; defaults to
@@ -202,7 +202,7 @@ func writeConnectorFile(tmpl *template.Template, path string, templateData Templ
 	return nil
 }
 
-func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types.SelfManagedConnector) (map[string]any, []Warning, error) {
+func (mc *SelfManagedConnectorMigrator) translateConnectorConfig(connector types.Connector) (map[string]any, []Warning, error) {
 	connectorClass, ok := connector.Config["connector.class"]
 	if !ok {
 		return nil, nil, fmt.Errorf("'connector.class' not found in config")

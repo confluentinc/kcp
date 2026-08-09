@@ -302,27 +302,28 @@ func evalMSKConnectPresent(clusters []report.ProcessedCluster) RedFlag {
 
 // ----- Row 7: self-managed Connect clusters present -----
 
-// Reads `KafkaAdminClientInformation.SelfManagedConnectors` directly.
-// Same nil-vs-empty disambiguation as row 6: empty struct with topics
-// populated counts as "no Connect clusters"; nil struct = scan didn't
-// run.
+// Reads `KafkaAdminClientInformation.ConnectClusters` directly. The
+// tri-state now keys off `ConnectClusters`: nil slice = unscanned;
+// empty/all-empty = scanned-none; any connectors = triggered.
 func evalSelfManagedConnectPresent(clusters []report.ProcessedCluster) RedFlag {
 	rf := RedFlag{ID: RedFlagIDSelfManagedConnectPresent, Title: "Self-managed Connect clusters present"}
 	var triggered []string
 	var unscanned []string
 	for _, c := range clusters {
-		smc := c.KafkaAdminClientInformation.SelfManagedConnectors
+		ccs := c.KafkaAdminClientInformation.ConnectClusters
+		total := 0
+		for _, cc := range ccs {
+			total += len(cc.Connectors)
+		}
 		switch {
-		case smc != nil && len(smc.Connectors) > 0:
-			triggered = append(triggered, fmt.Sprintf("%s (%d connector(s))", c.Name, len(smc.Connectors)))
-		case smc != nil:
-			// Empty struct with `Connectors` cleared — scan ran, found nothing.
+		case total > 0:
+			triggered = append(triggered, fmt.Sprintf("%s (%d connector(s))", c.Name, total))
+		case ccs != nil:
+			// scanned, found no connectors — not triggered.
 		default:
-			// nil — scan didn't run. Cross-check topic patterns for
-			// `connect-(configs|offsets|status)` so a stale state file
-			// doesn't suppress a real fleet.
+			// nil — scan didn't run. Cross-check topic patterns.
 			if patternHit, _ := topicPatternFound(c, connectInternalTopicPattern); patternHit {
-				triggered = append(triggered, c.Name+" (Connect topic pattern detected; SelfManagedConnectors scan didn't run)")
+				triggered = append(triggered, c.Name+" (Connect topic pattern detected; connect-clusters scan didn't run)")
 			} else {
 				unscanned = append(unscanned, c.Name)
 			}

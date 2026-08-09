@@ -133,7 +133,7 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 		return nil, fmt.Errorf("failed to parse statefile JSON: %w", err)
 	}
 
-	var connectors []types.SelfManagedConnector
+	var connectors []types.Connector
 
 	switch sourceType {
 	case "msk":
@@ -141,8 +141,8 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to get cluster: %w", err)
 		}
-		if cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil {
-			connectors = cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors
+		for _, cc := range cluster.KafkaAdminClientInformation.ConnectClusters {
+			connectors = append(connectors, cc.Connectors...)
 		}
 		if outputDir == "" {
 			outputDir = fmt.Sprintf("%s-connectors", cluster.Name)
@@ -152,8 +152,8 @@ func parseMigrateSelfManagedConnectorsOpts() (*MigrateSelfManagedConnectorOpts, 
 		if err != nil {
 			return nil, fmt.Errorf("failed to get Apache Kafka cluster: %w", err)
 		}
-		if cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil {
-			connectors = cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors
+		for _, cc := range cluster.KafkaAdminClientInformation.ConnectClusters {
+			connectors = append(connectors, cc.Connectors...)
 		}
 		if outputDir == "" {
 			outputDir = fmt.Sprintf("%s-connectors", cluster.ID)

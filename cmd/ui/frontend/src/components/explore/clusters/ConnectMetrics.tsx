@@ -20,8 +20,9 @@ interface ConnectMetricsProps {
   clusterId: string
   sourceType: 'msk' | 'osk'
   kind?: 'self-managed' | 'managed'
-  // When set (MSK-managed only), scope the metrics view to this connector and
-  // strip the connector suffix from metric labels.
+  connectRestURL?: string
+  // When set, scope the metrics view to this connector and (for MSK-managed) strip
+  // the connector suffix from metric labels.
   connectorName?: string
   connectMetricsMetadata?: {
     start_date?: string
@@ -29,14 +30,25 @@ interface ConnectMetricsProps {
     period?: number
     metrics_source?: string
   }
+  // When true, renders without its own card chrome (no bg/border/rounded/padding)
+  // so it can be nested as a sub-section inside a parent card instead of reading
+  // as its own standalone card.
+  bare?: boolean
+  // Optional content rendered inside this card, below the metrics content. Lets a
+  // parent nest additional sub-sections (e.g. the connector selector/metrics)
+  // visually inside the Connect Cluster Metrics card.
+  children?: React.ReactNode
 }
 
 export const ConnectMetrics = ({
   clusterId,
   sourceType,
   kind = 'self-managed',
+  connectRestURL,
   connectorName,
   connectMetricsMetadata,
+  bare = false,
+  children,
 }: ConnectMetricsProps) => {
   const [startDate, setStartDate] = useState<Date | undefined>(undefined)
   const [endDate, setEndDate] = useState<Date | undefined>(undefined)
@@ -48,6 +60,8 @@ export const ConnectMetrics = ({
     startDate,
     endDate,
     kind,
+    connectRestURL,
+    connectorName,
   })
 
   // For MSK-managed metrics, scope the (all-connectors) response to the selected
@@ -64,7 +78,7 @@ export const ConnectMetrics = ({
 
   // MSK-managed is scoped to a single connector, so it's "Connector Metrics";
   // self-managed is worker-level, so it stays "Connect Cluster Metrics".
-  const heading = kind === 'managed' ? 'Connector Metrics' : 'Connect Cluster Metrics'
+  const heading = kind === 'managed' || connectorName ? 'Connector Metrics' : 'Connect Cluster Metrics'
   const scanCommandHint =
     kind === 'managed'
       ? 'kcp scan msk-connectors --metrics-granularity 1d'
@@ -122,7 +136,7 @@ export const ConnectMetrics = ({
   })
 
   return (
-    <div className="bg-card rounded-lg border border-border p-6 transition-colors">
+    <div className={bare ? '' : 'bg-card rounded-lg border border-border p-6 transition-colors'}>
       <h4 className="text-lg font-semibold text-foreground mb-4">{heading}</h4>
 
       <DateRangePicker
@@ -214,6 +228,8 @@ export const ConnectMetrics = ({
           </p>
         </div>
       )}
+
+      {children}
     </div>
   )
 }

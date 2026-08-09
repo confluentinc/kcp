@@ -51,8 +51,11 @@ func loadCluster(t *testing.T, statePath string) types.OSKDiscoveredCluster {
 func assertConnectorsDiscovered(t *testing.T, statePath string) {
 	t.Helper()
 	c := loadCluster(t, statePath)
-	require.NotNil(t, c.KafkaAdminClientInformation.SelfManagedConnectors, "no self_managed_connectors in state")
-	conns := c.KafkaAdminClientInformation.SelfManagedConnectors.Connectors
+	require.NotEmpty(t, c.KafkaAdminClientInformation.ConnectClusters, "no connect_clusters in state")
+	var conns []types.Connector
+	for _, cc := range c.KafkaAdminClientInformation.ConnectClusters {
+		conns = append(conns, cc.Connectors...)
+	}
 	require.NotEmpty(t, conns, "expected at least one self-managed connector (test-heartbeat)")
 	withHost := 0
 	for _, cn := range conns {
@@ -165,8 +168,15 @@ func TestConnectScanMetrics(t *testing.T) {
 	require.NoError(t, err, out)
 
 	c := loadCluster(t, state)
-	require.NotNil(t, c.KafkaAdminClientInformation.SelfManagedConnectors, "no self_managed_connectors in state")
-	m := c.KafkaAdminClientInformation.SelfManagedConnectors.Metrics
+	var cc *types.ConnectCluster
+	for i := range c.KafkaAdminClientInformation.ConnectClusters {
+		if c.KafkaAdminClientInformation.ConnectClusters[i].ConnectRestURL == "http://localhost:18083" {
+			cc = &c.KafkaAdminClientInformation.ConnectClusters[i]
+			break
+		}
+	}
+	require.NotNil(t, cc, "no connect_cluster found for http://localhost:18083")
+	m := cc.Metrics
 	require.NotNil(t, m, "no Connect metrics collected")
 	assert.NotEmpty(t, m.Metrics, "expected at least one Connect metric data point")
 }

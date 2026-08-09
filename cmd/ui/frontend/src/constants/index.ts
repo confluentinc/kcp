@@ -110,10 +110,11 @@ export const DEFAULTS = {
 
 /**
  * AWS Service Names
- * Source of truth: Go constants in internal/types/state.go (Service* constants)
+ * Source of truth: Go constants in internal/types/costs.go (Service* constants)
  */
 export const AWS_SERVICES = {
   MSK: 'Amazon Managed Streaming for Apache Kafka',
+  MSK_CONNECT: 'Amazon Managed Streaming for Apache Kafka Connect',
   ELB: 'Amazon Elastic Load Balancing',
   VPC: 'Amazon Virtual Private Cloud',
 } as const
