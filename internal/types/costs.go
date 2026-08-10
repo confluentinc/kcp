@@ -47,4 +47,10 @@ const (
 	ServiceEC2Other              = "EC2 - Other"
 	ServiceELB                   = "Amazon Elastic Load Balancing"
 	ServiceVPC                   = "Amazon Virtual Private Cloud"
+
+	// ServiceMSKConnect is a synthetic label, not a real Cost Explorer SERVICE value.
+	// MSK Connect bills under ServiceMSK with USAGE_TYPE "<region>-Kafka.mcu.general";
+	// report.flattenCosts relabels those rows to this constant so Connect cost is
+	// visible as its own category instead of hiding inside broker cost.
+	ServiceMSKConnect = "Amazon Managed Streaming for Apache Kafka Connect"
 )
