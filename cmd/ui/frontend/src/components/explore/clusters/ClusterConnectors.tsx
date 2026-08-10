@@ -9,9 +9,9 @@ import {
 } from '@/components/common/ui/select'
 import { formatDate } from '@/lib/formatters'
 import { hasRedactedConfig } from '@/lib/redaction'
-import { CONNECTOR_TABS, REDACTED_PLACEHOLDER } from '@/constants'
+import { CONNECTOR_TABS, REDACTED_PLACEHOLDER, TAB_IDS } from '@/constants'
 import { ConnectMetrics } from './ConnectMetrics'
-import type { Connector, ConnectCluster, ConnectorTab, MSKConnector } from '@/types'
+import type { Connector, ConnectCluster, ConnectorTab, MSKConnector, TabId } from '@/types'
 
 interface ClusterConnectorsProps {
   connectors: MSKConnector[]
@@ -61,6 +61,12 @@ export const ClusterConnectors = ({
   // later duplicates unselectable. Index is the only unique handle we have here.
   const [selectedClusterIndex, setSelectedClusterIndex] = useState<number>(0)
   const [selectedConnectorName, setSelectedConnectorName] = useState<string>('')
+  // Metrics view (Chart/Table/Query) is hoisted here so it survives the remount
+  // each ConnectMetrics does on a cluster/connector switch (the remount is what
+  // re-initializes the date range). Kept separate for the cluster block vs the
+  // connector block since both render at once and toggle independently.
+  const [clusterMetricsView, setClusterMetricsView] = useState<TabId>(TAB_IDS.CHART)
+  const [connectorMetricsView, setConnectorMetricsView] = useState<TabId>(TAB_IDS.CHART)
 
   const selectedCluster = connectClusters[selectedClusterIndex]
   // Derived (not stored in state): the real endpoint string, possibly "", used
@@ -198,7 +204,8 @@ export const ClusterConnectors = ({
           // Remount when the selected cluster/connector changes so the date
           // filters re-initialize to the new selection's metadata window
           // (otherwise stale dates carry over and the metrics render empty
-          // until the user manually hits Reset).
+          // until the user manually hits Reset). The view (Chart/Table/Query)
+          // is hoisted to the parent so it survives this remount.
           key={`connector:${selectedConnectRestURL}:${selectedConnectorName}`}
           bare
           clusterId={clusterId}
@@ -206,6 +213,8 @@ export const ClusterConnectors = ({
           connectRestURL={selectedConnectRestURL}
           connectorName={selectedConnectorName}
           connectMetricsMetadata={selectedSelfManagedConnector.metrics.metadata}
+          activeTab={connectorMetricsView}
+          onActiveTabChange={setConnectorMetricsView}
         />
       ) : (
         <div data-testid="connector-metrics-empty">
@@ -457,11 +466,16 @@ export const ClusterConnectors = ({
           <ConnectMetrics
             // Remount on cluster change so date filters re-initialize to the new
             // cluster's metadata window (avoids the empty-until-Reset behavior).
-            key={`cluster:${selectedConnectRestURL}`}
+            // View is hoisted to the parent so it survives the remount. Keyed by
+            // index (not just URL) since multiple clusters can share the same
+            // connect_rest_url (see selectedClusterIndex comment above).
+            key={`cluster:${selectedClusterIndex}:${selectedConnectRestURL}`}
             clusterId={clusterId}
             sourceType={sourceType}
             connectRestURL={selectedConnectRestURL}
             connectMetricsMetadata={selectedCluster.metrics.metadata}
+            activeTab={clusterMetricsView}
+            onActiveTabChange={setClusterMetricsView}
           >
             {renderConnectorSection(false)}
           </ConnectMetrics>

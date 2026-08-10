@@ -38,6 +38,13 @@ interface ConnectMetricsProps {
   // parent nest additional sub-sections (e.g. the connector selector/metrics)
   // visually inside the Connect Cluster Metrics card.
   children?: React.ReactNode
+  // Optional controlled view (Chart/Table/Query). When the parent remounts this
+  // component (via a key) to re-initialize dates on a cluster/connector switch,
+  // it can hoist the view here so the user's chosen view survives the remount
+  // instead of snapping back to the default Chart tab. Falls back to internal
+  // state when not provided.
+  activeTab?: TabId
+  onActiveTabChange?: (id: TabId) => void
 }
 
 export const ConnectMetrics = ({
@@ -49,10 +56,18 @@ export const ConnectMetrics = ({
   connectMetricsMetadata,
   bare = false,
   children,
+  activeTab: activeTabProp,
+  onActiveTabChange,
 }: ConnectMetricsProps) => {
   const [startDate, setStartDate] = useState<Date | undefined>(undefined)
   const [endDate, setEndDate] = useState<Date | undefined>(undefined)
-  const [activeTab, setActiveTab] = useState<TabId>(TAB_IDS.CHART)
+  const [internalActiveTab, setInternalActiveTab] = useState<TabId>(TAB_IDS.CHART)
+
+  // Prefer the parent-controlled view when provided (so it survives the remount
+  // used to re-initialize dates on a cluster/connector switch); otherwise manage
+  // the view locally.
+  const activeTab = activeTabProp ?? internalActiveTab
+  const setActiveTab = onActiveTabChange ?? setInternalActiveTab
 
   const { metricsResponse: rawResponse, isLoading, error } = useConnectMetricsFetch({
     clusterId,
@@ -64,16 +79,19 @@ export const ConnectMetrics = ({
     connectorName,
   })
 
-  // For MSK-managed metrics, scope the (all-connectors) response to the selected
-  // connector and strip the " (connector)" label suffix so every downstream view
-  // (chart/table/query, JSON/CSV, aggregates) is connector-specific with bare
-  // metric names. Self-managed passes no connectorName → response unchanged.
+  // For MSK-managed metrics, one response carries ALL connectors with series
+  // labeled "<metric> (<connector>)", so scope it to the selected connector and
+  // strip the suffix for every downstream view (chart/table/query, JSON/CSV,
+  // aggregates). Self-managed is different: the backend already returns the
+  // selected connector's own metrics with bare labels (FilterConnectMetrics
+  // resolves connectorName server-side), so re-scoping here would filter every
+  // (unsuffixed) series out and show nothing. Gate strictly on kind === 'managed'.
   const metricsResponse = useMemo(
     () =>
-      connectorName && rawResponse
+      kind === 'managed' && connectorName && rawResponse
         ? scopeConnectMetricsToConnector(rawResponse, connectorName)
         : rawResponse,
-    [rawResponse, connectorName]
+    [kind, rawResponse, connectorName]
   )
 
   // MSK-managed is scoped to a single connector, so it's "Connector Metrics";

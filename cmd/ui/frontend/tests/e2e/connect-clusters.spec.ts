@@ -69,6 +69,60 @@ function stateWithConnectClusters() {
   return state
 }
 
+// Two Connect clusters that both have an empty connect_rest_url (the legacy
+// "unknown endpoint" case) but distinct metrics windows, so a stale-date bug on
+// switching between them is observable via the displayed date range.
+function stateWithDuplicateEmptyUrlClusters() {
+  const state = structuredClone(stateOSKOnly) as Record<string, any>
+  state.osk_sources.clusters[0].kafka_admin_client_information.connect_clusters = [
+    {
+      connect_rest_url: '',
+      metrics: {
+        metadata: {
+          start_date: '2026-01-15T12:00:00Z',
+          end_date: '2026-01-16T12:00:00Z',
+          period: 10,
+          metrics_source: 'jolokia',
+        },
+        results: [],
+        aggregates: {},
+        query_info: [],
+      },
+      connectors: [
+        {
+          name: 'legacy-a',
+          state: 'RUNNING',
+          config: { 'connector.class': 'io.x.A' },
+          connect_host: '10.0.0.1:8083',
+        },
+      ],
+    },
+    {
+      connect_rest_url: '',
+      metrics: {
+        metadata: {
+          start_date: '2026-06-15T12:00:00Z',
+          end_date: '2026-06-16T12:00:00Z',
+          period: 10,
+          metrics_source: 'jolokia',
+        },
+        results: [],
+        aggregates: {},
+        query_info: [],
+      },
+      connectors: [
+        {
+          name: 'legacy-b',
+          state: 'RUNNING',
+          config: { 'connector.class': 'io.x.B' },
+          connect_host: '10.0.0.2:8083',
+        },
+      ],
+    },
+  ]
+  return state
+}
+
 async function openConnectorsView(page: import('@playwright/test').Page, state: unknown) {
   await page.goto('/')
   await page.click('button:has-text("Upload KCP State File")')
@@ -139,5 +193,35 @@ test.describe('Self-managed Connect clusters', () => {
     await expect(details.locator('textarea')).toHaveValue(
       /connector\.class=io\.confluent\.connect\.s3\.S3SinkConnector/
     )
+  })
+
+  test('cluster metrics date range re-initializes when switching between clusters that share an empty connect_rest_url', async ({
+    page,
+  }) => {
+    await openConnectorsView(page, stateWithDuplicateEmptyUrlClusters())
+    await page.getByRole('button', { name: /Self Managed Connectors/ }).click()
+
+    const clusterSelect = page.getByTestId('connect-cluster-select')
+    await expect(clusterSelect).toBeVisible()
+
+    // Both entries share the empty connect_rest_url, so the dropdown renders the
+    // same "(unknown endpoint)" fallback label twice — select by position.
+    await clusterSelect.click()
+    const options = page.getByRole('option', { name: '(unknown endpoint)' })
+    await expect(options).toHaveCount(2)
+    await options.nth(0).click()
+
+    // First cluster's own metadata window (Jan 15-16, 2026).
+    await expect(page.getByRole('button', { name: /January 15th, 2026/ })).toBeVisible()
+
+    await clusterSelect.click()
+    await page.getByRole('option', { name: '(unknown endpoint)' }).nth(1).click()
+
+    // Must re-initialize to the second cluster's own metadata window (Jun 15-16,
+    // 2026) — not keep showing the first cluster's stale Jan 15-16 range, which
+    // would happen if the metrics block didn't remount because both clusters
+    // share the same connect_rest_url-derived key.
+    await expect(page.getByRole('button', { name: /June 15th, 2026/ })).toBeVisible()
+    await expect(page.getByRole('button', { name: /January 15th, 2026/ })).not.toBeVisible()
   })
 })
