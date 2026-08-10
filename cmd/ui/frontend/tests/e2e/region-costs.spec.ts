@@ -8,12 +8,26 @@ test.describe('Region Costs', () => {
 
     await page.click('button:has-text("Upload KCP State File")')
     const fileInput = page.locator('input[type="file"]')
+    // Wait for THIS upload's own /upload-state response rather than the generic
+    // "Apache Kafka" text: that text is also satisfied by the server's
+    // independently preloaded default state file (see playwright.config.ts's
+    // webServer --state-file), which loads on mount regardless of this test's
+    // upload. Waiting on it alone races against this fixture's own upload
+    // finishing — whichever settles last silently wins the app's selected view,
+    // so a click right after can be reverted moments later when the slower one
+    // resolves.
+    const uploadResponse = page.waitForResponse(
+      (res) => res.url().includes('/upload-state') && res.request().method() === 'POST'
+    )
     await fileInput.setInputFiles({
       name: 'state-with-metrics.json',
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(stateWithMetrics)),
     })
-    await page.waitForSelector('text=Apache Kafka', { timeout: 5000 })
+    await uploadResponse
+    // eu-south-1 exists only in this fixture (not the preloaded default state),
+    // so its presence confirms this upload — not the preloaded one — has rendered.
+    await expect(page.locator('button:has-text("eu-south-1")')).toBeVisible({ timeout: 5000 })
   })
 
   test('region cost overview renders with service and cost type selectors', async ({ page }) => {
