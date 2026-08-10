@@ -66,15 +66,19 @@ export const useMetricsDataProcessor = (
       }
     })
 
+    // Metric labels, sorted alphabetically so the table, dropdown, and CSV all
+    // present metrics in a stable, predictable order (instead of collection order).
+    const sortedLabels = Object.keys(metricsByLabel).sort((a, b) => a.localeCompare(b))
+
     // Create table data
-    const tableData = Object.keys(metricsByLabel).map((label) => ({
+    const tableData = sortedLabels.map((label) => ({
       metric: label,
       values: uniqueDates.map((date) => metricsByLabel[label][date] ?? null),
     }))
 
     // Create CSV data
     const csvHeaders = ['Metric', ...uniqueDates]
-    const csvRows = Object.keys(metricsByLabel).map((label) => [
+    const csvRows = sortedLabels.map((label) => [
       label || '',
       ...uniqueDates.map((date) => {
         const value = metricsByLabel[label][date]
@@ -96,7 +100,7 @@ export const useMetricsDataProcessor = (
         epochTime: dateObj.getTime(),
       }
 
-      Object.keys(metricsByLabel).forEach((label) => {
+      sortedLabels.forEach((label) => {
         const cleanLabel = label.replace('Cluster Aggregate - ', '')
         const value = metricsByLabel[label][date]
         dataPoint[cleanLabel] = value !== null && value !== undefined ? value : null
@@ -110,9 +114,7 @@ export const useMetricsDataProcessor = (
       csvData,
       chartData,
       uniqueDates,
-      metrics: Object.keys(metricsByLabel).map((label) =>
-        label.replace('Cluster Aggregate - ', '')
-      ),
+      metrics: sortedLabels.map((label) => label.replace('Cluster Aggregate - ', '')),
     }
   }, [metricsResponse])
 }
