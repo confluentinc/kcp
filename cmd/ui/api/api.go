@@ -26,7 +26,7 @@ type ReportService interface {
 	FilterRegionCosts(processedState report.ProcessedState, regionName string, startTime, endTime *time.Time) (*report.ProcessedRegionCosts, error)
 	FilterMetrics(processedState report.ProcessedState, regionName, clusterName string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
 	FilterClusterMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ProcessedClusterMetrics, error)
-	FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, kind string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
+	FilterConnectMetrics(processedState report.ProcessedState, clusterID, sourceType, kind string, connectRestURL *string, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error)
 }
 
 type UICmdOpts struct {
@@ -284,7 +284,9 @@ func (ui *UI) handleGetOSKMetrics(c echo.Context) error {
 // handleGetConnectMetrics serves self-managed Connect metrics for either an MSK or OSK
 // cluster. sourceType is an explicit path param ({msk, osk}); clusterId is a query param
 // (OSK cluster id, or an MSK ARN URL-encoded by the client). The filter searches only the
-// named source set, so a cluster id never resolves across source types.
+// named source set, so a cluster id never resolves across source types. connectRestURL and
+// connectorName are optional query params that narrow the result to a specific Connect
+// cluster and/or connector; both default to "" (first Connect cluster / cluster-level metrics).
 func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 	state, err := ui.getStateBySession(c)
 	if err != nil {
@@ -331,7 +333,20 @@ func (ui *UI) handleGetConnectMetrics(c echo.Context) error {
 
 	processedState := ui.reportService.ProcessState(*state)
 
-	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, kind, startTime, endTime)
+	// connectRestURL must distinguish "not passed at all" (nil - resolves to the
+	// service's back-compat default) from "passed as an empty string" (a real,
+	// addressable value for a legacy pre-v3 Connect cluster entry - see
+	// FilterConnectMetrics' doc comment). c.QueryParam alone can't tell these
+	// apart, since it returns "" for both; QueryParams().Has reports whether the
+	// key was actually present on the wire.
+	var connectRestURL *string
+	if c.QueryParams().Has("connectRestURL") {
+		v := c.QueryParam("connectRestURL")
+		connectRestURL = &v
+	}
+	connectorName := c.QueryParam("connectorName")
+
+	filteredMetrics, err := ui.reportService.FilterConnectMetrics(processedState, clusterId, sourceType, kind, connectRestURL, connectorName, startTime, endTime)
 	if err != nil {
 		// "Never collected" is the only case that warrants the scan-guidance hint.
 		// A cluster that HAS metrics but whose selected date range excludes them all

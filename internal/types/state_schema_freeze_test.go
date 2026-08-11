@@ -25,6 +25,9 @@ var schemaShapes = map[int]string{
 	// v2: added the additive, omitempty connector_metrics field to each MSK cluster's
 	// aws_client_information (CloudWatch AWS/KafkaConnect metrics for MSK-managed connectors).
 	2: "sha256:d4599b2deaaad71d99b9d22967a27f613ac65bf2d14b5b4b74559613095f6a43",
+	// v3: restructures self-managed Connect's kafka_admin_client_information.self_managed_connectors
+	// into connect_clusters (a list of Connect REST endpoints, each with its own connectors+metrics).
+	3: "sha256:da1abb1c08daa232d886ff09a3eaf1eed41614b57568937d93ccdf15ba2cdc5a",
 }
 
 // schemaFloor is the first versioned schema.
