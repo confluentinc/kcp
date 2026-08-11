@@ -41,6 +41,7 @@ var (
 	detectUnroutedProducersDuration time.Duration
 	consumerOffsetSyncDrainDuration time.Duration
 	promoteBatchSize                int
+	runReport                       string
 )
 
 func NewMigrationExecuteCmd() *cobra.Command {
@@ -100,6 +101,7 @@ the migration state file and must be provided each time.`,
 	optionalFlags.IntVar(&promoteBatchSize, "promote-batch-size", 0, "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.")
 	optionalFlags.DurationVar(&detectUnroutedProducersDuration, "detect-unrouted-producers-duration", 0, "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.")
 	optionalFlags.DurationVar(&consumerOffsetSyncDrainDuration, "consumer-offset-sync-drain-duration", 0, "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless the migration was initialised with --pause-consumer-offset-sync. 0 (the default) disables the wait.")
+	optionalFlags.StringVar(&runReport, "run-report", "", "Write per-stage migration timings to <path> as JSON.")
 	migrationExecuteCmd.Flags().AddFlagSet(optionalFlags)
 	groups[optionalFlags] = "Optional Flags"
 
@@ -165,6 +167,13 @@ the migration state file and must be provided each time.`,
 
 		return nil
 	})
+
+	// Hidden pending schema validation by the migration performance rig, which is
+	// its first consumer; intended to become user-facing, since the natural
+	// audience for per-stage timings is someone rehearsing their own migration.
+	// AddFlagSet shares the *pflag.Flag, so this also hides it from the grouped
+	// FlagUsages printed by SetUsageFunc above.
+	_ = migrationExecuteCmd.Flags().MarkHidden("run-report")
 
 	_ = migrationExecuteCmd.MarkFlagRequired("migration-id")
 	_ = migrationExecuteCmd.MarkFlagRequired("lag-threshold")
@@ -297,5 +306,6 @@ func parseMigrationExecutorOpts(state migration.MigrationState, config migration
 		InsecureSkipTLSVerify: insecureSkipTLSVerify,
 		RolloutTimeout:        rolloutTimeout,
 		PromoteBatchSize:      promoteBatchSize,
+		RunReportPath:         runReport,
 	}
 }
