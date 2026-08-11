@@ -173,10 +173,16 @@ minutes.
 # Install golangci-lint
 brew install golangci-lint
 
+# Install trivy
+brew install trivy
+
 # Run Go linters
 make lint
 
-# Install git pre-commit hooks (runs linters automatically on commit)
+# Run Trivy vulnerability scan
+make trivy
+
+# Install git pre-commit hooks (runs linters and trivy scan automatically on commit)
 make pre-commit-install
 ```
 
