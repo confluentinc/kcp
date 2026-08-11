@@ -52,9 +52,9 @@
     "lodash": "^4.18.0",
     "lodash-es": "^4.18.0",
     "fast-uri": "^3.1.5",
-    "@rjsf/core/nanoid": "^5.1.16",
-    "@rjsf/utils/nanoid": "^5.1.16",
-    "**/postcss/nanoid": "^3.3.18"
+    "@rjsf/core/nanoid": "^6.0.0",
+    "@rjsf/utils/nanoid": "^6.0.0",
+    "**/postcss/nanoid": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
