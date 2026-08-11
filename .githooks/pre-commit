@@ -5,3 +5,9 @@ if command -v golangci-lint >/dev/null 2>&1; then
 else
   echo "warning: golangci-lint not installed, skipping Go lint"
 fi
+
+if command -v trivy >/dev/null 2>&1; then
+  trivy fs --scanners vuln --show-suppressed --severity HIGH,CRITICAL --exit-code 1 . || exit 1
+else
+  echo "warning: trivy not installed, skipping vulnerability scan"
+fi

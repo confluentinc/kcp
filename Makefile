@@ -62,13 +62,16 @@ uninstall: ## Uninstall from /usr/local/bin (requires sudo)
 # Code Quality
 # ==============================================================================
 
-.PHONY: fmt lint pre-commit-install
+.PHONY: fmt lint trivy pre-commit-install
 
 fmt: ## Format Go code
 	gofmt -s -w .
 
 lint: ## Run Go linters (golangci-lint)
 	golangci-lint run --config .golangci.yml ./...
+
+trivy: ## Run Trivy vulnerability scan
+	trivy fs --scanners vuln --show-suppressed --severity HIGH,CRITICAL --exit-code 1 .
 
 pre-commit-install: ## Install git pre-commit hooks
 	git config --local core.hooksPath .githooks
