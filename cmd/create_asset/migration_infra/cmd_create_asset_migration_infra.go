@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/services/iampolicy"
 	"github.com/confluentinc/kcp/internal/types"
@@ -66,7 +67,9 @@ Type options:
 4. Private MSK endpoints — Jump Cluster (SASL/SCRAM)
 5. Private MSK endpoints — Jump Cluster (IAM, MSK only)
 
-> **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for Enterprise clusters. Dedicated clusters with private MSK endpoints must use Jump Clusters (Type 4 or 5). Dedicated clusters with public MSK endpoints can use Type 1.`,
+> **Note:** External Outbound Cluster Linking (Types 2 and 3) is only supported for Enterprise clusters. Dedicated clusters with private MSK endpoints must use Jump Clusters (Type 4 or 5). Dedicated clusters with public MSK endpoints can use Type 1.
+
+> **Note:** MSK Serverless clusters only support Type 5 (Jump Cluster [IAM]), since Serverless offers SASL/IAM authentication only. --jump-cluster-instance-type and --jump-cluster-broker-storage are required for Serverless sources (Serverless has no broker configuration to default them from), and --jump-cluster-broker-subnet-cidr accepts any count.`,
 		Example: `  # Type 4 — Jump Cluster with SASL/SCRAM, against a private MSK
   kcp create-asset migration-infra \
       --state-file kcp-state.json \
@@ -151,10 +154,10 @@ Type options:
 	typeFourFlags.SortFlags = false
 	typeFourFlags.StringVar(&targetBootstrapEndpoint, "target-bootstrap-endpoint", "", "The bootstrap endpoint to use for the Confluent Cloud cluster.")
 	typeFourFlags.StringVar(&existingPrivateLinkVpceId, "existing-private-link-vpce-id", "", "The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud.")
-	typeFourFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
+	typeFourFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes (for MSK Serverless sources, --type 5 only, any count is accepted: one jump cluster broker per CIDR).")
 	typeFourFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
-	typeFourFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
-	typeFourFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
+	typeFourFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type; required for MSK Serverless sources, --type 5 only, which have no broker type to default from).")
+	typeFourFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size; required for MSK Serverless sources, --type 5 only, which have no broker storage to default from).")
 	migrationInfraCmd.Flags().AddFlagSet(typeFourFlags)
 	groups[typeFourFlags] = "Type Four Flags"
 
@@ -162,11 +165,11 @@ Type options:
 	typeFiveFlags.SortFlags = false
 	typeFiveFlags.StringVar(&targetBootstrapEndpoint, "target-bootstrap-endpoint", "", "The bootstrap endpoint to use for the Confluent Cloud cluster.")
 	typeFiveFlags.StringVar(&existingPrivateLinkVpceId, "existing-private-link-vpce-id", "", "The ID of the existing VPC endpoint for the Private Link connection to Confluent Cloud.")
-	typeFiveFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes.")
+	typeFiveFlags.IPNetSliceVar(&jumpClusterBrokerSubnetCidr, "jump-cluster-broker-subnet-cidr", []net.IPNet{}, "The CIDR blocks to use for the jump cluster broker subnets. You should provide as many CIDRs as the MSK cluster has broker nodes (for MSK Serverless sources any count is accepted: one jump cluster broker per CIDR).")
 	typeFiveFlags.IPNetVar(&jumpClusterSetupHostSubnetCidr, "jump-cluster-setup-host-subnet-cidr", net.IPNet{}, "The CIDR block to use for the jump cluster setup host subnet.")
 	typeFiveFlags.StringVar(&jumpClusterIamAuthRoleName, "jump-cluster-iam-auth-role-name", "", " The IAM role name to authenticate the cluster link between MSK and the jump cluster.")
-	typeFiveFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type).")
-	typeFiveFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size).")
+	typeFiveFlags.StringVar(&jumpClusterInstanceType, "jump-cluster-instance-type", "", "[Optional] The instance type to use for the jump cluster. (default: MSK broker type; required for MSK Serverless sources, which have no broker type to default from).")
+	typeFiveFlags.IntVar(&jumpClusterBrokerStorage, "jump-cluster-broker-storage", 0, "[Optional] The storage size to use for the jump cluster brokers. (default: MSK cluster broker storage size; required for MSK Serverless sources, which have no broker storage to default from).")
 	migrationInfraCmd.Flags().AddFlagSet(typeFiveFlags)
 	groups[typeFiveFlags] = "Type Five Flags"
 
@@ -192,9 +195,10 @@ Available Migration Types:
     Type 2: External Outbound Cluster Link [SASL/SCRAM] (Enterprise clusters only) (MSK & Apache Kafka)
     Type 3: External Outbound Cluster Link [Unauthenticated Plaintext] (Enterprise clusters only) (MSK & Apache Kafka)
     Type 4: Jump Cluster [SASL/SCRAM] (MSK & Apache Kafka)
-    Type 5: Jump Cluster [IAM] (MSK)
+    Type 5: Jump Cluster [IAM] (MSK, incl. MSK Serverless)
 
 Note: Types 2 and 3 are only supported for Enterprise clusters. Dedicated clusters with private endpoints must use Type 4 or 5.
+Note: MSK Serverless clusters only support Type 5, since Serverless offers SASL/IAM authentication only.
 
 Refer to the kcp docs for more information on each migration type.
 		`)
@@ -359,8 +363,13 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		return nil, fmt.Errorf("failed to get cluster: %w", err)
 	}
 
-	if cluster.AWSClientInformation.MskClusterConfig.Provisioned == nil {
-		return nil, fmt.Errorf("cluster %s has no provisioned configuration, this could be because the cluster is a serverless cluster which is not supported for migration", cluster.Name)
+	isServerless := cluster.AWSClientInformation.MskClusterConfig.ClusterType == kafkatypes.ClusterTypeServerless
+	if isServerless && targetType != types.JumpClusterIam {
+		return nil, fmt.Errorf("cluster %s is MSK Serverless: only --type 5 (Jump Cluster [IAM]) is supported, because Serverless clusters offer SASL/IAM authentication only", cluster.Name)
+	}
+
+	if !isServerless && cluster.AWSClientInformation.MskClusterConfig.Provisioned == nil {
+		return nil, fmt.Errorf("cluster %s has no provisioned configuration, cannot determine broker networking or sizing", cluster.Name)
 	}
 
 	// Recurring statefile values.
@@ -503,16 +512,29 @@ func parseMSKMigrationInfraOpts() (*MigrationInfraOpts, error) {
 		opts.MigrationWizardRequest.HasPublicEndpoints = false
 		opts.MigrationWizardRequest.UseJumpClusters = true
 
-		if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
-			return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d), you should provide as many CIDRs as the MSK cluster has broker nodes", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
-		}
+		if isServerless {
+			// Serverless exposes no brokers - ListNodes is rejected outright by AWS -
+			// so there is no source broker count to size the jump cluster against and
+			// no BrokerNodeGroupInfo to default the instance type / storage from.
+			if jumpClusterInstanceType == "" {
+				return nil, fmt.Errorf("--jump-cluster-instance-type is required for MSK Serverless sources: Serverless clusters expose no broker configuration to default from")
+			}
 
-		if jumpClusterInstanceType == "" {
-			jumpClusterInstanceType = strings.TrimPrefix(aws.ToString(cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.InstanceType), "kafka.")
-		}
+			if jumpClusterBrokerStorage == 0 {
+				return nil, fmt.Errorf("--jump-cluster-broker-storage is required for MSK Serverless sources: Serverless clusters expose no broker storage to default from")
+			}
+		} else {
+			if len(jumpClusterBrokerSubnetCidr) != cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes {
+				return nil, fmt.Errorf("the number of jump cluster broker subnet CIDRs (%d) does not match the number of broker nodes in the MSK cluster (%d), you should provide as many CIDRs as the MSK cluster has broker nodes", len(jumpClusterBrokerSubnetCidr), cluster.ClusterMetrics.MetricMetadata.NumberOfBrokerNodes)
+			}
 
-		if jumpClusterBrokerStorage == 0 {
-			jumpClusterBrokerStorage = int(*cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
+			if jumpClusterInstanceType == "" {
+				jumpClusterInstanceType = strings.TrimPrefix(aws.ToString(cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.InstanceType), "kafka.")
+			}
+
+			if jumpClusterBrokerStorage == 0 {
+				jumpClusterBrokerStorage = int(*cluster.AWSClientInformation.MskClusterConfig.Provisioned.BrokerNodeGroupInfo.StorageInfo.EbsStorageInfo.VolumeSize)
+			}
 		}
 
 		opts.MigrationWizardRequest.TargetBootstrapEndpoint = targetBootstrapEndpoint
