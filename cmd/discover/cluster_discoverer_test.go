@@ -91,17 +91,75 @@ func TestClusterDiscoverer_EmptySubnets(t *testing.T) {
 }
 
 func TestClusterDiscoverer_ServerlessCluster(t *testing.T) {
-	// Serverless cluster — networking scan skipped, no provisioned-only fields accessed.
+	// Serverless cluster — networking is scanned via Serverless.VpcConfigs
+	// (not Provisioned.BrokerNodeGroupInfo), so no provisioned-only fields
+	// are accessed and Discover succeeds.
 	msk, ec2svc, metrics := defaultStubs()
 	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
 		return buildFullServerlessCluster(), nil
 	}
+	ec2svc.describeSubnetsFn = serverlessSubnetsStub
 
 	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
 	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
 
 	require.NoError(t, err)
 	assert.Equal(t, testClusterName, result.Name)
+}
+
+func TestClusterDiscoverer_ServerlessNetworking(t *testing.T) {
+	// Serverless clusters have no broker node group; their VPC attachment
+	// lives on Serverless.VpcConfigs instead. ListNodes is rejected by AWS
+	// for serverless clusters, so there are no broker nodes to map subnets
+	// to - subnet_msk_broker_id and private_ip_address stay at their zero
+	// values, one entry per subnet.
+	msk, ec2svc, metrics := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return buildFullServerlessCluster(), nil
+	}
+	ec2svc.describeSubnetsFn = serverlessSubnetsStub
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
+	result, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
+	require.NoError(t, err)
+
+	networking := result.AWSClientInformation.ClusterNetworking
+	assert.Equal(t, "vpc-serverless-1", networking.VpcId)
+	assert.Equal(t, []string{"subnet-sl-1", "subnet-sl-2"}, networking.SubnetIds)
+	assert.Equal(t, []string{"sg-sl-1"}, networking.SecurityGroups)
+
+	require.Len(t, networking.Subnets, 2)
+	assert.Equal(t, "subnet-sl-1", networking.Subnets[0].SubnetId)
+	assert.Equal(t, "us-east-1a", networking.Subnets[0].AvailabilityZone)
+	assert.Equal(t, "10.0.1.0/24", networking.Subnets[0].CidrBlock)
+	assert.Equal(t, 0, networking.Subnets[0].SubnetMskBrokerId)
+	assert.Equal(t, "", networking.Subnets[0].PrivateIpAddress)
+	assert.Equal(t, "subnet-sl-2", networking.Subnets[1].SubnetId)
+	assert.Equal(t, "us-east-1b", networking.Subnets[1].AvailabilityZone)
+	assert.Equal(t, "10.0.2.0/24", networking.Subnets[1].CidrBlock)
+}
+
+func TestClusterDiscoverer_ServerlessNoVpcConfigs(t *testing.T) {
+	// A serverless cluster whose Serverless block has no VpcConfigs should
+	// not happen in practice, but AWS's shape allows it — networking should
+	// error clearly, not panic on an empty slice.
+	msk, ec2svc, metrics := defaultStubs()
+	msk.describeClusterV2Fn = func(_ context.Context, _ string) (*kafka.DescribeClusterV2Output, error) {
+		return &kafka.DescribeClusterV2Output{
+			ClusterInfo: &kafkatypes.Cluster{
+				ClusterName: aws.String(testClusterName),
+				ClusterArn:  aws.String(testClusterArn),
+				ClusterType: kafkatypes.ClusterTypeServerless,
+				Serverless:  &kafkatypes.Serverless{},
+			},
+		}, nil
+	}
+
+	cd := newTestClusterDiscoverer(msk, ec2svc, metrics)
+	_, err := cd.Discover(context.Background(), testClusterArn, testRegion, true, true, "60s")
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "VPC configuration")
 }
 
 func TestClusterDiscoverer_SkipMetrics(t *testing.T) {
