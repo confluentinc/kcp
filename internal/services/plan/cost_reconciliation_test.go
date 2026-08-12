@@ -3,9 +3,10 @@ package plan
 import (
 	"testing"
 
-	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/confluentinc/kcp/internal/services/report"
 )
 
 // parseMSKInstanceType extracts the `<family>.<size>` portion from
