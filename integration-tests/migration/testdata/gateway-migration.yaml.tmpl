@@ -1,0 +1,80 @@
+# Rendered by renderGatewayMigration in manifest_fixture_test.go and written into
+# the runner pod at /workspace/gateway-migration-<scenario>.yaml.
+#
+# Deliberately carries NO `interpolate:` key. The suite cannot reach environment
+# variables at all — runKCP sets no cmd.Env, kubectl exec forwards no client
+# environment, and kcp-runner.yaml declares no env: block — so every value here
+# must stay literal. Opting in would turn a password containing "${" into an
+# undefined-variable hard error.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+
+metadata:
+  name: {{ .MetadataName | yamlQuote }}
+
+spec:
+  source:
+    # The e2e source is a CFK Kafka cluster, not MSK. The value is load-bearing:
+    # it gates `iam` to msk-only.
+    type: apache-kafka
+    bootstrapServers:
+      - {{ .SourceBootstrap | yamlQuote }}
+    credentials:
+      unauthenticated_plaintext: {}
+
+  target:
+    # confluent-platform with an explicit clusterId — required for both target
+    # types in this kind, and the reason decision 25 exists.
+    type: confluent-platform
+    clusterId: {{ .DestClusterID | yamlQuote }}
+    kafka:
+      bootstrapServers:
+        - {{ .DestBootstrap | yamlQuote }}
+      restEndpoint: {{ .RestEndpoint | yamlQuote }}
+      credentials:
+        sasl_plain:
+          username: {{ .APIKey | yamlQuote }}
+          password: {{ .APISecret | yamlQuote }}
+          tls: true
+        # Load-bearing on the Kafka leg: CFK's cert is signed by the self-signed
+        # CA setup.sh creates. Inert on the plain-HTTP REST leg, which inherits
+        # this value through derivation.
+        insecure_skip_tls_verify: true
+      # restCredentials omitted on purpose: derived in full from credentials.
+
+  clusterLink:
+    name: {{ .ClusterLinkName | yamlQuote }}
+{{- if .PauseConsumerOffsetSync }}
+    pauseConsumerOffsetSync: true
+{{- end }}
+
+  gateway:
+    namespace: {{ .Namespace | yamlQuote }}
+    kubeconfig: {{ .KubePath | yamlQuote }}
+    crs:
+      initial: {{ .GatewayName | yamlQuote }}
+      fenced: {{ .FencedCR | yamlQuote }}
+      switchover: {{ .SwitchoverCR | yamlQuote }}
+{{- if .Policy.Any }}
+
+  # Read FRESH by apply on every run and never snapshotted, which is what lets a
+  # scenario re-render this file between init and apply. Every knob is emitted
+  # only when non-zero: an absent key already means the zero the retired flags
+  # defaulted to, and a literal 0 would not match the schema's duration pattern.
+  policy:
+{{- if .Policy.LagThreshold }}
+    lagThreshold: {{ .Policy.LagThreshold }}
+{{- end }}
+{{- if .Policy.PromoteBatchSize }}
+    promoteBatchSize: {{ .Policy.PromoteBatchSize }}
+{{- end }}
+{{- if .Policy.RolloutTimeout }}
+    rolloutTimeout: {{ .Policy.RolloutTimeout }}
+{{- end }}
+{{- if .Policy.DetectUnroutedProducers }}
+    detectUnroutedProducersDuration: {{ .Policy.DetectUnroutedProducers }}
+{{- end }}
+{{- if .Policy.ConsumerOffsetSyncDrain }}
+    consumerOffsetSyncDrainDuration: {{ .Policy.ConsumerOffsetSyncDrain }}
+{{- end }}
+{{- end }}
