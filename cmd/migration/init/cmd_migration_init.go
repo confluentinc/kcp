@@ -181,8 +181,8 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		MigrationStateFile:    migrationStateFile,
 		MigrationState:        *migrationState,
 		MigrationConfig:       config,
-		ClusterApiKey:         restCreds.APIKey,
-		ClusterApiSecret:      restCreds.APISecret,
+		RestApiKey:            restCreds.APIKey,
+		RestApiSecret:         restCreds.APISecret,
 		ClusterRestCACert:     restCreds.CACert,
 		InsecureSkipTLSVerify: restCreds.InsecureSkipVerify,
 	}

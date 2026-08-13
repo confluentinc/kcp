@@ -349,3 +349,38 @@ func TestValidateMigrateClusterCredentials_IsReusableOnAnAlreadyBuiltStruct(t *t
 	require.Empty(t, ValidateMigrateClusterCredentials(ok))
 	require.NotEmpty(t, ValidateMigrateClusterCredentials(MigrateClusterCredentials{}))
 }
+
+// TestParseMigrateClusterCredentials_HintsDoNotMatchOnFileContent.
+// The old-format hints are chosen by substring-matching the decode error. If
+// that error still carries the source excerpt, the match runs against the
+// FILE'S CONTENT rather than the parser's message — so a password containing
+// "clusters" selects the wrong hint. Not a leak, but a secret-content-dependent
+// branch, and the hint an operator pastes into a ticket becomes a weak oracle
+// over the file.
+func TestParseMigrateClusterCredentials_HintsDoNotMatchOnFileContent(t *testing.T) {
+	_, errs := ParseMigrateClusterCredentials([]byte(
+		"sasl_scram:\n  username: admin\n  password: my-clusters-passw0rd\n  mechanizm: SHA512\n"))
+	require.NotEmpty(t, errs)
+
+	joined := joinErrStrings(errs)
+	require.Contains(t, joined, "mechanizm", "the real problem must be reported")
+	require.NotContains(t, joined, "single-cluster format",
+		"the scan-format hint must not fire because the PASSWORD contains 'clusters'")
+	require.NotContains(t, joined, "my-clusters-passw0rd")
+}
+
+// TestParseMigrateClusterCredentials_RealHintsStillFire — stripping the excerpt
+// must not cost the three genuine hints, whose trigger keys survive it.
+func TestParseMigrateClusterCredentials_RealHintsStillFire(t *testing.T) {
+	_, errs := ParseMigrateClusterCredentials([]byte("clusters:\n  - id: a\n"))
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "single-cluster format")
+
+	_, errs = ParseMigrateClusterCredentials([]byte("auth_method:\n  sasl_scram: {}\n"))
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "top-level")
+
+	_, errs = ParseMigrateClusterCredentials([]byte("bootstrap_servers:\n  - b:9092\n"))
+	require.NotEmpty(t, errs)
+	require.Contains(t, joinErrStrings(errs), "belong in the manifest")
+}

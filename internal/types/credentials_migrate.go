@@ -179,23 +179,29 @@ func ParseMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, []e
 func UnmarshalMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, error) {
 	var mc MigrateClusterCredentials
 	if err := yaml.UnmarshalWithOptions(data, &mc, yaml.Strict()); err != nil {
+		// Strip FIRST, then match. goccy's raw error carries an excerpt of the
+		// file, so matching on it would select a hint based on the file's
+		// CONTENT — a password containing "clusters" would trip the scan-format
+		// hint. The offending key survives stripping, so the three genuine
+		// hints still fire.
+		err = yamlsafe.StripSourceExcerpt(err)
 		msg := err.Error()
 		// Old format: auth_method: wrapper — hint that auth is now top-level.
 		if strings.Contains(msg, "auth_method") {
 			return MigrateClusterCredentials{}, fmt.Errorf(
-				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", yamlsafe.StripSourceExcerpt(err))
+				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", err)
 		}
 		// Common mistake: passing the OSK scan format (clusters: list).
 		if strings.Contains(msg, "clusters") {
 			return MigrateClusterCredentials{}, fmt.Errorf(
-				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", yamlsafe.StripSourceExcerpt(err))
+				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", err)
 		}
 		// Common mistake: including bootstrap_servers in the creds file.
 		if strings.Contains(msg, "bootstrap_servers") || strings.Contains(msg, "bootstrapServers") {
 			return MigrateClusterCredentials{}, fmt.Errorf(
-				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", yamlsafe.StripSourceExcerpt(err))
+				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", err)
 		}
-		return MigrateClusterCredentials{}, fmt.Errorf("failed to parse migrate credentials: %w", yamlsafe.StripSourceExcerpt(err))
+		return MigrateClusterCredentials{}, fmt.Errorf("failed to parse migrate credentials: %w", err)
 	}
 
 	// Resolution runs immediately after the unmarshal and before every

@@ -797,3 +797,35 @@ func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	return func() { slog.SetDefault(prev) }
 }
+
+// TestParseKind_SyntaxErrorDoesNotEchoSecrets. ParseKind decodes the ENTIRE
+// secret-bearing manifest and runs before parseStrict, so a YAML *syntax* error
+// never reaches the strict decode at all — it fails at the envelope first. An
+// indentation slip is the single most common YAML mistake, and its excerpt
+// window is wider than a strict error's.
+func TestParseKind_SyntaxErrorDoesNotEchoSecrets(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "        password: secret", "        password: SRC_PASSWORD_LEAKME", 1)
+	doc = strings.Replace(doc, "        mechanism: SHA512", "         mechanism: SHA512", 1) // one-space slip
+
+	_, err := ParseKind([]byte(doc))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "SRC_PASSWORD_LEAKME")
+}
+
+func TestParseGatewayMigration_SyntaxErrorDoesNotEchoSecrets(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "        password: secret", "        password: SRC_PASSWORD_LEAKME", 1)
+	doc = strings.Replace(doc, "        mechanism: SHA512", "         mechanism: SHA512", 1)
+
+	_, err := ParseGatewayMigration([]byte(doc))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "SRC_PASSWORD_LEAKME")
+}
+
+// TestParse_SyntaxErrorDoesNotEchoSecrets — kcp migrate's Parse inherits the
+// same envelope path.
+func TestParse_SyntaxErrorDoesNotEchoSecrets(t *testing.T) {
+	doc := "apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nspec:\n  source:\n    credentials:\n      sasl_scram:\n        password: MIGRATE_SECRET_LEAKME\n         mechanism: SHA512\n"
+	_, err := Parse([]byte(doc))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "MIGRATE_SECRET_LEAKME")
+}

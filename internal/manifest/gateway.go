@@ -37,6 +37,12 @@ type GatewayMigration struct {
 	// than under spec because credentials files need the same key and have no
 	// envelope, and because a --interpolate flag could not express "this file
 	// yes, that referenced file no".
+	//
+	// What the opt-in defends against is ACCIDENTAL expansion — a secret that
+	// legitimately contains "${" staying literal, and an already-shipped
+	// credentials file being read exactly as before. It is not a defence
+	// against a hostile manifest: the opt-in lives in the file itself, so a
+	// manifest is a trust boundary equal to a shell script.
 	Interpolate bool `yaml:"interpolate,omitempty" json:"interpolate,omitempty"`
 }
 
@@ -126,7 +132,12 @@ type envelope struct {
 func ParseKind(data []byte) (string, error) {
 	var e envelope
 	if err := yaml.Unmarshal(data, &e); err != nil {
-		return "", fmt.Errorf("reading manifest envelope: %w", err)
+		// This decodes the ENTIRE manifest, which is secret-bearing when
+		// credentials are inline, and it runs before the strict decode — so a
+		// YAML *syntax* error (an indentation slip, say) is caught here and
+		// never reaches the sites downstream. Its excerpt window is wider than
+		// a strict error's, because syntax errors carry more context.
+		return "", fmt.Errorf("reading manifest envelope: %w", yamlsafe.StripSourceExcerpt(err))
 	}
 	if strings.TrimSpace(e.Kind) == "" {
 		return "", fmt.Errorf("manifest has no kind: (expected %q or %q)", KindGatewayMigration, KindMigration)

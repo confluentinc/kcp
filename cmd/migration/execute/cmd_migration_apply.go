@@ -272,6 +272,12 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	if len(errs) > 0 {
 		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.credentials", errs)
 	}
+	// The sasl_plain-only rule is enforced in two validators upstream; assert it
+	// here rather than dereferencing on an invariant that lives elsewhere,
+	// because the alternative failure is a nil panic mid-cutover.
+	if dstCreds.SASLPlain == nil {
+		return MigrationExecutorOpts{}, fmt.Errorf("spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")
+	}
 
 	// Policy is read FRESH on every run and never snapshotted. Only these two
 	// reach the config; the rest were already purely execute-time.
