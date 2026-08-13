@@ -71,9 +71,9 @@ type Spec struct {
 }
 
 type Source struct {
-	Type             string   `yaml:"type" json:"type"`
-	BootstrapServers []string `yaml:"bootstrapServers" json:"bootstrapServers"`
-	Credentials      string   `yaml:"credentials" json:"credentials"`
+	Type             string         `yaml:"type" json:"type"`
+	BootstrapServers []string       `yaml:"bootstrapServers" json:"bootstrapServers"`
+	Credentials      CredentialsRef `yaml:"credentials" json:"credentials"`
 }
 
 type Target struct {
@@ -81,21 +81,34 @@ type Target struct {
 	// ClusterCredentials is the Kafka cluster / REST-v3 credential (Kafka
 	// cluster API key on Confluent Cloud) used for the /kafka/v3 REST surface:
 	// cluster links, topics, and ACLs.
-	ClusterCredentials string `yaml:"clusterCredentials" json:"clusterCredentials"`
+	ClusterCredentials CredentialsRef `yaml:"clusterCredentials" json:"clusterCredentials"`
 	// CloudCredentials is the Confluent Cloud Cloud/Global API key credential
 	// used ONLY by the serviceAccounts reconciler (IAM v2 / api.confluent.cloud).
 	// CC-target-only: the IAM v2 service-account API rejects a Kafka cluster API
 	// key, so this must be a distinct Cloud/Global key. Required only when
 	// serviceAccounts.autoCreate provisions accounts via IAM v2.
-	CloudCredentials string       `yaml:"cloudCredentials,omitempty" json:"cloudCredentials,omitempty"`
-	ClusterID        string       `yaml:"clusterId,omitempty" json:"clusterId,omitempty"`
-	Kafka            *TargetKafka `yaml:"kafka,omitempty" json:"kafka,omitempty"`
-	SchemaRegistry   *Endpoint    `yaml:"schemaRegistry,omitempty" json:"schemaRegistry,omitempty"`
-	Connect          *Endpoint    `yaml:"connect,omitempty" json:"connect,omitempty"`
+	CloudCredentials CredentialsRef `yaml:"cloudCredentials,omitempty" json:"cloudCredentials,omitempty"`
+	ClusterID        string         `yaml:"clusterId,omitempty" json:"clusterId,omitempty"`
+	Kafka            *TargetKafka   `yaml:"kafka,omitempty" json:"kafka,omitempty"`
+	SchemaRegistry   *Endpoint      `yaml:"schemaRegistry,omitempty" json:"schemaRegistry,omitempty"`
+	Connect          *Endpoint      `yaml:"connect,omitempty" json:"connect,omitempty"`
 }
 
+// TargetKafka is the destination Kafka cluster. RestEndpoint is the only field
+// kind: Migration uses; the rest are optional additions for kind:
+// GatewayMigration, which also dials the destination bootstrap directly.
 type TargetKafka struct {
 	RestEndpoint string `yaml:"restEndpoint" json:"restEndpoint"`
+	// BootstrapServers is the destination bootstrap, dialled directly (not only
+	// via REST) to read destination-side offsets.
+	BootstrapServers []string `yaml:"bootstrapServers,omitempty" json:"bootstrapServers,omitempty"`
+	// Credentials is the destination KAFKA leg. Only sasl_plain is supported in
+	// this release — the destination client is hardcoded to SASL/PLAIN over TLS.
+	Credentials CredentialsRef `yaml:"credentials,omitempty" json:"credentials,omitempty"`
+	// RestCredentials is the destination REST leg. A POINTER so that omitted
+	// (⇒ derived from Credentials) stays distinguishable from present-but-empty
+	// (⇒ a validation error).
+	RestCredentials *CredentialsRef `yaml:"restCredentials,omitempty" json:"restCredentials,omitempty"`
 }
 
 type Endpoint struct {
@@ -105,8 +118,8 @@ type Endpoint struct {
 // KafkaConn is a Kafka connection: a bootstrap address plus the auth-only
 // credentials file used to reach it. Parallels RestRef for REST endpoints.
 type KafkaConn struct {
-	BootstrapServers []string `yaml:"bootstrapServers" json:"bootstrapServers"`
-	Credentials      string   `yaml:"credentials" json:"credentials"`
+	BootstrapServers []string       `yaml:"bootstrapServers" json:"bootstrapServers"`
+	Credentials      CredentialsRef `yaml:"credentials" json:"credentials"`
 }
 
 type ClusterLink struct {
@@ -131,8 +144,8 @@ type ClusterLink struct {
 
 // RestRef references a REST endpoint plus a credentials file for it.
 type RestRef struct {
-	Endpoint    string `yaml:"endpoint" json:"endpoint"`
-	Credentials string `yaml:"credentials" json:"credentials"`
+	Endpoint    string         `yaml:"endpoint" json:"endpoint"`
+	Credentials CredentialsRef `yaml:"credentials" json:"credentials"`
 }
 
 // ConsumerOffsetSync configures consumer-offset migration on the link. Enable

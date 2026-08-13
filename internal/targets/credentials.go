@@ -17,27 +17,27 @@ import (
 
 // BasicAuth is HTTP basic auth (CP) — also how CC api_key/api_secret are sent.
 type BasicAuth struct {
-	Username           string `yaml:"username"`
-	Password           string `yaml:"password"`
-	CACert             string `yaml:"ca_cert,omitempty"`
-	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+	Username           string `yaml:"username" json:"username"`
+	Password           string `yaml:"password" json:"password"`
+	CACert             string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 }
 
 // BearerCreds carries an RBAC/OAuth bearer token (e.g. an MDS-issued JWT) sent
 // as `Authorization: Bearer <token>`.
 type BearerCreds struct {
-	Token              string `yaml:"token"`
-	CACert             string `yaml:"ca_cert,omitempty"`
-	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+	Token              string `yaml:"token" json:"token"`
+	CACert             string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 }
 
 // MTLSCreds carries client-certificate material for mutual TLS to the target
 // REST API. Auth is the TLS client cert, so no Authorization header is sent.
 type MTLSCreds struct {
-	CACert             string `yaml:"ca_cert,omitempty"`
-	ClientCert         string `yaml:"client_cert"`
-	ClientKey          string `yaml:"client_key"`
-	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+	CACert             string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	ClientCert         string `yaml:"client_cert" json:"client_cert"`
+	ClientKey          string `yaml:"client_key" json:"client_key"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 }
 
 // Credentials is the parsed target-creds.yaml. Exactly one auth block is allowed
@@ -48,20 +48,20 @@ type MTLSCreds struct {
 // They apply ONLY to the api_key form and are rejected alongside the others,
 // rather than being silently ignored.
 type Credentials struct {
-	Basic     *BasicAuth   `yaml:"basic,omitempty"`
-	APIKey    string       `yaml:"api_key,omitempty"`
-	APISecret string       `yaml:"api_secret,omitempty"`
-	Bearer    *BearerCreds `yaml:"bearer,omitempty"`
-	MTLS      *MTLSCreds   `yaml:"mtls,omitempty"`
+	Basic     *BasicAuth   `yaml:"basic,omitempty" json:"basic,omitempty"`
+	APIKey    string       `yaml:"api_key,omitempty" json:"api_key,omitempty"`
+	APISecret string       `yaml:"api_secret,omitempty" json:"api_secret,omitempty"`
+	Bearer    *BearerCreds `yaml:"bearer,omitempty" json:"bearer,omitempty"`
+	MTLS      *MTLSCreds   `yaml:"mtls,omitempty" json:"mtls,omitempty"`
 
 	// CACert / InsecureSkipVerify are the api_key form's TLS-trust siblings.
-	CACert             string `yaml:"ca_cert,omitempty"`
-	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+	CACert             string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
 
 	// Interpolate opts this file in to ${ENV_VAR} resolution. It is file-level
 	// rather than a CLI flag so each file governs itself: a manifest that opts
 	// in never changes how a credentials file it references is read.
-	Interpolate bool `yaml:"interpolate,omitempty"`
+	Interpolate bool `yaml:"interpolate,omitempty" json:"interpolate,omitempty"`
 }
 
 // LoadCredentials reads, parses and validates a target-creds.yaml file.

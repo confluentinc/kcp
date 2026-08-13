@@ -1,13 +1,27 @@
-// Package schemagen generates the migration.yaml JSON Schema from the manifest
-// Go structs. It is used by `go generate` and the drift-guard test only; no
-// runtime or command package imports it.
+// Package schemagen generates the migration.yaml and gateway-migration.yaml
+// JSON Schemas from the manifest Go structs. It is used by `go generate` and
+// the drift-guard tests only; no runtime or command package imports it.
 package schemagen
 
 import (
 	"encoding/json"
+	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/targets"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/google/jsonschema-go/jsonschema"
+)
+
+// durationPattern matches a Go duration string. time.Duration reflects as an
+// integer, but goccy parses "10m", so without this override the parser and the
+// schema would disagree and every editor honouring the yaml-language-server
+// header would flag the documented example as invalid.
+const durationPattern = `^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$`
+
+const (
+	defMigrateCredentials = "migrateClusterCredentials"
+	defTargetCredentials  = "targetCredentials"
 )
 
 // Generate reflects the Migration struct into a JSON Schema, injects the enums
@@ -37,6 +51,158 @@ func Generate() ([]byte, error) {
 		}
 	}
 
+	if err := addCredentialDefs(s); err != nil {
+		return nil, err
+	}
+	// Every credentials slot is a CredentialsRef: a path string or an inline
+	// mapping of the referenced file's shape.
+	polymorphic(source.Properties["credentials"], defMigrateCredentials)
+	polymorphic(target.Properties["clusterCredentials"], defTargetCredentials)
+	polymorphic(target.Properties["cloudCredentials"], defTargetCredentials)
+	for _, key := range []string{"source", "destination"} {
+		if kc, ok := clusterLink.Properties[key]; ok && kc.Properties != nil {
+			polymorphic(kc.Properties["credentials"], defMigrateCredentials)
+		}
+	}
+	if sr, ok := clusterLink.Properties["sourceRest"]; ok && sr.Properties != nil {
+		polymorphic(sr.Properties["credentials"], defTargetCredentials)
+	}
+
+	return marshal(s)
+}
+
+// GenerateGateway reflects the GatewayMigration struct into its own JSON
+// Schema. A second schema rather than a merged one: the two kinds share an
+// apiVersion and sub-types but not a shape, and one schema covering both would
+// validate every gateway field as unknown in a kcp migrate file, and vice versa.
+func GenerateGateway() ([]byte, error) {
+	s, err := jsonschema.For[manifest.GatewayMigration](nil)
+	if err != nil {
+		return nil, err
+	}
+
+	spec := s.Properties["spec"]
+	source := spec.Properties["source"]
+	target := spec.Properties["target"]
+	gateway := spec.Properties["gateway"]
+	policy := spec.Properties["policy"]
+	clusterLink := spec.Properties["clusterLink"]
+
+	source.Properties["type"].Enum = []any{manifest.SourceMSK, manifest.SourceApacheKafka}
+	target.Properties["type"].Enum = []any{manifest.TargetConfluentCloud, manifest.TargetConfluentPlatform}
+
+	if err := addCredentialDefs(s); err != nil {
+		return nil, err
+	}
+	polymorphic(source.Properties["credentials"], defMigrateCredentials)
+	kafka := target.Properties["kafka"]
+	polymorphic(kafka.Properties["credentials"], defMigrateCredentials)
+	polymorphic(kafka.Properties["restCredentials"], defTargetCredentials)
+
+	// Durations parse as "10m", not as an integer count.
+	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration"} {
+		p := policy.Properties[k]
+		// time.Duration reflects as {"type":"integer"}; Type and Types are
+		// mutually exclusive, so the reflected one must be replaced, not added to.
+		p.Type = "string"
+		p.Types = nil
+		p.Pattern = durationPattern
+	}
+
+	// Retiring ~56 flags retires ~56 pieces of --help guidance, and --help is
+	// the primary discovery surface for a CLI run from a bastion. Each ported
+	// field carries its flag's usage text, reworded away from the
+	// Confluent-Cloud-specific phrasing where "the destination" is meant.
+	describe(s, map[*jsonschema.Schema]string{
+		s.Properties["interpolate"]: "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key.",
+
+		source.Properties["type"]:             "Source Kafka flavour. Gates authentication: iam is msk-only.",
+		source.Properties["bootstrapServers"]: "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092, broker2:9092).",
+		source.Properties["credentials"]:      "Source cluster credentials: either a path to a credentials file, or the same content inline. Exactly one authentication block must be present.",
+
+		target.Properties["type"]:      "Destination flavour: a Confluent Cloud or Confluent Platform cluster.",
+		target.Properties["clusterId"]: "Destination cluster ID (e.g. lkc-abc123). Required for both destination types.",
+
+		kafka.Properties["bootstrapServers"]: "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).",
+		kafka.Properties["restEndpoint"]:     "REST endpoint of the destination cluster.",
+		kafka.Properties["credentials"]:      "Destination Kafka credentials, used as SASL/PLAIN against the destination bootstrap. Only sasl_plain is supported in this release.",
+		kafka.Properties["restCredentials"]:  "Destination REST credentials. OPTIONAL: when omitted these are derived in full from credentials (api_key/api_secret from sasl_plain.username/password, insecure_skip_verify from insecure_skip_tls_verify). Spell it out only for a REST endpoint behind a private CA — a block that is present is used exactly as written, never partially derived.",
+
+		clusterLink.Properties["name"]:                    "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
+		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during apply and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+
+		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
+		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
+
+		gateway.Properties["crs"].Properties["initial"]:    "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
+		gateway.Properties["crs"].Properties["fenced"]:     "Path to the local gateway CR YAML file that blocks traffic during migration.",
+		gateway.Properties["crs"].Properties["switchover"]: "Path to the local gateway CR YAML file that routes traffic to the destination.",
+
+		spec.Properties["topics"]: "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected.",
+
+		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",
+		policy.Properties["promoteBatchSize"]:                "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.",
+		policy.Properties["rolloutTimeout"]:                  "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+		policy.Properties["detectUnroutedProducersDuration"]: "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
+		policy.Properties["consumerOffsetSyncDrainDuration"]: "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
+	})
+
+	return marshal(s)
+}
+
+// polymorphic rewrites a credentials property into "a path string OR the
+// referenced file's shape inline".
+func polymorphic(p *jsonschema.Schema, def string) {
+	if p == nil {
+		return
+	}
+	desc := p.Description
+	*p = jsonschema.Schema{
+		Description: desc,
+		OneOf: []*jsonschema.Schema{
+			{Type: "string"},
+			{Ref: "#/$defs/" + def},
+		},
+	}
+}
+
+// describe applies descriptions after the polymorphic rewrite, so a rewritten
+// property keeps its text.
+func describe(root *jsonschema.Schema, m map[*jsonschema.Schema]string) {
+	_ = root
+	for p, text := range m {
+		if p != nil {
+			p.Description = text
+		}
+	}
+}
+
+// addCredentialDefs reflects the two real credentials structs into $defs, so
+// the inline branch validates against the actual shape rather than "any
+// object" — and stays in step automatically when a field is added.
+func addCredentialDefs(s *jsonschema.Schema) error {
+	mc, err := jsonschema.For[types.MigrateClusterCredentials](nil)
+	if err != nil {
+		return fmt.Errorf("reflecting migrate credentials: %w", err)
+	}
+	tc, err := jsonschema.For[targets.Credentials](nil)
+	if err != nil {
+		return fmt.Errorf("reflecting target credentials: %w", err)
+	}
+	// `interpolate` is file-level and is rejected inside an inline block, so the
+	// inline definitions must not advertise it.
+	delete(mc.Properties, "interpolate")
+	delete(tc.Properties, "interpolate")
+
+	if s.Defs == nil {
+		s.Defs = map[string]*jsonschema.Schema{}
+	}
+	s.Defs[defMigrateCredentials] = mc
+	s.Defs[defTargetCredentials] = tc
+	return nil
+}
+
+func marshal(s *jsonschema.Schema) ([]byte, error) {
 	b, err := json.MarshalIndent(s, "", "  ")
 	if err != nil {
 		return nil, err

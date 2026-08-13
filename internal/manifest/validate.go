@@ -44,7 +44,7 @@ func validateKafkaConn(field string, c *KafkaConn) []error {
 		return []error{fmt.Errorf("%s: required", field)}
 	}
 	errs := validateBootstrapServers(field+".bootstrapServers", c.BootstrapServers)
-	if blank(c.Credentials) {
+	if blankRef(c.Credentials) {
 		errs = append(errs, fmt.Errorf("%s.credentials: must not be empty", field))
 	}
 	return errs
@@ -166,7 +166,7 @@ func (m *Migration) Validate() []error {
 		errs = append(errs, err)
 	}
 	errs = append(errs, validateBootstrapServers("spec.source.bootstrapServers", m.Spec.Source.BootstrapServers)...)
-	if blank(m.Spec.Source.Credentials) {
+	if blankRef(m.Spec.Source.Credentials) {
 		add("spec.source.credentials: must not be empty")
 	}
 
@@ -196,7 +196,7 @@ func (m *Migration) Validate() []error {
 	default:
 		add("spec.target.type: unsupported value %q (supported: %s, %s)", m.Spec.Target.Type, TargetConfluentCloud, TargetConfluentPlatform)
 	}
-	if blank(m.Spec.Target.ClusterCredentials) {
+	if blankRef(m.Spec.Target.ClusterCredentials) {
 		add("spec.target.clusterCredentials: must not be empty")
 	}
 	// cloudCredentials is the CC Cloud/Global API key (distinct from the Kafka
@@ -206,17 +206,17 @@ func (m *Migration) Validate() []error {
 	// re-apply stays idempotent — needed whether service accounts are
 	// auto-created or mapped to pre-existing ids (serviceAccounts.autoCreate is a
 	// subset of this, as auto-create also calls the IAM v2 API).
-	if !blank(m.Spec.Target.CloudCredentials) && m.Spec.Target.Type != TargetConfluentCloud {
+	if !blankRef(m.Spec.Target.CloudCredentials) && m.Spec.Target.Type != TargetConfluentCloud {
 		add("spec.target.cloudCredentials: only valid when spec.target.type is %q", TargetConfluentCloud)
 	}
-	if m.Spec.ACLs != nil && m.Spec.Target.Type == TargetConfluentCloud && blank(m.Spec.Target.CloudCredentials) {
+	if m.Spec.ACLs != nil && m.Spec.Target.Type == TargetConfluentCloud && blankRef(m.Spec.Target.CloudCredentials) {
 		add("spec.target.cloudCredentials: required for spec.acls on a confluent-cloud target (used to reconcile Confluent Cloud's numeric ACL principals for idempotency)")
 	}
 	// serviceAccounts.autoCreate provisions accounts via the IAM v2 API, which
 	// also needs the Cloud/Global key — required even with no spec.acls (the
 	// acls-based rule above only covers the case where acls happens to be
 	// present too).
-	if m.Spec.ServiceAccounts != nil && m.Spec.ServiceAccounts.AutoCreate && m.Spec.Target.Type == TargetConfluentCloud && blank(m.Spec.Target.CloudCredentials) {
+	if m.Spec.ServiceAccounts != nil && m.Spec.ServiceAccounts.AutoCreate && m.Spec.Target.Type == TargetConfluentCloud && blankRef(m.Spec.Target.CloudCredentials) {
 		add("spec.target.cloudCredentials: required for spec.serviceAccounts.autoCreate on a confluent-cloud target (used to provision accounts via IAM v2)")
 	}
 
@@ -258,7 +258,7 @@ func (m *Migration) Validate() []error {
 				if blank(cl.SourceRest.Endpoint) {
 					add("spec.clusterLink.sourceRest.endpoint: must not be empty")
 				}
-				if blank(cl.SourceRest.Credentials) {
+				if blankRef(cl.SourceRest.Credentials) {
 					add("spec.clusterLink.sourceRest.credentials: must not be empty")
 				}
 			}

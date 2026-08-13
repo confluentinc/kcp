@@ -24,57 +24,57 @@ import (
 //
 //	unauthenticated_plaintext: {}
 type MigrateClusterCredentials struct {
-	IAM                      *MigrateIAM                      `yaml:"iam,omitempty"`
-	SASLScram                *MigrateSASLScram                `yaml:"sasl_scram,omitempty"`
-	SASLPlain                *MigrateSASLPlain                `yaml:"sasl_plain,omitempty"`
-	MTLS                     *MigrateMTLS                     `yaml:"mtls,omitempty"`
-	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty"`
-	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty"`
-	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty"`
+	IAM                      *MigrateIAM                      `yaml:"iam,omitempty" json:"iam,omitempty"`
+	SASLScram                *MigrateSASLScram                `yaml:"sasl_scram,omitempty" json:"sasl_scram,omitempty"`
+	SASLPlain                *MigrateSASLPlain                `yaml:"sasl_plain,omitempty" json:"sasl_plain,omitempty"`
+	MTLS                     *MigrateMTLS                     `yaml:"mtls,omitempty" json:"mtls,omitempty"`
+	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty" json:"unauthenticated_tls,omitempty"`
+	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty" json:"unauthenticated_plaintext,omitempty"`
+	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty" json:"insecure_skip_tls_verify,omitempty"`
 
 	// Interpolate opts this file in to ${ENV_VAR} resolution. It is file-level
 	// rather than a CLI flag so each file governs itself: a manifest that opts
 	// in never changes how a credentials file it references is read, and an
 	// operator whose secret legitimately contains "${" has a way out.
-	Interpolate bool `yaml:"interpolate,omitempty"`
+	Interpolate bool `yaml:"interpolate,omitempty" json:"interpolate,omitempty"`
 }
 
 // MigrateIAM is the MSK IAM auth block. region is required (SigV4 token signing);
 // there is no auto-derive. Valid only for an MSK source's read credentials.
 type MigrateIAM struct {
-	Region string `yaml:"region"`
+	Region string `yaml:"region" json:"region"`
 }
 
 // MigrateSASLScram is the SASL/SCRAM auth block for migrate credentials (no use: flag).
 type MigrateSASLScram struct {
-	Username  string `yaml:"username"`
-	Password  string `yaml:"password"`
-	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512"
-	CACert    string `yaml:"ca_cert,omitempty"`
+	Username  string `yaml:"username" json:"username"`
+	Password  string `yaml:"password" json:"password"`
+	Mechanism string `yaml:"mechanism,omitempty" json:"mechanism,omitempty"` // "SHA256" or "SHA512"
+	CACert    string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
 }
 
 // MigrateSASLPlain is the SASL/PLAIN auth block for migrate credentials (no use: flag).
 // Transport: ca_cert present ⇒ SASL_SSL (trusting that CA); tls: true ⇒ SASL_SSL
 // over the system/public trust store (no custom CA); neither ⇒ SASL_PLAINTEXT.
 type MigrateSASLPlain struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	CACert   string `yaml:"ca_cert,omitempty"`
-	UseTLS   bool   `yaml:"tls,omitempty"`
+	Username string `yaml:"username" json:"username"`
+	Password string `yaml:"password" json:"password"`
+	CACert   string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	UseTLS   bool   `yaml:"tls,omitempty" json:"tls,omitempty"`
 }
 
 // MigrateMTLS is the mutual-TLS auth block for migrate credentials (client cert +
 // key; no use: flag). The client authenticates with a certificate — distinct from
 // unauthenticated_tls (one-way TLS: server cert only, client not authenticated).
 type MigrateMTLS struct {
-	CACert     string `yaml:"ca_cert,omitempty"`
-	ClientCert string `yaml:"client_cert"`
-	ClientKey  string `yaml:"client_key"`
+	CACert     string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	ClientCert string `yaml:"client_cert" json:"client_cert"`
+	ClientKey  string `yaml:"client_key" json:"client_key"`
 }
 
 // MigrateUnauthenticatedTLS is the unauthenticated TLS auth block for migrate credentials (no use: flag).
 type MigrateUnauthenticatedTLS struct {
-	CACert string `yaml:"ca_cert,omitempty"`
+	CACert string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
 }
 
 // MigrateUnauthenticatedPlaintext is an empty marker block — its PRESENCE (unauthenticated_plaintext: {})
