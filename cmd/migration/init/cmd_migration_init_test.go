@@ -403,3 +403,30 @@ func TestInit_StateFilePermissions(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0600), info.Mode().Perm())
 }
+
+// TestInit_MidFlightRefusalDoesNotDependOnCredentials: the re-init guard is a
+// safety check, so it must be reachable even when credentials cannot resolve.
+// An operator re-running init mid-cutover needs to hear "this migration is
+// fenced", not "your environment variable is unset" — the first is the thing
+// that will hurt them.
+func TestInit_MidFlightRefusalDoesNotDependOnCredentials(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		doc = strings.Replace(doc, "kind: GatewayMigration", "kind: GatewayMigration\ninterpolate: true", 1)
+		return strings.Replace(doc, "        password: secret", "        password: ${KCP_UNSET_PW}", 1)
+	})
+
+	// Register the migration, then advance it past the point of no return.
+	state := migration.NewMigrationState()
+	state.UpsertMigration(migration.MigrationConfig{
+		MigrationId:  "msk-prod-to-cc-batch-1",
+		CurrentState: migration.StateFenced,
+	})
+	require.NoError(t, state.WriteToFile(stateFile))
+
+	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fenced")
+	assert.NotContains(t, err.Error(), "KCP_UNSET_PW",
+		"the credentials error must not mask the safety refusal")
+}

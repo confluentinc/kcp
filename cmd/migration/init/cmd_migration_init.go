@@ -103,7 +103,15 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	// point of no return that is exactly what §13 asks for ("re-run init to
 	// adopt the new spec"); after it, overwriting would discard the FSM position
 	// and the pre-disable link-config snapshot and strand a live cutover.
+	//
+	// This runs BEFORE credentials are resolved: it is a safety refusal, and an
+	// operator re-running init mid-cutover needs to hear "this migration is
+	// fenced" rather than have it masked by an unset environment variable.
 	if err := checkReInitIsSafe(migrationState, g.Metadata.Name); err != nil {
+		return err
+	}
+
+	if err := checkCredentialsResolve(g); err != nil {
 		return err
 	}
 
@@ -186,11 +194,9 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// loadGatewayManifest reads, parses, validates and credential-checks the
-// manifest. Credentials are resolved here — not only structurally validated —
-// so that a bad auth block fails before anything is written, which is the
-// fail-fast the six --use-* flags used to buy at the cost of declaring source
-// auth twice.
+// loadGatewayManifest reads, parses and structurally validates the manifest.
+// Credentials are checked separately (checkCredentialsResolve), so that the
+// safety refusals which do not need them can run first.
 func loadGatewayManifest(path string) (*manifest.GatewayMigration, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -205,17 +211,22 @@ func loadGatewayManifest(path string) (*manifest.GatewayMigration, error) {
 	if errs := g.Validate(); len(errs) > 0 {
 		return nil, joinValidationErrors(errs)
 	}
+	return g, nil
+}
 
-	// kcp never contacts the source during init, but resolving the block here
-	// turns "you got the auth wrong" into an init-time error rather than one
-	// discovered at apply, after the operator has scheduled a cutover window.
+// checkCredentialsResolve resolves every credential block without using the
+// result. kcp never contacts the source during init, but resolving here turns
+// "you got the auth wrong" into an init-time error rather than one discovered
+// at apply, after the operator has scheduled a cutover window — the fail-fast
+// the six --use-* flags used to buy at the cost of declaring source auth twice.
+func checkCredentialsResolve(g *manifest.GatewayMigration) error {
 	if _, errs := g.SourceCredentials(); len(errs) > 0 {
-		return nil, fmt.Errorf("spec.source.credentials: %w", joinValidationErrors(errs))
+		return fmt.Errorf("spec.source.credentials: %w", joinValidationErrors(errs))
 	}
 	if _, errs := g.DestinationKafkaCredentials(); len(errs) > 0 {
-		return nil, fmt.Errorf("spec.target.kafka.credentials: %w", joinValidationErrors(errs))
+		return fmt.Errorf("spec.target.kafka.credentials: %w", joinValidationErrors(errs))
 	}
-	return g, nil
+	return nil
 }
 
 // checkReInitIsSafe refuses to replace a migration that has irreversible work
