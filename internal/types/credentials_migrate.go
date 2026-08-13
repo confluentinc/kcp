@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/interpolate"
 	"github.com/goccy/go-yaml"
 )
 
@@ -30,6 +31,12 @@ type MigrateClusterCredentials struct {
 	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty"`
 	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty"`
 	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty"`
+
+	// Interpolate opts this file in to ${ENV_VAR} resolution. It is file-level
+	// rather than a CLI flag so each file governs itself: a manifest that opts
+	// in never changes how a credentials file it references is read, and an
+	// operator whose secret legitimately contains "${" has a way out.
+	Interpolate bool `yaml:"interpolate,omitempty"`
 }
 
 // MigrateIAM is the MSK IAM auth block. region is required (SigV4 token signing);
@@ -141,15 +148,22 @@ func (c MigrateClusterCredentials) authMethodConfig() AuthMethodConfig {
 	return amc
 }
 
-// LoadMigrateClusterCredentials reads and validates the auth-only flat migrate
-// credentials file, returning the auth-only MigrateClusterCredentials. The
-// bootstrap address comes from the manifest (see MigrateConn). Returns all problems.
+// LoadMigrateClusterCredentials reads, parses and validates the auth-only flat
+// migrate credentials file, returning the auth-only MigrateClusterCredentials.
+// The bootstrap address comes from the manifest (see MigrateConn). Returns all
+// problems.
 func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return MigrateClusterCredentials{}, []error{fmt.Errorf("failed to read migrate credentials file: %w", err)}
 	}
+	return ParseMigrateClusterCredentials(data)
+}
 
+// ParseMigrateClusterCredentials parses and validates migrate credentials from
+// bytes. It is the shared entry point so an inline manifest block and a
+// referenced file run exactly the same validation.
+func ParseMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, []error) {
 	var mc MigrateClusterCredentials
 	if err := yaml.UnmarshalWithOptions(data, &mc, yaml.Strict()); err != nil {
 		msg := err.Error()
@@ -171,6 +185,23 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 		return MigrateClusterCredentials{}, []error{fmt.Errorf("failed to parse migrate credentials: %w", err)}
 	}
 
+	// Resolution runs immediately after the unmarshal and before every
+	// validation below: the mechanism check and the cert paths are in
+	// interpolation scope, so resolving afterwards would reject the literal
+	// "${MECH}" rather than its value.
+	if mc.Interpolate {
+		if err := interpolate.Struct(&mc); err != nil {
+			return MigrateClusterCredentials{}, []error{fmt.Errorf("resolving migrate credentials: %w", err)}
+		}
+	}
+
+	return mc, ValidateMigrateClusterCredentials(mc)
+}
+
+// ValidateMigrateClusterCredentials applies every migrate-credentials rule to
+// an already-built struct, so a caller that assembled the block itself (an
+// inline manifest block) is held to the same rules as a file.
+func ValidateMigrateClusterCredentials(mc MigrateClusterCredentials) []error {
 	var errs []error
 	switch mc.methodCount() {
 	case 0:
@@ -199,7 +230,7 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 	if mc.SASLScram != nil && !isValidScramMechanism(mc.SASLScram.Mechanism) {
 		errs = append(errs, fmt.Errorf("sasl_scram.mechanism is required and must be SHA256 or SHA512 (MSK requires SHA512)"))
 	}
-	return mc, errs
+	return errs
 }
 
 // isValidScramMechanism reports whether m is an explicitly-specified, supported

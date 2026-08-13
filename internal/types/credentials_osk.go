@@ -214,7 +214,11 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 		case "", "SHA256", "SHA512", "SCRAM-SHA-256", "SCRAM-SHA-512":
 			// valid
 		default:
-			return fmt.Errorf("unsupported sasl_scram mechanism %q: must be SHA256, SHA512, SCRAM-SHA-256, or SCRAM-SHA-512", authMethod.SASLScram.Mechanism)
+			// The value is deliberately not echoed: with ${ENV_VAR}
+			// interpolation this field can hold a resolved secret if the
+			// operator binds the wrong variable, and this error reaches
+			// kcp.log, which is a support artefact the credentials file is not.
+			return fmt.Errorf("unsupported sasl_scram mechanism: must be SHA256, SHA512, SCRAM-SHA-256, or SCRAM-SHA-512")
 		}
 		if authMethod.SASLScram.CACert != "" {
 			if _, err := os.Stat(authMethod.SASLScram.CACert); err != nil {

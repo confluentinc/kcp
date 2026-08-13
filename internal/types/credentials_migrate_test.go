@@ -250,3 +250,102 @@ func TestMigrateConn(t *testing.T) {
 	require.NotNil(t, got.AuthMethod.SASLScram)
 	require.True(t, got.AuthMethod.SASLScram.Use)
 }
+
+// writeMigrateCreds writes a migrate credentials file and returns its path.
+func writeMigrateCreds(t *testing.T, content string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(content), 0600))
+	return p
+}
+
+// --- ${ENV_VAR} interpolation (opt-in, per file) ---
+
+func TestLoadMigrateClusterCredentials_InterpolatesWhenOptedIn(t *testing.T) {
+	t.Setenv("MSK_USERNAME", "admin")
+	t.Setenv("MSK_PASSWORD", "s3cret")
+	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
+		"interpolate: true\nsasl_scram:\n  username: ${MSK_USERNAME}\n  password: ${MSK_PASSWORD}\n  mechanism: SHA512\n"))
+	require.Empty(t, errs)
+	require.NotNil(t, creds.SASLScram)
+	require.Equal(t, "admin", creds.SASLScram.Username)
+	require.Equal(t, "s3cret", creds.SASLScram.Password)
+}
+
+// TestLoadMigrateClusterCredentials_NoInterpolationByDefault pins that every
+// already-shipped kcp migrate credentials file is read byte-for-byte as before.
+func TestLoadMigrateClusterCredentials_NoInterpolationByDefault(t *testing.T) {
+	t.Setenv("MSK_PASSWORD", "s3cret")
+	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
+		"sasl_scram:\n  username: admin\n  password: ${MSK_PASSWORD}\n  mechanism: SHA512\n"))
+	require.Empty(t, errs)
+	require.Equal(t, "${MSK_PASSWORD}", creds.SASLScram.Password)
+}
+
+func TestLoadMigrateClusterCredentials_InterpolateUndefinedVariableFails(t *testing.T) {
+	t.Setenv("MSK_USERNAME", "admin-name")
+	_, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
+		"interpolate: true\nsasl_scram:\n  username: ${MSK_USERNAME}\n  password: ${KCP_UNSET_PW}\n  mechanism: SHA512\n"))
+	require.NotEmpty(t, errs)
+	joined := joinErrStrings(errs)
+	require.Contains(t, joined, "KCP_UNSET_PW")
+	require.NotContains(t, joined, "admin-name", "a resolved value must never reach an error string")
+}
+
+// TestLoadMigrateClusterCredentials_InterpolatesBeforeValidation — the loader
+// rejects an unrecognised sasl_scram.mechanism, so resolution placed after
+// validation would reject the literal "${MECH}".
+func TestLoadMigrateClusterCredentials_InterpolatesBeforeValidation(t *testing.T) {
+	t.Setenv("MECH", "SHA512")
+	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
+		"interpolate: true\nsasl_scram:\n  username: u\n  password: p\n  mechanism: ${MECH}\n"))
+	require.Empty(t, errs)
+	require.Equal(t, "SHA512", creds.SASLScram.Mechanism)
+}
+
+// TestLoadMigrateClusterCredentials_MechanismErrorDoesNotEchoValue is the §10
+// logging hazard: an invalid mechanism must not echo the resolved value, which
+// on a mis-set variable is somebody else's secret.
+func TestLoadMigrateClusterCredentials_MechanismErrorDoesNotEchoValue(t *testing.T) {
+	t.Setenv("MECH", "super-secret-leak")
+	_, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
+		"interpolate: true\nsasl_scram:\n  username: u\n  password: p\n  mechanism: ${MECH}\n"))
+	require.NotEmpty(t, errs)
+	require.NotContains(t, joinErrStrings(errs), "super-secret-leak")
+}
+
+// TestLoadMigrateClusterCredentials_InterpolatedValueIsNotReparsed proves the
+// post-parse design: a password carrying YAML structure cannot inject a key.
+func TestLoadMigrateClusterCredentials_InterpolatedValueIsNotReparsed(t *testing.T) {
+	t.Setenv("EVIL", "p\nusername: attacker")
+	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
+		"interpolate: true\nsasl_scram:\n  username: real-user\n  password: ${EVIL}\n  mechanism: SHA512\n"))
+	require.Empty(t, errs)
+	require.Equal(t, "real-user", creds.SASLScram.Username)
+	require.Equal(t, "p\nusername: attacker", creds.SASLScram.Password)
+}
+
+// --- parse / validate split ---
+
+// TestParseMigrateClusterCredentials_AppliesSameValidationAsFile is the point
+// of the split: an inline block and a referenced file run identical validation.
+func TestParseMigrateClusterCredentials_AppliesSameValidationAsFile(t *testing.T) {
+	body := "sasl_scram: { username: u, password: p }\n"
+	_, parseErrs := ParseMigrateClusterCredentials([]byte(body))
+	_, loadErrs := LoadMigrateClusterCredentials(writeMigrateCreds(t, body))
+	require.NotEmpty(t, parseErrs)
+	require.Equal(t, joinErrStrings(loadErrs), joinErrStrings(parseErrs))
+}
+
+func TestParseMigrateClusterCredentials_RejectsUnknownFields(t *testing.T) {
+	_, errs := ParseMigrateClusterCredentials([]byte("unauthenticated_plaintext: {}\ntypo_field: x\n"))
+	require.NotEmpty(t, errs)
+}
+
+// TestValidateMigrateClusterCredentials_IsReusableOnAnAlreadyBuiltStruct lets
+// the manifest path validate an inline block it assembled itself.
+func TestValidateMigrateClusterCredentials_IsReusableOnAnAlreadyBuiltStruct(t *testing.T) {
+	ok := MigrateClusterCredentials{UnauthenticatedPlaintext: &MigrateUnauthenticatedPlaintext{}}
+	require.Empty(t, ValidateMigrateClusterCredentials(ok))
+	require.NotEmpty(t, ValidateMigrateClusterCredentials(MigrateClusterCredentials{}))
+}

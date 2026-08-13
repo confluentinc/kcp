@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/interpolate"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/goccy/go-yaml"
@@ -41,57 +42,106 @@ type MTLSCreds struct {
 
 // Credentials is the parsed target-creds.yaml. Exactly one auth block is allowed
 // out of: basic, api_key/api_secret (CC), bearer, mtls.
+//
+// ca_cert and insecure_skip_verify are top-level because the api_key form is
+// itself flat — basic, bearer and mtls carry their own copies inside the block.
+// They apply ONLY to the api_key form and are rejected alongside the others,
+// rather than being silently ignored.
 type Credentials struct {
 	Basic     *BasicAuth   `yaml:"basic,omitempty"`
 	APIKey    string       `yaml:"api_key,omitempty"`
 	APISecret string       `yaml:"api_secret,omitempty"`
 	Bearer    *BearerCreds `yaml:"bearer,omitempty"`
 	MTLS      *MTLSCreds   `yaml:"mtls,omitempty"`
+
+	// CACert / InsecureSkipVerify are the api_key form's TLS-trust siblings.
+	CACert             string `yaml:"ca_cert,omitempty"`
+	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty"`
+
+	// Interpolate opts this file in to ${ENV_VAR} resolution. It is file-level
+	// rather than a CLI flag so each file governs itself: a manifest that opts
+	// in never changes how a credentials file it references is read.
+	Interpolate bool `yaml:"interpolate,omitempty"`
 }
 
-// LoadCredentials reads and validates a target-creds.yaml file.
+// LoadCredentials reads, parses and validates a target-creds.yaml file.
 func LoadCredentials(path string) (*Credentials, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading target credentials: %w", err)
 	}
+	return ParseCredentials(data)
+}
+
+// ParseCredentials parses and validates target credentials from bytes. It is
+// the shared entry point so an inline block and a referenced file run exactly
+// the same validation — a rule can never apply to one spelling and not the
+// other.
+//
+// ${ENV_VAR} resolution runs immediately after the unmarshal and before every
+// validation, because validation stats ca_cert paths: resolving afterwards
+// would report `ca_cert file "${CA_PATH}": no such file`.
+func ParseCredentials(data []byte) (*Credentials, error) {
 	var c Credentials
 	if err := yaml.UnmarshalWithOptions(data, &c, yaml.Strict()); err != nil {
 		return nil, fmt.Errorf("parsing target credentials: %w", err)
 	}
+	if c.Interpolate {
+		if err := interpolate.Struct(&c); err != nil {
+			return nil, fmt.Errorf("resolving target credentials: %w", err)
+		}
+	}
+	if err := ValidateCredentials(&c); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// ValidateCredentials applies every target-credentials rule to an already-built
+// struct, so a caller that assembled the block itself (an inline manifest
+// block) is held to the same rules as a file.
+func ValidateCredentials(c *Credentials) error {
 	if (c.APIKey != "") != (c.APISecret != "") {
-		return nil, fmt.Errorf("api_key and api_secret must both be set or both omitted")
+		return fmt.Errorf("api_key and api_secret must both be set or both omitted")
 	}
 	if n := c.authBlockCount(); n != 1 {
-		return nil, fmt.Errorf("target credentials must specify exactly one auth block, found %d", n)
+		return fmt.Errorf("target credentials must specify exactly one auth block, found %d", n)
 	}
 	if c.Bearer != nil && c.Bearer.Token == "" {
-		return nil, fmt.Errorf("bearer.token must not be empty")
+		return fmt.Errorf("bearer.token must not be empty")
 	}
 	if c.MTLS != nil {
 		if c.MTLS.ClientCert == "" || c.MTLS.ClientKey == "" {
-			return nil, fmt.Errorf("mtls requires both client_cert and client_key")
+			return fmt.Errorf("mtls requires both client_cert and client_key")
 		}
 		for _, f := range []string{c.MTLS.ClientCert, c.MTLS.ClientKey, c.MTLS.CACert} {
 			if f == "" {
 				continue // CACert is optional
 			}
 			if _, err := os.Stat(f); err != nil {
-				return nil, fmt.Errorf("mtls certificate file %q: %w", f, err)
+				return fmt.Errorf("mtls certificate file %q: %w", f, err)
 			}
 		}
 	}
 	if c.Basic != nil && c.Basic.CACert != "" {
 		if _, err := os.Stat(c.Basic.CACert); err != nil {
-			return nil, fmt.Errorf("basic ca_cert file %q: %w", c.Basic.CACert, err)
+			return fmt.Errorf("basic ca_cert file %q: %w", c.Basic.CACert, err)
 		}
 	}
 	if c.Bearer != nil && c.Bearer.CACert != "" {
 		if _, err := os.Stat(c.Bearer.CACert); err != nil {
-			return nil, fmt.Errorf("bearer ca_cert file %q: %w", c.Bearer.CACert, err)
+			return fmt.Errorf("bearer ca_cert file %q: %w", c.Bearer.CACert, err)
 		}
 	}
-	return &c, nil
+	if c.APIKey == "" && (c.CACert != "" || c.InsecureSkipVerify) {
+		return fmt.Errorf("top-level ca_cert/insecure_skip_verify apply to the api_key form only; basic, bearer and mtls carry their own inside the block")
+	}
+	if c.APIKey != "" && c.CACert != "" {
+		if _, err := os.Stat(c.CACert); err != nil {
+			return fmt.Errorf("api_key ca_cert file %q: %w", c.CACert, err)
+		}
+	}
+	return nil
 }
 
 func (c Credentials) authBlockCount() int {
@@ -167,7 +217,7 @@ func (c Credentials) tlsTrust() (string, bool) {
 		return c.Bearer.CACert, c.Bearer.InsecureSkipVerify
 	case c.Basic != nil:
 		return c.Basic.CACert, c.Basic.InsecureSkipVerify
-	default: // api_key/api_secret (CC) — public CA
-		return "", false
+	default: // api_key/api_secret — public CA unless the siblings say otherwise
+		return c.CACert, c.InsecureSkipVerify
 	}
 }
