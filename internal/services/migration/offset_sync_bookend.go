@@ -238,7 +238,7 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	switch config.CurrentState {
 	case StateFenced, StateOffsetSyncPaused:
 		newReporter().remediation(
-			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — it retries the pause or completes the rollback as needed.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
+			"Migration apply failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration apply` to resume — it retries the pause or completes the rollback as needed.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
 			execErr,
 			config.ClusterLinkName,
 			offsetSyncEnableKey,
@@ -246,7 +246,7 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 		)
 	case StateFenceVerified:
 		newReporter().remediation(
-			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — traffic stays blocked until the switchover completes.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
+			"Migration apply failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration apply` to resume — traffic stays blocked until the switchover completes.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
 			execErr,
 			config.ClusterLinkName,
 			offsetSyncEnableKey,
@@ -254,14 +254,14 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 		)
 	case StatePromoted:
 		newReporter().remediation(
-			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to complete the switchover and restore client traffic.\n   Do not re-apply the initial gateway CR: topics are already promoted, and routing clients back to the source would diverge data.",
+			"Migration apply failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration apply` to complete the switchover and restore client traffic.\n   Do not re-apply the initial gateway CR: topics are already promoted, and routing clients back to the source would diverge data.",
 			execErr,
 			config.ClusterLinkName,
 			offsetSyncEnableKey,
 		)
 	default:
 		newReporter().remediation(
-			"Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
+			"Migration apply failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration apply` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
 			execErr,
 			config.ClusterLinkName,
 			offsetSyncEnableKey,

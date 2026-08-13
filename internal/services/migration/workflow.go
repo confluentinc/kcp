@@ -185,9 +185,9 @@ func (s *MigrationActions) Initialize(
 		observed, present := configs[offsetSyncEnableKey]
 		switch {
 		case !present:
-			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
+			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
 		case observed != "true":
-			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
+			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
 		}
 		s.reporter.success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
 	}
@@ -563,7 +563,7 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration apply' to resume",
 			ErrUnroutedProducers, strings.Join(violations, "\n  "))
 	}
 
@@ -607,9 +607,9 @@ func (s *MigrationActions) PauseOffsetSync(
 	observed, present := currentConfigs[offsetSyncEnableKey]
 	switch {
 	case !present:
-		return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
+		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
 	case observed != "true":
-		return fmt.Errorf("--pause-consumer-offset-sync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
+		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
 	}
 
 	// Optional drain window (--consumer-offset-sync-drain-duration): hold here

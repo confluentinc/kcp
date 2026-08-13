@@ -164,25 +164,37 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 // bytes. It is the shared entry point so an inline manifest block and a
 // referenced file run exactly the same validation.
 func ParseMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, []error) {
+	mc, err := UnmarshalMigrateClusterCredentials(data)
+	if err != nil {
+		return MigrateClusterCredentials{}, []error{err}
+	}
+	return mc, ValidateMigrateClusterCredentials(mc)
+}
+
+// UnmarshalMigrateClusterCredentials parses and resolves credentials WITHOUT
+// validating them. It exists so a caller that must fill a default before the
+// rules run — kcp migration defaults an omitted sasl_scram.mechanism to SHA512,
+// matching the flag it replaces — can do so without duplicating the parse.
+func UnmarshalMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, error) {
 	var mc MigrateClusterCredentials
 	if err := yaml.UnmarshalWithOptions(data, &mc, yaml.Strict()); err != nil {
 		msg := err.Error()
 		// Old format: auth_method: wrapper — hint that auth is now top-level.
 		if strings.Contains(msg, "auth_method") {
-			return MigrateClusterCredentials{}, []error{fmt.Errorf(
-				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", err)}
+			return MigrateClusterCredentials{}, fmt.Errorf(
+				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", err)
 		}
 		// Common mistake: passing the OSK scan format (clusters: list).
 		if strings.Contains(msg, "clusters") {
-			return MigrateClusterCredentials{}, []error{fmt.Errorf(
-				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", err)}
+			return MigrateClusterCredentials{}, fmt.Errorf(
+				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", err)
 		}
 		// Common mistake: including bootstrap_servers in the creds file.
 		if strings.Contains(msg, "bootstrap_servers") || strings.Contains(msg, "bootstrapServers") {
-			return MigrateClusterCredentials{}, []error{fmt.Errorf(
-				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", err)}
+			return MigrateClusterCredentials{}, fmt.Errorf(
+				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", err)
 		}
-		return MigrateClusterCredentials{}, []error{fmt.Errorf("failed to parse migrate credentials: %w", err)}
+		return MigrateClusterCredentials{}, fmt.Errorf("failed to parse migrate credentials: %w", err)
 	}
 
 	// Resolution runs immediately after the unmarshal and before every
@@ -191,11 +203,21 @@ func ParseMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, []e
 	// "${MECH}" rather than its value.
 	if mc.Interpolate {
 		if err := interpolate.Struct(&mc); err != nil {
-			return MigrateClusterCredentials{}, []error{fmt.Errorf("resolving migrate credentials: %w", err)}
+			return MigrateClusterCredentials{}, fmt.Errorf("resolving migrate credentials: %w", err)
 		}
 	}
 
-	return mc, ValidateMigrateClusterCredentials(mc)
+	return mc, nil
+}
+
+// DefaultSCRAMMechanism fills an omitted sasl_scram.mechanism. kcp migration
+// calls this with SHA512 to match the default of the --sasl-scram-mechanism
+// flag it replaces; kcp migrate deliberately does not, because for a
+// hand-written file the wrong default surfaces only as an opaque auth failure.
+func (c *MigrateClusterCredentials) DefaultSCRAMMechanism(mechanism string) {
+	if c.SASLScram != nil && c.SASLScram.Mechanism == "" {
+		c.SASLScram.Mechanism = mechanism
+	}
 }
 
 // ValidateMigrateClusterCredentials applies every migrate-credentials rule to

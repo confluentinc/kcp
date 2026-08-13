@@ -3,6 +3,7 @@ package manifest
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/interpolate"
@@ -85,15 +86,38 @@ func rejectInlineInterpolateKey(inline []byte) error {
 // own top-level `interpolate:` key, so a manifest opting in never changes how a
 // shared kcp migrate credentials file is read.
 func (r CredentialsRef) ResolveMigrateCluster(interp bool) (types.MigrateClusterCredentials, []error) {
+	return r.ResolveMigrateClusterWithDefaults(interp, nil)
+}
+
+// ResolveMigrateClusterWithDefaults resolves the slot, applies the caller's
+// defaults, and only then validates. The ordering is the point: a default that
+// landed after validation could not rescue a field the rules already rejected.
+func (r CredentialsRef) ResolveMigrateClusterWithDefaults(interp bool, defaults func(*types.MigrateClusterCredentials)) (types.MigrateClusterCredentials, []error) {
+	mc, err := r.unmarshalMigrateCluster(interp)
+	if err != nil {
+		return types.MigrateClusterCredentials{}, []error{err}
+	}
+	if defaults != nil {
+		defaults(&mc)
+	}
+	return mc, types.ValidateMigrateClusterCredentials(mc)
+}
+
+// unmarshalMigrateCluster reads the slot without validating it.
+func (r CredentialsRef) unmarshalMigrateCluster(interp bool) (types.MigrateClusterCredentials, error) {
 	if r.IsZero() {
-		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("credentials: must not be empty")}
+		return types.MigrateClusterCredentials{}, fmt.Errorf("credentials: must not be empty")
 	}
 	if !r.IsInline() {
-		return types.LoadMigrateClusterCredentials(r.Path)
+		data, err := os.ReadFile(r.Path)
+		if err != nil {
+			return types.MigrateClusterCredentials{}, fmt.Errorf("failed to read migrate credentials file: %w", err)
+		}
+		return types.UnmarshalMigrateClusterCredentials(data)
 	}
 
 	if err := rejectInlineInterpolateKey(r.Inline); err != nil {
-		return types.MigrateClusterCredentials{}, []error{err}
+		return types.MigrateClusterCredentials{}, err
 	}
 
 	// Strict() is re-applied explicitly: goccy does not propagate the outer
@@ -101,14 +125,14 @@ func (r CredentialsRef) ResolveMigrateCluster(interp bool) (types.MigrateCluster
 	// block would silently accept typos that a file rejects.
 	var mc types.MigrateClusterCredentials
 	if err := yaml.UnmarshalWithOptions(r.Inline, &mc, yaml.Strict()); err != nil {
-		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("parsing inline credentials: %w", err)}
+		return types.MigrateClusterCredentials{}, fmt.Errorf("parsing inline credentials: %w", err)
 	}
 	if interp {
 		if err := interpolate.Struct(&mc); err != nil {
-			return types.MigrateClusterCredentials{}, []error{fmt.Errorf("resolving inline credentials: %w", err)}
+			return types.MigrateClusterCredentials{}, fmt.Errorf("resolving inline credentials: %w", err)
 		}
 	}
-	return mc, types.ValidateMigrateClusterCredentials(mc)
+	return mc, nil
 }
 
 // ResolveTarget resolves the slot into REST-shaped target credentials, with the

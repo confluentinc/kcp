@@ -16,21 +16,25 @@ import (
 )
 
 type MigrationExecutorOpts struct {
-	MigrationStateFile    string
-	MigrationState        migration.MigrationState
-	MigrationConfig       migration.MigrationConfig
-	LagThreshold          int64
-	ClusterApiKey         string
-	ClusterApiSecret      string
-	ClusterBootstrap      string
-	SourceBootstrap       string
-	AWSRegion             string
-	AuthType              types.AuthType
-	SaslScramUsername     string
-	SaslScramPassword     string
-	SaslScramMechanism    string
-	SaslPlainUsername     string
-	SaslPlainPassword     string
+	MigrationStateFile string
+	MigrationState     migration.MigrationState
+	MigrationConfig    migration.MigrationConfig
+	LagThreshold       int64
+	ClusterApiKey      string
+	ClusterApiSecret   string
+	ClusterBootstrap   string
+	SourceBootstrap    string
+	AWSRegion          string
+	AuthType           types.AuthType
+	SaslScramUsername  string
+	SaslScramPassword  string
+	SaslScramMechanism string
+	SaslPlainUsername  string
+	SaslPlainPassword  string
+	// SaslPlainUseTLS selects SASL_SSL over the system trust store when no
+	// ca_cert is supplied. Without it a `tls: true` source block would be
+	// silently downgraded to cleartext SASL_PLAINTEXT.
+	SaslPlainUseTLS       bool
 	TlsCaCert             string
 	TlsClientCert         string
 	TlsClientKey          string
@@ -146,6 +150,7 @@ func sourceClusterAuth(opts MigrationExecutorOpts) types.ClusterAuth {
 			Username: opts.SaslPlainUsername,
 			Password: opts.SaslPlainPassword,
 			CACert:   opts.TlsCaCert,
+			UseTLS:   opts.SaslPlainUseTLS,
 		}
 	case types.AuthTypeIAM:
 		clusterAuth.AuthMethod.IAM = &types.IAMConfig{Use: true}

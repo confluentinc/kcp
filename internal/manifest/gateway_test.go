@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -601,4 +602,65 @@ func renderStruct(g *GatewayMigration) (string, error) {
 		}
 	}
 	return sb.String(), nil
+}
+
+// TestGateway_OmittedScramMechanismDefaultsToSHA512 is a parity rule with a
+// sharp edge. The retired --sasl-scram-mechanism defaulted to SHA512, so a
+// source declared with --use-sasl-scram and no mechanism worked. The shared
+// migrate credentials loader, by contrast, REQUIRES an explicit mechanism,
+// because for a hand-written kcp migrate file the wrong default surfaces only
+// as an opaque auth failure.
+//
+// Rejecting an omitted mechanism here would be a tightening: something
+// accepted today would stop being accepted. So this kind defaults it — and
+// SHA512 is also the only mechanism MSK serves.
+func TestGateway_OmittedScramMechanismDefaultsToSHA512(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512\n", "", 1)
+	g := parseGateway(t, doc)
+	require.Empty(t, g.Validate())
+
+	creds, errs := g.SourceCredentials()
+	require.Empty(t, errs, "an omitted mechanism must not be rejected")
+	assert.Equal(t, "SHA512", creds.SASLScram.Mechanism)
+}
+
+// TestGateway_ExplicitScramMechanismWins — the default only fills a gap.
+func TestGateway_ExplicitScramMechanismWins(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512", "        mechanism: SHA256", 1)
+	creds, errs := parseGateway(t, doc).SourceCredentials()
+	require.Empty(t, errs)
+	assert.Equal(t, "SHA256", creds.SASLScram.Mechanism)
+}
+
+// TestGateway_InvalidScramMechanismIsStillRejected — defaulting must not
+// weaken the check; this is one of execute's three ported preRunE errors.
+func TestGateway_InvalidScramMechanismIsStillRejected(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512", "        mechanism: SHA1", 1)
+	_, errs := parseGateway(t, doc).SourceCredentials()
+	require.NotEmpty(t, errs)
+}
+
+// TestGateway_ScramDefaultAppliesToAReferencedFileToo — the two spellings must
+// not diverge, which is the whole point of the parse/validate split.
+func TestGateway_ScramDefaultAppliesToAReferencedFileToo(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "creds.yaml")
+	require.NoError(t, os.WriteFile(p,
+		[]byte("sasl_scram:\n  username: admin\n  password: secret\n"), 0600))
+
+	doc := strings.Replace(validGatewayDoc,
+		"    credentials:\n      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
+		"    credentials: "+p, 1)
+	creds, errs := parseGateway(t, doc).SourceCredentials()
+	require.Empty(t, errs)
+	assert.Equal(t, "SHA512", creds.SASLScram.Mechanism)
+}
+
+// TestMigrateKind_StillRequiresAnExplicitMechanism — the default is scoped to
+// this kind; kcp migrate's stricter rule is unchanged.
+func TestMigrateKind_StillRequiresAnExplicitMechanism(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "creds.yaml")
+	require.NoError(t, os.WriteFile(p,
+		[]byte("sasl_scram:\n  username: admin\n  password: secret\n"), 0600))
+	_, errs := types.LoadMigrateClusterCredentials(p)
+	require.NotEmpty(t, errs)
 }

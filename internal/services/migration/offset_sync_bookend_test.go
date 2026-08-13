@@ -622,7 +622,7 @@ func TestWarnIfPaused_StuckAtRollbackSource_UrgentObservableState(t *testing.T) 
 
 			assert.Contains(t, out, "still fenced", "urgent copy names the fenced gateway")
 			assert.Contains(t, out, "blocked", "urgent copy names the client impact")
-			assert.Contains(t, out, "kcp migration execute", "urgent copy points at the re-run")
+			assert.Contains(t, out, "kcp migration apply", "urgent copy points at the re-run")
 			assert.Contains(t, out, "link-1")
 			assert.Contains(t, out, "consumer.offset.sync.enable")
 			assert.NotContains(t, out, "rollback failed",
@@ -650,7 +650,7 @@ func TestWarnIfPaused_FenceVerified_UrgentBlockedGuidance(t *testing.T) {
 
 	assert.Contains(t, out, "still fenced", "urgent copy names the fenced gateway")
 	assert.Contains(t, out, "blocked", "urgent copy names the client impact")
-	assert.Contains(t, out, "kcp migration execute", "urgent copy points at the re-run")
+	assert.Contains(t, out, "kcp migration apply", "urgent copy points at the re-run")
 	assert.Contains(t, out, "re-apply the initial gateway CR",
 		"pre-promotion the manual abort is still safe and must be offered")
 	assert.Contains(t, out, "link-1")
