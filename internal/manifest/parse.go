@@ -3,6 +3,7 @@ package manifest
 import (
 	"fmt"
 
+	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
 
@@ -32,7 +33,9 @@ func Parse(data []byte) (*Migration, error) {
 
 	var m Migration
 	if err := parseStrict(data, &m); err != nil {
-		return nil, fmt.Errorf("parsing migration manifest: %w", err)
+		// The manifest is secret-bearing when credentials are inline, so the
+		// decode error must not carry a rendered excerpt of it.
+		return nil, fmt.Errorf("parsing migration manifest: %w", yamlsafe.StripSourceExcerpt(err))
 	}
 	return &m, nil
 }

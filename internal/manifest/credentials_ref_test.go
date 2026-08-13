@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -198,4 +199,42 @@ func TestMigrationKind_StringCredentialsStillParse(t *testing.T) {
 	require.Empty(t, m.Validate())
 	assert.Equal(t, "./source-creds.yaml", m.Spec.Source.Credentials.Path)
 	assert.False(t, m.Spec.Source.Credentials.IsInline())
+}
+
+// --- security review F1: YAML decode errors must not carry a source excerpt ---
+
+// TestCredentialsRef_InlineParseErrorDoesNotEchoNeighbouringSecrets.
+// goccy annotates decode errors with a 3-line excerpt of the source around the
+// offending token. Under Strict(), a single typo anywhere near a credential
+// renders the neighbouring password line into err.Error(), which main.go feeds
+// straight to slog.Error and therefore into kcp.log — a support artefact the
+// credentials file is not.
+func TestCredentialsRef_InlineParseErrorDoesNotEchoNeighbouringSecrets(t *testing.T) {
+	h := parseRef(t, "credentials:\n  sasl_scram:\n    username: admin\n    password: SUPER_SECRET_VALUE\n    mechanizm: SHA512\n")
+	_, errs := h.Credentials.ResolveMigrateCluster(false)
+	require.NotEmpty(t, errs)
+
+	joined := errs[0].Error()
+	assert.Contains(t, joined, "mechanizm", "the actionable part must survive")
+	assert.NotContains(t, joined, "SUPER_SECRET_VALUE",
+		"a decode error must not render neighbouring credential lines")
+}
+
+// TestCredentialsRef_FileParseErrorDoesNotEchoNeighbouringSecrets covers the
+// referenced-file spelling, which the docs recommend as the safer one.
+func TestCredentialsRef_FileParseErrorDoesNotEchoNeighbouringSecrets(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "creds.yaml")
+	require.NoError(t, os.WriteFile(p,
+		[]byte("sasl_scram:\n  username: admin\n  password: FILE_SECRET_VALUE\n  mechanizm: SHA512\n"), 0600))
+
+	h := parseRef(t, "credentials: "+p+"\n")
+	_, errs := h.Credentials.ResolveMigrateCluster(false)
+	require.NotEmpty(t, errs)
+	assert.NotContains(t, errs[0].Error(), "FILE_SECRET_VALUE")
+}
+
+func TestParseCredentials_ParseErrorDoesNotEchoNeighbouringSecrets(t *testing.T) {
+	_, err := targets.ParseCredentials([]byte("api_key: KEY\napi_secret: REST_SECRET_VALUE\ntypo_field: x\n"))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "REST_SECRET_VALUE")
 }

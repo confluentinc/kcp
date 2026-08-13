@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/interpolate"
+	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
 
@@ -182,19 +183,19 @@ func UnmarshalMigrateClusterCredentials(data []byte) (MigrateClusterCredentials,
 		// Old format: auth_method: wrapper — hint that auth is now top-level.
 		if strings.Contains(msg, "auth_method") {
 			return MigrateClusterCredentials{}, fmt.Errorf(
-				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", err)
+				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", yamlsafe.StripSourceExcerpt(err))
 		}
 		// Common mistake: passing the OSK scan format (clusters: list).
 		if strings.Contains(msg, "clusters") {
 			return MigrateClusterCredentials{}, fmt.Errorf(
-				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", err)
+				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", yamlsafe.StripSourceExcerpt(err))
 		}
 		// Common mistake: including bootstrap_servers in the creds file.
 		if strings.Contains(msg, "bootstrap_servers") || strings.Contains(msg, "bootstrapServers") {
 			return MigrateClusterCredentials{}, fmt.Errorf(
-				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", err)
+				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", yamlsafe.StripSourceExcerpt(err))
 		}
-		return MigrateClusterCredentials{}, fmt.Errorf("failed to parse migrate credentials: %w", err)
+		return MigrateClusterCredentials{}, fmt.Errorf("failed to parse migrate credentials: %w", yamlsafe.StripSourceExcerpt(err))
 	}
 
 	// Resolution runs immediately after the unmarshal and before every

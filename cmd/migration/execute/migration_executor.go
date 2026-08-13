@@ -34,12 +34,23 @@ type MigrationExecutorOpts struct {
 	// SaslPlainUseTLS selects SASL_SSL over the system trust store when no
 	// ca_cert is supplied. Without it a `tls: true` source block would be
 	// silently downgraded to cleartext SASL_PLAINTEXT.
-	SaslPlainUseTLS       bool
-	TlsCaCert             string
-	TlsClientCert         string
-	TlsClientKey          string
-	ClusterRestCACert     string
-	InsecureSkipTLSVerify bool
+	SaslPlainUseTLS   bool
+	TlsCaCert         string
+	TlsClientCert     string
+	TlsClientKey      string
+	ClusterRestCACert string
+	// RestApiKey / RestApiSecret authenticate the destination REST surface.
+	// They are separate from ClusterApiKey/ClusterApiSecret because an explicit
+	// spec.target.kafka.restCredentials may name a different principal, and the
+	// Kafka leg must not silently authenticate as the REST one.
+	RestApiKey    string
+	RestApiSecret string
+	// TLS trust is per leg. One shared boolean meant relaxing verification for a
+	// self-signed source also stopped verifying the destination connections,
+	// which carry the destination API key as SASL/PLAIN and as HTTP Basic.
+	SourceInsecureSkipTLSVerify    bool
+	DestKafkaInsecureSkipTLSVerify bool
+	RestInsecureSkipTLSVerify      bool
 	// RolloutTimeout bounds the gateway-readiness wait during fence and
 	// switch. A value of 0 means no deadline — the wait runs until the
 	// operator reports ready or the user cancels.
@@ -81,7 +92,7 @@ func (m *MigrationExecutor) Run() error {
 
 	// REST client for the destination cluster-link API: trusts a private CA
 	// (--cluster-rest-ca-cert) and/or skips verification, else system roots (CC public CA).
-	httpClient, err := migration.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.InsecureSkipTLSVerify)
+	httpClient, err := migration.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.RestInsecureSkipTLSVerify)
 	if err != nil {
 		return fmt.Errorf("building destination REST client: %w", err)
 	}
@@ -102,13 +113,13 @@ func (m *MigrationExecutor) Run() error {
 		m.opts.MigrationStateFile,
 	)
 
-	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.ClusterApiKey, m.opts.ClusterApiSecret)
+	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.RestApiKey, m.opts.RestApiSecret)
 
 	// The consumer-offset-sync pause runs INSIDE the FSM (the
 	// pause_offset_sync stage, right after fencing) so destination offsets
 	// stay fresh through the lag and fence phases instead of going stale for
 	// the whole run. Only the restore below remains a bookend.
-	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
+	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.RestApiKey, m.opts.RestApiSecret); err != nil {
 		migration.WarnIfPausedOnExecuteFailure(&config, err)
 		return fmt.Errorf("failed to execute migration: %w", err)
 	}
@@ -172,7 +183,7 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 
 	// skipTLSVerify is threaded through the mapper into every TLS path, so no
 	// separate WithInsecureSkipVerify() override is needed.
-	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, m.opts.InsecureSkipTLSVerify)
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, m.opts.SourceInsecureSkipTLSVerify)
 	if err != nil {
 		return nil, fmt.Errorf("resolving source auth option: %w", err)
 	}
@@ -182,7 +193,7 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 		"brokers", len(brokerAddresses),
 		"auth_type", authType,
 		"region", region,
-		"insecure_skip_tls_verify", m.opts.InsecureSkipTLSVerify,
+		"insecure_skip_tls_verify", m.opts.SourceInsecureSkipTLSVerify,
 	)
 	sourceClient, err := client.NewKafkaClient(brokerAddresses, region, opts...)
 	if err != nil {
@@ -197,10 +208,11 @@ func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
 	slog.Debug("connecting to destination cluster (Confluent Cloud)",
 		"brokers", len(ccBrokers),
-		"insecure_skip_tls_verify", m.opts.InsecureSkipTLSVerify,
+		"insecure_skip_tls_verify", m.opts.DestKafkaInsecureSkipTLSVerify,
 	)
-	// Confluent Cloud: SASL/PLAIN over TLS (SASL_SSL), public CA (no ca_cert).
-	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret, "", m.opts.InsecureSkipTLSVerify)}
+	// SASL/PLAIN over TLS (SASL_SSL), public CA (no ca_cert). The credential is
+	// the destination KAFKA one, not the REST one — they may differ.
+	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret, "", m.opts.DestKafkaInsecureSkipTLSVerify)}
 	destClient, err := client.NewKafkaClient(ccBrokers, "", destOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to destination cluster: %w", err)

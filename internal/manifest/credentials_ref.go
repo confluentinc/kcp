@@ -9,6 +9,7 @@ import (
 	"github.com/confluentinc/kcp/internal/interpolate"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
 
@@ -125,7 +126,7 @@ func (r CredentialsRef) unmarshalMigrateCluster(interp bool) (types.MigrateClust
 	// block would silently accept typos that a file rejects.
 	var mc types.MigrateClusterCredentials
 	if err := yaml.UnmarshalWithOptions(r.Inline, &mc, yaml.Strict()); err != nil {
-		return types.MigrateClusterCredentials{}, fmt.Errorf("parsing inline credentials: %w", err)
+		return types.MigrateClusterCredentials{}, fmt.Errorf("parsing inline credentials: %w", yamlsafe.StripSourceExcerpt(err))
 	}
 	if interp {
 		if err := interpolate.Struct(&mc); err != nil {
@@ -151,7 +152,7 @@ func (r CredentialsRef) ResolveTarget(interp bool) (*targets.Credentials, error)
 
 	var c targets.Credentials
 	if err := yaml.UnmarshalWithOptions(r.Inline, &c, yaml.Strict()); err != nil {
-		return nil, fmt.Errorf("parsing inline credentials: %w", err)
+		return nil, fmt.Errorf("parsing inline credentials: %w", yamlsafe.StripSourceExcerpt(err))
 	}
 	if interp {
 		if err := interpolate.Struct(&c); err != nil {

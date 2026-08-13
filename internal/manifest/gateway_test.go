@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -663,4 +665,135 @@ func TestMigrateKind_StillRequiresAnExplicitMechanism(t *testing.T) {
 		[]byte("sasl_scram:\n  username: admin\n  password: secret\n"), 0600))
 	_, errs := types.LoadMigrateClusterCredentials(p)
 	require.NotEmpty(t, errs)
+}
+
+// TestGateway_ManifestParseErrorDoesNotEchoInlineSecrets: an unrelated typo in
+// the OUTER manifest still renders an excerpt that can span an inline
+// credentials block a few lines away.
+func TestGateway_ManifestParseErrorDoesNotEchoInlineSecrets(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "  clusterLink:", "  clusterLinkTYPO:", 1)
+	doc = strings.Replace(doc, "          password: CC_SECRET", "          password: DEST_SECRET_VALUE", 1)
+
+	_, err := ParseGatewayMigration([]byte(doc))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "DEST_SECRET_VALUE",
+		"the manifest is secret-bearing when credentials are inline")
+}
+
+// --- security review F3: a restCredentials form kcp cannot honour must be refused ---
+
+// TestGateway_RejectsNonAPIKeyRestCredentials. targets.ValidateCredentials
+// accepts basic/bearer/mtls and the generated schema advertises them, but every
+// command reads only the flat api_key form — so a bearer token is dropped and
+// the request goes out as anonymous Basic auth, with the declared ca_cert
+// ignored. Refuse rather than silently degrade, mirroring the sasl_plain-only
+// rule on the destination Kafka leg.
+func TestGateway_RejectsNonAPIKeyRestCredentials(t *testing.T) {
+	for name, block := range map[string]string{
+		"bearer": "      restCredentials:\n        bearer:\n          token: TOK\n",
+		"basic":  "      restCredentials:\n        basic:\n          username: u\n          password: p\n",
+		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: /c.pem\n          client_key: /k.pem\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := parseGateway(t, withRestCredentials(t, block))
+			requireErrContains(t, g.Validate(), "restCredentials")
+
+			_, err := g.RestCredentials()
+			require.Error(t, err, "resolution must refuse it too, not only Validate")
+		})
+	}
+}
+
+func TestGateway_AcceptsAPIKeyRestCredentials(t *testing.T) {
+	g := parseGateway(t, withRestCredentials(t,
+		"      restCredentials:\n        api_key: K\n        api_secret: S\n"))
+	require.Empty(t, g.Validate())
+}
+
+// --- security review F2/F4: TLS trust is per-leg, not one global boolean ---
+
+// TestGateway_InsecureSkipIsPerLeg. The manifest spells
+// insecure_skip_tls_verify as a per-block sibling, so relaxing it for a
+// self-signed SOURCE must not disable verification on the destination legs,
+// which carry the destination API key.
+func TestGateway_InsecureSkipIsPerLeg(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "    credentials:\n      sasl_scram:",
+		"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
+	g := parseGateway(t, doc)
+
+	src, errs := g.SourceCredentials()
+	require.Empty(t, errs)
+	assert.True(t, src.InsecureSkipTLSVerify)
+
+	dst, errs := g.DestinationKafkaCredentials()
+	require.Empty(t, errs)
+	assert.False(t, dst.InsecureSkipTLSVerify, "the source's relaxation must not reach the destination Kafka leg")
+
+	rest, err := g.RestCredentials()
+	require.NoError(t, err)
+	assert.False(t, rest.InsecureSkipVerify, "nor the destination REST leg")
+}
+
+// --- security review F7: the permission warning must cover every reader ---
+
+// TestLoadGatewayMigrationFile_WarnsOnLoosePermissions. The same secret-bearing
+// manifest is read by init, apply and lag-check; a warning wired into only one
+// of them misses an operator who tightens permissions after init, or who only
+// ever runs lag-check.
+func TestLoadGatewayMigrationFile_WarnsOnLoosePermissions(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "gateway-migration.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(validGatewayDoc), 0644))
+
+	var buf bytes.Buffer
+	restore := captureSlog(t, &buf)
+	g, err := LoadGatewayMigrationFile(p)
+	restore()
+
+	require.NoError(t, err)
+	require.NotNil(t, g)
+	assert.Contains(t, buf.String(), "group- or world-readable")
+}
+
+func TestLoadGatewayMigrationFile_QuietOnTightPermissions(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "gateway-migration.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(validGatewayDoc), 0600))
+
+	var buf bytes.Buffer
+	restore := captureSlog(t, &buf)
+	_, err := LoadGatewayMigrationFile(p)
+	restore()
+
+	require.NoError(t, err)
+	assert.NotContains(t, buf.String(), "group- or world-readable")
+}
+
+// TestLoadGatewayMigrationFile_ReturnsAllValidationProblems — an operator fixes
+// the file in one pass rather than one error per run.
+func TestLoadGatewayMigrationFile_ReturnsAllValidationProblems(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, "    name: msk-to-cc", "    name: \"\"", 1)
+	doc = strings.Replace(doc, "    namespace: confluent", "    namespace: \"\"", 1)
+	p := filepath.Join(t.TempDir(), "gateway-migration.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(doc), 0600))
+
+	_, err := LoadGatewayMigrationFile(p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.clusterLink.name")
+	assert.Contains(t, err.Error(), "spec.gateway.namespace")
+}
+
+func TestLoadGatewayMigrationFile_RejectsWrongKind(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "migration.yaml")
+	require.NoError(t, os.WriteFile(p, []byte(
+		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: x\n"), 0600))
+	_, err := LoadGatewayMigrationFile(p)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), KindGatewayMigration)
+}
+
+// captureSlog redirects the default logger into buf and returns a restore func.
+func captureSlog(t *testing.T, buf *bytes.Buffer) func() {
+	t.Helper()
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	return func() { slog.SetDefault(prev) }
 }

@@ -2,6 +2,7 @@ package manifest
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
+	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
 
@@ -164,7 +166,7 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 
 	var g GatewayMigration
 	if err := parseStrict(data, &g); err != nil {
-		return nil, fmt.Errorf("parsing gateway migration manifest: %w", err)
+		return nil, fmt.Errorf("parsing gateway migration manifest: %w", yamlsafe.StripSourceExcerpt(err))
 	}
 	if g.Interpolate {
 		if err := interpolateInto(&g); err != nil {
@@ -237,8 +239,14 @@ func (g *GatewayMigration) Validate() []error {
 				errs = append(errs, checkDestinationIsSASLPlain(mc)...)
 			}
 		}
-		if k.RestCredentials != nil && blankRef(*k.RestCredentials) {
-			add("spec.target.kafka.restCredentials: present but empty — omit it to derive from credentials, or fill it in")
+		if k.RestCredentials != nil {
+			if blankRef(*k.RestCredentials) {
+				add("spec.target.kafka.restCredentials: present but empty — omit it to derive from credentials, or fill it in")
+			} else if k.RestCredentials.IsInline() {
+				if tc, ok := peekTargetCreds(*k.RestCredentials); ok {
+					errs = append(errs, checkRestIsAPIKeyForm(tc)...)
+				}
+			}
 		}
 	}
 
@@ -351,6 +359,38 @@ func defaultGatewayCredentials(mc *types.MigrateClusterCredentials) {
 	mc.DefaultSCRAMMechanism(defaultScramMechanism)
 }
 
+// peekTargetCreds decodes an inline REST credentials block for validation
+// without I/O.
+func peekTargetCreds(ref CredentialsRef) (targets.Credentials, bool) {
+	var tc targets.Credentials
+	if err := yaml.Unmarshal(ref.Inline, &tc); err != nil {
+		return tc, false
+	}
+	return tc, true
+}
+
+// checkRestIsAPIKeyForm rejects every REST credentials form other than the flat
+// api_key pair.
+//
+// targets.Credentials can express basic, bearer and mtls, and its own
+// HTTPClient/Authenticator handle all of them — but every kcp migration command
+// reads only APIKey/APISecret/CACert/InsecureSkipVerify. A bearer block would
+// therefore be accepted, then dropped, and the request would go out as
+// anonymous Basic auth with the declared ca_cert ignored. Refusing is the same
+// call as the sasl_plain-only rule on the destination Kafka leg: a credential
+// that is silently not used is worse than one that is rejected.
+func checkRestIsAPIKeyForm(tc targets.Credentials) []error {
+	switch {
+	case tc.Bearer != nil:
+		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got bearer)")}
+	case tc.MTLS != nil:
+		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got mtls)")}
+	case tc.Basic != nil:
+		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got basic)")}
+	}
+	return nil
+}
+
 // SourceCredentials resolves the source Kafka leg.
 func (g *GatewayMigration) SourceCredentials() (types.MigrateClusterCredentials, []error) {
 	mc, errs := g.Spec.Source.Credentials.ResolveMigrateClusterWithDefaults(g.Interpolate, defaultGatewayCredentials)
@@ -393,7 +433,14 @@ func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 		return nil, fmt.Errorf("spec.target.kafka: required")
 	}
 	if ref := g.Spec.Target.Kafka.RestCredentials; ref != nil {
-		return ref.ResolveTarget(g.Interpolate)
+		tc, err := ref.ResolveTarget(g.Interpolate)
+		if err != nil {
+			return nil, err
+		}
+		if errs := checkRestIsAPIKeyForm(*tc); len(errs) > 0 {
+			return nil, errs[0]
+		}
+		return tc, nil
 	}
 
 	mc, errs := g.DestinationKafkaCredentials()
@@ -428,4 +475,54 @@ func (g *GatewayMigration) KubeconfigPath() (string, error) {
 		return "", fmt.Errorf("expanding %q in spec.gateway.kubeconfig: %w", "~/", err)
 	}
 	return filepath.Join(home, p[2:]), nil
+}
+
+// LoadGatewayMigrationFile reads, parses and structurally validates a manifest
+// from disk. Every command that reads a manifest goes through here, so the
+// secret-bearing-file warning cannot be wired into one command and forgotten in
+// the others.
+//
+// Credentials are NOT resolved: callers that need them ask for the specific leg,
+// which keeps the safety refusals that do not need credentials reachable when
+// resolution would fail.
+func LoadGatewayMigrationFile(path string) (*GatewayMigration, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading migration manifest: %w", err)
+	}
+	warnIfGroupOrWorldReadable(path)
+
+	g, err := ParseGatewayMigration(data)
+	if err != nil {
+		return nil, err
+	}
+	if errs := g.Validate(); len(errs) > 0 {
+		return nil, JoinProblems("the migration manifest", errs)
+	}
+	return g, nil
+}
+
+// warnIfGroupOrWorldReadable flags a secret-bearing manifest with loose
+// permissions. A warning rather than an error: the file may legitimately be a
+// read-only Kubernetes projected volume, and refusing to read it would break
+// the in-cluster path entirely.
+func warnIfGroupOrWorldReadable(path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		slog.Warn("⚠️ migration manifest is group- or world-readable and may contain credentials",
+			"path", path, "mode", fmt.Sprintf("%#o", perm))
+	}
+}
+
+// JoinProblems renders all problems at once, so an operator fixes the file in
+// one pass rather than one error per run.
+func JoinProblems(what string, errs []error) error {
+	msgs := make([]string, len(errs))
+	for i, e := range errs {
+		msgs[i] = "  - " + e.Error()
+	}
+	return fmt.Errorf("%d problem(s) found in %s:\n%s", len(errs), what, strings.Join(msgs, "\n"))
 }

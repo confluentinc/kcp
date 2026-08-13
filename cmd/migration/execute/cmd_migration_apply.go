@@ -87,7 +87,7 @@ func newApplyLikeCmd(use, short string, hidden bool) *cobra.Command {
 }
 
 func runMigrationApply(cmd *cobra.Command, args []string) error {
-	g, err := loadManifest(manifestFile)
+	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
 	}
@@ -112,25 +112,6 @@ func runMigrationApply(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	return NewMigrationExecutor(opts).Run()
-}
-
-// loadManifest reads, parses and validates the manifest. The validator is where
-// execute's three hand-written preRunE errors now live: an unrecognised
-// sasl_scram mechanism, a sub-10s detect-unrouted-producers window, and a
-// negative offset-sync drain.
-func loadManifest(path string) (*manifest.GatewayMigration, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading migration manifest: %w", err)
-	}
-	g, err := manifest.ParseGatewayMigration(data)
-	if err != nil {
-		return nil, err
-	}
-	if errs := g.Validate(); len(errs) > 0 {
-		return nil, joinErrors("the migration manifest", errs)
-	}
-	return g, nil
 }
 
 // resolveMigrationID prefers an explicit override. metadata.name is the
@@ -281,7 +262,7 @@ func diffCounts(want, have []string) (added, removed int) {
 func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, state migration.MigrationState, stateFile string) (MigrationExecutorOpts, error) {
 	srcCreds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
-		return MigrationExecutorOpts{}, joinErrors("spec.source.credentials", errs)
+		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.source.credentials", errs)
 	}
 	restCreds, err := g.RestCredentials()
 	if err != nil {
@@ -289,7 +270,7 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	}
 	dstCreds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return MigrationExecutorOpts{}, joinErrors("spec.target.kafka.credentials", errs)
+		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.credentials", errs)
 	}
 
 	// Policy is read FRESH on every run and never snapshotted. Only these two
@@ -298,18 +279,31 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	config.ConsumerOffsetSyncDrainDuration = g.Spec.Policy.ConsumerOffsetSyncDrainDuration
 
 	opts := MigrationExecutorOpts{
-		MigrationStateFile:    stateFile,
-		MigrationState:        state,
-		MigrationConfig:       *config,
-		LagThreshold:          int64(g.Spec.Policy.LagThreshold),
-		ClusterApiKey:         restCreds.APIKey,
-		ClusterApiSecret:      restCreds.APISecret,
-		ClusterRestCACert:     restCreds.CACert,
-		ClusterBootstrap:      config.ClusterBootstrap,
-		SourceBootstrap:       config.SourceBootstrap,
-		InsecureSkipTLSVerify: srcCreds.InsecureSkipTLSVerify || dstCreds.InsecureSkipTLSVerify,
-		RolloutTimeout:        g.Spec.Policy.RolloutTimeout,
-		PromoteBatchSize:      g.Spec.Policy.PromoteBatchSize,
+		MigrationStateFile: stateFile,
+		MigrationState:     state,
+		MigrationConfig:    *config,
+		LagThreshold:       int64(g.Spec.Policy.LagThreshold),
+		ClusterBootstrap:   config.ClusterBootstrap,
+		SourceBootstrap:    config.SourceBootstrap,
+		RolloutTimeout:     g.Spec.Policy.RolloutTimeout,
+		PromoteBatchSize:   g.Spec.Policy.PromoteBatchSize,
+
+		// The destination Kafka leg authenticates with the KAFKA block. When
+		// restCredentials is spelled out it may name a different, broader
+		// principal, and sending that to the broker would invert least privilege.
+		ClusterApiKey:    dstCreds.SASLPlain.Username,
+		ClusterApiSecret: dstCreds.SASLPlain.Password,
+
+		RestApiKey:        restCreds.APIKey,
+		RestApiSecret:     restCreds.APISecret,
+		ClusterRestCACert: restCreds.CACert,
+
+		// Each leg carries only what its own block asked for. Collapsing these
+		// would mean relaxing TLS for a self-signed source also stops verifying
+		// the destination connections that carry the destination API key.
+		SourceInsecureSkipTLSVerify:    srcCreds.InsecureSkipTLSVerify,
+		DestKafkaInsecureSkipTLSVerify: dstCreds.InsecureSkipTLSVerify,
+		RestInsecureSkipTLSVerify:      restCreds.InsecureSkipVerify,
 	}
 	applySourceAuth(&opts, srcCreds)
 	return opts, nil
@@ -348,12 +342,4 @@ func applySourceAuth(opts *MigrationExecutorOpts, creds types.MigrateClusterCred
 	case creds.UnauthenticatedPlaintext != nil:
 		opts.AuthType = types.AuthTypeUnauthenticatedPlaintext
 	}
-}
-
-func joinErrors(what string, errs []error) error {
-	msgs := make([]string, len(errs))
-	for i, e := range errs {
-		msgs[i] = "  - " + e.Error()
-	}
-	return fmt.Errorf("%d problem(s) found in %s:\n%s", len(errs), what, strings.Join(msgs, "\n"))
 }

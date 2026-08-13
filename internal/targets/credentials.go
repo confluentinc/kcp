@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/interpolate"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
 
@@ -84,7 +85,7 @@ func LoadCredentials(path string) (*Credentials, error) {
 func ParseCredentials(data []byte) (*Credentials, error) {
 	var c Credentials
 	if err := yaml.UnmarshalWithOptions(data, &c, yaml.Strict()); err != nil {
-		return nil, fmt.Errorf("parsing target credentials: %w", err)
+		return nil, fmt.Errorf("parsing target credentials: %w", yamlsafe.StripSourceExcerpt(err))
 	}
 	if c.Interpolate {
 		if err := interpolate.Struct(&c); err != nil {

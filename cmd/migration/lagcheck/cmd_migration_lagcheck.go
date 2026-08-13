@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
@@ -60,16 +59,9 @@ func preRunMigrationLag(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrationLag(cmd *cobra.Command, args []string) error {
-	data, err := os.ReadFile(manifestFile)
-	if err != nil {
-		return fmt.Errorf("reading migration manifest: %w", err)
-	}
-	g, err := manifest.ParseGatewayMigration(data)
+	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
-	}
-	if errs := g.Validate(); len(errs) > 0 {
-		return fmt.Errorf("%d problem(s) found in the migration manifest: %v", len(errs), errs[0])
 	}
 
 	config, httpClient, err := buildLagCheckConfig(g)

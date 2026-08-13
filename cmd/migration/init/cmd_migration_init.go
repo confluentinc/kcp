@@ -83,7 +83,7 @@ func preRunMigrationInit(cmd *cobra.Command, args []string) error {
 }
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
-	g, err := loadGatewayManifest(manifestFile)
+	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
 	}
@@ -194,26 +194,6 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// loadGatewayManifest reads, parses and structurally validates the manifest.
-// Credentials are checked separately (checkCredentialsResolve), so that the
-// safety refusals which do not need them can run first.
-func loadGatewayManifest(path string) (*manifest.GatewayMigration, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("reading migration manifest: %w", err)
-	}
-	warnIfGroupOrWorldReadable(path)
-
-	g, err := manifest.ParseGatewayMigration(data)
-	if err != nil {
-		return nil, err
-	}
-	if errs := g.Validate(); len(errs) > 0 {
-		return nil, joinValidationErrors(errs)
-	}
-	return g, nil
-}
-
 // checkCredentialsResolve resolves every credential block without using the
 // result. kcp never contacts the source during init, but resolving here turns
 // "you got the auth wrong" into an init-time error rather than one discovered
@@ -221,10 +201,10 @@ func loadGatewayManifest(path string) (*manifest.GatewayMigration, error) {
 // the six --use-* flags used to buy at the cost of declaring source auth twice.
 func checkCredentialsResolve(g *manifest.GatewayMigration) error {
 	if _, errs := g.SourceCredentials(); len(errs) > 0 {
-		return fmt.Errorf("spec.source.credentials: %w", joinValidationErrors(errs))
+		return fmt.Errorf("spec.source.credentials: %w", manifest.JoinProblems("the migration manifest", errs))
 	}
 	if _, errs := g.DestinationKafkaCredentials(); len(errs) > 0 {
-		return fmt.Errorf("spec.target.kafka.credentials: %w", joinValidationErrors(errs))
+		return fmt.Errorf("spec.target.kafka.credentials: %w", manifest.JoinProblems("the migration manifest", errs))
 	}
 	return nil
 }
@@ -269,28 +249,4 @@ func topicsOf(g *manifest.GatewayMigration) []string {
 		return []string{}
 	}
 	return *g.Spec.Topics
-}
-
-// warnIfGroupOrWorldReadable flags a secret-bearing manifest with loose
-// permissions. A warning rather than an error: the file may legitimately be a
-// read-only Kubernetes projected volume, and refusing to read it would break
-// the in-cluster path entirely.
-func warnIfGroupOrWorldReadable(path string) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return
-	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		slog.Warn("⚠️ migration manifest is group- or world-readable and may contain credentials", "path", path, "mode", fmt.Sprintf("%#o", perm))
-	}
-}
-
-// joinValidationErrors renders all problems at once, so an operator fixes the
-// file in one pass rather than one error per run.
-func joinValidationErrors(errs []error) error {
-	msgs := make([]string, len(errs))
-	for i, e := range errs {
-		msgs[i] = "  - " + e.Error()
-	}
-	return fmt.Errorf("%d problem(s) found in the migration manifest:\n%s", len(errs), strings.Join(msgs, "\n"))
 }

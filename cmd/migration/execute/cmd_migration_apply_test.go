@@ -454,7 +454,9 @@ func TestApply_InsecureSkipReachesAllThreeLegs(t *testing.T) {
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
-	assert.True(t, opts.InsecureSkipTLSVerify)
+	assert.True(t, opts.SourceInsecureSkipTLSVerify)
+	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
+	assert.True(t, opts.RestInsecureSkipTLSVerify)
 
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
@@ -524,4 +526,92 @@ func TestApply_NeverPersistsCredentials(t *testing.T) {
 	for _, secret := range []string{"secret", "CC_SECRET", "CC_KEY"} {
 		assert.NotContains(t, string(raw), secret)
 	}
+}
+
+// --- security review F2/F4: TLS trust must be per-leg ---
+
+// TestApply_SourceInsecureSkipDoesNotReachTheDestination. The manifest spells
+// insecure_skip_tls_verify per credentials block. Collapsing the blocks into
+// one boolean means an operator relaxing TLS for a self-signed on-prem SOURCE
+// also stops verifying the destination connections — which transmit the
+// destination API key as SASL/PLAIN and as HTTP Basic. Anyone able to MITM the
+// path to the destination then harvests them.
+func TestApply_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "    credentials:\n      sasl_scram:",
+			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
+	})
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	assert.True(t, opts.SourceInsecureSkipTLSVerify, "the source asked for it")
+	assert.False(t, opts.DestKafkaInsecureSkipTLSVerify, "the destination Kafka leg did not")
+	assert.False(t, opts.RestInsecureSkipTLSVerify, "nor the destination REST leg")
+}
+
+// TestApply_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
+func TestApply_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "      credentials:\n        sasl_plain:",
+			"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
+	})
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	assert.False(t, opts.SourceInsecureSkipTLSVerify)
+	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
+	assert.True(t, opts.RestInsecureSkipTLSVerify, "a DERIVED REST leg inherits from the Kafka block")
+}
+
+// TestApply_ExplicitRestCredentialsGovernTheRestLeg — with restCredentials
+// spelled out, its own insecure_skip_verify governs, and nothing else leaks in.
+// Otherwise a declared private-CA ca_cert would be loaded and then rendered
+// meaningless by an InsecureSkipVerify inherited from another leg.
+func TestApply_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		doc = strings.Replace(doc, "    credentials:\n      sasl_scram:",
+			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        api_key: K
+        api_secret: S
+  clusterLink:`, 1)
+	})
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	assert.True(t, opts.SourceInsecureSkipTLSVerify)
+	assert.False(t, opts.RestInsecureSkipTLSVerify,
+		"an explicit REST block that did not ask for it must keep verifying")
+}
+
+// --- security review F5: the Kafka leg authenticates with the KAFKA block ---
+
+// TestApply_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne. The
+// destination bootstrap is dialled with SASL/PLAIN. Feeding it from
+// restCredentials means a deliberately broader REST key reaches the broker
+// instead of the narrower Kafka-scoped one — least privilege inverted.
+func TestApply_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        api_key: REST_ONLY_KEY
+        api_secret: REST_ONLY_SECRET
+  clusterLink:`, 1)
+	})
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	assert.Equal(t, "CC_KEY", opts.ClusterApiKey, "the Kafka leg uses spec.target.kafka.credentials")
+	assert.Equal(t, "CC_SECRET", opts.ClusterApiSecret)
+	assert.Equal(t, "REST_ONLY_KEY", opts.RestApiKey, "the REST leg uses restCredentials")
+	assert.Equal(t, "REST_ONLY_SECRET", opts.RestApiSecret)
+}
+
+// TestApply_DerivedRestCredentialsStillMatchTheKafkaLeg — the common case is
+// unchanged: one pair feeds both legs.
+func TestApply_DerivedRestCredentialsStillMatchTheKafkaLeg(t *testing.T) {
+	f := newFixture(t, nil)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	assert.Equal(t, "CC_KEY", opts.ClusterApiKey)
+	assert.Equal(t, "CC_KEY", opts.RestApiKey)
 }
