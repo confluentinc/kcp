@@ -87,7 +87,7 @@ func validateSelection(field string, include []string) []error {
 // implementation) accepts shapes like "arn:aws:kafka::cluster/x" — missing
 // region/account — that superficially look right but that arnClusterIdentity
 // can't parse a real cluster identity out of either. Validating such an ARN
-// as OK would let a manifest reach apply time with a clusterArn that silently
+// as OK would let a manifest reach execute time with a clusterArn that silently
 // scopes nothing (Finding 2(a) / task-7).
 func isMSKClusterArn(s string) bool {
 	parts := strings.Split(s, ":")

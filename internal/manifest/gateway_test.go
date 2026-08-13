@@ -737,7 +737,7 @@ func TestGateway_InsecureSkipIsPerLeg(t *testing.T) {
 // --- security review F7: the permission warning must cover every reader ---
 
 // TestLoadGatewayMigrationFile_WarnsOnLoosePermissions. The same secret-bearing
-// manifest is read by init, apply and lag-check; a warning wired into only one
+// manifest is read by init, execute and lag-check; a warning wired into only one
 // of them misses an operator who tightens permissions after init, or who only
 // ever runs lag-check.
 func TestLoadGatewayMigrationFile_WarnsOnLoosePermissions(t *testing.T) {

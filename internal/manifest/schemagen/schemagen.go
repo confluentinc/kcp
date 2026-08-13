@@ -129,7 +129,7 @@ func GenerateGateway() ([]byte, error) {
 		kafka.Properties["restCredentials"]:  "Destination REST credentials. OPTIONAL: when omitted these are derived in full from credentials (api_key/api_secret from sasl_plain.username/password, insecure_skip_verify from insecure_skip_tls_verify). Spell it out only for a REST endpoint behind a private CA — a block that is present is used exactly as written, never partially derived.",
 
 		clusterLink.Properties["name"]:                    "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
-		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during apply and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
+		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
 
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",

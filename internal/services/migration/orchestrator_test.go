@@ -1148,7 +1148,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 				}
 			},
 			wantState:       StateOffsetSyncPaused,
-			wantContains:    []string{"still fenced", "blocked", "kcp migration apply", "test-link", "consumer.offset.sync.enable"},
+			wantContains:    []string{"still fenced", "blocked", "kcp migration execute", "test-link", "consumer.offset.sync.enable"},
 			wantNotContains: []string{"restore will run after a successful switchover", "rollback failed"},
 		},
 		{

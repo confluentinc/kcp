@@ -134,7 +134,7 @@ func TestLagCheck_AlwaysWatchesEveryMirrorTopic(t *testing.T) {
 }
 
 // TestLagCheck_UsesDerivedRestCredentials — omitting restCredentials derives
-// them, exactly as init and apply do.
+// them, exactly as init and execute do.
 func TestLagCheck_UsesDerivedRestCredentials(t *testing.T) {
 	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
 		return strings.Replace(doc, "  clusterLink:", `      restCredentials:

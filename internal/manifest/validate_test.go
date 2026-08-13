@@ -761,7 +761,7 @@ func TestValidate_ACLsIAM_MultiplePrincipalArns_OneMalformed(t *testing.T) {
 // segments — this shape does not actually scope anything (arnClusterIdentity
 // in internal/migrate/acls/iam_translate.go cannot parse a cluster identity
 // out of it any better than validation can), so a manifest naming it would
-// silently match zero grants at apply time. See Finding 2(a) / task-7.
+// silently match zero grants at execute time. See Finding 2(a) / task-7.
 func TestValidate_ACLsIAM_ClusterArnMalformed_EmptyRegionAccount(t *testing.T) {
 	m := validCCMigrationWithACLs(t)
 	m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: "arn:aws:kafka::cluster/x", PrincipalArns: []string{"arn:aws:iam::1:role/R"}}

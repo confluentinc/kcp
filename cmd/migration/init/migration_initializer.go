@@ -17,7 +17,7 @@ type MigrationInitializerOpts struct {
 	// the only client this initializer builds. Named for the leg rather than
 	// the cluster because the sibling execute package uses ClusterApiKey for
 	// the KAFKA leg, and one name meaning two things a directory apart is what
-	// produced the credential-crossing bug in apply.
+	// produced the credential-crossing bug in execute.
 	RestApiKey            string
 	RestApiSecret         string
 	ClusterRestCACert     string

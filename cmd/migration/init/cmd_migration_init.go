@@ -49,12 +49,12 @@ in the namespace — and writes the migration configuration to the state file.
 Validating up front matters because the alternative is discovering the problem at cutover,
 after client traffic has already been fenced.
 
-The state file can then be used by 'kcp migration apply' to run the migration.
+The state file can then be used by 'kcp migration execute' to run the migration.
 
 metadata.name in the manifest is the migration's identity and is written into the state
 file's migration_id, so re-running init updates that migration rather than creating a
 second one. Init refuses to overwrite a migration that is already past the point of no
-return; use 'kcp migration apply --accept-spec-change' there instead.
+return; use 'kcp migration execute --accept-spec-change' there instead.
 
 The manifest is secret-bearing when credentials are written inline. Keep it 0600, or
 reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: true).`,
@@ -162,10 +162,10 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	if skipValidate {
 		if config.PauseConsumerOffsetSync {
 			// Not a hard error: the pre-disable snapshot is taken by the
-			// Initialize FSM step on the first apply, two steps before offset
+			// Initialize FSM step on the first execute, two steps before offset
 			// sync can be paused, so skipping init-time validation does not
 			// leave the restore bookend with nothing to diff against.
-			slog.Warn("⚠️ validation skipped for a migration with spec.clusterLink.pauseConsumerOffsetSync: the cluster link's consumer.offset.sync.enable is not checked until apply")
+			slog.Warn("⚠️ validation skipped for a migration with spec.clusterLink.pauseConsumerOffsetSync: the cluster link's consumer.offset.sync.enable is not checked until execute")
 		}
 		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
 		return nil
@@ -197,7 +197,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 // checkCredentialsResolve resolves every credential block without using the
 // result. kcp never contacts the source during init, but resolving here turns
 // "you got the auth wrong" into an init-time error rather than one discovered
-// at apply, after the operator has scheduled a cutover window — the fail-fast
+// at execute, after the operator has scheduled a cutover window — the fail-fast
 // the six --use-* flags used to buy at the cost of declaring source auth twice.
 func checkCredentialsResolve(g *manifest.GatewayMigration) error {
 	if _, errs := g.SourceCredentials(); len(errs) > 0 {
@@ -221,7 +221,7 @@ func checkReInitIsSafe(state *migration.MigrationState, name string) error {
 	}
 	return fmt.Errorf(
 		"migration %q is already at state %q and cannot be re-initialised — re-running init would discard the state needed to complete or roll back the cutover.\n"+
-			"To proceed with an edited spec, run: kcp migration apply -f <file> --accept-spec-change",
+			"To proceed with an edited spec, run: kcp migration execute -f <file> --accept-spec-change",
 		name, existing.CurrentState)
 }
 

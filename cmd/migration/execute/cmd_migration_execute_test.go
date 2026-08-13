@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const applyManifest = `apiVersion: kcp.confluent.io/v1alpha1
+const executeManifest = `apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
   name: msk-prod-to-cc-batch-1
@@ -73,7 +73,7 @@ func newFixture(t *testing.T, mutate func(string) string) fixture {
 	require.NoError(t, os.WriteFile(f.fencedPath, []byte("kind: Gateway\nname: fenced\n"), 0600))
 	require.NoError(t, os.WriteFile(f.switchPath, []byte("kind: Gateway\nname: switchover\n"), 0600))
 
-	doc := strings.ReplaceAll(applyManifest, "FENCED_PATH", f.fencedPath)
+	doc := strings.ReplaceAll(executeManifest, "FENCED_PATH", f.fencedPath)
 	doc = strings.ReplaceAll(doc, "SWITCHOVER_PATH", f.switchPath)
 	if mutate != nil {
 		doc = mutate(doc)
@@ -109,9 +109,9 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 	require.NoError(t, state.WriteToFile(f.stateFile))
 }
 
-func runApply(t *testing.T, args ...string) (string, error) {
+func runExecute(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := NewMigrationApplyCmd()
+	cmd := NewMigrationExecuteCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -140,28 +140,24 @@ func persistedConfig(t *testing.T, f fixture) *migration.MigrationConfig {
 
 // --- command surface ---
 
-// TestApply_IsNamedApply — decision 7. Renaming now rather than when the PRFAQ
-// ships it spares customers two runbook rewrites for one audience.
-func TestApply_IsNamedApply(t *testing.T) {
-	assert.Equal(t, "apply", NewMigrationApplyCmd().Name())
-}
-
-// TestExecute_IsAHiddenAlias — existing runbooks and scripts keep working.
-func TestExecute_IsAHiddenAlias(t *testing.T) {
+// TestExecute_IsNamedExecute — the manifest work deliberately kept the existing
+// verb, so runbooks, scripts and the published docs stay correct.
+func TestExecute_IsNamedExecute(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	assert.Equal(t, "execute", cmd.Name())
-	assert.True(t, cmd.Hidden, "the old verb stays available but is not advertised")
+	assert.False(t, cmd.Hidden, "execute is the advertised verb, not an alias")
+	assert.Empty(t, cmd.Deprecated, "execute is not deprecated")
 }
 
-func TestApply_FlagSurfaceIsFourFlags(t *testing.T) {
-	cmd := NewMigrationApplyCmd()
+func TestExecute_FlagSurfaceIsFourFlags(t *testing.T) {
+	cmd := NewMigrationExecuteCmd()
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
 	assert.ElementsMatch(t,
 		[]string{"file", "migration-state-file", "migration-id", "accept-spec-change"}, names)
 }
 
-func TestApply_RetiredFlagsAreGone(t *testing.T) {
+func TestExecute_RetiredFlagsAreGone(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, flag := range []string{
 		"--lag-threshold", "--cluster-api-key", "--cluster-api-secret", "--aws-region",
@@ -170,24 +166,24 @@ func TestApply_RetiredFlagsAreGone(t *testing.T) {
 		"--use-sasl-iam", "--insecure-skip-tls-verify", "--cluster-rest-ca-cert",
 	} {
 		t.Run(flag, func(t *testing.T) {
-			_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile, flag, "1")
+			_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile, flag, "1")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "unknown flag")
 		})
 	}
 }
 
-func TestApply_RequiresFile(t *testing.T) {
-	_, err := runApply(t)
+func TestExecute_RequiresFile(t *testing.T) {
+	_, err := runExecute(t)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "file")
 }
 
 // --- migration id resolution ---
 
-// TestApply_ResolvesMigrationIdFromMetadataName — --migration-id survives as an
+// TestExecute_ResolvesMigrationIdFromMetadataName — --migration-id survives as an
 // override only; the manifest names the migration.
-func TestApply_ResolvesMigrationIdFromMetadataName(t *testing.T) {
+func TestExecute_ResolvesMigrationIdFromMetadataName(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
 	assert.Equal(t, "msk-prod-to-cc-batch-1", resolveMigrationID(g, ""))
@@ -195,11 +191,11 @@ func TestApply_ResolvesMigrationIdFromMetadataName(t *testing.T) {
 		"an explicit --migration-id addresses a pre-existing uuid-keyed row")
 }
 
-func TestApply_ErrorsWhenMigrationNotInStateFile(t *testing.T) {
+func TestExecute_ErrorsWhenMigrationNotInStateFile(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc, "  name: msk-prod-to-cc-batch-1", "  name: no-such-migration", 1)
 	})
-	_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+	_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no-such-migration")
 	assert.Contains(t, err.Error(), "kcp migration list")
@@ -239,7 +235,7 @@ func TestDrift_DetectsChangedTopology(t *testing.T) {
 }
 
 // TestDrift_OmittedTopicsMatchTheExpandedSnapshot is the §13 asymmetry: after
-// the first apply an omitted spec.topics compares against a snapshot back-filled
+// the first execute an omitted spec.topics compares against a snapshot back-filled
 // with every active mirror, so "omitted" must equal "whatever was expanded".
 func TestDrift_OmittedTopicsMatchTheExpandedSnapshot(t *testing.T) {
 	f := newFixture(t, nil)
@@ -285,7 +281,7 @@ func TestDrift_DetectsChangedCRBytes(t *testing.T) {
 	assert.Contains(t, strings.Join(drift, " "), "fenced CR")
 }
 
-// TestDrift_UnreadableCRIsNotFatal — apply is resume-safe and may run from a
+// TestDrift_UnreadableCRIsNotFatal — execute is resume-safe and may run from a
 // different cwd or pod after a crash, possibly with the gateway already fenced.
 // A moved CR file must not strand a mid-flight cutover.
 func TestDrift_UnreadableCRIsNotFatal(t *testing.T) {
@@ -295,7 +291,7 @@ func TestDrift_UnreadableCRIsNotFatal(t *testing.T) {
 		"an unreadable CR degrades to a warning, never a drift error")
 }
 
-// TestDrift_KubeconfigPathIsNotCompared — for the same reason: apply may
+// TestDrift_KubeconfigPathIsNotCompared — for the same reason: execute may
 // legitimately run from a different machine or pod.
 func TestDrift_KubeconfigPathIsNotCompared(t *testing.T) {
 	f := newFixture(t, nil)
@@ -303,8 +299,8 @@ func TestDrift_KubeconfigPathIsNotCompared(t *testing.T) {
 	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
 }
 
-// TestDrift_PolicyIsNeverCompared — policy is read fresh on every apply, which
-// is what lets a caller vary it between init and apply.
+// TestDrift_PolicyIsNeverCompared — policy is read fresh on every execute, which
+// is what lets a caller vary it between init and execute.
 func TestDrift_PolicyIsNeverCompared(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return doc + "  policy:\n    promoteBatchSize: 7\n    rolloutTimeout: 3m\n"
@@ -323,7 +319,7 @@ func TestDrift_CredentialsAreNotComparable(t *testing.T) {
 
 // --- drift response (§13's two rows) ---
 
-func TestApply_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
+func TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
 	for _, state := range []string{migration.StateUninitialized, migration.StateInitialized, migration.StateLagsOk} {
 		t.Run(state, func(t *testing.T) {
 			f := newFixture(t, nil)
@@ -331,7 +327,7 @@ func TestApply_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
 				c.CurrentState = state
 				c.ClusterLinkName = "changed-link"
 			})
-			_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+			_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "Re-run init")
 			assert.Contains(t, err.Error(), "spec.clusterLink")
@@ -339,13 +335,13 @@ func TestApply_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
 	}
 }
 
-func TestApply_DriftMidFlightSaysAcceptSpecChange(t *testing.T) {
+func TestExecute_DriftMidFlightSaysAcceptSpecChange(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.CurrentState = migration.StateFenced
 		c.ClusterLinkName = "changed-link"
 	})
-	_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+	_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--accept-spec-change")
 	assert.Contains(t, err.Error(), "already fenced")
@@ -353,16 +349,16 @@ func TestApply_DriftMidFlightSaysAcceptSpecChange(t *testing.T) {
 		"re-running init is not safe once producers are fenced")
 }
 
-// TestApply_AcceptSpecChangeOverridesDrift — the override must actually get
+// TestExecute_AcceptSpecChangeOverridesDrift — the override must actually get
 // past the check (the run then fails later, on the network, which is expected
 // in a unit test).
-func TestApply_AcceptSpecChangeOverridesDrift(t *testing.T) {
+func TestExecute_AcceptSpecChangeOverridesDrift(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.CurrentState = migration.StateFenced
 		c.ClusterLinkName = "changed-link"
 	})
-	_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile, "--accept-spec-change")
+	_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile, "--accept-spec-change")
 	if err != nil {
 		assert.NotContains(t, err.Error(), "config file has changed")
 	}
@@ -370,7 +366,7 @@ func TestApply_AcceptSpecChangeOverridesDrift(t *testing.T) {
 
 // --- policy is read fresh ---
 
-func TestApply_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
+func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return doc + `  policy:
     lagThreshold: 42
@@ -394,7 +390,7 @@ func TestApply_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 
 // --- source auth mapping ---
 
-func TestApply_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
+func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 	for name, tc := range map[string]struct {
 		block  string
 		assert func(*testing.T, MigrationExecutorOpts)
@@ -441,10 +437,10 @@ func TestApply_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 	}
 }
 
-// TestApply_InsecureSkipReachesAllThreeLegs preserves today's single-flag
+// TestExecute_InsecureSkipReachesAllThreeLegs preserves today's single-flag
 // fan-out: --insecure-skip-tls-verify reached the source, the destination Kafka
 // leg and the destination REST leg from one place.
-func TestApply_InsecureSkipReachesAllThreeLegs(t *testing.T) {
+func TestExecute_InsecureSkipReachesAllThreeLegs(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		doc = strings.Replace(doc, "    credentials:\n      sasl_scram:",
 			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
@@ -463,8 +459,8 @@ func TestApply_InsecureSkipReachesAllThreeLegs(t *testing.T) {
 	assert.True(t, rest.InsecureSkipVerify, "the derived REST leg inherits it")
 }
 
-// TestApply_DestinationKeyAndSecretFeedBothLegs — one pair, two legs, as today.
-func TestApply_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
+// TestExecute_DestinationKeyAndSecretFeedBothLegs — one pair, two legs, as today.
+func TestExecute_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
@@ -475,15 +471,15 @@ func TestApply_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
 
 // --- ported preRunE errors (§6) ---
 
-// TestApply_PortsExecutesBespokePreRunErrors: execute's three hand-written
+// TestExecute_PortsBespokePreRunErrors: execute's three hand-written
 // preRunE errors must have explicit homes in the manifest validator, or they
 // are silently dropped when the flag lattice is deleted.
-func TestApply_PortsExecutesBespokePreRunErrors(t *testing.T) {
+func TestExecute_PortsBespokePreRunErrors(t *testing.T) {
 	t.Run("invalid sasl_scram mechanism", func(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
 			return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: SHA1", 1)
 		})
-		_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+		_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
 		require.Error(t, err)
 		assert.Contains(t, strings.ToLower(err.Error()), "mechanism")
 	})
@@ -492,7 +488,7 @@ func TestApply_PortsExecutesBespokePreRunErrors(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
 			return doc + "  policy:\n    detectUnroutedProducersDuration: 5s\n"
 		})
-		_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+		_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "detectUnroutedProducersDuration")
 	})
@@ -501,7 +497,7 @@ func TestApply_PortsExecutesBespokePreRunErrors(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
 			return doc + "  policy:\n    consumerOffsetSyncDrainDuration: -5s\n"
 		})
-		_, err := runApply(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+		_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "consumerOffsetSyncDrainDuration")
 	})
@@ -509,7 +505,7 @@ func TestApply_PortsExecutesBespokePreRunErrors(t *testing.T) {
 
 // --- credential persistence boundary ---
 
-func TestApply_NeverPersistsCredentials(t *testing.T) {
+func TestExecute_NeverPersistsCredentials(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
 	cfg := persistedConfig(t, f)
@@ -530,13 +526,13 @@ func TestApply_NeverPersistsCredentials(t *testing.T) {
 
 // --- security review F2/F4: TLS trust must be per-leg ---
 
-// TestApply_SourceInsecureSkipDoesNotReachTheDestination. The manifest spells
+// TestExecute_SourceInsecureSkipDoesNotReachTheDestination. The manifest spells
 // insecure_skip_tls_verify per credentials block. Collapsing the blocks into
 // one boolean means an operator relaxing TLS for a self-signed on-prem SOURCE
 // also stops verifying the destination connections — which transmit the
 // destination API key as SASL/PLAIN and as HTTP Basic. Anyone able to MITM the
 // path to the destination then harvests them.
-func TestApply_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
+func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc, "    credentials:\n      sasl_scram:",
 			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
@@ -549,8 +545,8 @@ func TestApply_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 	assert.False(t, opts.RestInsecureSkipTLSVerify, "nor the destination REST leg")
 }
 
-// TestApply_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
-func TestApply_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
+// TestExecute_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
+func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc, "      credentials:\n        sasl_plain:",
 			"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
@@ -563,11 +559,11 @@ func TestApply_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 	assert.True(t, opts.RestInsecureSkipTLSVerify, "a DERIVED REST leg inherits from the Kafka block")
 }
 
-// TestApply_ExplicitRestCredentialsGovernTheRestLeg — with restCredentials
+// TestExecute_ExplicitRestCredentialsGovernTheRestLeg — with restCredentials
 // spelled out, its own insecure_skip_verify governs, and nothing else leaks in.
 // Otherwise a declared private-CA ca_cert would be loaded and then rendered
 // meaningless by an InsecureSkipVerify inherited from another leg.
-func TestApply_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
+func TestExecute_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		doc = strings.Replace(doc, "    credentials:\n      sasl_scram:",
 			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
@@ -586,11 +582,11 @@ func TestApply_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
 
 // --- security review F5: the Kafka leg authenticates with the KAFKA block ---
 
-// TestApply_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne. The
+// TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne. The
 // destination bootstrap is dialled with SASL/PLAIN. Feeding it from
 // restCredentials means a deliberately broader REST key reaches the broker
 // instead of the narrower Kafka-scoped one — least privilege inverted.
-func TestApply_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.T) {
+func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
         api_key: REST_ONLY_KEY
@@ -606,9 +602,9 @@ func TestApply_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.T)
 	assert.Equal(t, "REST_ONLY_SECRET", opts.RestApiSecret)
 }
 
-// TestApply_DerivedRestCredentialsStillMatchTheKafkaLeg — the common case is
+// TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg — the common case is
 // unchanged: one pair feeds both legs.
-func TestApply_DerivedRestCredentialsStillMatchTheKafkaLeg(t *testing.T) {
+func TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg(t *testing.T) {
 	f := newFixture(t, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)

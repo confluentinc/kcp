@@ -33,48 +33,34 @@ var reversibleStates = []string{
 	migration.StateLagsOk,
 }
 
-const applyLong = `Apply a migration: run the cutover described by a GatewayMigration manifest.
+const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
 
 The migration must already be registered with 'kcp migration init'. Topology comes from
 the state file's snapshot, taken at init; policy and credentials are read FRESH from the
 manifest on every run, so they can be varied between runs.
 
-If the manifest's topology no longer matches the snapshot, apply stops rather than
+If the manifest's topology no longer matches the snapshot, execute stops rather than
 silently reconciling. Before the point of no return the answer is to re-run init; once
 producers are fenced, pass --accept-spec-change to proceed with the edited spec.
 
-If a run is interrupted at any step, re-running 'kcp migration apply' resumes from the
+If a run is interrupted at any step, re-running 'kcp migration execute' resumes from the
 last completed step.`
 
-// NewMigrationApplyCmd builds the `apply` command.
-func NewMigrationApplyCmd() *cobra.Command {
-	return newApplyLikeCmd("apply", "Apply a migration (run the cutover)", false)
-}
-
-// NewMigrationExecuteCmd builds `execute` as a hidden alias of `apply`. The verb
-// changed with this release; keeping the old one registered means existing
-// runbooks and scripts keep working without advertising two spellings.
+// NewMigrationExecuteCmd builds the `execute` command.
 func NewMigrationExecuteCmd() *cobra.Command {
-	cmd := newApplyLikeCmd("execute", "Deprecated alias for 'kcp migration apply'", true)
-	cmd.Deprecated = "use 'kcp migration apply' instead."
-	return cmd
-}
-
-func newApplyLikeCmd(use, short string, hidden bool) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   use,
-		Short: short,
-		Long:  applyLong,
+		Use:   "execute",
+		Short: "Execute a migration (run the cutover)",
+		Long:  executeLong,
 		Example: `  # Run (or resume) the cutover
-  kcp migration apply -f gateway-migration.yaml
+  kcp migration execute -f gateway-migration.yaml
 
   # Proceed mid-cutover with an edited spec
-  kcp migration apply -f gateway-migration.yaml --accept-spec-change`,
-		Hidden:        hidden,
+  kcp migration execute -f gateway-migration.yaml --accept-spec-change`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
-		RunE:          runMigrationApply,
+		RunE:          runMigrationExecute,
 	}
 
 	cmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
@@ -86,7 +72,7 @@ func newApplyLikeCmd(use, short string, hidden bool) *cobra.Command {
 	return cmd
 }
 
-func runMigrationApply(cmd *cobra.Command, args []string) error {
+func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
@@ -160,7 +146,7 @@ func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationCon
 //
 // It compares only what the state file actually holds, so policy and
 // credentials are out of scope automatically rather than by rule. Two fields
-// are deliberately excluded: the kubeconfig path, because apply is resume-safe
+// are deliberately excluded: the kubeconfig path, because execute is resume-safe
 // and may legitimately run from a different machine or pod; and anything
 // credential-bearing, because credentials are never persisted.
 func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig) []string {
@@ -215,7 +201,7 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	}
 
 	// An omitted spec.topics means "every active mirror topic", and after the
-	// first apply the snapshot holds whatever that expanded to — so omitted
+	// first execute the snapshot holds whatever that expanded to — so omitted
 	// must compare equal to the expansion, not to an empty list.
 	if g.Spec.Topics != nil {
 		added, removed := diffCounts(*g.Spec.Topics, config.Topics)
@@ -228,7 +214,7 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 }
 
 // crChanged reports whether the CR file on disk differs from the snapshot taken
-// at init. An unreadable file is NOT drift: apply may be re-run from a
+// at init. An unreadable file is NOT drift: execute may be re-run from a
 // different cwd or pod after a crash, possibly with the gateway already fenced,
 // and a moved file must not strand a mid-flight cutover.
 func crChanged(path string, snapshot []byte) bool {

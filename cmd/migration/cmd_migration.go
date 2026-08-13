@@ -25,7 +25,7 @@ The migration workflow follows a defined lifecycle managed by a finite state mac
 6. **Promote Topics** — promote mirror topics at zero lag.
 7. **Switch Gateway** — apply the switchover gateway CR to route traffic to Confluent Cloud.
 
-If execution is interrupted at any step, re-running ` + "`kcp migration apply`" + ` resumes from the last completed step.
+If execution is interrupted at any step, re-running ` + "`kcp migration execute`" + ` resumes from the last completed step.
 
 Supporting documentation:
 
@@ -37,9 +37,6 @@ Supporting documentation:
 
 	migrationCmd.AddCommand(
 		i.NewMigrationInitCmd(),
-		execute.NewMigrationApplyCmd(),
-		// The old verb stays registered but hidden, so runbooks and scripts
-		// written against `execute` keep working for one release.
 		execute.NewMigrationExecuteCmd(),
 		lagcheck.NewMigrationLagCheckCmd(),
 		list.NewMigrationListCmd(),

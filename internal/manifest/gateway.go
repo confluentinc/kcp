@@ -56,8 +56,8 @@ type GatewaySpec struct {
 	// active mirror topic") stays distinguishable from an explicitly empty list,
 	// which means the opposite and is rejected.
 	Topics *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
-	// Policy is read fresh on every apply and never snapshotted, which is what
-	// lets a caller vary execute-time policy between init and apply.
+	// Policy is read fresh on every execute and never snapshotted, which is what
+	// lets a caller vary execute-time policy between init and execute.
 	Policy Policy `yaml:"policy,omitempty" json:"policy,omitempty"`
 }
 
