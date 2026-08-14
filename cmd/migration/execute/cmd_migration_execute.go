@@ -20,6 +20,11 @@ var (
 	migrationStateFile string
 	migrationId        string
 	acceptSpecChange   bool
+	// runReport is the diagnostics knob carried over from #408. It stays a flag
+	// rather than a manifest policy field: the path is a per-run, machine-specific
+	// output location — operational, not versioned desired state — and the
+	// external migration performance rig (its only consumer) drives it this way.
+	runReport string
 )
 
 // reversibleStates are the states with nothing irreversible behind them. Drift
@@ -71,6 +76,15 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
 	cmd.Flags().BoolVar(&acceptSpecChange, "accept-spec-change", false, "Proceed even though the manifest no longer matches the topology snapshot taken at init. Only meaningful once the cutover is past the point where re-running init is safe.")
 
+	// Hidden pending schema validation by the migration performance rig, its
+	// first consumer; intended to become user-facing, since the natural audience
+	// for per-stage timings is someone rehearsing their own migration. It is a
+	// flag, not a manifest policy field, because the path is a per-run output
+	// location rather than versioned desired state. PreRunE's BindEnvToFlags also
+	// binds it to the RUN_REPORT env var.
+	cmd.Flags().StringVar(&runReport, "run-report", "", "Write per-stage migration timings to <path> as JSON.")
+	_ = cmd.Flags().MarkHidden("run-report")
+
 	_ = cmd.MarkFlagRequired("file")
 	_ = cmd.MarkFlagRequired("migration-state-file")
 	return cmd
@@ -101,6 +115,9 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	// run-report is an execute-time diagnostics path, not part of the manifest;
+	// carry it straight from the flag onto the opts.
+	opts.RunReportPath = runReport
 	return NewMigrationExecutor(opts).Run()
 }
 

@@ -96,7 +96,8 @@ type MigrationOrchestrator struct {
 	actions        *MigrationActions
 	migrationState *MigrationState
 	stateFilePath  string
-	reporter       *reporter // user-facing terminal output
+	reporter       *reporter          // user-facing terminal output
+	runReport      *RunReportRecorder // per-stage timings; nil when not requested
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
@@ -202,6 +203,14 @@ func NewMigrationOrchestrator(
 	return orchestrator
 }
 
+// SetRunReportRecorder attaches a run-report recorder, which records per-stage
+// timings as Execute walks the workflow. A nil recorder (the default) disables
+// reporting; it is a setter rather than a constructor argument so the init path,
+// which builds an orchestrator for a single transition, is untouched.
+func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
+	o.runReport = r
+}
+
 // Initialize triggers the initialization event
 func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, clusterApiSecret string) error {
 	params := ExecutionParams{ClusterApiKey: clusterApiKey, ClusterApiSecret: clusterApiSecret}
@@ -228,9 +237,15 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	}
 
 	// Drive execution from canonical workflow - single source of truth
+	//
+	// Stage timings are taken here rather than on the FSM's before/after
+	// callbacks: looplab runs the named before_<EVENT> callback — which is where
+	// the step's actual work happens — BEFORE the general before_event one, so
+	// before_event fires after the work is already done and cannot mark a start.
 	for _, step := range canonicalWorkflow {
 		if !o.canTransition(step.Event) {
 			slog.Debug("skipping already-completed step", "step", step.Description, "event", step.Event)
+			o.runReport.StageSkipped(step.Event)
 			continue // Skip already-completed steps (enables resumability)
 		}
 
@@ -238,9 +253,12 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			o.reporter.section(header)
 		}
 		slog.Debug("executing migration step", "step", step.Description)
+		o.runReport.StageStarted(step.Event, step.FromState, step.ToState)
 		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
+			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err, params)
 		}
+		o.runReport.StageEnded(o.config.CurrentState)
 		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}

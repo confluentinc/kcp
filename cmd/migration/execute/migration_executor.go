@@ -60,6 +60,9 @@ type MigrationExecutorOpts struct {
 	// synchronous batches of this size, waiting for each batch to reach
 	// STOPPED before promoting the next.
 	PromoteBatchSize int
+	// RunReportPath, when non-empty, is where per-stage timings are written as
+	// JSON. Empty (the default) disables the report.
+	RunReportPath string
 }
 
 type MigrationExecutor struct {
@@ -113,15 +116,32 @@ func (m *MigrationExecutor) Run() error {
 		m.opts.MigrationStateFile,
 	)
 
+	// The run report is stamped on the way out whatever the outcome: a migration
+	// that failed — or one whose lag never converged — is a result worth
+	// recording, and a caller timing the run needs the stages that did complete.
+	runReport := migration.NewRunReportRecorder(
+		m.opts.RunReportPath,
+		config.MigrationId,
+		len(config.Topics),
+		m.opts.LagThreshold,
+		config.CurrentState,
+	)
+	orchestrator.SetRunReportRecorder(runReport)
+	var execErr error
+	defer func() { runReport.Finish(config.CurrentState, execErr) }()
+
+	// The cluster-link REST API authenticates with the REST credentials, which
+	// may name a broader principal than the destination KAFKA credentials — the
+	// two are kept separate so neither leg silently authenticates as the other.
 	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.RestApiKey, m.opts.RestApiSecret)
 
 	// The consumer-offset-sync pause runs INSIDE the FSM (the
 	// pause_offset_sync stage, right after fencing) so destination offsets
 	// stay fresh through the lag and fence phases instead of going stale for
 	// the whole run. Only the restore below remains a bookend.
-	if err := orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.RestApiKey, m.opts.RestApiSecret); err != nil {
-		migration.WarnIfPausedOnExecuteFailure(&config, err)
-		return fmt.Errorf("failed to execute migration: %w", err)
+	if execErr = orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.RestApiKey, m.opts.RestApiSecret); execErr != nil {
+		migration.WarnIfPausedOnExecuteFailure(&config, execErr)
+		return fmt.Errorf("failed to execute migration: %w", execErr)
 	}
 
 	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail

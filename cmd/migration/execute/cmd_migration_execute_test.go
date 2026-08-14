@@ -149,12 +149,25 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 	assert.Empty(t, cmd.Deprecated, "execute is not deprecated")
 }
 
-func TestExecute_FlagSurfaceIsFourFlags(t *testing.T) {
+// TestExecute_FlagSurfaceIsFourVisibleFlags — the manifest work moved every
+// tuning knob into the config file, leaving a deliberately small advertised
+// surface of four visible flags. --run-report is registered but hidden (a
+// diagnostics path whose only consumer is the performance rig), so it is
+// asserted separately rather than padding the advertised surface.
+func TestExecute_FlagSurfaceIsFourVisibleFlags(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
-	var names []string
-	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
+	var visible []string
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if !f.Hidden {
+			visible = append(visible, f.Name)
+		}
+	})
 	assert.ElementsMatch(t,
-		[]string{"file", "migration-state-file", "migration-id", "accept-spec-change"}, names)
+		[]string{"file", "migration-state-file", "migration-id", "accept-spec-change"}, visible)
+
+	runReport := cmd.Flags().Lookup("run-report")
+	require.NotNil(t, runReport, "run-report must stay registered for the performance rig")
+	assert.True(t, runReport.Hidden, "run-report is a diagnostics flag and must stay hidden")
 }
 
 func TestExecute_RetiredFlagsAreGone(t *testing.T) {
