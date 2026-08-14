@@ -4,7 +4,7 @@
 # and auth flags that used to be repeated across `init` and `execute`.
 #
 #   kcp migration init      -f gateway-migration.yaml
-#   kcp migration execute   -f gateway-migration.yaml
+#   kcp migration execute   -f gateway-migration.yaml --migration-state-file migration-state.json
 #   kcp migration lag-check -f gateway-migration.yaml
 #
 # Paths in this file resolve relative to the PROCESS working directory, not to

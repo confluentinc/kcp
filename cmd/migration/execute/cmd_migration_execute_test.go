@@ -179,6 +179,16 @@ func TestExecute_RequiresFile(t *testing.T) {
 	assert.Contains(t, err.Error(), "file")
 }
 
+// TestExecute_RequiresMigrationStateFile — the state file holds the topology
+// snapshot execute treats as the source of truth, so it is a required input
+// (no CWD default), matching every other state-file-consuming command.
+func TestExecute_RequiresMigrationStateFile(t *testing.T) {
+	f := newFixture(t, nil)
+	_, err := runExecute(t, "-f", f.manifestPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration-state-file")
+}
+
 // --- migration id resolution ---
 
 // TestExecute_ResolvesMigrationIdFromMetadataName — --migration-id survives as an

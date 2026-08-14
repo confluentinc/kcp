@@ -53,10 +53,10 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		Short: "Execute a migration (run the cutover)",
 		Long:  executeLong,
 		Example: `  # Run (or resume) the cutover
-  kcp migration execute -f gateway-migration.yaml
+  kcp migration execute -f gateway-migration.yaml --migration-state-file migration-state.json
 
   # Proceed mid-cutover with an edited spec
-  kcp migration execute -f gateway-migration.yaml --accept-spec-change`,
+  kcp migration execute -f gateway-migration.yaml --migration-state-file migration-state.json --accept-spec-change`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
@@ -64,11 +64,12 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file.")
+	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "", "Path to the migration-state.json file (produced by kcp migration init).")
 	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
 	cmd.Flags().BoolVar(&acceptSpecChange, "accept-spec-change", false, "Proceed even though the manifest no longer matches the topology snapshot taken at init. Only meaningful once the cutover is past the point where re-running init is safe.")
 
 	_ = cmd.MarkFlagRequired("file")
+	_ = cmd.MarkFlagRequired("migration-state-file")
 	return cmd
 }
 

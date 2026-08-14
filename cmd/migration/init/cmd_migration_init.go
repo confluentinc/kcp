@@ -221,7 +221,7 @@ func checkReInitIsSafe(state *migration.MigrationState, name string) error {
 	}
 	return fmt.Errorf(
 		"migration %q is already at state %q and cannot be re-initialised — re-running init would discard the state needed to complete or roll back the cutover.\n"+
-			"To proceed with an edited spec, run: kcp migration execute -f <file> --accept-spec-change",
+			"To proceed with an edited spec, run: kcp migration execute -f <file> --migration-state-file <state-file> --accept-spec-change",
 		name, existing.CurrentState)
 }
 
