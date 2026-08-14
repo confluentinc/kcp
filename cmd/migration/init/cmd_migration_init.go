@@ -64,9 +64,11 @@ reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: t
   # Register the migration without contacting the gateway or destination
   kcp migration init -f gateway-migration.yaml --skip-validate`,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationInit,
-		RunE:          runMigrationInit,
+		// A runtime failure must not bury the error under Cobra's usage block.
+		SilenceUsage: true,
+		Args:         cobra.NoArgs,
+		PreRunE:      preRunMigrationInit,
+		RunE:         runMigrationInit,
 	}
 
 	migrationInitCmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")

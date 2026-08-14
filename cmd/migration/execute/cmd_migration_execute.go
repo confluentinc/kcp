@@ -58,9 +58,12 @@ func NewMigrationExecuteCmd() *cobra.Command {
   # Proceed mid-cutover with an edited spec
   kcp migration execute -f gateway-migration.yaml --migration-state-file migration-state.json --accept-spec-change`,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
-		PreRunE:       func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
-		RunE:          runMigrationExecute,
+		// A runtime failure mid-cutover (e.g. a source-connect error) must not
+		// bury the error under Cobra's usage block.
+		SilenceUsage: true,
+		Args:         cobra.NoArgs,
+		PreRunE:      func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
+		RunE:         runMigrationExecute,
 	}
 
 	cmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")

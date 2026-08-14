@@ -41,9 +41,11 @@ before 'kcp migration init' has ever run.
 It always shows every mirror topic on the link; spec.topics does not narrow the view.`,
 		Example:       `  kcp migration lag-check -f gateway-migration.yaml`,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationLag,
-		RunE:          runMigrationLag,
+		// A runtime failure must not bury the error under Cobra's usage block.
+		SilenceUsage: true,
+		Args:         cobra.NoArgs,
+		PreRunE:      preRunMigrationLag,
+		RunE:         runMigrationLag,
 	}
 
 	cmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
