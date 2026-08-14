@@ -148,10 +148,14 @@ func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationCon
 
 // detectDrift returns the changed sections, described by field path and count.
 //
-// It compares only what the state file actually holds, so policy and
-// credentials are out of scope automatically rather than by rule. Two fields
-// are deliberately excluded: the kubeconfig path, because execute is resume-safe
-// and may legitimately run from a different machine or pod; and anything
+// It compares only the topology fields. Credentials are out of scope
+// automatically — they are never persisted. Policy is out of scope by omission,
+// not by absence: two policy fields (the detect-unrouted and offset-sync-drain
+// durations) DO reach the state file via MigrationConfig, but detectDrift never
+// reads them back, because policy is re-read fresh from the manifest every run
+// so the snapshot's copy is never authoritative. Two fields are additionally
+// excluded on purpose: the kubeconfig path, because execute is resume-safe and
+// may legitimately run from a different machine or pod; and anything
 // credential-bearing, because credentials are never persisted.
 func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig) []string {
 	var drift []string
@@ -269,8 +273,10 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		return MigrationExecutorOpts{}, fmt.Errorf("spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")
 	}
 
-	// Policy is read FRESH on every run and never snapshotted. Only these two
-	// reach the config; the rest were already purely execute-time.
+	// Policy is re-read fresh from the manifest on every run and overwrites
+	// whatever the config held, so the snapshot's copy is never authoritative.
+	// These two DO reach the state file (MigrationConfig carries json tags for
+	// both); the rest of policy was already purely execute-time.
 	config.DetectUnroutedProducersDuration = g.Spec.Policy.DetectUnroutedProducersDuration
 	config.ConsumerOffsetSyncDrainDuration = g.Spec.Policy.ConsumerOffsetSyncDrainDuration
 
