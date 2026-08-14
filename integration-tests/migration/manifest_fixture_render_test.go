@@ -40,7 +40,7 @@ func baselineOpts() manifestOpts {
 // keeps an inline block as raw bytes, so a typo'd auth key (dash instead of
 // underscore) passes both the strict decode and Validate() with zero errors and
 // only fails when a leg is resolved. These are the same three resolvers
-// cmd_migration_init.go and cmd_migration_apply.go call.
+// cmd_migration_init.go and cmd_migration_execute.go call.
 func TestRenderGatewayMigration_ParsesValidatesAndResolves(t *testing.T) {
 	rendered, err := renderGatewayMigration(baselineOpts())
 	require.NoError(t, err, "rendering the fixture must not fail")
@@ -115,7 +115,7 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 // TestRenderGatewayMigration_OmitsZeroPolicy pins that a scenario with no policy
 // renders no policy keys at all. Writing a zero as `0` rather than omitting it
 // would break the schema's duration pattern, which requires a unit — and five of
-// the nine apply sites want exactly this (lagThreshold 0, detect 0).
+// the nine execute sites want exactly this (lagThreshold 0, detect 0).
 func TestRenderGatewayMigration_OmitsZeroPolicy(t *testing.T) {
 	rendered, err := renderGatewayMigration(baselineOpts())
 	require.NoError(t, err)
@@ -131,7 +131,7 @@ func TestRenderGatewayMigration_OmitsZeroPolicy(t *testing.T) {
 }
 
 // TestRenderGatewayMigration_PolicyRoundTrips covers the per-scenario policy the
-// nine apply sites vary. Durations must render as duration STRINGS ("10s"), not
+// nine execute sites vary. Durations must render as duration STRINGS ("10s"), not
 // as the integer nanosecond count goccy would marshal a time.Duration to.
 func TestRenderGatewayMigration_PolicyRoundTrips(t *testing.T) {
 	opts := baselineOpts()
@@ -158,7 +158,7 @@ func TestRenderGatewayMigration_PolicyRoundTrips(t *testing.T) {
 }
 
 // TestRenderGatewayMigration_PauseConsumerOffsetSync covers the 6 init sites that
-// appended --pause-consumer-offset-sync. It is drift-compared at apply, so an
+// appended --pause-consumer-offset-sync. It is drift-compared at execute, so an
 // omitted-vs-false slip would surface as a spec-change refusal mid-suite.
 func TestRenderGatewayMigration_PauseConsumerOffsetSync(t *testing.T) {
 	opts := baselineOpts()

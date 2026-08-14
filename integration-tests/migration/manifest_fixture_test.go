@@ -14,8 +14,8 @@ import (
 
 // manifestOpts is everything that varies between the converted e2e scenarios.
 // Topology comes from setup.sh via .env; policy is per-scenario and is read
-// FRESH by apply on every run, which is what lets a scenario re-render the same
-// path between init and apply.
+// FRESH by execute on every run, which is what lets a scenario re-render the same
+// path between init and execute.
 type manifestOpts struct {
 	MetadataName    string
 	SourceBootstrap string
@@ -35,7 +35,7 @@ type manifestOpts struct {
 	Policy                  policyOpts
 }
 
-// policyOpts are the execute-time knobs the nine apply sites vary. Every zero
+// policyOpts are the execute-time knobs the nine execute sites vary. Every zero
 // value is rendered as an ABSENT key rather than as a literal 0: the schema's
 // duration pattern requires a unit, so `0` would not match, and an absent key
 // already means the zero the retired flags defaulted to.
@@ -133,7 +133,7 @@ func yamlQuote(s string) (string, error) {
 // `umask 077` rather than a chmod afterwards, because `cat >` does not change an
 // existing file's mode and a post-hoc chmod would leave a window at 0644. `rm -f`
 // first so a re-render — which is how a scenario varies policy between init and
-// apply — cannot inherit a mode from an earlier create. The path arrives as "$1"
+// execute — cannot inherit a mode from an earlier create. The path arrives as "$1"
 // rather than spliced into the script.
 //
 // `&&` rather than `;` between rm and cat: with `;` the script's exit status is

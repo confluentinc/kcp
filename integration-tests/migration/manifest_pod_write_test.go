@@ -21,7 +21,7 @@ import (
 // properties live in podWriteCommand, which is unit-tested without a cluster.
 //
 // Safe to call more than once for the same path: re-rendering is how a scenario
-// varies execute-time policy between init and apply, which is legal because apply
+// varies execute-time policy between init and execute, which is legal because execute
 // reads policy fresh and the drift check compares topology only.
 func writeManifestToPod(t *testing.T, cfg envConfig, podPath string, opts manifestOpts) {
 	t.Helper()

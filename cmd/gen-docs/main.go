@@ -52,7 +52,7 @@ var commandOrder = map[string][]string{
 	},
 	"kcp migration": {
 		"init",
-		"apply",
+		"execute",
 		"lag-check",
 		"list",
 	},

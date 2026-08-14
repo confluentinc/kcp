@@ -57,8 +57,8 @@ spec:
       switchover: {{ .SwitchoverCR | yamlQuote }}
 {{- if .Policy.Any }}
 
-  # Read FRESH by apply on every run and never snapshotted, which is what lets a
-  # scenario re-render this file between init and apply. Every knob is emitted
+  # Read FRESH by execute on every run and never snapshotted, which is what lets a
+  # scenario re-render this file between init and execute. Every knob is emitted
   # only when non-zero: an absent key already means the zero the retired flags
   # defaulted to, and a literal 0 would not match the schema's duration pattern.
   policy:

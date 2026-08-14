@@ -104,8 +104,8 @@ spec:
   # Note this has NO effect on `lag-check`, which always watches every mirror.
   topics: ['t1.order', 't1.inventory', 't2.order']
 
-  # OPTIONAL, and read FRESH on every apply — never frozen at init. That is what
-  # lets policy be varied between init and apply.
+  # OPTIONAL, and read FRESH on every execute — never frozen at init. That is what
+  # lets policy be varied between init and execute.
   policy:
     lagThreshold: 0
     promoteBatchSize: 100 # 0 = promote all at once
