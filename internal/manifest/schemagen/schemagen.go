@@ -113,7 +113,7 @@ func GenerateGateway() ([]byte, error) {
 	// the primary discovery surface for a CLI run from a bastion. Each ported
 	// field carries its flag's usage text, reworded away from the
 	// Confluent-Cloud-specific phrasing where "the destination" is meant.
-	describe(s, map[*jsonschema.Schema]string{
+	describe(map[*jsonschema.Schema]string{
 		s.Properties["interpolate"]: "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key.",
 
 		source.Properties["type"]:             "Source Kafka flavour. Gates authentication: iam is msk-only.",
@@ -168,8 +168,7 @@ func polymorphic(p *jsonschema.Schema, def string) {
 
 // describe applies descriptions after the polymorphic rewrite, so a rewritten
 // property keeps its text.
-func describe(root *jsonschema.Schema, m map[*jsonschema.Schema]string) {
-	_ = root
+func describe(m map[*jsonschema.Schema]string) {
 	for p, text := range m {
 		if p != nil {
 			p.Description = text
