@@ -350,6 +350,18 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 // the flag surface this replaces.
 func checkDestinationIsSASLPlain(mc types.MigrateClusterCredentials) []error {
 	if mc.SASLPlain != nil {
+		// The destination Kafka client dials SASL/PLAIN over the public trust
+		// store — createDestinationOffset hardcodes an empty ca_cert — and a
+		// derived REST leg drops ca_cert too. A ca_cert here would therefore be
+		// accepted and then silently ignored, so a private-CA destination would
+		// read as configured while actually connecting on the system roots.
+		// Refuse it, the same call as the sasl_plain-only and api_key-only rules.
+		// (tls stays permitted: it names the exact transport the destination
+		// already uses, so it is honoured rather than dropped.)
+		if strings.TrimSpace(mc.SASLPlain.CACert) != "" {
+			return []error{fmt.Errorf(
+				"spec.target.kafka.credentials.sasl_plain.ca_cert: a custom CA is not supported for the destination in this release (it dials the public trust store); remove ca_cert")}
+		}
 		return nil
 	}
 	if mc.IAM == nil && mc.SASLScram == nil && mc.MTLS == nil &&

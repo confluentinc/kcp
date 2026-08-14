@@ -232,6 +232,36 @@ func TestGateway_RejectsNonSASLPlainDestination(t *testing.T) {
 	}
 }
 
+// TestGateway_RejectsDestinationSASLPlainCACert. The destination Kafka client
+// dials the public trust store unconditionally (createDestinationOffset passes an
+// empty ca_cert) and a derived REST leg drops ca_cert, so a ca_cert on the
+// destination sasl_plain block would be accepted and then silently ignored — a
+// private-CA destination would read as configured while connecting on the system
+// roots. Refuse it, mirroring the sasl_plain-only and api_key-only rules.
+func TestGateway_RejectsDestinationSASLPlainCACert(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc,
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: /dest-ca.pem",
+		1)
+	g := parseGateway(t, doc)
+	requireErrContains(t, g.Validate(), "ca_cert")
+
+	// Resolution must refuse it too, not only Validate — including via the
+	// derived REST leg, which routes through DestinationKafkaCredentials.
+	_, errs := g.DestinationKafkaCredentials()
+	require.NotEmpty(t, errs)
+	_, err := g.RestCredentials()
+	require.Error(t, err)
+}
+
+// TestGateway_AllowsDestinationSASLPlainTLS keeps the counterpart honest: tls
+// names the exact transport the destination already uses, so it is honoured, not
+// dropped, and must stay valid (it is part of the canonical valid document).
+func TestGateway_AllowsDestinationSASLPlainTLS(t *testing.T) {
+	g := parseGateway(t, validGatewayDoc)
+	require.Empty(t, g.Validate())
+}
+
 // --- restCredentials derivation (decision 29) ---
 
 // TestGateway_DerivesRestCredentialsWhenOmitted: one flag pair feeds both
