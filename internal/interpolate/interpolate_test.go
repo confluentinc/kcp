@@ -187,3 +187,36 @@ func TestStruct_RequiresPointer(t *testing.T) {
 	err := Struct(outer{Name: "${X}"})
 	require.Error(t, err)
 }
+
+type withAny struct {
+	Field  any
+	AnyMap map[string]any
+}
+
+// TestStruct_ResolvesStringBehindInterface pins the contract the reflective walk
+// promises: a string reachable only through an interface-typed field, or a
+// map[string]any value, is resolved — not silently shipped as a literal
+// "${VAR}". The concrete value inside an interface is never addressable, so the
+// walk must copy-resolve-write-back through the settable interface itself.
+func TestStruct_ResolvesStringBehindInterface(t *testing.T) {
+	t.Setenv("IFACE_PW", "iface-secret")
+	t.Setenv("MAPANY_PW", "mapany-secret")
+
+	v := withAny{
+		Field:  "${IFACE_PW}",
+		AnyMap: map[string]any{"k": "${MAPANY_PW}"},
+	}
+	require.NoError(t, Struct(&v))
+	assert.Equal(t, "iface-secret", v.Field)
+	assert.Equal(t, "mapany-secret", v.AnyMap["k"])
+}
+
+// TestStruct_ReportsUndefinedVariableBehindInterface — the same fail-loud
+// contract applies through an interface: an unset variable is an error, and the
+// error names the variable, never a value.
+func TestStruct_ReportsUndefinedVariableBehindInterface(t *testing.T) {
+	v := withAny{Field: "${KCP_NO_SUCH_IFACE_VAR}"}
+	err := Struct(&v)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "KCP_NO_SUCH_IFACE_VAR")
+}

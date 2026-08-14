@@ -95,11 +95,29 @@ func walk(v reflect.Value, path string) error {
 		}
 		v.SetString(out)
 
-	case reflect.Pointer, reflect.Interface:
+	case reflect.Pointer:
 		if v.IsNil() {
 			return nil
 		}
 		return walk(v.Elem(), path)
+
+	case reflect.Interface:
+		// v.Elem() — the concrete value inside an interface — is never
+		// addressable, so walking it directly would silently skip it: a
+		// map[string]any value or an interface-typed field would ship a literal
+		// "${VAR}", the exact failure the reflective walk exists to prevent. If
+		// the interface itself is settable, resolve a settable copy of the
+		// concrete value and write it back.
+		if v.IsNil() || !v.CanSet() {
+			return nil
+		}
+		elem := v.Elem()
+		cp := reflect.New(elem.Type()).Elem()
+		cp.Set(elem)
+		if err := walk(cp, path); err != nil {
+			return err
+		}
+		v.Set(cp)
 
 	case reflect.Struct:
 		t := v.Type()
