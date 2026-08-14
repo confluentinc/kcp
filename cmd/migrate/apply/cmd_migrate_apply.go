@@ -368,7 +368,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	// topics, ACLs). The serviceAccounts reconciler needs a DIFFERENT credential
 	// (spec.target.cloudCredentials, the CC Cloud/Global API key) loaded in
 	// buildACLReconcilers, because IAM v2 rejects a Kafka cluster API key.
-	tgtCreds, err := targets.LoadCredentials(m.Spec.Target.ClusterCredentials)
+	tgtCreds, err := m.Spec.Target.ClusterCredentials.ResolveTarget(false)
 	if err != nil {
 		return err
 	}
@@ -455,7 +455,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 			if cl.SourceRest == nil {
 				return fmt.Errorf("clusterLink.sourceRest is required for mode %q", manifest.ClusterLinkModeSource)
 			}
-			srcRestCreds, err := targets.LoadCredentials(cl.SourceRest.Credentials)
+			srcRestCreds, err := cl.SourceRest.Credentials.ResolveTarget(false)
 			if err != nil {
 				return err
 			}
@@ -697,7 +697,7 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 	saClient, saAuth := tgtClient, tgtCreds.Authenticator()
 	cloudCredsAvailable := false
 	if m.Spec.Target.Type == manifest.TargetConfluentCloud {
-		cloudCreds, err := targets.LoadCredentials(m.Spec.Target.CloudCredentials)
+		cloudCreds, err := m.Spec.Target.CloudCredentials.ResolveTarget(false)
 		if err != nil {
 			return nil, fmt.Errorf("loading spec.target.cloudCredentials: %w", err)
 		}
@@ -923,11 +923,13 @@ func ensureIAMAllowed(conn types.KafkaSourceConn, sourceType, field string, isLi
 
 // loadMigrateCluster loads + validates a flat migrate credentials file and composes
 // the result with the given bootstrap servers from the manifest into a KafkaSourceConn.
-func loadMigrateCluster(cmd *cobra.Command, field string, bootstrapServers []string, path string) (types.KafkaSourceConn, error) {
-	if path == "" {
+func loadMigrateCluster(cmd *cobra.Command, field string, bootstrapServers []string, ref manifest.CredentialsRef) (types.KafkaSourceConn, error) {
+	if ref.IsZero() {
 		return types.KafkaSourceConn{}, fmt.Errorf("%s.credentials is required", field)
 	}
-	creds, errs := types.LoadMigrateClusterCredentials(path)
+	// kind: Migration has no manifest-level interpolate key, so inline blocks
+	// here are literal; a referenced file still governs itself via its own key.
+	creds, errs := ref.ResolveMigrateCluster(false)
 	if len(errs) > 0 {
 		for _, e := range errs {
 			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)

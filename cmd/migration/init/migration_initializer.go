@@ -10,11 +10,16 @@ import (
 )
 
 type MigrationInitializerOpts struct {
-	MigrationStateFile    string
-	MigrationState        migration.MigrationState
-	MigrationConfig       migration.MigrationConfig
-	ClusterApiKey         string
-	ClusterApiSecret      string
+	MigrationStateFile string
+	MigrationState     migration.MigrationState
+	MigrationConfig    migration.MigrationConfig
+	// RestApiKey / RestApiSecret authenticate the destination REST surface —
+	// the only client this initializer builds. Named for the leg rather than
+	// the cluster because the sibling execute package uses ClusterApiKey for
+	// the KAFKA leg, and one name meaning two things a directory apart is what
+	// produced the credential-crossing bug in execute.
+	RestApiKey            string
+	RestApiSecret         string
 	ClusterRestCACert     string
 	InsecureSkipTLSVerify bool
 }
@@ -51,7 +56,7 @@ func (m *MigrationInitializer) Run() error {
 	)
 
 	ctx := context.Background()
-	if err := orchestrator.Initialize(ctx, m.opts.ClusterApiKey, m.opts.ClusterApiSecret); err != nil {
+	if err := orchestrator.Initialize(ctx, m.opts.RestApiKey, m.opts.RestApiSecret); err != nil {
 		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 

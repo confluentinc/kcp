@@ -14,7 +14,7 @@ func validCCWithDestinationLink(t *testing.T) *Migration {
 	m := validCC()
 	m.Spec.ClusterLink = &ClusterLink{
 		Name:   "l",
-		Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./s.yaml"},
+		Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./s.yaml")},
 	}
 	return m
 }
@@ -35,8 +35,8 @@ func validCC() *Migration {
 		Kind:       KindMigration,
 		Metadata:   Metadata{Name: "m"},
 		Spec: Spec{
-			Source: Source{Type: SourceApacheKafka, BootstrapServers: []string{"b:9092"}, Credentials: "./s.yaml"},
-			Target: Target{Type: TargetConfluentCloud, ClusterID: "lkc-1", ClusterCredentials: "./t.yaml", Kafka: &TargetKafka{RestEndpoint: "https://pkc-x.confluent.cloud:443"}},
+			Source: Source{Type: SourceApacheKafka, BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./s.yaml")},
+			Target: Target{Type: TargetConfluentCloud, ClusterID: "lkc-1", ClusterCredentials: NewCredentialsPath("./t.yaml"), Kafka: &TargetKafka{RestEndpoint: "https://pkc-x.confluent.cloud:443"}},
 		},
 	}
 }
@@ -77,7 +77,7 @@ func TestValidate_SourceType(t *testing.T) {
 
 func TestValidate_SourceCredentials(t *testing.T) {
 	m := validCC()
-	m.Spec.Source.Credentials = ""
+	m.Spec.Source.Credentials = NewCredentialsPath("")
 	require.True(t, errorContains(m.Validate(), "spec.source.credentials"))
 }
 
@@ -102,7 +102,7 @@ func TestValidate_TargetCCRequiresCluster(t *testing.T) {
 
 func TestValidate_TargetCPRequiresRestEndpoint(t *testing.T) {
 	m := validCC()
-	m.Spec.Target = Target{Type: TargetConfluentPlatform, ClusterCredentials: "./t.yaml"}
+	m.Spec.Target = Target{Type: TargetConfluentPlatform, ClusterCredentials: NewCredentialsPath("./t.yaml")}
 	require.True(t, errorContains(m.Validate(), "spec.target.kafka.restEndpoint"))
 }
 
@@ -126,7 +126,7 @@ func TestValidate_TargetTypeEmpty(t *testing.T) {
 
 func TestValidate_TargetCredentials(t *testing.T) {
 	m := validCC()
-	m.Spec.Target.ClusterCredentials = ""
+	m.Spec.Target.ClusterCredentials = NewCredentialsPath("")
 	require.True(t, errorContains(m.Validate(), "spec.target.clusterCredentials"))
 }
 
@@ -134,7 +134,7 @@ func TestValidate_TargetCredentials(t *testing.T) {
 // confluent-platform target (it is the CC IAM v2 Cloud/Global key).
 func TestValidate_CloudCredentialsCConly(t *testing.T) {
 	m := baseCPTargetManifest(t)
-	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.Target.CloudCredentials = NewCredentialsPath("./cloud.yaml")
 	require.True(t, errorContains(m.Validate(), `spec.target.cloudCredentials: only valid when spec.target.type is "confluent-cloud"`))
 }
 
@@ -153,7 +153,7 @@ func TestValidate_CloudCredentialsRequiredForAutoCreate(t *testing.T) {
 // autoCreate and cloudCredentials set validates clean.
 func TestValidate_CloudCredentialsForAutoCreate_Valid(t *testing.T) {
 	m := baseCCTargetManifest(t)
-	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.Target.CloudCredentials = NewCredentialsPath("./cloud.yaml")
 	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
 	require.Empty(t, m.Validate())
@@ -175,7 +175,7 @@ func TestValidate_CloudCredentialsRequiredForMappingOnlyACLs(t *testing.T) {
 // mapping-only acls manifest validates clean once cloudCredentials is set.
 func TestValidate_CloudCredentialsForMappingOnlyACLs_Valid(t *testing.T) {
 	m := baseCCTargetManifest(t)
-	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.Target.CloudCredentials = NewCredentialsPath("./cloud.yaml")
 	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: false, Mapping: map[string]string{"User:x": "sa-1"}}
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
 	require.Empty(t, m.Validate())
@@ -197,7 +197,7 @@ func TestValidate_CloudCredentialsRequiredForAutoCreate_NoACLs(t *testing.T) {
 // autoCreate-only manifest validates clean once cloudCredentials is set.
 func TestValidate_CloudCredentialsForAutoCreate_NoACLs_Valid(t *testing.T) {
 	m := baseCCTargetManifest(t)
-	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.Target.CloudCredentials = NewCredentialsPath("./cloud.yaml")
 	m.Spec.ServiceAccounts = &ServiceAccounts{AutoCreate: true}
 	require.Empty(t, m.Validate())
 }
@@ -309,7 +309,7 @@ func TestValidate_CPTargetRejectsCluster(t *testing.T) {
 	m := validCC()
 	m.Spec.Target = Target{
 		Type:               TargetConfluentPlatform,
-		ClusterCredentials: "./t.yaml",
+		ClusterCredentials: NewCredentialsPath("./t.yaml"),
 		Kafka:              &TargetKafka{RestEndpoint: "https://broker:8090"},
 		ClusterID:          "lkc-1",
 	}
@@ -385,7 +385,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:   "cl",
 					Mode:   "destination",
-					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./src.yaml")},
 				}
 			},
 		},
@@ -394,7 +394,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 			mutate: func(m *Migration) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:   "cl",
-					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./src.yaml")},
 				}
 			},
 		},
@@ -411,7 +411,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:   "cl",
 					Mode:   "destination",
-					Source: &KafkaConn{Credentials: "./src.yaml"},
+					Source: &KafkaConn{Credentials: NewCredentialsPath("./src.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.source.bootstrapServers",
@@ -422,7 +422,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:   "cl",
 					Mode:   "destination",
-					Source: &KafkaConn{BootstrapServers: []string{"not-valid"}, Credentials: "./src.yaml"},
+					Source: &KafkaConn{BootstrapServers: []string{"not-valid"}, Credentials: NewCredentialsPath("./src.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.source.bootstrapServers",
@@ -433,8 +433,8 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:       "cl",
 					Mode:       "destination",
-					Source:     &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
-					SourceRest: &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					Source:     &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./src.yaml")},
+					SourceRest: &RestRef{Endpoint: "https://src:8090", Credentials: NewCredentialsPath("./rest.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest",
@@ -445,8 +445,8 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:        "cl",
 					Mode:        "destination",
-					Source:      &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
-					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+					Source:      &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./src.yaml")},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.destination",
@@ -458,8 +458,8 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:        "cl",
 					Mode:        "source",
-					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
-					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: NewCredentialsPath("./rest.yaml")},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 		},
@@ -470,7 +470,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:        "cl",
 					Mode:        "source",
-					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest",
@@ -482,8 +482,8 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:        "cl",
 					Mode:        "source",
-					SourceRest:  &RestRef{Credentials: "./rest.yaml"},
-					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+					SourceRest:  &RestRef{Credentials: NewCredentialsPath("./rest.yaml")},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest.endpoint",
@@ -496,7 +496,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 					Name:        "cl",
 					Mode:        "source",
 					SourceRest:  &RestRef{Endpoint: "https://src:8090"},
-					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.sourceRest.credentials",
@@ -508,7 +508,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:       "cl",
 					Mode:       "source",
-					SourceRest: &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
+					SourceRest: &RestRef{Endpoint: "https://src:8090", Credentials: NewCredentialsPath("./rest.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.destination",
@@ -520,8 +520,8 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:        "cl",
 					Mode:        "source",
-					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
-					Destination: &KafkaConn{Credentials: "./dst.yaml"},
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: NewCredentialsPath("./rest.yaml")},
+					Destination: &KafkaConn{Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.destination.bootstrapServers",
@@ -533,9 +533,9 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:        "cl",
 					Mode:        "source",
-					Source:      &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
-					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
-					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+					Source:      &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./src.yaml")},
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: NewCredentialsPath("./rest.yaml")},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.source",
@@ -547,8 +547,8 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:        "cl",
 					Mode:        "source",
-					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: "./rest.yaml"},
-					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./dst.yaml"},
+					SourceRest:  &RestRef{Endpoint: "https://src:8090", Credentials: NewCredentialsPath("./rest.yaml")},
+					Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./dst.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.mode",
@@ -559,7 +559,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:   "cl",
 					Mode:   "bidirectional",
-					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./src.yaml")},
 				}
 			},
 			wantErr: "not supported",
@@ -570,7 +570,7 @@ func TestValidate_ClusterLinkModes(t *testing.T) {
 				m.Spec.ClusterLink = &ClusterLink{
 					Name:   "cl",
 					Mode:   "sideways",
-					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./src.yaml"},
+					Source: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./src.yaml")},
 				}
 			},
 			wantErr: "spec.clusterLink.mode",
@@ -615,7 +615,7 @@ func baseCPTargetManifest(t *testing.T) *Migration {
 	m := baseCCTargetManifest(t)
 	m.Spec.Target = Target{
 		Type:               TargetConfluentPlatform,
-		ClusterCredentials: "./t.yaml",
+		ClusterCredentials: NewCredentialsPath("./t.yaml"),
 		Kafka:              &TargetKafka{RestEndpoint: "https://broker:8090"},
 	}
 	return m
@@ -657,7 +657,7 @@ func TestValidate_ACLsOnlyManifestAccepted(t *testing.T) {
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
 	// spec.acls on a confluent-cloud target requires the Cloud/Global key (for
 	// the acls reconciler's numeric-principal map).
-	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.Target.CloudCredentials = NewCredentialsPath("./cloud.yaml")
 	require.Empty(t, m.Validate())
 }
 
@@ -673,7 +673,7 @@ func validCCMigrationWithACLs(t *testing.T) *Migration {
 	m.Spec.ClusterLink, m.Spec.Topics = nil, nil
 	m.Spec.Source.Type = SourceMSK
 	m.Spec.ACLs = &ACLs{Include: []string{"*"}}
-	m.Spec.Target.CloudCredentials = "./cloud.yaml"
+	m.Spec.Target.CloudCredentials = NewCredentialsPath("./cloud.yaml")
 	return m
 }
 
@@ -761,7 +761,7 @@ func TestValidate_ACLsIAM_MultiplePrincipalArns_OneMalformed(t *testing.T) {
 // segments — this shape does not actually scope anything (arnClusterIdentity
 // in internal/migrate/acls/iam_translate.go cannot parse a cluster identity
 // out of it any better than validation can), so a manifest naming it would
-// silently match zero grants at apply time. See Finding 2(a) / task-7.
+// silently match zero grants at execute time. See Finding 2(a) / task-7.
 func TestValidate_ACLsIAM_ClusterArnMalformed_EmptyRegionAccount(t *testing.T) {
 	m := validCCMigrationWithACLs(t)
 	m.Spec.ACLs.IAM = &ACLsIAM{ClusterArn: "arn:aws:kafka::cluster/x", PrincipalArns: []string{"arn:aws:iam::1:role/R"}}
@@ -812,8 +812,8 @@ func TestValidate_SourceMSK_CannotSourceInitiate(t *testing.T) {
 	m.Spec.ClusterLink = &ClusterLink{
 		Name:        "l",
 		Mode:        ClusterLinkModeSource,
-		SourceRest:  &RestRef{Endpoint: "https://s", Credentials: "./s.yaml"},
-		Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: "./d.yaml"},
+		SourceRest:  &RestRef{Endpoint: "https://s", Credentials: NewCredentialsPath("./s.yaml")},
+		Destination: &KafkaConn{BootstrapServers: []string{"b:9092"}, Credentials: NewCredentialsPath("./d.yaml")},
 	}
 	require.True(t, errorContains(m.Validate(), "is not supported when spec.source.type"))
 }

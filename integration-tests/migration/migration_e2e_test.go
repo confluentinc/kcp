@@ -136,11 +136,6 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 	}
 }
 
-func testdataDir() string {
-	// integration-tests/migration/ -> integration-tests/migration/testdata/
-	return filepath.Join("testdata")
-}
-
 // runKCP executes the kcp binary inside the runner pod via kubectl exec.
 func runKCP(t *testing.T, cfg envConfig, args ...string) (string, string, error) {
 	t.Helper()
@@ -617,6 +612,8 @@ func TestMigrationE2E(t *testing.T) {
 
 	// State file lives inside the runner pod
 	stateFile := "/workspace/migration-state.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
 
 	// Record Gateway pod UIDs before migration
 	podUIDsBefore := getGatewayPodUIDs(t, clientset, cfg.Namespace, cfg.GatewayName)
@@ -624,7 +621,7 @@ func TestMigrationE2E(t *testing.T) {
 
 	// --- Step 0: prime source with baseline producer + consumer offsets ---
 	// The consumer commits offsets on the source pre-migration. With the
-	// default migration flow (no --pause-consumer-offset-sync flag), the
+	// default migration flow (no spec.clusterLink.pauseConsumerOffsetSync flag), the
 	// cluster link will mirror these committed offsets to the destination.
 	t.Run("seed_baseline_producer", func(t *testing.T) {
 		// 10 quick records to give the consumer something to commit on.
@@ -643,23 +640,12 @@ func TestMigrationE2E(t *testing.T) {
 
 	// --- Step 1: kcp migration init ---
 	t.Run("init", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -670,6 +656,8 @@ func TestMigrationE2E(t *testing.T) {
 		// Assert: state file exists with initialized state
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1, "expected exactly 1 migration")
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.Equal(t, "initialized", state.Migrations[0].CurrentState)
 		t.Logf("Migration ID: %s", state.Migrations[0].MigrationID)
 	})
@@ -689,21 +677,13 @@ func TestMigrationE2E(t *testing.T) {
 
 	// --- Step 3: kcp migration execute ---
 	t.Run("execute", func(t *testing.T) {
-		// Get migration ID from state file
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
-		migrationID := state.Migrations[0].MigrationID
 
 		executeArgs := []string{
 			"migration", "execute",
-			"--migration-id", migrationID,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--lag-threshold", "0",
-			"--use-unauthenticated-plaintext",
-			"--insecure-skip-tls-verify",
-			"--detect-unrouted-producers-duration", "0",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
@@ -716,7 +696,7 @@ func TestMigrationE2E(t *testing.T) {
 		require.Len(t, state.Migrations, 1)
 		assert.Equal(t, "switched", state.Migrations[0].CurrentState)
 
-		// Without --pause-consumer-offset-sync the pause_offset_sync FSM
+		// Without spec.clusterLink.pauseConsumerOffsetSync the pause_offset_sync FSM
 		// stage still fires as a pass-through and says so.
 		assert.Contains(t, stdout, "Offset-sync pause not requested",
 			"the pause stage must announce the pass-through path")
@@ -797,11 +777,11 @@ func TestMigrationE2E(t *testing.T) {
 	// touched the cluster link's consumer.offset.sync.enable config.
 	t.Run("offset_sync_unchanged", func(t *testing.T) {
 		value := getClusterLinkOffsetSyncEnable(t, cfg)
-		assert.Equal(t, "true", value, "without --pause-consumer-offset-sync, the cluster link config must remain true throughout the migration")
+		assert.Equal(t, "true", value, "without spec.clusterLink.pauseConsumerOffsetSync, the cluster link config must remain true throughout the migration")
 	})
 }
 
-// TestMigrationE2E_PromoteBatchSize exercises --promote-batch-size against a
+// TestMigrationE2E_PromoteBatchSize exercises spec.policy.promoteBatchSize against a
 // scenario whose cluster link mirrors many topics. With a batch size of 1, kcp
 // must promote one topic at a time, waiting for each to reach STOPPED before
 // promoting the next — i.e. fully synchronous batches. Asserts:
@@ -817,27 +797,19 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 		"batch scenario must provision multiple topics (got %v)", cfg.TopicNames)
 
 	stateFile := "/workspace/migration-state-batch.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.Policy.PromoteBatchSize = 1
 	const logPath = "/workspace/kcp.log"
 
 	// --- Step 1: init ---
 	t.Run("init", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -847,6 +819,8 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.Equal(t, "initialized", state.Migrations[0].CurrentState)
 	})
 
@@ -857,25 +831,15 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 	// Snapshot kcp.log so the batching assertion only inspects the execute run.
 	logStart := podFileLineCount(t, cfg, logPath)
 
-	// --- Step 2: execute with --promote-batch-size 1 ---
+	// --- Step 2: execute with spec.policy.promoteBatchSize: 1 ---
 	t.Run("execute_batched", func(t *testing.T) {
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
-		migrationID := state.Migrations[0].MigrationID
 
 		executeArgs := []string{
 			"migration", "execute",
-			"--migration-id", migrationID,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--lag-threshold", "0",
-			"--promote-batch-size", "1",
-			"--use-unauthenticated-plaintext",
-			"--insecure-skip-tls-verify",
-			// Required flag; 0 because this scenario's producer writes directly
-			// to the source brokers and would otherwise trip detection.
-			"--detect-unrouted-producers-duration", "0",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
@@ -918,16 +882,16 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 
 		n := len(cfg.TopicNames)
 		assert.Equal(t, n, singleTopicPromotes,
-			"expected exactly one single-topic promote call per topic with --promote-batch-size 1")
+			"expected exactly one single-topic promote call per topic with spec.policy.promoteBatchSize: 1")
 		assert.Zero(t, bulkPromotes,
-			"no promote call should contain more than one topic with --promote-batch-size 1")
+			"no promote call should contain more than one topic with spec.policy.promoteBatchSize: 1")
 		assert.Equal(t, n, stoppedConfirms,
 			"each promoted topic should be individually confirmed STOPPED")
 	})
 }
 
 // TestMigrationE2E_PauseOffsetSync_HappyPath exercises the full
-// --pause-consumer-offset-sync flow: init records intent, execute disables
+// spec.clusterLink.pauseConsumerOffsetSync flow: init records intent, execute disables
 // the config from the pause_offset_sync FSM stage (immediately after
 // fencing, so destination offsets stay fresh through the lag and fence
 // phases), runs the migration, then restores the config after switchover.
@@ -941,6 +905,9 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	cfg := loadEnvConfig(t, scenarioPauseSyncHappy)
 
 	stateFile := "/workspace/migration-state-pause-sync-happy.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.PauseConsumerOffsetSync = true
 
 	// Make sure no leftover producer is running from a prior test.
 	stopProducer(t, cfg)
@@ -960,24 +927,12 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 
 	// --- Step 1: init with the flag ---
 	t.Run("init_with_flag", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
-			"--pause-consumer-offset-sync",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -987,6 +942,8 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.True(t, state.Migrations[0].PauseConsumerOffsetSync, "intent must persist")
 		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must NOT be flipped at init time")
 	})
@@ -1039,18 +996,11 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	t.Run("execute_with_flag", func(t *testing.T) {
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
-		migrationID := state.Migrations[0].MigrationID
 
 		executeArgs := []string{
 			"migration", "execute",
-			"--migration-id", migrationID,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--lag-threshold", "0",
-			"--use-unauthenticated-plaintext",
-			"--insecure-skip-tls-verify",
-			"--detect-unrouted-producers-duration", "0",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
@@ -1082,7 +1032,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	t.Run("bookend_ran_and_final_state_restored", func(t *testing.T) {
 		// The pause stage and restore bookend print these lines
 		// unconditionally when they run. They are durable evidence that the
-		// disable→restore cycle executed, without depending on poll timing
+		// disable→restore cycle ran, without depending on poll timing
 		// landing inside the FSM window.
 		assert.Contains(t, executeStdout, "Pausing consumer.offset.sync",
 			"execute stdout must show the pause stage ran")
@@ -1105,8 +1055,8 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 }
 
 // TestMigrationE2E_PauseOffsetSync_Drain verifies the
-// --consumer-offset-sync-drain-duration flag end-to-end: with
-// --pause-consumer-offset-sync set, execute holds after fencing (sync still
+// spec.policy.consumerOffsetSyncDrainDuration flag end-to-end: with
+// spec.clusterLink.pauseConsumerOffsetSync set, execute holds after fencing (sync still
 // enabled) for the drain duration before disabling consumer.offset.sync.enable,
 // then completes the switchover and restores the config.
 //
@@ -1128,6 +1078,11 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 
 	const drain = 15 * time.Second
 
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.PauseConsumerOffsetSync = true
+	opts.Policy.ConsumerOffsetSyncDrain = drain
+
 	// No leftover producer from a prior test.
 	stopProducer(t, cfg)
 
@@ -1144,26 +1099,14 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 		stopProducer(t, cfg)
 	})
 
-	// Init with the pause flag (the drain is an execute-time flag).
+	// Init with the pause flag (the drain is an execute-time knob).
 	t.Run("init_with_pause_flag", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
-			"--pause-consumer-offset-sync",
 		}
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
 		t.Logf("init stdout:\n%s", stdout)
@@ -1176,19 +1119,11 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 	t.Run("execute_with_drain", func(t *testing.T) {
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
-		migrationID := state.Migrations[0].MigrationID
 
 		executeArgs := []string{
 			"migration", "execute",
-			"--migration-id", migrationID,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--lag-threshold", "0",
-			"--use-unauthenticated-plaintext",
-			"--insecure-skip-tls-verify",
-			"--detect-unrouted-producers-duration", "0",
-			"--consumer-offset-sync-drain-duration", drain.String(),
 		}
 
 		start := time.Now()
@@ -1263,25 +1198,16 @@ func TestMigrationE2E_PauseOffsetSync_InitRefuses(t *testing.T) {
 	require.Equal(t, "false", getClusterLinkOffsetSyncEnable(t, cfg), "fixture must be flipped to false before this test runs")
 
 	stateFile := "/workspace/migration-state-refuse.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.PauseConsumerOffsetSync = true
+
+	writeManifestToPod(t, cfg, manifestPath, opts)
 
 	initArgs := []string{
 		"migration", "init",
-		"--source-bootstrap", cfg.SourceBootstrap,
-		"--cluster-bootstrap", cfg.DestBootstrap,
-		"--cluster-id", cfg.DestClusterID,
-		"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-		"--cluster-link-name", cfg.ClusterLinkName,
-		"--cluster-api-key", cfg.ClusterAPIKey,
-		"--cluster-api-secret", cfg.ClusterAPISecret,
-		"--k8s-namespace", cfg.Namespace,
-		"--initial-cr-name", cfg.GatewayName,
-		"--fenced-cr-yaml", cfg.FencedCR,
-		"--switchover-cr-yaml", cfg.SwitchoverCR,
+		"-f", manifestPath,
 		"--migration-state-file", stateFile,
-		"--use-unauthenticated-plaintext",
-		"--kube-path", cfg.KubePath,
-		"--insecure-skip-tls-verify",
-		"--pause-consumer-offset-sync",
 	}
 
 	stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -1295,7 +1221,7 @@ func TestMigrationE2E_PauseOffsetSync_InitRefuses(t *testing.T) {
 
 // TestMigrationE2E_PauseOffsetSync_RestoresFilters verifies that a
 // consumer.offset.group.filters value configured on the cluster link before
-// init is preserved across the --pause-consumer-offset-sync round-trip.
+// init is preserved across the spec.clusterLink.pauseConsumerOffsetSync round-trip.
 //
 // The bookend exists because setting consumer.offset.sync.enable=false on a
 // cluster link clears consumer.offset.group.filters as a side effect on both
@@ -1310,6 +1236,9 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 	cfg := loadEnvConfig(t, scenarioPauseSyncRestoresFilters)
 
 	stateFile := "/workspace/migration-state-pause-sync-restores-filters.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.PauseConsumerOffsetSync = true
 	stopProducer(t, cfg)
 
 	const filtersKey = "consumer.offset.group.filters"
@@ -1328,24 +1257,12 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 
 	// --- Step 1: init with the flag ---
 	t.Run("init_captures_filters_snapshot", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
-			"--pause-consumer-offset-sync",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -1355,6 +1272,8 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.True(t, state.Migrations[0].PauseConsumerOffsetSync, "intent must persist")
 		assert.False(t, state.Migrations[0].PauseConsumerOffsetSyncFlipped, "marker must NOT be flipped at init time")
 		assert.Equal(t, filtersValue, state.Migrations[0].ClusterLinkConfigs[filtersKey],
@@ -1372,18 +1291,11 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 	t.Run("execute_with_flag", func(t *testing.T) {
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
-		migrationID := state.Migrations[0].MigrationID
 
 		executeArgs := []string{
 			"migration", "execute",
-			"--migration-id", migrationID,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--lag-threshold", "0",
-			"--use-unauthenticated-plaintext",
-			"--insecure-skip-tls-verify",
-			"--detect-unrouted-producers-duration", "0",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
@@ -1433,6 +1345,8 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 	require.NoError(t, err)
 
 	stateFile := "/workspace/migration-state-rogue-producer.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
 
 	// --- Step 0: seed the source topic so the link has data to mirror ---
 	t.Run("seed_source_topic", func(t *testing.T) {
@@ -1443,23 +1357,12 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 
 	// --- Step 1: kcp migration init ---
 	t.Run("init", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -1469,6 +1372,8 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.Equal(t, "initialized", state.Migrations[0].CurrentState)
 	})
 
@@ -1481,17 +1386,29 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 	podUIDsBefore := getGatewayPodUIDs(t, clientset, cfg.Namespace, cfg.GatewayName)
 	t.Logf("Gateway pods before execute: %d pods", len(podUIDsBefore))
 
-	migrationID := readMigrationState(t, cfg, stateFile).Migrations[0].MigrationID
+	// --- This scenario is also the "policy is read fresh" pin ---
+	//
+	// init above ran with NO policy block, so the state file's persisted
+	// detect_unrouted_producers_duration is 0 — which means "skip the check".
+	// Re-rendering the SAME path now is what makes detection run at all, so an
+	// execute that read policy from the init-time snapshot instead of the manifest
+	// would skip detection entirely and every assertion below would fail.
+	//
+	// This scenario is the pin rather than the promote-batch-size one because
+	// promoteBatchSize is never persisted at all (MigrationConfig carries only
+	// the two duration fields), so no implementation could fail that version of
+	// the test. detectUnroutedProducersDuration is round-tripped through the
+	// state file, so it can actually go stale.
+	//
+	// Legal because the drift check compares topology only — policy and
+	// credentials are structurally out of its scope.
+	opts.Policy.DetectUnroutedProducers = 10 * time.Second
+	writeManifestToPod(t, cfg, manifestPath, opts)
+
 	executeArgs := []string{
 		"migration", "execute",
-		"--migration-id", migrationID,
+		"-f", manifestPath,
 		"--migration-state-file", stateFile,
-		"--cluster-api-key", cfg.ClusterAPIKey,
-		"--cluster-api-secret", cfg.ClusterAPISecret,
-		"--lag-threshold", "0",
-		"--use-unauthenticated-plaintext",
-		"--insecure-skip-tls-verify",
-		"--detect-unrouted-producers-duration", "10s",
 	}
 
 	// --- Phase A: rogue producer trips detection, fence rolls back ---
@@ -1561,7 +1478,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 
 	t.Run("verify_gateway_rolled_out_on_abort", func(t *testing.T) {
 		podUIDsAfter := getGatewayPodUIDs(t, clientset, cfg.Namespace, cfg.GatewayName)
-		t.Logf("Gateway pods after aborted execute: %d pods", len(podUIDsAfter))
+		t.Logf("Gateway pods after an aborted execute: %d pods", len(podUIDsAfter))
 
 		rolled := false
 		for uid := range podUIDsAfter {
@@ -1649,26 +1566,18 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 	cfg := loadEnvConfig(t, scenarioRogueProducerFalsePositive)
 
 	stateFile := "/workspace/migration-state-rogue-producer-false-positive.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.Policy.DetectUnroutedProducers = 10 * time.Second
 
 	// --- Step 1: kcp migration init ---
 	t.Run("init", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -1678,6 +1587,8 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.Equal(t, "initialized", state.Migrations[0].CurrentState)
 	})
 
@@ -1685,17 +1596,10 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 		t.FailNow()
 	}
 
-	migrationID := readMigrationState(t, cfg, stateFile).Migrations[0].MigrationID
 	executeArgs := []string{
 		"migration", "execute",
-		"--migration-id", migrationID,
+		"-f", manifestPath,
 		"--migration-state-file", stateFile,
-		"--cluster-api-key", cfg.ClusterAPIKey,
-		"--cluster-api-secret", cfg.ClusterAPISecret,
-		"--lag-threshold", "0",
-		"--use-unauthenticated-plaintext",
-		"--insecure-skip-tls-verify",
-		"--detect-unrouted-producers-duration", "10s",
 	}
 
 	// --- Step 2: a legitimate, gateway-routed producer must not trip detection ---
@@ -1737,7 +1641,7 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 // real cluster link — including consumer.offset.group.filters, which CP
 // clears as a side effect of setting consumer.offset.sync.enable=false.
 //
-// Phase A: init with --pause-consumer-offset-sync, run execute with a rogue
+// Phase A: init with spec.clusterLink.pauseConsumerOffsetSync, run execute with a rogue
 // producer writing directly to source. The pause stage disables sync, then
 // detection trips, and the rollback restores enable=true plus the filters and
 // clears the flipped marker.
@@ -1761,6 +1665,10 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 	require.NoError(t, err)
 
 	stateFile := "/workspace/migration-state-pause-sync-rogue.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.PauseConsumerOffsetSync = true
+	opts.Policy.DetectUnroutedProducers = 10 * time.Second
 	stopProducer(t, cfg)
 
 	const filtersKey = "consumer.offset.group.filters"
@@ -1782,24 +1690,12 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 
 	// --- Step 1: init with the flag ---
 	t.Run("init_with_flag", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
-			"--pause-consumer-offset-sync",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -1809,6 +1705,8 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.Equal(t, "initialized", state.Migrations[0].CurrentState)
 		assert.True(t, state.Migrations[0].PauseConsumerOffsetSync, "intent must persist")
 	})
@@ -1817,17 +1715,10 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 		t.FailNow()
 	}
 
-	migrationID := readMigrationState(t, cfg, stateFile).Migrations[0].MigrationID
 	executeArgs := []string{
 		"migration", "execute",
-		"--migration-id", migrationID,
+		"-f", manifestPath,
 		"--migration-state-file", stateFile,
-		"--cluster-api-key", cfg.ClusterAPIKey,
-		"--cluster-api-secret", cfg.ClusterAPISecret,
-		"--lag-threshold", "0",
-		"--use-unauthenticated-plaintext",
-		"--insecure-skip-tls-verify",
-		"--detect-unrouted-producers-duration", "10s",
 	}
 
 	// --- Phase A: detection fires after the pause, rollback restores sync ---
@@ -1948,6 +1839,10 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 	require.NoError(t, err)
 
 	stateFile := "/workspace/migration-state-pause-sync-drift.json"
+	manifestPath := manifestPathFor(cfg)
+	opts := manifestOptsFor(cfg)
+	opts.PauseConsumerOffsetSync = true
+	opts.Policy.DetectUnroutedProducers = 10 * time.Second
 	stopProducer(t, cfg)
 
 	// Leave the shared fixture healthy whatever happens below.
@@ -1966,24 +1861,12 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 
 	// --- Step 1: init with the flag (link is healthy, so init passes) ---
 	t.Run("init_with_flag", func(t *testing.T) {
+		writeManifestToPod(t, cfg, manifestPath, opts)
+
 		initArgs := []string{
 			"migration", "init",
-			"--source-bootstrap", cfg.SourceBootstrap,
-			"--cluster-bootstrap", cfg.DestBootstrap,
-			"--cluster-id", cfg.DestClusterID,
-			"--cluster-rest-endpoint", cfg.RestProxyEndpoint,
-			"--cluster-link-name", cfg.ClusterLinkName,
-			"--cluster-api-key", cfg.ClusterAPIKey,
-			"--cluster-api-secret", cfg.ClusterAPISecret,
-			"--k8s-namespace", cfg.Namespace,
-			"--initial-cr-name", cfg.GatewayName,
-			"--fenced-cr-yaml", cfg.FencedCR,
-			"--switchover-cr-yaml", cfg.SwitchoverCR,
+			"-f", manifestPath,
 			"--migration-state-file", stateFile,
-			"--use-unauthenticated-plaintext",
-			"--kube-path", cfg.KubePath,
-			"--insecure-skip-tls-verify",
-			"--pause-consumer-offset-sync",
 		}
 
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -1993,6 +1876,8 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
+		assert.Equal(t, opts.MetadataName, state.Migrations[0].MigrationID,
+			"metadata.name must become the state file's migration_id — execute addresses the migration by it")
 		assert.Equal(t, "initialized", state.Migrations[0].CurrentState)
 	})
 
@@ -2010,17 +1895,10 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 	}
 	require.Equal(t, "false", getClusterLinkOffsetSyncEnable(t, cfg), "drift must be visible before execute runs")
 
-	migrationID := readMigrationState(t, cfg, stateFile).Migrations[0].MigrationID
 	executeArgs := []string{
 		"migration", "execute",
-		"--migration-id", migrationID,
+		"-f", manifestPath,
 		"--migration-state-file", stateFile,
-		"--cluster-api-key", cfg.ClusterAPIKey,
-		"--cluster-api-secret", cfg.ClusterAPISecret,
-		"--lag-threshold", "0",
-		"--use-unauthenticated-plaintext",
-		"--insecure-skip-tls-verify",
-		"--detect-unrouted-producers-duration", "10s",
 	}
 
 	// --- Phase A: pause refuses on drift, fence rolls back ---
@@ -2031,7 +1909,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 		combined := stdout + stderr
 
 		require.Error(t, err, "execute must fail when the pause stage finds the link already disabled")
-		assert.Contains(t, combined, "--pause-consumer-offset-sync refused",
+		assert.Contains(t, combined, "spec.clusterLink.pauseConsumerOffsetSync refused",
 			"the failure must be the pause stage's drift refusal")
 		assert.Contains(t, combined, "Pausing consumer offset sync failed",
 			"the rollback banner must name the pause failure as the reason")

@@ -1,0 +1,460 @@
+{
+  "type": "object",
+  "properties": {
+    "apiVersion": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    },
+    "spec": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Source Kafka flavour. Gates authentication: iam is msk-only.",
+              "enum": [
+                "msk",
+                "apache-kafka"
+              ]
+            },
+            "bootstrapServers": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "description": "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092, broker2:9092)."
+            },
+            "credentials": {
+              "description": "Source cluster credentials: either a path to a credentials file, or the same content inline. Exactly one authentication block must be present.",
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/migrateClusterCredentials"
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "bootstrapServers",
+            "credentials"
+          ],
+          "additionalProperties": false
+        },
+        "target": {
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "description": "Destination flavour: a Confluent Cloud or Confluent Platform cluster.",
+              "enum": [
+                "confluent-cloud",
+                "confluent-platform"
+              ]
+            },
+            "clusterId": {
+              "type": "string",
+              "description": "Destination cluster ID (e.g. lkc-abc123). Required for both destination types."
+            },
+            "kafka": {
+              "type": [
+                "null",
+                "object"
+              ],
+              "properties": {
+                "restEndpoint": {
+                  "type": "string",
+                  "description": "REST endpoint of the destination cluster."
+                },
+                "bootstrapServers": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092)."
+                },
+                "credentials": {
+                  "description": "Destination Kafka credentials, used as SASL/PLAIN against the destination bootstrap. Only sasl_plain is supported in this release.",
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/migrateClusterCredentials"
+                    }
+                  ]
+                },
+                "restCredentials": {
+                  "description": "Destination REST credentials. OPTIONAL: when omitted these are derived in full from credentials (api_key/api_secret from sasl_plain.username/password, insecure_skip_verify from insecure_skip_tls_verify). Spell it out only for a REST endpoint behind a private CA — a block that is present is used exactly as written, never partially derived.",
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/targetCredentials"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "restEndpoint"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "type",
+            "clusterId",
+            "kafka"
+          ],
+          "additionalProperties": false
+        },
+        "clusterLink": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string",
+              "description": "Name of the cluster link on the destination cluster. The link must ALREADY EXIST."
+            },
+            "pauseConsumerOffsetSync": {
+              "type": "boolean",
+              "description": "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true."
+            }
+          },
+          "required": [
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "gateway": {
+          "type": "object",
+          "properties": {
+            "namespace": {
+              "type": "string",
+              "description": "Kubernetes namespace where the gateway is deployed."
+            },
+            "kubeconfig": {
+              "type": "string",
+              "description": "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded."
+            },
+            "crs": {
+              "type": "object",
+              "properties": {
+                "initial": {
+                  "type": "string",
+                  "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path."
+                },
+                "fenced": {
+                  "type": "string",
+                  "description": "Path to the local gateway CR YAML file that blocks traffic during migration."
+                },
+                "switchover": {
+                  "type": "string",
+                  "description": "Path to the local gateway CR YAML file that routes traffic to the destination."
+                }
+              },
+              "required": [
+                "initial",
+                "fenced",
+                "switchover"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "namespace",
+            "crs"
+          ],
+          "additionalProperties": false
+        },
+        "topics": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "string"
+          },
+          "description": "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected."
+        },
+        "policy": {
+          "type": "object",
+          "properties": {
+            "lagThreshold": {
+              "type": "integer",
+              "description": "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration."
+            },
+            "promoteBatchSize": {
+              "type": "integer",
+              "description": "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (\u003e0), each batch is promoted and confirmed STOPPED before the next batch is submitted."
+            },
+            "rolloutTimeout": {
+              "type": "string",
+              "description": "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
+              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+            },
+            "detectUnroutedProducersDuration": {
+              "type": "string",
+              "description": "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
+              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+            },
+            "consumerOffsetSyncDrainDuration": {
+              "type": "string",
+              "description": "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
+              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "source",
+        "target",
+        "clusterLink",
+        "gateway"
+      ],
+      "additionalProperties": false
+    },
+    "interpolate": {
+      "type": "boolean",
+      "description": "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key."
+    }
+  },
+  "$defs": {
+    "migrateClusterCredentials": {
+      "type": "object",
+      "properties": {
+        "iam": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "region": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "region"
+          ],
+          "additionalProperties": false
+        },
+        "sasl_scram": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "mechanism": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "additionalProperties": false
+        },
+        "sasl_plain": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "additionalProperties": false
+        },
+        "mtls": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "client_cert",
+            "client_key"
+          ],
+          "additionalProperties": false
+        },
+        "unauthenticated_tls": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "unauthenticated_plaintext": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false
+        },
+        "insecure_skip_tls_verify": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "targetCredentials": {
+      "type": "object",
+      "properties": {
+        "basic": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "additionalProperties": false
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "api_secret": {
+          "type": "string"
+        },
+        "bearer": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "token"
+          ],
+          "additionalProperties": false
+        },
+        "mtls": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "client_cert",
+            "client_key"
+          ],
+          "additionalProperties": false
+        },
+        "ca_cert": {
+          "type": "string"
+        },
+        "insecure_skip_verify": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "apiVersion",
+    "kind",
+    "metadata",
+    "spec"
+  ],
+  "additionalProperties": false
+}
