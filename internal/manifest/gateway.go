@@ -360,16 +360,6 @@ func checkDestinationIsSASLPlain(mc types.MigrateClusterCredentials) []error {
 		"spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")}
 }
 
-// defaultScramMechanism is what --sasl-scram-mechanism defaulted to. Omitting
-// the mechanism worked before this change, so rejecting it now would be a
-// tightening — and SHA512 is the only mechanism MSK serves.
-const defaultScramMechanism = "SHA512"
-
-// defaultGatewayCredentials fills the gaps the retired flags used to fill.
-func defaultGatewayCredentials(mc *types.MigrateClusterCredentials) {
-	mc.DefaultSCRAMMechanism(defaultScramMechanism)
-}
-
 // peekTargetCreds decodes an inline REST credentials block for validation
 // without I/O.
 func peekTargetCreds(ref CredentialsRef) (targets.Credentials, bool) {
@@ -404,7 +394,7 @@ func checkRestIsAPIKeyForm(tc targets.Credentials) []error {
 
 // SourceCredentials resolves the source Kafka leg.
 func (g *GatewayMigration) SourceCredentials() (types.MigrateClusterCredentials, []error) {
-	mc, errs := g.Spec.Source.Credentials.ResolveMigrateClusterWithDefaults(g.Interpolate, defaultGatewayCredentials)
+	mc, errs := g.Spec.Source.Credentials.ResolveMigrateCluster(g.Interpolate)
 	if len(errs) > 0 {
 		return mc, errs
 	}
@@ -421,7 +411,7 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 	if g.Spec.Target.Kafka == nil {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("spec.target.kafka: required")}
 	}
-	mc, errs := g.Spec.Target.Kafka.Credentials.ResolveMigrateClusterWithDefaults(g.Interpolate, defaultGatewayCredentials)
+	mc, errs := g.Spec.Target.Kafka.Credentials.ResolveMigrateCluster(g.Interpolate)
 	if len(errs) > 0 {
 		return mc, errs
 	}

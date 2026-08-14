@@ -81,25 +81,19 @@ func rejectInlineInterpolateKey(inline []byte) error {
 	return nil
 }
 
-// ResolveMigrateCluster resolves the slot into auth-only Kafka credentials.
+// ResolveMigrateCluster resolves the slot into auth-only Kafka credentials,
+// then validates. No field is inferred: an omitted required field (e.g. the
+// SASL/SCRAM mechanism) is rejected rather than defaulted, so the config file
+// alone determines what was selected — the same rule for kcp migration and kcp
+// migrate.
 //
 // interp governs ONLY the inline form. A referenced file governs itself via its
 // own top-level `interpolate:` key, so a manifest opting in never changes how a
 // shared kcp migrate credentials file is read.
 func (r CredentialsRef) ResolveMigrateCluster(interp bool) (types.MigrateClusterCredentials, []error) {
-	return r.ResolveMigrateClusterWithDefaults(interp, nil)
-}
-
-// ResolveMigrateClusterWithDefaults resolves the slot, applies the caller's
-// defaults, and only then validates. The ordering is the point: a default that
-// landed after validation could not rescue a field the rules already rejected.
-func (r CredentialsRef) ResolveMigrateClusterWithDefaults(interp bool, defaults func(*types.MigrateClusterCredentials)) (types.MigrateClusterCredentials, []error) {
 	mc, err := r.unmarshalMigrateCluster(interp)
 	if err != nil {
 		return types.MigrateClusterCredentials{}, []error{err}
-	}
-	if defaults != nil {
-		defaults(&mc)
 	}
 	return mc, types.ValidateMigrateClusterCredentials(mc)
 }

@@ -217,16 +217,6 @@ func UnmarshalMigrateClusterCredentials(data []byte) (MigrateClusterCredentials,
 	return mc, nil
 }
 
-// DefaultSCRAMMechanism fills an omitted sasl_scram.mechanism. kcp migration
-// calls this with SHA512 to match the default of the --sasl-scram-mechanism
-// flag it replaces; kcp migrate deliberately does not, because for a
-// hand-written file the wrong default surfaces only as an opaque auth failure.
-func (c *MigrateClusterCredentials) DefaultSCRAMMechanism(mechanism string) {
-	if c.SASLScram != nil && c.SASLScram.Mechanism == "" {
-		c.SASLScram.Mechanism = mechanism
-	}
-}
-
 // ValidateMigrateClusterCredentials applies every migrate-credentials rule to
 // an already-built struct, so a caller that assembled the block itself (an
 // inline manifest block) is held to the same rules as a file.
@@ -251,11 +241,12 @@ func ValidateMigrateClusterCredentials(mc MigrateClusterCredentials) []error {
 	if mc.IAM != nil && strings.TrimSpace(mc.IAM.Region) == "" {
 		errs = append(errs, fmt.Errorf("iam.region is required (the AWS region for SigV4 token signing)"))
 	}
-	// Migrate creds are hand-written (unlike scan creds, which kcp discover fills
-	// in), so require an explicit SCRAM mechanism rather than silently defaulting
-	// to SHA256 — that default is wrong for MSK (SHA-512-only) and surfaces only as
-	// an opaque auth failure. (The scan format keeps its SHA256 default; this check
-	// is migrate-only, hence here and not in the shared validateAuthMethodConfig.)
+	// These creds are hand-written or config-file-driven (unlike scan creds, which
+	// kcp discover fills in), so require an explicit SCRAM mechanism rather than
+	// silently defaulting — a wrong default (SHA256 against MSK, which is
+	// SHA-512-only) surfaces only as an opaque auth failure. Both kcp migration and
+	// kcp migrate share this rule; the scan format keeps its SHA256 default, hence
+	// this check lives here and not in the shared validateAuthMethodConfig.
 	if mc.SASLScram != nil && !isValidScramMechanism(mc.SASLScram.Mechanism) {
 		errs = append(errs, fmt.Errorf("sasl_scram.mechanism is required and must be SHA256 or SHA512 (MSK requires SHA512)"))
 	}

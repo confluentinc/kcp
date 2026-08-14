@@ -606,45 +606,43 @@ func renderStruct(g *GatewayMigration) (string, error) {
 	return sb.String(), nil
 }
 
-// TestGateway_OmittedScramMechanismDefaultsToSHA512 is a parity rule with a
-// sharp edge. The retired --sasl-scram-mechanism defaulted to SHA512, so a
-// source declared with --use-sasl-scram and no mechanism worked. The shared
-// migrate credentials loader, by contrast, REQUIRES an explicit mechanism,
-// because for a hand-written kcp migrate file the wrong default surfaces only
-// as an opaque auth failure.
+// TestGateway_OmittedScramMechanismIsRejected — the gateway kind now follows
+// the same rule as kcp migrate: an omitted mechanism is rejected rather than
+// silently defaulted. Inferring SHA512 hid a wrong guess (a SHA256 source)
+// behind an opaque auth failure, so the config file must state the mechanism.
 //
-// Rejecting an omitted mechanism here would be a tightening: something
-// accepted today would stop being accepted. So this kind defaults it — and
-// SHA512 is also the only mechanism MSK serves.
-func TestGateway_OmittedScramMechanismDefaultsToSHA512(t *testing.T) {
+// The rejection surfaces on SourceCredentials(), not Validate(): the latter
+// only peeks and does not run the full credentials rules.
+func TestGateway_OmittedScramMechanismIsRejected(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512\n", "", 1)
 	g := parseGateway(t, doc)
 	require.Empty(t, g.Validate())
 
-	creds, errs := g.SourceCredentials()
-	require.Empty(t, errs, "an omitted mechanism must not be rejected")
-	assert.Equal(t, "SHA512", creds.SASLScram.Mechanism)
+	_, errs := g.SourceCredentials()
+	require.NotEmpty(t, errs, "an omitted mechanism must be rejected")
 }
 
-// TestGateway_ExplicitScramMechanismWins — the default only fills a gap.
-func TestGateway_ExplicitScramMechanismWins(t *testing.T) {
+// TestGateway_ExplicitScramMechanismIsAccepted — an explicit mechanism resolves
+// through unchanged.
+func TestGateway_ExplicitScramMechanismIsAccepted(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512", "        mechanism: SHA256", 1)
 	creds, errs := parseGateway(t, doc).SourceCredentials()
 	require.Empty(t, errs)
 	assert.Equal(t, "SHA256", creds.SASLScram.Mechanism)
 }
 
-// TestGateway_InvalidScramMechanismIsStillRejected — defaulting must not
-// weaken the check; this is one of execute's three ported preRunE errors.
+// TestGateway_InvalidScramMechanismIsStillRejected — an unsupported mechanism
+// is rejected; this is one of execute's three ported preRunE errors.
 func TestGateway_InvalidScramMechanismIsStillRejected(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc, "        mechanism: SHA512", "        mechanism: SHA1", 1)
 	_, errs := parseGateway(t, doc).SourceCredentials()
 	require.NotEmpty(t, errs)
 }
 
-// TestGateway_ScramDefaultAppliesToAReferencedFileToo — the two spellings must
-// not diverge, which is the whole point of the parse/validate split.
-func TestGateway_ScramDefaultAppliesToAReferencedFileToo(t *testing.T) {
+// TestGateway_OmittedScramMechanismInReferencedFileIsRejectedToo — the inline
+// and referenced-file spellings must not diverge: a referenced creds file that
+// omits the mechanism is rejected exactly as an inline block is.
+func TestGateway_OmittedScramMechanismInReferencedFileIsRejectedToo(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "creds.yaml")
 	require.NoError(t, os.WriteFile(p,
 		[]byte("sasl_scram:\n  username: admin\n  password: secret\n"), 0600))
@@ -652,14 +650,13 @@ func TestGateway_ScramDefaultAppliesToAReferencedFileToo(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
 		"    credentials:\n      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
 		"    credentials: "+p, 1)
-	creds, errs := parseGateway(t, doc).SourceCredentials()
-	require.Empty(t, errs)
-	assert.Equal(t, "SHA512", creds.SASLScram.Mechanism)
+	_, errs := parseGateway(t, doc).SourceCredentials()
+	require.NotEmpty(t, errs)
 }
 
-// TestMigrateKind_StillRequiresAnExplicitMechanism — the default is scoped to
-// this kind; kcp migrate's stricter rule is unchanged.
-func TestMigrateKind_StillRequiresAnExplicitMechanism(t *testing.T) {
+// TestMigrateKind_RequiresAnExplicitMechanism — the migrate kind requires an
+// explicit mechanism, the same rule the gateway kind now follows.
+func TestMigrateKind_RequiresAnExplicitMechanism(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "creds.yaml")
 	require.NoError(t, os.WriteFile(p,
 		[]byte("sasl_scram:\n  username: admin\n  password: secret\n"), 0600))
