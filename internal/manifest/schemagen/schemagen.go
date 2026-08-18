@@ -68,6 +68,16 @@ func Generate() ([]byte, error) {
 		polymorphic(sr.Properties["credentials"], defTargetCredentials)
 	}
 
+	// target.kafka.credentials / restCredentials live on the shared TargetKafka
+	// for kind: GatewayMigration only — kcp migrate authenticates the destination
+	// via spec.target.clusterCredentials and never reads them. Validate() rejects
+	// them here, so drop them from this schema too; otherwise an editor would
+	// offer a raw {Path, Inline} object for a field that does nothing in this kind.
+	if kafka, ok := target.Properties["kafka"]; ok && kafka.Properties != nil {
+		delete(kafka.Properties, "credentials")
+		delete(kafka.Properties, "restCredentials")
+	}
+
 	return marshal(s)
 }
 
@@ -98,6 +108,12 @@ func GenerateGateway() ([]byte, error) {
 	kafka := target.Properties["kafka"]
 	polymorphic(kafka.Properties["credentials"], defMigrateCredentials)
 	polymorphic(kafka.Properties["restCredentials"], defTargetCredentials)
+	// The reflected schema requires only restEndpoint (the one field without
+	// omitempty), but Validate() also requires bootstrapServers and credentials.
+	// Patch the schema to match so an editor/CI lint cannot pass a manifest that
+	// init will then reject; restCredentials stays optional (derived from
+	// credentials when omitted).
+	kafka.Required = []string{"restEndpoint", "bootstrapServers", "credentials"}
 
 	// Durations parse as "10m", not as an integer count.
 	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration"} {
@@ -114,7 +130,7 @@ func GenerateGateway() ([]byte, error) {
 	// field carries its flag's usage text, reworded away from the
 	// Confluent-Cloud-specific phrasing where "the destination" is meant.
 	describe(map[*jsonschema.Schema]string{
-		s.Properties["interpolate"]: "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key.",
+		s.Properties["interpolate"]: "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key. Only string values are interpolated; numeric and duration fields (e.g. spec.policy.rolloutTimeout) must be written as literals.",
 
 		source.Properties["type"]:             "Source Kafka flavour. Gates authentication: iam is msk-only.",
 		source.Properties["bootstrapServers"]: "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092, broker2:9092).",

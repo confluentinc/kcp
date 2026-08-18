@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/manifest"
@@ -19,17 +18,6 @@ var (
 	migrationStateFile string
 	skipValidate       bool
 )
-
-// reInitSafeStates are the states from which re-running init is safe: nothing
-// irreversible has happened yet, so replacing the persisted config loses
-// nothing. Past these, producers have been fenced and/or offset sync disabled,
-// and the FSM position plus the pre-disable link-config snapshot are the only
-// things that can complete or roll back the cutover.
-var reInitSafeStates = []string{
-	migration.StateUninitialized,
-	migration.StateInitialized,
-	migration.StateLagsOk,
-}
 
 func NewMigrationInitCmd() *cobra.Command {
 	migrationInitCmd := &cobra.Command{
@@ -218,7 +206,7 @@ func checkReInitIsSafe(state *migration.MigrationState, name string) error {
 	if err != nil || existing == nil {
 		return nil // no such migration yet — a fresh registration
 	}
-	if slices.Contains(reInitSafeStates, existing.CurrentState) {
+	if migration.IsReversibleState(existing.CurrentState) {
 		return nil
 	}
 	return fmt.Errorf(

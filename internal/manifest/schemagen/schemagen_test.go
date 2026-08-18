@@ -3,8 +3,12 @@ package schemagen
 import (
 	"encoding/json"
 	"os"
+	"reflect"
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,18 +123,49 @@ func TestGenerateGateway_Enums(t *testing.T) {
 // TestGenerateGateway_DurationsAreStringsNotIntegers: jsonschema-go reflects
 // time.Duration as an integer, but goccy parses "10m" — without the override
 // the yaml-language-server header would flag the documented example as invalid.
+//
+// The duration fields are enumerated from manifest.Policy by reflection rather
+// than a hardcoded list: a copy of the list here would pass even if
+// GenerateGateway forgot to patch a newly-added time.Duration field, which is
+// exactly the omission this test exists to catch.
 func TestGenerateGateway_DurationsAreStringsNotIntegers(t *testing.T) {
 	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
 	policy := props(t, spec["policy"].(map[string]any))
-	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration"} {
-		f := policy[k].(map[string]any)
-		require.Equal(t, "string", f["type"], "%s must be a duration string", k)
-		require.NotEmpty(t, f["pattern"], "%s must carry a duration pattern", k)
+
+	durationType := reflect.TypeOf(time.Duration(0))
+	policyType := reflect.TypeOf(manifest.Policy{})
+	sawDuration := false
+	for i := 0; i < policyType.NumField(); i++ {
+		field := policyType.Field(i)
+		if field.Type != durationType {
+			continue
+		}
+		sawDuration = true
+		name := jsonFieldName(field)
+		f, ok := policy[name].(map[string]any)
+		require.True(t, ok, "policy.%s (a time.Duration) is missing from the schema", name)
+		require.Equal(t, "string", f["type"], "%s must be a duration string", name)
+		require.NotEmpty(t, f["pattern"], "%s must carry a duration pattern", name)
 	}
+	require.True(t, sawDuration, "expected at least one time.Duration field in manifest.Policy")
+
 	// The counts stay integers.
 	for _, k := range []string{"lagThreshold", "promoteBatchSize"} {
 		require.Equal(t, "integer", policy[k].(map[string]any)["type"])
 	}
+}
+
+// jsonFieldName returns the schema property name for a struct field: its json
+// tag minus options, matching how jsonschema-go names reflected properties.
+func jsonFieldName(f reflect.StructField) string {
+	tag := f.Tag.Get("json")
+	if tag == "" {
+		return f.Name
+	}
+	if i := strings.IndexByte(tag, ','); i >= 0 {
+		tag = tag[:i]
+	}
+	return tag
 }
 
 // TestGenerateGateway_CredentialsArePolymorphic — a credentials slot is either
@@ -197,6 +232,12 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	require.ElementsMatch(t, []any{"apiVersion", "kind", "metadata", "spec"}, requiredOf(doc))
 	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway"}, requiredOf(p["spec"].(map[string]any)))
 	require.ElementsMatch(t, []any{"type", "clusterId", "kafka"}, requiredOf(spec["target"].(map[string]any)))
+	// kafka's reflected required set is only restEndpoint, but Validate() also
+	// requires bootstrapServers and credentials — the schema must match so a lint
+	// pass cannot green-light a manifest init will reject. restCredentials is
+	// derived and stays optional.
+	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "credentials"},
+		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
 	require.ElementsMatch(t, []any{"namespace", "crs"}, requiredOf(spec["gateway"].(map[string]any)))
 	require.ElementsMatch(t, []any{"initial", "fenced", "switchover"},
 		requiredOf(props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)))
@@ -221,4 +262,16 @@ func TestGenerate_MigrationCredentialsArePolymorphicToo(t *testing.T) {
 	oneOf, ok := src["credentials"].(map[string]any)["oneOf"].([]any)
 	require.True(t, ok, "spec.source.credentials must be a oneOf")
 	require.Len(t, oneOf, 2)
+}
+
+// TestGenerate_MigrationTargetKafkaOmitsGatewayOnlyCredentials — credentials and
+// restCredentials live on the shared TargetKafka for kind: GatewayMigration
+// only; kcp migrate ignores them and Validate() rejects them, so the kind:
+// Migration schema must not offer them (they otherwise reflect as a broken raw
+// {Path, Inline} object).
+func TestGenerate_MigrationTargetKafkaOmitsGatewayOnlyCredentials(t *testing.T) {
+	spec := props(t, props(t, asMap(t))["spec"].(map[string]any))
+	kafka := props(t, props(t, spec["target"].(map[string]any))["kafka"].(map[string]any))
+	require.NotContains(t, kafka, "credentials")
+	require.NotContains(t, kafka, "restCredentials")
 }

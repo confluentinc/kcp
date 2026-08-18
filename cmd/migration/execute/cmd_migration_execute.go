@@ -27,17 +27,6 @@ var (
 	runReport string
 )
 
-// reversibleStates are the states with nothing irreversible behind them. Drift
-// found here is answered with "re-run init", which is cheap and re-validates
-// the new spec properly. Past these, producers are fenced and/or offset sync is
-// disabled, and re-running init would discard what completes or rolls back the
-// cutover — so the only way forward is an explicit --accept-spec-change.
-var reversibleStates = []string{
-	migration.StateUninitialized,
-	migration.StateInitialized,
-	migration.StateLagsOk,
-}
-
 const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
 
 The migration must already be registered with 'kcp migration init'. Topology comes from
@@ -156,7 +145,7 @@ func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationCon
 	// The trailing guidance line is deliberately part of the error: it is the
 	// only thing the operator can act on, and by the time this fires mid-cutover
 	// they are reading it under time pressure.
-	if slices.Contains(reversibleStates, config.CurrentState) {
+	if migration.IsReversibleState(config.CurrentState) {
 		return fmt.Errorf("%s\n   Re-run init to adopt the new spec", header) //nolint:staticcheck // multi-line operator guidance
 	}
 	return fmt.Errorf("%s\n   This migration is already %s. Re-running init is not safe here;\n   pass --accept-spec-change to proceed with the edited spec", //nolint:staticcheck // multi-line operator guidance
