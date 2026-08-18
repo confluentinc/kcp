@@ -36,6 +36,25 @@ func isKnownState(s string) bool {
 	return false
 }
 
+// IsReversibleState reports whether state is one from which the migration can
+// still be safely re-initialised: nothing irreversible has happened yet, so
+// replacing the persisted config loses nothing. Past these (StateFenced onward)
+// producers have been fenced and/or consumer offset sync disabled, and the FSM
+// position plus the pre-disable link-config snapshot are the only things that
+// can complete or roll back the cutover.
+//
+// This classification belongs to the state machine, not the cobra layer: both
+// `kcp migration init` (refusing an unsafe re-init) and `kcp migration execute`
+// (choosing the drift response) ask the same question, and a copy in each
+// command would be one edit away from silently disagreeing with the FSM.
+func IsReversibleState(state string) bool {
+	switch state {
+	case StateUninitialized, StateInitialized, StateLagsOk:
+		return true
+	}
+	return false
+}
+
 // FSM Event constants
 const (
 	EventInitialize  = "initialize"

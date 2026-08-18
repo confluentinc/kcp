@@ -43,7 +43,14 @@
               }
             },
             "credentials": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/migrateClusterCredentials"
+                }
+              ]
             }
           },
           "required": [
@@ -64,10 +71,24 @@
               ]
             },
             "clusterCredentials": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/targetCredentials"
+                }
+              ]
             },
             "cloudCredentials": {
-              "type": "string"
+              "oneOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "$ref": "#/$defs/targetCredentials"
+                }
+              ]
             },
             "clusterId": {
               "type": "string"
@@ -80,6 +101,15 @@
               "properties": {
                 "restEndpoint": {
                   "type": "string"
+                },
+                "bootstrapServers": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
                 }
               },
               "required": [
@@ -174,7 +204,14 @@
                   }
                 },
                 "credentials": {
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/migrateClusterCredentials"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -193,7 +230,14 @@
                   "type": "string"
                 },
                 "credentials": {
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/targetCredentials"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -218,7 +262,14 @@
                   }
                 },
                 "credentials": {
-                  "type": "string"
+                  "oneOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "$ref": "#/$defs/migrateClusterCredentials"
+                    }
+                  ]
                 }
               },
               "required": [
@@ -472,6 +523,212 @@
         "source",
         "target"
       ],
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "migrateClusterCredentials": {
+      "type": "object",
+      "properties": {
+        "iam": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "region": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "region"
+          ],
+          "additionalProperties": false
+        },
+        "sasl_scram": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "mechanism": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "additionalProperties": false
+        },
+        "sasl_plain": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "tls": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "additionalProperties": false
+        },
+        "mtls": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "client_cert",
+            "client_key"
+          ],
+          "additionalProperties": false
+        },
+        "unauthenticated_tls": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        "unauthenticated_plaintext": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "additionalProperties": false
+        },
+        "insecure_skip_tls_verify": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "targetCredentials": {
+      "type": "object",
+      "properties": {
+        "basic": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "username": {
+              "type": "string"
+            },
+            "password": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "username",
+            "password"
+          ],
+          "additionalProperties": false
+        },
+        "api_key": {
+          "type": "string"
+        },
+        "api_secret": {
+          "type": "string"
+        },
+        "bearer": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "token": {
+              "type": "string"
+            },
+            "ca_cert": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "token"
+          ],
+          "additionalProperties": false
+        },
+        "mtls": {
+          "type": [
+            "null",
+            "object"
+          ],
+          "properties": {
+            "ca_cert": {
+              "type": "string"
+            },
+            "client_cert": {
+              "type": "string"
+            },
+            "client_key": {
+              "type": "string"
+            },
+            "insecure_skip_verify": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "client_cert",
+            "client_key"
+          ],
+          "additionalProperties": false
+        },
+        "ca_cert": {
+          "type": "string"
+        },
+        "insecure_skip_verify": {
+          "type": "boolean"
+        }
+      },
       "additionalProperties": false
     }
   },
