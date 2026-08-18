@@ -241,6 +241,10 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	require.ElementsMatch(t, []any{"namespace", "crs"}, requiredOf(spec["gateway"].(map[string]any)))
 	require.ElementsMatch(t, []any{"initial", "fenced", "switchover"},
 		requiredOf(props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)))
+	// lagThreshold's zero value is meaningful (fail-safe/strictest), not a
+	// stand-in for "omitted", so the key must be required even though the
+	// block it lives in (spec.policy) stays optional.
+	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(spec["policy"].(map[string]any)))
 }
 
 func TestGatewaySchemaInSync(t *testing.T) {

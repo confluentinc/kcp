@@ -230,6 +230,9 @@
               "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
             }
           },
+          "required": [
+            "lagThreshold"
+          ],
           "additionalProperties": false
         }
       },

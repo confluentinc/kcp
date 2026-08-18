@@ -115,6 +115,12 @@ func GenerateGateway() ([]byte, error) {
 	// credentials when omitted).
 	kafka.Required = []string{"restEndpoint", "bootstrapServers", "credentials"}
 
+	// lagThreshold's zero value is a legitimate, fail-safe setting (strictest:
+	// zero lag before proceeding), so it is indistinguishable from "omitted" —
+	// requiring the key forces an operator to choose it explicitly rather than
+	// silently inherit that default by leaving it out.
+	policy.Required = []string{"lagThreshold"}
+
 	// Durations parse as "10m", not as an integer count.
 	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration"} {
 		p := policy.Properties[k]
