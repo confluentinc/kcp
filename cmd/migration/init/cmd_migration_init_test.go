@@ -280,27 +280,49 @@ func TestInit_RejectsMissingFile(t *testing.T) {
 
 // TestInit_ValidatesSourceCredentials closes half of defect 1: source auth is
 // now declared once, and init actually validates it rather than only marking
-// flags required.
+// flags required. No --skip-validate here: checkCredentialsResolve runs in
+// Phase 5, so this error surfaces locally, before any gateway/K8s contact is
+// even attempted — see TestInit_SkipValidateSkipsCredentialResolution for the
+// --skip-validate counterpart.
 func TestInit_RejectsInvalidSourceCredentials(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	manifest := writeManifest(t, func(doc string) string {
 		return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: NOPE", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--skip-validate")
+	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile)
 	require.Error(t, err)
 	assert.Contains(t, strings.ToLower(err.Error()), "mechanism")
 }
 
-// TestInit_RejectsIAMOnApacheKafkaSource — the §2.4 gating reaches the command.
+// TestInit_RejectsIAMOnApacheKafkaSource — the §2.4 gating reaches the
+// command. No --skip-validate: see TestInit_RejectsInvalidSourceCredentials.
 func TestInit_RejectsIAMOnApacheKafkaSource(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	manifest := writeManifest(t, func(doc string) string {
 		doc = strings.Replace(doc, "    type: msk", "    type: apache-kafka", 1)
 		return strings.Replace(doc,
 			"      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
 			"      iam:\n        region: us-east-1", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--skip-validate")
+	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "iam")
+}
+
+// TestInit_SkipValidateSkipsCredentialResolution — --skip-validate defers
+// checkCredentialsResolve (Phase 5) along with the rest of validation, so
+// invalid source credentials are no longer caught at init. This is a
+// deliberate symmetry with the destination leg, which --skip-validate has
+// always exempted from eager resolution (RestCredentials() is Phase-5-only
+// too): neither leg is singled out, which matters as both grow more auth
+// methods (e.g. mTLS certs) that may need local file access to resolve.
+func TestInit_SkipValidateSkipsCredentialResolution(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: NOPE", 1)
+	})
+	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err, "credential resolution is deferred, not performed, under --skip-validate")
 }
 
 // --- decision 14: the mutual exclusion is dropped, replaced by a warning ---

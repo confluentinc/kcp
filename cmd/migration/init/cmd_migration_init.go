@@ -61,7 +61,7 @@ reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: t
 
 	migrationInitCmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
 	migrationInitCmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
-	migrationInitCmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
+	migrationInitCmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without resolving credentials or validating gateway/Kubernetes resources. Useful for testing.")
 
 	_ = migrationInitCmd.MarkFlagRequired("file")
 
@@ -98,10 +98,6 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	// operator re-running init mid-cutover needs to hear "this migration is
 	// fenced" rather than have it masked by an unset environment variable.
 	if err := checkReInitIsSafe(migrationState, g.Metadata.Name); err != nil {
-		return err
-	}
-
-	if err := checkCredentialsResolve(g); err != nil {
 		return err
 	}
 
@@ -162,6 +158,10 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 
 	// ===== PHASE 5: Validation orchestration =====
+	if err := checkCredentialsResolve(g); err != nil {
+		return err
+	}
+
 	restCreds, err := g.RestCredentials()
 	if err != nil {
 		return fmt.Errorf("resolving destination REST credentials: %w", err)
@@ -185,10 +185,19 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 }
 
 // checkCredentialsResolve resolves every credential block without using the
-// result. kcp never contacts the source during init, but resolving here turns
-// "you got the auth wrong" into an init-time error rather than one discovered
-// at execute, after the operator has scheduled a cutover window — the fail-fast
-// the six --use-* flags used to buy at the cost of declaring source auth twice.
+// result, so that "you got the auth wrong" is an init-time error rather than
+// one discovered at execute, after the operator has scheduled a cutover
+// window — the fail-fast the six --use-* flags used to buy at the cost of
+// declaring source auth twice.
+//
+// It runs as part of Phase 5, alongside RestCredentials(), so --skip-validate
+// (which returns before Phase 5) skips resolving source credentials exactly
+// as it already skipped resolving destination credentials — neither leg is
+// singled out for eager validation. That symmetry matters because both legs
+// are growing more auth methods (e.g. mTLS certs), each of which may need
+// local file access to resolve; --skip-validate promising "no infrastructure
+// contact, no local credential resolution" for one leg and not the other
+// would be an arbitrary distinction.
 func checkCredentialsResolve(g *manifest.GatewayMigration) error {
 	if _, errs := g.SourceCredentials(); len(errs) > 0 {
 		return fmt.Errorf("spec.source.credentials: %w", manifest.JoinProblems("the migration manifest", errs))
