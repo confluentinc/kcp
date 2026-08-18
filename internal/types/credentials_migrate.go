@@ -5,6 +5,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/confluentinc/kcp/internal/interpolate"
+	"github.com/confluentinc/kcp/internal/yamlsafe"
 	"github.com/goccy/go-yaml"
 )
 
@@ -23,51 +25,57 @@ import (
 //
 //	unauthenticated_plaintext: {}
 type MigrateClusterCredentials struct {
-	IAM                      *MigrateIAM                      `yaml:"iam,omitempty"`
-	SASLScram                *MigrateSASLScram                `yaml:"sasl_scram,omitempty"`
-	SASLPlain                *MigrateSASLPlain                `yaml:"sasl_plain,omitempty"`
-	MTLS                     *MigrateMTLS                     `yaml:"mtls,omitempty"`
-	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty"`
-	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty"`
-	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty"`
+	IAM                      *MigrateIAM                      `yaml:"iam,omitempty" json:"iam,omitempty"`
+	SASLScram                *MigrateSASLScram                `yaml:"sasl_scram,omitempty" json:"sasl_scram,omitempty"`
+	SASLPlain                *MigrateSASLPlain                `yaml:"sasl_plain,omitempty" json:"sasl_plain,omitempty"`
+	MTLS                     *MigrateMTLS                     `yaml:"mtls,omitempty" json:"mtls,omitempty"`
+	UnauthenticatedTLS       *MigrateUnauthenticatedTLS       `yaml:"unauthenticated_tls,omitempty" json:"unauthenticated_tls,omitempty"`
+	UnauthenticatedPlaintext *MigrateUnauthenticatedPlaintext `yaml:"unauthenticated_plaintext,omitempty" json:"unauthenticated_plaintext,omitempty"`
+	InsecureSkipTLSVerify    bool                             `yaml:"insecure_skip_tls_verify,omitempty" json:"insecure_skip_tls_verify,omitempty"`
+
+	// Interpolate opts this file in to ${ENV_VAR} resolution. It is file-level
+	// rather than a CLI flag so each file governs itself: a manifest that opts
+	// in never changes how a credentials file it references is read, and an
+	// operator whose secret legitimately contains "${" has a way out.
+	Interpolate bool `yaml:"interpolate,omitempty" json:"interpolate,omitempty"`
 }
 
 // MigrateIAM is the MSK IAM auth block. region is required (SigV4 token signing);
 // there is no auto-derive. Valid only for an MSK source's read credentials.
 type MigrateIAM struct {
-	Region string `yaml:"region"`
+	Region string `yaml:"region" json:"region"`
 }
 
 // MigrateSASLScram is the SASL/SCRAM auth block for migrate credentials (no use: flag).
 type MigrateSASLScram struct {
-	Username  string `yaml:"username"`
-	Password  string `yaml:"password"`
-	Mechanism string `yaml:"mechanism,omitempty"` // "SHA256" or "SHA512"
-	CACert    string `yaml:"ca_cert,omitempty"`
+	Username  string `yaml:"username" json:"username"`
+	Password  string `yaml:"password" json:"password"`
+	Mechanism string `yaml:"mechanism,omitempty" json:"mechanism,omitempty"` // "SHA256" or "SHA512"
+	CACert    string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
 }
 
 // MigrateSASLPlain is the SASL/PLAIN auth block for migrate credentials (no use: flag).
 // Transport: ca_cert present ⇒ SASL_SSL (trusting that CA); tls: true ⇒ SASL_SSL
 // over the system/public trust store (no custom CA); neither ⇒ SASL_PLAINTEXT.
 type MigrateSASLPlain struct {
-	Username string `yaml:"username"`
-	Password string `yaml:"password"`
-	CACert   string `yaml:"ca_cert,omitempty"`
-	UseTLS   bool   `yaml:"tls,omitempty"`
+	Username string `yaml:"username" json:"username"`
+	Password string `yaml:"password" json:"password"`
+	CACert   string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	UseTLS   bool   `yaml:"tls,omitempty" json:"tls,omitempty"`
 }
 
 // MigrateMTLS is the mutual-TLS auth block for migrate credentials (client cert +
 // key; no use: flag). The client authenticates with a certificate — distinct from
 // unauthenticated_tls (one-way TLS: server cert only, client not authenticated).
 type MigrateMTLS struct {
-	CACert     string `yaml:"ca_cert,omitempty"`
-	ClientCert string `yaml:"client_cert"`
-	ClientKey  string `yaml:"client_key"`
+	CACert     string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
+	ClientCert string `yaml:"client_cert" json:"client_cert"`
+	ClientKey  string `yaml:"client_key" json:"client_key"`
 }
 
 // MigrateUnauthenticatedTLS is the unauthenticated TLS auth block for migrate credentials (no use: flag).
 type MigrateUnauthenticatedTLS struct {
-	CACert string `yaml:"ca_cert,omitempty"`
+	CACert string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
 }
 
 // MigrateUnauthenticatedPlaintext is an empty marker block — its PRESENCE (unauthenticated_plaintext: {})
@@ -141,36 +149,78 @@ func (c MigrateClusterCredentials) authMethodConfig() AuthMethodConfig {
 	return amc
 }
 
-// LoadMigrateClusterCredentials reads and validates the auth-only flat migrate
-// credentials file, returning the auth-only MigrateClusterCredentials. The
-// bootstrap address comes from the manifest (see MigrateConn). Returns all problems.
+// LoadMigrateClusterCredentials reads, parses and validates the auth-only flat
+// migrate credentials file, returning the auth-only MigrateClusterCredentials.
+// The bootstrap address comes from the manifest (see MigrateConn). Returns all
+// problems.
 func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return MigrateClusterCredentials{}, []error{fmt.Errorf("failed to read migrate credentials file: %w", err)}
 	}
+	return ParseMigrateClusterCredentials(data)
+}
 
+// ParseMigrateClusterCredentials parses and validates migrate credentials from
+// bytes. It is the shared entry point so an inline manifest block and a
+// referenced file run exactly the same validation.
+func ParseMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, []error) {
+	mc, err := UnmarshalMigrateClusterCredentials(data)
+	if err != nil {
+		return MigrateClusterCredentials{}, []error{err}
+	}
+	return mc, ValidateMigrateClusterCredentials(mc)
+}
+
+// UnmarshalMigrateClusterCredentials parses and resolves credentials WITHOUT
+// validating them. It exists so a caller that must fill a default before the
+// rules run — kcp migration defaults an omitted sasl_scram.mechanism to SHA512,
+// matching the flag it replaces — can do so without duplicating the parse.
+func UnmarshalMigrateClusterCredentials(data []byte) (MigrateClusterCredentials, error) {
 	var mc MigrateClusterCredentials
 	if err := yaml.UnmarshalWithOptions(data, &mc, yaml.Strict()); err != nil {
+		// Strip FIRST, then match. goccy's raw error carries an excerpt of the
+		// file, so matching on it would select a hint based on the file's
+		// CONTENT — a password containing "clusters" would trip the scan-format
+		// hint. The offending key survives stripping, so the three genuine
+		// hints still fire.
+		err = yamlsafe.StripSourceExcerpt(err)
 		msg := err.Error()
 		// Old format: auth_method: wrapper — hint that auth is now top-level.
 		if strings.Contains(msg, "auth_method") {
-			return MigrateClusterCredentials{}, []error{fmt.Errorf(
-				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", err)}
+			return MigrateClusterCredentials{}, fmt.Errorf(
+				"auth methods are now specified at the top-level (no auth_method: wrapper) — e.g. 'sasl_scram: { username: ..., password: ... }': %w", err)
 		}
 		// Common mistake: passing the OSK scan format (clusters: list).
 		if strings.Contains(msg, "clusters") {
-			return MigrateClusterCredentials{}, []error{fmt.Errorf(
-				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", err)}
+			return MigrateClusterCredentials{}, fmt.Errorf(
+				"migrate credentials use a single-cluster format (top-level auth method only), not the scan 'clusters:' list: %w", err)
 		}
 		// Common mistake: including bootstrap_servers in the creds file.
 		if strings.Contains(msg, "bootstrap_servers") || strings.Contains(msg, "bootstrapServers") {
-			return MigrateClusterCredentials{}, []error{fmt.Errorf(
-				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", err)}
+			return MigrateClusterCredentials{}, fmt.Errorf(
+				"bootstrap servers belong in the manifest (spec.source.bootstrapServers or spec.clusterLink.source/destination.bootstrapServers), not the credentials file: %w", err)
 		}
-		return MigrateClusterCredentials{}, []error{fmt.Errorf("failed to parse migrate credentials: %w", err)}
+		return MigrateClusterCredentials{}, fmt.Errorf("failed to parse migrate credentials: %w", err)
 	}
 
+	// Resolution runs immediately after the unmarshal and before every
+	// validation below: the mechanism check and the cert paths are in
+	// interpolation scope, so resolving afterwards would reject the literal
+	// "${MECH}" rather than its value.
+	if mc.Interpolate {
+		if err := interpolate.Struct(&mc); err != nil {
+			return MigrateClusterCredentials{}, fmt.Errorf("resolving migrate credentials: %w", err)
+		}
+	}
+
+	return mc, nil
+}
+
+// ValidateMigrateClusterCredentials applies every migrate-credentials rule to
+// an already-built struct, so a caller that assembled the block itself (an
+// inline manifest block) is held to the same rules as a file.
+func ValidateMigrateClusterCredentials(mc MigrateClusterCredentials) []error {
 	var errs []error
 	switch mc.methodCount() {
 	case 0:
@@ -191,15 +241,16 @@ func LoadMigrateClusterCredentials(path string) (MigrateClusterCredentials, []er
 	if mc.IAM != nil && strings.TrimSpace(mc.IAM.Region) == "" {
 		errs = append(errs, fmt.Errorf("iam.region is required (the AWS region for SigV4 token signing)"))
 	}
-	// Migrate creds are hand-written (unlike scan creds, which kcp discover fills
-	// in), so require an explicit SCRAM mechanism rather than silently defaulting
-	// to SHA256 — that default is wrong for MSK (SHA-512-only) and surfaces only as
-	// an opaque auth failure. (The scan format keeps its SHA256 default; this check
-	// is migrate-only, hence here and not in the shared validateAuthMethodConfig.)
+	// These creds are hand-written or config-file-driven (unlike scan creds, which
+	// kcp discover fills in), so require an explicit SCRAM mechanism rather than
+	// silently defaulting — a wrong default (SHA256 against MSK, which is
+	// SHA-512-only) surfaces only as an opaque auth failure. Both kcp migration and
+	// kcp migrate share this rule; the scan format keeps its SHA256 default, hence
+	// this check lives here and not in the shared validateAuthMethodConfig.
 	if mc.SASLScram != nil && !isValidScramMechanism(mc.SASLScram.Mechanism) {
 		errs = append(errs, fmt.Errorf("sasl_scram.mechanism is required and must be SHA256 or SHA512 (MSK requires SHA512)"))
 	}
-	return mc, errs
+	return errs
 }
 
 // isValidScramMechanism reports whether m is an explicitly-specified, supported

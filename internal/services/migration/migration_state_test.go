@@ -364,3 +364,15 @@ func TestMigrationState_WriteToFile_TightensExistingLooseFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "existing 0644 file should be tightened to 0600")
 }
+
+// TestIsReversibleState pins the point-of-no-return boundary: the three
+// pre-fence states are reversible, everything from StateFenced on is not, and an
+// unknown value is treated as not reversible (fail safe).
+func TestIsReversibleState(t *testing.T) {
+	for _, s := range []string{StateUninitialized, StateInitialized, StateLagsOk} {
+		assert.True(t, IsReversibleState(s), "%s should be reversible", s)
+	}
+	for _, s := range []string{StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched, "bogus"} {
+		assert.False(t, IsReversibleState(s), "%s should not be reversible", s)
+	}
+}

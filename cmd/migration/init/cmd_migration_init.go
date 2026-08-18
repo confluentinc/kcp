@@ -5,53 +5,18 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
+	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
-	"github.com/google/uuid"
 	"github.com/spf13/cobra"
-	"github.com/spf13/pflag"
 )
 
 var (
-	migrationStateFile      string
-	skipValidate            bool
-	pauseConsumerOffsetSync bool
-
-	k8sNamespace   string
-	initialCrName  string
-	kubeConfigPath string
-
-	sourceBootstrap     string
-	clusterBootstrap    string
-	clusterId           string
-	clusterRestEndpoint string
-	clusterLinkName     string
-	clusterApiKey       string
-	clusterApiSecret    string
-	topics              []string
-
-	fencedCrYamlPath      string
-	switchoverCrYamlPath  string
-	insecureSkipTLSVerify bool
-	clusterRestCaCert     string
-
-	useSaslIam                  bool
-	useSaslScram                bool
-	useSaslPlain                bool
-	useTls                      bool
-	useUnauthenticatedTLS       bool
-	useUnauthenticatedPlaintext bool
-
-	saslScramUsername string
-	saslScramPassword string
-
-	saslPlainUsername string
-	saslPlainPassword string
-
-	tlsCaCert     string
-	tlsClientCert string
-	tlsClientKey  string
+	manifestFile       string
+	migrationStateFile string
+	skipValidate       bool
 )
 
 func NewMigrationInitCmd() *cobra.Command {
@@ -59,6 +24,10 @@ func NewMigrationInitCmd() *cobra.Command {
 		Use:   "init",
 		Short: "Initialize a new migration",
 		Long: `Initialize a new migration by validating infrastructure and persisting migration state.
+
+The migration is described by a single ` + "`kind: GatewayMigration`" + ` YAML file — the source
+and destination topology, the cluster link, the gateway CRs, and the credentials for each
+connection leg. See docs/assets/migration-assets/gateway-examples/gateway-migration.yaml.
 
 This command validates the cluster link and mirror topics on the destination cluster,
 fetches the current gateway CR from Kubernetes, validates the initial, fenced and switchover
@@ -70,253 +39,144 @@ after client traffic has already been fenced.
 
 The state file can then be used by 'kcp migration execute' to run the migration.
 
-All flags can be provided via environment variables using uppercase names with underscores
-(e.g. ` + "`--cluster-api-key`" + ` → ` + "`CLUSTER_API_KEY`" + `, ` + "`--source-bootstrap`" + ` → ` + "`SOURCE_BOOTSTRAP`" + `).`,
-		Example: `  # MSK source with IAM auth
-  kcp migration init \
-      --k8s-namespace my-namespace \
-      --initial-cr-name my-gateway \
-      --source-bootstrap b1.my-cluster.kafka.us-east-1.amazonaws.com:9098 \
-      --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
-      --cluster-id lkc-abc123 \
-      --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
-      --cluster-link-name my-cluster-link \
-      --cluster-api-key ABCDEFGHIJKLMNOP \
-      --cluster-api-secret xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
-      --fenced-cr-yaml gateway-fenced.yaml \
-      --switchover-cr-yaml gateway-switchover.yaml \
-      --use-sasl-iam
+metadata.name in the manifest is the migration's identity and is written into the state
+file's migration_id, so re-running init updates that migration rather than creating a
+second one. Init refuses to overwrite a migration that is already past the point of no
+return; use 'kcp migration execute --accept-spec-change' there instead.
 
-  # SASL/SCRAM source
-  kcp migration init \
-      --k8s-namespace my-namespace --initial-cr-name my-gateway \
-      --source-bootstrap broker1:9096 --cluster-bootstrap pkc-abc123.us-east-1.aws.confluent.cloud:9092 \
-      --cluster-id lkc-abc123 --cluster-rest-endpoint https://lkc-abc123.us-east-1.aws.confluent.cloud:443 \
-      --cluster-link-name my-cluster-link \
-      --cluster-api-key ABCDEFGHIJKLMNOP --cluster-api-secret xxxx \
-      --fenced-cr-yaml gateway-fenced.yaml --switchover-cr-yaml gateway-switchover.yaml \
-      --use-sasl-scram --sasl-scram-username kafkauser --sasl-scram-password kafkapass`,
+The manifest is secret-bearing when credentials are written inline. Keep it 0600, or
+reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: true).`,
+		Example: `  # Initialize from a manifest
+  kcp migration init -f gateway-migration.yaml
+
+  # Register the migration without contacting the gateway or destination
+  kcp migration init -f gateway-migration.yaml --skip-validate`,
 		SilenceErrors: true,
-		Args:          cobra.NoArgs,
-		PreRunE:       preRunMigrationInit,
-		RunE:          runMigrationInit,
+		// A runtime failure must not bury the error under Cobra's usage block.
+		SilenceUsage: true,
+		Args:         cobra.NoArgs,
+		PreRunE:      preRunMigrationInit,
+		RunE:         runMigrationInit,
 	}
 
-	groups := map[*pflag.FlagSet]string{}
+	migrationInitCmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
+	migrationInitCmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
+	migrationInitCmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without resolving credentials or validating gateway/Kubernetes resources. Useful for testing.")
 
-	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
-	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&k8sNamespace, "k8s-namespace", "", "Kubernetes namespace where the gateway is deployed.")
-	requiredFlags.StringVar(&initialCrName, "initial-cr-name", "", "Name of the initial gateway custom resource in Kubernetes.")
-	requiredFlags.StringVar(&sourceBootstrap, "source-bootstrap", "", "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092,broker2:9092).")
-	requiredFlags.StringVar(&clusterBootstrap, "cluster-bootstrap", "", "Confluent Cloud Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).")
-	requiredFlags.StringVar(&clusterId, "cluster-id", "", "Confluent Cloud destination cluster ID (e.g. lkc-abc123).")
-	requiredFlags.StringVar(&clusterRestEndpoint, "cluster-rest-endpoint", "", "REST endpoint of the destination Confluent Cloud cluster.")
-	requiredFlags.StringVar(&clusterLinkName, "cluster-link-name", "", "Name of the cluster link on the destination cluster.")
-	requiredFlags.StringVar(&clusterApiKey, "cluster-api-key", "", "API key for authenticating with the destination cluster.")
-	requiredFlags.StringVar(&clusterApiSecret, "cluster-api-secret", "", "API secret for authenticating with the destination cluster.")
-	requiredFlags.StringVar(&fencedCrYamlPath, "fenced-cr-yaml", "", "Path to the gateway CR YAML that blocks traffic during migration.")
-	requiredFlags.StringVar(&switchoverCrYamlPath, "switchover-cr-yaml", "", "Path to the gateway CR YAML that routes traffic to Confluent Cloud.")
-
-	migrationInitCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags"
-
-	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
-	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
-	optionalFlags.BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without validating gateway/Kubernetes resources. Useful for testing.")
-	optionalFlags.BoolVar(&pauseConsumerOffsetSync, "pause-consumer-offset-sync", false, "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.")
-	optionalFlags.StringVar(&kubeConfigPath, "kube-path", "", "The path to the Kubernetes config file to use for the migration.")
-	optionalFlags.StringSliceVar(&topics, "topics", []string{}, "The topics to cut over (comma separated list or repeated flag).")
-	optionalFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for REST endpoint and Kafka connections.")
-	optionalFlags.StringVar(&clusterRestCaCert, "cluster-rest-ca-cert", "", "Path to a CA certificate that verifies the destination cluster REST endpoint's TLS certificate. Use when the REST endpoint is HTTPS behind a private/internal CA; omit for Confluent Cloud (public CA).")
-	migrationInitCmd.Flags().AddFlagSet(optionalFlags)
-	groups[optionalFlags] = "Optional Flags"
-
-	// Authentication flags. These are validated at init time so the user declares their source auth
-	// strategy up front (fail-fast), but credentials are not passed to the initializer — source cluster
-	// connections only happen during 'migration execute'.
-	authFlags := pflag.NewFlagSet("auth", pflag.ExitOnError)
-	authFlags.SortFlags = false
-	authFlags.BoolVar(&useSaslIam, "use-sasl-iam", false, "Use IAM authentication for the source MSK cluster.")
-	authFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication for the source MSK cluster.")
-	authFlags.BoolVar(&useSaslPlain, "use-sasl-plain", false, "Use SASL/PLAIN authentication for the source cluster.")
-	authFlags.BoolVar(&useTls, "use-tls", false, "Use TLS authentication for the source MSK cluster.")
-	authFlags.BoolVar(&useUnauthenticatedTLS, "use-unauthenticated-tls", false, "Use unauthenticated (TLS encryption) for the source MSK cluster.")
-	authFlags.BoolVar(&useUnauthenticatedPlaintext, "use-unauthenticated-plaintext", false, "Use unauthenticated (plaintext) for the source MSK cluster.")
-	migrationInitCmd.Flags().AddFlagSet(authFlags)
-	groups[authFlags] = "Source Cluster Authentication Flags"
-
-	// SASL/SCRAM credential flags.
-	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
-	saslScramFlags.SortFlags = false
-	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username for the source MSK cluster.")
-	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password for the source MSK cluster.")
-	migrationInitCmd.Flags().AddFlagSet(saslScramFlags)
-	groups[saslScramFlags] = "SASL/SCRAM Flags"
-
-	// SASL/PLAIN credential flags.
-	saslPlainFlags := pflag.NewFlagSet("sasl-plain", pflag.ExitOnError)
-	saslPlainFlags.SortFlags = false
-	saslPlainFlags.StringVar(&saslPlainUsername, "sasl-plain-username", "", "SASL/PLAIN username for the source cluster.")
-	saslPlainFlags.StringVar(&saslPlainPassword, "sasl-plain-password", "", "SASL/PLAIN password for the source cluster.")
-	migrationInitCmd.Flags().AddFlagSet(saslPlainFlags)
-	groups[saslPlainFlags] = "SASL/PLAIN Flags"
-
-	// TLS credential flags.
-	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
-	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the source broker's TLS server certificate. Applies to any TLS-fronted source auth method (SASL/SCRAM, SASL/PLAIN over TLS, TLS/mTLS, unauthenticated-TLS); supply it only for a private/internal CA.")
-	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the TLS client certificate for the source MSK cluster.")
-	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the TLS client key for the source MSK cluster.")
-	migrationInitCmd.Flags().AddFlagSet(tlsFlags)
-	groups[tlsFlags] = "TLS Flags"
-
-	migrationInitCmd.SetUsageFunc(func(c *cobra.Command) error {
-		fmt.Printf("%s\n\n", c.Short)
-
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authFlags, saslScramFlags, saslPlainFlags, tlsFlags}
-		groupNames := []string{"Required Flags", "Optional Flags", "Source Cluster Authentication Flags", "SASL/SCRAM Flags", "SASL/PLAIN Flags", "TLS Flags"}
-
-		for i, fs := range flagOrder {
-			usage := fs.FlagUsages()
-			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
-			}
-		}
-
-		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
-
-		return nil
-	})
-
-	_ = migrationInitCmd.MarkFlagRequired("source-bootstrap")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-bootstrap")
-	_ = migrationInitCmd.MarkFlagRequired("k8s-namespace")
-	_ = migrationInitCmd.MarkFlagRequired("initial-cr-name")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-id")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-rest-endpoint")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-link-name")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-api-key")
-	_ = migrationInitCmd.MarkFlagRequired("cluster-api-secret")
-	_ = migrationInitCmd.MarkFlagRequired("fenced-cr-yaml")
-	_ = migrationInitCmd.MarkFlagRequired("switchover-cr-yaml")
-
-	migrationInitCmd.MarkFlagsMutuallyExclusive("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
-	migrationInitCmd.MarkFlagsOneRequired("use-sasl-iam", "use-sasl-scram", "use-sasl-plain", "use-tls", "use-unauthenticated-tls", "use-unauthenticated-plaintext")
-
-	// --pause-consumer-offset-sync requires the init-time snapshot captured by
-	// the validation path, so it cannot be combined with --skip-validate.
-	// Without the snapshot, the restore bookend has nothing to diff against
-	// and would silently leave the cluster link disabled after switchover.
-	migrationInitCmd.MarkFlagsMutuallyExclusive("skip-validate", "pause-consumer-offset-sync")
-
-	// If any credential in a pair is set, the whole pair must be set.
-	migrationInitCmd.MarkFlagsRequiredTogether("sasl-scram-username", "sasl-scram-password")
-	migrationInitCmd.MarkFlagsRequiredTogether("sasl-plain-username", "sasl-plain-password")
-	// The mTLS client identity is a pair; --tls-ca-cert is deliberately NOT
-	// grouped in, so it can be supplied on its own to trust a private CA on the
-	// SASL/SCRAM, SASL/PLAIN-over-TLS, and unauthenticated-TLS source paths.
-	migrationInitCmd.MarkFlagsRequiredTogether("tls-client-cert", "tls-client-key")
+	_ = migrationInitCmd.MarkFlagRequired("file")
 
 	return migrationInitCmd
 }
 
 func preRunMigrationInit(cmd *cobra.Command, args []string) error {
-	if err := utils.BindEnvToFlags(cmd); err != nil {
-		return err
-	}
-
-	if useSaslScram {
-		_ = cmd.MarkFlagRequired("sasl-scram-username")
-		_ = cmd.MarkFlagRequired("sasl-scram-password")
-	}
-
-	if useSaslPlain {
-		_ = cmd.MarkFlagRequired("sasl-plain-username")
-		_ = cmd.MarkFlagRequired("sasl-plain-password")
-	}
-
-	if useTls {
-		// --tls-ca-cert is NOT required: mTLS against a public/system-trusted CA
-		// works with system roots. It stays optional, for a private/internal CA.
-		_ = cmd.MarkFlagRequired("tls-client-cert")
-		_ = cmd.MarkFlagRequired("tls-client-key")
-	}
-
-	return nil
+	return utils.BindEnvToFlags(cmd)
 }
 
 func runMigrationInit(cmd *cobra.Command, args []string) error {
+	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
+	if err != nil {
+		return err
+	}
+
 	// ===== PHASE 1: Load or create state =====
 	var migrationState *migration.MigrationState
 	if _, err := os.Stat(migrationStateFile); err == nil {
-		// File exists, load it
 		migrationState, err = migration.NewMigrationStateFromFile(migrationStateFile)
 		if err != nil {
 			return fmt.Errorf("failed to load migration state: %w", err)
 		}
 	} else {
-		// File doesn't exist, create new state
 		migrationState = migration.NewMigrationState()
 	}
 
-	// ===== PHASE 2: Read YAML files =====
-	fencedCrYAML, err := os.ReadFile(fencedCrYamlPath)
-	if err != nil {
-		return fmt.Errorf("failed to read fenced CR YAML file: %w", err)
+	// metadata.name keys the row, so a second init is an UPDATE. Before the
+	// point of no return that is exactly what §13 asks for ("re-run init to
+	// adopt the new spec"); after it, overwriting would discard the FSM position
+	// and the pre-disable link-config snapshot and strand a live cutover.
+	//
+	// This runs BEFORE credentials are resolved: it is a safety refusal, and an
+	// operator re-running init mid-cutover needs to hear "this migration is
+	// fenced" rather than have it masked by an unset environment variable.
+	if err := checkReInitIsSafe(migrationState, g.Metadata.Name); err != nil {
+		return err
 	}
 
-	switchoverCrYAML, err := os.ReadFile(switchoverCrYamlPath)
+	// ===== PHASE 2: Read the CR files =====
+	// Both are snapshotted into the state file and applied FROM there at
+	// cutover, so a file edited or deleted after init cannot change what gets
+	// applied mid-flight.
+	fencedCrYAML, err := os.ReadFile(g.Spec.Gateway.CRs.Fenced)
 	if err != nil {
-		return fmt.Errorf("failed to read switchover CR YAML file: %w", err)
+		return fmt.Errorf("failed to read spec.gateway.crs.fenced: %w", err)
+	}
+	switchoverCrYAML, err := os.ReadFile(g.Spec.Gateway.CRs.Switchover)
+	if err != nil {
+		return fmt.Errorf("failed to read spec.gateway.crs.switchover: %w", err)
 	}
 
-	// Parse kube config path with default
-	kubeConfigPathResolved := kubeConfigPath
-	if kubeConfigPathResolved == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get user home directory: %v", err)
-		}
-		kubeConfigPathResolved = filepath.Join(homeDir, ".kube", "config")
+	kubeConfigPathResolved, err := resolveKubeConfigPath(g)
+	if err != nil {
+		return err
 	}
 	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
-	config := &migration.MigrationConfig{
-		MigrationId:             fmt.Sprintf("migration-%s", uuid.New().String()),
-		SourceBootstrap:         sourceBootstrap,
-		ClusterBootstrap:        clusterBootstrap,
-		K8sNamespace:            k8sNamespace,
-		InitialCrName:           initialCrName,
+	config := migration.MigrationConfig{
+		MigrationId:             g.Metadata.Name,
+		SourceBootstrap:         strings.Join(g.Spec.Source.BootstrapServers, ","),
+		ClusterBootstrap:        strings.Join(g.Spec.Target.Kafka.BootstrapServers, ","),
+		K8sNamespace:            g.Spec.Gateway.Namespace,
+		InitialCrName:           g.Spec.Gateway.CRs.Initial,
 		KubeConfigPath:          kubeConfigPathResolved,
-		ClusterId:               clusterId,
-		ClusterRestEndpoint:     clusterRestEndpoint,
-		ClusterLinkName:         clusterLinkName,
-		Topics:                  topics,
+		ClusterId:               g.Spec.Target.ClusterID,
+		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
+		ClusterLinkName:         g.Spec.ClusterLink.Name,
+		Topics:                  topicsOf(g),
 		FencedCrYAML:            fencedCrYAML,
 		SwitchoverCrYAML:        switchoverCrYAML,
 		CurrentState:            migration.StateUninitialized,
-		PauseConsumerOffsetSync: pauseConsumerOffsetSync,
+		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
 	}
 
-	// ===== PHASE 3: Early write - upsert migration and write to file =====
-	// CRITICAL: File MUST exist before orchestrator runs to prevent panic
-	migrationState.UpsertMigration(*config)
+	// ===== PHASE 3: Early write =====
+	// CRITICAL: the file MUST exist before the orchestrator runs.
+	migrationState.UpsertMigration(config)
 	if err := migrationState.WriteToFile(migrationStateFile); err != nil {
 		return fmt.Errorf("failed to write migration state file: %w", err)
 	}
 
-	// ===== PHASE 4: Handle skip-validate flag (exit early if set) =====
+	// ===== PHASE 4: Skip-validate exits early =====
 	if skipValidate {
+		if config.PauseConsumerOffsetSync {
+			// Not a hard error: the pre-disable snapshot is taken by the
+			// Initialize FSM step on the first execute, two steps before offset
+			// sync can be paused, so skipping init-time validation does not
+			// leave the restore bookend with nothing to diff against.
+			slog.Warn("⚠️ validation skipped for a migration with spec.clusterLink.pauseConsumerOffsetSync: the cluster link's consumer.offset.sync.enable is not checked until execute")
+		}
 		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
 		return nil
 	}
 
-	// ===== PHASE 5: Pass to initializer for validation orchestration only =====
-	opts := parseMigrationInitializerOpts(*migrationState, *config)
-	migrationInitializer := NewMigrationInitializer(opts)
-	if err := migrationInitializer.Run(); err != nil {
+	// ===== PHASE 5: Validation orchestration =====
+	if err := checkCredentialsResolve(g); err != nil {
+		return err
+	}
+
+	restCreds, err := g.RestCredentials()
+	if err != nil {
+		return fmt.Errorf("resolving destination REST credentials: %w", err)
+	}
+
+	opts := MigrationInitializerOpts{
+		MigrationStateFile:    migrationStateFile,
+		MigrationState:        *migrationState,
+		MigrationConfig:       config,
+		RestApiKey:            restCreds.APIKey,
+		RestApiSecret:         restCreds.APISecret,
+		ClusterRestCACert:     restCreds.CACert,
+		InsecureSkipTLSVerify: restCreds.InsecureSkipVerify,
+	}
+	if err := NewMigrationInitializer(opts).Run(); err != nil {
 		return err
 	}
 
@@ -324,14 +184,68 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func parseMigrationInitializerOpts(state migration.MigrationState, config migration.MigrationConfig) MigrationInitializerOpts {
-	return MigrationInitializerOpts{
-		MigrationStateFile:    migrationStateFile,
-		MigrationState:        state,
-		MigrationConfig:       config,
-		ClusterApiKey:         clusterApiKey,
-		ClusterApiSecret:      clusterApiSecret,
-		ClusterRestCACert:     clusterRestCaCert,
-		InsecureSkipTLSVerify: insecureSkipTLSVerify,
+// checkCredentialsResolve resolves every credential block without using the
+// result, so that "you got the auth wrong" is an init-time error rather than
+// one discovered at execute, after the operator has scheduled a cutover
+// window — the fail-fast the six --use-* flags used to buy at the cost of
+// declaring source auth twice.
+//
+// It runs as part of Phase 5, alongside RestCredentials(), so --skip-validate
+// (which returns before Phase 5) skips resolving source credentials exactly
+// as it already skipped resolving destination credentials — neither leg is
+// singled out for eager validation. That symmetry matters because both legs
+// are growing more auth methods (e.g. mTLS certs), each of which may need
+// local file access to resolve; --skip-validate promising "no infrastructure
+// contact, no local credential resolution" for one leg and not the other
+// would be an arbitrary distinction.
+func checkCredentialsResolve(g *manifest.GatewayMigration) error {
+	if _, errs := g.SourceCredentials(); len(errs) > 0 {
+		return fmt.Errorf("spec.source.credentials: %w", manifest.JoinProblems("the migration manifest", errs))
 	}
+	if _, errs := g.DestinationKafkaCredentials(); len(errs) > 0 {
+		return fmt.Errorf("spec.target.kafka.credentials: %w", manifest.JoinProblems("the migration manifest", errs))
+	}
+	return nil
+}
+
+// checkReInitIsSafe refuses to replace a migration that has irreversible work
+// behind it.
+func checkReInitIsSafe(state *migration.MigrationState, name string) error {
+	existing, err := state.GetMigrationById(name)
+	if err != nil || existing == nil {
+		return nil // no such migration yet — a fresh registration
+	}
+	if migration.IsReversibleState(existing.CurrentState) {
+		return nil
+	}
+	return fmt.Errorf(
+		"migration %q is already at state %q and cannot be re-initialised — re-running init would discard the state needed to complete or roll back the cutover.\n"+
+			"To proceed with an edited spec, run: kcp migration execute -f <file> --migration-state-file <state-file> --accept-spec-change",
+		name, existing.CurrentState)
+}
+
+// resolveKubeConfigPath applies the ~/.kube/config default. spec.gateway.
+// kubeconfig is the one manifest field where a leading ~/ is expanded.
+func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
+	p, err := g.KubeconfigPath()
+	if err != nil {
+		return "", err
+	}
+	if p != "" {
+		return p, nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".kube", "config"), nil
+}
+
+// topicsOf flattens spec.topics. Omitted stays an empty list, which the
+// Initialize FSM step back-fills with every active mirror topic.
+func topicsOf(g *manifest.GatewayMigration) []string {
+	if g.Spec.Topics == nil {
+		return []string{}
+	}
+	return *g.Spec.Topics
 }

@@ -315,7 +315,7 @@ func checkSpecsDiffer(initial, fenced, switchover gatewayCR, f *findings) {
 	}
 
 	if len(fencedSpec) > 0 && reflect.DeepEqual(fencedSpec, switchoverSpec) {
-		f.problem("the fenced and switchover gateway CRs have identical specs, so the switchover would change nothing (are --fenced-cr-yaml and --switchover-cr-yaml the same file?)")
+		f.problem("the fenced and switchover gateway CRs have identical specs, so the switchover would change nothing (do spec.gateway.crs.fenced and spec.gateway.crs.switchover point at the same file?)")
 	}
 	if len(initialSpec) > 0 && reflect.DeepEqual(initialSpec, switchoverSpec) {
 		f.problem("the switchover gateway CR spec is identical to the live gateway's, so the switchover would not route traffic to Confluent Cloud")
