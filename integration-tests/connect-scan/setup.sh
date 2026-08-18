@@ -20,11 +20,14 @@ CONNECTOR_JSON='{
 }'
 
 # wait_rest <label> <base-url> [curl-auth-args...] — poll the Connect REST root.
+# --connect-timeout/--max-time bound each attempt so a listener that accepts the
+# TCP connection but never completes the TLS handshake (or never responds) fails
+# that attempt in seconds instead of hanging the whole retry loop indefinitely.
 wait_rest() {
   local label="$1" url="$2"; shift 2
   echo "Waiting for Kafka Connect REST — $label ($url)..."
   for i in $(seq 1 60); do
-    if curl -s "$@" "$url/" > /dev/null 2>&1; then
+    if curl -s --connect-timeout 3 --max-time 5 "$@" "$url/" > /dev/null 2>&1; then
       echo "  $label ready!"
       return 0
     fi
@@ -39,7 +42,7 @@ create_connector() {
   echo "Creating test connector — $label..."
   for i in $(seq 1 30); do
     local code
-    code=$(curl -s -o /dev/null -w "%{http_code}" "$@" -X POST "$url/connectors" \
+    code=$(curl -s --connect-timeout 3 --max-time 5 -o /dev/null -w "%{http_code}" "$@" -X POST "$url/connectors" \
       -H "Content-Type: application/json" -d "$CONNECTOR_JSON" 2>/dev/null)
     if [ "$code" = "201" ] || [ "$code" = "200" ]; then
       echo "  connector created on $label (HTTP $code)"
@@ -80,7 +83,7 @@ create_connector "basic-tls" "https://localhost:18087" "${BASIC_TLS_AUTH[@]}"
 # ── Jolokia on the unauthenticated worker (:18781) for the metrics subtest ────
 echo "Waiting for Jolokia on the unauthenticated Connect worker (:18781)..."
 for i in $(seq 1 30); do
-  if curl -s http://localhost:18781/jolokia/version > /dev/null 2>&1; then
+  if curl -s --connect-timeout 3 --max-time 5 http://localhost:18781/jolokia/version > /dev/null 2>&1; then
     echo "  Jolokia ready!"
     break
   fi
