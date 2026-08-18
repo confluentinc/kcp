@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -338,6 +339,70 @@ func TestDrift_CredentialsAreNotComparable(t *testing.T) {
 		return strings.Replace(doc, "        password: secret", "        password: rotated", 1)
 	})
 	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
+}
+
+// TestMigrationConfig_EveryFieldClassifiedForDrift is a classification guard,
+// not a behavioral test: it proves every field on MigrationConfig has been
+// deliberately triaged as either checked by detectDrift (a topology field the
+// manifest can drift out from under) or exempt (identity/FSM bookkeeping,
+// runtime data populated by init, policy re-read fresh every run, or
+// host-specific). A field in neither set fails loudly, turning "someone added
+// a field and forgot to teach detectDrift about it" from a silent gap into a
+// build-breaking one.
+//
+// This proves triage, not implementation — it does not confirm a driftChecked
+// field actually has a comparison in detectDrift. Pair any addition to
+// driftChecked with a new case in TestDrift_DetectsChangedTopology (scalars)
+// or a dedicated test (CR bytes, Topics); this test alone cannot catch a field
+// that's classified as checked but never actually compared.
+func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
+	// Must have a comparison in detectDrift.
+	driftChecked := map[string]bool{
+		"SourceBootstrap":         true,
+		"ClusterBootstrap":        true,
+		"ClusterId":               true,
+		"ClusterRestEndpoint":     true,
+		"ClusterLinkName":         true,
+		"Topics":                  true,
+		"PauseConsumerOffsetSync": true,
+		"K8sNamespace":            true,
+		"InitialCrName":           true,
+		"FencedCrYAML":            true,
+		"SwitchoverCrYAML":        true,
+	}
+	// Deliberately not compared by detectDrift — each entry says why.
+	driftExempt := map[string]bool{
+		// identity / FSM bookkeeping, not part of the declared spec
+		"MigrationId":  true,
+		"CurrentState": true,
+		// execute is resume-safe and may legitimately run from a different
+		// machine or pod (TestDrift_KubeconfigPathIsNotCompared)
+		"KubeConfigPath": true,
+		// policy is re-read fresh from the manifest on every run; the
+		// snapshot's copy is never authoritative (TestDrift_PolicyIsNeverCompared)
+		"DetectUnroutedProducersDuration": true,
+		"ConsumerOffsetSyncDrainDuration": true,
+		// runtime data populated by init from the live cluster link, not part
+		// of the operator's declared spec
+		"ClusterLinkTopics":  true,
+		"ClusterLinkConfigs": true,
+		// execute-time bookkeeping for whether kcp itself has already flipped
+		// offset sync, not something the operator's YAML declares
+		"PauseConsumerOffsetSyncFlipped": true,
+		// only the fenced/switchover CRs are drift-checked; the initial CR is
+		// applied once at init and never revisited
+		"InitialCrYAML": true,
+	}
+
+	typ := reflect.TypeOf(migration.MigrationConfig{})
+	require.Equal(t, typ.NumField(), len(driftChecked)+len(driftExempt),
+		"MigrationConfig's field count doesn't match the classified total — a field was added without being classified")
+
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Name
+		require.True(t, driftChecked[name] != driftExempt[name], // exactly one
+			"MigrationConfig.%s is unclassified for drift detection — add it to driftChecked (with a detectDrift comparison and a behavioral test) or driftExempt (with a reason)", name)
+	}
 }
 
 // --- drift response (§13's two rows) ---

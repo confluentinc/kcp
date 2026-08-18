@@ -95,6 +95,9 @@ const (
 
 // MigrationConfig holds all domain configuration for a migration
 // This is pure data with no behavior - just fields that get serialized
+//
+// Every field added here must be classified for drift detection — see
+// TestMigrationConfig_EveryFieldClassifiedForDrift in cmd/migration/execute.
 type MigrationConfig struct {
 	MigrationId  string `json:"migration_id"`
 	CurrentState string `json:"current_state"`
