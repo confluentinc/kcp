@@ -145,6 +145,15 @@ Prometheus JMX Exporter with a standard Kafka configuration. If your exporter
 uses custom relabelling rules that rename these metrics, the queries will return
 empty results.
 
+When that happens you have three options: fix the exporter's relabelling, add a
+Prometheus recording rule that re-publishes the series under its default name, or
+— without touching your monitoring stack — repoint `kcp` at the names your
+exporter actually exposes with `prometheus.metric_names` in
+`apache-kafka-credentials.yaml`. The same mechanism exists for non-standard JMX
+MBean names via `jolokia.mbean_overrides`. See
+[Metric-name overrides](credentials.md#metric-name-overrides) for the label list
+and semantics.
+
 ## Filtering by cluster (Prometheus)
 
 When a single Prometheus instance scrapes multiple Kafka clusters, use

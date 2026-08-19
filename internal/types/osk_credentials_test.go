@@ -647,6 +647,186 @@ clusters:
 	assert.Equal(t, []string{"broker1:9092", "broker2:9092"}, creds.Clusters[0].BootstrapServers)
 }
 
+func TestNewOSKCredentialsFromFile_MetricNameOverrides(t *testing.T) {
+	content := `
+clusters:
+- id: prod-kafka-01
+  bootstrap_servers:
+  - broker1:9092
+  auth_method:
+    sasl_scram:
+      use: true
+      username: admin
+      password: secret
+  prometheus:
+    url: http://prom:9090
+    metric_names:
+      BytesInPerSec: acme_broker_bytesin_total
+      MessagesInPerSec: acme_broker_messagesin_total
+  jolokia:
+    endpoints:
+    - http://broker1:8778/jolokia
+    mbean_overrides:
+      BytesInPerSec: "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec"
+`
+	tmpFile := filepath.Join(t.TempDir(), "apache-kafka-credentials.yaml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(content), 0644))
+
+	creds, errs := NewOSKCredentialsFromFile(tmpFile)
+	require.Empty(t, errs)
+	require.NotNil(t, creds)
+	require.Len(t, creds.Clusters, 1)
+
+	require.NotNil(t, creds.Clusters[0].Prometheus)
+	assert.Equal(t, map[string]string{
+		"BytesInPerSec":    "acme_broker_bytesin_total",
+		"MessagesInPerSec": "acme_broker_messagesin_total",
+	}, creds.Clusters[0].Prometheus.MetricNames)
+
+	require.NotNil(t, creds.Clusters[0].Jolokia)
+	assert.Equal(t, map[string]string{
+		"BytesInPerSec": "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec",
+	}, creds.Clusters[0].Jolokia.MBeanOverrides)
+}
+
+func TestNewOSKCredentialsFromFile_NoOverrides(t *testing.T) {
+	content := `
+clusters:
+- id: prod-kafka-01
+  bootstrap_servers:
+  - broker1:9092
+  auth_method:
+    sasl_scram:
+      use: true
+      username: admin
+      password: secret
+  prometheus:
+    url: http://prom:9090
+`
+	tmpFile := filepath.Join(t.TempDir(), "apache-kafka-credentials.yaml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(content), 0644))
+
+	creds, errs := NewOSKCredentialsFromFile(tmpFile)
+	require.Empty(t, errs)
+	require.NotNil(t, creds)
+	require.Len(t, creds.Clusters, 1)
+	assert.Nil(t, creds.Clusters[0].Prometheus.MetricNames)
+}
+
+func TestOSKCredentials_Validate_UnknownPrometheusMetricNameKey(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					SASLScram: &SASLScramConfig{Use: true, Username: "u", Password: "p"},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "http://prom:9090",
+					MetricNames: map[string]string{
+						"BytesInPerSec":  "acme_broker_bytesin_total", // valid
+						"BytesInPersec":  "typo_here",                 // invalid: wrong case
+						"NotARealMetric": "whatever",                  // invalid: unknown
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.False(t, valid)
+	require.NotEmpty(t, errs)
+
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	// Names the bad keys
+	assert.Contains(t, joined, "BytesInPersec")
+	assert.Contains(t, joined, "NotARealMetric")
+	// Lists a valid label so the user can self-correct
+	assert.Contains(t, joined, "BytesInPerSec")
+	// Does not reject the valid key
+	assert.NotContains(t, joined, "acme_broker_bytesin_total")
+}
+
+func TestOSKCredentials_Validate_UnknownJolokiaMBeanOverrideKey(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					SASLScram: &SASLScramConfig{Use: true, Username: "u", Password: "p"},
+				},
+				Jolokia: &JolokiaConfig{
+					Endpoints: []string{"http://broker1:8778/jolokia"},
+					MBeanOverrides: map[string]string{
+						"TotallyBogus": "acme.kafka:type=Foo",
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.False(t, valid)
+	require.NotEmpty(t, errs)
+
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	assert.Contains(t, joined, "TotallyBogus")
+}
+
+func TestOSKCredentials_Validate_ValidOverrideKeysPass(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					SASLScram: &SASLScramConfig{Use: true, Username: "u", Password: "p"},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "http://prom:9090",
+					MetricNames: map[string]string{
+						"BytesInPerSec":          "acme_broker_bytesin_total",
+						"TotalLocalStorageUsage": "acme_log_size",
+					},
+				},
+				Jolokia: &JolokiaConfig{
+					Endpoints: []string{"http://broker1:8778/jolokia"},
+					MBeanOverrides: map[string]string{
+						"GlobalPartitionCount": "acme.kafka:type=KafkaController,name=GlobalPartitionCount",
+					},
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid)
+	assert.Empty(t, errs)
+}
+
+func TestValidBrokerMetricLabels(t *testing.T) {
+	labels := ValidBrokerMetricLabels()
+	assert.ElementsMatch(t, []string{
+		"BytesInPerSec",
+		"BytesOutPerSec",
+		"MessagesInPerSec",
+		"PartitionCount",
+		"GlobalPartitionCount",
+		"ClientConnectionCount",
+		"TotalLocalStorageUsage",
+	}, labels)
+	// Returned sorted for a stable error message
+	assert.IsIncreasing(t, labels)
+}
+
 func TestNewOSKCredentialsFromFile_FileNotFound(t *testing.T) {
 	creds, errs := NewOSKCredentialsFromFile("/nonexistent/file.yaml")
 	assert.Nil(t, creds)
