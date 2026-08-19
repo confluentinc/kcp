@@ -39,30 +39,52 @@ type MetricDefinitions struct {
 	Aggregates             []AggregateMBeanConfig
 	PerConnectorAggregates []AggregateMBeanConfig
 	UnitConversions        map[string]float64
+	// OverriddenNames is the set of metric labels whose MBean came from a
+	// user-configured override rather than the default. A read failure for an
+	// overridden MBean is actionable (the override was set precisely to fix an
+	// empty result), so it is logged louder than a routine missing default.
+	// Nil when no overrides are configured.
+	OverriddenNames map[string]bool
 }
 
 // BrokerMetricDefinitions returns the standard Kafka broker metric definitions.
-func BrokerMetricDefinitions() MetricDefinitions {
-	return MetricDefinitions{
+// overrides maps a logical label (e.g. "BytesInPerSec") to the MBean object name
+// this cluster's Jolokia agent actually exposes; an entry with an empty value is
+// ignored. Pass nil for the defaults.
+func BrokerMetricDefinitions(overrides map[string]string) MetricDefinitions {
+	overridden := map[string]bool{}
+	name := func(label, def string) string {
+		if v, ok := overrides[label]; ok && v != "" {
+			overridden[label] = true
+			return v
+		}
+		return def
+	}
+
+	defs := MetricDefinitions{
 		Counters: []CounterMBeanConfig{
-			{"BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"},
-			{"BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"},
-			{"MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"},
+			{"BytesInPerSec", name("BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")},
+			{"BytesOutPerSec", name("BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec")},
+			{"MessagesInPerSec", name("MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec")},
 		},
 		Gauges: []GaugeMBeanConfig{
-			{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
+			{"PartitionCount", name("PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount"), "Value"},
 		},
 		Controller: []GaugeMBeanConfig{
-			{"GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount", "Value"},
+			{"GlobalPartitionCount", name("GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount"), "Value"},
 		},
 		Aggregates: []AggregateMBeanConfig{
-			{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
-			{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
+			{"ClientConnectionCount", name("ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*"), "connection-count"},
+			{"TotalLocalStorageUsage", name("TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*"), "Value"},
 		},
 		UnitConversions: map[string]float64{
 			"TotalLocalStorageUsage": 1024 * 1024 * 1024,
 		},
 	}
+	if len(overridden) > 0 {
+		defs.OverriddenNames = overridden
+	}
+	return defs
 }
 
 // ConnectMetricDefinitions returns metric definitions for Kafka Connect workers.
@@ -156,9 +178,12 @@ func (s *JMXService) logMetricReadErrorOnce(metricName, msg string, err error) {
 	s.warnedMetricIssue[metricName] = true
 
 	switch {
-	case errors.Is(err, client.ErrJolokiaMBeanNotFound):
+	case errors.Is(err, client.ErrJolokiaMBeanNotFound) && !s.metrics.OverriddenNames[metricName]:
 		slog.Debug(msg, "mbean", metricName, "error", err)
 	default:
+		// A not-found for an overridden MBean is actionable — the override was
+		// configured precisely to point at an MBean this agent exposes — so it
+		// is surfaced at Warn rather than the routine Debug.
 		slog.Warn(msg, "mbean", metricName, "error", err)
 	}
 }
