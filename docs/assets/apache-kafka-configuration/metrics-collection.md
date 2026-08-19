@@ -131,8 +131,9 @@ endpoints and uses the first successful response. For **Prometheus**, the JMX
 Exporter must be scraping the controller pods/brokers for this metric to be
 available. With the default JMX Exporter configuration, the metric is exposed as
 `kafka_controller_kafkacontroller_value{name="GlobalPartitionCount"}`. If
-`GlobalPartitionCount` is not found, `kcp` will log an info message and the
-metric will be omitted from results — all other metrics will still be collected.
+`GlobalPartitionCount` is not found, `kcp` logs the omission — at WARN for
+Jolokia, DEBUG for Prometheus — and the metric is left out of the results; all
+other metrics are still collected.
 
 Ensure your Prometheus instance is scraping the Kafka controller nodes (not just
 broker nodes). In Kubernetes with KRaft mode, controllers may run as separate

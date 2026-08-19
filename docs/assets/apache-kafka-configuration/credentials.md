@@ -195,14 +195,21 @@ Both key on the same seven logical labels:
 `BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`, `PartitionCount`,
 `GlobalPartitionCount`, `ClientConnectionCount`, `TotalLocalStorageUsage`.
 
-- **Only labels you need to change** must appear; unlisted labels keep their defaults.
+- **Only labels you need to change** must appear; unlisted labels keep their
+  defaults. A key with an empty value (`BytesInPerSec: ""`) is treated as *no
+  override* and silently ignored — set a real name or omit the key entirely.
 - **Keys are validated at load time** — an unknown or misspelled label (wrong case
-  included) is a hard error listing the valid labels, not a silent no-op.
+  included) is a hard error listing the valid labels, not a silent no-op. Both
+  blocks are validated whenever the file loads, regardless of which one `--metrics`
+  selects, so a typo in the block you are *not* currently scanning with still fails
+  the scan.
 - **Prometheus overrides replace the base series name only.** `kcp` keeps its own
   wrapping (`sum(rate(<name>[<window>]))`, `sum(<name>)`, the GiB conversion) and
   `filter.labels` injection, so the override is a rename, not a full-query rewrite.
   For `GlobalPartitionCount` the `{name="GlobalPartitionCount"}` discriminator is
-  preserved on top of the overridden series name.
+  preserved on top of the overridden series name — so your relabelled series must
+  still carry the `name="GlobalPartitionCount"` label, or the preserved
+  discriminator filters it down to nothing.
 - If an overridden metric **still** returns no data, `kcp` logs it at **WARN**
   (a plain missing default is logged at DEBUG) — the override was configured
   precisely to fix an empty result, so a still-empty result is worth surfacing.
