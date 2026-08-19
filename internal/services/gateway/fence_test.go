@@ -146,6 +146,23 @@ func TestFenceRoutes_PreservesUint64NodeIdRanges(t *testing.T) {
 	assert.EqualValues(t, 3, r["end"])
 }
 
+// TestFenceRoutesObj_MatchesFenceRoutes proves FenceRoutesObj (the
+// already-parsed-tree entry point workflow.FenceGateway uses to avoid a
+// redundant parse) produces the same result as FenceRoutes given the same
+// input, just pre-parsed.
+func TestFenceRoutesObj_MatchesFenceRoutes(t *testing.T) {
+	var obj map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(baseRouteCR), &obj))
+
+	patched, err := FenceRoutesObj(obj, []string{"migration-route"})
+	require.NoError(t, err)
+
+	fence := routeFenceBlock(t, patched, "migration-route")
+	require.NotNil(t, fence, "the named route should carry a fence block after patching")
+	assert.Equal(t, "ALL", fence["scope"])
+	assert.Equal(t, "BROKER_NOT_AVAILABLE", fence["errorCode"])
+}
+
 // TestFenceRoutes_FenceIsTheOnlyDelta proves the design's central claim: the
 // patched CR equals the base with nothing changed but the injected fence block.
 // This is what makes fence and unfence exact inverses — unfence re-applies the

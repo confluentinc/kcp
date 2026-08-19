@@ -30,7 +30,14 @@ func FenceRoutes(baseCRBytes []byte, routeNames []string) ([]byte, error) {
 	if err := yaml.Unmarshal(baseCRBytes, &obj); err != nil {
 		return nil, fmt.Errorf("parsing base gateway CR: %w", err)
 	}
+	return FenceRoutesObj(obj, routeNames)
+}
 
+// FenceRoutesObj is FenceRoutes for a base CR the caller has already parsed
+// into a plain map[string]any (e.g. migration.cleanInitialCR), sparing a
+// redundant parse/marshal round trip when the caller already holds the tree.
+// obj is mutated in place with the injected fence block(s).
+func FenceRoutesObj(obj map[string]any, routeNames []string) ([]byte, error) {
 	if len(routeNames) == 0 {
 		return nil, fmt.Errorf("no routes named to fence")
 	}
