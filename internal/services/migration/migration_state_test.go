@@ -1,6 +1,7 @@
 package migration
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -271,6 +272,144 @@ func TestMigrationConfig_PauseConsumerOffsetSync_ForwardCompat(t *testing.T) {
 
 	assert.Contains(t, contents, `"pause_consumer_offset_sync"`, "field should be present in JSON even when false")
 	assert.Contains(t, contents, `"pause_consumer_offset_sync_flipped"`, "flipped field should be present in JSON even when false")
+}
+
+// legacyFencedRouteCR is a minimal fenced gateway CR shaped like the file the
+// pre-38f5c974 kcp snapshotted into MigrationConfig.FencedCrYAML: the initial
+// CR with a fence block already injected onto the named route.
+const legacyFencedRouteCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: my-gateway-cr
+spec:
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
+      fence:
+        scope: ALL
+        errorCode: BROKER_NOT_AVAILABLE
+`
+
+// TestMigrationConfig_FenceRoutes_BackwardCompat verifies that a
+// migration-state.json written before FenceRoutes existed (fenced_cr_yaml
+// instead, no fence_routes key) backfills FenceRoutes from the legacy field
+// on load, recovering the fenced route name from the snapshotted fenced CR.
+// Without this, a migration already past StateFenced when kcp upgrades could
+// never resume: every fenced-family resume re-fences at bootstrap (see
+// EventExpireFence), and gateway.FenceRoutes refuses an empty route list.
+func TestMigrationConfig_FenceRoutes_BackwardCompat(t *testing.T) {
+	legacyJSON := `{
+  "migrations": [
+    {
+      "migration_id": "mig-legacy-fence",
+      "current_state": "fenced",
+      "initial_cr_name": "my-gateway-cr",
+      "k8s_namespace": "confluent",
+      "fenced_cr_yaml": "` + base64.StdEncoding.EncodeToString([]byte(legacyFencedRouteCR)) + `"
+    }
+  ],
+  "kcp_build_info": {"version": "", "commit": "", "date": ""},
+  "timestamp": "2026-01-01T00:00:00Z"
+}`
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "legacy-fence-state.json")
+	require.NoError(t, os.WriteFile(filePath, []byte(legacyJSON), 0644))
+
+	loaded, err := NewMigrationStateFromFile(filePath)
+	require.NoError(t, err, "loading a pre-FenceRoutes state file must succeed")
+	require.Len(t, loaded.Migrations, 1)
+
+	assert.Equal(t, []string{"migration-route"}, loaded.Migrations[0].FenceRoutes,
+		"FenceRoutes should be recovered from the legacy fenced_cr_yaml snapshot")
+}
+
+// TestMigrationConfig_FenceRoutes_PrefersPersistedOverLegacy verifies that a
+// state file already carrying fence_routes is never overwritten by a stale
+// (or coincidentally present) legacy fenced_cr_yaml key — the new field wins.
+func TestMigrationConfig_FenceRoutes_PrefersPersistedOverLegacy(t *testing.T) {
+	legacyJSON := `{
+  "migrations": [
+    {
+      "migration_id": "mig-both-fields",
+      "current_state": "fenced",
+      "fence_routes": ["persisted-route"],
+      "fenced_cr_yaml": "` + base64.StdEncoding.EncodeToString([]byte(legacyFencedRouteCR)) + `"
+    }
+  ],
+  "kcp_build_info": {"version": "", "commit": "", "date": ""},
+  "timestamp": "2026-01-01T00:00:00Z"
+}`
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "both-fields-state.json")
+	require.NoError(t, os.WriteFile(filePath, []byte(legacyJSON), 0644))
+
+	loaded, err := NewMigrationStateFromFile(filePath)
+	require.NoError(t, err)
+	require.Len(t, loaded.Migrations, 1)
+
+	assert.Equal(t, []string{"persisted-route"}, loaded.Migrations[0].FenceRoutes)
+}
+
+// TestMigrationConfig_FenceRoutes_LegacyFieldDroppedOnNextWrite verifies the
+// recovery is a one-time backfill, not a field kcp keeps carrying forward:
+// once loaded, writing the state back out produces the new fence_routes shape
+// with no fenced_cr_yaml key.
+func TestMigrationConfig_FenceRoutes_LegacyFieldDroppedOnNextWrite(t *testing.T) {
+	legacyJSON := `{
+  "migrations": [
+    {
+      "migration_id": "mig-legacy-fence",
+      "current_state": "fenced",
+      "fenced_cr_yaml": "` + base64.StdEncoding.EncodeToString([]byte(legacyFencedRouteCR)) + `"
+    }
+  ],
+  "kcp_build_info": {"version": "", "commit": "", "date": ""},
+  "timestamp": "2026-01-01T00:00:00Z"
+}`
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "legacy-fence-state.json")
+	require.NoError(t, os.WriteFile(filePath, []byte(legacyJSON), 0644))
+
+	loaded, err := NewMigrationStateFromFile(filePath)
+	require.NoError(t, err)
+
+	rewritten := filepath.Join(dir, "rewritten-state.json")
+	require.NoError(t, loaded.WriteToFile(rewritten))
+
+	data, err := os.ReadFile(rewritten)
+	require.NoError(t, err)
+	contents := string(data)
+
+	assert.Contains(t, contents, `"fence_routes"`, "rewritten state should carry the new field")
+	assert.NotContains(t, contents, "fenced_cr_yaml", "rewritten state should drop the retired legacy field")
+}
+
+// TestMigrationConfig_FenceRoutes_LegacyFieldFailsLoudlyWhenUnrecoverable
+// verifies a corrupt or unparseable legacy fenced_cr_yaml surfaces a load
+// error rather than silently leaving FenceRoutes empty — an empty FenceRoutes
+// would itself fail, but only much later, at the next fence apply.
+func TestMigrationConfig_FenceRoutes_LegacyFieldFailsLoudlyWhenUnrecoverable(t *testing.T) {
+	legacyJSON := `{
+  "migrations": [
+    {
+      "migration_id": "mig-corrupt-fence",
+      "current_state": "fenced",
+      "fenced_cr_yaml": "` + base64.StdEncoding.EncodeToString([]byte("not: [valid")) + `"
+    }
+  ],
+  "kcp_build_info": {"version": "", "commit": "", "date": ""},
+  "timestamp": "2026-01-01T00:00:00Z"
+}`
+
+	dir := t.TempDir()
+	filePath := filepath.Join(dir, "corrupt-fence-state.json")
+	require.NoError(t, os.WriteFile(filePath, []byte(legacyJSON), 0644))
+
+	_, err := NewMigrationStateFromFile(filePath)
+	require.Error(t, err, "an unrecoverable legacy fenced_cr_yaml must fail the load, not silently drop FenceRoutes")
 }
 
 // skipIfWindows skips file-mode assertions on Windows, where POSIX permission
