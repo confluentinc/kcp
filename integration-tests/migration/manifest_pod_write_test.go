@@ -59,7 +59,7 @@ func manifestOptsFor(cfg envConfig) manifestOpts {
 		APISecret:       cfg.ClusterAPISecret,
 		Namespace:       cfg.Namespace,
 		GatewayName:     cfg.GatewayName,
-		FencedCR:        cfg.FencedCR,
+		FenceRoutes:     cfg.FenceRoutes,
 		SwitchoverCR:    cfg.SwitchoverCR,
 		KubePath:        cfg.KubePath,
 	}
