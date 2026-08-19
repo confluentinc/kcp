@@ -248,6 +248,176 @@ func TestHTTPClient_NotDefaultClient(t *testing.T) {
 	assert.NotSame(t, http.DefaultClient, concreteClient)
 }
 
+// --- ${ENV_VAR} interpolation (opt-in, per file) ---
+
+// TestLoadCredentials_InterpolatesWhenOptedIn is the headline behaviour: with
+// interpolate: true, ${VAR} references resolve from the environment.
+func TestLoadCredentials_InterpolatesWhenOptedIn(t *testing.T) {
+	t.Setenv("CC_API_KEY", "KEY-123")
+	t.Setenv("CC_API_SECRET", "SECRET-456")
+	yaml := "interpolate: true\napi_key: ${CC_API_KEY}\napi_secret: ${CC_API_SECRET}\n"
+	c, err := LoadCredentials(writeTemp(t, yaml))
+	require.NoError(t, err)
+	assert.Equal(t, "KEY-123", c.APIKey)
+	assert.Equal(t, "SECRET-456", c.APISecret)
+}
+
+// TestLoadCredentials_NoInterpolationByDefault pins that every already-shipped
+// credentials file is read byte-for-byte as before — interpolation is a new
+// capability, not a behaviour change.
+func TestLoadCredentials_NoInterpolationByDefault(t *testing.T) {
+	t.Setenv("CC_API_KEY", "KEY-123")
+	yaml := "api_key: ${CC_API_KEY}\napi_secret: literal\n"
+	c, err := LoadCredentials(writeTemp(t, yaml))
+	require.NoError(t, err)
+	assert.Equal(t, "${CC_API_KEY}", c.APIKey, "absent interpolate: every value is literal")
+}
+
+// TestLoadCredentials_InterpolateUndefinedVariableFails — hard error naming the
+// variable, never the value of a sibling that did resolve.
+func TestLoadCredentials_InterpolateUndefinedVariableFails(t *testing.T) {
+	t.Setenv("CC_API_KEY", "KEY-123")
+	yaml := "interpolate: true\napi_key: ${CC_API_KEY}\napi_secret: ${KCP_UNSET_SECRET}\n"
+	_, err := LoadCredentials(writeTemp(t, yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "KCP_UNSET_SECRET")
+	assert.NotContains(t, err.Error(), "KEY-123")
+}
+
+// TestLoadCredentials_InterpolatesBeforeValidation is the ordering requirement
+// from §10: LoadCredentials os.Stats ca_cert, so resolution placed after
+// validation would yield `ca_cert file "${CA_PATH}": no such file`.
+func TestLoadCredentials_InterpolatesBeforeValidation(t *testing.T) {
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	require.NoError(t, os.WriteFile(caFile, []byte("pem"), 0600))
+	t.Setenv("CA_PATH", caFile)
+
+	yaml := "interpolate: true\nbasic:\n  username: u\n  password: p\n  ca_cert: ${CA_PATH}\n"
+	c, err := LoadCredentials(writeTemp(t, yaml))
+	require.NoError(t, err, "ca_cert must be resolved before its existence is checked")
+	assert.Equal(t, caFile, c.Basic.CACert)
+}
+
+// TestLoadCredentials_InterpolatedValueIsNotReparsed proves the post-parse
+// design: a secret containing YAML structure cannot alter the document.
+func TestLoadCredentials_InterpolatedValueIsNotReparsed(t *testing.T) {
+	t.Setenv("EVIL", "p\nusername: attacker")
+	yaml := "interpolate: true\nbasic:\n  username: real-user\n  password: ${EVIL}\n"
+	c, err := LoadCredentials(writeTemp(t, yaml))
+	require.NoError(t, err)
+	assert.Equal(t, "real-user", c.Basic.Username, "the injected key must not have taken effect")
+	assert.Equal(t, "p\nusername: attacker", c.Basic.Password)
+}
+
+// --- parse / validate split ---
+
+// TestParseCredentials_AppliesSameValidationAsFile is the point of the split:
+// an inline block and a referenced file run the same validation, so a rule can
+// never apply to one spelling and not the other.
+func TestParseCredentials_AppliesSameValidationAsFile(t *testing.T) {
+	body := []byte("basic:\n  username: a\n  password: b\napi_key: K\napi_secret: S\n")
+
+	_, parseErr := ParseCredentials(body)
+	_, loadErr := LoadCredentials(writeTemp(t, string(body)))
+
+	require.Error(t, parseErr)
+	require.Error(t, loadErr)
+	assert.Equal(t, loadErr.Error(), parseErr.Error())
+}
+
+// TestParseCredentials_RejectsUnknownFields confirms goccy's strict mode is
+// applied on the bytes path too, not only via LoadCredentials.
+func TestParseCredentials_RejectsUnknownFields(t *testing.T) {
+	_, err := ParseCredentials([]byte("api_key: K\napi_secret: S\ntypo_field: x\n"))
+	require.Error(t, err)
+}
+
+// TestValidateCredentials_IsReusableOnAnAlreadyBuiltStruct lets the manifest
+// path validate a block it assembled itself.
+func TestValidateCredentials_IsReusableOnAnAlreadyBuiltStruct(t *testing.T) {
+	require.NoError(t, ValidateCredentials(&Credentials{APIKey: "K", APISecret: "S"}))
+	require.Error(t, ValidateCredentials(&Credentials{}))
+}
+
+// TestHTTPClient_APIKeyWithCACert_TrustsPrivateCA confirms the flat
+// api_key/api_secret form honours a sibling ca_cert, so a destination REST
+// endpoint behind a private CA is reachable without restating the key/secret as
+// a basic block.
+func TestHTTPClient_APIKeyWithCACert_TrustsPrivateCA(t *testing.T) {
+	srv, caPath := startTLSServer(t)
+	c := Credentials{APIKey: "KEY", APISecret: "SECRET", CACert: caPath}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	resp, err := concreteClient.Get(srv.URL) //nolint:noctx
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestHTTPClient_APIKeySkipVerify_Connects confirms a sibling
+// insecure_skip_verify on the api_key form bypasses certificate verification.
+// This is the leg --insecure-skip-tls-verify reaches today.
+func TestHTTPClient_APIKeySkipVerify_Connects(t *testing.T) {
+	srv, _ := startTLSServer(t)
+	c := Credentials{APIKey: "KEY", APISecret: "SECRET", InsecureSkipVerify: true}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	resp, err := concreteClient.Get(srv.URL) //nolint:noctx
+	require.NoError(t, err)
+	defer func() { _ = resp.Body.Close() }()
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+// TestHTTPClient_APIKeyNoCACert_FailsVerification pins that the api_key form
+// still verifies by default — the siblings are opt-in, not a loosening.
+func TestHTTPClient_APIKeyNoCACert_FailsVerification(t *testing.T) {
+	srv, _ := startTLSServer(t)
+	c := Credentials{APIKey: "KEY", APISecret: "SECRET"}
+	client, err := c.HTTPClient()
+	require.NoError(t, err)
+	concreteClient, ok := client.(*http.Client)
+	require.True(t, ok)
+	_, err = concreteClient.Get(srv.URL) //nolint:noctx
+	require.Error(t, err)
+}
+
+// TestLoadCredentials_APIKeyWithTLSSiblings parses the full api_key form.
+func TestLoadCredentials_APIKeyWithTLSSiblings(t *testing.T) {
+	dir := t.TempDir()
+	caFile := filepath.Join(dir, "ca.pem")
+	require.NoError(t, os.WriteFile(caFile, []byte("not-a-real-pem"), 0600))
+
+	yaml := "api_key: KEY\napi_secret: SECRET\nca_cert: " + caFile + "\ninsecure_skip_verify: true\n"
+	c, err := LoadCredentials(writeTemp(t, yaml))
+	require.NoError(t, err)
+	assert.Equal(t, caFile, c.CACert)
+	assert.True(t, c.InsecureSkipVerify)
+}
+
+// TestLoadCredentials_APIKeyBadCACert confirms the api_key form's ca_cert is
+// existence-checked like basic's, rather than failing later at handshake time.
+func TestLoadCredentials_APIKeyBadCACert(t *testing.T) {
+	yaml := "api_key: KEY\napi_secret: SECRET\nca_cert: /no/such/file\n"
+	_, err := LoadCredentials(writeTemp(t, yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "ca_cert")
+}
+
+// TestLoadCredentials_RejectsTopLevelTLSWithoutAPIKey confirms the top-level
+// siblings are rejected alongside basic/bearer/mtls rather than silently
+// ignored — those blocks carry their own ca_cert, and a value that looks
+// applied but is not is the worst outcome for a TLS-trust setting.
+func TestLoadCredentials_RejectsTopLevelTLSWithoutAPIKey(t *testing.T) {
+	yaml := "basic:\n  username: u\n  password: p\ninsecure_skip_verify: true\n"
+	_, err := LoadCredentials(writeTemp(t, yaml))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "api_key")
+}
+
 // TestLoadCredentials_BasicBadCACert confirms LoadCredentials rejects a basic
 // block whose ca_cert points to a non-existent file.
 func TestLoadCredentials_BasicBadCACert(t *testing.T) {

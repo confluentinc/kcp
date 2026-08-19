@@ -36,6 +36,25 @@ func isKnownState(s string) bool {
 	return false
 }
 
+// IsReversibleState reports whether state is one from which the migration can
+// still be safely re-initialised: nothing irreversible has happened yet, so
+// replacing the persisted config loses nothing. Past these (StateFenced onward)
+// producers have been fenced and/or consumer offset sync disabled, and the FSM
+// position plus the pre-disable link-config snapshot are the only things that
+// can complete or roll back the cutover.
+//
+// This classification belongs to the state machine, not the cobra layer: both
+// `kcp migration init` (refusing an unsafe re-init) and `kcp migration execute`
+// (choosing the drift response) ask the same question, and a copy in each
+// command would be one edit away from silently disagreeing with the FSM.
+func IsReversibleState(state string) bool {
+	switch state {
+	case StateUninitialized, StateInitialized, StateLagsOk:
+		return true
+	}
+	return false
+}
+
 // FSM Event constants
 const (
 	EventInitialize  = "initialize"
@@ -76,6 +95,9 @@ const (
 
 // MigrationConfig holds all domain configuration for a migration
 // This is pure data with no behavior - just fields that get serialized
+//
+// Every field added here must be classified for drift detection — see
+// TestMigrationConfig_EveryFieldClassifiedForDrift in cmd/migration/execute.
 type MigrationConfig struct {
 	MigrationId  string `json:"migration_id"`
 	CurrentState string `json:"current_state"`
@@ -129,6 +151,28 @@ type MigrationConfig struct {
 	InitialCrYAML    []byte `json:"initial_cr_yaml"`
 	FencedCrYAML     []byte `json:"fenced_cr_yaml"`
 	SwitchoverCrYAML []byte `json:"switchover_cr_yaml"`
+
+	// LastRunPolicies records the effective execute-time policy the most recent
+	// `kcp migration execute` ran with — the manifest's spec.defaultPolicies with
+	// any per-run flag overrides applied. It is observational: written for the
+	// operator and support, never read back by kcp. Policy is re-read fresh from
+	// the manifest every run, so this snapshot is deliberately excluded from drift
+	// detection. A pointer with omitempty so a freshly-initialised migration does
+	// not carry an empty block until the first execute has actually run.
+	LastRunPolicies *LastRunPolicies `json:"last_run_policies,omitempty"`
+}
+
+// LastRunPolicies is the observational record of the effective policy an execute
+// run used (see MigrationConfig.LastRunPolicies). Its fields mirror
+// manifest.DefaultPolicies one-to-one; zero values are recorded verbatim because
+// zero is meaningful for every knob (0 skips the check / imposes no deadline /
+// promotes all at once), so an audit reader sees exactly what each was set to.
+type LastRunPolicies struct {
+	LagThreshold                    int           `json:"lag_threshold"`
+	PromoteBatchSize                int           `json:"promote_batch_size"`
+	RolloutTimeout                  time.Duration `json:"rollout_timeout"`
+	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
+	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
 }
 
 // ----- migration state file -----
