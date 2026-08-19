@@ -157,8 +157,9 @@ func GenerateGateway() ([]byte, error) {
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
 
 		gateway.Properties["crs"].Properties["initial"]:    "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
-		gateway.Properties["crs"].Properties["fenced"]:     "Path to the local gateway CR YAML file that blocks traffic during migration.",
 		gateway.Properties["crs"].Properties["switchover"]: "Path to the local gateway CR YAML file that routes traffic to the destination.",
+
+		gateway.Properties["fence"].Properties["routes"]: "Route name(s) (spec.routes[].name) to fence at cutover. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. Each name must exist in the initial CR and must not already be fenced.",
 
 		spec.Properties["topics"]: "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected.",
 

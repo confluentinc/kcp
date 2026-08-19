@@ -272,8 +272,10 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	if g.Spec.Gateway.CRs.Initial != config.InitialCrName {
 		gatewayChanges = append(gatewayChanges, "crs.initial")
 	}
-	if crChanged(g.Spec.Gateway.CRs.Fenced, config.FencedCrYAML) {
-		gatewayChanges = append(gatewayChanges, "fenced CR")
+	// fence.routes drifts as a set (reordering is not a change). Counts only,
+	// never names — a bare flag, like the retired fenced-CR byte check.
+	if added, removed := diffCounts(g.Spec.Gateway.Fence.Routes, config.FenceRoutes); added > 0 || removed > 0 {
+		gatewayChanges = append(gatewayChanges, "fence.routes")
 	}
 	if crChanged(g.Spec.Gateway.CRs.Switchover, config.SwitchoverCrYAML) {
 		gatewayChanges = append(gatewayChanges, "switchover CR")

@@ -93,8 +93,15 @@ spec:
     # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
     crs:
       initial: gateway-initial # a Kubernetes object NAME, read live
-      fenced: /etc/kcp/gateway-fenced.yaml # a local FILE path
       switchover: /etc/kcp/gateway-switchover.yaml # a local FILE path
+    # Route(s) to fence at cutover, by spec.routes[].name. kcp reads the live
+    # initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE}
+    # onto each named route, and applies the patched CR — there is no separate
+    # fenced-CR file to create or keep in sync. The named routes must exist in
+    # the initial CR and must not already be fenced.
+    fence:
+      routes:
+        - migration-route
 
   # OPTIONAL. A flat list of LITERAL topic names, exact-matched against the
   # link's active mirror topics — not globs, and a name that matches nothing is

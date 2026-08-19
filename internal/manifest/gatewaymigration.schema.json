@@ -170,10 +170,6 @@
                   "type": "string",
                   "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path."
                 },
-                "fenced": {
-                  "type": "string",
-                  "description": "Path to the local gateway CR YAML file that blocks traffic during migration."
-                },
                 "switchover": {
                   "type": "string",
                   "description": "Path to the local gateway CR YAML file that routes traffic to the destination."
@@ -181,15 +177,34 @@
               },
               "required": [
                 "initial",
-                "fenced",
                 "switchover"
+              ],
+              "additionalProperties": false
+            },
+            "fence": {
+              "type": "object",
+              "properties": {
+                "routes": {
+                  "type": [
+                    "null",
+                    "array"
+                  ],
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Route name(s) (spec.routes[].name) to fence at cutover. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. Each name must exist in the initial CR and must not already be fenced."
+                }
+              },
+              "required": [
+                "routes"
               ],
               "additionalProperties": false
             }
           },
           "required": [
             "namespace",
-            "crs"
+            "crs",
+            "fence"
           ],
           "additionalProperties": false
         },

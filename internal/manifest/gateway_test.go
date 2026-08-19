@@ -49,8 +49,10 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-      fenced: /etc/kcp/gateway-fenced.yaml
       switchover: /etc/kcp/gateway-switchover.yaml
+    fence:
+      routes:
+        - migration-route
 `
 
 func parseGateway(t *testing.T, doc string) *GatewayMigration {
@@ -91,8 +93,8 @@ func TestGateway_ParsesEveryField(t *testing.T) {
 	assert.Equal(t, "msk-to-cc", g.Spec.ClusterLink.Name)
 	assert.Equal(t, "confluent", g.Spec.Gateway.Namespace)
 	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CRs.Initial)
-	assert.Equal(t, "/etc/kcp/gateway-fenced.yaml", g.Spec.Gateway.CRs.Fenced)
 	assert.Equal(t, "/etc/kcp/gateway-switchover.yaml", g.Spec.Gateway.CRs.Switchover)
+	assert.Equal(t, []string{"migration-route"}, g.Spec.Gateway.Fence.Routes)
 }
 
 func TestGateway_RejectsUnknownFields(t *testing.T) {
@@ -378,10 +380,9 @@ func TestGateway_RequiresGatewayNamespace(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.gateway.namespace")
 }
 
-func TestGateway_RequiresAllThreeCRs(t *testing.T) {
+func TestGateway_RequiresBothCRs(t *testing.T) {
 	for field, line := range map[string]string{
 		"spec.gateway.crs.initial":    "      initial: gateway-initial\n",
-		"spec.gateway.crs.fenced":     "      fenced: /etc/kcp/gateway-fenced.yaml\n",
 		"spec.gateway.crs.switchover": "      switchover: /etc/kcp/gateway-switchover.yaml\n",
 	} {
 		t.Run(field, func(t *testing.T) {
@@ -389,6 +390,40 @@ func TestGateway_RequiresAllThreeCRs(t *testing.T) {
 			requireErrContains(t, g.Validate(), field)
 		})
 	}
+}
+
+// fenceBlock is the fence stanza in the canonical doc; tests replace it to vary
+// spec.gateway.fence.routes.
+const fenceBlock = "    fence:\n      routes:\n        - migration-route\n"
+
+// TestGateway_RequiresFenceRoutes — with no route named to fence, the fence step
+// would apply the bare initial CR and report success while every client keeps
+// flowing. Both an omitted block and an explicitly empty list are rejected.
+func TestGateway_RequiresFenceRoutes(t *testing.T) {
+	t.Run("omitted", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock, "", 1))
+		requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+	})
+	t.Run("empty list", func(t *testing.T) {
+		g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock, "    fence:\n      routes: []\n", 1))
+		requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+	})
+}
+
+// TestGateway_RejectsBlankFenceRoute — a blank route name matches nothing and
+// would fail at fence time; catch it at parse.
+func TestGateway_RejectsBlankFenceRoute(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
+		"    fence:\n      routes:\n        - \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+}
+
+// TestGateway_RejectsDuplicateFenceRoutes — a repeated name is an operator slip;
+// the second would try to fence an already-fenced route at cutover.
+func TestGateway_RejectsDuplicateFenceRoutes(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
+		"    fence:\n      routes:\n        - migration-route\n        - migration-route\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
 }
 
 // TestGateway_KubeconfigTildeIsExpanded — the one place in the repo where a
