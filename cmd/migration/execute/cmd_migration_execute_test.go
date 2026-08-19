@@ -400,6 +400,10 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		// only the fenced/switchover CRs are drift-checked; the initial CR is
 		// applied once at init and never revisited
 		"InitialCrYAML": true,
+		// observational record of the effective policy the last execute ran with —
+		// written for humans/support, never read back by kcp, so it can no more
+		// drift than policy itself (TestExecute_RecordsLastRunPolicies)
+		"LastRunPolicies": true,
 	}
 
 	typ := reflect.TypeOf(migration.MigrationConfig{})
@@ -520,6 +524,47 @@ func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 99, opts.LagThreshold)
 	assert.EqualValues(t, 60, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
+}
+
+// TestExecute_RecordsLastRunPolicies — buildExecutorOpts stamps the effective
+// policy (manifest defaults with this run's overrides applied) onto the config
+// that saveState persists, as an observational LastRunPolicies record. It is
+// never read back — hence drift-exempt — so this proves it is at least written,
+// and that it captures the OVERRIDE rather than the manifest default.
+func TestExecute_RecordsLastRunPolicies(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n"
+	})
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile,
+		"--lag-threshold", "99",
+	}))
+
+	g := loadGateway(t, f.manifestPath)
+	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
+	require.Empty(t, g.Spec.DefaultPolicies.Validate())
+
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	rec := opts.MigrationConfig.LastRunPolicies
+	require.NotNil(t, rec, "the effective policy must be recorded on the persisted config")
+	assert.Equal(t, 99, rec.LagThreshold, "the override, not the manifest default, is recorded")
+	assert.Equal(t, 3, rec.PromoteBatchSize)
+	assert.Equal(t, 2*time.Minute, rec.RolloutTimeout)
+	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
+	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration, "an unset knob is recorded as its zero")
+}
+
+// TestExecute_InitDoesNotCarryLastRunPolicies — the record is absent until the
+// first execute: a freshly-initialised migration (the fixture's persisted config)
+// must not carry an empty block, which is why the field is a pointer with
+// omitempty.
+func TestExecute_InitDoesNotCarryLastRunPolicies(t *testing.T) {
+	f := newFixture(t, nil)
+	assert.Nil(t, persistedConfig(t, f).LastRunPolicies,
+		"a migration that has only been init'd must have no LastRunPolicies record")
 }
 
 // TestExecute_InvalidPolicyOverrideIsRejected — an override can carry a value the

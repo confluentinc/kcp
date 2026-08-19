@@ -127,6 +127,20 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", id, migrationStateFile)
 	}
 
+	// Record what this run will execute with — the effective policy (manifest
+	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
+	// this is the durable audit trail of the knobs a given execute used; the same
+	// values are also snapshotted into the state file as LastRunPolicies.
+	slog.Info("executing migration with effective policy",
+		"migration_id", id,
+		"state", config.CurrentState,
+		"lag_threshold", g.Spec.DefaultPolicies.LagThreshold,
+		"promote_batch_size", g.Spec.DefaultPolicies.PromoteBatchSize,
+		"rollout_timeout", g.Spec.DefaultPolicies.RolloutTimeout,
+		"detect_unrouted_producers_duration", g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
+		"consumer_offset_sync_drain_duration", g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
+	)
+
 	if err := checkSpecDrift(g, config); err != nil {
 		return err
 	}
@@ -339,6 +353,19 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	// both); the rest of policy was already purely execute-time.
 	config.DetectUnroutedProducersDuration = g.Spec.DefaultPolicies.DetectUnroutedProducersDuration
 	config.ConsumerOffsetSyncDrainDuration = g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration
+
+	// Record the full effective policy (manifest defaults with this run's
+	// overrides applied) as an observational snapshot that saveState persists.
+	// Unlike the two duration fields above — runtime plumbing the workflow reads
+	// back — this block exists purely for the operator and support, is never read
+	// by kcp, and is therefore exempt from drift detection.
+	config.LastRunPolicies = &migration.LastRunPolicies{
+		LagThreshold:                    g.Spec.DefaultPolicies.LagThreshold,
+		PromoteBatchSize:                g.Spec.DefaultPolicies.PromoteBatchSize,
+		RolloutTimeout:                  g.Spec.DefaultPolicies.RolloutTimeout,
+		DetectUnroutedProducersDuration: g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
+		ConsumerOffsetSyncDrainDuration: g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
+	}
 
 	opts := MigrationExecutorOpts{
 		MigrationStateFile: stateFile,

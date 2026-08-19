@@ -151,6 +151,28 @@ type MigrationConfig struct {
 	InitialCrYAML    []byte `json:"initial_cr_yaml"`
 	FencedCrYAML     []byte `json:"fenced_cr_yaml"`
 	SwitchoverCrYAML []byte `json:"switchover_cr_yaml"`
+
+	// LastRunPolicies records the effective execute-time policy the most recent
+	// `kcp migration execute` ran with — the manifest's spec.defaultPolicies with
+	// any per-run flag overrides applied. It is observational: written for the
+	// operator and support, never read back by kcp. Policy is re-read fresh from
+	// the manifest every run, so this snapshot is deliberately excluded from drift
+	// detection. A pointer with omitempty so a freshly-initialised migration does
+	// not carry an empty block until the first execute has actually run.
+	LastRunPolicies *LastRunPolicies `json:"last_run_policies,omitempty"`
+}
+
+// LastRunPolicies is the observational record of the effective policy an execute
+// run used (see MigrationConfig.LastRunPolicies). Its fields mirror
+// manifest.DefaultPolicies one-to-one; zero values are recorded verbatim because
+// zero is meaningful for every knob (0 skips the check / imposes no deadline /
+// promotes all at once), so an audit reader sees exactly what each was set to.
+type LastRunPolicies struct {
+	LagThreshold                    int           `json:"lag_threshold"`
+	PromoteBatchSize                int           `json:"promote_batch_size"`
+	RolloutTimeout                  time.Duration `json:"rollout_timeout"`
+	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
+	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
 }
 
 // ----- migration state file -----

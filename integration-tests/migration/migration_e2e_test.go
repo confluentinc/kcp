@@ -1395,10 +1395,12 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 	// would skip detection entirely and every assertion below would fail.
 	//
 	// This scenario is the pin rather than the promote-batch-size one because
-	// promoteBatchSize is never persisted at all (MigrationConfig carries only
-	// the two duration fields), so no implementation could fail that version of
-	// the test. detectUnroutedProducersDuration is round-tripped through the
-	// state file, so it can actually go stale.
+	// promoteBatchSize reaches the state file only as an observational
+	// LastRunPolicies record that execute never reads back, so a stale persisted
+	// value still can't affect a run and no implementation could fail that version
+	// of the test. detectUnroutedProducersDuration is round-tripped through a field
+	// the workflow does read (MigrationConfig.DetectUnroutedProducersDuration), so
+	// it can actually go stale.
 	//
 	// Legal because the drift check compares topology only — policy and
 	// credentials are structurally out of its scope.
