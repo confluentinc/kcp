@@ -403,11 +403,12 @@ for scenario in "${SCENARIOS[@]}"; do
   done
 done
 
-# --- Render fenced/switchover CRs for runner-pod copy ---
-# Not applied to the cluster — kcp migration init/execute apply them as part
-# of the FSM. We just need rendered copies on disk to ship into the pod.
+# --- Render switchover CRs for runner-pod copy ---
+# Not applied to the cluster — kcp migration execute applies the switchover as
+# part of the FSM. We just need a rendered copy on disk to ship into the pod.
+# There is no fenced CR: kcp derives the fence from the live initial CR by
+# injecting a fence block onto the route(s) named in spec.gateway.fence.routes.
 for scenario in "${SCENARIOS[@]}"; do
-  render_scenario "${TEMPLATES_DIR}/gateway-fenced.yaml" "${scenario}" >/dev/null
   render_scenario "${TEMPLATES_DIR}/gateway-switchover.yaml" "${scenario}" >/dev/null
 done
 
@@ -444,9 +445,6 @@ kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.setconfig-linux" "${KCP_POD}:/workspace/setconfig"
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/setconfig
 for scenario in "${SCENARIOS[@]}"; do
-  kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp \
-    "${RENDERED_DIR}/gateway-fenced-${scenario}.yaml" \
-    "${KCP_POD}:/workspace/gateway-fenced-${scenario}.yaml"
   kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp \
     "${RENDERED_DIR}/gateway-switchover-${scenario}.yaml" \
     "${KCP_POD}:/workspace/gateway-switchover-${scenario}.yaml"
@@ -532,7 +530,8 @@ ENV_FILE="${SCRIPT_DIR}/.env"
     echo "KCP_E2E_${upper}_TOPIC_NAME=e2e-test-topic-${scenario}"
     echo "KCP_E2E_${upper}_TOPIC_NAMES=$(topic_names_csv "${scenario}")"
     echo "KCP_E2E_${upper}_GATEWAY_NAME=migration-gateway-${scenario}"
-    echo "KCP_E2E_${upper}_FENCED_CR=/workspace/gateway-fenced-${scenario}.yaml"
+    # The route the initial CR declares; kcp injects the fence onto it at cutover.
+    echo "KCP_E2E_${upper}_FENCE_ROUTES=migration-route"
     echo "KCP_E2E_${upper}_SWITCHOVER_CR=/workspace/gateway-switchover-${scenario}.yaml"
   done
 } > "${ENV_FILE}"

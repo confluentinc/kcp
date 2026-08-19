@@ -53,8 +53,12 @@ spec:
     kubeconfig: {{ .KubePath | yamlQuote }}
     crs:
       initial: {{ .GatewayName | yamlQuote }}
-      fenced: {{ .FencedCR | yamlQuote }}
       switchover: {{ .SwitchoverCR | yamlQuote }}
+    fence:
+      routes:
+{{- range .FenceRoutes }}
+        - {{ . | yamlQuote }}
+{{- end }}
 {{- if .Policy.Any }}
 
   # Read FRESH by execute on every run and never snapshotted, which is what lets a

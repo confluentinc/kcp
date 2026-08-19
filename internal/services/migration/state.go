@@ -149,8 +149,13 @@ type MigrationConfig struct {
 	InitialCrName    string `json:"initial_cr_name"`
 	K8sNamespace     string `json:"k8s_namespace"`
 	InitialCrYAML    []byte `json:"initial_cr_yaml"`
-	FencedCrYAML     []byte `json:"fenced_cr_yaml"`
 	SwitchoverCrYAML []byte `json:"switchover_cr_yaml"`
+	// FenceRoutes are the spec.routes[].name values fenced at cutover. There is
+	// no snapshotted fenced CR: FenceGateway derives it at fence time by
+	// injecting a fence block onto these routes in the (metadata-stripped) live
+	// initial CR snapshot — see gateway.FenceRoutes. Deriving fence from the same
+	// InitialCrYAML that unfence re-applies makes the two exact inverses.
+	FenceRoutes []string `json:"fence_routes"`
 
 	// LastRunPolicies records the effective execute-time policy the most recent
 	// `kcp migration execute` ran with — the manifest's spec.defaultPolicies with
