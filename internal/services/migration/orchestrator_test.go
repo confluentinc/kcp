@@ -51,14 +51,16 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		Topics:              topics,
 		InitialCrName:       "my-gateway",
 		K8sNamespace:        "confluent",
-		InitialCrYAML:       []byte("initial-yaml"),
-		FencedCrYAML:        []byte("fenced-yaml"),
+		InitialCrYAML:       []byte(testInitialCR),
+		FenceRoutes:         []string{"migration-route"},
 		SwitchoverCrYAML:    []byte("switchover-yaml"),
 	}
 
-	// Default mock implementations
+	// Default mock implementations. The initial CR must be a real routed gateway
+	// CR: FenceGateway derives the fenced CR from it (cleanInitialCR +
+	// gateway.FenceRoutes), so a scalar placeholder would fail to parse.
 	getGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
-		return []byte("initial-yaml"), nil
+		return []byte(testInitialCR), nil
 	}
 	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte) error {
 		return nil
@@ -218,7 +220,7 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 			overrides := orchestratorOverrides{
 				getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
 					atomic.AddInt32(&getYAMLCalls, 1)
-					return []byte("initial-yaml"), nil
+					return []byte(testInitialCR), nil
 				},
 			}
 
@@ -319,7 +321,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
 	// Set valid YAML for InitialCrYAML so unfenceGateway can parse it
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	// Override source offset provider to return increasing offsets (simulating rogue)
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -388,7 +390,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	// Override source offset provider to return increasing offsets
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -436,7 +438,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	// Override source offset provider to return increasing offsets
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -606,8 +608,12 @@ func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T
 			mu.Lock()
 			defer mu.Unlock()
 			require.NotEmpty(t, appliedYAMLs, "the resume must apply gateway CRs")
-			assert.Equal(t, "fenced-yaml", appliedYAMLs[0],
+			// The re-asserted fence is derived from the initial CR (fence injected
+			// onto the named route), not a snapshotted fenced-CR blob.
+			assert.Contains(t, appliedYAMLs[0], "fence",
 				"resume must re-apply the fenced CR before verifying or promoting behind it")
+			assert.Contains(t, appliedYAMLs[0], "migration-route",
+				"the re-asserted fence must target the migration route")
 
 			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 			assert.Equal(t, StateSwitched, persisted.CurrentState)
@@ -638,7 +644,7 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 	stateDir = filepath.Dir(stateFilePath)
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	// Rogue producer: source offsets keep increasing.
 	var sourceCalls int64
@@ -762,7 +768,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
 	config.PauseConsumerOffsetSync = true
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	orch.actions.clusterLinkService = &mockClusterLinkService{
 		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
@@ -810,7 +816,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
 	config.PauseConsumerOffsetSync = true
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	var alterFail int32 = 1
 	originalCL := orch.actions.clusterLinkService
@@ -869,7 +875,7 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
 	config.PauseConsumerOffsetSync = true
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	orch.actions.clusterLinkService = &mockClusterLinkService{
 		listConfigsFn: func(c context.Context, cfg clusterlink.Config) (map[string]string, error) {
@@ -919,7 +925,7 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
 	var listCalls int64
@@ -982,7 +988,7 @@ func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *test
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
 	var listCalls int64
@@ -1033,7 +1039,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
 	var listCalls int64
@@ -1095,7 +1101,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 // change that would silently mis-shape the operator guidance while both isolated
 // unit tests still pass.
 func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
-	validCR := []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	validCR := []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	// enableTrue is the drift-check/happy list response used by every case.
 	enableTrue := func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
@@ -1116,12 +1122,12 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 		{
 			name: "offset_sync_paused: rogue detected then unfence fails",
 			overrides: orchestratorOverrides{
-				// The fence applies the (literal) fenced CR; the rollback's
-				// unfence applies the round-tripped initial CR carrying
-				// "kind: Gateway". Failing only the latter cancels abort_fence,
-				// so the FSM honestly rests at offset_sync_paused.
+				// The fence applies the initial CR with a fence block injected onto
+				// the route; the rollback's unfence applies the fence-free initial
+				// CR. Failing only the latter (the apply with no fence block) cancels
+				// abort_fence, so the FSM honestly rests at offset_sync_paused.
 				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-					if strings.Contains(string(yaml), "kind: Gateway") {
+					if !strings.Contains(string(yaml), "fence") {
 						return fmt.Errorf("k8s API unavailable")
 					}
 					return nil
@@ -1334,7 +1340,7 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 	orch, config, _ := newHappyPathOrchestrator(t, StateLagsOk, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 	config.ClusterLinkConfigs = map[string]string{
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["SENSITIVE-GROUP-FILTER"]}`,
@@ -1400,7 +1406,7 @@ func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenceVerified, nil)
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\n")
+	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
 
 	// Rogue producer: source offsets keep increasing on every call
 	orch.actions.sourceOffset = &mockOffsetProvider{

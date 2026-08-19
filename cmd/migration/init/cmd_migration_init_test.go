@@ -48,22 +48,22 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-      fenced: FENCED_PATH
       switchover: SWITCHOVER_PATH
+    fence:
+      routes:
+        - migration-route
 `
 
-// writeManifest writes the manifest with real CR files created alongside it,
-// and returns the manifest path.
+// writeManifest writes the manifest with the switchover CR file created
+// alongside it, and returns the manifest path. There is no fenced CR file — the
+// fence is derived from the live initial CR at cutover.
 func writeManifest(t *testing.T, mutate func(string) string) string {
 	t.Helper()
 	dir := t.TempDir()
-	fenced := filepath.Join(dir, "fenced.yaml")
 	switchover := filepath.Join(dir, "switchover.yaml")
-	require.NoError(t, os.WriteFile(fenced, []byte("kind: Gateway\n"), 0600))
 	require.NoError(t, os.WriteFile(switchover, []byte("kind: Gateway\n"), 0600))
 
-	doc := strings.ReplaceAll(gatewayManifest, "FENCED_PATH", fenced)
-	doc = strings.ReplaceAll(doc, "SWITCHOVER_PATH", switchover)
+	doc := strings.ReplaceAll(gatewayManifest, "SWITCHOVER_PATH", switchover)
 	if mutate != nil {
 		doc = mutate(doc)
 	}
@@ -178,7 +178,7 @@ func TestInit_JoinsMultipleBootstrapServers(t *testing.T) {
 	assert.Equal(t, "b-1.msk.us-east-1.amazonaws.com:9096,b-2.msk.us-east-1.amazonaws.com:9096", cfg.SourceBootstrap)
 }
 
-func TestInit_SnapshotsCRFileBytes(t *testing.T) {
+func TestInit_SnapshotsSwitchoverAndPersistsFenceRoutes(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
@@ -187,8 +187,10 @@ func TestInit_SnapshotsCRFileBytes(t *testing.T) {
 	require.NoError(t, err)
 	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
 	require.NoError(t, err)
-	assert.Equal(t, "kind: Gateway\n", string(cfg.FencedCrYAML))
+	// The switchover CR is snapshotted as bytes; the fence is recorded as route
+	// names, derived from the live initial CR at cutover rather than a file.
 	assert.Equal(t, "kind: Gateway\n", string(cfg.SwitchoverCrYAML))
+	assert.Equal(t, []string{"migration-route"}, cfg.FenceRoutes)
 }
 
 func TestInit_TopicsCarryThrough(t *testing.T) {

@@ -27,7 +27,7 @@ type manifestOpts struct {
 	APISecret       string
 	Namespace       string
 	GatewayName     string
-	FencedCR        string
+	FenceRoutes     []string
 	SwitchoverCR    string
 	KubePath        string
 

@@ -109,7 +109,7 @@ func (s *MigrationActions) Initialize(
 	// the live secret check can legitimately be skipped (no RBAC to read
 	// secrets), and claiming a check ran when it did not is how a missing
 	// secretRef reached a cutover in the first place.
-	validation, err := s.gatewayService.ValidateGatewayCRs(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, config.FencedCrYAML, config.SwitchoverCrYAML)
+	validation, err := s.gatewayService.ValidateGatewayCRs(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, config.SwitchoverCrYAML, config.FenceRoutes)
 	for _, warning := range validation.Warnings {
 		s.reporter.warn("%s", warning)
 	}
@@ -434,7 +434,22 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		}
 	}
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.FencedCrYAML); err != nil {
+	// Derive the fenced CR from the same metadata-stripped initial snapshot that
+	// unfence re-applies: fence = InitialCrYAML + fence-block on the named
+	// route(s), so fence and its removal are exact inverses. There is no
+	// separately-snapshotted fenced CR. Passing the already-parsed tree to
+	// gateway.FenceRoutesObj spares a redundant parse/marshal round trip —
+	// cleanInitialCR would otherwise marshal it back to bytes only for
+	// FenceRoutes to immediately re-parse them.
+	base, err := cleanInitialCR(config.InitialCrYAML)
+	if err != nil {
+		return err
+	}
+	fencedCrYAML, err := gateway.FenceRoutesObj(base, config.FenceRoutes)
+	if err != nil {
+		return fmt.Errorf("failed to build fenced gateway CR: %w", err)
+	}
+	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, fencedCrYAML); err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
@@ -467,21 +482,26 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	return nil
 }
 
-// unfenceGateway reapplies the initial gateway CR to restore normal traffic,
-// then waits for the operator to report the gateway Ready at the restored
-// spec — the same convergence check FenceGateway uses. Without the wait we
-// would report traffic restored while pods are still cycling, and miss
-// rollout failures entirely. The initial CR YAML fetched from k8s contains
-// server-managed metadata (managedFields, resourceVersion, status) that
-// breaks server-side apply, so we strip it before applying.
-func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
-	// Parse the initial CR, strip server metadata, re-marshal
+// cleanInitialCR parses the initial CR YAML and strips the server-managed
+// metadata (managedFields, resourceVersion, uid, creationTimestamp,
+// generation) and top-level status that a live-read CR carries and that
+// server-side apply rejects, returning the cleaned tree as a plain
+// map[string]interface{} rather than re-marshalled bytes — FenceGateway hands
+// the tree straight to gateway.FenceRoutesObj, sparing a redundant
+// marshal/parse round trip; unfenceGateway, which needs bytes to apply
+// directly, marshals it itself.
+//
+// It is the single canonical base for both fence-removal paths and the fence
+// itself: unfenceGateway re-applies it verbatim, and FenceGateway injects a
+// fence block onto it. Deriving the fence from the same snapshot unfence
+// re-applies is what makes fence and unfence exact inverses.
+func cleanInitialCR(initialCrYAML []byte) (map[string]interface{}, error) {
 	var obj map[string]interface{}
-	if err := yaml.Unmarshal(config.InitialCrYAML, &obj); err != nil {
-		return fmt.Errorf("failed to parse initial CR YAML: %w", err)
+	if err := yaml.Unmarshal(initialCrYAML, &obj); err != nil {
+		return nil, fmt.Errorf("failed to parse initial CR YAML: %w", err)
 	}
 
-	// Remove server-managed fields that break re-apply
+	// Remove server-managed fields that break re-apply.
 	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
 		delete(metadata, "managedFields")
 		delete(metadata, "resourceVersion")
@@ -491,6 +511,21 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 	}
 	delete(obj, "status")
 
+	return obj, nil
+}
+
+// unfenceGateway reapplies the initial gateway CR to restore normal traffic,
+// then waits for the operator to report the gateway Ready at the restored
+// spec — the same convergence check FenceGateway uses. Without the wait we
+// would report traffic restored while pods are still cycling, and miss
+// rollout failures entirely. The initial CR YAML fetched from k8s contains
+// server-managed metadata (managedFields, resourceVersion, status) that
+// breaks server-side apply, so we strip it before applying.
+func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
+	obj, err := cleanInitialCR(config.InitialCrYAML)
+	if err != nil {
+		return err
+	}
 	cleanYAML, err := yaml.Marshal(obj)
 	if err != nil {
 		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)

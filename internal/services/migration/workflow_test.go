@@ -12,10 +12,24 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
+
+// testInitialCR is a minimal live-read gateway CR with a route named
+// migration-route, so FenceGateway's cleanInitialCR + gateway.FenceRoutes can
+// derive a fenced CR from it in unit tests.
+const testInitialCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gw-1
+spec:
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
+`
 
 // ===========================================================================
 // Initialize tests
@@ -50,7 +64,6 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
-		FencedCrYAML:        []byte("fenced"),
 		SwitchoverCrYAML:    []byte("switchover"),
 	}
 
@@ -80,7 +93,7 @@ func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, v
 		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
 			return []byte("initial-yaml"), nil
 		},
-		validateGatewayCRsFn: func(_ context.Context, _, _ string, _, _, _ []byte) (gateway.CRValidationResult, error) {
+		validateGatewayCRsFn: func(_ context.Context, _, _ string, _, _ []byte, _ []string) (gateway.CRValidationResult, error) {
 			return result, validationErr
 		},
 	}
@@ -103,7 +116,6 @@ func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, v
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
-		FencedCrYAML:        []byte("fenced"),
 		SwitchoverCrYAML:    []byte("switchover"),
 	}, "key", "secret")
 
@@ -173,15 +185,17 @@ func TestWorkflow_Initialize_PassesNamespaceAndGatewayToValidator(t *testing.T) 
 	// The live secret lookup is namespace-scoped, and the identity check needs the
 	// target gateway name — both come from the migration config.
 	var gotNamespace, gotGateway string
-	var gotInitial, gotFenced, gotSwitchover []byte
+	var gotInitial, gotSwitchover []byte
+	var gotFenceRoutes []string
 
 	gw := &mockGatewayService{
 		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
 			return []byte("initial-yaml"), nil
 		},
-		validateGatewayCRsFn: func(_ context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error) {
+		validateGatewayCRsFn: func(_ context.Context, namespace, name string, initial, switchover []byte, fenceRoutes []string) (gateway.CRValidationResult, error) {
 			gotNamespace, gotGateway = namespace, name
-			gotInitial, gotFenced, gotSwitchover = initial, fenced, switchover
+			gotInitial, gotSwitchover = initial, switchover
+			gotFenceRoutes = fenceRoutes
 			return gateway.CRValidationResult{}, nil
 		},
 	}
@@ -201,7 +215,7 @@ func TestWorkflow_Initialize_PassesNamespaceAndGatewayToValidator(t *testing.T) 
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
-		FencedCrYAML:        []byte("fenced"),
+		FenceRoutes:         []string{"migration-route"},
 		SwitchoverCrYAML:    []byte("switchover"),
 	}, "key", "secret")
 
@@ -209,8 +223,8 @@ func TestWorkflow_Initialize_PassesNamespaceAndGatewayToValidator(t *testing.T) 
 	assert.Equal(t, "kcp", gotNamespace)
 	assert.Equal(t, "migration-gateway", gotGateway)
 	assert.Equal(t, "initial-yaml", string(gotInitial), "the live CR just fetched, not the stale config field")
-	assert.Equal(t, "fenced", string(gotFenced))
 	assert.Equal(t, "switchover", string(gotSwitchover))
+	assert.Equal(t, []string{"migration-route"}, gotFenceRoutes)
 }
 
 func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
@@ -255,7 +269,6 @@ func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
 		ClusterRestEndpoint: "https://cluster",
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
-		FencedCrYAML:        []byte("fenced"),
 		SwitchoverCrYAML:    []byte("switchover"),
 	}
 
@@ -290,7 +303,6 @@ func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
 		Topics:              []string{"topic-x"},
-		FencedCrYAML:        []byte("fenced"),
 		SwitchoverCrYAML:    []byte("switchover"),
 	}
 
@@ -327,7 +339,6 @@ func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
 		Topics:              nil, // empty — should discover all
-		FencedCrYAML:        []byte("fenced"),
 		SwitchoverCrYAML:    []byte("switchover"),
 	}
 
@@ -971,6 +982,40 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 // FenceGateway / SwitchGateway tests
 // ===========================================================================
 
+// TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR is the behavioural
+// heart of the inline-fence change: FenceGateway no longer applies a
+// snapshotted fenced CR file — it derives the fenced CR at cutover from the
+// metadata-stripped initial CR by injecting a fence block onto the routes named
+// in config.FenceRoutes. The applied bytes must carry that fence.
+func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
+	var applied []byte
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte) error {
+			applied = yaml
+			return nil
+		},
+		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
+			return nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+
+	require.NoError(t, wf.FenceGateway(context.Background(), config))
+	require.NotNil(t, applied, "FenceGateway must apply a CR")
+
+	// Re-parse the applied bytes and confirm the fence landed on the named route.
+	var obj map[string]any
+	require.NoError(t, yaml.Unmarshal(applied, &obj))
+	routes := obj["spec"].(map[string]any)["routes"].([]any)
+	route := routes[0].(map[string]any)
+	assert.Equal(t, "migration-route", route["name"])
+	fence, ok := route["fence"].(map[string]any)
+	require.True(t, ok, "the named route must carry a fence block")
+	assert.Equal(t, "ALL", fence["scope"])
+	assert.Equal(t, "BROKER_NOT_AVAILABLE", fence["errorCode"])
+}
+
 func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
@@ -988,7 +1033,7 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1026,7 +1071,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 	// keeps the lightweight readiness-only wait and never touches pod UIDs. The
 	// operator-acceptance wait, by contrast, now runs on every path — the
 	// Deployment-only wait cannot tell a no-op apply from a rejected one.
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1053,7 +1098,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1098,7 +1143,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 	// observe the fenced CR (so "no rollout detected" downstream is trustworthy),
 	// then wait for those old pods to actually terminate so no unfenced pod is
 	// still serving traffic when detection's first offset snapshot is taken.
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced"), DetectUnroutedProducersDuration: 10 * time.Second}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}, DetectUnroutedProducersDuration: 10 * time.Second}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1116,7 +1161,7 @@ func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1136,7 +1181,7 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	wf.SetRolloutTimeout(100 * time.Millisecond)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1155,7 +1200,7 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -1179,7 +1224,7 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	wf.SetRolloutTimeout(15 * time.Minute)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1197,7 +1242,7 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", FencedCrYAML: []byte("fenced")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)

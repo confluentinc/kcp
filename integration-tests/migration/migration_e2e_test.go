@@ -62,8 +62,8 @@ type envConfig struct {
 	TopicName       string   // single-topic scenarios (producer/consumer target)
 	TopicNames      []string // all mirror topics for the scenario (>=1)
 	GatewayName     string
-	FencedCR        string // in-pod fixture path
-	SwitchoverCR    string // in-pod fixture path
+	FenceRoutes     []string // spec.gateway.fence.routes — derived from the live initial CR
+	SwitchoverCR    string   // in-pod fixture path
 }
 
 func loadEnvConfig(t *testing.T, scenario string) envConfig {
@@ -113,6 +113,11 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 		topicNames = []string{topicName}
 	}
 
+	var fenceRoutes []string
+	if fr := vars[prefix+"FENCE_ROUTES"]; fr != "" {
+		fenceRoutes = strings.Split(fr, ",")
+	}
+
 	return envConfig{
 		Kubeconfig:        vars["KCP_E2E_KUBECONFIG"],
 		KubeContext:       vars["KCP_E2E_KUBE_CONTEXT"],
@@ -131,7 +136,7 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 		TopicName:       topicName,
 		TopicNames:      topicNames,
 		GatewayName:     vars[prefix+"GATEWAY_NAME"],
-		FencedCR:        vars[prefix+"FENCED_CR"],
+		FenceRoutes:     fenceRoutes,
 		SwitchoverCR:    vars[prefix+"SWITCHOVER_CR"],
 	}
 }

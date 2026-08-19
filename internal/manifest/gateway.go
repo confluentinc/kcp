@@ -92,17 +92,30 @@ type Gateway struct {
 	// does not either.
 	Kubeconfig string     `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	CRs        GatewayCRs `yaml:"crs" json:"crs"`
+	// Fence names the route(s) kcp fences at cutover. There is no fenced-CR
+	// file: kcp reads the live initial CR, injects the fence block onto each
+	// named route, and applies the patched CR.
+	Fence GatewayFence `yaml:"fence" json:"fence"`
 }
 
-// GatewayCRs holds three keys of the same shape with two different meanings,
-// inherited from --initial-cr-name vs --fenced-cr-yaml.
+// GatewayCRs holds the two gateway CRs the migration reads by different means,
+// inherited from --initial-cr-name vs the switchover file path.
 type GatewayCRs struct {
 	// Initial is a Kubernetes object NAME, read live from the cluster at init.
 	Initial string `yaml:"initial" json:"initial"`
-	// Fenced is a local FILE path, snapshotted into the state file at init.
-	Fenced string `yaml:"fenced" json:"fenced"`
 	// Switchover is a local FILE path, snapshotted into the state file at init.
 	Switchover string `yaml:"switchover" json:"switchover"`
+}
+
+// GatewayFence declares which route(s) the fence step blocks. kcp derives the
+// fenced CR from the live initial CR by injecting
+// fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route,
+// so fence and its rollback (which re-applies the same initial CR) are exact
+// inverses. The switchover CR, which lifts the fence, stays file-based.
+type GatewayFence struct {
+	// Routes are the spec.routes[].name values to fence. Non-empty; each entry
+	// must be a non-blank, unique route name that exists in the initial CR.
+	Routes []string `yaml:"routes" json:"routes"`
 }
 
 // DefaultPolicies is the execute-time knobs. Every value is optional and zero
@@ -278,11 +291,23 @@ func (g *GatewayMigration) Validate() []error {
 	if blank(g.Spec.Gateway.CRs.Initial) {
 		add("spec.gateway.crs.initial: must not be empty (a Kubernetes object name, read live)")
 	}
-	if blank(g.Spec.Gateway.CRs.Fenced) {
-		add("spec.gateway.crs.fenced: must not be empty (a local file path)")
-	}
 	if blank(g.Spec.Gateway.CRs.Switchover) {
 		add("spec.gateway.crs.switchover: must not be empty (a local file path)")
+	}
+	if routes := g.Spec.Gateway.Fence.Routes; len(routes) == 0 {
+		add("spec.gateway.fence.routes: must name at least one route to fence")
+	} else {
+		seen := make(map[string]struct{}, len(routes))
+		for i, name := range routes {
+			if blank(name) {
+				add("spec.gateway.fence.routes[%d]: must not be blank", i)
+				continue
+			}
+			if _, dup := seen[name]; dup {
+				add("spec.gateway.fence.routes: %q is listed more than once", name)
+			}
+			seen[name] = struct{}{}
+		}
 	}
 
 	// --- topics ---
