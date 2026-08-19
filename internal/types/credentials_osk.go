@@ -4,8 +4,55 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 )
+
+// validBrokerMetricLabels is the canonical set of logical broker-metric labels
+// that metric-name overrides (prometheus.metric_names, jolokia.mbean_overrides)
+// may key on. It is the single source of truth shared by the credentials
+// validator and the Prometheus/JMX metric-definition builders; drift tests in
+// those packages assert their definitions cover exactly this set.
+var validBrokerMetricLabels = map[string]struct{}{
+	"BytesInPerSec":          {},
+	"BytesOutPerSec":         {},
+	"MessagesInPerSec":       {},
+	"PartitionCount":         {},
+	"GlobalPartitionCount":   {},
+	"ClientConnectionCount":  {},
+	"TotalLocalStorageUsage": {},
+}
+
+// ValidBrokerMetricLabels returns the canonical broker-metric labels, sorted for
+// a stable error message and stable test assertions.
+func ValidBrokerMetricLabels() []string {
+	labels := make([]string, 0, len(validBrokerMetricLabels))
+	for l := range validBrokerMetricLabels {
+		labels = append(labels, l)
+	}
+	sort.Strings(labels)
+	return labels
+}
+
+// validateMetricNameOverrides ensures every override key is a known broker-metric
+// label, so a typo'd or wrong-case key is a loud error rather than a silent
+// no-op. fieldName names the offending config field. Only the (non-secret)
+// override keys are echoed — the override values are not.
+func validateMetricNameOverrides(overrides map[string]string, fieldName string) error {
+	var unknown []string
+	for key := range overrides {
+		if _, ok := validBrokerMetricLabels[key]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+	if len(unknown) == 0 {
+		return nil
+	}
+	sort.Strings(unknown)
+	return fmt.Errorf("%s: unknown metric label(s) %s; valid labels are: %s",
+		fieldName, strings.Join(unknown, ", "), strings.Join(ValidBrokerMetricLabels(), ", "))
+}
 
 // OSKCredentials represents the apache-kafka-credentials.yaml file
 type OSKCredentials struct {
@@ -35,6 +82,11 @@ type JolokiaConfig struct {
 	Endpoints []string           `yaml:"endpoints"`
 	Auth      *JolokiaAuthConfig `yaml:"auth,omitempty"`
 	TLS       *JolokiaTLSConfig  `yaml:"tls,omitempty"`
+	// MBeanOverrides maps a logical broker-metric label (e.g. "BytesInPerSec")
+	// to the MBean object name this cluster's JMX/Jolokia agent actually exposes,
+	// for agents that use non-standard MBean names. Keys must be one of the
+	// labels in ValidBrokerMetricLabels(); unknown keys are rejected at load time.
+	MBeanOverrides map[string]string `yaml:"mbean_overrides,omitempty"`
 }
 
 // JolokiaAuthConfig contains authentication credentials for Jolokia
@@ -55,6 +107,13 @@ type PrometheusConfig struct {
 	Auth   *PrometheusAuthConfig   `yaml:"auth,omitempty"`
 	TLS    *PrometheusTLSConfig    `yaml:"tls,omitempty"`
 	Filter *PrometheusFilterConfig `yaml:"filter,omitempty"`
+	// MetricNames maps a logical broker-metric label (e.g. "BytesInPerSec") to
+	// the base Prometheus series name this cluster's exporter actually exposes,
+	// for exporters that relabel the standard series. The name is substituted
+	// into kcp's existing query wrapping (sum/rate/selector), so filter.labels
+	// injection continues to work. Keys must be one of the labels in
+	// ValidBrokerMetricLabels(); unknown keys are rejected at load time.
+	MetricNames map[string]string `yaml:"metric_names,omitempty"`
 }
 
 // PrometheusFilterConfig holds label selectors to scope Prometheus queries to a specific target.
@@ -297,6 +356,9 @@ func validatePrometheusConfig(prom *PrometheusConfig) error {
 			return fmt.Errorf("tls ca_cert file not found: %s", prom.TLS.CACert)
 		}
 	}
+	if err := validateMetricNameOverrides(prom.MetricNames, "metric_names"); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -317,6 +379,9 @@ func validateJolokiaConfig(jolokia *JolokiaConfig) error {
 		if _, err := os.Stat(jolokia.TLS.CACert); err != nil {
 			return fmt.Errorf("tls ca_cert file not found: %s", jolokia.TLS.CACert)
 		}
+	}
+	if err := validateMetricNameOverrides(jolokia.MBeanOverrides, "mbean_overrides"); err != nil {
+		return err
 	}
 	return nil
 }

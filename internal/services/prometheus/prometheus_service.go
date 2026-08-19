@@ -25,18 +25,49 @@ type MetricQuery struct {
 	// GroupByConnector indicates the query is aggregated with `sum by (connector) (...)`
 	// and results should be broken out per connector using the `connector` series label.
 	GroupByConnector bool
+	// Overridden is true when PrometheusMetric came from a user-configured
+	// metric-name override rather than the default series name. An overridden
+	// query that still returns no data is actionable (the override was set
+	// precisely to fix an empty result), so it is logged louder than a routine
+	// empty default.
+	Overridden bool
 }
 
 // BrokerQueryDefinitions returns the standard Kafka broker Prometheus queries.
-func BrokerQueryDefinitions() []MetricQuery {
+// overrides maps a logical label (e.g. "BytesInPerSec") to the base series name
+// this cluster's exporter actually exposes; an entry with an empty value is
+// ignored. The overridden name is substituted into kcp's existing query wrapping
+// and set as PrometheusMetric, so applyLabelFilter injection keeps working. Pass
+// nil for the defaults.
+func BrokerQueryDefinitions(overrides map[string]string) []MetricQuery {
+	name := func(label, def string) (string, bool) {
+		if v, ok := overrides[label]; ok && v != "" {
+			return v, true
+		}
+		return def, false
+	}
+
+	bytesIn, bytesInOv := name("BytesInPerSec", "kafka_server_brokertopicmetrics_bytesinpersec_total")
+	bytesOut, bytesOutOv := name("BytesOutPerSec", "kafka_server_brokertopicmetrics_bytesoutpersec_total")
+	messagesIn, messagesInOv := name("MessagesInPerSec", "kafka_server_brokertopicmetrics_messagesinpersec_total")
+	partitionCount, partitionCountOv := name("PartitionCount", "kafka_server_replicamanager_partitioncount")
+	globalPartition, globalPartitionOv := name("GlobalPartitionCount", "kafka_controller_kafkacontroller_value")
+	clientConn, clientConnOv := name("ClientConnectionCount", "kafka_server_socketservermetrics_connection_count")
+	logSize, logSizeOv := name("TotalLocalStorageUsage", "kafka_log_log_size")
+
+	// GlobalPartitionCount is distinguished by a {name="..."} discriminator on a
+	// shared controller series; an override replaces the base series name and the
+	// discriminator is preserved.
+	globalPartitionSel := globalPartition + `{name="GlobalPartitionCount"}`
+
 	return []MetricQuery{
-		{Label: "BytesInPerSec", Query: "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[%s]))", PrometheusMetric: "kafka_server_brokertopicmetrics_bytesinpersec_total"},
-		{Label: "BytesOutPerSec", Query: "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", PrometheusMetric: "kafka_server_brokertopicmetrics_bytesoutpersec_total"},
-		{Label: "MessagesInPerSec", Query: "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))", PrometheusMetric: "kafka_server_brokertopicmetrics_messagesinpersec_total"},
-		{Label: "PartitionCount", Query: "sum(kafka_server_replicamanager_partitioncount)", PrometheusMetric: "kafka_server_replicamanager_partitioncount"},
-		{Label: "GlobalPartitionCount", Query: "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}", PrometheusMetric: "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}"},
-		{Label: "ClientConnectionCount", Query: "sum(kafka_server_socketservermetrics_connection_count)", PrometheusMetric: "kafka_server_socketservermetrics_connection_count"},
-		{Label: "TotalLocalStorageUsage", Query: "sum(kafka_log_log_size) / (1024*1024*1024)", PrometheusMetric: "kafka_log_log_size"},
+		{Label: "BytesInPerSec", Query: "sum(rate(" + bytesIn + "[%s]))", PrometheusMetric: bytesIn, Overridden: bytesInOv},
+		{Label: "BytesOutPerSec", Query: "sum(rate(" + bytesOut + "[%s]))", PrometheusMetric: bytesOut, Overridden: bytesOutOv},
+		{Label: "MessagesInPerSec", Query: "sum(rate(" + messagesIn + "[%s]))", PrometheusMetric: messagesIn, Overridden: messagesInOv},
+		{Label: "PartitionCount", Query: "sum(" + partitionCount + ")", PrometheusMetric: partitionCount, Overridden: partitionCountOv},
+		{Label: "GlobalPartitionCount", Query: globalPartitionSel, PrometheusMetric: globalPartitionSel, Overridden: globalPartitionOv},
+		{Label: "ClientConnectionCount", Query: "sum(" + clientConn + ")", PrometheusMetric: clientConn, Overridden: clientConnOv},
+		{Label: "TotalLocalStorageUsage", Query: "sum(" + logSize + ") / (1024*1024*1024)", PrometheusMetric: logSize, Overridden: logSizeOv},
 	}
 }
 
@@ -176,7 +207,11 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 			dataPoints += len(r.Values)
 		}
 		if dataPoints == 0 {
-			slog.Debug("Prometheus query returned no data points", "label", mq.Label, "query", query)
+			if mq.Overridden {
+				slog.Warn("⚠️ Overridden Prometheus metric returned no data points — check the configured metric_names value", "label", mq.Label, "query", query)
+			} else {
+				slog.Debug("Prometheus query returned no data points", "label", mq.Label, "query", query)
+			}
 		}
 
 		for _, result := range results {
