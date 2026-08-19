@@ -2,624 +2,802 @@ package execute
 
 import (
 	"bytes"
-	"context"
-	"log/slog"
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/confluentinc/kcp/internal/types"
-	"github.com/confluentinc/kcp/internal/utils"
+	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func resetAuthFlags() {
-	useSaslIam = false
-	useSaslScram = false
-	useSaslPlain = false
-	useTls = false
-	useUnauthenticatedTLS = false
-	useUnauthenticatedPlaintext = false
-	rolloutTimeout = 0
-	detectUnroutedProducersDuration = 0
-	consumerOffsetSyncDrainDuration = 0
+const executeManifest = `apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: msk-prod-to-cc-batch-1
+spec:
+  source:
+    type: msk
+    bootstrapServers:
+      - b-1.msk.us-east-1.amazonaws.com:9096
+    credentials:
+      sasl_scram:
+        username: admin
+        password: secret
+        mechanism: SHA512
+  target:
+    type: confluent-cloud
+    clusterId: lkc-abc123
+    kafka:
+      bootstrapServers:
+        - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+      credentials:
+        sasl_plain:
+          username: CC_KEY
+          password: CC_SECRET
+          tls: true
+  clusterLink:
+    name: msk-to-cc
+  gateway:
+    namespace: confluent
+    crs:
+      initial: gateway-initial
+      fenced: FENCED_PATH
+      switchover: SWITCHOVER_PATH
+`
+
+type fixture struct {
+	manifestPath string
+	stateFile    string
+	fencedPath   string
+	switchPath   string
+	dir          string
 }
 
-func TestMigrationExecute_NoAuthFlag_ReturnsError(t *testing.T) {
-	resetAuthFlags()
+// newFixture writes a manifest, its two CR files, and a state file holding a
+// migration whose persisted config matches the manifest.
+func newFixture(t *testing.T, mutate func(string) string) fixture {
+	t.Helper()
+	dir := t.TempDir()
+	f := fixture{
+		dir:          dir,
+		manifestPath: filepath.Join(dir, "gateway-migration.yaml"),
+		stateFile:    filepath.Join(dir, "migration-state.json"),
+		fencedPath:   filepath.Join(dir, "fenced.yaml"),
+		switchPath:   filepath.Join(dir, "switchover.yaml"),
+	}
+	require.NoError(t, os.WriteFile(f.fencedPath, []byte("kind: Gateway\nname: fenced\n"), 0600))
+	require.NoError(t, os.WriteFile(f.switchPath, []byte("kind: Gateway\nname: switchover\n"), 0600))
 
+	doc := strings.ReplaceAll(executeManifest, "FENCED_PATH", f.fencedPath)
+	doc = strings.ReplaceAll(doc, "SWITCHOVER_PATH", f.switchPath)
+	if mutate != nil {
+		doc = mutate(doc)
+	}
+	require.NoError(t, os.WriteFile(f.manifestPath, []byte(doc), 0600))
+
+	f.writeState(t, func(*migration.MigrationConfig) {})
+	return f
+}
+
+// writeState persists a config built from the UNMUTATED manifest, then applies
+// the caller's edit — so a test can make the file and the snapshot disagree.
+func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig)) {
+	t.Helper()
+	cfg := migration.MigrationConfig{
+		MigrationId:         "msk-prod-to-cc-batch-1",
+		SourceBootstrap:     "b-1.msk.us-east-1.amazonaws.com:9096",
+		ClusterBootstrap:    "pkc-xxxxx.us-east-1.aws.confluent.cloud:9092",
+		K8sNamespace:        "confluent",
+		InitialCrName:       "gateway-initial",
+		KubeConfigPath:      "/some/kube/config",
+		ClusterId:           "lkc-abc123",
+		ClusterRestEndpoint: "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443",
+		ClusterLinkName:     "msk-to-cc",
+		Topics:              []string{"t1.order", "t2.inventory"},
+		FencedCrYAML:        []byte("kind: Gateway\nname: fenced\n"),
+		SwitchoverCrYAML:    []byte("kind: Gateway\nname: switchover\n"),
+		CurrentState:        migration.StateInitialized,
+	}
+	edit(&cfg)
+	state := migration.NewMigrationState()
+	state.UpsertMigration(cfg)
+	require.NoError(t, state.WriteToFile(f.stateFile))
+}
+
+func runExecute(t *testing.T, args ...string) (string, error) {
+	t.Helper()
 	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--detect-unrouted-producers-duration", "0",
-	})
-
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
 	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "at least one of the flags")
+	return out.String(), err
 }
 
-func TestMigrationExecute_WithAuthFlag_PassesValidation(t *testing.T) {
-	resetAuthFlags()
+func loadGateway(t *testing.T, path string) *manifest.GatewayMigration {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	require.NoError(t, err)
+	g, err := manifest.ParseGatewayMigration(data)
+	require.NoError(t, err)
+	return g
+}
 
+func persistedConfig(t *testing.T, f fixture) *migration.MigrationConfig {
+	t.Helper()
+	state, err := migration.NewMigrationStateFromFile(f.stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	return cfg
+}
+
+// --- command surface ---
+
+// TestExecute_IsNamedExecute — the manifest work deliberately kept the existing
+// verb, so runbooks, scripts and the published docs stay correct.
+func TestExecute_IsNamedExecute(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "0",
+	assert.Equal(t, "execute", cmd.Name())
+	assert.False(t, cmd.Hidden, "execute is the advertised verb, not an alias")
+	assert.Empty(t, cmd.Deprecated, "execute is not deprecated")
+}
+
+// TestExecute_VisibleFlagSurface — the manifest work moved topology and auth
+// into the config file; what stays on the command line is the manifest path,
+// the state file, the id override, and the per-policy overrides that vary a
+// spec.defaultPolicies value for a single run. --run-report is registered but
+// hidden (a diagnostics path whose only consumer is the performance rig), so it
+// is asserted separately rather than padding the advertised surface.
+func TestExecute_VisibleFlagSurface(t *testing.T) {
+	cmd := NewMigrationExecuteCmd()
+	var visible []string
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		if !f.Hidden {
+			visible = append(visible, f.Name)
+		}
 	})
+	assert.ElementsMatch(t, []string{
+		"migration-yaml", "migration-state-file", "migration-id",
+		"lag-threshold", "promote-batch-size", "rollout-timeout",
+		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
+	}, visible)
 
-	err := cmd.Execute()
-	// Should fail later (missing state file), NOT on auth validation.
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "at least one of the flags")
-	assert.Contains(t, err.Error(), "migration state file")
+	runReport := cmd.Flags().Lookup("run-report")
+	require.NotNil(t, runReport, "run-report must stay registered for the performance rig")
+	assert.True(t, runReport.Hidden, "run-report is a diagnostics flag and must stay hidden")
 }
 
-func TestMigrationExecute_WithSaslPlainFlag_RequiresCredentials(t *testing.T) {
-	resetAuthFlags()
+// TestExecute_RetiredFlagsAreGone — the topology/auth flags moved into the
+// manifest. The per-policy override flags (--lag-threshold, --rollout-timeout,
+// etc.) are NOT here: they are the live surface, asserted by
+// TestExecute_VisibleFlagSurface.
+func TestExecute_RetiredFlagsAreGone(t *testing.T) {
+	f := newFixture(t, nil)
+	for _, flag := range []string{
+		"--cluster-api-key", "--cluster-api-secret", "--aws-region",
+		"--sasl-scram-mechanism", "--use-sasl-iam",
+		"--insecure-skip-tls-verify", "--cluster-rest-ca-cert",
+	} {
+		t.Run(flag, func(t *testing.T) {
+			_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, flag, "1")
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "unknown flag")
+		})
+	}
+}
 
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-sasl-plain",
-		"--detect-unrouted-producers-duration", "0",
+func TestExecute_RequiresMigrationYaml(t *testing.T) {
+	_, err := runExecute(t)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration-yaml")
+}
+
+// TestExecute_RequiresMigrationStateFile — the state file holds the topology
+// snapshot execute treats as the source of truth, so it is a required input
+// (no CWD default), matching every other state-file-consuming command.
+func TestExecute_RequiresMigrationStateFile(t *testing.T) {
+	f := newFixture(t, nil)
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration-state-file")
+}
+
+// --- migration id resolution ---
+
+// TestExecute_ResolvesMigrationIdFromMetadataName — --migration-id survives as an
+// override only; the manifest names the migration.
+func TestExecute_ResolvesMigrationIdFromMetadataName(t *testing.T) {
+	f := newFixture(t, nil)
+	g := loadGateway(t, f.manifestPath)
+	assert.Equal(t, "msk-prod-to-cc-batch-1", resolveMigrationID(g, ""))
+	assert.Equal(t, "migration-abc-uuid", resolveMigrationID(g, "migration-abc-uuid"),
+		"an explicit --migration-id addresses a pre-existing uuid-keyed row")
+}
+
+func TestExecute_ErrorsWhenMigrationNotInStateFile(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "  name: msk-prod-to-cc-batch-1", "  name: no-such-migration", 1)
 	})
-
-	err := cmd.Execute()
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "sasl-plain-username")
+	assert.Contains(t, err.Error(), "no-such-migration")
+	assert.Contains(t, err.Error(), "kcp migration list")
 }
 
-func TestMigrationExecute_WithSaslPlainFlagAndCredentials_PassesValidation(t *testing.T) {
-	resetAuthFlags()
+// --- drift check (§13) ---
 
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-sasl-plain",
-		"--sasl-plain-username", "user",
-		"--sasl-plain-password", "pass",
-		"--detect-unrouted-producers-duration", "0",
+func TestDrift_NoDriftWhenManifestMatchesSnapshot(t *testing.T) {
+	f := newFixture(t, nil)
+	g := loadGateway(t, f.manifestPath)
+	// The snapshot holds an expanded topic list and the manifest omits topics.
+	assert.Empty(t, detectDrift(g, persistedConfig(t, f)))
+}
+
+func TestDrift_DetectsChangedTopology(t *testing.T) {
+	for name, tc := range map[string]struct {
+		edit func(*migration.MigrationConfig)
+		want string
+	}{
+		"source bootstrap":  {func(c *migration.MigrationConfig) { c.SourceBootstrap = "other:9092" }, "spec.source"},
+		"cluster bootstrap": {func(c *migration.MigrationConfig) { c.ClusterBootstrap = "other:9092" }, "spec.target"},
+		"cluster id":        {func(c *migration.MigrationConfig) { c.ClusterId = "lkc-other" }, "spec.target"},
+		"rest endpoint":     {func(c *migration.MigrationConfig) { c.ClusterRestEndpoint = "https://other" }, "spec.target"},
+		"link name":         {func(c *migration.MigrationConfig) { c.ClusterLinkName = "other-link" }, "spec.clusterLink"},
+		"namespace":         {func(c *migration.MigrationConfig) { c.K8sNamespace = "other-ns" }, "spec.gateway"},
+		"initial cr":        {func(c *migration.MigrationConfig) { c.InitialCrName = "other-cr" }, "spec.gateway"},
+		"pause offset sync": {func(c *migration.MigrationConfig) { c.PauseConsumerOffsetSync = true }, "spec.clusterLink"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, nil)
+			f.writeState(t, tc.edit)
+			drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
+			require.NotEmpty(t, drift)
+			assert.Contains(t, strings.Join(drift, " "), tc.want)
+		})
+	}
+}
+
+// TestDrift_OmittedTopicsMatchTheExpandedSnapshot is the §13 asymmetry: after
+// the first execute an omitted spec.topics compares against a snapshot back-filled
+// with every active mirror, so "omitted" must equal "whatever was expanded".
+func TestDrift_OmittedTopicsMatchTheExpandedSnapshot(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.Topics = []string{"anything", "at", "all"}
 	})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "at least one of the flags")
-	assert.Contains(t, err.Error(), "migration state file")
+	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
 }
 
-func TestMigrationExecute_MultipleAuthFlags_ReturnsError(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-tls",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "0",
+func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + "  topics: ['t1.order', 't3.new']\n"
 	})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "if any flags in the group")
-}
-
-// Regression guard: --tls-ca-cert must be usable on a non-mTLS source method
-// (here SASL/SCRAM) without the mTLS client cert/key — it is no longer grouped
-// with them. Fails later (missing state file), not on flag grouping.
-func TestMigrationExecute_SaslScramWithCACertOnly_PassesValidation(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-sasl-scram",
-		"--sasl-scram-username", "user",
-		"--sasl-scram-password", "pass",
-		"--tls-ca-cert", "ca.pem",
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.Topics = []string{"t1.order", "t2.inventory"}
 	})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "if any flags in the group", "--tls-ca-cert must not require the mTLS client cert/key")
-	assert.Contains(t, err.Error(), "migration state file")
+	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
+	require.NotEmpty(t, drift)
+	joined := strings.Join(drift, " ")
+	assert.Contains(t, joined, "spec.topics")
+	assert.Contains(t, joined, "1 added")
+	assert.Contains(t, joined, "1 removed")
 }
 
-// Regression guard: --use-tls (mTLS) must NOT require --tls-ca-cert — mTLS
-// against a public/system-trusted CA works with system roots.
-func TestMigrationExecute_TLSWithoutCACert_PassesValidation(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-tls",
-		"--tls-client-cert", "cert.pem",
-		"--tls-client-key", "key.pem",
+// TestDrift_NeverNamesTopics — counts only. Dumping a topic list into a
+// terminal error is the one thing this project's error copy must not do.
+func TestDrift_NeverNamesTopics(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + "  topics: ['secret-topic-name']\n"
 	})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "tls-ca-cert", "mTLS must not require --tls-ca-cert")
-	assert.Contains(t, err.Error(), "migration state file")
+	f.writeState(t, func(c *migration.MigrationConfig) { c.Topics = []string{"other-topic"} })
+	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
+	joined := strings.Join(drift, " ")
+	assert.NotContains(t, joined, "secret-topic-name")
+	assert.NotContains(t, joined, "other-topic")
 }
 
-// ===========================================================================
-// --sasl-scram-mechanism flag tests
-// ===========================================================================
+func TestDrift_DetectsChangedCRBytes(t *testing.T) {
+	f := newFixture(t, nil)
+	require.NoError(t, os.WriteFile(f.fencedPath, []byte("kind: Gateway\nname: EDITED\n"), 0600))
+	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
+	require.NotEmpty(t, drift)
+	assert.Contains(t, strings.Join(drift, " "), "fenced CR")
+}
 
-func TestMigrationExecute_SaslScramMechanism_DefaultIsSHA512(t *testing.T) {
-	resetAuthFlags()
+// TestDrift_UnreadableCRIsNotFatal — execute is resume-safe and may run from a
+// different cwd or pod after a crash, possibly with the gateway already fenced.
+// A moved CR file must not strand a mid-flight cutover.
+func TestDrift_UnreadableCRIsNotFatal(t *testing.T) {
+	f := newFixture(t, nil)
+	require.NoError(t, os.Remove(f.fencedPath))
+	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)),
+		"an unreadable CR degrades to a warning, never a drift error")
+}
 
+// TestDrift_KubeconfigPathIsNotCompared — for the same reason: execute may
+// legitimately run from a different machine or pod.
+func TestDrift_KubeconfigPathIsNotCompared(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) { c.KubeConfigPath = "/a/totally/different/path" })
+	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
+}
+
+// TestDrift_PolicyIsNeverCompared — policy is read fresh on every execute, which
+// is what lets a caller vary it between init and execute.
+func TestDrift_PolicyIsNeverCompared(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + "  defaultPolicies:\n    promoteBatchSize: 7\n    rolloutTimeout: 3m\n"
+	})
+	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
+}
+
+// TestDrift_CredentialsAreNotComparable — credentials are never persisted, so
+// defect 1's changed-between-runs half stays open by construction.
+func TestDrift_CredentialsAreNotComparable(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "        password: secret", "        password: rotated", 1)
+	})
+	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
+}
+
+// TestMigrationConfig_EveryFieldClassifiedForDrift is a classification guard,
+// not a behavioral test: it proves every field on MigrationConfig has been
+// deliberately triaged as either checked by detectDrift (a topology field the
+// manifest can drift out from under) or exempt (identity/FSM bookkeeping,
+// runtime data populated by init, policy re-read fresh every run, or
+// host-specific). A field in neither set fails loudly, turning "someone added
+// a field and forgot to teach detectDrift about it" from a silent gap into a
+// build-breaking one.
+//
+// This proves triage, not implementation — it does not confirm a driftChecked
+// field actually has a comparison in detectDrift. Pair any addition to
+// driftChecked with a new case in TestDrift_DetectsChangedTopology (scalars)
+// or a dedicated test (CR bytes, Topics); this test alone cannot catch a field
+// that's classified as checked but never actually compared.
+func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
+	// Must have a comparison in detectDrift.
+	driftChecked := map[string]bool{
+		"SourceBootstrap":         true,
+		"ClusterBootstrap":        true,
+		"ClusterId":               true,
+		"ClusterRestEndpoint":     true,
+		"ClusterLinkName":         true,
+		"Topics":                  true,
+		"PauseConsumerOffsetSync": true,
+		"K8sNamespace":            true,
+		"InitialCrName":           true,
+		"FencedCrYAML":            true,
+		"SwitchoverCrYAML":        true,
+	}
+	// Deliberately not compared by detectDrift — each entry says why.
+	driftExempt := map[string]bool{
+		// identity / FSM bookkeeping, not part of the declared spec
+		"MigrationId":  true,
+		"CurrentState": true,
+		// execute is resume-safe and may legitimately run from a different
+		// machine or pod (TestDrift_KubeconfigPathIsNotCompared)
+		"KubeConfigPath": true,
+		// policy is re-read fresh from the manifest on every run; the
+		// snapshot's copy is never authoritative (TestDrift_PolicyIsNeverCompared)
+		"DetectUnroutedProducersDuration": true,
+		"ConsumerOffsetSyncDrainDuration": true,
+		// runtime data populated by init from the live cluster link, not part
+		// of the operator's declared spec
+		"ClusterLinkTopics":  true,
+		"ClusterLinkConfigs": true,
+		// execute-time bookkeeping for whether kcp itself has already flipped
+		// offset sync, not something the operator's YAML declares
+		"PauseConsumerOffsetSyncFlipped": true,
+		// only the fenced/switchover CRs are drift-checked; the initial CR is
+		// applied once at init and never revisited
+		"InitialCrYAML": true,
+		// observational record of the effective policy the last execute ran with —
+		// written for humans/support, never read back by kcp, so it can no more
+		// drift than policy itself (TestExecute_RecordsLastRunPolicies)
+		"LastRunPolicies": true,
+	}
+
+	typ := reflect.TypeOf(migration.MigrationConfig{})
+	require.Equal(t, typ.NumField(), len(driftChecked)+len(driftExempt),
+		"MigrationConfig's field count doesn't match the classified total — a field was added without being classified")
+
+	for i := 0; i < typ.NumField(); i++ {
+		name := typ.Field(i).Name
+		require.True(t, driftChecked[name] != driftExempt[name], // exactly one
+			"MigrationConfig.%s is unclassified for drift detection — add it to driftChecked (with a detectDrift comparison and a behavioral test) or driftExempt (with a reason)", name)
+	}
+}
+
+// --- drift response (§13's two rows) ---
+
+func TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
+	for _, state := range []string{migration.StateUninitialized, migration.StateInitialized, migration.StateLagsOk} {
+		t.Run(state, func(t *testing.T) {
+			f := newFixture(t, nil)
+			f.writeState(t, func(c *migration.MigrationConfig) {
+				c.CurrentState = state
+				c.ClusterLinkName = "changed-link"
+			})
+			_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "Re-run init")
+			assert.Contains(t, err.Error(), "spec.clusterLink")
+		})
+	}
+}
+
+// TestExecute_DriftMidFlightProceedsWithoutBlocking — past the point of no
+// return, re-running init would strand the live cutover, so there is no longer a
+// safe alternative to proceeding with the edited spec. checkSpecDrift warns and
+// returns nil rather than blocking; the drift-consent flag it used to require is
+// gone.
+func TestExecute_DriftMidFlightProceedsWithoutBlocking(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.CurrentState = migration.StateFenced
+		c.ClusterLinkName = "changed-link"
+	})
+	g := loadGateway(t, f.manifestPath)
+	cfg := persistedConfig(t, f)
+	require.NotEmpty(t, detectDrift(g, cfg), "the fixture must actually have drift")
+	assert.NoError(t, checkSpecDrift(g, cfg),
+		"drift past the point of no return must not block the cutover")
+}
+
+// --- policy is read fresh ---
+
+func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + `  defaultPolicies:
+    lagThreshold: 42
+    promoteBatchSize: 7
+    rolloutTimeout: 3m
+    detectUnroutedProducersDuration: 30s
+    consumerOffsetSyncDrainDuration: 15s
+`
+	})
+	g := loadGateway(t, f.manifestPath)
+	cfg := persistedConfig(t, f)
+	opts, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	assert.EqualValues(t, 42, opts.LagThreshold)
+	assert.Equal(t, 7, opts.PromoteBatchSize)
+	assert.EqualValues(t, 180, opts.RolloutTimeout.Seconds())
+	assert.EqualValues(t, 30, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
+	assert.EqualValues(t, 15, opts.MigrationConfig.ConsumerOffsetSyncDrainDuration.Seconds())
+}
+
+// --- per-policy override flags ---
+
+// TestExecute_PolicyOverrideFlagsReplaceManifestDefaults — only a flag the
+// operator set explicitly overrides, and an explicit 0 (meaningful for every
+// one of these) counts as set. An unset flag leaves the manifest default alone.
+func TestExecute_PolicyOverrideFlagsReplaceManifestDefaults(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-sasl-scram",
-		"--sasl-scram-username", "user",
-		"--sasl-scram-password", "pass",
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--migration-yaml", "x", "--migration-state-file", "y",
+		"--detect-unrouted-producers-duration", "60s",
+		"--promote-batch-size", "0",
 	}))
 
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, "SHA512", opts.SaslScramMechanism, "default --sasl-scram-mechanism should be SHA512 for MSK compatibility")
+	p := manifest.DefaultPolicies{
+		PromoteBatchSize:                100,
+		RolloutTimeout:                  10 * time.Minute,
+		DetectUnroutedProducersDuration: 30 * time.Second,
+	}
+	applyPolicyOverrides(cmd, &p)
+
+	assert.Equal(t, 60*time.Second, p.DetectUnroutedProducersDuration, "an explicit flag replaces the default")
+	assert.Equal(t, 0, p.PromoteBatchSize, "an explicit 0 override replaces a non-zero default")
+	assert.Equal(t, 10*time.Minute, p.RolloutTimeout, "an unset flag leaves the manifest default untouched")
 }
 
-func TestMigrationExecute_SaslScramMechanism_ExplicitSHA256(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-sasl-scram",
-		"--sasl-scram-username", "user",
-		"--sasl-scram-password", "pass",
-		"--sasl-scram-mechanism", "SHA256",
-	}))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, "SHA256", opts.SaslScramMechanism)
-}
-
-func TestMigrationExecute_SaslScramMechanism_BindFromEnvVar(t *testing.T) {
-	resetAuthFlags()
-	t.Setenv("SASL_SCRAM_MECHANISM", "SHA256")
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-sasl-scram",
-		"--sasl-scram-username", "user",
-		"--sasl-scram-password", "pass",
-	}))
-	require.NoError(t, utils.BindEnvToFlags(cmd))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, "SHA256", opts.SaslScramMechanism, "SASL_SCRAM_MECHANISM env var should override the default")
-}
-
-func TestMigrationExecute_SaslScramMechanism_InvalidValueRejected(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-sasl-scram",
-		"--sasl-scram-username", "user",
-		"--sasl-scram-password", "pass",
-		"--sasl-scram-mechanism", "MD5",
-		"--detect-unrouted-producers-duration", "0",
+// TestExecute_PolicyOverrideReachesExecutorOpts — an override applied to the
+// manifest's defaults flows all the way through buildExecutorOpts, the same path
+// runMigrationExecute takes.
+func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    detectUnroutedProducersDuration: 30s\n"
 	})
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile,
+		"--lag-threshold", "99",
+		"--detect-unrouted-producers-duration", "60s",
+	}))
 
-	err := cmd.Execute()
+	g := loadGateway(t, f.manifestPath)
+	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
+	require.Empty(t, g.Spec.DefaultPolicies.Validate())
+
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	assert.EqualValues(t, 99, opts.LagThreshold)
+	assert.EqualValues(t, 60, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
+}
+
+// TestExecute_RecordsLastRunPolicies — buildExecutorOpts stamps the effective
+// policy (manifest defaults with this run's overrides applied) onto the config
+// that saveState persists, as an observational LastRunPolicies record. It is
+// never read back — hence drift-exempt — so this proves it is at least written,
+// and that it captures the OVERRIDE rather than the manifest default.
+func TestExecute_RecordsLastRunPolicies(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n"
+	})
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile,
+		"--lag-threshold", "99",
+	}))
+
+	g := loadGateway(t, f.manifestPath)
+	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
+	require.Empty(t, g.Spec.DefaultPolicies.Validate())
+
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	rec := opts.MigrationConfig.LastRunPolicies
+	require.NotNil(t, rec, "the effective policy must be recorded on the persisted config")
+	assert.Equal(t, 99, rec.LagThreshold, "the override, not the manifest default, is recorded")
+	assert.Equal(t, 3, rec.PromoteBatchSize)
+	assert.Equal(t, 2*time.Minute, rec.RolloutTimeout)
+	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
+	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration, "an unset knob is recorded as its zero")
+}
+
+// TestExecute_InitDoesNotCarryLastRunPolicies — the record is absent until the
+// first execute: a freshly-initialised migration (the fixture's persisted config)
+// must not carry an empty block, which is why the field is a pointer with
+// omitempty.
+func TestExecute_InitDoesNotCarryLastRunPolicies(t *testing.T) {
+	f := newFixture(t, nil)
+	assert.Nil(t, persistedConfig(t, f).LastRunPolicies,
+		"a migration that has only been init'd must have no LastRunPolicies record")
+}
+
+// TestExecute_InvalidPolicyOverrideIsRejected — an override can carry a value the
+// manifest never did, so the effective policy is re-validated. A sub-10s detect
+// duration is rejected before any network work.
+func TestExecute_InvalidPolicyOverrideIsRejected(t *testing.T) {
+	f := newFixture(t, nil)
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile,
+		"--detect-unrouted-producers-duration", "5s")
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid --sasl-scram-mechanism")
+	assert.Contains(t, err.Error(), "detectUnroutedProducersDuration")
 }
 
-// ===========================================================================
-// SASL/SCRAM mechanism end-to-end test
-// ===========================================================================
+// --- source auth mapping ---
 
-func TestMigrationExecute_SaslScramMechanism_ReachesKafkaClient(t *testing.T) {
-	// Verify the mechanism value propagates from opts through createSourceOffset
-	// into the Kafka client SASL configuration. We capture slog output to confirm
-	// configureSASLTypeSCRAMAuthentication receives the correct mechanism.
-	var buf bytes.Buffer
-	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
-	original := slog.Default()
-	slog.SetDefault(slog.New(handler))
-	defer slog.SetDefault(original)
+func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
+	for name, tc := range map[string]struct {
+		block  string
+		assert func(*testing.T, MigrationExecutorOpts)
+	}{
+		"sasl_scram": {
+			"      sasl_scram:\n        username: u\n        password: p\n        mechanism: SHA256",
+			func(t *testing.T, o MigrationExecutorOpts) {
+				assert.Equal(t, "u", o.SaslScramUsername)
+				assert.Equal(t, "p", o.SaslScramPassword)
+				assert.Equal(t, "SHA256", o.SaslScramMechanism)
+			},
+		},
+		"iam": {
+			"      iam:\n        region: eu-west-2",
+			func(t *testing.T, o MigrationExecutorOpts) {
+				assert.Equal(t, "eu-west-2", o.AWSRegion, "iam.region replaces --aws-region")
+			},
+		},
+		"sasl_plain": {
+			"      sasl_plain:\n        username: pu\n        password: pp\n        tls: true",
+			func(t *testing.T, o MigrationExecutorOpts) {
+				assert.Equal(t, "pu", o.SaslPlainUsername)
+				assert.True(t, o.SaslPlainUseTLS, "tls: true must not be silently dropped to cleartext")
+			},
+		},
+		"unauthenticated_plaintext": {
+			"      unauthenticated_plaintext: {}",
+			func(t *testing.T, o MigrationExecutorOpts) {
+				assert.Empty(t, o.SaslScramUsername)
+			},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t, func(doc string) string {
+				return strings.Replace(doc,
+					"      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
+					tc.block, 1)
+			})
+			g := loadGateway(t, f.manifestPath)
+			opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+			require.NoError(t, err)
+			tc.assert(t, opts)
+		})
+	}
+}
 
-	executor := NewMigrationExecutor(MigrationExecutorOpts{
-		SourceBootstrap:    "localhost:19999", // bogus port, will fail to connect
-		AuthType:           types.AuthTypeSASLSCRAM,
-		SaslScramUsername:  "user",
-		SaslScramPassword:  "pass",
-		SaslScramMechanism: "SHA512",
+// TestExecute_InsecureSkipReachesAllThreeLegs preserves today's single-flag
+// fan-out: --insecure-skip-tls-verify reached the source, the destination Kafka
+// leg and the destination REST leg from one place.
+func TestExecute_InsecureSkipReachesAllThreeLegs(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		doc = strings.Replace(doc, "    credentials:\n      sasl_scram:",
+			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
+		return strings.Replace(doc, "      credentials:\n        sasl_plain:",
+			"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
+	})
+	g := loadGateway(t, f.manifestPath)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	assert.True(t, opts.SourceInsecureSkipTLSVerify)
+	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
+	assert.True(t, opts.RestInsecureSkipTLSVerify)
+
+	rest, err := g.RestCredentials()
+	require.NoError(t, err)
+	assert.True(t, rest.InsecureSkipVerify, "the derived REST leg inherits it")
+}
+
+// TestExecute_DestinationKeyAndSecretFeedBothLegs — one pair, two legs, as today.
+func TestExecute_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
+	f := newFixture(t, nil)
+	g := loadGateway(t, f.manifestPath)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	assert.Equal(t, "CC_KEY", opts.ClusterApiKey)
+	assert.Equal(t, "CC_SECRET", opts.ClusterApiSecret)
+}
+
+// --- ported preRunE errors (§6) ---
+
+// TestExecute_PortsBespokePreRunErrors: execute's three hand-written
+// preRunE errors must have explicit homes in the manifest validator, or they
+// are silently dropped when the flag lattice is deleted.
+func TestExecute_PortsBespokePreRunErrors(t *testing.T) {
+	t.Run("invalid sasl_scram mechanism", func(t *testing.T) {
+		f := newFixture(t, func(doc string) string {
+			return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: SHA1", 1)
+		})
+		_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+		require.Error(t, err)
+		assert.Contains(t, strings.ToLower(err.Error()), "mechanism")
 	})
 
-	_, err := executor.createSourceOffset(context.Background())
-	require.Error(t, err, "should fail to connect to bogus broker")
-
-	logOutput := buf.String()
-	assert.Contains(t, logOutput, "mechanism=SHA512",
-		"SASL/SCRAM configuration should log the mechanism that was passed through opts")
-}
-
-// ===========================================================================
-// --rollout-timeout flag tests
-// ===========================================================================
-
-func TestMigrationExecute_RolloutTimeout_DefaultIsZero(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-	}))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, time.Duration(0), opts.RolloutTimeout, "default --rollout-timeout should be 0 (no deadline)")
-}
-
-func TestMigrationExecute_RolloutTimeout_ExplicitValueParsed(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--rollout-timeout", "10m",
-	}))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, 10*time.Minute, opts.RolloutTimeout)
-}
-
-func TestMigrationExecute_RolloutTimeout_InvalidDurationFails(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	err := cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--rollout-timeout", "not-a-duration",
-	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "rollout-timeout")
-}
-
-func TestMigrationExecute_RolloutTimeout_BindFromEnvVar(t *testing.T) {
-	resetAuthFlags()
-	t.Setenv("ROLLOUT_TIMEOUT", "7m")
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-	}))
-	require.NoError(t, utils.BindEnvToFlags(cmd))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, 7*time.Minute, opts.RolloutTimeout, "ROLLOUT_TIMEOUT env var should populate the flag")
-}
-
-// ===========================================================================
-// --detect-unrouted-producers-duration flag tests
-// ===========================================================================
-
-func TestMigrationExecute_DetectUnroutedProducersDuration_ZeroSkipsCheck(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "0",
+	t.Run("sub-10s detect duration", func(t *testing.T) {
+		f := newFixture(t, func(doc string) string {
+			return doc + "  defaultPolicies:\n    detectUnroutedProducersDuration: 5s\n"
+		})
+		_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "detectUnroutedProducersDuration")
 	})
 
-	err := cmd.Execute()
-	// Should fail on missing state file, not on duration validation
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "migration state file")
-}
-
-func TestMigrationExecute_DetectUnroutedProducersDuration_ValidDuration(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "10s",
+	t.Run("negative drain duration", func(t *testing.T) {
+		f := newFixture(t, func(doc string) string {
+			return doc + "  defaultPolicies:\n    consumerOffsetSyncDrainDuration: -5s\n"
+		})
+		_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "consumerOffsetSyncDrainDuration")
 	})
-
-	err := cmd.Execute()
-	// Should fail on missing state file, not on duration validation
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "migration state file")
 }
 
-func TestMigrationExecute_DetectUnroutedProducersDuration_BelowMinimumRejected(t *testing.T) {
-	resetAuthFlags()
+// --- credential persistence boundary ---
 
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "5s",
+func TestExecute_NeverPersistsCredentials(t *testing.T) {
+	f := newFixture(t, nil)
+	g := loadGateway(t, f.manifestPath)
+	cfg := persistedConfig(t, f)
+	_, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	state := migration.NewMigrationState()
+	state.UpsertMigration(*cfg)
+	out := filepath.Join(f.dir, "written.json")
+	require.NoError(t, state.WriteToFile(out))
+
+	raw, err := os.ReadFile(out)
+	require.NoError(t, err)
+	for _, secret := range []string{"secret", "CC_SECRET", "CC_KEY"} {
+		assert.NotContains(t, string(raw), secret)
+	}
+}
+
+// --- security review F2/F4: TLS trust must be per-leg ---
+
+// TestExecute_SourceInsecureSkipDoesNotReachTheDestination. The manifest spells
+// insecure_skip_tls_verify per credentials block. Collapsing the blocks into
+// one boolean means an operator relaxing TLS for a self-signed on-prem SOURCE
+// also stops verifying the destination connections — which transmit the
+// destination API key as SASL/PLAIN and as HTTP Basic. Anyone able to MITM the
+// path to the destination then harvests them.
+func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "    credentials:\n      sasl_scram:",
+			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
 	})
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
 
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be at least 10s")
+	assert.True(t, opts.SourceInsecureSkipTLSVerify, "the source asked for it")
+	assert.False(t, opts.DestKafkaInsecureSkipTLSVerify, "the destination Kafka leg did not")
+	assert.False(t, opts.RestInsecureSkipTLSVerify, "nor the destination REST leg")
 }
 
-// The check is opt-in: omitting --detect-unrouted-producers-duration must not
-// error on a missing required flag. It defaults to 0 (skip), so execution
-// proceeds until it fails on the missing state file instead.
-func TestMigrationExecute_DetectUnroutedProducersDuration_OptionalDefaultsToSkip(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		// --detect-unrouted-producers-duration intentionally omitted
+// TestExecute_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
+func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "      credentials:\n        sasl_plain:",
+			"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
 	})
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
 
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "detect-unrouted-producers-duration",
-		"omitting the flag must not fail flag-required validation")
-	assert.Contains(t, err.Error(), "migration state file")
-	assert.Equal(t, time.Duration(0), detectUnroutedProducersDuration,
-		"default --detect-unrouted-producers-duration should be 0 (skip the check)")
+	assert.False(t, opts.SourceInsecureSkipTLSVerify)
+	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
+	assert.True(t, opts.RestInsecureSkipTLSVerify, "a DERIVED REST leg inherits from the Kafka block")
 }
 
-func TestMigrationExecute_DetectUnroutedProducersDuration_BindFromEnvVar(t *testing.T) {
-	resetAuthFlags()
-	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "15s")
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		// --detect-unrouted-producers-duration omitted: env must supply it.
-	}))
-	require.NoError(t, utils.BindEnvToFlags(cmd))
-
-	assert.Equal(t, 15*time.Second, detectUnroutedProducersDuration,
-		"DETECT_UNROUTED_PRODUCERS_DURATION env var should populate the flag")
-}
-
-// TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected
-// pins that an env-provided value still flows through the <10s validation — the
-// bind happens in preRunE ahead of the check, so a below-minimum env value must
-// be rejected exactly as a below-minimum flag value is.
-func TestMigrationExecute_DetectUnroutedProducersDuration_EnvVarBelowMinimumRejected(t *testing.T) {
-	resetAuthFlags()
-	t.Setenv("DETECT_UNROUTED_PRODUCERS_DURATION", "5s")
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		// --detect-unrouted-producers-duration omitted: env supplies 5s.
+// TestExecute_ExplicitRestCredentialsGovernTheRestLeg — with restCredentials
+// spelled out, its own insecure_skip_verify governs, and nothing else leaks in.
+// Otherwise a declared private-CA ca_cert would be loaded and then rendered
+// meaningless by an InsecureSkipVerify inherited from another leg.
+func TestExecute_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		doc = strings.Replace(doc, "    credentials:\n      sasl_scram:",
+			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        api_key: K
+        api_secret: S
+  clusterLink:`, 1)
 	})
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
 
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must be at least 10s")
+	assert.True(t, opts.SourceInsecureSkipTLSVerify)
+	assert.False(t, opts.RestInsecureSkipTLSVerify,
+		"an explicit REST block that did not ask for it must keep verifying")
 }
 
-// ===========================================================================
-// --promote-batch-size flag tests
-// ===========================================================================
+// --- security review F5: the Kafka leg authenticates with the KAFKA block ---
 
-func TestMigrationExecute_PromoteBatchSize_DefaultIsZero(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-	}))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, 0, opts.PromoteBatchSize, "default --promote-batch-size should be 0 (promote all at once)")
-}
-
-func TestMigrationExecute_PromoteBatchSize_ExplicitValueParsed(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--promote-batch-size", "10",
-	}))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, 10, opts.PromoteBatchSize)
-}
-
-func TestMigrationExecute_PromoteBatchSize_InvalidValueFails(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	err := cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--promote-batch-size", "not-an-int",
+// TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne. The
+// destination bootstrap is dialled with SASL/PLAIN. Feeding it from
+// restCredentials means a deliberately broader REST key reaches the broker
+// instead of the narrower Kafka-scoped one — least privilege inverted.
+func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        api_key: REST_ONLY_KEY
+        api_secret: REST_ONLY_SECRET
+  clusterLink:`, 1)
 	})
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "promote-batch-size")
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+
+	assert.Equal(t, "CC_KEY", opts.ClusterApiKey, "the Kafka leg uses spec.target.kafka.credentials")
+	assert.Equal(t, "CC_SECRET", opts.ClusterApiSecret)
+	assert.Equal(t, "REST_ONLY_KEY", opts.RestApiKey, "the REST leg uses restCredentials")
+	assert.Equal(t, "REST_ONLY_SECRET", opts.RestApiSecret)
 }
 
-func TestMigrationExecute_PromoteBatchSize_BindFromEnvVar(t *testing.T) {
-	resetAuthFlags()
-	t.Setenv("PROMOTE_BATCH_SIZE", "25")
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-	}))
-	require.NoError(t, utils.BindEnvToFlags(cmd))
-
-	opts := parseMigrationExecutorOpts(migration.MigrationState{}, migration.MigrationConfig{})
-	assert.Equal(t, 25, opts.PromoteBatchSize, "PROMOTE_BATCH_SIZE env var should populate the flag")
-}
-
-// ===========================================================================
-// --consumer-offset-sync-drain-duration flag tests
-// ===========================================================================
-
-func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_DefaultIsZero(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "0",
-	}))
-
-	assert.Equal(t, time.Duration(0), consumerOffsetSyncDrainDuration,
-		"default --consumer-offset-sync-drain-duration should be 0 (no drain)")
-}
-
-func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_ExplicitValueParsed(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "0",
-		"--consumer-offset-sync-drain-duration", "45s",
-	}))
-
-	assert.Equal(t, 45*time.Second, consumerOffsetSyncDrainDuration)
-}
-
-func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_NegativeRejected(t *testing.T) {
-	resetAuthFlags()
-
-	cmd := NewMigrationExecuteCmd()
-	cmd.SetArgs([]string{
-		"--migration-id", "test-migration",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "0",
-		"--consumer-offset-sync-drain-duration", "-5s",
-	})
-
-	err := cmd.Execute()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "must not be negative")
-}
-
-func TestMigrationExecute_ConsumerOffsetSyncDrainDuration_BindFromEnvVar(t *testing.T) {
-	resetAuthFlags()
-	t.Setenv("CONSUMER_OFFSET_SYNC_DRAIN_DURATION", "90s")
-
-	cmd := NewMigrationExecuteCmd()
-	require.NoError(t, cmd.ParseFlags([]string{
-		"--migration-id", "test",
-		"--lag-threshold", "1",
-		"--cluster-api-key", "key",
-		"--cluster-api-secret", "secret",
-		"--use-unauthenticated-plaintext",
-		"--detect-unrouted-producers-duration", "0",
-	}))
-	require.NoError(t, utils.BindEnvToFlags(cmd))
-
-	assert.Equal(t, 90*time.Second, consumerOffsetSyncDrainDuration,
-		"CONSUMER_OFFSET_SYNC_DRAIN_DURATION env var should populate the flag")
+// TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg — the common case is
+// unchanged: one pair feeds both legs.
+func TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg(t *testing.T) {
+	f := newFixture(t, nil)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	assert.Equal(t, "CC_KEY", opts.ClusterApiKey)
+	assert.Equal(t, "CC_KEY", opts.RestApiKey)
 }

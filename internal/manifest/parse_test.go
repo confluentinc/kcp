@@ -86,7 +86,7 @@ spec:
 	cl := m.Spec.ClusterLink
 	require.NotNil(t, cl.Source)
 	require.Equal(t, []string{"b:9092"}, cl.Source.BootstrapServers)
-	require.Equal(t, "./s.yaml", cl.Source.Credentials)
+	require.Equal(t, "./s.yaml", cl.Source.Credentials.Path)
 	require.Equal(t, "clusterA.", cl.Prefix)
 	require.NotNil(t, cl.ConsumerOffsetSync)
 	require.NotNil(t, cl.ConsumerOffsetSync.Enable)
