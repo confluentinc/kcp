@@ -92,13 +92,13 @@ func TestInit_FlagSurfaceIsThreeFlags(t *testing.T) {
 	cmd := NewMigrationInitCmd()
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
-	assert.ElementsMatch(t, []string{"file", "migration-state-file", "skip-validate"}, names)
+	assert.ElementsMatch(t, []string{"migration-yaml", "migration-state-file", "skip-validate"}, names)
 }
 
-func TestInit_RequiresFile(t *testing.T) {
+func TestInit_RequiresMigrationYaml(t *testing.T) {
 	_, err := runInit(t)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "file")
+	assert.Contains(t, err.Error(), "migration-yaml")
 }
 
 // TestInit_RetiredFlagsAreGone — the retired flags must fail loudly rather
@@ -114,7 +114,7 @@ func TestInit_RetiredFlagsAreGone(t *testing.T) {
 		"--cluster-rest-ca-cert", "--tls-ca-cert",
 	} {
 		t.Run(flag, func(t *testing.T) {
-			_, err := runInit(t, "-f", writeManifest(t, nil), flag, "x")
+			_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), flag, "x")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "unknown flag")
 		})
@@ -127,7 +127,7 @@ func TestInit_WritesConfigFromManifest(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	manifest := writeManifest(t, nil)
 
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -150,7 +150,7 @@ func TestInit_WritesConfigFromManifest(t *testing.T) {
 // the migration identity, written into the existing migration_id field.
 func TestInit_MetadataNameIsTheMigrationId(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	_, err := runInit(t, "-f", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -168,7 +168,7 @@ func TestInit_JoinsMultipleBootstrapServers(t *testing.T) {
 		return strings.Replace(doc, "      - b-1.msk.us-east-1.amazonaws.com:9096",
 			"      - b-1.msk.us-east-1.amazonaws.com:9096\n      - b-2.msk.us-east-1.amazonaws.com:9096", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -180,7 +180,7 @@ func TestInit_JoinsMultipleBootstrapServers(t *testing.T) {
 
 func TestInit_SnapshotsCRFileBytes(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	_, err := runInit(t, "-f", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -196,7 +196,7 @@ func TestInit_TopicsCarryThrough(t *testing.T) {
 	manifest := writeManifest(t, func(doc string) string {
 		return doc + "  topics: ['t1.order', 't2.inventory']\n"
 	})
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -210,7 +210,7 @@ func TestInit_TopicsCarryThrough(t *testing.T) {
 // config, which the Initialize step back-fills with every active mirror.
 func TestInit_OmittedTopicsMeansEveryMirror(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	_, err := runInit(t, "-f", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -222,7 +222,7 @@ func TestInit_OmittedTopicsMeansEveryMirror(t *testing.T) {
 
 func TestInit_KubeconfigDefaultsToHomeDir(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	_, err := runInit(t, "-f", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -241,7 +241,7 @@ func TestInit_PauseConsumerOffsetSyncComesFromManifest(t *testing.T) {
 		return strings.Replace(doc, "    name: msk-to-cc",
 			"    name: msk-to-cc\n    pauseConsumerOffsetSync: true", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -257,7 +257,7 @@ func TestInit_RejectsInvalidManifest(t *testing.T) {
 	manifest := writeManifest(t, func(doc string) string {
 		return strings.Replace(doc, "    name: msk-to-cc", "    name: \"\"", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--skip-validate")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "spec.clusterLink.name")
 }
@@ -268,13 +268,13 @@ func TestInit_RejectsMigrationKindManifest(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "migration.yaml")
 	require.NoError(t, os.WriteFile(p, []byte(
 		"apiVersion: kcp.confluent.io/v1alpha1\nkind: Migration\nmetadata:\n  name: x\n"), 0600))
-	_, err := runInit(t, "-f", p, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", p, "--skip-validate")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GatewayMigration")
 }
 
 func TestInit_RejectsMissingFile(t *testing.T) {
-	_, err := runInit(t, "-f", filepath.Join(t.TempDir(), "nope.yaml"), "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", filepath.Join(t.TempDir(), "nope.yaml"), "--skip-validate")
 	require.Error(t, err)
 }
 
@@ -289,7 +289,7 @@ func TestInit_RejectsInvalidSourceCredentials(t *testing.T) {
 	manifest := writeManifest(t, func(doc string) string {
 		return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: NOPE", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile)
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile)
 	require.Error(t, err)
 	assert.Contains(t, strings.ToLower(err.Error()), "mechanism")
 }
@@ -304,7 +304,7 @@ func TestInit_RejectsIAMOnApacheKafkaSource(t *testing.T) {
 			"      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
 			"      iam:\n        region: us-east-1", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile)
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "iam")
 }
@@ -321,7 +321,7 @@ func TestInit_SkipValidateSkipsCredentialResolution(t *testing.T) {
 	manifest := writeManifest(t, func(doc string) string {
 		return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: NOPE", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err, "credential resolution is deferred, not performed, under --skip-validate")
 }
 
@@ -337,7 +337,7 @@ func TestInit_SkipValidateWithPauseOffsetSyncIsAllowed(t *testing.T) {
 		return strings.Replace(doc, "    name: msk-to-cc",
 			"    name: msk-to-cc\n    pauseConsumerOffsetSync: true", 1)
 	})
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err, "the combination is accepted, not rejected")
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -357,7 +357,7 @@ func TestInit_RefusesToOverwriteAMidFlightMigration(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	manifest := writeManifest(t, nil)
 
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	// Advance the persisted migration to a state with irreversible work behind it.
@@ -369,7 +369,7 @@ func TestInit_RefusesToOverwriteAMidFlightMigration(t *testing.T) {
 	state.UpsertMigration(*cfg)
 	require.NoError(t, state.WriteToFile(stateFile))
 
-	_, err = runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err = runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fenced")
 
@@ -387,9 +387,9 @@ func TestInit_ReRunIsAllowedBeforeAnythingIrreversible(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	manifest := writeManifest(t, nil)
 
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
-	_, err = runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err = runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	state, err := migration.NewMigrationStateFromFile(stateFile)
@@ -403,7 +403,7 @@ func TestInit_ReRunIsAllowedBeforeAnythingIrreversible(t *testing.T) {
 // inlining credentials puts them one struct-copy away from the state file.
 func TestInit_NeverPersistsCredentials(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	_, err := runInit(t, "-f", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	raw, err := os.ReadFile(stateFile)
@@ -418,7 +418,7 @@ func TestInit_NeverPersistsCredentials(t *testing.T) {
 // secret-bearing manifest and inherits the same handling expectations.
 func TestInit_StateFilePermissions(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	_, err := runInit(t, "-f", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
 
 	info, err := os.Stat(stateFile)
@@ -446,7 +446,7 @@ func TestInit_MidFlightRefusalDoesNotDependOnCredentials(t *testing.T) {
 	})
 	require.NoError(t, state.WriteToFile(stateFile))
 
-	_, err := runInit(t, "-f", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fenced")
 	assert.NotContains(t, err.Error(), "KCP_UNSET_PW",

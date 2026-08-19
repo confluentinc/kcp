@@ -3,9 +3,9 @@
 # The declarative form of a `kcp migration` run. One file replaces the topology
 # and auth flags that used to be repeated across `init` and `execute`.
 #
-#   kcp migration init      -f gateway-migration.yaml
-#   kcp migration execute   -f gateway-migration.yaml --migration-state-file migration-state.json
-#   kcp migration lag-check -f gateway-migration.yaml
+#   kcp migration init      --migration-yaml gateway-migration.yaml
+#   kcp migration execute   --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
+#   kcp migration lag-check --migration-yaml gateway-migration.yaml
 #
 # Paths in this file resolve relative to the PROCESS working directory, not to
 # the file's own location. The one exception is spec.gateway.kubeconfig, where a
@@ -105,8 +105,10 @@ spec:
   topics: ['t1.order', 't1.inventory', 't2.order']
 
   # OPTIONAL, and read FRESH on every execute — never frozen at init. That is what
-  # lets policy be varied between init and execute.
-  policy:
+  # lets policy be varied between init and execute. Each value is a DEFAULT:
+  # `kcp migration execute` can override any of them for a single run with the
+  # matching flag (e.g. --detect-unrouted-producers-duration 60s), no edit needed.
+  defaultPolicies:
     lagThreshold: 0
     promoteBatchSize: 100 # 0 = promote all at once
     rolloutTimeout: 10m # 0 = no deadline

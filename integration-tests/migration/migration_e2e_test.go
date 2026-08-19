@@ -644,7 +644,7 @@ func TestMigrationE2E(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -682,7 +682,7 @@ func TestMigrationE2E(t *testing.T) {
 
 		executeArgs := []string{
 			"migration", "execute",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -781,7 +781,7 @@ func TestMigrationE2E(t *testing.T) {
 	})
 }
 
-// TestMigrationE2E_PromoteBatchSize exercises spec.policy.promoteBatchSize against a
+// TestMigrationE2E_PromoteBatchSize exercises spec.defaultPolicies.promoteBatchSize against a
 // scenario whose cluster link mirrors many topics. With a batch size of 1, kcp
 // must promote one topic at a time, waiting for each to reach STOPPED before
 // promoting the next — i.e. fully synchronous batches. Asserts:
@@ -808,7 +808,7 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -831,14 +831,14 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 	// Snapshot kcp.log so the batching assertion only inspects the execute run.
 	logStart := podFileLineCount(t, cfg, logPath)
 
-	// --- Step 2: execute with spec.policy.promoteBatchSize: 1 ---
+	// --- Step 2: execute with spec.defaultPolicies.promoteBatchSize: 1 ---
 	t.Run("execute_batched", func(t *testing.T) {
 		state := readMigrationState(t, cfg, stateFile)
 		require.Len(t, state.Migrations, 1)
 
 		executeArgs := []string{
 			"migration", "execute",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -882,9 +882,9 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 
 		n := len(cfg.TopicNames)
 		assert.Equal(t, n, singleTopicPromotes,
-			"expected exactly one single-topic promote call per topic with spec.policy.promoteBatchSize: 1")
+			"expected exactly one single-topic promote call per topic with spec.defaultPolicies.promoteBatchSize: 1")
 		assert.Zero(t, bulkPromotes,
-			"no promote call should contain more than one topic with spec.policy.promoteBatchSize: 1")
+			"no promote call should contain more than one topic with spec.defaultPolicies.promoteBatchSize: 1")
 		assert.Equal(t, n, stoppedConfirms,
 			"each promoted topic should be individually confirmed STOPPED")
 	})
@@ -931,7 +931,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -999,7 +999,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 
 		executeArgs := []string{
 			"migration", "execute",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1055,7 +1055,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 }
 
 // TestMigrationE2E_PauseOffsetSync_Drain verifies the
-// spec.policy.consumerOffsetSyncDrainDuration flag end-to-end: with
+// spec.defaultPolicies.consumerOffsetSyncDrainDuration flag end-to-end: with
 // spec.clusterLink.pauseConsumerOffsetSync set, execute holds after fencing (sync still
 // enabled) for the drain duration before disabling consumer.offset.sync.enable,
 // then completes the switchover and restores the config.
@@ -1105,7 +1105,7 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 		stdout, stderr, err := runKCP(t, cfg, initArgs...)
@@ -1122,7 +1122,7 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 
 		executeArgs := []string{
 			"migration", "execute",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1206,7 +1206,7 @@ func TestMigrationE2E_PauseOffsetSync_InitRefuses(t *testing.T) {
 
 	initArgs := []string{
 		"migration", "init",
-		"-f", manifestPath,
+		"--migration-yaml", manifestPath,
 		"--migration-state-file", stateFile,
 	}
 
@@ -1261,7 +1261,7 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1294,7 +1294,7 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 
 		executeArgs := []string{
 			"migration", "execute",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1361,7 +1361,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1407,7 +1407,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 
 	executeArgs := []string{
 		"migration", "execute",
-		"-f", manifestPath,
+		"--migration-yaml", manifestPath,
 		"--migration-state-file", stateFile,
 	}
 
@@ -1576,7 +1576,7 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1598,7 +1598,7 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 
 	executeArgs := []string{
 		"migration", "execute",
-		"-f", manifestPath,
+		"--migration-yaml", manifestPath,
 		"--migration-state-file", stateFile,
 	}
 
@@ -1694,7 +1694,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1717,7 +1717,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 
 	executeArgs := []string{
 		"migration", "execute",
-		"-f", manifestPath,
+		"--migration-yaml", manifestPath,
 		"--migration-state-file", stateFile,
 	}
 
@@ -1865,7 +1865,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 
 		initArgs := []string{
 			"migration", "init",
-			"-f", manifestPath,
+			"--migration-yaml", manifestPath,
 			"--migration-state-file", stateFile,
 		}
 
@@ -1897,7 +1897,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 
 	executeArgs := []string{
 		"migration", "execute",
-		"-f", manifestPath,
+		"--migration-yaml", manifestPath,
 		"--migration-state-file", stateFile,
 	}
 

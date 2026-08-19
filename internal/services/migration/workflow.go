@@ -681,7 +681,7 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
-		s.reporter.detail("Detection disabled (spec.policy.detectUnroutedProducersDuration=0) — skipping check")
+		s.reporter.detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
 		return nil
 	}
 

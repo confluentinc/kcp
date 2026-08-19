@@ -120,14 +120,14 @@ func TestRenderGatewayMigration_OmitsZeroPolicy(t *testing.T) {
 	rendered, err := renderGatewayMigration(baselineOpts())
 	require.NoError(t, err)
 
-	assert.NotContains(t, rendered, "policy:", "a scenario with no policy must render no policy block")
+	assert.NotContains(t, rendered, "defaultPolicies:", "a scenario with no policy must render no policy block")
 	assert.NotContains(t, rendered, "lagThreshold")
 	assert.NotContains(t, rendered, "detectUnroutedProducersDuration")
 
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
-	assert.Equal(t, manifest.Policy{}, g.Spec.Policy, "an omitted policy block must parse to the zero Policy")
+	assert.Equal(t, manifest.DefaultPolicies{}, g.Spec.DefaultPolicies, "an omitted policy block must parse to the zero DefaultPolicies")
 }
 
 // TestRenderGatewayMigration_PolicyRoundTrips covers the per-scenario policy the
@@ -150,11 +150,11 @@ func TestRenderGatewayMigration_PolicyRoundTrips(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, g.Validate())
 
-	assert.Equal(t, 1, g.Spec.Policy.PromoteBatchSize)
-	assert.Equal(t, 10*time.Second, g.Spec.Policy.DetectUnroutedProducersDuration)
-	assert.Equal(t, 15*time.Second, g.Spec.Policy.ConsumerOffsetSyncDrainDuration)
+	assert.Equal(t, 1, g.Spec.DefaultPolicies.PromoteBatchSize)
+	assert.Equal(t, 10*time.Second, g.Spec.DefaultPolicies.DetectUnroutedProducersDuration)
+	assert.Equal(t, 15*time.Second, g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration)
 	// lagThreshold stays omitted at zero even when siblings are set.
-	assert.Equal(t, 0, g.Spec.Policy.LagThreshold)
+	assert.Equal(t, 0, g.Spec.DefaultPolicies.LagThreshold)
 }
 
 // TestRenderGatewayMigration_PauseConsumerOffsetSync covers the 6 init sites that

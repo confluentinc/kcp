@@ -61,7 +61,7 @@ spec:
   # scenario re-render this file between init and execute. Every knob is emitted
   # only when non-zero: an absent key already means the zero the retired flags
   # defaulted to, and a literal 0 would not match the schema's duration pattern.
-  policy:
+  defaultPolicies:
 {{- if .Policy.LagThreshold }}
     lagThreshold: {{ .Policy.LagThreshold }}
 {{- end }}

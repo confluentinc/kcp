@@ -69,14 +69,14 @@ func loadLagGateway(t *testing.T, path string) *manifest.GatewayMigration {
 	return g
 }
 
-// TestLagCheck_FlagSurfaceIsTwoFlags — decision 15: -f and --poll-interval,
-// nothing else. lag-check reads no state file, so a --migration-id would
-// resolve nothing.
+// TestLagCheck_FlagSurfaceIsTwoFlags — decision 15: --migration-yaml and
+// --poll-interval, nothing else. lag-check reads no state file, so a
+// --migration-id would resolve nothing.
 func TestLagCheck_FlagSurfaceIsTwoFlags(t *testing.T) {
 	cmd := NewMigrationLagCheckCmd()
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
-	assert.ElementsMatch(t, []string{"file", "poll-interval"}, names)
+	assert.ElementsMatch(t, []string{"migration-yaml", "poll-interval"}, names)
 }
 
 func TestLagCheck_RetiredFlagsAreGone(t *testing.T) {
@@ -89,7 +89,7 @@ func TestLagCheck_RetiredFlagsAreGone(t *testing.T) {
 			var out bytes.Buffer
 			cmd.SetOut(&out)
 			cmd.SetErr(&out)
-			cmd.SetArgs([]string{"-f", writeLagManifest(t, nil), flag, "x"})
+			cmd.SetArgs([]string{"--migration-yaml", writeLagManifest(t, nil), flag, "x"})
 			err := cmd.Execute()
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "unknown flag")
@@ -97,7 +97,7 @@ func TestLagCheck_RetiredFlagsAreGone(t *testing.T) {
 	}
 }
 
-func TestLagCheck_RequiresFile(t *testing.T) {
+func TestLagCheck_RequiresMigrationYaml(t *testing.T) {
 	cmd := NewMigrationLagCheckCmd()
 	var out bytes.Buffer
 	cmd.SetOut(&out)
@@ -105,7 +105,7 @@ func TestLagCheck_RequiresFile(t *testing.T) {
 	cmd.SetArgs(nil)
 	err := cmd.Execute()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "file")
+	assert.Contains(t, err.Error(), "migration-yaml")
 }
 
 // TestLagCheck_BuildsConfigFromManifest — the five values it needs map 1:1
@@ -178,7 +178,7 @@ func TestLagCheck_RejectsMigrationKindManifest(t *testing.T) {
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
-	cmd.SetArgs([]string{"-f", p})
+	cmd.SetArgs([]string{"--migration-yaml", p})
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "GatewayMigration")

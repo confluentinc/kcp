@@ -95,7 +95,7 @@ func GenerateGateway() ([]byte, error) {
 	source := spec.Properties["source"]
 	target := spec.Properties["target"]
 	gateway := spec.Properties["gateway"]
-	policy := spec.Properties["policy"]
+	policy := spec.Properties["defaultPolicies"]
 	clusterLink := spec.Properties["clusterLink"]
 
 	source.Properties["type"].Enum = []any{manifest.SourceMSK, manifest.SourceApacheKafka}
@@ -136,7 +136,7 @@ func GenerateGateway() ([]byte, error) {
 	// field carries its flag's usage text, reworded away from the
 	// Confluent-Cloud-specific phrasing where "the destination" is meant.
 	describe(map[*jsonschema.Schema]string{
-		s.Properties["interpolate"]: "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key. Only string values are interpolated; numeric and duration fields (e.g. spec.policy.rolloutTimeout) must be written as literals.",
+		s.Properties["interpolate"]: "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key. Only string values are interpolated; numeric and duration fields (e.g. spec.defaultPolicies.rolloutTimeout) must be written as literals.",
 
 		source.Properties["type"]:             "Source Kafka flavour. Gates authentication: iam is msk-only.",
 		source.Properties["bootstrapServers"]: "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092, broker2:9092).",

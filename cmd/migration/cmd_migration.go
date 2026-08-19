@@ -17,7 +17,7 @@ func NewMigrationCmd() *cobra.Command {
 
 The migration workflow follows a defined lifecycle managed by a finite state machine:
 
-1. **Initialize** — validate cluster link and gateway CRs, persist migration config (` + "`kcp migration init -f gateway-migration.yaml`" + `).
+1. **Initialize** — validate cluster link and gateway CRs, persist migration config (` + "`kcp migration init --migration-yaml gateway-migration.yaml`" + `).
 2. **Check Lags** — compare source and destination offsets until lag drops below the configured threshold.
 3. **Fence Gateway** — apply the fenced gateway CR to block traffic during cutover.
 4. **Pause Offset Sync** — with ` + "`spec.clusterLink.pauseConsumerOffsetSync`" + `, pause cluster-link consumer offset sync (passes through otherwise); on failure the fence is rolled back automatically.

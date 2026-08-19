@@ -56,9 +56,12 @@ type GatewaySpec struct {
 	// active mirror topic") stays distinguishable from an explicitly empty list,
 	// which means the opposite and is rejected.
 	Topics *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
-	// Policy is read fresh on every execute and never snapshotted, which is what
-	// lets a caller vary execute-time policy between init and execute.
-	Policy Policy `yaml:"policy,omitempty" json:"policy,omitempty"`
+	// DefaultPolicies is read fresh on every execute and never snapshotted, which
+	// is what lets a caller vary execute-time policy between init and execute.
+	// Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
+	// (e.g. --detect-unrouted-producers-duration) that overrides the value here
+	// for a single run.
+	DefaultPolicies DefaultPolicies `yaml:"defaultPolicies,omitempty" json:"defaultPolicies,omitempty"`
 }
 
 // GatewayTarget is the destination envelope. It is deliberately NOT
@@ -102,9 +105,11 @@ type GatewayCRs struct {
 	Switchover string `yaml:"switchover" json:"switchover"`
 }
 
-// Policy is the execute-time knobs. Every value is optional and zero carries
-// meaning: 0 promotes all at once / imposes no deadline / skips the check.
-type Policy struct {
+// DefaultPolicies is the execute-time knobs. Every value is optional and zero
+// carries meaning: 0 promotes all at once / imposes no deadline / skips the
+// check. Each field is a default that `kcp migration execute` can override with
+// a per-policy flag for a single run.
+type DefaultPolicies struct {
 	LagThreshold     int `yaml:"lagThreshold,omitempty" json:"lagThreshold,omitempty"`
 	PromoteBatchSize int `yaml:"promoteBatchSize,omitempty" json:"promoteBatchSize,omitempty"`
 	// RolloutTimeout bounds the gateway rollout. 0 means no deadline.
@@ -292,31 +297,34 @@ func (g *GatewayMigration) Validate() []error {
 		}
 	}
 
-	// --- policy ---
-	errs = append(errs, g.Spec.Policy.validate()...)
+	// --- defaultPolicies ---
+	errs = append(errs, g.Spec.DefaultPolicies.Validate()...)
 
 	return errs
 }
 
-func (p Policy) validate() []error {
+// Validate checks the policy block. It is exported because `kcp migration
+// execute` re-validates after applying command-line overrides, which can
+// introduce a value the manifest itself never carried.
+func (p DefaultPolicies) Validate() []error {
 	var errs []error
 	if p.LagThreshold < 0 {
-		errs = append(errs, fmt.Errorf("spec.policy.lagThreshold: must not be negative"))
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.lagThreshold: must not be negative"))
 	}
 	if p.PromoteBatchSize < 0 {
-		errs = append(errs, fmt.Errorf("spec.policy.promoteBatchSize: must not be negative (0 promotes all at once)"))
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.promoteBatchSize: must not be negative (0 promotes all at once)"))
 	}
 	if p.RolloutTimeout < 0 {
-		errs = append(errs, fmt.Errorf("spec.policy.rolloutTimeout: must not be negative (0 means no deadline)"))
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.rolloutTimeout: must not be negative (0 means no deadline)"))
 	}
 	if p.ConsumerOffsetSyncDrainDuration < 0 {
-		errs = append(errs, fmt.Errorf("spec.policy.consumerOffsetSyncDrainDuration: must not be negative (0 means no wait)"))
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.consumerOffsetSyncDrainDuration: must not be negative (0 means no wait)"))
 	}
 	if p.DetectUnroutedProducersDuration < 0 {
-		errs = append(errs, fmt.Errorf("spec.policy.detectUnroutedProducersDuration: must not be negative (0 skips the check)"))
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.detectUnroutedProducersDuration: must not be negative (0 skips the check)"))
 	} else if p.DetectUnroutedProducersDuration > 0 && p.DetectUnroutedProducersDuration < minDetectUnroutedProducersDuration {
 		errs = append(errs, fmt.Errorf(
-			"spec.policy.detectUnroutedProducersDuration: must be at least %s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh",
+			"spec.defaultPolicies.detectUnroutedProducersDuration: must be at least %s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh",
 			minDetectUnroutedProducersDuration))
 	}
 	return errs

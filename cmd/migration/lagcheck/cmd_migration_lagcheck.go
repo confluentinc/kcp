@@ -39,7 +39,7 @@ comes from the GatewayMigration manifest, so this command reads no state file an
 before 'kcp migration init' has ever run.
 
 It always shows every mirror topic on the link; spec.topics does not narrow the view.`,
-		Example:       `  kcp migration lag-check -f gateway-migration.yaml`,
+		Example:       `  kcp migration lag-check --migration-yaml gateway-migration.yaml`,
 		SilenceErrors: true,
 		// A runtime failure must not bury the error under Cobra's usage block.
 		SilenceUsage: true,
@@ -48,10 +48,10 @@ It always shows every mirror topic on the link; spec.topics does not narrow the 
 		RunE:         runMigrationLag,
 	}
 
-	cmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
+	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
 	cmd.Flags().IntVar(&pollInterval, "poll-interval", 1, "Poll interval in seconds (1-60)")
 
-	_ = cmd.MarkFlagRequired("file")
+	_ = cmd.MarkFlagRequired("migration-yaml")
 
 	return cmd
 }

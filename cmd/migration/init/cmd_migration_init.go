@@ -42,15 +42,16 @@ The state file can then be used by 'kcp migration execute' to run the migration.
 metadata.name in the manifest is the migration's identity and is written into the state
 file's migration_id, so re-running init updates that migration rather than creating a
 second one. Init refuses to overwrite a migration that is already past the point of no
-return; use 'kcp migration execute --accept-spec-change' there instead.
+return; run 'kcp migration execute' there instead — it proceeds with the edited spec
+(warning loudly) rather than discarding the state a live cutover needs.
 
 The manifest is secret-bearing when credentials are written inline. Keep it 0600, or
 reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: true).`,
 		Example: `  # Initialize from a manifest
-  kcp migration init -f gateway-migration.yaml
+  kcp migration init --migration-yaml gateway-migration.yaml
 
   # Register the migration without contacting the gateway or destination
-  kcp migration init -f gateway-migration.yaml --skip-validate`,
+  kcp migration init --migration-yaml gateway-migration.yaml --skip-validate`,
 		SilenceErrors: true,
 		// A runtime failure must not bury the error under Cobra's usage block.
 		SilenceUsage: true,
@@ -59,11 +60,11 @@ reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: t
 		RunE:         runMigrationInit,
 	}
 
-	migrationInitCmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
+	migrationInitCmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
 	migrationInitCmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
 	migrationInitCmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without resolving credentials or validating gateway/Kubernetes resources. Useful for testing.")
 
-	_ = migrationInitCmd.MarkFlagRequired("file")
+	_ = migrationInitCmd.MarkFlagRequired("migration-yaml")
 
 	return migrationInitCmd
 }
@@ -220,7 +221,7 @@ func checkReInitIsSafe(state *migration.MigrationState, name string) error {
 	}
 	return fmt.Errorf(
 		"migration %q is already at state %q and cannot be re-initialised — re-running init would discard the state needed to complete or roll back the cutover.\n"+
-			"To proceed with an edited spec, run: kcp migration execute -f <file> --migration-state-file <state-file> --accept-spec-change",
+			"To proceed with an edited spec, run: kcp migration execute --migration-yaml <file> --migration-state-file <state-file>",
 		name, existing.CurrentState)
 }
 

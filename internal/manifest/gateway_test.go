@@ -438,7 +438,7 @@ func TestGateway_RejectsBlankTopicName(t *testing.T) {
 }
 
 func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {
-	doc := validGatewayDoc + `  policy:
+	doc := validGatewayDoc + `  defaultPolicies:
     lagThreshold: 0
     promoteBatchSize: 100
     rolloutTimeout: 10m
@@ -447,10 +447,10 @@ func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {
 `
 	g := parseGateway(t, doc)
 	require.Empty(t, g.Validate())
-	assert.Equal(t, 100, g.Spec.Policy.PromoteBatchSize)
-	assert.Equal(t, 10*time.Minute, g.Spec.Policy.RolloutTimeout)
-	assert.Equal(t, 30*time.Second, g.Spec.Policy.DetectUnroutedProducersDuration)
-	assert.Equal(t, 15*time.Second, g.Spec.Policy.ConsumerOffsetSyncDrainDuration)
+	assert.Equal(t, 100, g.Spec.DefaultPolicies.PromoteBatchSize)
+	assert.Equal(t, 10*time.Minute, g.Spec.DefaultPolicies.RolloutTimeout)
+	assert.Equal(t, 30*time.Second, g.Spec.DefaultPolicies.DetectUnroutedProducersDuration)
+	assert.Equal(t, 15*time.Second, g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration)
 }
 
 // TestGateway_PolicyOmittedIsZeroValued — every policy knob is optional and 0
@@ -458,26 +458,26 @@ func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {
 func TestGateway_PolicyOmittedIsZeroValued(t *testing.T) {
 	g := parseGateway(t, validGatewayDoc)
 	require.Empty(t, g.Validate())
-	assert.Equal(t, Policy{}, g.Spec.Policy)
+	assert.Equal(t, DefaultPolicies{}, g.Spec.DefaultPolicies)
 }
 
 // TestGateway_RejectsSubTenSecondDetectDuration mirrors the retired flag's
 // documented minimum, which existed because a shorter window cannot observe a
 // producer's metadata refresh.
 func TestGateway_RejectsSubTenSecondDetectDuration(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  policy:\n    detectUnroutedProducersDuration: 5s\n")
+	g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n    detectUnroutedProducersDuration: 5s\n")
 	requireErrContains(t, g.Validate(), "detectUnroutedProducersDuration")
 }
 
 func TestGateway_AcceptsZeroDetectDurationMeaningSkipped(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  policy:\n    detectUnroutedProducersDuration: 0s\n")
+	g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n    detectUnroutedProducersDuration: 0s\n")
 	require.Empty(t, g.Validate())
 }
 
 func TestGateway_RejectsNegativePolicyNumbers(t *testing.T) {
 	for _, line := range []string{"    lagThreshold: -1", "    promoteBatchSize: -1"} {
 		t.Run(strings.TrimSpace(line), func(t *testing.T) {
-			g := parseGateway(t, validGatewayDoc+"  policy:\n"+line+"\n")
+			g := parseGateway(t, validGatewayDoc+"  defaultPolicies:\n"+line+"\n")
 			require.NotEmpty(t, g.Validate())
 		})
 	}

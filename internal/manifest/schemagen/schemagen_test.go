@@ -124,16 +124,16 @@ func TestGenerateGateway_Enums(t *testing.T) {
 // time.Duration as an integer, but goccy parses "10m" — without the override
 // the yaml-language-server header would flag the documented example as invalid.
 //
-// The duration fields are enumerated from manifest.Policy by reflection rather
-// than a hardcoded list: a copy of the list here would pass even if
+// The duration fields are enumerated from manifest.DefaultPolicies by reflection
+// rather than a hardcoded list: a copy of the list here would pass even if
 // GenerateGateway forgot to patch a newly-added time.Duration field, which is
 // exactly the omission this test exists to catch.
 func TestGenerateGateway_DurationsAreStringsNotIntegers(t *testing.T) {
 	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
-	policy := props(t, spec["policy"].(map[string]any))
+	policy := props(t, spec["defaultPolicies"].(map[string]any))
 
 	durationType := reflect.TypeOf(time.Duration(0))
-	policyType := reflect.TypeOf(manifest.Policy{})
+	policyType := reflect.TypeOf(manifest.DefaultPolicies{})
 	sawDuration := false
 	for i := 0; i < policyType.NumField(); i++ {
 		field := policyType.Field(i)
@@ -147,7 +147,7 @@ func TestGenerateGateway_DurationsAreStringsNotIntegers(t *testing.T) {
 		require.Equal(t, "string", f["type"], "%s must be a duration string", name)
 		require.NotEmpty(t, f["pattern"], "%s must carry a duration pattern", name)
 	}
-	require.True(t, sawDuration, "expected at least one time.Duration field in manifest.Policy")
+	require.True(t, sawDuration, "expected at least one time.Duration field in manifest.DefaultPolicies")
 
 	// The counts stay integers.
 	for _, k := range []string{"lagThreshold", "promoteBatchSize"} {
@@ -205,7 +205,7 @@ func TestGenerateGateway_InlineCredentialsDefRejectsInterpolate(t *testing.T) {
 func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
 	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
 
-	policy := props(t, spec["policy"].(map[string]any))
+	policy := props(t, spec["defaultPolicies"].(map[string]any))
 	require.Contains(t, policy["detectUnroutedProducersDuration"].(map[string]any)["description"],
 		"minimum 10s", "the opt-in check's minimum was documented on the flag")
 	require.Contains(t, policy["promoteBatchSize"].(map[string]any)["description"], "0")
@@ -243,8 +243,8 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 		requiredOf(props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)))
 	// lagThreshold's zero value is meaningful (fail-safe/strictest), not a
 	// stand-in for "omitted", so the key must be required even though the
-	// block it lives in (spec.policy) stays optional.
-	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(spec["policy"].(map[string]any)))
+	// block it lives in (spec.defaultPolicies) stays optional.
+	require.ElementsMatch(t, []any{"lagThreshold"}, requiredOf(spec["defaultPolicies"].(map[string]any)))
 }
 
 func TestGatewaySchemaInSync(t *testing.T) {

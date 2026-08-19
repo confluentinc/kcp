@@ -7,6 +7,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migration"
@@ -19,7 +20,16 @@ var (
 	manifestFile       string
 	migrationStateFile string
 	migrationId        string
-	acceptSpecChange   bool
+	// Per-policy overrides. Each mirrors a field in spec.defaultPolicies and,
+	// when the flag (or its bound env var) is explicitly set, replaces the
+	// manifest's default for this one run. "Explicitly set" is read from
+	// cmd.Flags().Changed, so an override to a zero value — which carries meaning
+	// for every one of these — is distinguishable from an omitted flag.
+	lagThresholdOverride                    int
+	promoteBatchSizeOverride                int
+	rolloutTimeoutOverride                  time.Duration
+	detectUnroutedProducersDurationOverride time.Duration
+	consumerOffsetSyncDrainDurationOverride time.Duration
 	// runReport is the diagnostics knob carried over from #408. It stays a flag
 	// rather than a manifest policy field: the path is a per-run, machine-specific
 	// output location — operational, not versioned desired state — and the
@@ -33,9 +43,13 @@ The migration must already be registered with 'kcp migration init'. Topology com
 the state file's snapshot, taken at init; policy and credentials are read FRESH from the
 manifest on every run, so they can be varied between runs.
 
+Each spec.defaultPolicies value can also be overridden for a single run with its flag
+(e.g. --detect-unrouted-producers-duration), without editing the manifest.
+
 If the manifest's topology no longer matches the snapshot, execute stops rather than
 silently reconciling. Before the point of no return the answer is to re-run init; once
-producers are fenced, pass --accept-spec-change to proceed with the edited spec.
+past it — where re-running init would strand the live cutover — execute warns loudly and
+proceeds with the edited spec, since there is no longer a safe alternative.
 
 If a run is interrupted at any step, re-running 'kcp migration execute' resumes from the
 last completed step.`
@@ -47,10 +61,10 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		Short: "Execute a migration (run the cutover)",
 		Long:  executeLong,
 		Example: `  # Run (or resume) the cutover
-  kcp migration execute -f gateway-migration.yaml --migration-state-file migration-state.json
+  kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
 
-  # Proceed mid-cutover with an edited spec
-  kcp migration execute -f gateway-migration.yaml --migration-state-file migration-state.json --accept-spec-change`,
+  # Override a policy default for this run only
+  kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json --detect-unrouted-producers-duration 60s`,
 		SilenceErrors: true,
 		// A runtime failure mid-cutover (e.g. a source-connect error) must not
 		// bury the error under Cobra's usage block.
@@ -60,10 +74,19 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		RunE:         runMigrationExecute,
 	}
 
-	cmd.Flags().StringVarP(&manifestFile, "file", "f", "", "Path to the GatewayMigration manifest describing this migration.")
+	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
 	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "", "Path to the migration-state.json file (produced by kcp migration init).")
 	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
-	cmd.Flags().BoolVar(&acceptSpecChange, "accept-spec-change", false, "Proceed even though the manifest no longer matches the topology snapshot taken at init. Only meaningful once the cutover is past the point where re-running init is safe.")
+
+	// Per-policy overrides. Each replaces the matching spec.defaultPolicies value
+	// for this run only; omit the flag to use the manifest's default. Only a flag
+	// the operator explicitly set (checked via Flags().Changed) overrides, so a
+	// zero value — meaningful for all of these — is not confused with "unset".
+	cmd.Flags().IntVar(&lagThresholdOverride, "lag-threshold", 0, "Override spec.defaultPolicies.lagThreshold: total replication lag (sum of all partition lags) tolerated before proceeding.")
+	cmd.Flags().IntVar(&promoteBatchSizeOverride, "promote-batch-size", 0, "Override spec.defaultPolicies.promoteBatchSize: max mirror topics promoted per batch. 0 promotes all at once.")
+	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Override spec.defaultPolicies.rolloutTimeout: max wait for the operator to report the gateway Ready during fence and switchover (e.g. 10m). 0 means no deadline.")
+	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: window to monitor source offsets after fencing for producers bypassing the gateway. 0 skips the check; minimum 10s when set.")
+	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override spec.defaultPolicies.consumerOffsetSyncDrainDuration: wait after fencing before disabling the link's consumer offset sync. Has no effect unless pauseConsumerOffsetSync is set. 0 means no wait.")
 
 	// Hidden pending schema validation by the migration performance rig, its
 	// first consumer; intended to become user-facing, since the natural audience
@@ -74,7 +97,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	cmd.Flags().StringVar(&runReport, "run-report", "", "Write per-stage migration timings to <path> as JSON.")
 	_ = cmd.Flags().MarkHidden("run-report")
 
-	_ = cmd.MarkFlagRequired("file")
+	_ = cmd.MarkFlagRequired("migration-yaml")
 	_ = cmd.MarkFlagRequired("migration-state-file")
 	return cmd
 }
@@ -85,9 +108,17 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Command-line overrides replace the manifest's per-policy defaults for this
+	// run, then the effective block is re-validated: an override can carry a
+	// value the manifest itself never did (e.g. a sub-10s detect duration).
+	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
+	if errs := g.Spec.DefaultPolicies.Validate(); len(errs) > 0 {
+		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
+	}
+
 	state, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
-		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init -f %s' to create a new migration first", migrationStateFile, err, manifestFile)
+		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init --migration-yaml %s' to create a new migration first", migrationStateFile, err, manifestFile)
 	}
 
 	id := resolveMigrationID(g, migrationId)
@@ -120,6 +151,28 @@ func resolveMigrationID(g *manifest.GatewayMigration, override string) string {
 	return g.Metadata.Name
 }
 
+// applyPolicyOverrides replaces each default that the operator set explicitly on
+// the command line (or via its bound env var). Only a Changed flag overrides:
+// zero is a legitimate, meaningful value for every one of these, so it must not
+// be mistaken for "unset" and silently clobber a manifest default.
+func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
+	if cmd.Flags().Changed("lag-threshold") {
+		p.LagThreshold = lagThresholdOverride
+	}
+	if cmd.Flags().Changed("promote-batch-size") {
+		p.PromoteBatchSize = promoteBatchSizeOverride
+	}
+	if cmd.Flags().Changed("rollout-timeout") {
+		p.RolloutTimeout = rolloutTimeoutOverride
+	}
+	if cmd.Flags().Changed("detect-unrouted-producers-duration") {
+		p.DetectUnroutedProducersDuration = detectUnroutedProducersDurationOverride
+	}
+	if cmd.Flags().Changed("consumer-offset-sync-drain-duration") {
+		p.ConsumerOffsetSyncDrainDuration = consumerOffsetSyncDrainDurationOverride
+	}
+}
+
 // checkSpecDrift compares the manifest against the topology snapshot and
 // converts any difference into the response §13 prescribes for the current FSM
 // state. A warning would not do in either row: users are taught this YAML is
@@ -136,20 +189,21 @@ func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationCon
 	slog.Debug("manifest differs from the topology snapshot taken at init",
 		"migration_id", config.MigrationId, "state", config.CurrentState, "sections", strings.Join(drift, "; "))
 
-	if acceptSpecChange {
-		slog.Warn("⚠️ proceeding with an edited spec (--accept-spec-change)", "sections", strings.Join(drift, "; "))
-		return nil
-	}
-
-	header := fmt.Sprintf("config file has changed since this migration was initialised:\n   %s", strings.Join(drift, ",\n   "))
-	// The trailing guidance line is deliberately part of the error: it is the
-	// only thing the operator can act on, and by the time this fires mid-cutover
-	// they are reading it under time pressure.
+	// Before the point of no return, drift is a hard stop: re-running init is
+	// safe and is how a new spec is adopted, so a scrolled-past warning would not
+	// be consent. The trailing guidance line is deliberately part of the error —
+	// it is the only thing the operator can act on.
 	if migration.IsReversibleState(config.CurrentState) {
+		header := fmt.Sprintf("config file has changed since this migration was initialised:\n   %s", strings.Join(drift, ",\n   "))
 		return fmt.Errorf("%s\n   Re-run init to adopt the new spec", header) //nolint:staticcheck // multi-line operator guidance
 	}
-	return fmt.Errorf("%s\n   This migration is already %s. Re-running init is not safe here;\n   pass --accept-spec-change to proceed with the edited spec", //nolint:staticcheck // multi-line operator guidance
-		header, config.CurrentState)
+
+	// Past the point of no return, re-running init would discard the FSM position
+	// and pre-disable snapshot and strand the live cutover — so proceeding with
+	// the edited spec is the only safe path. Warn loudly rather than block.
+	slog.Warn("⚠️ proceeding with an edited spec: this migration is past the point where re-running init is safe",
+		"state", config.CurrentState, "sections", strings.Join(drift, "; "))
+	return nil
 }
 
 // detectDrift returns the changed sections, described by field path and count.
@@ -283,18 +337,18 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	// whatever the config held, so the snapshot's copy is never authoritative.
 	// These two DO reach the state file (MigrationConfig carries json tags for
 	// both); the rest of policy was already purely execute-time.
-	config.DetectUnroutedProducersDuration = g.Spec.Policy.DetectUnroutedProducersDuration
-	config.ConsumerOffsetSyncDrainDuration = g.Spec.Policy.ConsumerOffsetSyncDrainDuration
+	config.DetectUnroutedProducersDuration = g.Spec.DefaultPolicies.DetectUnroutedProducersDuration
+	config.ConsumerOffsetSyncDrainDuration = g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration
 
 	opts := MigrationExecutorOpts{
 		MigrationStateFile: stateFile,
 		MigrationState:     state,
 		MigrationConfig:    *config,
-		LagThreshold:       int64(g.Spec.Policy.LagThreshold),
+		LagThreshold:       int64(g.Spec.DefaultPolicies.LagThreshold),
 		ClusterBootstrap:   config.ClusterBootstrap,
 		SourceBootstrap:    config.SourceBootstrap,
-		RolloutTimeout:     g.Spec.Policy.RolloutTimeout,
-		PromoteBatchSize:   g.Spec.Policy.PromoteBatchSize,
+		RolloutTimeout:     g.Spec.DefaultPolicies.RolloutTimeout,
+		PromoteBatchSize:   g.Spec.DefaultPolicies.PromoteBatchSize,
 
 		// The destination Kafka leg authenticates with the KAFKA block. When
 		// restCredentials is spelled out it may name a different, broader

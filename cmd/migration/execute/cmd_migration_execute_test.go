@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migration"
@@ -150,12 +151,13 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 	assert.Empty(t, cmd.Deprecated, "execute is not deprecated")
 }
 
-// TestExecute_FlagSurfaceIsFourVisibleFlags — the manifest work moved every
-// tuning knob into the config file, leaving a deliberately small advertised
-// surface of four visible flags. --run-report is registered but hidden (a
-// diagnostics path whose only consumer is the performance rig), so it is
-// asserted separately rather than padding the advertised surface.
-func TestExecute_FlagSurfaceIsFourVisibleFlags(t *testing.T) {
+// TestExecute_VisibleFlagSurface — the manifest work moved topology and auth
+// into the config file; what stays on the command line is the manifest path,
+// the state file, the id override, and the per-policy overrides that vary a
+// spec.defaultPolicies value for a single run. --run-report is registered but
+// hidden (a diagnostics path whose only consumer is the performance rig), so it
+// is asserted separately rather than padding the advertised surface.
+func TestExecute_VisibleFlagSurface(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	var visible []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) {
@@ -163,34 +165,40 @@ func TestExecute_FlagSurfaceIsFourVisibleFlags(t *testing.T) {
 			visible = append(visible, f.Name)
 		}
 	})
-	assert.ElementsMatch(t,
-		[]string{"file", "migration-state-file", "migration-id", "accept-spec-change"}, visible)
+	assert.ElementsMatch(t, []string{
+		"migration-yaml", "migration-state-file", "migration-id",
+		"lag-threshold", "promote-batch-size", "rollout-timeout",
+		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
+	}, visible)
 
 	runReport := cmd.Flags().Lookup("run-report")
 	require.NotNil(t, runReport, "run-report must stay registered for the performance rig")
 	assert.True(t, runReport.Hidden, "run-report is a diagnostics flag and must stay hidden")
 }
 
+// TestExecute_RetiredFlagsAreGone — the topology/auth flags moved into the
+// manifest. The per-policy override flags (--lag-threshold, --rollout-timeout,
+// etc.) are NOT here: they are the live surface, asserted by
+// TestExecute_VisibleFlagSurface.
 func TestExecute_RetiredFlagsAreGone(t *testing.T) {
 	f := newFixture(t, nil)
 	for _, flag := range []string{
-		"--lag-threshold", "--cluster-api-key", "--cluster-api-secret", "--aws-region",
-		"--sasl-scram-mechanism", "--promote-batch-size", "--rollout-timeout",
-		"--detect-unrouted-producers-duration", "--consumer-offset-sync-drain-duration",
-		"--use-sasl-iam", "--insecure-skip-tls-verify", "--cluster-rest-ca-cert",
+		"--cluster-api-key", "--cluster-api-secret", "--aws-region",
+		"--sasl-scram-mechanism", "--use-sasl-iam",
+		"--insecure-skip-tls-verify", "--cluster-rest-ca-cert",
 	} {
 		t.Run(flag, func(t *testing.T) {
-			_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile, flag, "1")
+			_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, flag, "1")
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "unknown flag")
 		})
 	}
 }
 
-func TestExecute_RequiresFile(t *testing.T) {
+func TestExecute_RequiresMigrationYaml(t *testing.T) {
 	_, err := runExecute(t)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "file")
+	assert.Contains(t, err.Error(), "migration-yaml")
 }
 
 // TestExecute_RequiresMigrationStateFile — the state file holds the topology
@@ -198,7 +206,7 @@ func TestExecute_RequiresFile(t *testing.T) {
 // (no CWD default), matching every other state-file-consuming command.
 func TestExecute_RequiresMigrationStateFile(t *testing.T) {
 	f := newFixture(t, nil)
-	_, err := runExecute(t, "-f", f.manifestPath)
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "migration-state-file")
 }
@@ -219,7 +227,7 @@ func TestExecute_ErrorsWhenMigrationNotInStateFile(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc, "  name: msk-prod-to-cc-batch-1", "  name: no-such-migration", 1)
 	})
-	_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no-such-migration")
 	assert.Contains(t, err.Error(), "kcp migration list")
@@ -327,7 +335,7 @@ func TestDrift_KubeconfigPathIsNotCompared(t *testing.T) {
 // is what lets a caller vary it between init and execute.
 func TestDrift_PolicyIsNeverCompared(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return doc + "  policy:\n    promoteBatchSize: 7\n    rolloutTimeout: 3m\n"
+		return doc + "  defaultPolicies:\n    promoteBatchSize: 7\n    rolloutTimeout: 3m\n"
 	})
 	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
 }
@@ -415,7 +423,7 @@ func TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
 				c.CurrentState = state
 				c.ClusterLinkName = "changed-link"
 			})
-			_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+			_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "Re-run init")
 			assert.Contains(t, err.Error(), "spec.clusterLink")
@@ -423,40 +431,29 @@ func TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
 	}
 }
 
-func TestExecute_DriftMidFlightSaysAcceptSpecChange(t *testing.T) {
+// TestExecute_DriftMidFlightProceedsWithoutBlocking — past the point of no
+// return, re-running init would strand the live cutover, so there is no longer a
+// safe alternative to proceeding with the edited spec. checkSpecDrift warns and
+// returns nil rather than blocking; the drift-consent flag it used to require is
+// gone.
+func TestExecute_DriftMidFlightProceedsWithoutBlocking(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.CurrentState = migration.StateFenced
 		c.ClusterLinkName = "changed-link"
 	})
-	_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "--accept-spec-change")
-	assert.Contains(t, err.Error(), "already fenced")
-	assert.NotContains(t, err.Error(), "Re-run init",
-		"re-running init is not safe once producers are fenced")
-}
-
-// TestExecute_AcceptSpecChangeOverridesDrift — the override must actually get
-// past the check (the run then fails later, on the network, which is expected
-// in a unit test).
-func TestExecute_AcceptSpecChangeOverridesDrift(t *testing.T) {
-	f := newFixture(t, nil)
-	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.CurrentState = migration.StateFenced
-		c.ClusterLinkName = "changed-link"
-	})
-	_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile, "--accept-spec-change")
-	if err != nil {
-		assert.NotContains(t, err.Error(), "config file has changed")
-	}
+	g := loadGateway(t, f.manifestPath)
+	cfg := persistedConfig(t, f)
+	require.NotEmpty(t, detectDrift(g, cfg), "the fixture must actually have drift")
+	assert.NoError(t, checkSpecDrift(g, cfg),
+		"drift past the point of no return must not block the cutover")
 }
 
 // --- policy is read fresh ---
 
 func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return doc + `  policy:
+		return doc + `  defaultPolicies:
     lagThreshold: 42
     promoteBatchSize: 7
     rolloutTimeout: 3m
@@ -474,6 +471,66 @@ func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	assert.EqualValues(t, 180, opts.RolloutTimeout.Seconds())
 	assert.EqualValues(t, 30, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
 	assert.EqualValues(t, 15, opts.MigrationConfig.ConsumerOffsetSyncDrainDuration.Seconds())
+}
+
+// --- per-policy override flags ---
+
+// TestExecute_PolicyOverrideFlagsReplaceManifestDefaults — only a flag the
+// operator set explicitly overrides, and an explicit 0 (meaningful for every
+// one of these) counts as set. An unset flag leaves the manifest default alone.
+func TestExecute_PolicyOverrideFlagsReplaceManifestDefaults(t *testing.T) {
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--migration-yaml", "x", "--migration-state-file", "y",
+		"--detect-unrouted-producers-duration", "60s",
+		"--promote-batch-size", "0",
+	}))
+
+	p := manifest.DefaultPolicies{
+		PromoteBatchSize:                100,
+		RolloutTimeout:                  10 * time.Minute,
+		DetectUnroutedProducersDuration: 30 * time.Second,
+	}
+	applyPolicyOverrides(cmd, &p)
+
+	assert.Equal(t, 60*time.Second, p.DetectUnroutedProducersDuration, "an explicit flag replaces the default")
+	assert.Equal(t, 0, p.PromoteBatchSize, "an explicit 0 override replaces a non-zero default")
+	assert.Equal(t, 10*time.Minute, p.RolloutTimeout, "an unset flag leaves the manifest default untouched")
+}
+
+// TestExecute_PolicyOverrideReachesExecutorOpts — an override applied to the
+// manifest's defaults flows all the way through buildExecutorOpts, the same path
+// runMigrationExecute takes.
+func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    detectUnroutedProducersDuration: 30s\n"
+	})
+	cmd := NewMigrationExecuteCmd()
+	require.NoError(t, cmd.Flags().Parse([]string{
+		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile,
+		"--lag-threshold", "99",
+		"--detect-unrouted-producers-duration", "60s",
+	}))
+
+	g := loadGateway(t, f.manifestPath)
+	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
+	require.Empty(t, g.Spec.DefaultPolicies.Validate())
+
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	assert.EqualValues(t, 99, opts.LagThreshold)
+	assert.EqualValues(t, 60, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
+}
+
+// TestExecute_InvalidPolicyOverrideIsRejected — an override can carry a value the
+// manifest never did, so the effective policy is re-validated. A sub-10s detect
+// duration is rejected before any network work.
+func TestExecute_InvalidPolicyOverrideIsRejected(t *testing.T) {
+	f := newFixture(t, nil)
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile,
+		"--detect-unrouted-producers-duration", "5s")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "detectUnroutedProducersDuration")
 }
 
 // --- source auth mapping ---
@@ -567,25 +624,25 @@ func TestExecute_PortsBespokePreRunErrors(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
 			return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: SHA1", 1)
 		})
-		_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+		_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 		require.Error(t, err)
 		assert.Contains(t, strings.ToLower(err.Error()), "mechanism")
 	})
 
 	t.Run("sub-10s detect duration", func(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
-			return doc + "  policy:\n    detectUnroutedProducersDuration: 5s\n"
+			return doc + "  defaultPolicies:\n    detectUnroutedProducersDuration: 5s\n"
 		})
-		_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+		_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "detectUnroutedProducersDuration")
 	})
 
 	t.Run("negative drain duration", func(t *testing.T) {
 		f := newFixture(t, func(doc string) string {
-			return doc + "  policy:\n    consumerOffsetSyncDrainDuration: -5s\n"
+			return doc + "  defaultPolicies:\n    consumerOffsetSyncDrainDuration: -5s\n"
 		})
-		_, err := runExecute(t, "-f", f.manifestPath, "--migration-state-file", f.stateFile)
+		_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "consumerOffsetSyncDrainDuration")
 	})
