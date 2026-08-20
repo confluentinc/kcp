@@ -27,7 +27,7 @@ func NewMigrationInitCmd() *cobra.Command {
 
 The migration is described by a single ` + "`kind: GatewayMigration`" + ` YAML file — the source
 and destination topology, the cluster link, the gateway CRs, and the credentials for each
-connection leg. See docs/assets/migration-assets/gateway-examples/gateway-migration.yaml.
+connection leg. See docs/assets/gateway-examples/gateway-migration.yaml.
 
 This command validates the cluster link and mirror topics on the destination cluster,
 fetches the current gateway CR from Kubernetes, validates the initial, fenced and switchover

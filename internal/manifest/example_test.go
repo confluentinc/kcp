@@ -54,7 +54,7 @@ func TestGatewayExampleManifestIsValid(t *testing.T) {
 	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
 		t.Setenv(v, "example-value")
 	}
-	data, err := os.ReadFile("../../docs/assets/migration-assets/gateway-examples/gateway-migration.yaml")
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
 	require.NoError(t, err)
 	g, err := ParseGatewayMigration(data)
 	require.NoError(t, err)
@@ -67,7 +67,7 @@ func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
 	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
 		t.Setenv(v, "example-value")
 	}
-	data, err := os.ReadFile("../../docs/assets/migration-assets/gateway-examples/gateway-migration.yaml")
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
 	require.NoError(t, err)
 	g, err := ParseGatewayMigration(data)
 	require.NoError(t, err)
