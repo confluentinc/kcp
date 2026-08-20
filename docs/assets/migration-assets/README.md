@@ -1,5 +1,22 @@
 # Migration assets
 
+This folder is scoped to **one** manifest: `migration.yaml` (`kind: Migration`),
+which drives the separate, still-hidden `kcp migrate` direct-API command. That
+command isn't user-facing yet, which is why this whole folder is excluded from
+the built docs site (`mkdocs.yml`'s `exclude_docs`) — keep any future addition
+here scoped to that manifest, not the unrelated one below.
+
+`kcp migration init|execute|lag-check` (fully user-facing) is driven by a
+different manifest, `gateway-migration.yaml` (`kind: GatewayMigration`), which
+shares this one's `apiVersion` and parser but nothing else. Its docs live
+**outside** this folder, published normally: see
+[gateway manifest reference](../gateway-manifest-reference.md) and
+[`gateway-examples/gateway-migration.yaml`](../gateway-examples/gateway-migration.yaml).
+A file written for one `kind` is rejected with a clear error if pointed at the
+other command.
+
+---
+
 A `kcp migrate` migration is driven by a single **manifest** (`migration.yaml`)
 that describes the desired end state, plus external **credential files** that hold
 auth only. This section provides a ready-to-copy reference manifest, worked
