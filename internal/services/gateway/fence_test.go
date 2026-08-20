@@ -163,47 +163,6 @@ func TestFenceRoutesObj_MatchesFenceRoutes(t *testing.T) {
 	assert.Equal(t, "BROKER_NOT_AVAILABLE", fence["errorCode"])
 }
 
-// TestFencedRouteNames_RecoversNamesFromFencedRoutes proves FencedRouteNames
-// is FenceRoutes' inverse: fencing a route and then recovering names from the
-// result must yield the same name back. This is the round trip the legacy
-// migration-state.json backward-compat path (MigrationConfig.UnmarshalJSON)
-// relies on.
-func TestFencedRouteNames_RecoversNamesFromFencedRoutes(t *testing.T) {
-	patched, err := FenceRoutes([]byte(baseRouteCR), []string{"migration-route"})
-	require.NoError(t, err)
-
-	names, err := FencedRouteNames(patched)
-	require.NoError(t, err)
-	assert.Equal(t, []string{"migration-route"}, names)
-}
-
-// TestFencedRouteNames_RecoversMultipleNames covers a legacy fenced CR that
-// fenced more than one route.
-func TestFencedRouteNames_RecoversMultipleNames(t *testing.T) {
-	patched, err := FenceRoutes([]byte(baseRouteCR), []string{"migration-route", "scram-preregistration"})
-	require.NoError(t, err)
-
-	names, err := FencedRouteNames(patched)
-	require.NoError(t, err)
-	assert.ElementsMatch(t, []string{"migration-route", "scram-preregistration"}, names)
-}
-
-// TestFencedRouteNames_IgnoresUnfencedRoutes — a route with no fence block
-// (or an explicit fence: null) must not be reported as fenced.
-func TestFencedRouteNames_IgnoresUnfencedRoutes(t *testing.T) {
-	names, err := FencedRouteNames([]byte(baseRouteCR))
-	require.Error(t, err, "a CR with no fenced routes at all has nothing to recover")
-	assert.Nil(t, names)
-}
-
-// TestFencedRouteNames_ErrorsOnNoSpecRoutes guards the no-spec.routes case
-// distinctly from "routes present but none fenced".
-func TestFencedRouteNames_ErrorsOnNoSpecRoutes(t *testing.T) {
-	_, err := FencedRouteNames([]byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nspec: {}\n"))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "spec.routes")
-}
-
 // TestFenceRoutes_FenceIsTheOnlyDelta proves the design's central claim: the
 // patched CR equals the base with nothing changed but the injected fence block.
 // This is what makes fence and unfence exact inverses — unfence re-applies the

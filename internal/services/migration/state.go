@@ -3,54 +3,12 @@ package migration
 import (
 	"encoding/json"
 	"fmt"
-	"log/slog"
 	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 )
-
-// legacyFencedCRJSONKey is the JSON key of the FencedCrYAML field removed in
-// 38f5c974 (replaced by MigrationConfig.FenceRoutes). A migration-state.json
-// written by a pre-38f5c974 kcp still carries it under this key; see
-// MigrationConfig.UnmarshalJSON.
-const legacyFencedCRJSONKey = "fenced_cr_yaml"
-
-// UnmarshalJSON backfills FenceRoutes from the retired FencedCrYAML field
-// (legacyFencedCRJSONKey) when decoding a migration-state.json written before
-// FenceRoutes existed. A plain struct decode silently drops the unknown
-// "fenced_cr_yaml" key, leaving FenceRoutes empty — which fails, but too late:
-// not at load time, but the next time the fence is (re-)applied, since every
-// resume of a fenced-family state re-fences at bootstrap (see
-// EventExpireFence) and gateway.FenceRoutes refuses an empty route list.
-// Recovering the route names here, once, at load time keeps that resume
-// working: the old field snapshotted the already-fenced CR itself, so the
-// fenced route names can be read straight back off it.
-func (c *MigrationConfig) UnmarshalJSON(data []byte) error {
-	type plain MigrationConfig
-	aux := struct {
-		LegacyFencedCrYAML []byte `json:"fenced_cr_yaml,omitempty"`
-		*plain
-	}{plain: (*plain)(c)}
-
-	if err := json.Unmarshal(data, &aux); err != nil {
-		return err
-	}
-
-	if len(c.FenceRoutes) == 0 && len(aux.LegacyFencedCrYAML) > 0 {
-		routes, err := gateway.FencedRouteNames(aux.LegacyFencedCrYAML)
-		if err != nil {
-			return fmt.Errorf("recovering fence routes from legacy %s: %w", legacyFencedCRJSONKey, err)
-		}
-		c.FenceRoutes = routes
-		slog.Warn("⚠️ recovered fence routes from a legacy fenced_cr_yaml snapshot; the next state write drops it",
-			"migrationId", c.MigrationId, "routeCount", len(routes))
-	}
-
-	return nil
-}
 
 // ----- migration FSM state and events -----
 
