@@ -102,14 +102,12 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// ===== PHASE 2: Read the CR files =====
-	// Both are snapshotted into the state file and applied FROM there at
-	// cutover, so a file edited or deleted after init cannot change what gets
-	// applied mid-flight.
-	fencedCrYAML, err := os.ReadFile(g.Spec.Gateway.CRs.Fenced)
-	if err != nil {
-		return fmt.Errorf("failed to read spec.gateway.crs.fenced: %w", err)
-	}
+	// ===== PHASE 2: Read the switchover CR file =====
+	// The switchover CR is snapshotted into the state file and applied FROM there
+	// at cutover, so a file edited or deleted after init cannot change what gets
+	// applied mid-flight. There is no fenced CR to read: the fence is derived at
+	// cutover from the live initial CR by injecting a fence block onto the routes
+	// named in spec.gateway.fence.routes.
 	switchoverCrYAML, err := os.ReadFile(g.Spec.Gateway.CRs.Switchover)
 	if err != nil {
 		return fmt.Errorf("failed to read spec.gateway.crs.switchover: %w", err)
@@ -132,7 +130,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
 		ClusterLinkName:         g.Spec.ClusterLink.Name,
 		Topics:                  topicsOf(g),
-		FencedCrYAML:            fencedCrYAML,
+		FenceRoutes:             g.Spec.Gateway.Fence.Routes,
 		SwitchoverCrYAML:        switchoverCrYAML,
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,

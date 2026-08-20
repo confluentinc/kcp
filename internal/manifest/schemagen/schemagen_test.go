@@ -212,7 +212,9 @@ func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
 
 	crs := props(t, props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any))
 	require.Contains(t, crs["initial"].(map[string]any)["description"], "name")
-	require.Contains(t, crs["fenced"].(map[string]any)["description"], "ath")
+
+	fence := props(t, props(t, spec["gateway"].(map[string]any))["fence"].(map[string]any))
+	require.Contains(t, fence["routes"].(map[string]any)["description"], "fence")
 
 	topics := spec["topics"].(map[string]any)
 	require.NotEmpty(t, topics["description"])
@@ -238,9 +240,11 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	// derived and stays optional.
 	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "credentials"},
 		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
-	require.ElementsMatch(t, []any{"namespace", "crs"}, requiredOf(spec["gateway"].(map[string]any)))
-	require.ElementsMatch(t, []any{"initial", "fenced", "switchover"},
+	require.ElementsMatch(t, []any{"namespace", "crs", "fence"}, requiredOf(spec["gateway"].(map[string]any)))
+	require.ElementsMatch(t, []any{"initial", "switchover"},
 		requiredOf(props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)))
+	require.ElementsMatch(t, []any{"routes"},
+		requiredOf(props(t, spec["gateway"].(map[string]any))["fence"].(map[string]any)))
 	// lagThreshold's zero value is meaningful (fail-safe/strictest), not a
 	// stand-in for "omitted", so the key must be required even though the
 	// block it lives in (spec.defaultPolicies) stays optional.
