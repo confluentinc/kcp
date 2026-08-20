@@ -28,7 +28,7 @@ func TestMigrationState_WriteAndRead_RoundTrip(t *testing.T) {
 			InitialCrName:       "my-gateway-cr",
 			K8sNamespace:        "confluent",
 			InitialCrYAML:       []byte("apiVersion: v1"),
-			FencedCrYAML:        []byte("apiVersion: v1\nfenced: true"),
+			FenceRoutes:         []string{"migration-route"},
 			SwitchoverCrYAML:    []byte("apiVersion: v1\nswitchover: true"),
 		},
 		{

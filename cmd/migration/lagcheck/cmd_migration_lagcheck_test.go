@@ -45,8 +45,10 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-      fenced: /etc/kcp/fenced.yaml
       switchover: /etc/kcp/switchover.yaml
+    fence:
+      routes:
+        - migration-route
 `
 
 func writeLagManifest(t *testing.T, mutate func(string) string) string {
