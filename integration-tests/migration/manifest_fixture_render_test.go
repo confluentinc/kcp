@@ -26,7 +26,7 @@ func baselineOpts() manifestOpts {
 		APISecret:       "testpassword",
 		Namespace:       "confluent",
 		GatewayName:     "migration-gateway-baseline",
-		FencedCR:        "/workspace/gateway-fenced-baseline.yaml",
+		FenceRoutes:     []string{"migration-route"},
 		SwitchoverCR:    "/workspace/gateway-switchover-baseline.yaml",
 		KubePath:        "/workspace/kubeconfig",
 	}
@@ -84,7 +84,7 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.Equal(t, opts.Namespace, g.Spec.Gateway.Namespace)
 	assert.Equal(t, opts.KubePath, g.Spec.Gateway.Kubeconfig)
 	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CRs.Initial)
-	assert.Equal(t, opts.FencedCR, g.Spec.Gateway.CRs.Fenced)
+	assert.Equal(t, opts.FenceRoutes, g.Spec.Gateway.Fence.Routes)
 	assert.Equal(t, opts.SwitchoverCR, g.Spec.Gateway.CRs.Switchover)
 
 	// The destination Kafka leg carries the API key/secret and the only
@@ -339,7 +339,7 @@ func TestManifestForLog_RedactsCredentialsButKeepsTopology(t *testing.T) {
 	assert.Contains(t, logged, opts.SourceBootstrap)
 	assert.Contains(t, logged, opts.ClusterLinkName)
 	assert.Contains(t, logged, opts.DestClusterID)
-	assert.Contains(t, logged, opts.FencedCR)
+	assert.Contains(t, logged, opts.FenceRoutes[0])
 }
 
 // TestManifestForLog_RedactsByKeyPathNotValue is what forces key-path redaction.
