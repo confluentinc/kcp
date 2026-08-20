@@ -122,6 +122,13 @@ blocks:
   - name: 'integration: kafka connect scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:
+      agent:
+        machine:
+          # This job runs a broker + four Connect JVMs concurrently. The pipeline
+          # default (amd64-1) is memory-tight for five JVMs and was contributing to
+          # runs being hard-killed mid-startup; use the larger machine already used by
+          # the migration e2e block. (Per-JVM heaps are also capped in docker-compose.yml.)
+          type: s1-prod-ubuntu24-04-amd64-2
       prologue:
         commands:
           # keytool (from JDK) is required for TLS certificate generation
