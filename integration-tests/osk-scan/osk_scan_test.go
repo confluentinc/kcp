@@ -134,3 +134,69 @@ func TestOSKScanMetrics(t *testing.T) {
 		})
 	}
 }
+
+// TestOSKScanPrometheusMetricNameOverride proves the prometheus.metric_names
+// override end-to-end: the credential points BytesInPerSec at a relabelled
+// series (acme_broker_bytesin_total) that the seeder wrote at a deliberately
+// high, constant rate. If the override drove the query, BytesInPerSec's
+// aggregate reflects that series' magnitude (~9,000,000) — far above the
+// standard series' range (max ~170,000) — so the value itself proves the
+// override was used, not just that some data came back.
+func TestOSKScanPrometheusMetricNameOverride(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state.json")
+	out, err := runScan(t, "--source-type", "apache-kafka",
+		"--credentials-file", credDir+"/prometheus-relabelled.yaml",
+		"--state-file", state,
+		"--metrics", "prometheus",
+		"--metrics-range", "30d")
+	require.NoError(t, err, out)
+
+	c := loadOSKCluster(t, state)
+	require.NotNil(t, c.ClusterMetrics, "no metrics collected")
+
+	agg, ok := c.ClusterMetrics.Aggregates["BytesInPerSec"]
+	require.True(t, ok, "BytesInPerSec must be collected via the relabelled series")
+	require.NotNil(t, agg.Maximum, "BytesInPerSec should have a maximum")
+	assert.Greater(t, *agg.Maximum, 1_000_000.0,
+		"BytesInPerSec must reflect the relabelled series' magnitude (~9,000,000), proving the override drove the query rather than the default series")
+}
+
+// TestOSKScanMetricNameOverrideValidation proves the "prove errors" path: an
+// unknown/typo'd override key is rejected at credential-load time, so the scan
+// fails fast with a helpful message instead of silently no-opping the override.
+func TestOSKScanMetricNameOverrideValidation(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state.json")
+	out, err := runScan(t, "--source-type", "apache-kafka",
+		"--credentials-file", credDir+"/prometheus-bad-override.yaml",
+		"--state-file", state,
+		"--metrics", "prometheus",
+		"--metrics-range", "30d")
+
+	require.Error(t, err, "scan must fail on an unknown metric_names key; output: %s", out)
+	assert.Contains(t, out, "unknown metric label",
+		"error must name the problem so the user can self-correct")
+	assert.Contains(t, out, "BytesInPersec", "error must name the offending key")
+}
+
+// TestOSKScanJMXMBeanOverrideMissing proves the Jolokia override is threaded
+// end-to-end and degrades gracefully: BytesInPerSec is overridden to an MBean
+// the agent doesn't expose, so it is omitted from the results while every other
+// metric is still collected and the scan exits 0. (The unit tests assert the
+// accompanying loud Warn; here we prove the scan-level behaviour.)
+func TestOSKScanJMXMBeanOverrideMissing(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state.json")
+	out, err := runScan(t, "--source-type", "apache-kafka",
+		"--credentials-file", credDir+"/jmx-bad-override.yaml",
+		"--state-file", state,
+		"--metrics", "jolokia",
+		"--metrics-duration", "10s", "--metrics-interval", "1s")
+	require.NoError(t, err, out)
+
+	c := loadOSKCluster(t, state)
+	require.NotNil(t, c.ClusterMetrics, "no metrics collected")
+	assert.NotEmpty(t, c.ClusterMetrics.Aggregates,
+		"other metrics must still be collected when one overridden MBean is missing")
+	_, ok := c.ClusterMetrics.Aggregates["BytesInPerSec"]
+	assert.False(t, ok,
+		"BytesInPerSec is overridden to a non-existent MBean and must be omitted, not defaulted")
+}
