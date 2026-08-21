@@ -195,6 +195,31 @@ Both key on the same seven logical labels:
 `BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`, `PartitionCount`,
 `GlobalPartitionCount`, `ClientConnectionCount`, `TotalLocalStorageUsage`.
 
+For example, if your Prometheus JMX Exporter publishes the byte-rate series under
+an `acme_` prefix and drops the `_total` suffix, map just the labels that changed
+— everything you omit keeps its default:
+
+```yaml
+prometheus:
+  url: http://prometheus.example.com:9090
+  metric_names:
+    BytesInPerSec: acme_kafka_bytesin     # default: kafka_server_brokertopicmetrics_bytesinpersec_total
+    BytesOutPerSec: acme_kafka_bytesout   # default: kafka_server_brokertopicmetrics_bytesoutpersec_total
+```
+
+`kcp` slots the name into its own wrapping, so it now runs
+`sum(rate(acme_kafka_bytesin[<window>]))` in place of the default. The Jolokia
+equivalent maps the same logical label to a full MBean object name (domain
+included) rather than a series name:
+
+```yaml
+jolokia:
+  endpoints:
+    - http://broker1.example.com:8778/jolokia
+  mbean_overrides:
+    BytesInPerSec: "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec"   # default domain: kafka.server
+```
+
 - **Only labels you need to change** must appear; unlisted labels keep their
   defaults. A key with an empty value (`BytesInPerSec: ""`) is treated as *no
   override* and silently ignored — set a real name or omit the key entirely.
@@ -213,6 +238,12 @@ Both key on the same seven logical labels:
 - If an overridden metric **still** returns no data, `kcp` logs it at **WARN**
   (a plain missing default is logged at DEBUG) — the override was configured
   precisely to fix an empty result, so a still-empty result is worth surfacing.
+- **An override is a rename, not a re-interpretation.** The series or bean you
+  point at must have the same *shape* as the default — a byte counter for the
+  `*PerSec` rates, a gauge for the counts, raw bytes for storage. Repointing at a
+  rate gauge or a differently-united series yields a *wrong value with no error*,
+  not an empty result. See
+  [What an override does not change](metrics-collection.md#what-an-override-does-not-change).
 
 ## Where to go next
 

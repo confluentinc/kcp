@@ -40,29 +40,16 @@ KAFKA_OPTS="-javaagent:/path/to/jolokia-agent.jar=port=8778,host=0.0.0.0"
 Each broker runs its own Jolokia endpoint, so for a multi-broker cluster you
 list every endpoint under `jolokia.endpoints` in `apache-kafka-credentials.yaml`.
 
-## Counter-based rates, not EWMA
-
-Kafka's JMX rate metrics (`BytesInPerSec`, `MessagesInPerSec`, …) ship several
-pre-computed fields including `OneMinuteRate`, `FiveMinuteRate` and
-`FifteenMinuteRate`. These are **exponentially weighted moving averages
-(EWMA)** — useful for dashboards, but unsuitable for aggregation: consecutive
-EWMA samples are highly correlated, so a min/max/average over them
-under-states the true variance in traffic.
-
-For the **Jolokia** backend, `kcp` reads the `Count` field — a monotonic
-counter of total bytes (or messages) since broker start — and computes the
-actual rate over each sample interval:
-
-```
-rate = (Count_current - Count_previous) / elapsed_seconds
-```
-
-This produces independent data points with real variance, accurately reflecting
-traffic over each interval.
-
-The **Prometheus** backend achieves the same result using PromQL's `rate()`
-function, which computes per-second rates from counters stored in Prometheus
-(see [Prometheus PromQL queries](#prometheus-promql-queries) below).
+> [!NOTE]
+> **Why counters, not the pre-computed rates.** Kafka's JMX rate metrics ship
+> `OneMinuteRate` / `FiveMinuteRate` / `FifteenMinuteRate` — exponentially
+> weighted moving averages, handy for dashboards but poor for aggregation:
+> consecutive samples are highly correlated, so a min/max/average over them
+> understates the true variance in traffic. Instead `kcp` reads the monotonic
+> `Count` and derives the rate itself over each interval — `(Count_current −
+> Count_previous) / elapsed` on Jolokia, PromQL's `rate()` on
+> [Prometheus](#prometheus-promql-queries) — yielding independent data points
+> that reflect real traffic.
 
 ## Scan duration and poll interval
 
@@ -154,6 +141,44 @@ exporter actually exposes with `prometheus.metric_names` in
 MBean names via `jolokia.mbean_overrides`. See
 [Metric-name overrides](credentials.md#metric-name-overrides) for the label list
 and semantics.
+
+## What an override does not change
+
+`prometheus.metric_names` and `jolokia.mbean_overrides` change **which identifier
+`kcp` queries** — a Prometheus series name or a JMX object name. They do **not**
+change how `kcp` reads the result. The series or bean you point at must match the
+*shape* of the default it replaces; if it doesn't, `kcp` records a wrong value with
+no error and — unlike a missing metric — no empty-result warning:
+
+| Metric(s)                                                        | Target must be…                                                                                                 |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`            | a **monotonic counter** in **bytes** (or messages). Jolokia reads its `Count`; Prometheus wraps it in `rate()`. |
+| `PartitionCount`, `ClientConnectionCount`, `GlobalPartitionCount`| a plain **gauge**.                                                                                              |
+| `TotalLocalStorageUsage`                                         | raw **bytes** — `kcp` divides by 1024³ to report GiB.                                                           |
+
+> [!WARNING]
+> The sharpest trap is **counter vs. gauge**. `kcp` treats the three `*PerSec`
+> metrics as counters and derives the rate itself (`rate()` on Prometheus,
+> `Δcount / elapsed` on Jolokia). If you repoint one at a pre-averaged rate
+> **gauge** — an exporter mapping `OneMinuteRate`, or a native exporter that
+> already publishes a per-second value — the rate is taken *over a rate* and the
+> result is meaningless. Because the query still returns data, no warning fires.
+> A unit mismatch (bits instead of bytes; GiB instead of bytes for storage)
+> fails the same silent way: the number is simply wrong.
+
+Two more things an override does **not** touch:
+
+- **The Jolokia attribute is fixed** (`Count` for counters, `Value` for gauges).
+  The override changes the object name, not the attribute, so the bean you name
+  must expose its value under that same attribute.
+- **`GlobalPartitionCount` keeps its `{name="GlobalPartitionCount"}` discriminator**
+  on Prometheus, so an overridden series must still carry that `name` label (see
+  the [note above](#prometheus-promql-queries)).
+
+If your setup differs on unit, shape, read attribute, or per-broker aggregation —
+common when the same relabelling that renamed a metric also changed its `type:` or
+dropped a label — a name override alone is not enough. Fix it at the exporter, or
+add a Prometheus recording rule that republishes the series in the shape above.
 
 ## Filtering by cluster (Prometheus)
 
