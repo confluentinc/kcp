@@ -32,6 +32,7 @@ i=0
 cum_bytes_in=0
 cum_bytes_out=0
 cum_msgs_in=0
+cum_acme_bytes_in=0
 while [ $t -le $NOW ]; do
   hour=$(( (t / 3600) % 24 ))
 
@@ -49,6 +50,15 @@ while [ $t -le $NOW ]; do
   rate_bytes_in=$(( 50000 + traffic_mult * 50000 + variance * 1000 ))
   cum_bytes_in=$(( cum_bytes_in + rate_bytes_in * STEP ))
   generate_metric_line "kafka_server_brokertopicmetrics_bytesinpersec_total" "$t" "$cum_bytes_in" >> "$METRICS_FILE"
+
+  # Relabelled BytesInPerSec series — the fixture for the prometheus.metric_names
+  # override test (credentials/prometheus-relabelled.yaml). It accumulates at a
+  # constant, deliberately high rate (9 MB/s) so that a scan which sourced
+  # BytesInPerSec via the override yields a sum(rate(...)) aggregate (~9,000,000)
+  # far above the standard series' range (max ~170,000). That magnitude gap is
+  # what proves the override actually drove the query rather than the default.
+  cum_acme_bytes_in=$(( cum_acme_bytes_in + 9000000 * STEP ))
+  generate_metric_line "acme_broker_bytesin_total" "$t" "$cum_acme_bytes_in" >> "$METRICS_FILE"
 
   # BytesOutPerSec rate: 30000-150000 bytes/sec
   rate_bytes_out=$(( 30000 + traffic_mult * 30000 + variance * 800 ))
