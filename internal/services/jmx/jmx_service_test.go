@@ -485,6 +485,112 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	assert.True(t, queryNames["GlobalPartitionCount"], "QueryInfo should still include GlobalPartitionCount")
 }
 
+// TestCollectRawSample_MissingCounterMBeanDedupesAndStaysDebug is a regression
+// test: the Counters loop must route through logMetricReadErrorOnce like the
+// Gauges/Aggregates loops, so a missing default counter MBean is (a) logged at
+// Debug rather than Warn, and (b) deduped to once per scan rather than once
+// per poll.
+func TestCollectRawSample_MissingCounterMBeanDedupesAndStaysDebug(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response map[string]any
+		switch {
+		case strings.Contains(r.URL.Path, "BytesInPerSec"):
+			// Missing on this cluster — Jolokia reports not-found.
+			response = map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"}
+		default:
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": 0.0, "Value": 0.0}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(nil), "broker")
+
+	// Poll multiple times, as CollectOverDuration would on every tick.
+	for i := 0; i < 3; i++ {
+		_, err := svc.collectRawSample(context.Background())
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 0, strings.Count(logBuf.String(), "level=WARN"),
+		"a missing default counter MBean is routine and must not log at WARN")
+	assert.Equal(t, 1, strings.Count(logBuf.String(), "Failed to read MBean"),
+		"missing counter MBean read failure should be deduped to once per scan, not once per poll")
+}
+
+// TestCollectRawSample_OverriddenCounterMBeanNotFoundIsLoud is the counter-loop
+// counterpart of TestLogMetricReadErrorOnce_OverriddenMBeanNotFoundIsLoud: an
+// overridden counter MBean that still isn't found is actionable and must be
+// logged at Warn, not Debug.
+func TestCollectRawSample_OverriddenCounterMBeanNotFoundIsLoud(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec"}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	defs := BrokerMetricDefinitions(map[string]string{
+		"BytesInPerSec": "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec",
+	})
+	svc := NewJMXService([]string{server.URL}, defs, "broker")
+
+	_, err := svc.collectRawSample(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, logBuf.String(), "level=WARN",
+		"a not-found for an overridden counter MBean is actionable and must be logged at WARN")
+}
+
+// TestCollectOverDuration_OverriddenControllerMBeanMissingMentionsOverride is a
+// regression test: when the Controller MBean's label was overridden via
+// mbean_overrides and still isn't found on any broker, the caveat must point
+// at the override rather than the generic "ensure your exporter scrapes"
+// hint, which sends users chasing exporter config instead of the override
+// they just set.
+func TestCollectOverDuration_OverriddenControllerMBeanMissingMentionsOverride(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response map[string]any
+		switch {
+		case strings.Contains(r.URL.Path, "acme.kafka"):
+			response = map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: acme.kafka:type=KafkaController,name=GlobalPartitionCount"}
+		default:
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": 0.0, "Value": 0.0}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	defs := BrokerMetricDefinitions(map[string]string{
+		"GlobalPartitionCount": "acme.kafka:type=KafkaController,name=GlobalPartitionCount",
+	})
+	svc := NewJMXService([]string{server.URL}, defs, "broker")
+
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Contains(t, logBuf.String(), "mbean_overrides",
+		"a missing overridden controller MBean should mention mbean_overrides, not just the generic exporter hint")
+}
+
 // mockSourceOnlyConnectJolokiaServer simulates a source-only Connect cluster:
 // sink-task-metrics MBeans don't exist (404 InstanceNotFoundException), while
 // everything else responds normally. This is the "no sink connectors" case

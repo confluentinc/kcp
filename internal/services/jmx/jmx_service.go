@@ -200,7 +200,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
-				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
+				s.logMetricReadErrorOnce(mb.Name, "Failed to read MBean", err)
 				continue
 			}
 			if v, ok := value["Count"]; ok {
@@ -244,8 +244,15 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 			}
 		}
 		if !found && !s.warnedControllerMissing[mb.MBean] {
-			slog.Warn("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
-				"mbean", mb.MBean, "metric", mb.Name)
+			if s.metrics.OverriddenNames[mb.Name] {
+				// A not-found for an overridden MBean is actionable — the override
+				// was configured precisely to point at an MBean this agent exposes.
+				slog.Warn("Controller MBean not available from any broker — metric will be omitted. The mbean_overrides entry configured for this metric did not return data; verify the MBean name matches what your JMX exporter exposes.",
+					"mbean", mb.MBean, "metric", mb.Name)
+			} else {
+				slog.Warn("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
+					"mbean", mb.MBean, "metric", mb.Name)
+			}
 			s.warnedControllerMissing[mb.MBean] = true
 		}
 	}

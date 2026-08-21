@@ -56,9 +56,11 @@ func BrokerQueryDefinitions(overrides map[string]string) []MetricQuery {
 	logSize, logSizeOv := name("TotalLocalStorageUsage", "kafka_log_log_size")
 
 	// GlobalPartitionCount is distinguished by a {name="..."} discriminator on a
-	// shared controller series; an override replaces the base series name and the
-	// discriminator is preserved.
-	globalPartitionSel := globalPartition + `{name="GlobalPartitionCount"}`
+	// shared controller series; an override replaces the base series name. If the
+	// override itself already carries a label selector (e.g. a job-scoped
+	// series), the discriminator is merged into it rather than appended as a
+	// second brace group, which would otherwise produce invalid PromQL.
+	globalPartitionSel := appendNameDiscriminator(globalPartition, "GlobalPartitionCount")
 
 	return []MetricQuery{
 		{Label: "BytesInPerSec", Query: "sum(rate(" + bytesIn + "[%s]))", PrometheusMetric: bytesIn, Overridden: bytesInOv},
@@ -150,6 +152,17 @@ func applyLabelFilter(query, metricName string, labels map[string]string) string
 
 	// No existing selector — add one
 	return query[:afterName] + "{" + labelStr + "}" + query[afterName:]
+}
+
+// appendNameDiscriminator appends a {name="value"} label matcher to a
+// Prometheus series name, merging it into an existing selector if the series
+// already carries one (e.g. from a metric-name override that points at a
+// job-scoped series) rather than producing a second, invalid brace group.
+func appendNameDiscriminator(series, name string) string {
+	if idx := strings.Index(series, "{"); idx >= 0 {
+		return series[:idx+1] + fmt.Sprintf(`name="%s",`, name) + series[idx+1:]
+	}
+	return series + fmt.Sprintf(`{name="%s"}`, name)
 }
 
 // SelectStep chooses an appropriate query step based on the time range

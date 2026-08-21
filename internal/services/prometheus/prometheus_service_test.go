@@ -272,6 +272,66 @@ func TestBrokerQueryDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
 		"BrokerQueryDefinitions labels must match the canonical override label set")
 }
 
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName
+// covers the common case: the override is a bare series name with no
+// selector of its own, so the {name="..."} discriminator is simply appended.
+func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName(t *testing.T) {
+	defs := BrokerQueryDefinitions(map[string]string{"GlobalPartitionCount": "acme_controller_value"})
+
+	var global MetricQuery
+	for _, d := range defs {
+		if d.Label == "GlobalPartitionCount" {
+			global = d
+		}
+	}
+
+	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount"}`, global.Query)
+	assert.Equal(t, global.Query, global.PrometheusMetric)
+	assert.True(t, global.Overridden)
+}
+
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges
+// is a regression test: GlobalPartitionCount's query is built by appending a
+// static {name="GlobalPartitionCount"} discriminator to the override value. If
+// the override itself already carries a label selector (e.g. it points at a
+// job-scoped series), naively appending a second brace group produces invalid
+// PromQL (two adjacent selectors on one series). The discriminator must be
+// merged into the existing selector instead.
+func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges(t *testing.T) {
+	defs := BrokerQueryDefinitions(map[string]string{
+		"GlobalPartitionCount": `acme_controller_value{job="acme"}`,
+	})
+
+	var global MetricQuery
+	for _, d := range defs {
+		if d.Label == "GlobalPartitionCount" {
+			global = d
+		}
+	}
+
+	// A single, valid selector — not two adjacent brace groups.
+	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount",job="acme"}`, global.Query)
+	assert.Equal(t, global.Query, global.PrometheusMetric)
+	assert.NotContains(t, global.Query, "}{", "must not produce two adjacent brace groups")
+	assert.True(t, global.Overridden)
+}
+
+func TestAppendNameDiscriminator(t *testing.T) {
+	tests := []struct {
+		name   string
+		series string
+		want   string
+	}{
+		{"no existing selector", "acme_controller_value", `acme_controller_value{name="GlobalPartitionCount"}`},
+		{"merges into existing selector", `acme_controller_value{job="acme"}`, `acme_controller_value{name="GlobalPartitionCount",job="acme"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, appendNameDiscriminator(tt.series, "GlobalPartitionCount"))
+		})
+	}
+}
+
 func TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud(t *testing.T) {
 	// Only PartitionCount returns data; every other query is empty. This keeps
 	// allMetrics non-empty so the generic "no metrics collected" warning stays
