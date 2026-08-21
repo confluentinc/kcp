@@ -1,9 +1,11 @@
 package prometheus
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -76,7 +78,7 @@ func TestPrometheusService_CollectMetrics(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(), nil)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(nil), nil)
 
 	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
 	require.NoError(t, err)
@@ -115,7 +117,7 @@ func TestPrometheusService_CollectMetrics_MissingMetric(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(), nil)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(nil), nil)
 
 	result, err := svc.CollectMetrics(context.Background(), 7*24*time.Hour)
 	require.NoError(t, err)
@@ -144,7 +146,7 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 	defer server.Close()
 
 	promClient := client.NewPrometheusClient(server.URL)
-	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(), nil)
+	svc := NewPrometheusService(promClient, BrokerQueryDefinitions(nil), nil)
 
 	result, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
 	require.NoError(t, err)
@@ -152,7 +154,7 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 	require.NotEmpty(t, result.QueryInfo)
 
 	// Should have one entry per query definition (7)
-	assert.Len(t, result.QueryInfo, len(BrokerQueryDefinitions()))
+	assert.Len(t, result.QueryInfo, len(BrokerQueryDefinitions(nil)))
 
 	for _, qi := range result.QueryInfo {
 		assert.Equal(t, types.MetricBackendPrometheus, qi.SourceType)
@@ -184,12 +186,199 @@ func TestPrometheusService_CollectMetrics_PopulatesQueryInfo(t *testing.T) {
 	assert.True(t, names["TotalLocalStorageUsage"])
 }
 
+func TestBrokerQueryDefinitions_NoOverrideRegression(t *testing.T) {
+	// With no overrides, output must be byte-identical to the historical defaults.
+	expected := []MetricQuery{
+		{Label: "BytesInPerSec", Query: "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[%s]))", PrometheusMetric: "kafka_server_brokertopicmetrics_bytesinpersec_total"},
+		{Label: "BytesOutPerSec", Query: "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", PrometheusMetric: "kafka_server_brokertopicmetrics_bytesoutpersec_total"},
+		{Label: "MessagesInPerSec", Query: "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))", PrometheusMetric: "kafka_server_brokertopicmetrics_messagesinpersec_total"},
+		{Label: "PartitionCount", Query: "sum(kafka_server_replicamanager_partitioncount)", PrometheusMetric: "kafka_server_replicamanager_partitioncount"},
+		{Label: "GlobalPartitionCount", Query: "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}", PrometheusMetric: "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}"},
+		{Label: "ClientConnectionCount", Query: "sum(kafka_server_socketservermetrics_connection_count)", PrometheusMetric: "kafka_server_socketservermetrics_connection_count"},
+		{Label: "TotalLocalStorageUsage", Query: "sum(kafka_log_log_size) / (1024*1024*1024)", PrometheusMetric: "kafka_log_log_size"},
+	}
+
+	assert.Equal(t, expected, BrokerQueryDefinitions(nil))
+	assert.Equal(t, expected, BrokerQueryDefinitions(map[string]string{}))
+}
+
+func TestBrokerQueryDefinitions_Override(t *testing.T) {
+	overrides := map[string]string{
+		"BytesInPerSec":          "acme_broker_bytesin_total",
+		"PartitionCount":         "acme_partition_count",
+		"TotalLocalStorageUsage": "acme_log_size",
+	}
+	defs := BrokerQueryDefinitions(overrides)
+
+	byLabel := make(map[string]MetricQuery)
+	for _, d := range defs {
+		byLabel[d.Label] = d
+	}
+
+	// Rate-wrapped metric: series substituted, %s rate window preserved, flagged overridden.
+	bytesIn := byLabel["BytesInPerSec"]
+	assert.Equal(t, "sum(rate(acme_broker_bytesin_total[%s]))", bytesIn.Query)
+	assert.Equal(t, "acme_broker_bytesin_total", bytesIn.PrometheusMetric)
+	assert.True(t, bytesIn.Overridden)
+
+	// Sum-wrapped gauge.
+	partition := byLabel["PartitionCount"]
+	assert.Equal(t, "sum(acme_partition_count)", partition.Query)
+	assert.Equal(t, "acme_partition_count", partition.PrometheusMetric)
+	assert.True(t, partition.Overridden)
+
+	// Arithmetic-wrapped metric keeps its conversion.
+	storage := byLabel["TotalLocalStorageUsage"]
+	assert.Equal(t, "sum(acme_log_size) / (1024*1024*1024)", storage.Query)
+	assert.Equal(t, "acme_log_size", storage.PrometheusMetric)
+	assert.True(t, storage.Overridden)
+
+	// A metric with no override keeps its default and is not flagged.
+	bytesOut := byLabel["BytesOutPerSec"]
+	assert.Equal(t, "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", bytesOut.Query)
+	assert.False(t, bytesOut.Overridden)
+
+	// An empty override value is ignored (treated as no override).
+	defsEmpty := BrokerQueryDefinitions(map[string]string{"BytesInPerSec": ""})
+	for _, d := range defsEmpty {
+		if d.Label == "BytesInPerSec" {
+			assert.Equal(t, "kafka_server_brokertopicmetrics_bytesinpersec_total", d.PrometheusMetric)
+			assert.False(t, d.Overridden)
+		}
+	}
+}
+
+func TestBrokerQueryDefinitions_OverridePreservesLabelFilterInjection(t *testing.T) {
+	defs := BrokerQueryDefinitions(map[string]string{"BytesInPerSec": "acme_broker_bytesin_total"})
+	var bytesIn MetricQuery
+	for _, d := range defs {
+		if d.Label == "BytesInPerSec" {
+			bytesIn = d
+		}
+	}
+
+	// Resolve the rate window as CollectMetrics would, then inject label selectors.
+	resolved := fmt.Sprintf(bytesIn.Query, "5m")
+	filtered := applyLabelFilter(resolved, bytesIn.PrometheusMetric, map[string]string{"job": "acme"})
+	assert.Equal(t, "sum(rate(acme_broker_bytesin_total{job=\"acme\"}[5m]))", filtered)
+}
+
+func TestBrokerQueryDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
+	var labels []string
+	for _, d := range BrokerQueryDefinitions(nil) {
+		labels = append(labels, d.Label)
+	}
+	assert.ElementsMatch(t, types.ValidBrokerMetricLabels(), labels,
+		"BrokerQueryDefinitions labels must match the canonical override label set")
+}
+
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName
+// covers the common case: the override is a bare series name with no
+// selector of its own, so the {name="..."} discriminator is simply appended.
+func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName(t *testing.T) {
+	defs := BrokerQueryDefinitions(map[string]string{"GlobalPartitionCount": "acme_controller_value"})
+
+	var global MetricQuery
+	for _, d := range defs {
+		if d.Label == "GlobalPartitionCount" {
+			global = d
+		}
+	}
+
+	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount"}`, global.Query)
+	assert.Equal(t, global.Query, global.PrometheusMetric)
+	assert.True(t, global.Overridden)
+}
+
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges
+// is a regression test: GlobalPartitionCount's query is built by appending a
+// static {name="GlobalPartitionCount"} discriminator to the override value. If
+// the override itself already carries a label selector (e.g. it points at a
+// job-scoped series), naively appending a second brace group produces invalid
+// PromQL (two adjacent selectors on one series). The discriminator must be
+// merged into the existing selector instead.
+func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges(t *testing.T) {
+	defs := BrokerQueryDefinitions(map[string]string{
+		"GlobalPartitionCount": `acme_controller_value{job="acme"}`,
+	})
+
+	var global MetricQuery
+	for _, d := range defs {
+		if d.Label == "GlobalPartitionCount" {
+			global = d
+		}
+	}
+
+	// A single, valid selector — not two adjacent brace groups.
+	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount",job="acme"}`, global.Query)
+	assert.Equal(t, global.Query, global.PrometheusMetric)
+	assert.NotContains(t, global.Query, "}{", "must not produce two adjacent brace groups")
+	assert.True(t, global.Overridden)
+}
+
+func TestAppendNameDiscriminator(t *testing.T) {
+	tests := []struct {
+		name   string
+		series string
+		want   string
+	}{
+		{"no existing selector", "acme_controller_value", `acme_controller_value{name="GlobalPartitionCount"}`},
+		{"merges into existing selector", `acme_controller_value{job="acme"}`, `acme_controller_value{name="GlobalPartitionCount",job="acme"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, appendNameDiscriminator(tt.series, "GlobalPartitionCount"))
+		})
+	}
+}
+
+func TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud(t *testing.T) {
+	// Only PartitionCount returns data; every other query is empty. This keeps
+	// allMetrics non-empty so the generic "no metrics collected" warning stays
+	// silent and we isolate the per-metric empty signal.
+	mockData := map[string][]float64{
+		"partitioncount": {50.0, 50.0},
+	}
+	server := newMockPrometheusServer(t, mockData)
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	promClient := client.NewPrometheusClient(server.URL)
+	// Override BytesInPerSec to a series the mock has no data for.
+	defs := BrokerQueryDefinitions(map[string]string{"BytesInPerSec": "totally_missing_series"})
+	svc := NewPrometheusService(promClient, defs, nil)
+
+	_, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
+	require.NoError(t, err)
+
+	// An overridden query that still returns nothing is actionable → WARN.
+	// A non-overridden empty query (e.g. BytesOutPerSec) stays quiet (DEBUG).
+	var warnedBytesIn, warnedBytesOut bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if !strings.Contains(line, "level=WARN") {
+			continue
+		}
+		if strings.Contains(line, "BytesInPerSec") {
+			warnedBytesIn = true
+		}
+		if strings.Contains(line, "BytesOutPerSec") {
+			warnedBytesOut = true
+		}
+	}
+	assert.True(t, warnedBytesIn, "overridden-but-empty metric should be logged at WARN")
+	assert.False(t, warnedBytesOut, "non-overridden empty metric should not be logged at WARN")
+}
+
 func TestBuildPrometheusQueryInfo(t *testing.T) {
 	end := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
 	start := end.Add(-24 * time.Hour)
-	infos := buildPrometheusQueryInfo("http://prom:9090", "5m", 60*time.Second, 24*time.Hour, start, end, BrokerQueryDefinitions(), nil)
+	infos := buildPrometheusQueryInfo("http://prom:9090", "5m", 60*time.Second, 24*time.Hour, start, end, BrokerQueryDefinitions(nil), nil)
 
-	assert.Len(t, infos, len(BrokerQueryDefinitions()))
+	assert.Len(t, infos, len(BrokerQueryDefinitions(nil)))
 
 	// Rate-based metrics should have rate() in the aggregation note
 	for _, info := range infos[:3] {

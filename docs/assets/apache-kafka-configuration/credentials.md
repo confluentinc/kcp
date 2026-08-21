@@ -137,6 +137,8 @@ jolokia:
   tls:                          # optional — omit for plain HTTP
     ca_cert: /path/to/ca.pem
     insecure_skip_verify: false
+  mbean_overrides:              # optional — see "Metric-name overrides" below
+    BytesInPerSec: "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec"
 ```
 
 | Field                       | Required | Description                                                          |
@@ -145,6 +147,7 @@ jolokia:
 | `auth.username` / `password`| no       | HTTP basic auth credentials.                                         |
 | `tls.ca_cert`               | no       | CA certificate for HTTPS Jolokia endpoints.                          |
 | `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
+| `mbean_overrides`           | no       | Map of logical metric label → MBean object name for agents that expose non-standard MBean names. See [Metric-name overrides](#metric-name-overrides). |
 
 ### `prometheus` — optional, for historical metrics
 
@@ -160,6 +163,9 @@ prometheus:
   filter:                       # optional — scope queries to a specific target
     labels:
       job: confluent/kafka-jmx-exporter
+  metric_names:                 # optional — see "Metric-name overrides" below
+    BytesInPerSec: acme_broker_bytesin_total
+    MessagesInPerSec: acme_broker_messagesin_total
 ```
 
 | Field                       | Required | Description                                                          |
@@ -169,10 +175,44 @@ prometheus:
 | `tls.ca_cert`               | no       | CA certificate for HTTPS Prometheus endpoints.                       |
 | `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
 | `filter.labels`             | no       | Map of Prometheus label selectors to scope queries. When set, all PromQL queries include these as `{key="value"}` filters. Useful when a single Prometheus scrapes multiple clusters. |
+| `metric_names`              | no       | Map of logical metric label → base Prometheus series name for exporters that relabel the standard series. See [Metric-name overrides](#metric-name-overrides). |
 
 `jolokia` and `prometheus` are mutually exclusive per scan invocation — `--metrics`
 selects which one `kcp` reads. You can keep both blocks in the file and switch
 between them by changing the flag.
+
+### Metric-name overrides
+
+If your Prometheus exporter relabels the standard broker series, or your Jolokia
+agent exposes broker MBeans under non-standard object names, the built-in queries
+return empty results. Rather than patching those names in source, repoint them per
+cluster: `prometheus.metric_names` maps a logical label to the base **series name**
+your exporter exposes, and `jolokia.mbean_overrides` maps a logical label to the
+**MBean object name** your agent exposes.
+
+Both key on the same seven logical labels:
+
+`BytesInPerSec`, `BytesOutPerSec`, `MessagesInPerSec`, `PartitionCount`,
+`GlobalPartitionCount`, `ClientConnectionCount`, `TotalLocalStorageUsage`.
+
+- **Only labels you need to change** must appear; unlisted labels keep their
+  defaults. A key with an empty value (`BytesInPerSec: ""`) is treated as *no
+  override* and silently ignored — set a real name or omit the key entirely.
+- **Keys are validated at load time** — an unknown or misspelled label (wrong case
+  included) is a hard error listing the valid labels, not a silent no-op. Both
+  blocks are validated whenever the file loads, regardless of which one `--metrics`
+  selects, so a typo in the block you are *not* currently scanning with still fails
+  the scan.
+- **Prometheus overrides replace the base series name only.** `kcp` keeps its own
+  wrapping (`sum(rate(<name>[<window>]))`, `sum(<name>)`, the GiB conversion) and
+  `filter.labels` injection, so the override is a rename, not a full-query rewrite.
+  For `GlobalPartitionCount` the `{name="GlobalPartitionCount"}` discriminator is
+  preserved on top of the overridden series name — so your relabelled series must
+  still carry the `name="GlobalPartitionCount"` label, or the preserved
+  discriminator filters it down to nothing.
+- If an overridden metric **still** returns no data, `kcp` logs it at **WARN**
+  (a plain missing default is logged at DEBUG) — the override was configured
+  precisely to fix an empty result, so a still-empty result is worth surfacing.
 
 ## Where to go next
 
