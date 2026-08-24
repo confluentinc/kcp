@@ -377,6 +377,8 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		RolloutTimeout:                  g.Spec.DefaultPolicies.RolloutTimeout,
 		DetectUnroutedProducersDuration: g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
 		ConsumerOffsetSyncDrainDuration: g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
+		HotReloadTimeout:                g.Spec.DefaultPolicies.HotReloadTimeout,
+		GatewayConfigPort:               g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 
 	opts := MigrationExecutorOpts{

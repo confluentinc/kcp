@@ -569,7 +569,7 @@ func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
 // and that it captures the OVERRIDE rather than the manifest default.
 func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n"
+		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n    hotReloadTimeout: 45s\n    gatewayConfigPort: 9090\n"
 	})
 	cmd := NewMigrationExecuteCmd()
 	require.NoError(t, cmd.Flags().Parse([]string{
@@ -591,6 +591,8 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	assert.Equal(t, 2*time.Minute, rec.RolloutTimeout)
 	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
 	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration, "an unset knob is recorded as its zero")
+	assert.Equal(t, 45*time.Second, rec.HotReloadTimeout)
+	assert.Equal(t, 9090, rec.GatewayConfigPort)
 }
 
 // TestExecute_InitDoesNotCarryLastRunPolicies — the record is absent until the
