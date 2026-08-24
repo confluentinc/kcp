@@ -259,10 +259,13 @@ blocks:
           value: "kcp-gateway-license"
       prologue:
         commands:
-          # Google Cloud SDK is not pre-installed on Semaphore agents.
-          - curl https://sdk.cloud.google.com | bash -s -- --disable-prompts
-          - source ~/google-cloud-sdk/path.bash.inc
+          # The gcloud SDK is pre-installed on Semaphore ubuntu24 agents at
+          # ~/google-cloud-sdk (re-running the installer aborts on the existing
+          # dir), so only install if it is genuinely missing, then ensure it is
+          # on PATH.
+          - command -v gcloud >/dev/null 2>&1 || curl https://sdk.cloud.google.com | bash -s -- --disable-prompts
           - export PATH="${HOME}/google-cloud-sdk/bin:${PATH}"
+          - gcloud --version | head -n 1
       jobs:
         - name: 'read licence secret'
           commands:
