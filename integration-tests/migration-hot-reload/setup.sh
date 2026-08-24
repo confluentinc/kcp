@@ -52,6 +52,13 @@ LICENSE_SECRET_ID="${LICENSE_SECRET_ID:-kcp/e2e/gateway-license}"
 # this secret name takes precedence over the AWS path — but not over an explicit
 # GATEWAY_LICENSE_KEY.
 GATEWAY_LICENSE_GCP_SECRET="${GATEWAY_LICENSE_GCP_SECRET:-}"
+# CI likewise has no ambient AWS credentials for the ECR operator-image pull. When
+# these are set (the Semaphore path), the narrowly-scoped ECR access key is read
+# from GCP Secret Manager — over the same OIDC federation as the licence — and
+# exported for the ECR login below. Both must be set together; leave them unset
+# locally, where an ambient AWS profile is used instead.
+ECR_AWS_KEY_GCP_SECRET="${ECR_AWS_KEY_GCP_SECRET:-}"
+ECR_AWS_SECRET_GCP_SECRET="${ECR_AWS_SECRET_GCP_SECRET:-}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
@@ -159,6 +166,20 @@ kubectl --context "${PROFILE}" create namespace "${NAMESPACE}" --dry-run=client 
 echo "Preparing images..."
 if ! docker image inspect "${OPERATOR_IMAGE}" >/dev/null 2>&1; then
   echo "  Authenticating to ECR..."
+  # CI has no ambient AWS credentials. When the ECR pull secrets are configured
+  # (Semaphore), read the narrowly-scoped access key from GCP Secret Manager and
+  # export it here — straight into the env var, never echoed, never on disk, never
+  # passed as an argument. Locally these knobs are unset and the ambient AWS
+  # profile is used unchanged.
+  if [ -n "${ECR_AWS_KEY_GCP_SECRET:-}" ] && [ -n "${ECR_AWS_SECRET_GCP_SECRET:-}" ]; then
+    command -v gcloud >/dev/null 2>&1 || {
+      echo "FATAL: ECR_AWS_*_GCP_SECRET is set but the gcloud CLI is not on PATH to read the ECR credentials" >&2
+      exit 1
+    }
+    AWS_ACCESS_KEY_ID="$(gcloud secrets versions access latest --secret="${ECR_AWS_KEY_GCP_SECRET}")"
+    AWS_SECRET_ACCESS_KEY="$(gcloud secrets versions access latest --secret="${ECR_AWS_SECRET_GCP_SECRET}")"
+    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  fi
   aws ecr get-login-password --region "${AWS_REGION}" \
     | docker login --username AWS --password-stdin "${OPERATOR_REGISTRY}" >/dev/null
   echo "  Pulling operator image (amd64)..."
