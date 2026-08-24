@@ -92,7 +92,17 @@ ensure_ecr_aws_creds() {
     }
     AWS_ACCESS_KEY_ID="$(gcloud secrets versions access latest --secret="${ECR_AWS_KEY_GCP_SECRET}")"
     AWS_SECRET_ACCESS_KEY="$(gcloud secrets versions access latest --secret="${ECR_AWS_SECRET_GCP_SECRET}")"
+    if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
+      echo "FATAL: the ECR credentials read from GCP Secret Manager are empty — does ${SERVICE_ACCOUNT_EMAIL:-the CI service account} have secretAccessor on ${ECR_AWS_KEY_GCP_SECRET} and ${ECR_AWS_SECRET_GCP_SECRET}?" >&2
+      exit 1
+    fi
     export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    # These are static IAM-user credentials. The CI agent carries its own ambient AWS
+    # environment (instance/IMDS creds for its post-job CloudWatch hook); a leftover
+    # AWS_SESSION_TOKEN alongside a static access key makes AWS reject the request with
+    # UnrecognizedClientException, and an inherited AWS_PROFILE would shadow these. Clear
+    # both so only the scoped key is used.
+    unset AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE
   fi
   _ecr_aws_creds_ready=1
 }
@@ -102,7 +112,8 @@ echo "Profile:        ${PROFILE}"
 echo "Gateway:        ${GATEWAY_NAME} (${GATEWAY_REPLICAS} replicas, +1 canary during a hot reload)"
 echo "Gateway image:  confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}"
 echo "Source broker:  ${KAFKA_IMAGE} -> ${SOURCE_BOOTSTRAP} (topic ${SOURCE_TOPIC})"
-echo "CFK chart:      ${CFK_CHART_OCI:+${CFK_CHART_OCI} (${CFK_CHART_VERSION}, from ECR)}${CFK_CHART_OCI:-${CFK_CHART_PATH}}"
+chart_display="${CFK_CHART_OCI:+${CFK_CHART_OCI} (${CFK_CHART_VERSION}, from ECR)}"
+echo "CFK chart:      ${chart_display:-${CFK_CHART_PATH}}"
 echo ""
 
 # --- Preflight -------------------------------------------------------------
