@@ -234,3 +234,54 @@ blocks:
             # runs `mkdocs build --strict` — catches dependency-resolution conflicts
             # and breaking extension changes before they reach contributors.
             - make docs-build
+
+  # TEMPORARY probe — confirms the gateway hot-reload licence is reachable from
+  # Semaphore via the dedicated kcp WIF (pool kcp-idp-pool, SA semaphore-kcp),
+  # ahead of wiring the full migration-hot-reload e2e block. It authenticates
+  # exactly as publish_release.yml does, reads the kcp-gateway-license secret,
+  # and reports only its byte count / JWT segment count — never the licence
+  # itself. DELETE this block once the read is verified green.
+  - name: 'probe: gateway licence from GCP'
+    dependencies: []
+    task:
+      env_vars:
+        - name: PROJECT_ID
+          value: "kcp-prod"
+        - name: PROJECT_NUMBER
+          value: "118281707876"
+        - name: POOL_ID
+          value: "kcp-idp-pool"
+        - name: PROVIDER_ID
+          value: "kcp-idp-provider"
+        - name: SERVICE_ACCOUNT_EMAIL
+          value: "semaphore-kcp@kcp-prod.iam.gserviceaccount.com"
+        - name: GATEWAY_LICENSE_GCP_SECRET
+          value: "kcp-gateway-license"
+      prologue:
+        commands:
+          # The gcloud SDK is pre-installed on Semaphore ubuntu24 agents at
+          # ~/google-cloud-sdk (re-running the installer aborts on the existing
+          # dir), so only install if it is genuinely missing, then ensure it is
+          # on PATH.
+          - command -v gcloud >/dev/null 2>&1 || curl https://sdk.cloud.google.com | bash -s -- --disable-prompts
+          - export PATH="${HOME}/google-cloud-sdk/bin:${PATH}"
+          - gcloud --version | head -n 1
+      jobs:
+        - name: 'read licence secret'
+          commands:
+            # WIF federation via Semaphore's built-in OIDC token — same flow as
+            # the release pipeline, just against the kcp-scoped pool/provider.
+            - export POOL_URI="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
+            - echo "${SEMAPHORE_OIDC_TOKEN}" > /tmp/oidc_token
+            - gcloud iam workload-identity-pools create-cred-config "${POOL_URI}" --service-account="${SERVICE_ACCOUNT_EMAIL}" --output-file="${HOME}/semaphore/creds.json" --credential-source-file=/tmp/oidc_token --credential-source-type="text"
+            - export GOOGLE_APPLICATION_CREDENTIALS="${HOME}/semaphore/creds.json"
+            - gcloud auth login --cred-file="${HOME}/semaphore/creds.json" --project="${PROJECT_ID}"
+            # Read the secret into a shell var and report only its shape. Semaphore
+            # echoes the command text (not expanded values), so the licence never
+            # reaches the log; expect ~704 bytes and 3 JWT segments.
+            - |
+              LICENCE="$(gcloud secrets versions access latest --secret="${GATEWAY_LICENSE_GCP_SECRET}" --project="${PROJECT_ID}")"
+              BYTES="$(printf '%s' "${LICENCE}" | wc -c | tr -d ' ')"
+              SEGMENTS="$(( $(printf '%s' "${LICENCE}" | tr -cd '.' | wc -c) + 1 ))"
+              echo "licence byte count: ${BYTES}, JWT segments: ${SEGMENTS}"
+              test "${BYTES}" -gt 0
