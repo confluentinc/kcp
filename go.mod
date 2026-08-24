@@ -1,6 +1,6 @@
 module github.com/confluentinc/kcp
 
-go 1.26
+go 1.26.7
 
 require (
 	github.com/IBM/sarama v1.46.3
