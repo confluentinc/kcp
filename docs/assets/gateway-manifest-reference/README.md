@@ -162,6 +162,8 @@ on every `execute`, never frozen at `init`.
 | `rolloutTimeout` | duration | `0` | `--rollout-timeout` | Max wait for the operator to report the gateway `Ready` during fence and switchover (e.g. `10m`). `0` means no deadline — waits until convergence or cancellation. |
 | `detectUnroutedProducersDuration` | duration | `0` | `--detect-unrouted-producers-duration` | Window to monitor source offsets after fencing for producers still bypassing the gateway; a detected increase aborts before switchover. `0` **skips the check entirely**; minimum `10s` when set — shorter can't span a producer's metadata refresh. |
 | `consumerOffsetSyncDrainDuration` | duration | `0` | `--consumer-offset-sync-drain-duration` | Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set. `0` means no wait. |
+| `hotReloadTimeout` | duration | `0` | `--hot-reload-timeout` | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0` uses the built-in 90s budget rather than waiting forever. |
+| `gatewayConfigPort` | int | `0` | `--gateway-config-port` | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the persisted value, falling back to the gateway default (`9180`). |
 
 ## Credentials
 
@@ -244,7 +246,7 @@ tables above:
 | `kcp migration execute` | `--migration-yaml` | yes | Path to this manifest. |
 | | `--migration-state-file` | yes | Produced by `init`. |
 | | `--migration-id` | no | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
-| | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration` | no | Per-run overrides of the matching `spec.defaultPolicies` field for this run only. |
+| | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no | Per-run overrides of the matching `spec.defaultPolicies` field for this run only. |
 | `kcp migration lag-check` | `--migration-yaml` | yes | Path to this manifest. |
 | | `--poll-interval` | no (default `1`) | Poll interval in seconds, `1`-`60`. |
 
@@ -316,6 +318,8 @@ Key rules, beyond required/optional per field above:
 | `spec.defaultPolicies.rolloutTimeout` | duration | no | `0` | `>= 0` |
 | `spec.defaultPolicies.detectUnroutedProducersDuration` | duration | no | `0` | `0`, or `>= 10s` |
 | `spec.defaultPolicies.consumerOffsetSyncDrainDuration` | duration | no | `0` | `>= 0` |
+| `spec.defaultPolicies.hotReloadTimeout` | duration | no | `0` | `>= 0` |
+| `spec.defaultPolicies.gatewayConfigPort` | int | no | `0` | `>= 0` |
 
 ## Editor support
 

@@ -135,8 +135,8 @@ func TestRunReport_ResumeRecordsSkippedStages(t *testing.T) {
 // A failure is a result, not an absence of one.
 func TestRunReport_FailedRunIsRecorded(t *testing.T) {
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-			return fmt.Errorf("apply gateway failed: forbidden")
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
+			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
 	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
