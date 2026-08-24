@@ -134,6 +134,15 @@ type DefaultPolicies struct {
 	// ConsumerOffsetSyncDrainDuration waits after disabling consumer offset
 	// sync. 0 means no wait; it has no effect unless pauseConsumerOffsetSync.
 	ConsumerOffsetSyncDrainDuration time.Duration `yaml:"consumerOffsetSyncDrainDuration,omitempty" json:"consumerOffsetSyncDrainDuration,omitempty"`
+	// HotReloadTimeout bounds the per-pod configId verification used when the
+	// gateway supports hot-reload. 0 uses gateway.DefaultHotReloadTimeout; unlike
+	// RolloutTimeout this is never unbounded, since a hot-reload moves no
+	// Kubernetes signal to wait on.
+	HotReloadTimeout time.Duration `yaml:"hotReloadTimeout,omitempty" json:"hotReloadTimeout,omitempty"`
+	// GatewayConfigPort is the port serving the gateway's /config endpoint,
+	// polled per pod to confirm a config revision was applied. 0 uses the
+	// persisted value, falling back to the gateway default (9180).
+	GatewayConfigPort int `yaml:"gatewayConfigPort,omitempty" json:"gatewayConfigPort,omitempty"`
 }
 
 // envelope is the minimum needed to discriminate one kind from another. It is
@@ -351,6 +360,12 @@ func (p DefaultPolicies) Validate() []error {
 		errs = append(errs, fmt.Errorf(
 			"spec.defaultPolicies.detectUnroutedProducersDuration: must be at least %s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh",
 			minDetectUnroutedProducersDuration))
+	}
+	if p.HotReloadTimeout < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.hotReloadTimeout: must not be negative (0 uses the built-in default)"))
+	}
+	if p.GatewayConfigPort < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.gatewayConfigPort: must not be negative (0 uses the default port)"))
 	}
 	return errs
 }

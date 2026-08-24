@@ -122,7 +122,7 @@ func GenerateGateway() ([]byte, error) {
 	policy.Required = []string{"lagThreshold"}
 
 	// Durations parse as "10m", not as an integer count.
-	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration"} {
+	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
 		p := policy.Properties[k]
 		// time.Duration reflects as {"type":"integer"}; Type and Types are
 		// mutually exclusive, so the reflected one must be replaced, not added to.
@@ -168,6 +168,8 @@ func GenerateGateway() ([]byte, error) {
 		policy.Properties["rolloutTimeout"]:                  "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
 		policy.Properties["detectUnroutedProducersDuration"]: "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
 		policy.Properties["consumerOffsetSyncDrainDuration"]: "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
+		policy.Properties["hotReloadTimeout"]:                "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+		policy.Properties["gatewayConfigPort"]:               "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the persisted value, falling back to the gateway default (9180).",
 	})
 
 	return marshal(s)
