@@ -168,6 +168,7 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"migration-yaml", "migration-state-file", "migration-id",
 		"lag-threshold", "promote-batch-size", "rollout-timeout",
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
+		"hot-reload-timeout", "gateway-config-port",
 	}, visible)
 
 	runReport := cmd.Flags().Lookup("run-report")
@@ -433,6 +434,12 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		// written for humans/support, never read back by kcp, so it can no more
 		// drift than policy itself (TestExecute_RecordsLastRunPolicies)
 		"LastRunPolicies": true,
+		// resolved live against the cluster's Gateway CRD/CR at init, and
+		// re-resolved authoritatively at execute — reflects the cluster's
+		// capability, not something the operator's manifest declares
+		"GatewayVerificationMode": true,
+		"GatewayHotReloadEnabled": true,
+		"GatewayConfigPort":       true,
 	}
 
 	typ := reflect.TypeOf(migration.MigrationConfig{})
