@@ -18,10 +18,12 @@ const (
 
 	// DefaultHotReloadTimeout is the budget for a hot-reload to reach every pod.
 	//
-	// Measured convergence on a working gateway is ~14s, so this is deliberately
-	// generous: a timeout here is terminal, and the cost of waiting slightly
-	// longer is far lower than the cost of failing a switchover that was about to
-	// succeed. It matches the budget the rig's verify.sh uses.
+	// It is a ceiling, not a wait: WaitForGatewayConfigID returns the moment every
+	// pod reports the new configId, so this is only ever spent on failure. Measured
+	// convergence is ~4-6s locally and ~14s on EKS, so 90s is deliberately generous
+	// — a timeout here is terminal, and waiting longer costs far less than failing a
+	// switchover that was about to succeed. Lowering it buys nothing on the happy
+	// path and only makes that false failure more likely.
 	DefaultHotReloadTimeout = 90 * time.Second
 )
 

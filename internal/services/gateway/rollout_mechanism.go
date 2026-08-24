@@ -46,8 +46,11 @@ const (
 // the operator writing that status and writing the Deployment — not "did
 // anything happen at all", which the generation baseline answers outright.
 //
-// The duration is not measured. It is the same 10s the previous detection window
-// used, kept rather than replaced with a second unmeasured number.
+// This window only affects gateways that cannot report a configId; the modern
+// path detects a roll inline from the generation baseline (see
+// waitForGatewayConfigID) and never observes it. Kept at 10s rather than shrunk:
+// on that legacy fallback, reading a roll CFK writes to the Deployment a beat
+// late as "no roll" would skip the replacement wait with no configId backstop.
 //
 // var so tests can shorten it.
 var gatewayRollConfirmationWindow = 10 * time.Second
