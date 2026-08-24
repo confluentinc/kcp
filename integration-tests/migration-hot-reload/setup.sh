@@ -28,6 +28,11 @@ GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-2}"
 # The public Helm repo tops out at 0.1718.10, whose CRD predates spec.configId,
 # so the chart has to come from a local checkout.
 CFK_CHART_PATH="${CFK_CHART_PATH:-${HOME}/cfk-setup/gateway-hotreload/cfk-chart-v3.3.x}"
+# In CI the chart is not on disk. When CFK_CHART_OCI is set (the Semaphore path) it is
+# an oci:// reference to the chart mirrored in ECR; setup.sh pulls and unpacks it below
+# and then treats it exactly like a local checkout. CFK_CHART_VERSION is its tag.
+CFK_CHART_OCI="${CFK_CHART_OCI:-}"
+CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.1718.34}"
 # Docker Hub's operator also stops at 0.1718.10, so the image comes from the
 # internal ECR mirror. It is published amd64-only.
 OPERATOR_IMAGE="${OPERATOR_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-operator:v0.1718.34-amd64}"
@@ -73,18 +78,52 @@ WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 MINIKUBE_CPUS="${MINIKUBE_CPUS:-4}"
 MINIKUBE_MEMORY="${MINIKUBE_MEMORY:-10240}"
 
+# Populate AWS credentials for the ECR pulls (operator image and CFK chart) from GCP
+# Secret Manager when the CI knobs are set — over the same OIDC federation as the
+# licence. Idempotent (reads once). No-op locally, where an ambient AWS profile is used
+# unchanged. Both knobs are required together. The values go straight into env vars:
+# never echoed, never written to disk, never passed as an argument.
+ensure_ecr_aws_creds() {
+  [ -n "${_ecr_aws_creds_ready:-}" ] && return 0
+  if [ -n "${ECR_AWS_KEY_GCP_SECRET:-}" ] && [ -n "${ECR_AWS_SECRET_GCP_SECRET:-}" ]; then
+    command -v gcloud >/dev/null 2>&1 || {
+      echo "FATAL: ECR_AWS_*_GCP_SECRET is set but the gcloud CLI is not on PATH to read the ECR credentials" >&2
+      exit 1
+    }
+    AWS_ACCESS_KEY_ID="$(gcloud secrets versions access latest --secret="${ECR_AWS_KEY_GCP_SECRET}")"
+    AWS_SECRET_ACCESS_KEY="$(gcloud secrets versions access latest --secret="${ECR_AWS_SECRET_GCP_SECRET}")"
+    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+  fi
+  _ecr_aws_creds_ready=1
+}
+
 echo "=== kcp hot-reload E2E setup ==="
 echo "Profile:        ${PROFILE}"
 echo "Gateway:        ${GATEWAY_NAME} (${GATEWAY_REPLICAS} replicas, +1 canary during a hot reload)"
 echo "Gateway image:  confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}"
 echo "Source broker:  ${KAFKA_IMAGE} -> ${SOURCE_BOOTSTRAP} (topic ${SOURCE_TOPIC})"
-echo "CFK chart:      ${CFK_CHART_PATH}"
+echo "CFK chart:      ${CFK_CHART_OCI:+${CFK_CHART_OCI} (${CFK_CHART_VERSION}, from ECR)}${CFK_CHART_OCI:-${CFK_CHART_PATH}}"
 echo ""
 
 # --- Preflight -------------------------------------------------------------
 for bin in minikube kubectl helm docker; do
   command -v "$bin" >/dev/null 2>&1 || { echo "FATAL: ${bin} is required but not on PATH"; exit 1; }
 done
+
+# In CI, fetch the chart from the ECR OCI mirror and unpack it so everything below
+# (the configId guard and helm install) treats it exactly like a local checkout.
+if [ -n "${CFK_CHART_OCI}" ]; then
+  echo "Pulling CFK chart from the ECR mirror..."
+  ensure_ecr_aws_creds
+  chart_registry="${CFK_CHART_OCI#oci://}"
+  chart_registry="${chart_registry%%/*}"
+  aws ecr get-login-password --region "${AWS_REGION}" \
+    | helm registry login --username AWS --password-stdin "${chart_registry}" >/dev/null
+  chart_unpack_dir="$(mktemp -d)"
+  helm pull "${CFK_CHART_OCI}" --version "${CFK_CHART_VERSION}" \
+    --untar --untardir "${chart_unpack_dir}" >/dev/null
+  CFK_CHART_PATH="${chart_unpack_dir}/$(basename "${CFK_CHART_OCI}")"
+fi
 
 if [ ! -d "${CFK_CHART_PATH}" ]; then
   cat >&2 <<EOF
@@ -166,20 +205,7 @@ kubectl --context "${PROFILE}" create namespace "${NAMESPACE}" --dry-run=client 
 echo "Preparing images..."
 if ! docker image inspect "${OPERATOR_IMAGE}" >/dev/null 2>&1; then
   echo "  Authenticating to ECR..."
-  # CI has no ambient AWS credentials. When the ECR pull secrets are configured
-  # (Semaphore), read the narrowly-scoped access key from GCP Secret Manager and
-  # export it here — straight into the env var, never echoed, never on disk, never
-  # passed as an argument. Locally these knobs are unset and the ambient AWS
-  # profile is used unchanged.
-  if [ -n "${ECR_AWS_KEY_GCP_SECRET:-}" ] && [ -n "${ECR_AWS_SECRET_GCP_SECRET:-}" ]; then
-    command -v gcloud >/dev/null 2>&1 || {
-      echo "FATAL: ECR_AWS_*_GCP_SECRET is set but the gcloud CLI is not on PATH to read the ECR credentials" >&2
-      exit 1
-    }
-    AWS_ACCESS_KEY_ID="$(gcloud secrets versions access latest --secret="${ECR_AWS_KEY_GCP_SECRET}")"
-    AWS_SECRET_ACCESS_KEY="$(gcloud secrets versions access latest --secret="${ECR_AWS_SECRET_GCP_SECRET}")"
-    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
-  fi
+  ensure_ecr_aws_creds
   aws ecr get-login-password --region "${AWS_REGION}" \
     | docker login --username AWS --password-stdin "${OPERATOR_REGISTRY}" >/dev/null
   echo "  Pulling operator image (amd64)..."
