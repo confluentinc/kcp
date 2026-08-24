@@ -234,3 +234,79 @@ blocks:
             # runs `mkdocs build --strict` — catches dependency-resolution conflicts
             # and breaking extension changes before they reach contributors.
             - make docs-build
+
+  - name: 'integration: gateway hot-reload e2e'
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
+    task:
+      agent:
+        machine:
+          # Matches the migration e2e block: the gateway JVMs + hot-reload canary +
+          # source broker need the larger node (setup.sh sizes minikube at 10 GiB / 4 CPU).
+          type: s1-prod-ubuntu24-04-amd64-2
+      env_vars:
+        # GCP workload-identity federation for the confluentinc/kcp repo
+        # (provisioned in migration-tooling/.infra, module kcp_ci_workload_identity).
+        - name: PROJECT_ID
+          value: "kcp-prod"
+        - name: PROJECT_NUMBER
+          value: "118281707876"
+        - name: POOL_ID
+          value: "kcp-idp-pool"
+        - name: PROVIDER_ID
+          value: "kcp-idp-provider"
+        - name: SERVICE_ACCOUNT_EMAIL
+          value: "semaphore-kcp@kcp-prod.iam.gserviceaccount.com"
+        # The licence and the two ECR pull credentials are read from GCP Secret
+        # Manager over that federation by setup.sh — never materialised in the pipeline.
+        - name: GATEWAY_LICENSE_GCP_SECRET
+          value: "kcp-gateway-license"
+        - name: ECR_AWS_KEY_GCP_SECRET
+          value: "kcp-semaphore-ecr-gateway-image-key"
+        - name: ECR_AWS_SECRET_GCP_SECRET
+          value: "kcp-semaphore-ecr-gateway-image-secret"
+        # CFK 3.3.0 is not public; the chart (and the operator image, via setup.sh's
+        # default) come from the kcp-owned ECR OCI mirror in account 635910096382.
+        - name: CFK_CHART_OCI
+          value: "oci://635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-for-kubernetes"
+        - name: CFK_CHART_VERSION
+          value: "0.1718.34"
+      prologue:
+        commands:
+          # Minikube + a K8s-1.30 kubectl are not pre-installed (same as migration e2e).
+          - curl -LO https://storage.googleapis.com/minikube/releases/v1.35.0/minikube-linux-amd64
+          - sudo install minikube-linux-amd64 /usr/local/bin/minikube
+          - curl -LO "https://dl.k8s.io/release/v1.30.0/bin/linux/amd64/kubectl"
+          - sudo install kubectl /usr/local/bin/kubectl
+          # Helm (installs the CFK chart) and the AWS CLI (ECR login) may not be on
+          # the agent; install a pinned helm / awscli v2 only when missing.
+          - command -v helm >/dev/null 2>&1 || (curl -fsSL https://raw.githubusercontent.com/helm/helm/v3.16.4/scripts/get-helm-3 | DESIRED_VERSION=v3.16.4 bash)
+          - command -v aws >/dev/null 2>&1 || (curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o /tmp/awscliv2.zip && unzip -q /tmp/awscliv2.zip -d /tmp && sudo /tmp/aws/install --update)
+          # gcloud SDK is pre-installed at ~/google-cloud-sdk (re-running the installer
+          # aborts on the existing dir); install only if missing, then put it on PATH.
+          - command -v gcloud >/dev/null 2>&1 || curl https://sdk.cloud.google.com | bash -s -- --disable-prompts
+          - export PATH="${HOME}/google-cloud-sdk/bin:${PATH}"
+          # Authenticate to GCP via Semaphore's built-in OIDC token so setup.sh can read
+          # the licence + ECR credentials (same flow as kcp-release/publish_release.yml).
+          - export POOL_URI="projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/providers/${PROVIDER_ID}"
+          - echo "${SEMAPHORE_OIDC_TOKEN}" > /tmp/oidc_token
+          - gcloud iam workload-identity-pools create-cred-config "${POOL_URI}" --service-account="${SERVICE_ACCOUNT_EMAIL}" --output-file="${HOME}/semaphore/creds.json" --credential-source-file=/tmp/oidc_token --credential-source-type="text"
+          - export GOOGLE_APPLICATION_CREDENTIALS="${HOME}/semaphore/creds.json"
+          - gcloud auth login --cred-file="${HOME}/semaphore/creds.json" --project="${PROJECT_ID}"
+          # Restore cached minikube preloads (K8s tarballs) to skip re-download.
+          - cache restore minikube-cache
+      jobs:
+        - name: 'gateway hot-reload e2e'
+          commands:
+            - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-migration-hot-reload-setup
+            - make test-migration-hot-reload-run
+      epilogue:
+        always:
+          commands:
+            - make test-migration-hot-reload-teardown
+        on_pass:
+          commands:
+            - cache store minikube-cache ~/.minikube/cache/

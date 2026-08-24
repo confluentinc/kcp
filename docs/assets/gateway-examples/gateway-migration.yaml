@@ -121,3 +121,5 @@ spec:
     rolloutTimeout: 10m # 0 = no deadline
     detectUnroutedProducersDuration: 30s # 0 = CHECK SKIPPED; min 10s when set
     consumerOffsetSyncDrainDuration: 15s # 0 = no wait; needs pauseConsumerOffsetSync
+    hotReloadTimeout: 90s # 0 = built-in 90s budget; never unbounded
+    gatewayConfigPort: 0 # 0 = persisted value, falling back to the gateway default (9180)
