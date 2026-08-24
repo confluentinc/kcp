@@ -3,6 +3,13 @@
 Proves, against a real licensed Confluent Gateway, that kcp confirms a gateway
 transition by **config revision** rather than by pod turnover.
 
+> **You need a CP Enterprise Gateway licence to run this suite at all — a purely
+> local run included, not just CI.** The gateway gates its config-file watcher on
+> the licence, and CFK reports success without it, so an unlicensed run passes
+> every Kubernetes assertion while proving nothing. `setup.sh` therefore refuses to
+> start without one: it reads the licence from `GATEWAY_LICENSE_KEY`, else from AWS
+> Secrets Manager (`kcp/e2e/gateway-license`). See [The licence](#the-licence).
+
 ```bash
 make test-migration-hot-reload            # setup, run, teardown
 make test-migration-hot-reload-setup      # provision only
@@ -121,10 +128,14 @@ Kubernetes or CFK signal shows the difference; only `GET /config` does. That
 asymmetry is why kcp has `VerifyHotReloadCapability`, and why `setup.sh` greps the
 gateway log for the trial-mode warning before declaring itself ready.
 
-`setup.sh` takes the licence from `GATEWAY_LICENSE_KEY` if set, else from AWS
-Secrets Manager at `kcp/e2e/gateway-license` (authenticate first). The JWT reaches
-the cluster through a pipe into `kubectl create secret`: never on argv, never
-written to disk, never logged. The rendered CRs reference the Secret by name only.
+`setup.sh` resolves the licence in precedence order: from `GATEWAY_LICENSE_KEY` if
+set; else, when `GATEWAY_LICENSE_GCP_SECRET` names a secret, from GCP Secret Manager
+— the CI path, reached over Semaphore's OIDC workload-identity federation (see the
+`kcp_ci_workload_identity` module in `migration-tooling/.infra`); else from AWS
+Secrets Manager at `kcp/e2e/gateway-license` (authenticate first). Whichever the
+source, the JWT reaches the cluster through a pipe into `kubectl create secret`:
+never on argv, never written to disk, never logged. The rendered CRs reference the
+Secret by name only.
 
 ## Architecture note
 

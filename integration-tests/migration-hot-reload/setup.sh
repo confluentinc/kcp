@@ -47,6 +47,11 @@ GATEWAY_BOOTSTRAP="${GATEWAY_NAME}.${NAMESPACE}.svc.cluster.local:9595"
 SOURCE_TOPIC="${SOURCE_TOPIC:-kcp-hr-fence-probe}"
 
 LICENSE_SECRET_ID="${LICENSE_SECRET_ID:-kcp/e2e/gateway-license}"
+# CI reads the licence from GCP Secret Manager instead of AWS, over Semaphore's OIDC
+# workload-identity federation (see .semaphore and migration-tooling/.infra). When set,
+# this secret name takes precedence over the AWS path — but not over an explicit
+# GATEWAY_LICENSE_KEY.
+GATEWAY_LICENSE_GCP_SECRET="${GATEWAY_LICENSE_GCP_SECRET:-}"
 AWS_REGION="${AWS_REGION:-us-east-1}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
 
@@ -97,9 +102,25 @@ fi
 echo "  ✓ chart ${chart_version} declares spec.configId"
 
 # The licence is the one input with no in-cluster substitute. Take it from the
-# environment when set, else from Secrets Manager. It is never written to disk
-# and never passed as an argument — see create_license_secret.
-if [ -z "${GATEWAY_LICENSE_KEY:-}" ]; then
+# environment when set, else from GCP Secret Manager (the CI path), else from AWS
+# Secrets Manager. It is never written to disk and never passed as an argument —
+# see create_license_secret.
+if [ -n "${GATEWAY_LICENSE_KEY:-}" ]; then
+  echo "  ✓ using licence from GATEWAY_LICENSE_KEY"
+elif [ -n "${GATEWAY_LICENSE_GCP_SECRET:-}" ]; then
+  command -v gcloud >/dev/null 2>&1 || {
+    echo "FATAL: GATEWAY_LICENSE_GCP_SECRET is set but the gcloud CLI is not on PATH to read it" >&2
+    exit 1
+  }
+  # Mirrors the AWS branch: prove there is an active credential, not that it can read this
+  # specific secret — the read itself happens in create_license_secret, straight into a pipe.
+  if ! gcloud auth print-access-token >/dev/null 2>&1; then
+    echo "FATAL: GATEWAY_LICENSE_GCP_SECRET is set but there is no active gcloud credential to read ${GATEWAY_LICENSE_GCP_SECRET}." >&2
+    echo "       Authenticate to GCP or export GATEWAY_LICENSE_KEY with a CP Enterprise licence." >&2
+    exit 1
+  fi
+  echo "  ✓ gcloud credential present; licence will be read from GCP secret ${GATEWAY_LICENSE_GCP_SECRET}"
+else
   command -v aws >/dev/null 2>&1 || {
     echo "FATAL: GATEWAY_LICENSE_KEY is unset and the aws CLI is not on PATH to fetch ${LICENSE_SECRET_ID}" >&2
     exit 1
@@ -110,8 +131,6 @@ if [ -z "${GATEWAY_LICENSE_KEY:-}" ]; then
     exit 1
   fi
   echo "  ✓ AWS credentials present; licence will be read from ${LICENSE_SECRET_ID}"
-else
-  echo "  ✓ using licence from GATEWAY_LICENSE_KEY"
 fi
 
 # --- Cluster ---------------------------------------------------------------
@@ -167,6 +186,10 @@ create_license_secret() {
   local manifest
   if [ -n "${GATEWAY_LICENSE_KEY:-}" ]; then
     manifest="$(printf '%s' "${GATEWAY_LICENSE_KEY}" \
+      | kubectl --context "${PROFILE}" -n "${NAMESPACE}" create secret generic gateway-license \
+          --from-file=license.txt=/dev/stdin --dry-run=client -o yaml)"
+  elif [ -n "${GATEWAY_LICENSE_GCP_SECRET:-}" ]; then
+    manifest="$(gcloud secrets versions access latest --secret="${GATEWAY_LICENSE_GCP_SECRET}" \
       | kubectl --context "${PROFILE}" -n "${NAMESPACE}" create secret generic gateway-license \
           --from-file=license.txt=/dev/stdin --dry-run=client -o yaml)"
   else
