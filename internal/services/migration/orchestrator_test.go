@@ -24,8 +24,8 @@ import (
 // orchestratorOverrides allows tests to customize mock behavior before construction.
 type orchestratorOverrides struct {
 	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
-	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
-	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
+	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
@@ -62,8 +62,8 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	getGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
 		return []byte(testInitialCR), nil
 	}
-	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte) error {
-		return nil
+	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
+		return configID, nil
 	}
 
 	// Track promoted topics so ListMirrorTopics can model the realistic
@@ -89,7 +89,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	}
 
 	// Default nil → mock returns success
-	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 
 	// Apply overrides if provided
 	if len(overrides) > 0 {
@@ -118,7 +118,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 				"uid-2": {},
 			}, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return nil
 		},
 		waitForGatewayReadyFn: waitForGatewayReadyFn,
@@ -244,6 +244,45 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 	}
 }
 
+// TestHasPendingWork pins the predicate cmd/migration/execute uses to decide
+// whether to touch the gateway at all before Execute runs — see
+// migration_executor.go. It must agree with what Execute would actually do:
+// true for every state Execute walks at least one step for, false only once
+// there is nothing left.
+func TestHasPendingWork(t *testing.T) {
+	t.Run("true for a fresh migration", func(t *testing.T) {
+		orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
+		assert.True(t, orch.HasPendingWork())
+	})
+
+	t.Run("true for every state short of switched", func(t *testing.T) {
+		for _, s := range []string{StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted} {
+			t.Run(s, func(t *testing.T) {
+				orch, _, _ := newHappyPathOrchestrator(t, s, nil)
+				assert.True(t, orch.HasPendingWork())
+			})
+		}
+	})
+
+	t.Run("false once switched", func(t *testing.T) {
+		orch, _, _ := newHappyPathOrchestrator(t, StateSwitched, nil)
+		assert.False(t, orch.HasPendingWork(),
+			"a completed migration must report no pending work, so a re-run touches nothing")
+	})
+
+	t.Run("true for an unrecognized state, deferring to Execute's own refusal", func(t *testing.T) {
+		// A corrupted file or one written by a newer kcp must fail loudly at
+		// Execute (see isKnownState), not be silently read here as "nothing to
+		// do" — that would report a bogus success instead of the refusal.
+		orch, _, _ := newHappyPathOrchestrator(t, "some-future-state", nil)
+		require.True(t, orch.HasPendingWork())
+
+		err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unrecognized migration state")
+	})
+}
+
 // --- Error handling tests ---
 
 func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
@@ -280,8 +319,8 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 
 func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-			return fmt.Errorf("apply gateway failed: forbidden")
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
 
@@ -306,13 +345,13 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	var appliedYAMLs []string
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			// Record every applied CR so the unfence (the round-tripped initial
 			// CR, distinct from the literal fenced-yaml) can be asserted below.
 			mu.Lock()
 			appliedYAMLs = append(appliedYAMLs, string(yaml))
 			mu.Unlock()
-			return nil
+			return "", nil
 		},
 	}
 
@@ -375,14 +414,14 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 	var applyCallCount int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCallCount, 1)
 			if n == 1 {
 				// First apply is the fence — succeed
-				return nil
+				return "", nil
 			}
 			// Second apply is the unfence — fail
-			return fmt.Errorf("k8s API unavailable")
+			return "", fmt.Errorf("k8s API unavailable")
 		},
 	}
 
@@ -428,7 +467,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		// (the builder's default, which succeeds), so WaitForGatewayReady is
 		// reached only by the unfence rollout — fail it to exercise the
 		// "unfence never converges" path.
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			atomic.AddInt64(&waitCallCount, 1)
 			return fmt.Errorf("gateway pods did not converge")
 		},
@@ -592,11 +631,11 @@ func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T
 			var mu sync.Mutex
 			var appliedYAMLs []string
 			overrides := orchestratorOverrides{
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 					mu.Lock()
 					appliedYAMLs = append(appliedYAMLs, string(yaml))
 					mu.Unlock()
-					return nil
+					return "", nil
 				},
 			}
 
@@ -631,13 +670,13 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 	var stateDir string
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			if atomic.AddInt64(&applyCalls, 1) == 2 {
 				// The unfence apply: remove the state directory so every
 				// subsequent persist fails while the unfence itself succeeds.
 				require.NoError(t, os.RemoveAll(stateDir))
 			}
-			return nil
+			return "", nil
 		},
 	}
 
@@ -680,9 +719,9 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 	}
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			record("apply")
-			return nil
+			return "", nil
 		},
 	}
 
@@ -756,11 +795,11 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 	var applyCalls, waitCalls, alterCalls int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
-			return nil
+			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			atomic.AddInt64(&waitCalls, 1)
 			return nil
 		},
@@ -798,6 +837,114 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		"only the failed disable attempt — no restore call when nothing was flipped")
 }
 
+// TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR covers the state
+// that per-pod verification made reachable for the first time: the fenced CR is
+// live in the cluster but was never confirmed on the serving pods. Leaving it
+// there means either traffic blocked on part of the fleet, or a promotion still
+// in flight that lands after kcp exits. Either way kcp must put back what it
+// changed.
+func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
+	var appliedYAML [][]byte
+	var mu sync.Mutex
+	var readyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			mu.Lock()
+			appliedYAML = append(appliedYAML, yaml)
+			mu.Unlock()
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			// First call is the fence's own verification — fail it. The second is
+			// the restore's, which must succeed for the compensation to complete.
+			if atomic.AddInt64(&readyCalls, 1) == 1 {
+				return fmt.Errorf("gateway pods did not converge")
+			}
+			return nil
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Contains(t, err.Error(), "gateway pods did not converge",
+		"the original cause must survive the compensation")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, appliedYAML, 2, "the fence apply must be followed by a restoring apply")
+	wantFenced, err := deriveFencedCRYAML(config)
+	require.NoError(t, err)
+	assert.Equal(t, wantFenced, appliedYAML[0])
+	assert.Contains(t, string(appliedYAML[1]), "kind: Gateway",
+		"the second apply must be the initial CR, not the fenced one")
+	assert.NotEqual(t, wantFenced, appliedYAML[1])
+
+	// The fence transition was cancelled, so the machine never left lags_ok —
+	// which is already the truth once the fence has been undone. No transition
+	// completed, so there is nothing to persist and no state file to read.
+	assert.Equal(t, StateLagsOk, orch.fsm.Current())
+	assert.NoFileExists(t, stateFilePath,
+		"a run that completed no transition must not write state")
+}
+
+func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testing.T) {
+	// The worst case: the fence is unconfirmed AND cannot be undone. Silence here
+	// would strand an operator with a gateway that may be fencing traffic, so the
+	// surfaced error has to name both halves.
+	var applyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			if atomic.AddInt64(&applyCalls, 1) == 2 {
+				return "", fmt.Errorf("k8s API unavailable")
+			}
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("gateway pods did not converge")
+		},
+	}
+
+	orch, _, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Contains(t, err.Error(), "gateway pods did not converge", "the fence failure")
+	assert.Contains(t, err.Error(), "k8s API unavailable", "the restore failure")
+	assert.Contains(t, err.Error(), "inspect it before re-running")
+
+	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls), "the restore must have been attempted")
+
+	assert.Equal(t, StateLagsOk, orch.fsm.Current())
+	assert.NoFileExists(t, stateFilePath)
+}
+
+func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
+	// The fenced CR never reached the cluster, so there is nothing to undo and
+	// kcp must not write to a gateway it did not change.
+	var applyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return "", fmt.Errorf("admission webhook denied the request")
+		},
+	}
+
+	orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"a failed fence apply must not be followed by a restoring apply")
+}
+
 func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T) {
 	// AE4: the pause failed and the unfence also fails. The rollback cancels:
 	// state stays fenced (memory and disk, honestly reflecting the gateway),
@@ -805,12 +952,12 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	var applyCalls int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 2 {
-				return fmt.Errorf("k8s API unavailable") // the unfence attempt
+				return "", fmt.Errorf("k8s API unavailable") // the unfence attempt
 			}
-			return nil // fence (run 1), and the re-run's fence/switch applies
+			return "", nil // fence (run 1), and the re-run's fence/switch applies
 		},
 	}
 
@@ -863,13 +1010,13 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(c context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(c context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 1 {
-				return nil // fence
+				return "", nil // fence
 			}
 			cancel() // ctx dies mid-unfence
-			return c.Err()
+			return "", c.Err()
 		},
 	}
 
@@ -912,11 +1059,11 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 	}
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			record("apply")
-			return nil
+			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			record("wait-ready")
 			return nil
 		},
@@ -1126,11 +1273,11 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 				// the route; the rollback's unfence applies the fence-free initial
 				// CR. Failing only the latter (the apply with no fence block) cancels
 				// abort_fence, so the FSM honestly rests at offset_sync_paused.
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 					if !strings.Contains(string(yaml), "fence") {
-						return fmt.Errorf("k8s API unavailable")
+						return "", fmt.Errorf("k8s API unavailable")
 					}
-					return nil
+					return "", nil
 				},
 			},
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
@@ -1186,11 +1333,11 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			overrides: orchestratorOverrides{
 				// Fence and switchover both apply; only the switchover CR fails,
 				// leaving the FSM at promoted (switch failures do not roll back).
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 					if strings.Contains(string(yaml), "switchover") {
-						return fmt.Errorf("switchover apply failed")
+						return "", fmt.Errorf("switchover apply failed")
 					}
-					return nil
+					return "", nil
 				},
 			},
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
@@ -1438,9 +1585,9 @@ func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
 	// Re-running execute resumes from offset_sync_paused and retries verification.
 	var applyCalls int64
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
-			return nil
+			return "", nil
 		},
 	}
 

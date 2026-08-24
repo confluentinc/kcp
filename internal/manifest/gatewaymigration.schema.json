@@ -243,6 +243,15 @@
               "type": "string",
               "description": "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
               "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+            },
+            "hotReloadTimeout": {
+              "type": "string",
+              "description": "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+            },
+            "gatewayConfigPort": {
+              "type": "integer",
+              "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the persisted value, falling back to the gateway default (9180)."
             }
           },
           "required": [
