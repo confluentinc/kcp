@@ -75,7 +75,7 @@ type gatewayCR struct {
 // a Secret that did not exist, the operator refused the spec, and the gateway
 // stayed fenced with every client blocked. Nothing ahead of the apply looked at
 // that secret at all; this does, before any client traffic has been touched.
-func (s *K8sService) ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error) {
+func (s *K8sService) ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, switchoverYAML []byte, fenceRoutes []string) (CRValidationResult, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return CRValidationResult{}, fmt.Errorf("failed to build config: %w", err)
@@ -86,22 +86,24 @@ func (s *K8sService) ValidateGatewayCRs(ctx context.Context, namespace, gatewayN
 		return CRValidationResult{}, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	return validateGatewayCRs(ctx, clientset, namespace, gatewayName, initialYAML, fencedYAML, switchoverYAML)
+	return validateGatewayCRs(ctx, clientset, namespace, gatewayName, initialYAML, switchoverYAML, fenceRoutes)
 }
 
 // validateGatewayCRs is the inner orchestration used by ValidateGatewayCRs.
 // Split from the method so unit tests can inject a fake clientset, matching
 // waitForGatewayPods and waitForGatewayReady.
-func validateGatewayCRs(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialYAML, fencedYAML, switchoverYAML []byte) (CRValidationResult, error) {
+//
+// There is no fenced CR to check: the fence is derived at cutover from the live
+// initial CR by injecting a fence block onto the routes named in fenceRoutes
+// (see gateway.FenceRoutes). So instead of cross-checking a fenced file, this
+// confirms those routes exist in the initial CR and are not already fenced, then
+// that the switchover CR lifts the fence rather than leaving them blocked.
+func validateGatewayCRs(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialYAML, switchoverYAML []byte, fenceRoutes []string) (CRValidationResult, error) {
 	var result CRValidationResult
 
 	// Parsing is terminal rather than one problem among many: every later check
 	// reads the parsed tree, so there is nothing useful left to report.
 	initial, err := parseGatewayCR(roleInitial, initialYAML)
-	if err != nil {
-		return result, err
-	}
-	fenced, err := parseGatewayCR(roleFenced, fencedYAML)
 	if err != nil {
 		return result, err
 	}
@@ -112,21 +114,20 @@ func validateGatewayCRs(ctx context.Context, clientset kubernetes.Interface, nam
 
 	var f findings
 
-	for _, cr := range []gatewayCR{initial, fenced, switchover} {
+	for _, cr := range []gatewayCR{initial, switchover} {
 		checkGatewayShape(cr, &f)
 	}
 
 	// The initial CR is fetched from the cluster by name, so its identity and
 	// wiring are correct by construction and the operator has already accepted
-	// its spec — checking it again would only add noise.
-	for _, cr := range []gatewayCR{fenced, switchover} {
-		checkGatewayIdentity(cr, namespace, gatewayName, &f)
-		checkStreamingDomainWiring(cr, &f)
-	}
+	// its spec — checking it again would only add noise. Only the
+	// operator-authored switchover CR needs those checks.
+	checkGatewayIdentity(switchover, namespace, gatewayName, &f)
+	checkStreamingDomainWiring(switchover, &f)
 
-	checkFenceBlocks(fenced, switchover, &f)
-	checkSpecsDiffer(initial, fenced, switchover, &f)
-	checkSecretRefsExist(ctx, clientset, namespace, []gatewayCR{fenced, switchover}, &result, &f)
+	checkFenceTargets(initial, switchover, fenceRoutes, &f)
+	checkSpecsDiffer(initial, switchover, &f)
+	checkSecretRefsExist(ctx, clientset, namespace, []gatewayCR{switchover}, &result, &f)
 
 	// Findings reach the terminal through the caller's reporter (which mirrors
 	// them into kcp.log), and the returned error is logged by main. Logging them
@@ -224,49 +225,54 @@ func checkGatewayIdentity(cr gatewayCR, namespace, gatewayName string, f *findin
 	}
 }
 
-// checkFenceBlocks confirms the fenced CR actually fences, and that the
-// switchover CR lifts the fence it applied.
+// checkFenceTargets confirms the migration can fence the routes it names and
+// that the switchover CR lifts that fence.
 //
-// Both failures are silent in the same way: the migration runs to completion and
-// reports success. Without a fence, topics are promoted while producers are
-// still writing to the source. With a fence left in the switchover CR, every
-// client stays blocked after kcp declares the migration complete.
+// The fence is derived from the live initial CR (FenceRoutes injects a fence
+// block onto each named route), so a named route must exist in the initial CR
+// and must not already be fenced — the fence is purely additive. The switchover
+// CR must then not still fence those routes, or every client stays blocked after
+// kcp declares the migration complete — the mirror of the 2026-07-27 outcome.
 //
 // Fences are tracked per route because a gateway legitimately fences one route
 // while leaving another serving — the SCRAM pre-registration route in
 // docs/assets/gateway-switchover stays available throughout.
-func checkFenceBlocks(fenced, switchover gatewayCR, f *findings) {
-	fencedList, routesPresent := fencedRoutes(fenced)
-	switch {
-	case len(fencedList) > 0:
-		// The fenced CR blocks at least one route — nothing to report.
-	case treeContainsNonNilKey(fenced.obj, "fence"):
-		// A fence exists somewhere kcp cannot attribute to a route. Don't refuse:
-		// the CRD may grow other placements. Say only what is true — that the
-		// fence could not be confirmed.
-		f.warn("the fenced gateway CR has a fence block that is not on a route, so kcp cannot confirm which routes it blocks")
-	case !routesPresent:
-		f.problem("the fenced gateway CR declares no spec.routes, so it cannot fence client traffic")
-	default:
-		f.problem("the fenced gateway CR contains no fence block, so applying it would not block client traffic — the migration would promote topics while producers are still writing to the source")
-	}
-
-	fencedSet := make(map[string]struct{}, len(fencedList))
-	for _, route := range fencedList {
-		if route.matchable {
-			fencedSet[route.identity] = struct{}{}
+func checkFenceTargets(initial, switchover gatewayCR, fenceRoutes []string, f *findings) {
+	// Which routes does the live initial CR declare, and which already carry a
+	// fence? The fence is derived from the initial CR, so a named route must exist
+	// there and must not already be fenced.
+	present := routeNames(initial)
+	alreadyFenced := map[string]struct{}{}
+	if initialFenced, _ := fencedRoutes(initial); len(initialFenced) > 0 {
+		for _, r := range initialFenced {
+			if r.matchable {
+				alreadyFenced[r.identity] = struct{}{}
+			}
 		}
 	}
 
+	// The set of route identities the migration will fence, keyed the same way
+	// fencedRoutes keys them (name=…) so the switchover comparison below lines up.
+	fencedSet := make(map[string]struct{}, len(fenceRoutes))
+	for _, name := range fenceRoutes {
+		fencedSet["name="+name] = struct{}{}
+		if _, ok := present[name]; !ok {
+			f.problem("the initial gateway CR has no route named %q for the migration to fence", name)
+			continue
+		}
+		if _, fenced := alreadyFenced["name="+name]; fenced {
+			f.problem("the initial gateway CR already fences route %q; the fence is additive and cannot fence it again", name)
+		}
+	}
+
+	// The switchover CR must lift the fence on every route the migration fenced.
 	switchoverList, _ := fencedRoutes(switchover)
 	var stillFenced, otherFenced, unmatchable []string
 	for _, route := range switchoverList {
 		switch {
 		case !route.matchable:
 			// Neither a name nor an endpoint: there is nothing to match this
-			// against in the fenced CR, so claiming either outcome would be a
-			// guess. Positional matching is not a substitute — the two files
-			// routinely hold different numbers of routes.
+			// against, so claiming either outcome would be a guess.
 			unmatchable = append(unmatchable, route.label)
 		case containsKey(fencedSet, route.identity):
 			stillFenced = append(stillFenced, route.label)
@@ -276,7 +282,7 @@ func checkFenceBlocks(fenced, switchover gatewayCR, f *findings) {
 	}
 
 	if len(stillFenced) > 0 {
-		f.problem("the switchover gateway CR still fences the route(s) the fenced CR blocks (%s), so clients would stay blocked after switchover", strings.Join(stillFenced, ", "))
+		f.problem("the switchover gateway CR still fences the route(s) the migration fences (%s), so clients would stay blocked after switchover", strings.Join(stillFenced, ", "))
 	}
 	// kcp cannot know the intent behind fencing a route the migration never
 	// fenced — it may be deliberate — so this warns rather than refuses.
@@ -294,18 +300,17 @@ func containsKey[V any](set map[string]V, key string) bool {
 	return found
 }
 
-// checkSpecsDiffer catches the wrong-file mistakes that yield a "successful"
-// migration with nothing switched over: the same file passed to both flags, or
-// the live gateway's own spec handed back as the switchover. Either way the
-// apply is a no-op, which does not bump metadata.generation, so even
-// WaitForGatewayAccepted returns immediately and the step reports success.
+// checkSpecsDiffer catches the wrong-file mistake that yields a "successful"
+// migration with nothing switched over: the live gateway's own spec handed back
+// as the switchover. The apply is then a no-op, which does not bump
+// metadata.generation, so even WaitForGatewayAccepted returns immediately and
+// the step reports success.
 //
 // Only exact equality is reported. The live initial CR carries operator defaults
 // the user's file omits, so a *difference* from it proves nothing — this is a
 // cheap identity test, not a diff.
-func checkSpecsDiffer(initial, fenced, switchover gatewayCR, f *findings) {
+func checkSpecsDiffer(initial, switchover gatewayCR, f *findings) {
 	initialSpec, _ := mapField(initial.obj, "spec")
-	fencedSpec, _ := mapField(fenced.obj, "spec")
 	switchoverSpec, _ := mapField(switchover.obj, "spec")
 
 	// A missing spec is already reported by checkGatewayShape; comparing absent
@@ -314,9 +319,6 @@ func checkSpecsDiffer(initial, fenced, switchover gatewayCR, f *findings) {
 		return
 	}
 
-	if len(fencedSpec) > 0 && reflect.DeepEqual(fencedSpec, switchoverSpec) {
-		f.problem("the fenced and switchover gateway CRs have identical specs, so the switchover would change nothing (are --fenced-cr-yaml and --switchover-cr-yaml the same file?)")
-	}
 	if len(initialSpec) > 0 && reflect.DeepEqual(initialSpec, switchoverSpec) {
 		f.problem("the switchover gateway CR spec is identical to the live gateway's, so the switchover would not route traffic to Confluent Cloud")
 	}
@@ -569,6 +571,24 @@ type routeFence struct {
 	identity  string
 	label     string
 	matchable bool
+}
+
+// routeNames returns the set of spec.routes[].name values a CR declares. Used
+// to confirm the routes the migration will fence exist in the live initial CR.
+func routeNames(cr gatewayCR) map[string]struct{} {
+	names := map[string]struct{}{}
+	spec, _ := mapField(cr.obj, "spec")
+	routes, _ := sliceField(spec, "routes")
+	for _, raw := range routes {
+		route, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, ok := stringField(route, "name"); ok && name != "" {
+			names[name] = struct{}{}
+		}
+	}
+	return names
 }
 
 // fencedRoutes returns the spec.routes entries carrying a fence block, and

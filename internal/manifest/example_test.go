@@ -45,3 +45,42 @@ func TestValidCCFixtureIsValid(t *testing.T) {
 	require.NoError(t, err)
 	require.Empty(t, m.Validate(), "valid_cc.yaml must validate clean (it must not put a managed key in clusterLink.configs)")
 }
+
+// TestGatewayExampleManifestIsValid keeps the documented gateway example in
+// step with the parser and validator. The example is secret-bearing by design
+// (inline credentials), so it uses ${ENV_VAR} references throughout — which
+// means the test must supply them.
+func TestGatewayExampleManifestIsValid(t *testing.T) {
+	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
+		t.Setenv(v, "example-value")
+	}
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
+	require.NoError(t, err)
+	g, err := ParseGatewayMigration(data)
+	require.NoError(t, err)
+	require.Empty(t, g.Validate(), "the documented gateway example must validate clean")
+}
+
+// TestGatewayExampleResolvesEveryLeg proves the example is not merely
+// structurally valid: all three connection legs resolve from it.
+func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
+	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
+		t.Setenv(v, "example-value")
+	}
+	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
+	require.NoError(t, err)
+	g, err := ParseGatewayMigration(data)
+	require.NoError(t, err)
+
+	src, errs := g.SourceCredentials()
+	require.Empty(t, errs)
+	require.NotNil(t, src.SASLScram)
+
+	dst, errs := g.DestinationKafkaCredentials()
+	require.Empty(t, errs)
+	require.NotNil(t, dst.SASLPlain)
+
+	rest, err := g.RestCredentials()
+	require.NoError(t, err)
+	require.Equal(t, "example-value", rest.APIKey)
+}

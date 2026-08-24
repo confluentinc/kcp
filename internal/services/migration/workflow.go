@@ -117,9 +117,15 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 	// The fenced and switchover CRs are inputs to detection, not just payloads to
 	// apply later: applying one is what puts spec.hotReload into force, so a
 	// detector shown only the live gateway can pick rollout verification for a
-	// migration that will hot-reload — and then observe nothing.
+	// migration that will hot-reload — and then observe nothing. There is no
+	// snapshotted fenced CR to hand it, so derive one the same way FenceGateway
+	// does: inject a fence block onto FenceRoutes in the live initial CR.
+	fencedCrYAML, err := deriveFencedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to derive fenced gateway CR: %w", err)
+	}
 	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName,
-		gatewayConfigPort(config), config.FencedCrYAML, config.SwitchoverCrYAML)
+		gatewayConfigPort(config), fencedCrYAML, config.SwitchoverCrYAML)
 	if err != nil {
 		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
 	}
@@ -348,31 +354,6 @@ func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config
 	return nil
 }
 
-// stripServerMetadata removes the server-managed metadata a CR fetched from the
-// cluster carries (managedFields, resourceVersion, uid, creationTimestamp,
-// generation, status), which server-side apply rejects.
-func stripServerMetadata(crYAML []byte) ([]byte, error) {
-	var obj map[string]any
-	if err := yaml.Unmarshal(crYAML, &obj); err != nil {
-		return nil, fmt.Errorf("failed to parse gateway CR YAML: %w", err)
-	}
-
-	if metadata, ok := obj["metadata"].(map[string]any); ok {
-		delete(metadata, "managedFields")
-		delete(metadata, "resourceVersion")
-		delete(metadata, "uid")
-		delete(metadata, "creationTimestamp")
-		delete(metadata, "generation")
-	}
-	delete(obj, "status")
-
-	cleanYAML, err := yaml.Marshal(obj)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal cleaned gateway CR YAML: %w", err)
-	}
-	return cleanYAML, nil
-}
-
 // printConfigWaitProgress renders one line per poll tick of the per-pod configId
 // wait. The converged tick is silent — the caller prints the success line.
 func (s *MigrationActions) printConfigWaitProgress(p gateway.ConfigWaitProgress) {
@@ -437,7 +418,7 @@ func (s *MigrationActions) Initialize(
 	// the live secret check can legitimately be skipped (no RBAC to read
 	// secrets), and claiming a check ran when it did not is how a missing
 	// secretRef reached a cutover in the first place.
-	validation, err := s.gatewayService.ValidateGatewayCRs(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, config.FencedCrYAML, config.SwitchoverCrYAML)
+	validation, err := s.gatewayService.ValidateGatewayCRs(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, config.SwitchoverCrYAML, config.FenceRoutes)
 	for _, warning := range validation.Warnings {
 		s.reporter.warn("%s", warning)
 	}
@@ -524,9 +505,9 @@ func (s *MigrationActions) Initialize(
 		observed, present := configs[offsetSyncEnableKey]
 		switch {
 		case !present:
-			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
+			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
 		case observed != "true":
-			return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
+			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
 		}
 		s.reporter.success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
 	}
@@ -782,7 +763,16 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		}
 	}
 
-	applied, err := s.applyGatewayCR(ctx, config, config.FencedCrYAML, "fence")
+	// Derive the fenced CR from the same metadata-stripped initial snapshot that
+	// unfence re-applies: fence = InitialCrYAML + fence-block on the named
+	// route(s), so fence and its removal are exact inverses. There is no
+	// separately-snapshotted fenced CR.
+	fencedCrYAML, err := deriveFencedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to build fenced gateway CR: %w", err)
+	}
+
+	applied, err := s.applyGatewayCR(ctx, config, fencedCrYAML, "fence")
 	if err != nil {
 		if errors.Is(err, gateway.ErrApplyUnverified) {
 			// The server-side apply itself succeeded and the fenced spec is live
@@ -851,6 +841,51 @@ func (s *MigrationActions) confirmFence(
 	}
 }
 
+// deriveFencedCRYAML builds the fenced CR bytes from the live initial CR
+// snapshot by injecting a fence block onto config.FenceRoutes (see
+// gateway.FenceRoutesObj). There is no separately-snapshotted fenced CR:
+// FenceGateway's apply and ResolveGatewayCapability's detection both derive
+// from the same source, so they can never drift from each other.
+func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
+	base, err := cleanInitialCR(config.InitialCrYAML)
+	if err != nil {
+		return nil, err
+	}
+	return gateway.FenceRoutesObj(base, config.FenceRoutes)
+}
+
+// cleanInitialCR parses the initial CR YAML and strips the server-managed
+// metadata (managedFields, resourceVersion, uid, creationTimestamp,
+// generation) and top-level status that a live-read CR carries and that
+// server-side apply rejects, returning the cleaned tree as a plain
+// map[string]interface{} rather than re-marshalled bytes — FenceGateway hands
+// the tree straight to gateway.FenceRoutesObj, sparing a redundant
+// marshal/parse round trip; unfenceGateway, which needs bytes to apply
+// directly, marshals it itself.
+//
+// It is the single canonical base for both fence-removal paths and the fence
+// itself: unfenceGateway re-applies it verbatim, and FenceGateway injects a
+// fence block onto it. Deriving the fence from the same snapshot unfence
+// re-applies is what makes fence and unfence exact inverses.
+func cleanInitialCR(initialCrYAML []byte) (map[string]interface{}, error) {
+	var obj map[string]interface{}
+	if err := yaml.Unmarshal(initialCrYAML, &obj); err != nil {
+		return nil, fmt.Errorf("failed to parse initial CR YAML: %w", err)
+	}
+
+	// Remove server-managed fields that break re-apply.
+	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
+		delete(metadata, "managedFields")
+		delete(metadata, "resourceVersion")
+		delete(metadata, "uid")
+		delete(metadata, "creationTimestamp")
+		delete(metadata, "generation")
+	}
+	delete(obj, "status")
+
+	return obj, nil
+}
+
 // unfenceGateway reapplies the initial gateway CR to restore normal traffic,
 // then waits for the operator to report the gateway Ready at the restored
 // spec — the same convergence check FenceGateway uses. Without the wait we
@@ -859,7 +894,11 @@ func (s *MigrationActions) confirmFence(
 // server-managed metadata (managedFields, resourceVersion, status) that
 // breaks server-side apply, so we strip it before applying.
 func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
-	cleanYAML, err := stripServerMetadata(config.InitialCrYAML)
+	obj, err := cleanInitialCR(config.InitialCrYAML)
+	if err != nil {
+		return err
+	}
+	cleanYAML, err := yaml.Marshal(obj)
 	if err != nil {
 		return err
 	}
@@ -974,9 +1013,9 @@ func (s *MigrationActions) PauseOffsetSync(
 	observed, present := currentConfigs[offsetSyncEnableKey]
 	switch {
 	case !present:
-		return fmt.Errorf("--pause-consumer-offset-sync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
+		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
 	case observed != "true":
-		return fmt.Errorf("--pause-consumer-offset-sync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
+		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
 	}
 
 	// Optional drain window (--consumer-offset-sync-drain-duration): hold here
@@ -1048,7 +1087,7 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
-		s.reporter.detail("Detection disabled (--detect-unrouted-producers-duration=0) — skipping check")
+		s.reporter.detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
 		return nil
 	}
 

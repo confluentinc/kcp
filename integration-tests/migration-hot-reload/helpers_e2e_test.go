@@ -26,8 +26,8 @@ func mustReadFile(t *testing.T, envKey string) []byte {
 
 // stripServerFields removes the server-managed metadata a CR fetched from the
 // cluster carries, which server-side apply rejects. It mirrors the migration
-// workflow's stripServerMetadata; duplicated rather than exported because
-// widening kcp's public surface for a test is the wrong trade.
+// workflow's cleanInitialCR; duplicated rather than exported because widening
+// kcp's public surface for a test is the wrong trade.
 func stripServerFields(t *testing.T, crYAML []byte) []byte {
 	t.Helper()
 

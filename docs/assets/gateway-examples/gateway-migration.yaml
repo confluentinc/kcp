@@ -1,0 +1,125 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/gatewaymigration.schema.json
+#
+# The declarative form of a `kcp migration` run. One file replaces the topology
+# and auth flags that used to be repeated across `init` and `execute`.
+#
+#   kcp migration init      --migration-yaml gateway-migration.yaml
+#   kcp migration execute   --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
+#   kcp migration lag-check --migration-yaml gateway-migration.yaml
+#
+# Paths in this file resolve relative to the PROCESS working directory, not to
+# the file's own location. The one exception is spec.gateway.kubeconfig, where a
+# leading ~/ is expanded.
+#
+# This file is secret-bearing when credentials are written inline. Keep it 0600,
+# and prefer ${ENV_VAR} references (below) over literal passwords.
+
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+
+metadata:
+  # THE migration identity — unique per state file, and written into the state
+  # file's migration_id. Pre-existing uuid-keyed migrations keep working and
+  # stay addressable with `--migration-id`.
+  name: msk-prod-to-cc-batch-1
+
+# Opt in to ${ENV_VAR} resolution for THIS file. Absent (the default) means
+# every value is literal. Each file governs itself: this does not reach into a
+# referenced credentials file, which needs its own `interpolate: true`.
+#
+# Syntax is narrow on purpose: only ${VAR} is a reference (a bare $VAR is not),
+# `$${` escapes a literal "${", and an unset variable is a hard error naming the
+# variable — an empty password silently attempting auth is the worst outcome.
+interpolate: true
+
+spec:
+  # kcp only ever READS from the source.
+  source:
+    type: msk # msk | apache-kafka. Gates auth: iam is msk-only.
+    bootstrapServers:
+      - b-1.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096
+      - b-2.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096
+    # Either an inline block (below) or a path to a credentials file:
+    #   credentials: /etc/kcp/source-creds.yaml
+    # The inline mapping is the same shape as that file's top level, so the two
+    # spellings are a copy-paste apart. Prefer the path form for a Kubernetes
+    # Secret mounted as a file.
+    credentials:
+      sasl_scram:
+        username: ${MSK_USERNAME}
+        password: ${MSK_PASSWORD}
+        mechanism: SHA512 # SHA256 | SHA512 — MSK is SHA512-only
+
+  target:
+    type: confluent-cloud # confluent-cloud | confluent-platform
+    clusterId: lkc-abc123 # required for BOTH destination types
+    kafka:
+      bootstrapServers:
+        - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+      # The destination KAFKA leg. Only sasl_plain is supported in this release
+      # — the destination client is hardcoded to SASL/PLAIN over TLS, so any
+      # other block would be accepted and then silently ignored.
+      credentials:
+        sasl_plain:
+          username: ${CC_API_KEY}
+          password: ${CC_API_SECRET}
+          tls: true
+        # insecure_skip_tls_verify is a SIBLING of the auth block, not a key
+        # inside it, and it reaches all three connection legs:
+        # insecure_skip_tls_verify: true
+      #
+      # restCredentials is OPTIONAL and DERIVED in full from credentials when
+      # omitted: api_key/api_secret from sasl_plain.username/password, and
+      # insecure_skip_verify from insecure_skip_tls_verify above.
+      #
+      # Spell it out only for a REST endpoint behind a private CA. A block that
+      # is present is used exactly as written — never partially derived — so it
+      # must restate the key and secret.
+      #
+      # restCredentials:
+      #   api_key: ${CC_API_KEY}
+      #   api_secret: ${CC_API_SECRET}
+      #   ca_cert: /etc/kcp/dest-ca.pem
+
+  clusterLink:
+    name: msk-to-cc # the link must ALREADY EXIST on the destination
+    # Disable the link's consumer.offset.sync.enable during apply and restore it
+    # after switchover. Requires the link to currently have it enabled.
+    pauseConsumerOffsetSync: true
+
+  gateway:
+    namespace: confluent
+    # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
+    crs:
+      initial: gateway-initial # a Kubernetes object NAME, read live
+      switchover: /etc/kcp/gateway-switchover.yaml # a local FILE path
+    # Route(s) to fence at cutover, by spec.routes[].name. kcp reads the live
+    # initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE}
+    # onto each named route, and applies the patched CR — there is no separate
+    # fenced-CR file to create or keep in sync. The named routes must exist in
+    # the initial CR and must not already be fenced.
+    fence:
+      routes:
+        - migration-route
+
+  # OPTIONAL. A flat list of LITERAL topic names, exact-matched against the
+  # link's active mirror topics — not globs, and a name that matches nothing is
+  # a hard error. Omit the key entirely to cut over every active mirror topic;
+  # an empty list is rejected rather than silently meaning "all".
+  #
+  # Note this has NO effect on `lag-check`, which always watches every mirror.
+  topics: ['t1.order', 't1.inventory', 't2.order']
+
+  # OPTIONAL, and read FRESH on every execute — never frozen at init. That is what
+  # lets policy be varied between init and execute. Each value is a DEFAULT:
+  # `kcp migration execute` can override any of them for a single run with the
+  # matching flag (e.g. --detect-unrouted-producers-duration 60s), no edit needed.
+  defaultPolicies:
+    lagThreshold: 0
+    promoteBatchSize: 100 # 0 = promote all at once
+    rolloutTimeout: 10m # 0 = no deadline
+    detectUnroutedProducersDuration: 30s # 0 = CHECK SKIPPED; min 10s when set
+    consumerOffsetSyncDrainDuration: 15s # 0 = no wait; needs pauseConsumerOffsetSync
+    hotReloadTimeout: 90s # 0 = built-in 90s budget; never unbounded
+    gatewayConfigPort: 0 # 0 = persisted value, falling back to the gateway default (9180)

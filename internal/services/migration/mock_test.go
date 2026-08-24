@@ -15,7 +15,7 @@ type mockGatewayService struct {
 	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
 	detectCapabilityFn       func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
 	waitForConfigIDFn        func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
-	validateGatewayCRsFn     func(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error)
+	validateGatewayCRsFn     func(ctx context.Context, namespace, name string, initial, switchover []byte, fenceRoutes []string) (gateway.CRValidationResult, error)
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
 	applyGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
@@ -50,9 +50,9 @@ func (m *mockGatewayService) WaitForGatewayConfigID(ctx context.Context, namespa
 	return nil
 }
 
-func (m *mockGatewayService) ValidateGatewayCRs(ctx context.Context, namespace, name string, initial, fenced, switchover []byte) (gateway.CRValidationResult, error) {
+func (m *mockGatewayService) ValidateGatewayCRs(ctx context.Context, namespace, name string, initial, switchover []byte, fenceRoutes []string) (gateway.CRValidationResult, error) {
 	if m.validateGatewayCRsFn != nil {
-		return m.validateGatewayCRsFn(ctx, namespace, name, initial, fenced, switchover)
+		return m.validateGatewayCRsFn(ctx, namespace, name, initial, switchover, fenceRoutes)
 	}
 	return gateway.CRValidationResult{}, nil
 }

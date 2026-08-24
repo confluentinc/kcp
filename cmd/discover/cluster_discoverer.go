@@ -93,12 +93,13 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	awsClientInfo.MskClusterConfig = *cluster.ClusterInfo
 
 	// MSK Serverless does not support several AWS-API metadata scans (VPC
-	// connections, nodes, SCRAM secrets, compatible versions, networking) or the
-	// AWS topic APIs. Announce it once per cluster; the individual per-scan skips
-	// stay in kcp.log at Debug.
+	// connections, nodes, SCRAM secrets, compatible versions) or the AWS topic
+	// APIs. Announce it once per cluster; the individual per-scan skips stay in
+	// kcp.log at Debug. Networking is scanned for Serverless too (see
+	// scanNetworkingInfo), just via a different AWS API shape.
 	isServerless := cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless
 	if isServerless {
-		slog.Warn("⚠️ MSK Serverless cluster; skipping unsupported scans (VPC connections, nodes, SCRAM secrets, compatible versions, networking, topics)")
+		slog.Warn("⚠️ MSK Serverless cluster; skipping unsupported scans (VPC connections, nodes, SCRAM secrets, compatible versions, topics)")
 	}
 
 	brokers, err := cd.getBootstrapBrokers(ctx, clusterArn)
@@ -143,15 +144,11 @@ func (cd *ClusterDiscoverer) discoverAWSClientInformation(ctx context.Context, c
 	}
 	awsClientInfo.CompatibleVersions = *versions
 
-	if isServerless {
-		slog.Debug("⏭️ skipping networking scan for MSK Serverless cluster")
-	} else {
-		networking, err := cd.scanNetworkingInfo(ctx, cluster, nodes)
-		if err != nil {
-			return nil, nil, err
-		}
-		awsClientInfo.ClusterNetworking = networking
+	networking, err := cd.scanNetworkingInfo(ctx, cluster, nodes)
+	if err != nil {
+		return nil, nil, err
 	}
+	awsClientInfo.ClusterNetworking = networking
 
 	switch {
 	case skipTopics:
@@ -285,11 +282,46 @@ func (cs *ClusterDiscoverer) getCompatibleKafkaVersions(ctx context.Context, clu
 }
 
 func (cd *ClusterDiscoverer) scanNetworkingInfo(ctx context.Context, cluster *kafka.DescribeClusterV2Output, nodes []kafkatypes.NodeInfo) (types.ClusterNetworking, error) {
-	if cluster.ClusterInfo == nil || cluster.ClusterInfo.Provisioned == nil || cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo == nil {
-		return types.ClusterNetworking{}, fmt.Errorf("cluster has no broker node group info, cannot determine networking")
+	if cluster.ClusterInfo == nil {
+		return types.ClusterNetworking{}, fmt.Errorf("cluster info is nil, cannot determine networking")
 	}
-	subnetIds := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.ClientSubnets
-	securityGroups := cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.SecurityGroups
+
+	var subnetIds, securityGroups []string
+	isServerless := cluster.ClusterInfo.ClusterType == kafkatypes.ClusterTypeServerless
+
+	switch {
+	case isServerless:
+		// Serverless has no broker node group; its VPC attachment lives on
+		// Serverless.VpcConfigs instead of Provisioned.BrokerNodeGroupInfo. AWS
+		// permits more than one VpcConfig, so concatenate across all of them,
+		// deduping subnet IDs (security groups are commonly shared).
+		if cluster.ClusterInfo.Serverless == nil || len(cluster.ClusterInfo.Serverless.VpcConfigs) == 0 {
+			return types.ClusterNetworking{}, fmt.Errorf("serverless cluster has no VPC configuration, cannot determine networking")
+		}
+
+		seenSubnets := map[string]bool{}
+		seenSecurityGroups := map[string]bool{}
+		for _, vpcConfig := range cluster.ClusterInfo.Serverless.VpcConfigs {
+			for _, subnetId := range vpcConfig.SubnetIds {
+				if !seenSubnets[subnetId] {
+					seenSubnets[subnetId] = true
+					subnetIds = append(subnetIds, subnetId)
+				}
+			}
+			for _, sgId := range vpcConfig.SecurityGroupIds {
+				if !seenSecurityGroups[sgId] {
+					seenSecurityGroups[sgId] = true
+					securityGroups = append(securityGroups, sgId)
+				}
+			}
+		}
+	default:
+		if cluster.ClusterInfo.Provisioned == nil || cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo == nil {
+			return types.ClusterNetworking{}, fmt.Errorf("cluster has no broker node group info, cannot determine networking")
+		}
+		subnetIds = cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.ClientSubnets
+		securityGroups = cluster.ClusterInfo.Provisioned.BrokerNodeGroupInfo.SecurityGroups
+	}
 
 	vpcId, err := cd.getVpcIdFromSubnets(ctx, subnetIds)
 	if err != nil {
@@ -301,7 +333,15 @@ func (cd *ClusterDiscoverer) scanNetworkingInfo(ctx context.Context, cluster *ka
 		return types.ClusterNetworking{}, fmt.Errorf("failed to get subnet details: %v", err)
 	}
 
-	subnetInfo := cd.createCombinedSubnetBrokerInfo(nodes, subnetDetails)
+	var subnetInfo []types.SubnetInfo
+	if isServerless {
+		// Serverless has no enumerable brokers (ListNodes is rejected outright by
+		// AWS), so there is no per-broker subnet mapping to build. Emit one entry
+		// per subnet instead, leaving the broker-only fields at their zero values.
+		subnetInfo = cd.createSubnetInfoWithoutBrokers(subnetIds, subnetDetails)
+	} else {
+		subnetInfo = cd.createCombinedSubnetBrokerInfo(nodes, subnetDetails)
+	}
 
 	return types.ClusterNetworking{
 		VpcId:          vpcId,
@@ -345,6 +385,23 @@ func (cd *ClusterDiscoverer) getSubnetDetails(ctx context.Context, subnetIds []s
 	}
 
 	return subnets, nil
+}
+
+// createSubnetInfoWithoutBrokers builds one SubnetInfo per subnet ID, in the
+// given order, for cluster types (MSK Serverless) that have no enumerable
+// broker nodes to map subnets to. SubnetMskBrokerId and PrivateIpAddress -
+// the two fields ListNodes would otherwise supply - are left at their zero
+// values.
+func (cd *ClusterDiscoverer) createSubnetInfoWithoutBrokers(subnetIds []string, subnetDetails map[string]types.SubnetInfo) []types.SubnetInfo {
+	var subnetInfo []types.SubnetInfo
+
+	for _, subnetId := range subnetIds {
+		if details, exists := subnetDetails[subnetId]; exists {
+			subnetInfo = append(subnetInfo, details)
+		}
+	}
+
+	return subnetInfo
 }
 
 func (cd *ClusterDiscoverer) createCombinedSubnetBrokerInfo(nodes []kafkatypes.NodeInfo, subnetDetails map[string]types.SubnetInfo) []types.SubnetInfo {

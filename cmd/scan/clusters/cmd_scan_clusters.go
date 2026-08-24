@@ -450,7 +450,7 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
-	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(), "broker", jolokiaOpts...)
+	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(clusterCreds.Jolokia.MBeanOverrides), "broker", jolokiaOpts...)
 	return jmxService.CollectOverDuration(ctx, duration, interval)
 }
 
@@ -485,6 +485,6 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 	}
 
 	promClient := client.NewPrometheusClient(clusterCreds.Prometheus.URL, promOpts...)
-	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(), labels)
+	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(clusterCreds.Prometheus.MetricNames), labels)
 	return promService.CollectMetrics(ctx, queryRange)
 }

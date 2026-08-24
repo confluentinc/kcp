@@ -206,14 +206,57 @@ func buildFullProvisionedCluster() *kafka.DescribeClusterV2Output {
 	}
 }
 
-// buildFullServerlessCluster returns a serverless cluster with all fields populated.
+// buildFullServerlessCluster returns a serverless cluster with all fields
+// populated — use as the baseline for happy-path tests. Its VpcConfigs
+// subnets match serverlessSubnetsStub, below.
 func buildFullServerlessCluster() *kafka.DescribeClusterV2Output {
 	return &kafka.DescribeClusterV2Output{
 		ClusterInfo: &kafkatypes.Cluster{
 			ClusterName: aws.String(testClusterName),
 			ClusterArn:  aws.String(testClusterArn),
 			ClusterType: kafkatypes.ClusterTypeServerless,
-			Serverless:  &kafkatypes.Serverless{},
+			Serverless: &kafkatypes.Serverless{
+				VpcConfigs: []kafkatypes.VpcConfig{
+					{
+						SubnetIds:        []string{"subnet-sl-1", "subnet-sl-2"},
+						SecurityGroupIds: []string{"sg-sl-1"},
+					},
+				},
+				ClientAuthentication: &kafkatypes.ServerlessClientAuthentication{
+					Sasl: &kafkatypes.ServerlessSasl{
+						Iam: &kafkatypes.Iam{Enabled: aws.Bool(true)},
+					},
+				},
+			},
 		},
 	}
+}
+
+// serverlessSubnetsStub provides AZ/CIDR details for the two subnets in
+// buildFullServerlessCluster's VpcConfigs. Wire it into
+// stubEC2Service.describeSubnetsFn for tests that exercise the serverless
+// networking scan.
+func serverlessSubnetsStub(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+	details := map[string]ec2types.Subnet{
+		"subnet-sl-1": {
+			SubnetId:         aws.String("subnet-sl-1"),
+			VpcId:            aws.String("vpc-serverless-1"),
+			AvailabilityZone: aws.String("us-east-1a"),
+			CidrBlock:        aws.String("10.0.1.0/24"),
+		},
+		"subnet-sl-2": {
+			SubnetId:         aws.String("subnet-sl-2"),
+			VpcId:            aws.String("vpc-serverless-1"),
+			AvailabilityZone: aws.String("us-east-1b"),
+			CidrBlock:        aws.String("10.0.2.0/24"),
+		},
+	}
+
+	var subnets []ec2types.Subnet
+	for _, id := range subnetIds {
+		if s, ok := details[id]; ok {
+			subnets = append(subnets, s)
+		}
+	}
+	return &ec2.DescribeSubnetsOutput{Subnets: subnets}, nil
 }

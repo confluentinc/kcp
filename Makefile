@@ -62,13 +62,16 @@ uninstall: ## Uninstall from /usr/local/bin (requires sudo)
 # Code Quality
 # ==============================================================================
 
-.PHONY: fmt lint pre-commit-install
+.PHONY: fmt lint trivy pre-commit-install
 
 fmt: ## Format Go code
 	gofmt -s -w .
 
 lint: ## Run Go linters (golangci-lint)
 	golangci-lint run --config .golangci.yml ./...
+
+trivy: ## Run Trivy vulnerability scan
+	trivy fs --scanners vuln --show-suppressed --severity HIGH,CRITICAL --exit-code 1 .
 
 pre-commit-install: ## Install git pre-commit hooks
 	git config --local core.hooksPath .githooks
@@ -136,9 +139,18 @@ test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	  status=$$? ; cd ../.. ; bash integration-tests/osk-scan/teardown.sh ; exit $$status
 
 test-kafka-connect: build ## Run Kafka Connect self-managed connector scan tests
-	@bash integration-tests/connect-scan/setup.sh
-	cd integration-tests/connect-scan && go test -tags integration -v ./... ; \
-	  status=$$? ; cd ../.. ; bash integration-tests/connect-scan/teardown.sh ; exit $$status
+	@cd integration-tests/connect-scan && \
+	  if bash setup.sh; then \
+	    go test -tags integration -timeout 8m -v ./... ; status=$$? ; \
+	  else \
+	    echo "ERROR: connect-scan setup.sh failed" ; status=1 ; \
+	  fi ; \
+	  if [ $$status -ne 0 ]; then \
+	    echo "=== docker compose logs (connect-scan, on failure) ===" ; \
+	    docker compose logs --no-color --tail=400 || true ; \
+	  fi ; \
+	  bash teardown.sh || true ; \
+	  exit $$status
 
 test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, basic auth)
 	@bash integration-tests/schema-registry/setup.sh

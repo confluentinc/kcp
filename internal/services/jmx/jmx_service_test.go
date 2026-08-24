@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -55,6 +57,116 @@ func mockJolokiaServer(t *testing.T) *httptest.Server {
 	}))
 }
 
+func TestBrokerMetricDefinitions_NoOverrideRegression(t *testing.T) {
+	expected := MetricDefinitions{
+		Counters: []CounterMBeanConfig{
+			{"BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"},
+			{"BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"},
+			{"MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"},
+		},
+		Gauges: []GaugeMBeanConfig{
+			{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
+		},
+		Controller: []GaugeMBeanConfig{
+			{"GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount", "Value"},
+		},
+		Aggregates: []AggregateMBeanConfig{
+			{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
+			{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
+		},
+		UnitConversions: map[string]float64{
+			"TotalLocalStorageUsage": 1024 * 1024 * 1024,
+		},
+	}
+
+	assert.Equal(t, expected, BrokerMetricDefinitions(nil))
+	assert.Equal(t, expected, BrokerMetricDefinitions(map[string]string{}))
+	assert.Nil(t, BrokerMetricDefinitions(nil).OverriddenNames)
+}
+
+func TestBrokerMetricDefinitions_Override(t *testing.T) {
+	overrides := map[string]string{
+		"BytesInPerSec":         "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec",     // counter
+		"PartitionCount":        "acme.kafka:type=ReplicaManager,name=PartitionCount",        // gauge
+		"GlobalPartitionCount":  "acme.kafka:type=KafkaController,name=GlobalPartitionCount", // controller
+		"ClientConnectionCount": "acme.kafka:type=socket-server-metrics,listener=*",          // aggregate
+	}
+	defs := BrokerMetricDefinitions(overrides)
+
+	assert.Equal(t, "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec", defs.Counters[0].MBean)
+	assert.Equal(t, "acme.kafka:type=ReplicaManager,name=PartitionCount", defs.Gauges[0].MBean)
+	assert.Equal(t, "acme.kafka:type=KafkaController,name=GlobalPartitionCount", defs.Controller[0].MBean)
+	assert.Equal(t, "acme.kafka:type=socket-server-metrics,listener=*", defs.Aggregates[0].MBean)
+
+	// Non-overridden aggregate keeps its default.
+	assert.Equal(t, "kafka.log:type=Log,name=Size,*", defs.Aggregates[1].MBean)
+
+	// OverriddenNames records exactly the overridden labels.
+	assert.Equal(t, map[string]bool{
+		"BytesInPerSec":         true,
+		"PartitionCount":        true,
+		"GlobalPartitionCount":  true,
+		"ClientConnectionCount": true,
+	}, defs.OverriddenNames)
+
+	// An empty override value is ignored.
+	defsEmpty := BrokerMetricDefinitions(map[string]string{"BytesInPerSec": ""})
+	assert.Equal(t, "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec", defsEmpty.Counters[0].MBean)
+	assert.Nil(t, defsEmpty.OverriddenNames)
+}
+
+func TestBrokerMetricDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
+	defs := BrokerMetricDefinitions(nil)
+	var names []string
+	for _, c := range defs.Counters {
+		names = append(names, c.Name)
+	}
+	for _, g := range defs.Gauges {
+		names = append(names, g.Name)
+	}
+	for _, c := range defs.Controller {
+		names = append(names, c.Name)
+	}
+	for _, a := range defs.Aggregates {
+		names = append(names, a.Name)
+	}
+	assert.ElementsMatch(t, types.ValidBrokerMetricLabels(), names,
+		"BrokerMetricDefinitions names must match the canonical override label set")
+}
+
+func TestLogMetricReadErrorOnce_OverriddenMBeanNotFoundIsLoud(t *testing.T) {
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	defs := BrokerMetricDefinitions(map[string]string{
+		"PartitionCount": "acme.kafka:type=ReplicaManager,name=PartitionCount",
+	})
+	svc := NewJMXService([]string{"http://broker:8778/jolokia"}, defs, "broker")
+
+	notFound := fmt.Errorf("read failed: %w", client.ErrJolokiaMBeanNotFound)
+	// PartitionCount is overridden — a not-found is actionable → WARN.
+	svc.logMetricReadErrorOnce("PartitionCount", "Failed to read MBean", notFound)
+	// BytesOutPerSec is a default — a not-found is routine → DEBUG.
+	svc.logMetricReadErrorOnce("BytesOutPerSec", "Failed to read MBean", notFound)
+
+	var warnedOverridden, warnedDefault bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if !strings.Contains(line, "level=WARN") {
+			continue
+		}
+		if strings.Contains(line, "PartitionCount") {
+			warnedOverridden = true
+		}
+		if strings.Contains(line, "BytesOutPerSec") {
+			warnedDefault = true
+		}
+	}
+	assert.True(t, warnedOverridden, "overridden MBean-not-found should be logged at WARN")
+	assert.False(t, warnedDefault, "non-overridden MBean-not-found stays at DEBUG")
+}
+
 func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
 	prev := &rawSample{
 		timestamp: time.Now(),
@@ -67,7 +179,7 @@ func TestComputeSnapshot_RatesFromCounterDeltas(t *testing.T) {
 		gauges:    map[string]float64{"PartitionCount": 50, "GlobalPartitionCount": 20, "ClientConnectionCount": 5, "TotalLocalStorageUsage": 2147483648},
 	}
 
-	snapshot := computeSnapshot(prev, curr, BrokerMetricDefinitions().UnitConversions)
+	snapshot := computeSnapshot(prev, curr, BrokerMetricDefinitions(nil).UnitConversions)
 
 	assert.Equal(t, 1000.0, snapshot.metrics["BytesInPerSec"])
 	assert.Equal(t, 500.0, snapshot.metrics["BytesOutPerSec"])
@@ -155,7 +267,7 @@ func TestCollectOverDuration_ReturnsProcessedClusterMetrics(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(nil), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -187,14 +299,14 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 	server := mockJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(nil), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.NotEmpty(t, result.QueryInfo)
 
-	defs := BrokerMetricDefinitions()
+	defs := BrokerMetricDefinitions(nil)
 	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
 	assert.Len(t, result.QueryInfo, expectedCount)
 
@@ -223,7 +335,7 @@ func TestCollectOverDuration_PopulatesQueryInfo(t *testing.T) {
 
 func TestBuildJMXQueryInfo(t *testing.T) {
 	brokerURLs := []string{"http://broker1:8778/jolokia", "http://broker2:8778/jolokia"}
-	defs := BrokerMetricDefinitions()
+	defs := BrokerMetricDefinitions(nil)
 	infos := buildJMXQueryInfo(brokerURLs, 5*time.Minute, 10*time.Second, defs, "broker")
 
 	expectedCount := len(defs.Counters) + len(defs.Gauges) + len(defs.Controller) + len(defs.Aggregates)
@@ -345,7 +457,7 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prevLogger) })
 
-	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(), "broker")
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(nil), "broker")
 	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
 
 	require.NoError(t, err)
@@ -371,6 +483,112 @@ func TestCollectOverDuration_ControllerMBeanGracefulOmission(t *testing.T) {
 		queryNames[qi.MetricName] = true
 	}
 	assert.True(t, queryNames["GlobalPartitionCount"], "QueryInfo should still include GlobalPartitionCount")
+}
+
+// TestCollectRawSample_MissingCounterMBeanDedupesAndStaysDebug is a regression
+// test: the Counters loop must route through logMetricReadErrorOnce like the
+// Gauges/Aggregates loops, so a missing default counter MBean is (a) logged at
+// Debug rather than Warn, and (b) deduped to once per scan rather than once
+// per poll.
+func TestCollectRawSample_MissingCounterMBeanDedupesAndStaysDebug(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response map[string]any
+		switch {
+		case strings.Contains(r.URL.Path, "BytesInPerSec"):
+			// Missing on this cluster — Jolokia reports not-found.
+			response = map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"}
+		default:
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": 0.0, "Value": 0.0}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	svc := NewJMXService([]string{server.URL}, BrokerMetricDefinitions(nil), "broker")
+
+	// Poll multiple times, as CollectOverDuration would on every tick.
+	for i := 0; i < 3; i++ {
+		_, err := svc.collectRawSample(context.Background())
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, 0, strings.Count(logBuf.String(), "level=WARN"),
+		"a missing default counter MBean is routine and must not log at WARN")
+	assert.Equal(t, 1, strings.Count(logBuf.String(), "Failed to read MBean"),
+		"missing counter MBean read failure should be deduped to once per scan, not once per poll")
+}
+
+// TestCollectRawSample_OverriddenCounterMBeanNotFoundIsLoud is the counter-loop
+// counterpart of TestLogMetricReadErrorOnce_OverriddenMBeanNotFoundIsLoud: an
+// overridden counter MBean that still isn't found is actionable and must be
+// logged at Warn, not Debug.
+func TestCollectRawSample_OverriddenCounterMBeanNotFoundIsLoud(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec"}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	defs := BrokerMetricDefinitions(map[string]string{
+		"BytesInPerSec": "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec",
+	})
+	svc := NewJMXService([]string{server.URL}, defs, "broker")
+
+	_, err := svc.collectRawSample(context.Background())
+	require.NoError(t, err)
+
+	assert.Contains(t, logBuf.String(), "level=WARN",
+		"a not-found for an overridden counter MBean is actionable and must be logged at WARN")
+}
+
+// TestCollectOverDuration_OverriddenControllerMBeanMissingMentionsOverride is a
+// regression test: when the Controller MBean's label was overridden via
+// mbean_overrides and still isn't found on any broker, the caveat must point
+// at the override rather than the generic "ensure your exporter scrapes"
+// hint, which sends users chasing exporter config instead of the override
+// they just set.
+func TestCollectOverDuration_OverriddenControllerMBeanMissingMentionsOverride(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var response map[string]any
+		switch {
+		case strings.Contains(r.URL.Path, "acme.kafka"):
+			response = map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: acme.kafka:type=KafkaController,name=GlobalPartitionCount"}
+		default:
+			response = map[string]any{"status": 200, "value": map[string]any{"Count": 0.0, "Value": 0.0}}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	defs := BrokerMetricDefinitions(map[string]string{
+		"GlobalPartitionCount": "acme.kafka:type=KafkaController,name=GlobalPartitionCount",
+	})
+	svc := NewJMXService([]string{server.URL}, defs, "broker")
+
+	result, err := svc.CollectOverDuration(context.Background(), 3*time.Second, 1*time.Second)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+
+	assert.Contains(t, logBuf.String(), "mbean_overrides",
+		"a missing overridden controller MBean should mention mbean_overrides, not just the generic exporter hint")
 }
 
 // mockSourceOnlyConnectJolokiaServer simulates a source-only Connect cluster:
@@ -454,7 +672,7 @@ func TestCollectRawSample_MissingSinkMBeanLogsDebugOnceNotWarn(t *testing.T) {
 }
 
 func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
-	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions(), "broker")
+	svc := NewJMXService([]string{"http://localhost:1"}, BrokerMetricDefinitions(nil), "broker")
 	_, err := svc.CollectOverDuration(context.Background(), 5*time.Second, 5*time.Second)
 
 	require.Error(t, err)

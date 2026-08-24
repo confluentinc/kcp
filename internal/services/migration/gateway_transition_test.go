@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -33,10 +34,12 @@ func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 
 func hotReloadConfig() *MigrationConfig {
 	return &MigrationConfig{
-		K8sNamespace:     "confluent",
-		InitialCrName:    "gw-1",
-		InitialCrYAML:    []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\nstatus:\n  observedGeneration: 4\n"),
-		FencedCrYAML:     []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nspec:\n  replicas: 1\n"),
+		K8sNamespace:  "confluent",
+		InitialCrName: "gw-1",
+		// A real routed CR: FenceGateway's cleanInitialCR + gateway.FenceRoutesObj
+		// derive the fenced CR from it, which needs spec.routes to inject onto.
+		InitialCrYAML:    []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n"),
+		FenceRoutes:      []string{"migration-route"},
 		SwitchoverCrYAML: []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nspec:\n  replicas: 1\n"),
 	}
 }
@@ -402,7 +405,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 	})
 }
 
-func TestStripServerMetadata(t *testing.T) {
+func TestCleanInitialCR(t *testing.T) {
 	t.Run("removes every server-managed field", func(t *testing.T) {
 		in := []byte(`
 apiVersion: platform.confluent.io/v1beta1
@@ -420,7 +423,9 @@ spec:
 status:
   observedGeneration: 7
 `)
-		out, err := stripServerMetadata(in)
+		obj, err := cleanInitialCR(in)
+		require.NoError(t, err)
+		out, err := yaml.Marshal(obj)
 		require.NoError(t, err)
 
 		body := string(out)
@@ -432,13 +437,15 @@ status:
 	})
 
 	t.Run("tolerates a CR with no metadata block", func(t *testing.T) {
-		out, err := stripServerMetadata([]byte("apiVersion: v1\nkind: Gateway\nspec: {}\n"))
+		obj, err := cleanInitialCR([]byte("apiVersion: v1\nkind: Gateway\nspec: {}\n"))
+		require.NoError(t, err)
+		out, err := yaml.Marshal(obj)
 		require.NoError(t, err)
 		assert.Contains(t, string(out), "Gateway")
 	})
 
 	t.Run("rejects unparseable YAML", func(t *testing.T) {
-		_, err := stripServerMetadata([]byte("\tnot: [valid"))
+		_, err := cleanInitialCR([]byte("\tnot: [valid"))
 		require.Error(t, err)
 	})
 }

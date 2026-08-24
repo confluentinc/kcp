@@ -18,6 +18,11 @@ services:
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: 'CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT'
       KAFKA_CONTROLLER_LISTENER_NAMES: 'CONTROLLER'
       KAFKA_INTER_BROKER_LISTENER_NAME: 'PLAINTEXT'
+      # Cap the JVM heap. This suite runs the broker + four Connect workers (five
+      # JVMs) concurrently on one CI agent; with the images' unbounded defaults the
+      # agent was running out of memory and the job was being hard-killed mid-startup
+      # (~23 min, no test output). Explicit small heaps make total memory predictable.
+      KAFKA_HEAP_OPTS: '-Xmx512M -Xms512M'
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
@@ -39,6 +44,9 @@ services:
       CONNECT_BOOTSTRAP_SERVERS: 'connect-kafka:29092'
       CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
       CONNECT_REST_PORT: 8083
+      # Small, explicit heap — see the broker note above; keeps five concurrent JVMs
+      # inside the agent's memory budget.
+      KAFKA_HEAP_OPTS: '-Xmx512M -Xms256M'
       CONNECT_GROUP_ID: 'connect-cluster'
       CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs'
       CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets'
@@ -57,7 +65,20 @@ services:
         cub kafka-ready -b connect-kafka:29092 1 120
 
         echo "Downloading Jolokia agent..."
-        curl -sSL https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar -o /tmp/jolokia-agent.jar
+        # Bounded + retried: the old unbounded `curl -sSL` had no timeout, so a slow
+        # or unreachable Maven Central would hang this worker's startup indefinitely
+        # (Connect never started, and the readiness wait then stalled). Fail each
+        # attempt fast and retry a few times instead.
+        for attempt in 1 2 3 4 5; do
+          if curl -fsSL --connect-timeout 5 --max-time 60 \
+               https://repo1.maven.org/maven2/org/jolokia/jolokia-jvm/1.7.2/jolokia-jvm-1.7.2.jar \
+               -o /tmp/jolokia-agent.jar && [ -s /tmp/jolokia-agent.jar ]; then
+            break
+          fi
+          echo "Jolokia download attempt $$attempt failed; retrying..."
+          rm -f /tmp/jolokia-agent.jar
+          sleep 3
+        done
 
         echo "Starting Kafka Connect with Jolokia..."
         export KAFKA_OPTS="-javaagent:/tmp/jolokia-agent.jar=port=8781,host=0.0.0.0"
@@ -108,6 +129,7 @@ services:
       CONNECT_PLUGIN_PATH: '/usr/share/java,/usr/share/confluent-hub-components'
       CONNECT_REST_EXTENSION_CLASSES: 'org.apache.kafka.connect.rest.basic.auth.extension.BasicAuthSecurityRestExtension'
       KAFKA_OPTS: '-Djava.security.auth.login.config=/etc/connect/connect-jaas.conf'
+      KAFKA_HEAP_OPTS: '-Xmx512M -Xms256M'
     command:
       - bash
       - -c
@@ -134,6 +156,7 @@ services:
       CONNECT_LISTENERS: 'https://0.0.0.0:8083'
       CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
       CONNECT_REST_ADVERTISED_LISTENER: 'https'
+      KAFKA_HEAP_OPTS: '-Xmx512M -Xms256M'
       CONNECT_GROUP_ID: 'connect-cluster-mtls'
       CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs-mtls'
       CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets-mtls'
@@ -179,6 +202,7 @@ services:
       CONNECT_LISTENERS: 'https://0.0.0.0:8083'
       CONNECT_REST_ADVERTISED_HOST_NAME: 'localhost'
       CONNECT_REST_ADVERTISED_LISTENER: 'https'
+      KAFKA_HEAP_OPTS: '-Xmx512M -Xms256M'
       CONNECT_GROUP_ID: 'connect-cluster-basic-tls'
       CONNECT_CONFIG_STORAGE_TOPIC: 'connect-configs-basic-tls'
       CONNECT_OFFSET_STORAGE_TOPIC: 'connect-offsets-basic-tls'
