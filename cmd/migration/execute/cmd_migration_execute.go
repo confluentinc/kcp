@@ -1,15 +1,15 @@
 package execute
 
 import (
-	"bytes"
 	"fmt"
 	"log/slog"
-	"os"
+	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -282,13 +282,13 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	if g.Spec.Gateway.CRs.Initial != config.InitialCrName {
 		gatewayChanges = append(gatewayChanges, "crs.initial")
 	}
-	// fence.routes drifts as a set (reordering is not a change). Counts only,
+	// routes drifts as a set (reordering is not a change). Counts only,
 	// never names — a bare flag, like the retired fenced-CR byte check.
-	if added, removed := diffCounts(g.Spec.Gateway.Fence.Routes, config.FenceRoutes); added > 0 || removed > 0 {
-		gatewayChanges = append(gatewayChanges, "fence.routes")
+	if added, removed := diffCounts(g.Spec.Gateway.RouteNames(), config.FenceRoutes); added > 0 || removed > 0 {
+		gatewayChanges = append(gatewayChanges, "routes")
 	}
-	if crChanged(g.Spec.Gateway.CRs.Switchover, config.SwitchoverCrYAML) {
-		gatewayChanges = append(gatewayChanges, "switchover CR")
+	if switchoverTargetsChanged(g.Spec.Gateway.Routes, config.SwitchoverTargets) {
+		gatewayChanges = append(gatewayChanges, "switchover targets")
 	}
 	if len(gatewayChanges) > 0 {
 		drift = append(drift, fmt.Sprintf("spec.gateway (%s)", strings.Join(gatewayChanges, ", ")))
@@ -307,17 +307,29 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	return drift
 }
 
-// crChanged reports whether the CR file on disk differs from the snapshot taken
-// at init. An unreadable file is NOT drift: execute may be re-run from a
-// different cwd or pod after a crash, possibly with the gateway already fenced,
-// and a moved file must not strand a mid-flight cutover.
-func crChanged(path string, snapshot []byte) bool {
-	current, err := os.ReadFile(path)
-	if err != nil {
-		slog.Warn("⚠️ could not verify CR drift; proceeding on the snapshot taken at init", "path", path, "error", err)
-		return false
+// switchoverTarget is the comparable half of gateway.RouteSwitchoverTarget
+// (routeName is the map key), so two target lists can be compared as sets —
+// reordering is not a change, matching routes' own drift semantics.
+type switchoverTarget struct {
+	streamingDomainName string
+	bootstrapServerId   string
+}
+
+// switchoverTargetsChanged reports whether the manifest's declared per-route
+// switchover targets differ from the snapshot taken at init. Unlike the
+// retired file-based switchover CR, there is no file to read and therefore no
+// "unreadable" case to degrade: the target is pure manifest data, resolved
+// the moment the document parses.
+func switchoverTargetsChanged(routes []manifest.GatewayRoute, snapshot []gateway.RouteSwitchoverTarget) bool {
+	want := make(map[string]switchoverTarget, len(routes))
+	for _, r := range routes {
+		want[r.Name] = switchoverTarget{r.StreamingDomain.Name, r.StreamingDomain.BootstrapServerId}
 	}
-	return !bytes.Equal(current, snapshot)
+	have := make(map[string]switchoverTarget, len(snapshot))
+	for _, t := range snapshot {
+		have[t.RouteName] = switchoverTarget{t.StreamingDomainName, t.BootstrapServerId}
+	}
+	return !maps.Equal(want, have)
 }
 
 // diffCounts returns how many entries want adds and drops relative to have.

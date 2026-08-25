@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -48,22 +49,22 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-      switchover: SWITCHOVER_PATH
-    fence:
-      routes:
-        - migration-route
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: confluent-cloud
+          bootstrapServerId: SASL_PLAIN
 `
 
 type fixture struct {
 	manifestPath string
 	stateFile    string
-	switchPath   string
 	dir          string
 }
 
-// newFixture writes a manifest, its switchover CR file, and a state file holding
-// a migration whose persisted config matches the manifest. There is no fenced CR
-// file — the fence is derived from the live initial CR at cutover.
+// newFixture writes a manifest and a state file holding a migration whose
+// persisted config matches the manifest. There is no fenced or switchover CR
+// file — both are derived from the live initial CR at cutover.
 func newFixture(t *testing.T, mutate func(string) string) fixture {
 	t.Helper()
 	dir := t.TempDir()
@@ -71,11 +72,9 @@ func newFixture(t *testing.T, mutate func(string) string) fixture {
 		dir:          dir,
 		manifestPath: filepath.Join(dir, "gateway-migration.yaml"),
 		stateFile:    filepath.Join(dir, "migration-state.json"),
-		switchPath:   filepath.Join(dir, "switchover.yaml"),
 	}
-	require.NoError(t, os.WriteFile(f.switchPath, []byte("kind: Gateway\nname: switchover\n"), 0600))
 
-	doc := strings.ReplaceAll(executeManifest, "SWITCHOVER_PATH", f.switchPath)
+	doc := executeManifest
 	if mutate != nil {
 		doc = mutate(doc)
 	}
@@ -101,7 +100,7 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 		ClusterLinkName:     "msk-to-cc",
 		Topics:              []string{"t1.order", "t2.inventory"},
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("kind: Gateway\nname: switchover\n"),
+		SwitchoverTargets:   []gateway.RouteSwitchoverTarget{{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"}},
 		CurrentState:        migration.StateInitialized,
 	}
 	edit(&cfg)
@@ -305,52 +304,53 @@ func TestDrift_NeverNamesTopics(t *testing.T) {
 	assert.NotContains(t, joined, "other-topic")
 }
 
-func TestDrift_DetectsChangedSwitchoverCRBytes(t *testing.T) {
-	f := newFixture(t, nil)
-	require.NoError(t, os.WriteFile(f.switchPath, []byte("kind: Gateway\nname: EDITED\n"), 0600))
+// TestDrift_DetectsChangedSwitchoverTarget — editing a fence route's
+// switchover target after init is drift. Unlike the retired file-based
+// switchover CR there is no file to edit or lose, so there is no
+// "unreadable" case either: the target is pure manifest data.
+func TestDrift_DetectsChangedSwitchoverTarget(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "bootstrapServerId: SASL_PLAIN", "bootstrapServerId: SASL_SCRAM", 1)
+	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
-	assert.Contains(t, strings.Join(drift, " "), "switchover CR")
+	assert.Contains(t, strings.Join(drift, " "), "switchover targets")
 }
 
-// TestDrift_DetectsChangedFenceRoutes — editing spec.gateway.fence.routes after
-// init is drift, reported as a bare flag: counts/flag only, never route names.
-func TestDrift_DetectsChangedFenceRoutes(t *testing.T) {
+// TestDrift_DetectsChangedRoutes — editing spec.gateway.routes after init is
+// drift, reported as a bare flag: counts/flag only, never route names.
+func TestDrift_DetectsChangedRoutes(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc,
-			"        - migration-route\n",
-			"        - migration-route\n        - extra-route\n", 1)
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
+				"      - name: extra-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	joined := strings.Join(drift, " ")
-	assert.Contains(t, joined, "fence.routes")
+	assert.Contains(t, joined, "routes")
 	assert.NotContains(t, joined, "extra-route", "drift output must never name routes")
 }
 
-// TestDrift_ReorderedFenceRoutesIsNotDrift — fence.routes drifts as a set, so a
-// reorder of the same names is not a change.
-func TestDrift_ReorderedFenceRoutesIsNotDrift(t *testing.T) {
+// TestDrift_ReorderedRoutesIsNotDrift — routes drift as a set, so a reorder of
+// the same names is not a change.
+func TestDrift_ReorderedRoutesIsNotDrift(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc,
-			"      routes:\n        - migration-route\n",
-			"      routes:\n        - migration-route\n        - second-route\n", 1)
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
+				"      - name: second-route\n        streamingDomain:\n          name: confluent-cloud-2\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	})
-	// Snapshot carries the two routes in the opposite order.
+	// Snapshot carries the two routes (and their targets) in the opposite order.
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.FenceRoutes = []string{"second-route", "migration-route"}
+		c.SwitchoverTargets = []gateway.RouteSwitchoverTarget{
+			{RouteName: "second-route", StreamingDomainName: "confluent-cloud-2", BootstrapServerId: "SASL_PLAIN"},
+			{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
+		}
 	})
 	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
-}
-
-// TestDrift_UnreadableCRIsNotFatal — execute is resume-safe and may run from a
-// different cwd or pod after a crash, possibly with the gateway already fenced.
-// A moved CR file must not strand a mid-flight cutover.
-func TestDrift_UnreadableCRIsNotFatal(t *testing.T) {
-	f := newFixture(t, nil)
-	require.NoError(t, os.Remove(f.switchPath))
-	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)),
-		"an unreadable CR degrades to a warning, never a drift error")
 }
 
 // TestDrift_KubeconfigPathIsNotCompared — for the same reason: execute may
@@ -406,7 +406,7 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		"K8sNamespace":            true,
 		"InitialCrName":           true,
 		"FenceRoutes":             true,
-		"SwitchoverCrYAML":        true,
+		"SwitchoverTargets":       true,
 	}
 	// Deliberately not compared by detectDrift — each entry says why.
 	driftExempt := map[string]bool{

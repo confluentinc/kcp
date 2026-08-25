@@ -140,7 +140,7 @@ spec:
 
 > **Note:** With `kcp migration` you do **not** author or supply this file. kcp
 > derives the fenced state at cutover from the live initial CR, injecting the
-> `fence` block below onto the route(s) named in `spec.gateway.fence.routes`. The
+> `fence` block below onto the route(s) named in `spec.gateway.routes`. The
 > YAML here is shown only to illustrate what the fenced state looks like — it is
 > exactly what kcp applies.
 

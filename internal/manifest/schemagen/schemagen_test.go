@@ -213,8 +213,8 @@ func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
 	crs := props(t, props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any))
 	require.Contains(t, crs["initial"].(map[string]any)["description"], "name")
 
-	fence := props(t, props(t, spec["gateway"].(map[string]any))["fence"].(map[string]any))
-	require.Contains(t, fence["routes"].(map[string]any)["description"], "fence")
+	gatewayProps := props(t, spec["gateway"].(map[string]any))
+	require.Contains(t, gatewayProps["routes"].(map[string]any)["description"], "fence")
 
 	topics := spec["topics"].(map[string]any)
 	require.NotEmpty(t, topics["description"])
@@ -240,11 +240,17 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	// derived and stays optional.
 	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "credentials"},
 		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
-	require.ElementsMatch(t, []any{"namespace", "crs", "fence"}, requiredOf(spec["gateway"].(map[string]any)))
-	require.ElementsMatch(t, []any{"initial", "switchover"},
+	require.ElementsMatch(t, []any{"namespace", "crs", "routes"}, requiredOf(spec["gateway"].(map[string]any)))
+	// switchover is retired (D2): the property is dropped from the schema
+	// entirely (see the shipped-example test below), so only initial remains.
+	require.ElementsMatch(t, []any{"initial"},
 		requiredOf(props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)))
-	require.ElementsMatch(t, []any{"routes"},
-		requiredOf(props(t, spec["gateway"].(map[string]any))["fence"].(map[string]any)))
+	// Each route pairs a name with its streaming domain target (D4): a route
+	// cannot be named here without also declaring where it switches to.
+	routeItem := props(t, spec["gateway"].(map[string]any))["routes"].(map[string]any)["items"].(map[string]any)
+	require.ElementsMatch(t, []any{"name", "streamingDomain"}, routeItem["required"])
+	require.NotContains(t, props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)["properties"].(map[string]any), "switchover",
+		"crs.switchover must not appear in the schema at all — offering it would mislead an editor into typing something Validate() always rejects")
 	// lagThreshold's zero value is meaningful (fail-safe/strictest), not a
 	// stand-in for "omitted", so the key must be required even though the
 	// block it lives in (spec.defaultPolicies) stays optional.

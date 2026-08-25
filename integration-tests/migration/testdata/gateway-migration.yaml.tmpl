@@ -53,11 +53,12 @@ spec:
     kubeconfig: {{ .KubePath | yamlQuote }}
     crs:
       initial: {{ .GatewayName | yamlQuote }}
-      switchover: {{ .SwitchoverCR | yamlQuote }}
-    fence:
-      routes:
+    routes:
 {{- range .FenceRoutes }}
-        - {{ . | yamlQuote }}
+      - name: {{ .Name | yamlQuote }}
+        streamingDomain:
+          name: {{ .SwitchoverDomainName | yamlQuote }}
+          bootstrapServerId: {{ .SwitchoverBootstrapServerId | yamlQuote }}
 {{- end }}
 {{- if .Policy.Any }}
 
