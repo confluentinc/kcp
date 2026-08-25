@@ -49,10 +49,13 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-      switchover: /etc/kcp/gateway-switchover.yaml
     fence:
       routes:
-        - migration-route
+        - name: migration-route
+          switchover:
+            streamingDomain:
+              name: confluent-cloud
+              bootstrapServerId: SASL_PLAIN
 `
 
 func parseGateway(t *testing.T, doc string) *GatewayMigration {
@@ -93,8 +96,13 @@ func TestGateway_ParsesEveryField(t *testing.T) {
 	assert.Equal(t, "msk-to-cc", g.Spec.ClusterLink.Name)
 	assert.Equal(t, "confluent", g.Spec.Gateway.Namespace)
 	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CRs.Initial)
-	assert.Equal(t, "/etc/kcp/gateway-switchover.yaml", g.Spec.Gateway.CRs.Switchover)
-	assert.Equal(t, []string{"migration-route"}, g.Spec.Gateway.Fence.Routes)
+	assert.Empty(t, g.Spec.Gateway.CRs.Switchover, "no manifest sets it, so this must stay unset")
+	assert.Equal(t, []GatewayFenceRoute{{
+		Name: "migration-route",
+		Switchover: GatewayRouteSwitchover{
+			StreamingDomain: GatewayStreamingDomainRef{Name: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
+		},
+	}}, g.Spec.Gateway.Fence.Routes)
 }
 
 func TestGateway_RejectsUnknownFields(t *testing.T) {
@@ -380,21 +388,27 @@ func TestGateway_RequiresGatewayNamespace(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.gateway.namespace")
 }
 
-func TestGateway_RequiresBothCRs(t *testing.T) {
-	for field, line := range map[string]string{
-		"spec.gateway.crs.initial":    "      initial: gateway-initial\n",
-		"spec.gateway.crs.switchover": "      switchover: /etc/kcp/gateway-switchover.yaml\n",
-	} {
-		t.Run(field, func(t *testing.T) {
-			g := parseGateway(t, strings.Replace(validGatewayDoc, line, "", 1))
-			requireErrContains(t, g.Validate(), field)
-		})
-	}
+func TestGateway_RequiresInitialCR(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc, "      initial: gateway-initial\n", "", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.crs.initial")
+}
+
+// TestGateway_RejectsSwitchoverCRPath is decision D2: crs.switchover is
+// hard-removed, not deprecated-and-kept. The field stays on the Go struct only
+// so a manifest that still sets it is refused with a migration hint, rather
+// than goccy silently dropping the unknown-shaped key and the manifest reading
+// as valid while doing something the operator did not intend.
+func TestGateway_RejectsSwitchoverCRPath(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc,
+		"    crs:\n      initial: gateway-initial\n",
+		"    crs:\n      initial: gateway-initial\n      switchover: /etc/kcp/gateway-switchover.yaml\n", 1)
+	g := parseGateway(t, doc)
+	requireErrContains(t, g.Validate(), "spec.gateway.crs.switchover")
 }
 
 // fenceBlock is the fence stanza in the canonical doc; tests replace it to vary
 // spec.gateway.fence.routes.
-const fenceBlock = "    fence:\n      routes:\n        - migration-route\n"
+const fenceBlock = "    fence:\n      routes:\n        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n"
 
 // TestGateway_RequiresFenceRoutes — with no route named to fence, the fence step
 // would apply the bare initial CR and report success while every client keeps
@@ -414,16 +428,59 @@ func TestGateway_RequiresFenceRoutes(t *testing.T) {
 // would fail at fence time; catch it at parse.
 func TestGateway_RejectsBlankFenceRoute(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
-		"    fence:\n      routes:\n        - \"\"\n", 1))
+		"    fence:\n      routes:\n        - name: \"\"\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n", 1))
 	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
 }
 
 // TestGateway_RejectsDuplicateFenceRoutes — a repeated name is an operator slip;
 // the second would try to fence an already-fenced route at cutover.
 func TestGateway_RejectsDuplicateFenceRoutes(t *testing.T) {
-	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
-		"    fence:\n      routes:\n        - migration-route\n        - migration-route\n", 1))
+	doc := strings.Replace(validGatewayDoc, fenceBlock, fenceBlock+
+		"        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n", 1)
+	g := parseGateway(t, doc)
 	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+}
+
+// TestGateway_RequiresSwitchoverOnEveryFenceRoute is decision D4: the
+// switchover target lives inside the fence-route entry itself, so a route
+// cannot be named to fence without also declaring where it switches to — the
+// schema makes fence-without-switch unrepresentable rather than checking for it
+// after the fact.
+func TestGateway_RequiresSwitchoverOnEveryFenceRoute(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
+		"    fence:\n      routes:\n        - name: migration-route\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+}
+
+// TestGateway_RejectsBlankSwitchoverStreamingDomainName — an empty target
+// domain name matches nothing in the initial CR and would fail at switch time;
+// catch it at parse.
+func TestGateway_RejectsBlankSwitchoverStreamingDomainName(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc,
+		"              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n",
+		"              name: \"\"\n              bootstrapServerId: SASL_PLAIN\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+}
+
+// TestGateway_RejectsBlankSwitchoverBootstrapServerId mirrors the domain-name
+// case for the bootstrap server id half of the target.
+func TestGateway_RejectsBlankSwitchoverBootstrapServerId(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc,
+		"              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n",
+		"              name: confluent-cloud\n              bootstrapServerId: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+}
+
+// TestGateway_TwoFenceRoutesWithDifferentTargetsValidate — the GREEN case for
+// the multi-route/multi-target shape: two routes may switch to different
+// streaming domains.
+func TestGateway_TwoFenceRoutesWithDifferentTargetsValidate(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, fenceBlock, fenceBlock+
+		"        - name: scram-preregistration\n          switchover:\n            streamingDomain:\n              name: confluent-cloud-2\n              bootstrapServerId: SASL_PLAIN\n", 1)
+	g := parseGateway(t, doc)
+	require.Empty(t, g.Validate())
+	require.Len(t, g.Spec.Gateway.Fence.Routes, 2)
+	assert.Equal(t, "confluent-cloud-2", g.Spec.Gateway.Fence.Routes[1].Switchover.StreamingDomain.Name)
 }
 
 // TestGateway_KubeconfigTildeIsExpanded — the one place in the repo where a

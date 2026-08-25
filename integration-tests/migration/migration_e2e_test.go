@@ -62,8 +62,7 @@ type envConfig struct {
 	TopicName       string   // single-topic scenarios (producer/consumer target)
 	TopicNames      []string // all mirror topics for the scenario (>=1)
 	GatewayName     string
-	FenceRoutes     []string // spec.gateway.fence.routes — derived from the live initial CR
-	SwitchoverCR    string   // in-pod fixture path
+	FenceRoutes     []string // spec.gateway.fence.routes[].name — derived from the live initial CR
 }
 
 func loadEnvConfig(t *testing.T, scenario string) envConfig {
@@ -137,7 +136,6 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 		TopicNames:      topicNames,
 		GatewayName:     vars[prefix+"GATEWAY_NAME"],
 		FenceRoutes:     fenceRoutes,
-		SwitchoverCR:    vars[prefix+"SWITCHOVER_CR"],
 	}
 }
 

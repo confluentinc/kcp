@@ -114,18 +114,23 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 		config.GatewayConfigPort = gateway.DefaultGatewayConfigPort
 	}
 
-	// The fenced and switchover CRs are inputs to detection, not just payloads to
+	// The fenced and switched CRs are inputs to detection, not just payloads to
 	// apply later: applying one is what puts spec.hotReload into force, so a
 	// detector shown only the live gateway can pick rollout verification for a
-	// migration that will hot-reload — and then observe nothing. There is no
-	// snapshotted fenced CR to hand it, so derive one the same way FenceGateway
-	// does: inject a fence block onto FenceRoutes in the live initial CR.
+	// migration that will hot-reload — and then observe nothing. Neither is
+	// snapshotted: both are derived the same way, injecting onto the live
+	// initial CR (a fence block for the fenced CR, a streamingDomain flip for
+	// the switched CR).
 	fencedCrYAML, err := deriveFencedCRYAML(config)
 	if err != nil {
 		return fmt.Errorf("failed to derive fenced gateway CR: %w", err)
 	}
+	switchedCrYAML, err := deriveSwitchedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to derive switched gateway CR: %w", err)
+	}
 	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName,
-		gatewayConfigPort(config), fencedCrYAML, config.SwitchoverCrYAML)
+		gatewayConfigPort(config), fencedCrYAML, switchedCrYAML)
 	if err != nil {
 		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
 	}
@@ -413,12 +418,12 @@ func (s *MigrationActions) Initialize(
 	}
 	config.InitialCrYAML = initialCrYAML
 
-	// Validate all three gateway CRs are consistent, and that the secrets they
-	// reference exist. Report what was actually verified rather than a bare tick:
-	// the live secret check can legitimately be skipped (no RBAC to read
-	// secrets), and claiming a check ran when it did not is how a missing
-	// secretRef reached a cutover in the first place.
-	validation, err := s.gatewayService.ValidateGatewayCRs(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, config.SwitchoverCrYAML, config.FenceRoutes)
+	// Prove the redundant auth this migration depends on is actually staged,
+	// and that the secrets it references exist. Report what was actually
+	// verified rather than a bare tick: the live secret check can legitimately
+	// be skipped (no RBAC to read secrets), and claiming a check ran when it
+	// did not is how a missing secretRef reached a cutover in the first place.
+	validation, err := s.gatewayService.CheckRedundantAuthStaged(ctx, config.K8sNamespace, config.InitialCrYAML, config.SwitchoverTargets)
 	for _, warning := range validation.Warnings {
 		s.reporter.warn("%s", warning)
 	}
@@ -852,6 +857,21 @@ func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
 		return nil, err
 	}
 	return gateway.FenceRoutesObj(base, config.FenceRoutes)
+}
+
+// deriveSwitchedCRYAML builds the switched CR bytes from the live initial CR
+// snapshot by flipping each fence route's streamingDomain to its
+// config.SwitchoverTargets entry (see gateway.SwitchRoutesObj). There is no
+// separately-snapshotted switched CR: SwitchGateway's apply and
+// ResolveGatewayCapability's detection both derive from the same source, so
+// they can never drift from each other — the same property deriveFencedCRYAML
+// gives the fenced CR.
+func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
+	base, err := cleanInitialCR(config.InitialCrYAML)
+	if err != nil {
+		return nil, err
+	}
+	return gateway.SwitchRoutesObj(base, config.SwitchoverTargets)
 }
 
 // cleanInitialCR parses the initial CR YAML and strips the server-managed
@@ -1298,10 +1318,18 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 	}
 }
 
-// SwitchGateway applies the switchover gateway CR YAML to point to Confluent
-// Cloud, confirms the operator accepted the new spec, then waits for it to
-// report the gateway as Ready. The wait uses the same no-deadline-by-default
-// behavior as FenceGateway.
+// SwitchGateway derives the switched gateway CR from the live initial CR
+// snapshot — cleanInitialCR(config.InitialCrYAML) with each fence route's
+// streamingDomain flipped to its config.SwitchoverTargets entry (see
+// gateway.SwitchRoutesObj) — applies it, confirms the operator accepted the
+// new spec, then waits for it to report the gateway as Ready. The wait uses
+// the same no-deadline-by-default behavior as FenceGateway.
+//
+// Because the initial CR is unfenced and its routes already carry pre-staged
+// ("redundant") auth for the target domain (proved at init by
+// checkRedundantAuthStaged), this one apply yields unfenced + target-domain +
+// target-auth with no secret or auth change at cutover — there is no
+// separately-authored switchover CR to apply.
 //
 // The acceptance check is what stops this reporting a completed migration for a
 // switchover the operator refused — the failure mode described on
@@ -1310,7 +1338,12 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
-	applied, err := s.applyGatewayCR(ctx, config, config.SwitchoverCrYAML, "switchover")
+	switchedCrYAML, err := deriveSwitchedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to build switched gateway CR: %w", err)
+	}
+
+	applied, err := s.applyGatewayCR(ctx, config, switchedCrYAML, "switchover")
 	if err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}

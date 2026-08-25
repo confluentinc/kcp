@@ -121,6 +121,19 @@ func GenerateGateway() ([]byte, error) {
 	// silently inherit that default by leaving it out.
 	policy.Required = []string{"lagThreshold"}
 
+	// crs.switchover is retired (D2): Validate() hard-rejects a manifest that
+	// still sets it, so offering it as a legal-looking key would mislead an
+	// editor into typing something that always fails. Drop it from the schema
+	// entirely, the same call as the kind:Migration-only credentials fields
+	// above.
+	crs := gateway.Properties["crs"]
+	delete(crs.Properties, "switchover")
+	crs.Required = []string{"initial"}
+
+	// The switchover target's two leaf fields have no omitempty tag, so the
+	// reflected schema already requires them; nothing to patch beyond that.
+	fenceRouteItem := gateway.Properties["fence"].Properties["routes"].Items
+
 	// Durations parse as "10m", not as an integer count.
 	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
 		p := policy.Properties[k]
@@ -156,10 +169,13 @@ func GenerateGateway() ([]byte, error) {
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
 
-		gateway.Properties["crs"].Properties["initial"]:    "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
-		gateway.Properties["crs"].Properties["switchover"]: "Path to the local gateway CR YAML file that routes traffic to the destination.",
+		crs.Properties["initial"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
 
-		gateway.Properties["fence"].Properties["routes"]: "Route name(s) (spec.routes[].name) to fence at cutover. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. Each name must exist in the initial CR and must not already be fenced.",
+		gateway.Properties["fence"].Properties["routes"]:                                                      "Route(s) to fence at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced.",
+		fenceRouteItem.Properties["name"]:                                                                     "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR.",
+		fenceRouteItem.Properties["switchover"]:                                                               "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
+		fenceRouteItem.Properties["switchover"].Properties["streamingDomain"].Properties["name"]:              "Name of a streaming domain already declared in the initial CR's spec.streamingDomains.",
+		fenceRouteItem.Properties["switchover"].Properties["streamingDomain"].Properties["bootstrapServerId"]: "A bootstrap server id declared on that streaming domain.",
 
 		spec.Properties["topics"]: "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected.",
 

@@ -44,10 +44,28 @@ func writeManifestToPod(t *testing.T, cfg envConfig, podPath string, opts manife
 	require.NoError(t, cmd.Run(), "writing %s into the pod: %s", podPath, stderr.String())
 }
 
+// e2eSwitchoverDomainName and e2eSwitchoverBootstrapServerId are the target
+// every converted e2e scenario switches to — the destination streaming domain
+// the initial CR fixture (testdata/manifests/templates/gateway-initial.yaml)
+// already declares. There is no per-scenario variation today, so this is a
+// fixed pairing rather than something setup.sh needs to publish per route.
+const (
+	e2eSwitchoverDomainName        = "destination-kafka-cluster"
+	e2eSwitchoverBootstrapServerId = "SASL_PLAIN"
+)
+
 // manifestOptsFor builds the manifest options every scenario shares, from the
 // topology setup.sh published into .env. Callers set metadata.name, the manifest
 // path, pause intent and policy on top.
 func manifestOptsFor(cfg envConfig) manifestOpts {
+	fenceRoutes := make([]fenceRouteOpts, len(cfg.FenceRoutes))
+	for i, name := range cfg.FenceRoutes {
+		fenceRoutes[i] = fenceRouteOpts{
+			Name:                        name,
+			SwitchoverDomainName:        e2eSwitchoverDomainName,
+			SwitchoverBootstrapServerId: e2eSwitchoverBootstrapServerId,
+		}
+	}
 	return manifestOpts{
 		MetadataName:    "e2e-" + cfg.Scenario,
 		SourceBootstrap: cfg.SourceBootstrap,
@@ -59,8 +77,7 @@ func manifestOptsFor(cfg envConfig) manifestOpts {
 		APISecret:       cfg.ClusterAPISecret,
 		Namespace:       cfg.Namespace,
 		GatewayName:     cfg.GatewayName,
-		FenceRoutes:     cfg.FenceRoutes,
-		SwitchoverCR:    cfg.SwitchoverCR,
+		FenceRoutes:     fenceRoutes,
 		KubePath:        cfg.KubePath,
 	}
 }

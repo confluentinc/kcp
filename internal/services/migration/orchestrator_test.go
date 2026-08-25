@@ -53,7 +53,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		K8sNamespace:        "confluent",
 		InitialCrYAML:       []byte(testInitialCR),
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover-yaml"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
 	// Default mock implementations. The initial CR must be a real routed gateway
@@ -110,7 +110,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 
 	gw := &mockGatewayService{
 		getGatewayYAMLFn: getGatewayYAMLFn,
-		// validateGatewayCRsFn left unset: the mock's default passes validation.
+		// checkRedundantAuthStagedFn left unset: the mock's default passes validation.
 		applyGatewayYAMLFn: applyGatewayYAMLFn,
 		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{
@@ -1333,8 +1333,12 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			overrides: orchestratorOverrides{
 				// Fence and switchover both apply; only the switchover CR fails,
 				// leaving the FSM at promoted (switch failures do not roll back).
+				// The switch apply is the only one that flips the route's
+				// streamingDomain to the switchover target, so its presence is
+				// the discriminator (the fence apply carries a fence block
+				// instead, never the target domain).
 				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
-					if strings.Contains(string(yaml), "switchover") {
+					if strings.Contains(string(yaml), "confluent-cloud") {
 						return "", fmt.Errorf("switchover apply failed")
 					}
 					return "", nil
