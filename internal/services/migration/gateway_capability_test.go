@@ -24,10 +24,11 @@ func TestResolveGatewayCapability(t *testing.T) {
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := &MigrationConfig{
-			K8sNamespace:  "confluent",
-			InitialCrName: "gw-1",
-			InitialCrYAML: []byte(testInitialCR),
-			FenceRoutes:   []string{"migration-route"},
+			K8sNamespace:      "confluent",
+			InitialCrName:     "gw-1",
+			InitialCrYAML:     []byte(testInitialCR),
+			FenceRoutes:       []string{"migration-route"},
+			SwitchoverTargets: testSwitchoverTargets,
 		}
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -51,19 +52,21 @@ func TestResolveGatewayCapability(t *testing.T) {
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := &MigrationConfig{
-			K8sNamespace:     "confluent",
-			InitialCrName:    "gw-1",
-			InitialCrYAML:    []byte(testInitialCR),
-			FenceRoutes:      []string{"migration-route"},
-			SwitchoverCrYAML: []byte("kind: Gateway # switchover"),
+			K8sNamespace:      "confluent",
+			InitialCrName:     "gw-1",
+			InitialCrYAML:     []byte(testInitialCR),
+			FenceRoutes:       []string{"migration-route"},
+			SwitchoverTargets: testSwitchoverTargets,
 		}
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
 
 		wantFenced, err := deriveFencedCRYAML(config)
 		require.NoError(t, err)
+		wantSwitched, err := deriveSwitchedCRYAML(config)
+		require.NoError(t, err)
 		assert.Equal(t, wantFenced, gotFenced)
-		assert.Equal(t, config.SwitchoverCrYAML, gotSwitchover)
+		assert.Equal(t, wantSwitched, gotSwitchover)
 	})
 
 	t.Run("adopts rollout verification on a pre-hot-reload cluster", func(t *testing.T) {
@@ -77,10 +80,11 @@ func TestResolveGatewayCapability(t *testing.T) {
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 		config := &MigrationConfig{
-			K8sNamespace:  "confluent",
-			InitialCrName: "gw-1",
-			InitialCrYAML: []byte(testInitialCR),
-			FenceRoutes:   []string{"migration-route"},
+			K8sNamespace:      "confluent",
+			InitialCrName:     "gw-1",
+			InitialCrYAML:     []byte(testInitialCR),
+			FenceRoutes:       []string{"migration-route"},
+			SwitchoverTargets: testSwitchoverTargets,
 		}
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -94,11 +98,11 @@ func TestResolveGatewayCapability(t *testing.T) {
 		gw := &mockGatewayService{}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 
-		unset := &MigrationConfig{InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+		unset := &MigrationConfig{InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}, SwitchoverTargets: testSwitchoverTargets}
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), unset))
 		assert.Equal(t, gateway.DefaultGatewayConfigPort, unset.GatewayConfigPort)
 
-		explicit := &MigrationConfig{GatewayConfigPort: 19180, InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+		explicit := &MigrationConfig{GatewayConfigPort: 19180, InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}, SwitchoverTargets: testSwitchoverTargets}
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), explicit))
 		assert.Equal(t, 19180, explicit.GatewayConfigPort)
 	})
@@ -116,6 +120,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 			GatewayVerificationMode: string(gateway.VerifyPerPodConfigID),
 			InitialCrYAML:           []byte(testInitialCR),
 			FenceRoutes:             []string{"migration-route"},
+			SwitchoverTargets:       testSwitchoverTargets,
 		}
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -140,6 +145,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 			GatewayVerificationMode: string(gateway.VerifyRollout),
 			InitialCrYAML:           []byte(testInitialCR),
 			FenceRoutes:             []string{"migration-route"},
+			SwitchoverTargets:       testSwitchoverTargets,
 		}
 
 		require.NoError(t, actions.ResolveGatewayCapability(context.Background(), config))
@@ -156,7 +162,7 @@ func TestResolveGatewayCapability(t *testing.T) {
 		}
 		actions := NewMigrationActions(gw, &mockClusterLinkService{})
 
-		config := &MigrationConfig{InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}}
+		config := &MigrationConfig{InitialCrYAML: []byte(testInitialCR), FenceRoutes: []string{"migration-route"}, SwitchoverTargets: testSwitchoverTargets}
 		err := actions.ResolveGatewayCapability(context.Background(), config)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "403")

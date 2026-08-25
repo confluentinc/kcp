@@ -93,15 +93,30 @@ spec:
     # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
     crs:
       initial: gateway-initial # a Kubernetes object NAME, read live
-      switchover: /etc/kcp/gateway-switchover.yaml # a local FILE path
-    # Route(s) to fence at cutover, by spec.routes[].name. kcp reads the live
-    # initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE}
+      # switchover is no longer supported — see fence.routes[].switchover
+      # below. Setting it is a validation error, not a silent no-op.
+    # Route(s) to fence at cutover, and where each switches to. kcp reads the
+    # live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE}
     # onto each named route, and applies the patched CR — there is no separate
     # fenced-CR file to create or keep in sync. The named routes must exist in
     # the initial CR and must not already be fenced.
+    #
+    # At cutover kcp derives the switched CR the same way: it flips each
+    # route's spec.routes[].streamingDomain to the domain/bootstrapServerId
+    # declared here and applies the patched CR — no switchover CR file
+    # either. This is safe with NO secret or auth change at cutover only
+    # because the route's security.cluster already carries pre-staged
+    # ("redundant") swap auth for the target domain; kcp proves that staging
+    # holds at init (see checkRedundantAuthStaged), before anything is
+    # fenced. Both the target domain and its bootstrapServerId must already
+    # be declared in the initial CR's spec.streamingDomains.
     fence:
       routes:
-        - migration-route
+        - name: migration-route
+          switchover:
+            streamingDomain:
+              name: confluent-cloud
+              bootstrapServerId: SASL_PLAIN
 
   # OPTIONAL. A flat list of LITERAL topic names, exact-matched against the
   # link's active mirror topics — not globs, and a name that matches nothing is
