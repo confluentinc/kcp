@@ -123,7 +123,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
 		ClusterLinkName:         g.Spec.ClusterLink.Name,
 		Topics:                  topicsOf(g),
-		FenceRoutes:             g.Spec.Gateway.Fence.RouteNames(),
+		FenceRoutes:             g.Spec.Gateway.RouteNames(),
 		SwitchoverTargets:       switchoverTargetsOf(g),
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
@@ -242,19 +242,19 @@ func topicsOf(g *manifest.GatewayMigration) []string {
 	return *g.Spec.Topics
 }
 
-// switchoverTargetsOf projects each fence route's switchover target — one
-// entry per fence route, since switchover is required on every entry (D4).
-// There is no separately-snapshotted switched CR: execute derives it from
+// switchoverTargetsOf projects each route's streaming domain target — one
+// entry per route, since a target is required on every entry (D4). There is
+// no separately-snapshotted switched CR: execute derives it from
 // InitialCrYAML plus these targets, the same way it derives the fenced CR
 // from InitialCrYAML plus FenceRoutes.
 func switchoverTargetsOf(g *manifest.GatewayMigration) []gateway.RouteSwitchoverTarget {
-	routes := g.Spec.Gateway.Fence.Routes
+	routes := g.Spec.Gateway.Routes
 	targets := make([]gateway.RouteSwitchoverTarget, len(routes))
 	for i, r := range routes {
 		targets[i] = gateway.RouteSwitchoverTarget{
 			RouteName:           r.Name,
-			StreamingDomainName: r.Switchover.StreamingDomain.Name,
-			BootstrapServerId:   r.Switchover.StreamingDomain.BootstrapServerId,
+			StreamingDomainName: r.StreamingDomain.Name,
+			BootstrapServerId:   r.StreamingDomain.BootstrapServerId,
 		}
 	}
 	return targets

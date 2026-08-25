@@ -62,7 +62,7 @@ type envConfig struct {
 	TopicName       string   // single-topic scenarios (producer/consumer target)
 	TopicNames      []string // all mirror topics for the scenario (>=1)
 	GatewayName     string
-	FenceRoutes     []string // spec.gateway.fence.routes[].name — derived from the live initial CR
+	FenceRoutes     []string // spec.gateway.routes[].name — derived from the live initial CR
 }
 
 func loadEnvConfig(t *testing.T, scenario string) envConfig {

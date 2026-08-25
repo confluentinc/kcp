@@ -34,11 +34,10 @@ type manifestOpts struct {
 	Policy                  policyOpts
 }
 
-// fenceRouteOpts is one spec.gateway.fence.routes[] entry: a route to fence,
-// paired with the streaming domain/bootstrapServerId it switches to at
-// cutover. There is no separate switchover CR file — kcp derives the switch
-// from the live initial CR plus this target, the same way it derives the
-// fence.
+// fenceRouteOpts is one spec.gateway.routes[] entry: a route to fence, paired
+// with the streaming domain/bootstrapServerId it switches to at cutover.
+// There is no separate switchover CR file — kcp derives the switch from the
+// live initial CR plus this target, the same way it derives the fence.
 type fenceRouteOpts struct {
 	Name                        string
 	SwitchoverDomainName        string

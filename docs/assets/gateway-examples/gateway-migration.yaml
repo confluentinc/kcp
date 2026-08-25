@@ -93,7 +93,7 @@ spec:
     # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
     crs:
       initial: gateway-initial # a Kubernetes object NAME, read live
-      # switchover is no longer supported — see fence.routes[].switchover
+      # switchover is no longer supported — see routes[].streamingDomain
       # below. Setting it is a validation error, not a silent no-op.
     # Route(s) to fence at cutover, and where each switches to. kcp reads the
     # live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE}
@@ -110,13 +110,11 @@ spec:
     # holds at init (see checkRedundantAuthStaged), before anything is
     # fenced. Both the target domain and its bootstrapServerId must already
     # be declared in the initial CR's spec.streamingDomains.
-    fence:
-      routes:
-        - name: migration-route
-          switchover:
-            streamingDomain:
-              name: confluent-cloud
-              bootstrapServerId: SASL_PLAIN
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: confluent-cloud
+          bootstrapServerId: SASL_PLAIN
 
   # OPTIONAL. A flat list of LITERAL topic names, exact-matched against the
   # link's active mirror topics — not globs, and a name that matches nothing is

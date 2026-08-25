@@ -176,69 +176,51 @@
               ],
               "additionalProperties": false
             },
-            "fence": {
-              "type": "object",
-              "properties": {
-                "routes": {
-                  "type": [
-                    "null",
-                    "array"
-                  ],
-                  "items": {
+            "routes": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR."
+                  },
+                  "streamingDomain": {
                     "type": "object",
                     "properties": {
                       "name": {
                         "type": "string",
-                        "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR."
+                        "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains."
                       },
-                      "switchover": {
-                        "type": "object",
-                        "properties": {
-                          "streamingDomain": {
-                            "type": "object",
-                            "properties": {
-                              "name": {
-                                "type": "string",
-                                "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains."
-                              },
-                              "bootstrapServerId": {
-                                "type": "string",
-                                "description": "A bootstrap server id declared on that streaming domain."
-                              }
-                            },
-                            "required": [
-                              "name",
-                              "bootstrapServerId"
-                            ],
-                            "additionalProperties": false
-                          }
-                        },
-                        "description": "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
-                        "required": [
-                          "streamingDomain"
-                        ],
-                        "additionalProperties": false
+                      "bootstrapServerId": {
+                        "type": "string",
+                        "description": "A bootstrap server id declared on that streaming domain."
                       }
                     },
+                    "description": "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
                     "required": [
                       "name",
-                      "switchover"
+                      "bootstrapServerId"
                     ],
                     "additionalProperties": false
-                  },
-                  "description": "Route(s) to fence at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced."
-                }
+                  }
+                },
+                "required": [
+                  "name",
+                  "streamingDomain"
+                ],
+                "additionalProperties": false
               },
-              "required": [
-                "routes"
-              ],
-              "additionalProperties": false
+              "description": "Route(s) kcp fences and switches over at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced."
             }
           },
           "required": [
             "namespace",
             "crs",
-            "fence"
+            "routes"
           ],
           "additionalProperties": false
         },

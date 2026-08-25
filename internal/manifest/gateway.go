@@ -92,10 +92,15 @@ type Gateway struct {
 	// does not either.
 	Kubeconfig string     `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	CRs        GatewayCRs `yaml:"crs" json:"crs"`
-	// Fence names the route(s) kcp fences at cutover. There is no fenced-CR
-	// file: kcp reads the live initial CR, injects the fence block onto each
-	// named route, and applies the patched CR.
-	Fence GatewayFence `yaml:"fence" json:"fence"`
+	// Routes names the route(s) kcp fences and switches over at cutover, each
+	// paired with the streaming domain it switches to. There is no fenced-CR
+	// or switchover-CR file: kcp reads the live initial CR, injects the fence
+	// block onto each named route to block traffic, and — derived the same
+	// way from the same live CR — later flips each route's streamingDomain to
+	// its declared target. Fence and its rollback (which re-applies the same
+	// initial CR) are therefore exact inverses, and there is no second list
+	// to keep in sync with this one (D1).
+	Routes []GatewayRoute `yaml:"routes" json:"routes"`
 }
 
 // GatewayCRs holds the gateway CR the migration reads live, plus a detector
@@ -104,7 +109,7 @@ type GatewayCRs struct {
 	// Initial is a Kubernetes object NAME, read live from the cluster at init.
 	Initial string `yaml:"initial" json:"initial"`
 	// Switchover is retired (D2): the switchover CR is now a derived inline
-	// update to the initial CR (see GatewayFence), not an operator-authored
+	// update to the initial CR (see Gateway.Routes), not an operator-authored
 	// file. This field stays as a plain string ONLY so Validate can detect a
 	// manifest that still sets it and reject with a migration hint — goccy
 	// silently drops unknown keys, so removing the field outright would turn a
@@ -113,36 +118,20 @@ type GatewayCRs struct {
 	Switchover string `yaml:"switchover,omitempty" json:"switchover,omitempty"`
 }
 
-// GatewayFence declares which route(s) the fence step blocks, and where each
-// switches to at cutover. kcp derives the fenced CR from the live initial CR
-// by injecting fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each
-// named route, so fence and its rollback (which re-applies the same initial
-// CR) are exact inverses. The switch is likewise derived: it flips each
-// route's streamingDomain to its declared target and re-applies — no
-// switchover CR file, and no separate list to keep in sync with the fence
-// routes (D1).
-type GatewayFence struct {
-	// Routes name the routes to fence, each carrying its own switchover
-	// target. Non-empty; each entry must have a non-blank, unique route name
-	// that exists in the initial CR, and a non-blank switchover target.
-	Routes []GatewayFenceRoute `yaml:"routes" json:"routes"`
-}
-
-// GatewayFenceRoute is one route to fence, paired with the streaming domain it
-// switches to at cutover. The pairing is structural (D4): a route cannot be
-// named to fence without also declaring where it switches, because the FSM
-// only supports init -> fence -> switch, with no fence-without-switch path.
-type GatewayFenceRoute struct {
-	Name       string                 `yaml:"name" json:"name"`
-	Switchover GatewayRouteSwitchover `yaml:"switchover" json:"switchover"`
-}
-
-// GatewayRouteSwitchover names the streaming domain a fence route switches to
-// at cutover. Because the route's security.cluster already carries pre-staged
-// ("redundant") auth for this domain, the switch is a plain field flip with no
-// secret or auth change (see checkRedundantAuthStaged, which proves that
-// staging holds before any route is fenced).
-type GatewayRouteSwitchover struct {
+// GatewayRoute is one route kcp fences and switches over at cutover, paired
+// with the streaming domain it switches to. The pairing is structural (D4): a
+// route cannot be named here without also declaring where it switches,
+// because the FSM only supports init -> fence -> switch, with no
+// fence-without-switch path. Each entry must have a non-blank, unique route
+// name that exists in the initial CR, and a non-blank streaming domain
+// target.
+//
+// Because the route's security.cluster already carries pre-staged
+// ("redundant") auth for the target domain, the switch is a plain field flip
+// with no secret or auth change (see checkRedundantAuthStaged, which proves
+// that staging holds before any route is fenced).
+type GatewayRoute struct {
+	Name            string                    `yaml:"name" json:"name"`
 	StreamingDomain GatewayStreamingDomainRef `yaml:"streamingDomain" json:"streamingDomain"`
 }
 
@@ -154,11 +143,11 @@ type GatewayStreamingDomainRef struct {
 	BootstrapServerId string `yaml:"bootstrapServerId" json:"bootstrapServerId"`
 }
 
-// RouteNames projects the fence routes to their plain names, the shape the
+// RouteNames projects the gateway's routes to their plain names, the shape the
 // rest of kcp (state snapshots, drift detection) has always worked with.
-func (f GatewayFence) RouteNames() []string {
-	names := make([]string, len(f.Routes))
-	for i, r := range f.Routes {
+func (g Gateway) RouteNames() []string {
+	names := make([]string, len(g.Routes))
+	for i, r := range g.Routes {
 		names[i] = r.Name
 	}
 	return names
@@ -349,28 +338,28 @@ func (g *GatewayMigration) Validate() []error {
 	// crs.switchover is retired (D2): setting it is a hard error with a
 	// migration hint, not a silent no-op.
 	if !blank(g.Spec.Gateway.CRs.Switchover) {
-		add("spec.gateway.crs.switchover: is no longer supported; declare a switchover target per route under fence.routes[].switchover instead")
+		add("spec.gateway.crs.switchover: is no longer supported; declare a switchover target per route under gateway.routes[].streamingDomain instead")
 	}
-	if routes := g.Spec.Gateway.Fence.Routes; len(routes) == 0 {
-		add("spec.gateway.fence.routes: must name at least one route to fence")
+	if routes := g.Spec.Gateway.Routes; len(routes) == 0 {
+		add("spec.gateway.routes: must name at least one route")
 	} else {
 		seen := make(map[string]struct{}, len(routes))
 		for i, route := range routes {
 			if blank(route.Name) {
-				add("spec.gateway.fence.routes[%d]: name must not be blank", i)
+				add("spec.gateway.routes[%d]: name must not be blank", i)
 			} else {
 				if _, dup := seen[route.Name]; dup {
-					add("spec.gateway.fence.routes: %q is listed more than once", route.Name)
+					add("spec.gateway.routes: %q is listed more than once", route.Name)
 				}
 				seen[route.Name] = struct{}{}
 			}
-			// D4: switchover is required on every fence route — a route
-			// cannot be named to fence without also declaring its target.
-			if blank(route.Switchover.StreamingDomain.Name) {
-				add("spec.gateway.fence.routes[%d].switchover.streamingDomain.name: must not be empty", i)
+			// D4: every route fences AND switches over — a route cannot be
+			// named here without also declaring its target.
+			if blank(route.StreamingDomain.Name) {
+				add("spec.gateway.routes[%d].streamingDomain.name: must not be empty", i)
 			}
-			if blank(route.Switchover.StreamingDomain.BootstrapServerId) {
-				add("spec.gateway.fence.routes[%d].switchover.streamingDomain.bootstrapServerId: must not be empty", i)
+			if blank(route.StreamingDomain.BootstrapServerId) {
+				add("spec.gateway.routes[%d].streamingDomain.bootstrapServerId: must not be empty", i)
 			}
 		}
 	}
