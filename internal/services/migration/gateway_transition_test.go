@@ -38,9 +38,9 @@ func hotReloadConfig() *MigrationConfig {
 		InitialCrName: "gw-1",
 		// A real routed CR: FenceGateway's cleanInitialCR + gateway.FenceRoutesObj
 		// derive the fenced CR from it, which needs spec.routes to inject onto.
-		InitialCrYAML:    []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n"),
-		FenceRoutes:      []string{"migration-route"},
-		SwitchoverCrYAML: []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nspec:\n  replicas: 1\n"),
+		InitialCrYAML:     []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n"),
+		FenceRoutes:       []string{"migration-route"},
+		SwitchoverTargets: testSwitchoverTargets,
 	}
 }
 

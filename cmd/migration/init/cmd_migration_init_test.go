@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -48,22 +49,23 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-      switchover: SWITCHOVER_PATH
     fence:
       routes:
-        - migration-route
+        - name: migration-route
+          switchover:
+            streamingDomain:
+              name: confluent-cloud
+              bootstrapServerId: SASL_PLAIN
 `
 
-// writeManifest writes the manifest with the switchover CR file created
-// alongside it, and returns the manifest path. There is no fenced CR file — the
-// fence is derived from the live initial CR at cutover.
+// writeManifest writes the manifest and returns its path. There is no fenced
+// or switchover CR file — both are derived from the live initial CR at
+// cutover.
 func writeManifest(t *testing.T, mutate func(string) string) string {
 	t.Helper()
 	dir := t.TempDir()
-	switchover := filepath.Join(dir, "switchover.yaml")
-	require.NoError(t, os.WriteFile(switchover, []byte("kind: Gateway\n"), 0600))
 
-	doc := strings.ReplaceAll(gatewayManifest, "SWITCHOVER_PATH", switchover)
+	doc := gatewayManifest
 	if mutate != nil {
 		doc = mutate(doc)
 	}
@@ -178,7 +180,7 @@ func TestInit_JoinsMultipleBootstrapServers(t *testing.T) {
 	assert.Equal(t, "b-1.msk.us-east-1.amazonaws.com:9096,b-2.msk.us-east-1.amazonaws.com:9096", cfg.SourceBootstrap)
 }
 
-func TestInit_SnapshotsSwitchoverAndPersistsFenceRoutes(t *testing.T) {
+func TestInit_PersistsFenceRoutesAndSwitchoverTargets(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
@@ -187,10 +189,27 @@ func TestInit_SnapshotsSwitchoverAndPersistsFenceRoutes(t *testing.T) {
 	require.NoError(t, err)
 	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
 	require.NoError(t, err)
-	// The switchover CR is snapshotted as bytes; the fence is recorded as route
-	// names, derived from the live initial CR at cutover rather than a file.
-	assert.Equal(t, "kind: Gateway\n", string(cfg.SwitchoverCrYAML))
+	// Both are derived from the live initial CR at cutover rather than a file:
+	// the fence is recorded as route names, and each fence route's switchover
+	// target is projected from the manifest's fence.routes[].switchover.
 	assert.Equal(t, []string{"migration-route"}, cfg.FenceRoutes)
+	assert.Equal(t, []gateway.RouteSwitchoverTarget{
+		{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
+	}, cfg.SwitchoverTargets)
+}
+
+// TestInit_RejectsSwitchoverCRPath is decision D2: crs.switchover is
+// hard-removed, so a manifest that still sets it must be refused at init —
+// the abuse case for the removed file mode.
+func TestInit_RejectsSwitchoverCRPath(t *testing.T) {
+	manifest := writeManifest(t, func(doc string) string {
+		return strings.Replace(doc, "      initial: gateway-initial\n",
+			"      initial: gateway-initial\n      switchover: /etc/kcp/gateway-switchover.yaml\n", 1)
+	})
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "spec.gateway.crs.switchover")
+	assert.Contains(t, err.Error(), "no longer supported")
 }
 
 func TestInit_TopicsCarryThrough(t *testing.T) {

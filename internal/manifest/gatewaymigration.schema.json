@@ -169,15 +169,10 @@
                 "initial": {
                   "type": "string",
                   "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path."
-                },
-                "switchover": {
-                  "type": "string",
-                  "description": "Path to the local gateway CR YAML file that routes traffic to the destination."
                 }
               },
               "required": [
-                "initial",
-                "switchover"
+                "initial"
               ],
               "additionalProperties": false
             },
@@ -190,9 +185,48 @@
                     "array"
                   ],
                   "items": {
-                    "type": "string"
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR."
+                      },
+                      "switchover": {
+                        "type": "object",
+                        "properties": {
+                          "streamingDomain": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string",
+                                "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains."
+                              },
+                              "bootstrapServerId": {
+                                "type": "string",
+                                "description": "A bootstrap server id declared on that streaming domain."
+                              }
+                            },
+                            "required": [
+                              "name",
+                              "bootstrapServerId"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "description": "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
+                        "required": [
+                          "streamingDomain"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "switchover"
+                    ],
+                    "additionalProperties": false
                   },
-                  "description": "Route name(s) (spec.routes[].name) to fence at cutover. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. Each name must exist in the initial CR and must not already be fenced."
+                  "description": "Route(s) to fence at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced."
                 }
               },
               "required": [
