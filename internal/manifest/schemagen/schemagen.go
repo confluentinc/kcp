@@ -130,9 +130,9 @@ func GenerateGateway() ([]byte, error) {
 	delete(crs.Properties, "switchover")
 	crs.Required = []string{"initial"}
 
-	// The switchover target's two leaf fields have no omitempty tag, so the
-	// reflected schema already requires them; nothing to patch beyond that.
-	fenceRouteItem := gateway.Properties["fence"].Properties["routes"].Items
+	// The streaming domain target's two leaf fields have no omitempty tag, so
+	// the reflected schema already requires them; nothing to patch beyond that.
+	routeItem := gateway.Properties["routes"].Items
 
 	// Durations parse as "10m", not as an integer count.
 	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
@@ -171,11 +171,11 @@ func GenerateGateway() ([]byte, error) {
 
 		crs.Properties["initial"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
 
-		gateway.Properties["fence"].Properties["routes"]:                                                      "Route(s) to fence at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced.",
-		fenceRouteItem.Properties["name"]:                                                                     "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR.",
-		fenceRouteItem.Properties["switchover"]:                                                               "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
-		fenceRouteItem.Properties["switchover"].Properties["streamingDomain"].Properties["name"]:              "Name of a streaming domain already declared in the initial CR's spec.streamingDomains.",
-		fenceRouteItem.Properties["switchover"].Properties["streamingDomain"].Properties["bootstrapServerId"]: "A bootstrap server id declared on that streaming domain.",
+		gateway.Properties["routes"]:                                            "Route(s) kcp fences and switches over at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced.",
+		routeItem.Properties["name"]:                                            "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR.",
+		routeItem.Properties["streamingDomain"]:                                 "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
+		routeItem.Properties["streamingDomain"].Properties["name"]:              "Name of a streaming domain already declared in the initial CR's spec.streamingDomains.",
+		routeItem.Properties["streamingDomain"].Properties["bootstrapServerId"]: "A bootstrap server id declared on that streaming domain.",
 
 		spec.Properties["topics"]: "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected.",
 

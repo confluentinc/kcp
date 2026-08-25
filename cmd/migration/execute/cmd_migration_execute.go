@@ -282,12 +282,12 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	if g.Spec.Gateway.CRs.Initial != config.InitialCrName {
 		gatewayChanges = append(gatewayChanges, "crs.initial")
 	}
-	// fence.routes drifts as a set (reordering is not a change). Counts only,
+	// routes drifts as a set (reordering is not a change). Counts only,
 	// never names — a bare flag, like the retired fenced-CR byte check.
-	if added, removed := diffCounts(g.Spec.Gateway.Fence.RouteNames(), config.FenceRoutes); added > 0 || removed > 0 {
-		gatewayChanges = append(gatewayChanges, "fence.routes")
+	if added, removed := diffCounts(g.Spec.Gateway.RouteNames(), config.FenceRoutes); added > 0 || removed > 0 {
+		gatewayChanges = append(gatewayChanges, "routes")
 	}
-	if switchoverTargetsChanged(g.Spec.Gateway.Fence.Routes, config.SwitchoverTargets) {
+	if switchoverTargetsChanged(g.Spec.Gateway.Routes, config.SwitchoverTargets) {
 		gatewayChanges = append(gatewayChanges, "switchover targets")
 	}
 	if len(gatewayChanges) > 0 {
@@ -309,7 +309,7 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 
 // switchoverTarget is the comparable half of gateway.RouteSwitchoverTarget
 // (routeName is the map key), so two target lists can be compared as sets —
-// reordering is not a change, matching fence.routes' own drift semantics.
+// reordering is not a change, matching routes' own drift semantics.
 type switchoverTarget struct {
 	streamingDomainName string
 	bootstrapServerId   string
@@ -320,10 +320,10 @@ type switchoverTarget struct {
 // retired file-based switchover CR, there is no file to read and therefore no
 // "unreadable" case to degrade: the target is pure manifest data, resolved
 // the moment the document parses.
-func switchoverTargetsChanged(routes []manifest.GatewayFenceRoute, snapshot []gateway.RouteSwitchoverTarget) bool {
+func switchoverTargetsChanged(routes []manifest.GatewayRoute, snapshot []gateway.RouteSwitchoverTarget) bool {
 	want := make(map[string]switchoverTarget, len(routes))
 	for _, r := range routes {
-		want[r.Name] = switchoverTarget{r.Switchover.StreamingDomain.Name, r.Switchover.StreamingDomain.BootstrapServerId}
+		want[r.Name] = switchoverTarget{r.StreamingDomain.Name, r.StreamingDomain.BootstrapServerId}
 	}
 	have := make(map[string]switchoverTarget, len(snapshot))
 	for _, t := range snapshot {

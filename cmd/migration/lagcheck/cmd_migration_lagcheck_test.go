@@ -45,13 +45,11 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-    fence:
-      routes:
-        - name: migration-route
-          switchover:
-            streamingDomain:
-              name: confluent-cloud
-              bootstrapServerId: SASL_PLAIN
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: confluent-cloud
+          bootstrapServerId: SASL_PLAIN
 `
 
 func writeLagManifest(t *testing.T, mutate func(string) string) string {

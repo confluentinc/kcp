@@ -49,13 +49,11 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-    fence:
-      routes:
-        - name: migration-route
-          switchover:
-            streamingDomain:
-              name: confluent-cloud
-              bootstrapServerId: SASL_PLAIN
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: confluent-cloud
+          bootstrapServerId: SASL_PLAIN
 `
 
 func parseGateway(t *testing.T, doc string) *GatewayMigration {
@@ -97,12 +95,10 @@ func TestGateway_ParsesEveryField(t *testing.T) {
 	assert.Equal(t, "confluent", g.Spec.Gateway.Namespace)
 	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CRs.Initial)
 	assert.Empty(t, g.Spec.Gateway.CRs.Switchover, "no manifest sets it, so this must stay unset")
-	assert.Equal(t, []GatewayFenceRoute{{
-		Name: "migration-route",
-		Switchover: GatewayRouteSwitchover{
-			StreamingDomain: GatewayStreamingDomainRef{Name: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
-		},
-	}}, g.Spec.Gateway.Fence.Routes)
+	assert.Equal(t, []GatewayRoute{{
+		Name:            "migration-route",
+		StreamingDomain: GatewayStreamingDomainRef{Name: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
+	}}, g.Spec.Gateway.Routes)
 }
 
 func TestGateway_RejectsUnknownFields(t *testing.T) {
@@ -406,81 +402,81 @@ func TestGateway_RejectsSwitchoverCRPath(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.gateway.crs.switchover")
 }
 
-// fenceBlock is the fence stanza in the canonical doc; tests replace it to vary
-// spec.gateway.fence.routes.
-const fenceBlock = "    fence:\n      routes:\n        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n"
+// routesBlock is the routes stanza in the canonical doc; tests replace it to
+// vary spec.gateway.routes.
+const routesBlock = "    routes:\n      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"
 
-// TestGateway_RequiresFenceRoutes — with no route named to fence, the fence step
-// would apply the bare initial CR and report success while every client keeps
-// flowing. Both an omitted block and an explicitly empty list are rejected.
-func TestGateway_RequiresFenceRoutes(t *testing.T) {
+// TestGateway_RequiresRoutes — with no route named, the fence step would apply
+// the bare initial CR and report success while every client keeps flowing.
+// Both an omitted block and an explicitly empty list are rejected.
+func TestGateway_RequiresRoutes(t *testing.T) {
 	t.Run("omitted", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock, "", 1))
-		requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, routesBlock, "", 1))
+		requireErrContains(t, g.Validate(), "spec.gateway.routes")
 	})
 	t.Run("empty list", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock, "    fence:\n      routes: []\n", 1))
-		requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, routesBlock, "    routes: []\n", 1))
+		requireErrContains(t, g.Validate(), "spec.gateway.routes")
 	})
 }
 
-// TestGateway_RejectsBlankFenceRoute — a blank route name matches nothing and
+// TestGateway_RejectsBlankRouteName — a blank route name matches nothing and
 // would fail at fence time; catch it at parse.
-func TestGateway_RejectsBlankFenceRoute(t *testing.T) {
-	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
-		"    fence:\n      routes:\n        - name: \"\"\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n", 1))
-	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+func TestGateway_RejectsBlankRouteName(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc, routesBlock,
+		"    routes:\n      - name: \"\"\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.routes")
 }
 
-// TestGateway_RejectsDuplicateFenceRoutes — a repeated name is an operator slip;
+// TestGateway_RejectsDuplicateRoutes — a repeated name is an operator slip;
 // the second would try to fence an already-fenced route at cutover.
-func TestGateway_RejectsDuplicateFenceRoutes(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, fenceBlock, fenceBlock+
-		"        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n", 1)
+func TestGateway_RejectsDuplicateRoutes(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, routesBlock, routesBlock+
+		"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	g := parseGateway(t, doc)
-	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+	requireErrContains(t, g.Validate(), "spec.gateway.routes")
 }
 
-// TestGateway_RequiresSwitchoverOnEveryFenceRoute is decision D4: the
-// switchover target lives inside the fence-route entry itself, so a route
-// cannot be named to fence without also declaring where it switches to — the
-// schema makes fence-without-switch unrepresentable rather than checking for it
-// after the fact.
-func TestGateway_RequiresSwitchoverOnEveryFenceRoute(t *testing.T) {
-	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
-		"    fence:\n      routes:\n        - name: migration-route\n", 1))
-	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+// TestGateway_RequiresStreamingDomainOnEveryRoute is decision D4: the
+// streaming domain target lives inside the route entry itself, so a route
+// cannot be named without also declaring where it switches to — the schema
+// makes fence-without-switch unrepresentable rather than checking for it after
+// the fact.
+func TestGateway_RequiresStreamingDomainOnEveryRoute(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc, routesBlock,
+		"    routes:\n      - name: migration-route\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.routes")
 }
 
-// TestGateway_RejectsBlankSwitchoverStreamingDomainName — an empty target
-// domain name matches nothing in the initial CR and would fail at switch time;
-// catch it at parse.
-func TestGateway_RejectsBlankSwitchoverStreamingDomainName(t *testing.T) {
+// TestGateway_RejectsBlankStreamingDomainName — an empty target domain name
+// matches nothing in the initial CR and would fail at switch time; catch it at
+// parse.
+func TestGateway_RejectsBlankStreamingDomainName(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
-		"              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n",
-		"              name: \"\"\n              bootstrapServerId: SASL_PLAIN\n", 1))
-	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+		"          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+		"          name: \"\"\n          bootstrapServerId: SASL_PLAIN\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.routes")
 }
 
-// TestGateway_RejectsBlankSwitchoverBootstrapServerId mirrors the domain-name
-// case for the bootstrap server id half of the target.
-func TestGateway_RejectsBlankSwitchoverBootstrapServerId(t *testing.T) {
+// TestGateway_RejectsBlankStreamingDomainBootstrapServerId mirrors the
+// domain-name case for the bootstrap server id half of the target.
+func TestGateway_RejectsBlankStreamingDomainBootstrapServerId(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
-		"              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n",
-		"              name: confluent-cloud\n              bootstrapServerId: \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+		"          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+		"          name: confluent-cloud\n          bootstrapServerId: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.routes")
 }
 
-// TestGateway_TwoFenceRoutesWithDifferentTargetsValidate — the GREEN case for
-// the multi-route/multi-target shape: two routes may switch to different
-// streaming domains.
-func TestGateway_TwoFenceRoutesWithDifferentTargetsValidate(t *testing.T) {
-	doc := strings.Replace(validGatewayDoc, fenceBlock, fenceBlock+
-		"        - name: scram-preregistration\n          switchover:\n            streamingDomain:\n              name: confluent-cloud-2\n              bootstrapServerId: SASL_PLAIN\n", 1)
+// TestGateway_TwoRoutesWithDifferentTargetsValidate — the GREEN case for the
+// multi-route/multi-target shape: two routes may switch to different streaming
+// domains.
+func TestGateway_TwoRoutesWithDifferentTargetsValidate(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc, routesBlock, routesBlock+
+		"      - name: scram-preregistration\n        streamingDomain:\n          name: confluent-cloud-2\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	g := parseGateway(t, doc)
 	require.Empty(t, g.Validate())
-	require.Len(t, g.Spec.Gateway.Fence.Routes, 2)
-	assert.Equal(t, "confluent-cloud-2", g.Spec.Gateway.Fence.Routes[1].Switchover.StreamingDomain.Name)
+	require.Len(t, g.Spec.Gateway.Routes, 2)
+	assert.Equal(t, "confluent-cloud-2", g.Spec.Gateway.Routes[1].StreamingDomain.Name)
 }
 
 // TestGateway_KubeconfigTildeIsExpanded — the one place in the repo where a

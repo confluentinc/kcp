@@ -176,11 +176,11 @@ type MigrationConfig struct {
 	// InitialCrYAML that unfence re-applies makes the two exact inverses.
 	FenceRoutes []string `json:"fence_routes"`
 
-	// SwitchoverTargets names, for each fence route, the streaming domain the
+	// SwitchoverTargets names, for each route, the streaming domain the
 	// redundant-auth switch flips it to at cutover — projected from
-	// spec.gateway.fence.routes[].switchover (one entry per fence route, since
-	// switchover is required on every entry). There is no snapshotted switched
-	// CR either: SwitchGateway derives it the same way FenceGateway derives the
+	// spec.gateway.routes[].streamingDomain (one entry per route, since a
+	// target is required on every entry). There is no snapshotted switched CR
+	// either: SwitchGateway derives it the same way FenceGateway derives the
 	// fenced CR, from InitialCrYAML plus these targets.
 	SwitchoverTargets []gateway.RouteSwitchoverTarget `json:"switchover_targets"`
 

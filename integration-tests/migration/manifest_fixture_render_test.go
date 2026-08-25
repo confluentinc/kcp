@@ -84,12 +84,12 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.Equal(t, opts.KubePath, g.Spec.Gateway.Kubeconfig)
 	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CRs.Initial)
 	assert.Empty(t, g.Spec.Gateway.CRs.Switchover, "the rendered fixture never sets the retired field")
-	require.Len(t, g.Spec.Gateway.Fence.Routes, len(opts.FenceRoutes))
+	require.Len(t, g.Spec.Gateway.Routes, len(opts.FenceRoutes))
 	for i, want := range opts.FenceRoutes {
-		got := g.Spec.Gateway.Fence.Routes[i]
+		got := g.Spec.Gateway.Routes[i]
 		assert.Equal(t, want.Name, got.Name)
-		assert.Equal(t, want.SwitchoverDomainName, got.Switchover.StreamingDomain.Name)
-		assert.Equal(t, want.SwitchoverBootstrapServerId, got.Switchover.StreamingDomain.BootstrapServerId)
+		assert.Equal(t, want.SwitchoverDomainName, got.StreamingDomain.Name)
+		assert.Equal(t, want.SwitchoverBootstrapServerId, got.StreamingDomain.BootstrapServerId)
 	}
 
 	// The destination Kafka leg carries the API key/secret and the only

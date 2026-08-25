@@ -49,13 +49,11 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-    fence:
-      routes:
-        - name: migration-route
-          switchover:
-            streamingDomain:
-              name: confluent-cloud
-              bootstrapServerId: SASL_PLAIN
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: confluent-cloud
+          bootstrapServerId: SASL_PLAIN
 `
 
 // writeManifest writes the manifest and returns its path. There is no fenced
@@ -190,8 +188,8 @@ func TestInit_PersistsFenceRoutesAndSwitchoverTargets(t *testing.T) {
 	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
 	require.NoError(t, err)
 	// Both are derived from the live initial CR at cutover rather than a file:
-	// the fence is recorded as route names, and each fence route's switchover
-	// target is projected from the manifest's fence.routes[].switchover.
+	// the fence is recorded as route names, and each route's switchover
+	// target is projected from the manifest's routes[].streamingDomain.
 	assert.Equal(t, []string{"migration-route"}, cfg.FenceRoutes)
 	assert.Equal(t, []gateway.RouteSwitchoverTarget{
 		{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},

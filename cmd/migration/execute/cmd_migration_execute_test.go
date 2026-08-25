@@ -49,13 +49,11 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-    fence:
-      routes:
-        - name: migration-route
-          switchover:
-            streamingDomain:
-              name: confluent-cloud
-              bootstrapServerId: SASL_PLAIN
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: confluent-cloud
+          bootstrapServerId: SASL_PLAIN
 `
 
 type fixture struct {
@@ -319,30 +317,30 @@ func TestDrift_DetectsChangedSwitchoverTarget(t *testing.T) {
 	assert.Contains(t, strings.Join(drift, " "), "switchover targets")
 }
 
-// TestDrift_DetectsChangedFenceRoutes — editing spec.gateway.fence.routes after
-// init is drift, reported as a bare flag: counts/flag only, never route names.
-func TestDrift_DetectsChangedFenceRoutes(t *testing.T) {
+// TestDrift_DetectsChangedRoutes — editing spec.gateway.routes after init is
+// drift, reported as a bare flag: counts/flag only, never route names.
+func TestDrift_DetectsChangedRoutes(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc,
-			"        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n",
-			"        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n"+
-				"        - name: extra-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n", 1)
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
+				"      - name: extra-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	joined := strings.Join(drift, " ")
-	assert.Contains(t, joined, "fence.routes")
+	assert.Contains(t, joined, "routes")
 	assert.NotContains(t, joined, "extra-route", "drift output must never name routes")
 }
 
-// TestDrift_ReorderedFenceRoutesIsNotDrift — fence.routes drifts as a set, so a
-// reorder of the same names is not a change.
-func TestDrift_ReorderedFenceRoutesIsNotDrift(t *testing.T) {
+// TestDrift_ReorderedRoutesIsNotDrift — routes drift as a set, so a reorder of
+// the same names is not a change.
+func TestDrift_ReorderedRoutesIsNotDrift(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc,
-			"        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n",
-			"        - name: migration-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud\n              bootstrapServerId: SASL_PLAIN\n"+
-				"        - name: second-route\n          switchover:\n            streamingDomain:\n              name: confluent-cloud-2\n              bootstrapServerId: SASL_PLAIN\n", 1)
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
+				"      - name: second-route\n        streamingDomain:\n          name: confluent-cloud-2\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	})
 	// Snapshot carries the two routes (and their targets) in the opposite order.
 	f.writeState(t, func(c *migration.MigrationConfig) {
