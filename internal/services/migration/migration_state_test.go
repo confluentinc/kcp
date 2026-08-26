@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func TestMigrationState_WriteAndRead_RoundTrip(t *testing.T) {
 			K8sNamespace:        "confluent",
 			InitialCrYAML:       []byte("apiVersion: v1"),
 			FenceRoutes:         []string{"migration-route"},
-			SwitchoverCrYAML:    []byte("apiVersion: v1\nswitchover: true"),
+			SwitchoverTargets:   []gateway.RouteSwitchoverTarget{{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"}},
 		},
 		{
 			MigrationId:      "mig-002",
