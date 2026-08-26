@@ -595,6 +595,77 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	assert.Equal(t, 9090, rec.GatewayConfigPort)
 }
 
+// TestExecute_RefusesStateFilePredatingSwitchover — a migration-state.json
+// written before redundant-auth switchover existed has fence routes but no
+// switchover targets. Left alone it fails deep in the switch step ("no
+// switchover targets given") after traffic is already fenced; execute must
+// refuse it up front, before any cluster contact, and point at the fix.
+func TestExecute_RefusesStateFilePredatingSwitchover(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.SwitchoverTargets = nil // the shape only a pre-feature state file has
+	})
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "redundant-auth switchover",
+		"the message must name the feature the state file predates")
+	assert.Contains(t, strings.ToLower(err.Error()), "init",
+		"the message must point the operator at re-running init")
+	assert.NotContains(t, err.Error(), "no switchover targets given",
+		"it must fail here, not late at the switch step")
+}
+
+// TestExecute_PolicyLogArgsCoverEveryDefaultPolicy — the audit log line that
+// records "executing migration with effective policy" is hand-mirrored from
+// DefaultPolicies and has already drifted (hotReloadTimeout and gatewayConfigPort
+// were silently dropped). effectivePolicyLogArgs is the single place the log's
+// copy lives; this pins every field to it so a future field cannot slip out of
+// the audit trail unnoticed.
+func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
+	p := manifest.DefaultPolicies{
+		LagThreshold:                    11,
+		PromoteBatchSize:                22,
+		RolloutTimeout:                  33 * time.Second,
+		DetectUnroutedProducersDuration: 44 * time.Second,
+		ConsumerOffsetSyncDrainDuration: 55 * time.Second,
+		HotReloadTimeout:                66 * time.Second,
+		GatewayConfigPort:               9099,
+	}
+	kv := kvMap(t, effectivePolicyLogArgs("mig-1", "initialized", p))
+
+	// The two the audit line silently dropped — the whole point of this test.
+	assert.Equal(t, 66*time.Second, kv["hot_reload_timeout"])
+	assert.Equal(t, 9099, kv["gateway_config_port"])
+
+	// And the rest, so no field drops out unnoticed later.
+	assert.Equal(t, "mig-1", kv["migration_id"])
+	assert.Equal(t, "initialized", kv["state"])
+	assert.Equal(t, 11, kv["lag_threshold"])
+	assert.Equal(t, 22, kv["promote_batch_size"])
+	assert.Equal(t, 33*time.Second, kv["rollout_timeout"])
+	assert.Equal(t, 44*time.Second, kv["detect_unrouted_producers_duration"])
+	assert.Equal(t, 55*time.Second, kv["consumer_offset_sync_drain_duration"])
+
+	// Every DefaultPolicies field must appear as a policy key (plus migration_id
+	// and state): the count guards against a new field being added to the struct
+	// but not to the log.
+	assert.Len(t, kv, reflect.TypeOf(p).NumField()+2)
+}
+
+// kvMap turns slog-style key/value args into a map, requiring string keys.
+func kvMap(t *testing.T, args []any) map[string]any {
+	t.Helper()
+	require.Zero(t, len(args)%2, "log args must be key/value pairs")
+	m := make(map[string]any, len(args)/2)
+	for i := 0; i < len(args); i += 2 {
+		key, ok := args[i].(string)
+		require.True(t, ok, "log arg %d must be a string key", i)
+		m[key] = args[i+1]
+	}
+	return m
+}
+
 // TestExecute_InitDoesNotCarryLastRunPolicies — the record is absent until the
 // first execute: a freshly-initialised migration (the fixture's persisted config)
 // must not carry an empty block, which is why the field is a pointer with

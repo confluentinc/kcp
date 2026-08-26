@@ -196,6 +196,27 @@ func TestInit_PersistsFenceRoutesAndSwitchoverTargets(t *testing.T) {
 	}, cfg.SwitchoverTargets)
 }
 
+// TestInit_PersistsGatewayConfigPort — the init-time capability probe dials the
+// gateway /config endpoint on this port; if the manifest's value is not copied
+// into the persisted config, the probe falls back to the hardcoded default and
+// init fails on any non-default port that execute would resolve correctly.
+func TestInit_PersistsGatewayConfigPort(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		return doc + `  defaultPolicies:
+    gatewayConfigPort: 9099
+`
+	})
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err)
+
+	state, err := migration.NewMigrationStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Equal(t, 9099, cfg.GatewayConfigPort)
+}
+
 // TestInit_RejectsSwitchoverCRPath is decision D2: crs.switchover is
 // hard-removed, so a manifest that still sets it must be refused at init —
 // the abuse case for the removed file mode.

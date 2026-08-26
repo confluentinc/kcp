@@ -403,6 +403,35 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "timed out")
 	})
+
+	t.Run("remediation hint selects the gateway pods without a wrong container name", func(t *testing.T) {
+		// The hint feeds an operator mid-incident. The gateway CR name is not the
+		// container name, so passing it as `-c` makes kubectl error out instead of
+		// showing the logs — the PR's own e2e (setup.sh) omits -c entirely.
+		var applied []string
+		gw := hotReloadCapableGateway(&applied)
+		gw.waitForConfigIDFn = func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+			return fmt.Errorf("timed out after 90s waiting for the gateway to apply the configId")
+		}
+		config := hotReloadConfig()
+
+		// Build the actions inside the capture: the reporter binds os.Stdout/os.Stderr
+		// at construction, so it must be created after the pipes are swapped in.
+		var resolveErr, verifyErr error
+		var stdout string
+		stderr := captureStderr(t, func() {
+			stdout = captureStdout(t, func() {
+				actions := NewMigrationActions(gw, &mockClusterLinkService{})
+				resolveErr = actions.ResolveGatewayCapability(context.Background(), config)
+				verifyErr = actions.VerifyHotReloadCapability(context.Background(), config)
+			})
+		})
+		require.NoError(t, resolveErr)
+		require.Error(t, verifyErr)
+		out := stdout + stderr
+		assert.Contains(t, out, "logs -l app=gw-1", "the hint must select the gateway pods by app label")
+		assert.NotContains(t, out, " -c ", "the hint must not pass a container name — the gateway CR name is not the container name")
+	})
 }
 
 func TestCleanInitialCR(t *testing.T) {

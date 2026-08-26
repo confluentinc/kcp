@@ -352,7 +352,7 @@ func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config
 		s.reporter.remediation("A configId-only change must hot-reload without restarting pods. When it never reaches the pods, the\n"+
 			"   gateway's config watcher is not running — most often because the gateway holds a trial rather than an\n"+
 			"   Enterprise licence. CFK reports success regardless, so check the gateway itself:\n"+
-			"   kubectl -n %s logs -l app=%s -c %s | grep -i hot-reload", config.K8sNamespace, config.InitialCrName, config.InitialCrName)
+			"   kubectl -n %s logs -l app=%s | grep -i hot-reload", config.K8sNamespace, config.InitialCrName)
 		return err
 	}
 
