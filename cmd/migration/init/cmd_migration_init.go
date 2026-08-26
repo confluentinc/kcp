@@ -127,6 +127,10 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		SwitchoverTargets:       switchoverTargetsOf(g),
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
+		// The init-time capability probe dials /config on this port; without it the
+		// probe falls back to the hardcoded default and fails on a non-default port
+		// that execute (which reads the manifest fresh) would resolve correctly.
+		GatewayConfigPort: g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 
 	// ===== PHASE 3: Early write =====

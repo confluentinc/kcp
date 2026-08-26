@@ -23,10 +23,11 @@ import (
 
 // orchestratorOverrides allows tests to customize mock behavior before construction.
 type orchestratorOverrides struct {
-	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
-	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
-	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
-	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
+	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
+	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
+	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	promoteMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
 // newHappyPathOrchestrator builds an orchestrator where every workflow step succeeds.
@@ -90,6 +91,8 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 
 	// Default nil → mock returns success
 	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	// Default nil → mock treats the spec as accepted by the operator
+	var waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 
 	// Apply overrides if provided
 	if len(overrides) > 0 {
@@ -102,6 +105,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		}
 		if o.waitForGatewayReadyFn != nil {
 			waitForGatewayReadyFn = o.waitForGatewayReadyFn
+		}
+		if o.waitForGatewayAcceptedFn != nil {
+			waitForGatewayAcceptedFn = o.waitForGatewayAcceptedFn
 		}
 		if o.promoteMirrorTopicsFn != nil {
 			promoteMirrorTopicsFn = o.promoteMirrorTopicsFn
@@ -121,7 +127,8 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return nil
 		},
-		waitForGatewayReadyFn: waitForGatewayReadyFn,
+		waitForGatewayReadyFn:    waitForGatewayReadyFn,
+		waitForGatewayAcceptedFn: waitForGatewayAcceptedFn,
 	}
 
 	cl := &mockClusterLinkService{
@@ -943,6 +950,68 @@ func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
 	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
 		"a failed fence apply must not be followed by a restoring apply")
+}
+
+func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *testing.T) {
+	// A definite rejection (CFK explicitly refused the fenced spec) must not be
+	// dressed up as the ambiguous "could not be confirmed on every gateway pod"
+	// timeout wording: the operator needs to know the fence never took effect and
+	// see CFK's own reason, not be pointed at a partial-application hunt.
+	rejection := &gateway.GatewayRejectedError{
+		Gateway:            "my-gateway",
+		ConditionType:      "platform.confluent.io/cluster-ready",
+		Reason:             "ApplyFailed",
+		Message:            "secretRef kcp-plain not found",
+		Generation:         5,
+		ObservedGeneration: 4,
+	}
+
+	var appliedYAML [][]byte
+	var mu sync.Mutex
+	var acceptCalls int64
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			mu.Lock()
+			appliedYAML = append(appliedYAML, yaml)
+			mu.Unlock()
+			return "", nil
+		},
+		waitForGatewayAcceptedFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
+			// Reject the fence's acceptance wait; let the restore's own wait pass.
+			if atomic.AddInt64(&acceptCalls, 1) == 1 {
+				return rejection
+			}
+			return nil
+		},
+	}
+
+	// Build inside the capture: the reporter binds os.Stdout/os.Stderr at
+	// construction, so the orchestrator must be created after the pipes are swapped.
+	var err error
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+			err = orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		})
+	})
+	out := stdout + stderr
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	var rejected *gateway.GatewayRejectedError
+	assert.ErrorAs(t, err, &rejected, "the operator's rejection must survive in the error chain")
+
+	// The restore still runs — the refused spec is live in etcd and would fence if
+	// the objection later clears — but the message must be the definite-rejection one.
+	assert.Contains(t, out, "rejected", "must say the operator rejected the spec")
+	assert.Contains(t, out, "ApplyFailed", "must surface the operator's own reason")
+	assert.NotContains(t, out, "could not be confirmed on every gateway pod",
+		"the ambiguous-timeout wording must not be used for a definite rejection")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, appliedYAML, 2, "the rejected fence must still be followed by a restoring apply")
 }
 
 func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T) {
