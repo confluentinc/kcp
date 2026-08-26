@@ -168,6 +168,7 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"migration-yaml", "migration-state-file", "migration-id",
 		"lag-threshold", "promote-batch-size", "rollout-timeout",
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
+		"hot-reload-timeout", "gateway-config-port",
 	}, visible)
 
 	runReport := cmd.Flags().Lookup("run-report")
@@ -433,6 +434,12 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		// written for humans/support, never read back by kcp, so it can no more
 		// drift than policy itself (TestExecute_RecordsLastRunPolicies)
 		"LastRunPolicies": true,
+		// resolved live against the cluster's Gateway CRD/CR at init, and
+		// re-resolved authoritatively at execute — reflects the cluster's
+		// capability, not something the operator's manifest declares
+		"GatewayVerificationMode": true,
+		"GatewayHotReloadEnabled": true,
+		"GatewayConfigPort":       true,
 	}
 
 	typ := reflect.TypeOf(migration.MigrationConfig{})
@@ -562,7 +569,7 @@ func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
 // and that it captures the OVERRIDE rather than the manifest default.
 func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n"
+		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n    hotReloadTimeout: 45s\n    gatewayConfigPort: 9090\n"
 	})
 	cmd := NewMigrationExecuteCmd()
 	require.NoError(t, cmd.Flags().Parse([]string{
@@ -584,6 +591,8 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	assert.Equal(t, 2*time.Minute, rec.RolloutTimeout)
 	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
 	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration, "an unset knob is recorded as its zero")
+	assert.Equal(t, 45*time.Second, rec.HotReloadTimeout)
+	assert.Equal(t, 9090, rec.GatewayConfigPort)
 }
 
 // TestExecute_InitDoesNotCarryLastRunPolicies — the record is absent until the
