@@ -920,7 +920,7 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 	}
 	cleanYAML, err := yaml.Marshal(obj)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
 	}
 
 	// The rollback apply gets a fresh configId too. Without one it would carry

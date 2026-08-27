@@ -74,9 +74,15 @@ type ConfigWaitOptions struct {
 	// BaselineDeploymentGeneration is the backing Deployment's
 	// metadata.generation from immediately before the apply. A generation past
 	// it means CFK chose to replace the pods, which switches the wait to
-	// RollTimeout. 0 means it could not be read, and any generation then counts
-	// as a roll — the conservative direction, since it grants the longer budget
-	// rather than cutting a real rollout short.
+	// RollTimeout. 0 means it could not be read; the wait then stays on the
+	// bounded HotReloadTimeout rather than widening to the roll budget. Widening
+	// on an unknown baseline is the direction that hangs forever on a gateway
+	// whose config watcher never started (RollTimeout is usually unbounded) —
+	// precisely the failure this budget exists to surface — so an unreadable
+	// baseline is capped, at the known cost of failing a real rollout that
+	// exceeds HotReloadTimeout. See the switch site in WaitForGatewayConfigID
+	// for the full rationale, and note this is deliberately the opposite of how
+	// observeRolloutMechanism treats an unknown baseline.
 	BaselineDeploymentGeneration int64
 
 	PollInterval time.Duration
