@@ -271,15 +271,16 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 }
 
 // BuildClusterLinkConfig assembles a clusterlink.Config from a migration
-// config plus runtime API credentials. Centralized here so the bookend
-// callers in cmd/migration/execute don't duplicate the field layout.
-func BuildClusterLinkConfig(config *MigrationConfig, apiKey, apiSecret string) clusterlink.Config {
+// config plus a runtime REST Authenticator. Centralized here so the bookend
+// callers in cmd/migration/execute don't duplicate the field layout. auth
+// carries whichever REST auth form the manifest resolved — basic, bearer or
+// mtls — not only the api_key/api_secret pair BasicAuth wraps.
+func BuildClusterLinkConfig(config *MigrationConfig, auth clusterlink.Authenticator) clusterlink.Config {
 	return clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
 		LinkName:     config.ClusterLinkName,
-		APIKey:       apiKey,
-		APISecret:    apiSecret,
 		Topics:       config.Topics,
+		Auth:         auth,
 	}
 }

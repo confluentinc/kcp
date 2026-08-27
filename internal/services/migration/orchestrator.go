@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/looplab/fsm"
 )
@@ -77,9 +78,11 @@ var stepHeaders = map[string]string{
 // execParamsFromEvent, rather than stashed on the orchestrator, so the values
 // flow with the event instead of living as mutable orchestrator state.
 type ExecutionParams struct {
-	LagThreshold     int64
-	ClusterApiKey    string
-	ClusterApiSecret string
+	LagThreshold int64
+	// RestAuth authenticates the destination cluster-link REST surface — the
+	// full resolved Authenticator (basic, bearer, or mtls), not only an
+	// api_key/api_secret pair.
+	RestAuth clusterlink.Authenticator
 }
 
 // execParamsFromEvent returns the ExecutionParams passed to fsm.Event. Forward
@@ -219,8 +222,8 @@ func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
 }
 
 // Initialize triggers the initialization event
-func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, clusterApiSecret string) error {
-	params := ExecutionParams{ClusterApiKey: clusterApiKey, ClusterApiSecret: clusterApiSecret}
+func (o *MigrationOrchestrator) Initialize(ctx context.Context, restAuth clusterlink.Authenticator) error {
+	params := ExecutionParams{RestAuth: restAuth}
 	if err := o.fsm.Event(ctx, EventInitialize, params); err != nil {
 		return err
 	}
@@ -228,7 +231,7 @@ func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, c
 }
 
 // Execute runs the full migration workflow from the current state
-func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, clusterApiKey, clusterApiSecret string) error {
+func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator) error {
 	// An unknown persisted state (corrupted file, or one written by a newer
 	// kcp) makes every canTransition check below return false, so the loop
 	// would skip every step and falsely report the migration complete. Refuse
@@ -238,9 +241,8 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	}
 
 	params := ExecutionParams{
-		LagThreshold:     lagThreshold,
-		ClusterApiKey:    clusterApiKey,
-		ClusterApiSecret: clusterApiSecret,
+		LagThreshold: lagThreshold,
+		RestAuth:     restAuth,
 	}
 
 	// Drive execution from canonical workflow - single source of truth
@@ -335,7 +337,7 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// Restore the paused sync config even when the persist failed: cluster
 	// reality outranks state-file tidiness, and the restore's own persist (via
 	// the same path) keeps the marker honest when it can.
-	o.actions.restoreOffsetSyncAfterRollback(o.config, params.ClusterApiKey, params.ClusterApiSecret, o.PersistState)
+	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth, o.PersistState)
 
 	if persistErr != nil {
 		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, persistErr)
@@ -438,7 +440,7 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 // onInitialize runs the initialize transition: delegates to workflow Initialize.
 func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.Initialize(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
+	if err := o.actions.Initialize(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -446,7 +448,7 @@ func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) 
 // onWaitForLags runs the wait_for_lags transition: delegates to workflow CheckLags.
 func (o *MigrationOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.CheckLags(ctx, o.config, p.LagThreshold, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
+	if err := o.actions.CheckLags(ctx, o.config, p.LagThreshold, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -464,7 +466,7 @@ func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 // way — promotion's path runs through offset_sync_paused unconditionally.
 func (o *MigrationOrchestrator) onPauseOffsetSync(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.PauseOffsetSync(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret, o.PersistState); err != nil {
+	if err := o.actions.PauseOffsetSync(ctx, o.config, p.RestAuth, o.PersistState); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -483,7 +485,7 @@ func (o *MigrationOrchestrator) onVerifyFence(ctx context.Context, e *fsm.Event)
 // onPromote runs the forward promote transition: delegates to PromoteTopics.
 func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.PromoteTopics(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
+	if err := o.actions.PromoteTopics(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
