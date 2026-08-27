@@ -199,7 +199,7 @@ func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *Mi
 func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	err := orch.Initialize(context.Background(), "api-key", "api-secret")
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, StateInitialized, config.CurrentState)
@@ -211,7 +211,7 @@ func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
@@ -233,7 +233,7 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, startState, nil, overrides)
 
-			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 			require.NoError(t, err)
 
 			assert.Equal(t, StateSwitched, config.CurrentState)
@@ -284,7 +284,7 @@ func TestHasPendingWork(t *testing.T) {
 		orch, _, _ := newHappyPathOrchestrator(t, "some-future-state", nil)
 		require.True(t, orch.HasPendingWork())
 
-		err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unrecognized migration state")
 	})
@@ -301,7 +301,7 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
-	err := orch.Initialize(context.Background(), "api-key", "api-secret")
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// Config state should NOT have advanced
@@ -333,7 +333,7 @@ func TestOrchestrator_Execute_FenceError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// The orchestrator should have persisted state after each successful step.
@@ -386,7 +386,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -446,7 +446,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	// Unrouted producers were detected, so the surfaced error still wraps
 	// ErrUnroutedProducers; the unfence happens on the abort_fence rollback and
@@ -494,7 +494,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -522,7 +522,7 @@ func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
 	config.DetectUnroutedProducersDuration = time.Millisecond
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// The verify step succeeded (stable offsets) and was persisted; the promote
@@ -616,7 +616,7 @@ func TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection(t *test
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&getCalls), int64(2),
@@ -648,7 +648,7 @@ func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T
 
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, state, nil, overrides)
 
-			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 			require.NoError(t, err)
 
 			mu.Lock()
@@ -701,7 +701,7 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers,
 		"the step error must keep its classification through the persist-failure wrap")
@@ -761,7 +761,7 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -826,7 +826,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
@@ -874,7 +874,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge",
@@ -918,7 +918,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testi
 
 	orch, _, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge", "the fence failure")
@@ -945,7 +945,7 @@ func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
 
 	orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
@@ -992,7 +992,7 @@ func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *test
 	stderr := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
 			orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
-			err = orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 		})
 	})
 	out := stdout + stderr
@@ -1052,7 +1052,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom")
 
@@ -1065,7 +1065,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	// Re-run recovery: the transient pause failure is gone; execute resumes
 	// from fenced, pauses, and completes — no pending-rollback bookkeeping.
 	atomic.StoreInt32(&alterFail, 0)
-	err = orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err, "a re-run after a failed rollback must retry the pause and proceed")
 	persisted = loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
@@ -1103,7 +1103,7 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 		},
 	}
 
-	err := orch.Execute(ctx, 0, "api-key", "api-secret")
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
@@ -1171,7 +1171,7 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -1229,7 +1229,7 @@ func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *test
 	}
 
 	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnroutedProducers)
 	})
@@ -1289,7 +1289,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 	}
 
 	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnroutedProducers)
 	})
@@ -1437,7 +1437,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, tc.overrides)
 			tc.configure(orch, config)
 
-			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 			require.Error(t, err)
 
 			// The FSM rests in the expected urgent state, in memory (the value
@@ -1486,7 +1486,7 @@ func TestOrchestrator_Execute_NoOptIn_NeverTouchesClusterLinkConfig(t *testing.T
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls),
@@ -1522,7 +1522,7 @@ func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *tes
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls), "no second pause")
@@ -1590,7 +1590,7 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 	var stdout string
 	stderrOut := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
-			err := orch.Execute(context.Background(), 0, "api-key", "super-secret-value")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "super-secret-value"})
 			require.Error(t, err)
 		})
 	})
@@ -1610,7 +1610,7 @@ func TestOrchestrator_Execute_UnknownState_Fails(t *testing.T) {
 	// and printing "Migration complete!" is the failure mode this guards.
 	orch, config, _ := newHappyPathOrchestrator(t, "bogus_state", nil)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err, "an unrecognized persisted state must not execute as a silent no-op")
 	assert.Contains(t, err.Error(), "bogus_state")
 	assert.Equal(t, "bogus_state", config.CurrentState,
@@ -1641,7 +1641,7 @@ func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := orch.Execute(ctx, 0, "api-key", "api-secret")
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err,
 		"resume from fence_verified must re-run detection and catch the rogue producer")
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
@@ -1678,7 +1678,7 @@ func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
 		"a fetch failure must not be classified as a detection")
@@ -1701,7 +1701,7 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// The verify_fence transition succeeded first (detection disabled → no-op),
