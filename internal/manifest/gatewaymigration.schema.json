@@ -98,7 +98,7 @@
                   "description": "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092)."
                 },
                 "credentials": {
-                  "description": "Destination Kafka credentials, used as SASL/PLAIN against the destination bootstrap. Only sasl_plain is supported in this release.",
+                  "description": "Destination Kafka credentials, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
                   "oneOf": [
                     {
                       "type": "string"
@@ -109,7 +109,7 @@
                   ]
                 },
                 "restCredentials": {
-                  "description": "Destination REST credentials. OPTIONAL: when omitted these are derived in full from credentials (api_key/api_secret from sasl_plain.username/password, insecure_skip_verify from insecure_skip_tls_verify). Spell it out only for a REST endpoint behind a private CA — a block that is present is used exactly as written, never partially derived.",
+                  "description": "Destination REST (cluster-link) credentials: api_key/api_secret, basic, bearer, or mtls. OPTIONAL only when credentials is sasl_plain — then derived in full (api_key/api_secret from sasl_plain.username/password, ca_cert and insecure_skip_verify inherited). Required for every other credentials method, since there is no principal to derive one from. A present block is used exactly as written, never partially derived.",
                   "oneOf": [
                     {
                       "type": "string"

@@ -251,6 +251,25 @@ func TestMigrateConn(t *testing.T) {
 	require.True(t, got.AuthMethod.SASLScram.Use)
 }
 
+// TestMigrateConn_NilBootstrapServers_AuthMappingUnaffected. Every existing
+// MigrateConn call site passes real bootstrap addresses; buildExecutorOpts
+// resolving the migration destination auth via MigrateConn(nil, dstCreds) is a
+// new usage shape. Bootstrap servers must not affect the auth-type mapping —
+// proven here rather than assumed from precedent.
+func TestMigrateConn_NilBootstrapServers_AuthMappingUnaffected(t *testing.T) {
+	creds := MigrateClusterCredentials{SASLPlain: &MigrateSASLPlain{Username: "u", Password: "p", UseTLS: true}}
+
+	got := MigrateConn(nil, creds)
+	require.Nil(t, got.BootstrapServers)
+	require.NotNil(t, got.AuthMethod.SASLPlain)
+	require.True(t, got.AuthMethod.SASLPlain.Use)
+	require.True(t, got.AuthMethod.SASLPlain.UseTLS)
+
+	authType, err := got.GetSelectedAuthType()
+	require.NoError(t, err)
+	require.Equal(t, AuthTypeSASLPlain, authType)
+}
+
 // writeMigrateCreds writes a migrate credentials file and returns its path.
 func writeMigrateCreds(t *testing.T, content string) string {
 	t.Helper()

@@ -102,26 +102,36 @@ The cluster being migrated to.
 | `clusterId` | string | yes | Required for **both** destination types — this kind never discovers it live. |
 | `kafka.bootstrapServers` | `[]string` | yes | Destination Kafka bootstrap. |
 | `kafka.restEndpoint` | string | yes | Destination Admin REST endpoint (cluster link + topic operations). |
-| `kafka.credentials` | path or inline | yes | Destination Kafka leg, used as SASL/PLAIN against the bootstrap. **Only `sasl_plain` is accepted** — see below. |
-| `kafka.restCredentials` | path or inline | no | Destination REST leg. Optional — derived from `credentials` when omitted. See below. |
+| `kafka.credentials` | path or inline | yes | Destination Kafka leg, dialled directly to read destination-side offsets. Accepts `sasl_plain`, `sasl_scram`, `mtls`, `unauthenticated_tls`, or `unauthenticated_plaintext` — see below. |
+| `kafka.restCredentials` | path or inline | no (except when `credentials` isn't `sasl_plain` — see below) | Destination REST leg. |
 
-`kafka.credentials` is checked against the destination client, which is
-hardcoded to SASL/PLAIN over TLS: any other auth block is rejected outright
-rather than silently accepted and ignored. A `ca_cert` inside `sasl_plain` is
-also rejected for the destination in this release — the client always dials
-the public trust store, so a private CA here would read as configured while
-actually connecting on system roots. Set `tls: true` (no `ca_cert`) for a
-public-CA destination.
+`kafka.credentials` accepts any Kafka auth method **except** `iam` — the
+destination is Confluent Cloud or Confluent Platform, never MSK, so `iam` is
+rejected outright rather than silently accepted and then failing opaquely at
+connection time. Unlike the source leg, a `ca_cert` inside `sasl_plain` is
+honoured here too: it names a private CA the destination client trusts
+directly, on top of (or instead of) the public trust store `tls: true`
+selects.
+
+Unlike the shared table above, a destination `sasl_plain` with **neither**
+`ca_cert` nor `tls` set does not fall back to `SASL_PLAINTEXT`: it defaults to
+`tls: true` against the public trust store, matching the destination client's
+pre-existing behavior — the destination is always a managed/production
+cluster, never on-prem plaintext like a source may legitimately be. There is
+no `sasl_plain` field that opts back into `SASL_PLAINTEXT` against the
+destination; use `unauthenticated_plaintext` for a genuinely plaintext
+destination (test/lab only).
 
 `kafka.restCredentials` is **optional and derived in full** from `credentials`
-when omitted: `api_key`/`api_secret` come from `sasl_plain.username`/`password`,
-and `insecure_skip_verify` from the sibling `insecure_skip_tls_verify`. Spell it
-out only when the REST endpoint sits behind a different, private CA than the
-Kafka listener — and when you do, only the flat `api_key`/`api_secret` form is
-accepted (`basic`, `bearer`, `mtls` are all rejected, for the same reason as
-above: a form the client can't act on is worse silently dropped than refused).
-A block that is present is used exactly as written, never partially derived, so
-it must restate the key and secret even if they match `credentials`.
+**only when that block is `sasl_plain`**: `api_key`/`api_secret` come from
+`sasl_plain.username`/`password`, and `ca_cert`/`insecure_skip_verify` are
+inherited from their `sasl_plain` siblings. For every other `credentials`
+method there is no principal to derive a REST credential from, so
+`restCredentials` becomes **required** — spell out any of `api_key`/`api_secret`,
+`basic`, `bearer`, or `mtls` (see the REST credentials table below). A block
+that is present is always used exactly as written, never partially derived, so
+a `sasl_plain` destination that spells it out anyway must restate the key and
+secret even if they match `credentials`.
 
 ## `spec.clusterLink`
 
@@ -234,15 +244,12 @@ Specify **exactly one** block (or the `api_key`/`api_secret` pair).
 (e.g. self-managed CP/MDS). Public-CA endpoints (Confluent Cloud via `api_key`)
 need neither.
 
-Two restrictions are specific to **this** manifest, narrower than the two
+One restriction is specific to **this** manifest, narrower than the two
 tables above:
 
 - `spec.source.credentials.iam` is valid only when `spec.source.type: msk`.
-- `spec.target.kafka.credentials` accepts **only `sasl_plain`**, and
-  `spec.target.kafka.restCredentials`, if spelled out, accepts **only the flat
-  `api_key`/`api_secret` form** — every other block in the tables above is
-  rejected on these two slots specifically, because the destination clients
-  this manifest drives can't act on it.
+  `spec.target.kafka.credentials.iam` is rejected outright, on both source and
+  destination legs — the destination is Confluent Cloud/Platform, never MSK.
 
 ## How the commands read this file
 
@@ -315,8 +322,8 @@ Key rules, beyond required/optional per field above:
 | `spec.target.clusterId` | string | yes | — | required for both target types |
 | `spec.target.kafka.bootstrapServers` | `[]string` | yes | — | `host:port` |
 | `spec.target.kafka.restEndpoint` | string | yes | — | URL |
-| `spec.target.kafka.credentials` | path or inline | yes | — | `sasl_plain` only |
-| `spec.target.kafka.restCredentials` | path or inline | no | derived from `credentials` | `api_key`/`api_secret` form only |
+| `spec.target.kafka.credentials` | path or inline | yes | — | Kafka family except `iam` |
+| `spec.target.kafka.restCredentials` | path or inline | no if `credentials` is `sasl_plain`; **yes** otherwise | derived from `credentials` when `sasl_plain` | `api_key`/`api_secret`, `basic`, `bearer`, or `mtls` |
 | `spec.clusterLink.name` | string | yes | — | must reference an existing link |
 | `spec.clusterLink.pauseConsumerOffsetSync` | bool | no | `false` | — |
 | `spec.gateway.namespace` | string | yes | — | — |
