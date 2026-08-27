@@ -407,7 +407,7 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 ) error {
 	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
@@ -461,8 +461,7 @@ func (s *MigrationActions) Initialize(
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
 		LinkName:     config.ClusterLinkName,
-		APIKey:       clusterApiKey,
-		APISecret:    clusterApiSecret,
+		Auth:         restAuth,
 		Topics:       config.Topics,
 	}
 
@@ -541,7 +540,7 @@ func (s *MigrationActions) CheckLags(
 	ctx context.Context,
 	config *MigrationConfig,
 	lagThreshold int64,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 ) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
@@ -1004,7 +1003,7 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 func (s *MigrationActions) PauseOffsetSync(
 	ctx context.Context,
 	config *MigrationConfig,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 	persist func() error,
 ) error {
 	if !config.PauseConsumerOffsetSync {
@@ -1018,7 +1017,7 @@ func (s *MigrationActions) PauseOffsetSync(
 		return nil
 	}
 
-	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+	clCfg := BuildClusterLinkConfig(config, restAuth)
 
 	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
 
@@ -1087,10 +1086,10 @@ func (s *MigrationActions) PauseOffsetSync(
 // refusal), which also keeps externally-set config untouched.
 func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 	config *MigrationConfig,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 	persist func() error,
 ) {
-	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+	clCfg := BuildClusterLinkConfig(config, restAuth)
 	restoreOffsetSync(s.clusterLinkService, clCfg, config, persist, "Gateway unfenced but")
 }
 
@@ -1123,7 +1122,7 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 }
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
-func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -1136,8 +1135,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
 		LinkName:     config.ClusterLinkName,
-		APIKey:       clusterApiKey,
-		APISecret:    clusterApiSecret,
+		Auth:         restAuth,
 		Topics:       config.Topics,
 	}
 

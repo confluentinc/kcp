@@ -57,30 +57,68 @@ spec:
       bootstrapServers:
         - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
-      # The destination KAFKA leg. Only sasl_plain is supported in this release
-      # — the destination client is hardcoded to SASL/PLAIN over TLS, so any
-      # other block would be accepted and then silently ignored.
+      # The destination KAFKA leg, dialled directly to read destination-side
+      # offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or
+      # unauthenticated_plaintext — iam is rejected (the destination is
+      # Confluent Cloud/Platform, never MSK).
       credentials:
         sasl_plain:
           username: ${CC_API_KEY}
           password: ${CC_API_SECRET}
           tls: true
+          # ca_cert: /etc/kcp/dest-ca.pem  # honoured here — trusts a private CA
         # insecure_skip_tls_verify is a SIBLING of the auth block, not a key
         # inside it, and it reaches all three connection legs:
         # insecure_skip_tls_verify: true
+        #
+        # A Confluent Platform destination behind SASL/SCRAM instead of
+        # SASL/PLAIN:
+        # sasl_scram:
+        #   username: ${CP_USERNAME}
+        #   password: ${CP_PASSWORD}
+        #   mechanism: SHA256 # SHA256 | SHA512
+        #   ca_cert: /etc/kcp/dest-ca.pem
+        #
+        # Or mutual TLS (the client authenticates via its certificate):
+        # mtls:
+        #   client_cert: /etc/kcp/dest-client.pem
+        #   client_key: /etc/kcp/dest-client-key.pem
+        #   ca_cert: /etc/kcp/dest-ca.pem
+        #
+        # Or one-way TLS / plaintext, for a lab/test destination:
+        # unauthenticated_tls:
+        #   ca_cert: /etc/kcp/dest-ca.pem
+        # unauthenticated_plaintext: {}
       #
-      # restCredentials is OPTIONAL and DERIVED in full from credentials when
-      # omitted: api_key/api_secret from sasl_plain.username/password, and
-      # insecure_skip_verify from insecure_skip_tls_verify above.
+      # restCredentials is OPTIONAL and DERIVED in full from credentials ONLY
+      # when that block is sasl_plain (above): api_key/api_secret from
+      # sasl_plain.username/password, and ca_cert/insecure_skip_verify from
+      # their sasl_plain siblings.
       #
-      # Spell it out only for a REST endpoint behind a private CA. A block that
-      # is present is used exactly as written — never partially derived — so it
-      # must restate the key and secret.
+      # For every other credentials method (sasl_scram, mtls, unauthenticated_*)
+      # there is no principal to derive a REST credential from, so
+      # restCredentials is REQUIRED. A block that is present is always used
+      # exactly as written — never partially derived — so a sasl_plain
+      # destination that spells it out anyway must restate the key and secret.
       #
       # restCredentials:
       #   api_key: ${CC_API_KEY}
       #   api_secret: ${CC_API_SECRET}
       #   ca_cert: /etc/kcp/dest-ca.pem
+      #
+      # Or, alongside a sasl_scram/mtls/unauthenticated_* destination above,
+      # any of the REST-specific forms:
+      # restCredentials:
+      #   basic:
+      #     username: ${CP_REST_USERNAME}
+      #     password: ${CP_REST_PASSWORD}
+      # restCredentials:
+      #   bearer:
+      #     token: ${CP_REST_TOKEN}
+      # restCredentials:
+      #   mtls:
+      #     client_cert: /etc/kcp/dest-rest-client.pem
+      #     client_key: /etc/kcp/dest-rest-client-key.pem
 
   clusterLink:
     name: msk-to-cc # the link must ALREADY EXIST on the destination
