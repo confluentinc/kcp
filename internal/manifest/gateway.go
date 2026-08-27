@@ -254,7 +254,7 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 //
 // It does no I/O, so a credentials slot spelled as a path is checked for
 // presence only; the rules that need the block's contents (source auth gating,
-// the sasl_plain-only destination rule) run here for an inline block and again
+// the destination iam rejection) run here for an inline block and again
 // in SourceCredentials / DestinationKafkaCredentials for both spellings.
 func (g *GatewayMigration) Validate() []error {
 	var errs []error
@@ -310,11 +310,14 @@ func (g *GatewayMigration) Validate() []error {
 		} else if k.Credentials.IsInline() {
 			if mc, ok := peekMigrateCreds(k.Credentials); ok {
 				errs = append(errs, checkDestinationKafkaAuth(mc)...)
+				if k.RestCredentials == nil && mc.SASLPlain == nil {
+					add("spec.target.kafka.restCredentials: required — it can only be derived from spec.target.kafka.credentials when that block is sasl_plain")
+				}
 			}
 		}
 		if k.RestCredentials != nil {
 			if blankRef(*k.RestCredentials) {
-				add("spec.target.kafka.restCredentials: present but empty — omit it to derive from credentials, or fill it in")
+				add("spec.target.kafka.restCredentials: present but empty — fill it in, or omit it entirely to derive from credentials (only possible when that block is sasl_plain)")
 			}
 		}
 	}
@@ -462,9 +465,9 @@ func (g *GatewayMigration) SourceCredentials() (types.MigrateClusterCredentials,
 	return mc, nil
 }
 
-// DestinationKafkaCredentials resolves the destination Kafka leg — the API
-// key/secret used as SASL/PLAIN against the destination bootstrap, not only as
-// HTTP basic over REST.
+// DestinationKafkaCredentials resolves the destination Kafka leg. Any auth
+// method is accepted except iam — the destination is Confluent Cloud/Platform,
+// never MSK.
 func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCredentials, []error) {
 	if g.Spec.Target.Kafka == nil {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("spec.target.kafka: required")}

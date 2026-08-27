@@ -216,10 +216,6 @@ func TestGateway_RequiresTargetKafkaBootstrapServers(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.target.kafka.bootstrapServers")
 }
 
-// TestGateway_RejectsNonSASLPlainDestination is the rule decision 29 forces:
-// migration_executor.go dials the destination as SASL/PLAIN unconditionally, so
-// any other block would be silently ignored — worse than the flag surface it
-// replaces.
 // TestGateway_AcceptsEveryDestinationMethodExceptIAM. All the auth/TLS
 // machinery on the destination Kafka leg already exists and is now routed
 // through AdminOptionForAuthMethod, the same mapper the source leg uses — so
@@ -350,6 +346,8 @@ func TestGateway_RestCredentialsRequiredWhenNotSASLPlain(t *testing.T) {
 		"        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
 		1)
 	g := parseGateway(t, doc)
+
+	requireErrContains(t, g.Validate(), "spec.target.kafka.restCredentials")
 
 	_, err := g.RestCredentials()
 	require.Error(t, err)
@@ -855,12 +853,6 @@ func TestGateway_ManifestParseErrorDoesNotEchoInlineSecrets(t *testing.T) {
 
 // --- security review F3: a restCredentials form kcp cannot honour must be refused ---
 
-// TestGateway_RejectsNonAPIKeyRestCredentials. targets.ValidateCredentials
-// accepts basic/bearer/mtls and the generated schema advertises them, but every
-// command reads only the flat api_key form — so a bearer token is dropped and
-// the request goes out as anonymous Basic auth, with the declared ca_cert
-// ignored. Refuse rather than silently degrade, mirroring the sasl_plain-only
-// rule on the destination Kafka leg.
 // TestGateway_AcceptsEveryRestCredentialsForm. targets.Credentials already
 // implements Authenticator/HTTPClient for basic, bearer and mtls — B.4 stops
 // refusing them so a CP destination behind RBAC or mTLS can be reached.
