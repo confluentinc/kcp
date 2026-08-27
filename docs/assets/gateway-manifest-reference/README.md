@@ -113,6 +113,15 @@ honoured here too: it names a private CA the destination client trusts
 directly, on top of (or instead of) the public trust store `tls: true`
 selects.
 
+Unlike the shared table above, a destination `sasl_plain` with **neither**
+`ca_cert` nor `tls` set does not fall back to `SASL_PLAINTEXT`: it defaults to
+`tls: true` against the public trust store, matching the destination client's
+pre-existing behavior — the destination is always a managed/production
+cluster, never on-prem plaintext like a source may legitimately be. There is
+no `sasl_plain` field that opts back into `SASL_PLAINTEXT` against the
+destination; use `unauthenticated_plaintext` for a genuinely plaintext
+destination (test/lab only).
+
 `kafka.restCredentials` is **optional and derived in full** from `credentials`
 **only when that block is `sasl_plain`**: `api_key`/`api_secret` come from
 `sasl_plain.username`/`password`, and `ca_cert`/`insecure_skip_verify` are
