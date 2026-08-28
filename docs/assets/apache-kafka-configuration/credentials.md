@@ -139,6 +139,8 @@ jolokia:
     insecure_skip_verify: false
   mbean_overrides:              # optional — see "Metric-name overrides" below
     BytesInPerSec: "acme.kafka:type=BrokerTopicMetrics,name=BytesInPerSec"
+  connect_mbean_overrides:      # optional — for Connect worker scans; see connect-metrics-collection.md
+    task-count: "acme.connect:type=connect-worker-metrics"
 ```
 
 | Field                       | Required | Description                                                          |
@@ -148,6 +150,7 @@ jolokia:
 | `tls.ca_cert`               | no       | CA certificate for HTTPS Jolokia endpoints.                          |
 | `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
 | `mbean_overrides`           | no       | Map of logical metric label → MBean object name for agents that expose non-standard MBean names. See [Metric-name overrides](#metric-name-overrides). |
+| `connect_mbean_overrides`   | no       | Map of logical Connect-metric label → MBean object name, for `kcp scan self-managed-connectors` scans of Kafka Connect workers. See [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides). |
 
 ### `prometheus` — optional, for historical metrics
 
@@ -166,6 +169,8 @@ prometheus:
   metric_names:                 # optional — see "Metric-name overrides" below
     BytesInPerSec: acme_broker_bytesin_total
     MessagesInPerSec: acme_broker_messagesin_total
+  connect_metric_names:         # optional — for Connect worker scans; see connect-metrics-collection.md
+    task-count: acme_connect_task_count
 ```
 
 | Field                       | Required | Description                                                          |
@@ -176,6 +181,7 @@ prometheus:
 | `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
 | `filter.labels`             | no       | Map of Prometheus label selectors to scope queries. When set, all PromQL queries include these as `{key="value"}` filters. Useful when a single Prometheus scrapes multiple clusters. |
 | `metric_names`              | no       | Map of logical metric label → base Prometheus series name for exporters that relabel the standard series. See [Metric-name overrides](#metric-name-overrides). |
+| `connect_metric_names`       | no       | Map of logical Connect-metric label → base Prometheus series name, for `kcp scan self-managed-connectors` scans of Kafka Connect workers. See [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides). |
 
 `jolokia` and `prometheus` are mutually exclusive per scan invocation — `--metrics`
 selects which one `kcp` reads. You can keep both blocks in the file and switch
@@ -244,6 +250,13 @@ jolokia:
   rate gauge or a differently-united series yields a *wrong value with no error*,
   not an empty result. See
   [What an override does not change](metrics-collection.md#what-an-override-does-not-change).
+
+Kafka Connect worker metrics have their own analogous pair —
+`prometheus.connect_metric_names` and `jolokia.connect_mbean_overrides` — keyed on
+the ten Connect metric labels rather than the seven broker ones. See
+[Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides)
+for the label list, worked examples, and the per-connector caveats specific to
+Connect.
 
 ## Where to go next
 
