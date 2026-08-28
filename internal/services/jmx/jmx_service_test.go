@@ -381,7 +381,7 @@ func TestBuildJMXQueryInfo(t *testing.T) {
 // buildJMXQueryInfo only iterated Counters, Gauges, Controller, and Aggregates.
 func TestBuildJMXQueryInfo_PerConnectorAggregates(t *testing.T) {
 	workerURLs := []string{"http://worker1:8778/jolokia"}
-	defs := ConnectMetricDefinitions()
+	defs := ConnectMetricDefinitions(nil)
 	infos := buildJMXQueryInfo(workerURLs, 5*time.Minute, 10*time.Second, defs, "worker")
 
 	expectedCount := len(defs.Gauges) + len(defs.Aggregates) + len(defs.PerConnectorAggregates)
@@ -643,7 +643,7 @@ func TestCollectRawSample_MissingSinkMBeanLogsDebugOnceNotWarn(t *testing.T) {
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	t.Cleanup(func() { slog.SetDefault(prevLogger) })
 
-	svc := NewJMXService([]string{server.URL}, ConnectMetricDefinitions(), "worker")
+	svc := NewJMXService([]string{server.URL}, ConnectMetricDefinitions(nil), "worker")
 
 	// Poll collectRawSample multiple times, as CollectOverDuration would on
 	// every tick, to verify the dedupe holds across repeated polls.
@@ -680,7 +680,7 @@ func TestCollectOverDuration_DurationMustExceedInterval(t *testing.T) {
 }
 
 func TestConnectMetricDefinitions(t *testing.T) {
-	defs := ConnectMetricDefinitions()
+	defs := ConnectMetricDefinitions(nil)
 
 	require.Len(t, defs.Gauges, 2)
 	assert.Equal(t, "connector-count", defs.Gauges[0].Name)
@@ -755,7 +755,7 @@ func TestCollectRawSample_PerConnectorAggregates(t *testing.T) {
 	server := mockConnectJolokiaServer(t)
 	defer server.Close()
 
-	svc := NewJMXService([]string{server.URL}, ConnectMetricDefinitions(), "worker")
+	svc := NewJMXService([]string{server.URL}, ConnectMetricDefinitions(nil), "worker")
 	sample, err := svc.collectRawSample(context.Background())
 
 	require.NoError(t, err)
@@ -774,4 +774,71 @@ func TestCollectRawSample_PerConnectorAggregates(t *testing.T) {
 	// The cluster-wide (non-per-connector) aggregates should still be summed as before.
 	assert.Equal(t, 100.0, sample.gauges["incoming-byte-rate"])
 	assert.Equal(t, 50.0, sample.gauges["outgoing-byte-rate"])
+}
+
+func TestConnectMetricDefinitions_NoOverrideRegression(t *testing.T) {
+	expected := MetricDefinitions{
+		Gauges: []GaugeMBeanConfig{
+			{"connector-count", "kafka.connect:type=connect-worker-metrics", "connector-count"},
+			{"task-count", "kafka.connect:type=connect-worker-metrics", "task-count"},
+		},
+		Aggregates: []AggregateMBeanConfig{
+			{"incoming-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "incoming-byte-rate"},
+			{"outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "outgoing-byte-rate"},
+			{"connection-count", "kafka.connect:client-id=*,type=connect-metrics", "connection-count"},
+			{"request-rate", "kafka.connect:client-id=*,type=connect-metrics", "request-rate"},
+		},
+		PerConnectorAggregates: []AggregateMBeanConfig{
+			{"source-record-write-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate"},
+			{"source-record-poll-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-poll-rate"},
+			{"sink-record-read-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-read-rate"},
+			{"sink-record-send-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-send-rate"},
+		},
+	}
+	assert.Equal(t, expected, ConnectMetricDefinitions(nil))
+	assert.Equal(t, expected, ConnectMetricDefinitions(map[string]string{}))
+	assert.Nil(t, ConnectMetricDefinitions(nil).OverriddenNames)
+}
+
+func TestConnectMetricDefinitions_Override(t *testing.T) {
+	overrides := map[string]string{
+		"task-count":               "acme.connect:type=connect-worker-metrics",                 // gauge
+		"incoming-byte-rate":       "acme.connect:client-id=*,type=connect-metrics",            // aggregate
+		"source-record-write-rate": "acme.connect:type=source-task-metrics,connector=*,task=*", // per-connector (wildcards preserved)
+	}
+	defs := ConnectMetricDefinitions(overrides)
+
+	assert.Equal(t, "acme.connect:type=connect-worker-metrics", defs.Gauges[1].MBean)          // task-count
+	assert.Equal(t, "acme.connect:client-id=*,type=connect-metrics", defs.Aggregates[0].MBean) // incoming-byte-rate
+	assert.Equal(t, "acme.connect:type=source-task-metrics,connector=*,task=*", defs.PerConnectorAggregates[0].MBean)
+
+	// Non-overridden entries keep their defaults.
+	assert.Equal(t, "kafka.connect:type=connect-worker-metrics", defs.Gauges[0].MBean) // connector-count
+
+	assert.Equal(t, map[string]bool{
+		"task-count":               true,
+		"incoming-byte-rate":       true,
+		"source-record-write-rate": true,
+	}, defs.OverriddenNames)
+
+	// Empty override value is ignored.
+	defsEmpty := ConnectMetricDefinitions(map[string]string{"task-count": ""})
+	assert.Equal(t, "kafka.connect:type=connect-worker-metrics", defsEmpty.Gauges[1].MBean)
+	assert.Nil(t, defsEmpty.OverriddenNames)
+}
+
+func TestConnectMetricDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
+	defs := ConnectMetricDefinitions(nil)
+	var names []string
+	for _, g := range defs.Gauges {
+		names = append(names, g.Name)
+	}
+	for _, a := range defs.Aggregates {
+		names = append(names, a.Name)
+	}
+	for _, a := range defs.PerConnectorAggregates {
+		names = append(names, a.Name)
+	}
+	assert.ElementsMatch(t, types.ValidConnectMetricLabels(), names,
+		"ConnectMetricDefinitions names must match the canonical Connect override label set")
 }
