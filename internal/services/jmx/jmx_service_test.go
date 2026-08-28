@@ -827,6 +827,23 @@ func TestConnectMetricDefinitions_Override(t *testing.T) {
 	assert.Nil(t, defsEmpty.OverriddenNames)
 }
 
+// TestConnectMetricDefinitions_MixedEmptyAndRealOverrides guards the exactness
+// of OverriddenNames under mixed input: an empty override value must be
+// ignored (default MBean kept, label absent from OverriddenNames) while real
+// overrides in the same map are applied and recorded, across both the Gauges
+// and Aggregates definition groups.
+func TestConnectMetricDefinitions_MixedEmptyAndRealOverrides(t *testing.T) {
+	defs := ConnectMetricDefinitions(map[string]string{
+		"task-count":         "acme.connect:type=connect-worker-metrics",      // real → applied
+		"connector-count":    "",                                              // empty → ignored
+		"incoming-byte-rate": "acme.connect:client-id=*,type=connect-metrics", // real → applied
+	})
+	assert.Equal(t, "acme.connect:type=connect-worker-metrics", defs.Gauges[1].MBean)          // task-count
+	assert.Equal(t, "kafka.connect:type=connect-worker-metrics", defs.Gauges[0].MBean)         // connector-count default kept
+	assert.Equal(t, "acme.connect:client-id=*,type=connect-metrics", defs.Aggregates[0].MBean) // incoming-byte-rate
+	assert.Equal(t, map[string]bool{"task-count": true, "incoming-byte-rate": true}, defs.OverriddenNames)
+}
+
 func TestConnectMetricDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
 	defs := ConnectMetricDefinitions(nil)
 	var names []string

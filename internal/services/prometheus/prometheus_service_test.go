@@ -373,6 +373,52 @@ func TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud(t *testing.T) {
 	assert.False(t, warnedBytesOut, "non-overridden empty metric should not be logged at WARN")
 }
 
+// TestConnectQueryDefinitions_CollectMetrics_OverriddenEmptyIsLoud is the
+// Connect analog of TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud:
+// it proves the shared overridden-but-empty WARN path also fires for Connect
+// query definitions, not just broker ones.
+func TestConnectQueryDefinitions_CollectMetrics_OverriddenEmptyIsLoud(t *testing.T) {
+	// Only connector-count returns data; every other query (including the
+	// overridden task-count) is empty. This keeps allMetrics non-empty so the
+	// generic "no metrics collected" warning stays silent and we isolate the
+	// per-metric empty signal.
+	mockData := map[string][]float64{
+		"connector_count": {2.0, 2.0},
+	}
+	server := newMockPrometheusServer(t, mockData)
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	promClient := client.NewPrometheusClient(server.URL)
+	// Override task-count to a series the mock has no data for.
+	defs := ConnectQueryDefinitions(map[string]string{"task-count": "totally_missing_connect_series"})
+	svc := NewPrometheusService(promClient, defs, nil)
+
+	_, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
+	require.NoError(t, err)
+
+	// An overridden query that still returns nothing is actionable → WARN.
+	// A non-overridden empty query (e.g. incoming-byte-rate) stays quiet (DEBUG).
+	var warnedTaskCount, warnedIncomingByteRate bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if !strings.Contains(line, "level=WARN") {
+			continue
+		}
+		if strings.Contains(line, "task-count") {
+			warnedTaskCount = true
+		}
+		if strings.Contains(line, "incoming-byte-rate") {
+			warnedIncomingByteRate = true
+		}
+	}
+	assert.True(t, warnedTaskCount, "overridden-but-empty Connect metric should be logged at WARN")
+	assert.False(t, warnedIncomingByteRate, "non-overridden empty Connect metric should not be logged at WARN")
+}
+
 func TestBuildPrometheusQueryInfo(t *testing.T) {
 	end := time.Date(2026, 5, 11, 12, 0, 0, 0, time.UTC)
 	start := end.Add(-24 * time.Hour)

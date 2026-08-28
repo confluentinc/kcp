@@ -1473,3 +1473,30 @@ func TestOSKCredentials_Validate_ConnectAndBrokerOverridesValidatedIndependently
 	assert.Contains(t, joined, "connect_metric_names")
 	assert.Contains(t, joined, "BytesInPerSec")
 }
+
+// TestOSKCredentials_Validate_ConnectLabelUnderBrokerKeyRejected is the
+// symmetric counterpart of the cross-set check above: a valid CONNECT label
+// placed under the broker metric_names map must be rejected, just as a
+// broker label under connect_metric_names is rejected.
+func TestOSKCredentials_Validate_ConnectLabelUnderBrokerKeyRejected(t *testing.T) {
+	creds := &OSKCredentials{Clusters: []OSKClusterAuth{{
+		ID:               "prod-01",
+		BootstrapServers: []string{"broker1:9092"},
+		AuthMethod:       AuthMethodConfig{SASLScram: &SASLScramConfig{Use: true, Username: "u", Password: "p"}},
+		Prometheus: &PrometheusConfig{
+			URL:         "http://prom:9090",
+			MetricNames: map[string]string{"task-count": "acme_connect_task_count"}, // valid connect label, wrong key
+		},
+	}}}
+
+	valid, errs := creds.Validate()
+	assert.False(t, valid)
+	require.NotEmpty(t, errs)
+
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	assert.Contains(t, joined, "metric_names")
+	assert.Contains(t, joined, "task-count")
+}
