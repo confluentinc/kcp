@@ -270,15 +270,51 @@ func TestConnectScanJMXMBeanOverrideMissing(t *testing.T) {
 	assert.False(t, ok, "task-count is overridden to a non-existent MBean and must be omitted, not defaulted")
 }
 
-// NOTE on scope: a third override case — proving the Prometheus
-// connect_metric_names substitution end-to-end against a relabelled series,
-// mirroring TestOSKScanPrometheusMetricNameOverride from PR #415 — is
-// intentionally NOT covered in this suite. This harness's docker-compose
-// stands up Kafka + Connect workers only (Jolokia-only metrics); there is no
-// Prometheus backend or seed mechanism here to relabel a series against,
-// unlike integration-tests/osk-scan (see its seed-prometheus-data.sh).
-// Standing up a new Prometheus stack for this one case was judged out of
-// scope for this change. The substitution logic itself is covered by the
-// Task 3 unit tests in internal/services/prometheus
-// (TestConnectQueryDefinitions_Override,
-// TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection).
+// TestConnectScanPrometheusMetricNameOverride proves the
+// prometheus.connect_metric_names override end-to-end, mirroring
+// TestOSKScanPrometheusMetricNameOverride from PR #415. The credential
+// (prometheus-relabelled.yaml) points task-count at a relabelled series
+// (acme_connect_task_count) that setup.sh's Prometheus seeder wrote as a
+// constant-424 gauge across the 30-day range.
+//
+// This harness has no JMX exporter scraping Connect into Prometheus, so the
+// DEFAULT series (kafka_connect_worker_task_count) does not exist here at
+// all — task-count resolving at all (let alone at ~424) is only possible if
+// the override drove the query. Discovery still needs the real Connect REST
+// API, so --connect-rest-url points at the same unauthenticated worker
+// TestConnectScanMetrics uses.
+func TestConnectScanPrometheusMetricNameOverride(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "state.json")
+	out, err := runKCP(t, "scan", "clusters", "--source-type", "apache-kafka",
+		"--credentials-file", credDir+"/kafka-plaintext.yaml",
+		"--state-file", state)
+	require.NoError(t, err, out)
+
+	out, err = runKCP(t, "scan", "self-managed-connectors",
+		"--state-file", state,
+		"--connect-rest-url", "http://localhost:18083",
+		"--cluster-id", clusterID,
+		"--use-unauthenticated",
+		"--metrics", "prometheus",
+		"--metrics-range", "30d",
+		"--credentials-file", credDir+"/prometheus-relabelled.yaml")
+	require.NoError(t, err, out)
+
+	c := loadCluster(t, state)
+	var cc *types.ConnectCluster
+	for i := range c.KafkaAdminClientInformation.ConnectClusters {
+		if c.KafkaAdminClientInformation.ConnectClusters[i].ConnectRestURL == "http://localhost:18083" {
+			cc = &c.KafkaAdminClientInformation.ConnectClusters[i]
+			break
+		}
+	}
+	require.NotNil(t, cc, "no connect_cluster found for http://localhost:18083")
+	m := cc.Metrics
+	require.NotNil(t, m, "no Connect metrics collected")
+
+	agg, ok := m.Aggregates["task-count"]
+	require.True(t, ok, "task-count must be collected via the relabelled series; without the override it would be absent (no default series exists in this harness)")
+	require.NotNil(t, agg.Maximum, "task-count should have a maximum")
+	assert.InDelta(t, 424.0, *agg.Maximum, 1.0,
+		"task-count must reflect the relabelled series' seeded value (424), proving the override drove the query")
+}
