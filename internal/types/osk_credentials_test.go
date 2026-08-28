@@ -1361,3 +1361,115 @@ func TestOSKCredentials_HasJolokiaConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestValidConnectMetricLabels(t *testing.T) {
+	labels := ValidConnectMetricLabels()
+	assert.ElementsMatch(t, []string{
+		"connector-count", "task-count",
+		"incoming-byte-rate", "outgoing-byte-rate",
+		"connection-count", "request-rate",
+		"source-record-write-rate", "source-record-poll-rate",
+		"sink-record-read-rate", "sink-record-send-rate",
+	}, labels)
+	assert.IsIncreasing(t, labels) // sorted for a stable error message
+}
+
+func TestNewOSKCredentialsFromFile_ConnectMetricNameOverrides(t *testing.T) {
+	content := `
+clusters:
+- id: prod-connect-01
+  bootstrap_servers:
+  - broker1:9092
+  auth_method:
+    sasl_scram:
+      use: true
+      username: admin
+      password: secret
+  prometheus:
+    url: http://connect-worker:9090
+    connect_metric_names:
+      task-count: acme_connect_task_count
+      source-record-write-rate: acme_connect_source_write
+  jolokia:
+    endpoints:
+    - http://connect-worker:8778/jolokia
+    connect_mbean_overrides:
+      task-count: "acme.connect:type=connect-worker-metrics"
+`
+	tmpFile := filepath.Join(t.TempDir(), "apache-kafka-credentials.yaml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(content), 0644))
+
+	creds, errs := NewOSKCredentialsFromFile(tmpFile)
+	require.Empty(t, errs)
+	require.NotNil(t, creds)
+	require.Len(t, creds.Clusters, 1)
+
+	require.NotNil(t, creds.Clusters[0].Prometheus)
+	assert.Equal(t, map[string]string{
+		"task-count":               "acme_connect_task_count",
+		"source-record-write-rate": "acme_connect_source_write",
+	}, creds.Clusters[0].Prometheus.ConnectMetricNames)
+
+	require.NotNil(t, creds.Clusters[0].Jolokia)
+	assert.Equal(t, map[string]string{
+		"task-count": "acme.connect:type=connect-worker-metrics",
+	}, creds.Clusters[0].Jolokia.ConnectMBeanOverrides)
+}
+
+func TestOSKCredentials_Validate_UnknownConnectMetricNameKey(t *testing.T) {
+	creds := &OSKCredentials{Clusters: []OSKClusterAuth{{
+		ID:               "prod-connect-01",
+		BootstrapServers: []string{"broker1:9092"},
+		AuthMethod:       AuthMethodConfig{SASLScram: &SASLScramConfig{Use: true, Username: "u", Password: "p"}},
+		Prometheus: &PrometheusConfig{
+			URL: "http://connect-worker:9090",
+			ConnectMetricNames: map[string]string{
+				"task-count":     "acme_connect_task_count", // valid
+				"Task-Count":     "typo_here",               // invalid: wrong case
+				"not-a-real-one": "whatever",                // invalid: unknown
+			},
+		},
+	}}}
+
+	valid, errs := creds.Validate()
+	assert.False(t, valid)
+	require.NotEmpty(t, errs)
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	assert.Contains(t, joined, "connect_metric_names")
+	assert.Contains(t, joined, "Task-Count")
+	assert.Contains(t, joined, "not-a-real-one")
+	assert.Contains(t, joined, "task-count")                 // a valid label is listed for self-correction
+	assert.NotContains(t, joined, "acme_connect_task_count") // never echo override values
+}
+
+func TestOSKCredentials_Validate_ConnectAndBrokerOverridesValidatedIndependently(t *testing.T) {
+	// A valid broker key AND a valid connect key on the same cluster both pass;
+	// a broker label used under a connect key (and vice versa) is rejected.
+	creds := &OSKCredentials{Clusters: []OSKClusterAuth{{
+		ID:               "prod-01",
+		BootstrapServers: []string{"broker1:9092"},
+		AuthMethod:       AuthMethodConfig{SASLScram: &SASLScramConfig{Use: true, Username: "u", Password: "p"}},
+		Prometheus: &PrometheusConfig{
+			URL:                "http://prom:9090",
+			MetricNames:        map[string]string{"BytesInPerSec": "acme_bytesin"},         // valid broker
+			ConnectMetricNames: map[string]string{"task-count": "acme_connect_task_count"}, // valid connect
+		},
+	}}}
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "%v", errs)
+	assert.Empty(t, errs)
+
+	// Cross-set: a broker label under connect_metric_names is unknown there.
+	creds.Clusters[0].Prometheus.ConnectMetricNames = map[string]string{"BytesInPerSec": "x"}
+	valid, errs = creds.Validate()
+	assert.False(t, valid)
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	assert.Contains(t, joined, "connect_metric_names")
+	assert.Contains(t, joined, "BytesInPerSec")
+}
