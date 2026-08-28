@@ -2,12 +2,14 @@ package lagcheck
 
 import (
 	"bytes"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,6 +52,29 @@ spec:
         streamingDomain:
           name: confluent-cloud
           bootstrapServerId: SASL_PLAIN
+`
+
+// testClientCertPEM / testClientKeyPEM are a matching self-signed EC
+// cert/key pair (tls.LoadX509KeyPair requires a real match, unlike a CA pool
+// which only needs a valid PEM certificate block).
+const testClientCertPEM = `-----BEGIN CERTIFICATE-----
+MIIBjDCCATGgAwIBAgIUA/4TGWc0qi/IPJxzmUwI38mlbWgwCgYIKoZIzj0EAwIw
+GjEYMBYGA1UEAwwPa2NwLXRlc3QtY2xpZW50MCAXDTI2MDgyODA3NTk0NFoYDzIx
+MjYwODA0MDc1OTQ0WjAaMRgwFgYDVQQDDA9rY3AtdGVzdC1jbGllbnQwWTATBgcq
+hkjOPQIBBggqhkjOPQMBBwNCAAR4vuBHztIw8/su1HVf+jxMh0F4AqiwU+PcgMDY
+T48U6chMykYv0VBh4vquBYLBrC9AlTlIdCZaELbpCe7FU3yOo1MwUTAdBgNVHQ4E
+FgQUQJ8HqBMoP5Y1Ufj1yIvYDJkmpNYwHwYDVR0jBBgwFoAUQJ8HqBMoP5Y1Ufj1
+yIvYDJkmpNYwDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQDAgNJADBGAiEAtFEq
+b8ddh9vpNTBtpdc9hZ5t+qFoD7SnopH/XLzAx1YCIQDTjYk6/N1n9qaAIjuAvRmw
+qE1MOvjjj3nTE4fDY6Em7w==
+-----END CERTIFICATE-----
+`
+
+const testClientKeyPEM = `-----BEGIN PRIVATE KEY-----
+MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgj7WeQdDBvKMUoZyY
+nLE2wnGyC1mK55bN0QKQGVdBvmShRANCAAR4vuBHztIw8/su1HVf+jxMh0F4Aqiw
+U+PcgMDYT48U6chMykYv0VBh4vquBYLBrC9AlTlIdCZaELbpCe7FU3yO
+-----END PRIVATE KEY-----
 `
 
 func writeLagManifest(t *testing.T, mutate func(string) string) string {
@@ -121,8 +146,7 @@ func TestLagCheck_BuildsConfigFromManifest(t *testing.T) {
 	assert.Equal(t, "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443", cfg.RestEndpoint)
 	assert.Equal(t, "lkc-abc123", cfg.ClusterID)
 	assert.Equal(t, "msk-to-cc", cfg.LinkName)
-	assert.Equal(t, "CC_KEY", cfg.APIKey)
-	assert.Equal(t, "CC_SECRET", cfg.APISecret)
+	assert.Equal(t, clusterlink.BasicAuth{Username: "CC_KEY", Password: "CC_SECRET"}, cfg.Auth)
 }
 
 // TestLagCheck_AlwaysWatchesEveryMirrorTopic — spec.topics has NO effect here;
@@ -147,7 +171,68 @@ func TestLagCheck_UsesDerivedRestCredentials(t *testing.T) {
 	}))
 	cfg, _, err := buildLagCheckConfig(g)
 	require.NoError(t, err)
-	assert.Equal(t, "EXPLICIT_KEY", cfg.APIKey, "an explicit block wins over derivation")
+	assert.Equal(t, clusterlink.BasicAuth{Username: "EXPLICIT_KEY", Password: "EXPLICIT_SECRET"}, cfg.Auth,
+		"an explicit block wins over derivation")
+}
+
+// TestLagCheck_BuildsBasicAuthConfig — a basic restCredentials block maps to
+// clusterlink.BasicAuth carrying its own username/password, not the
+// api_key-derived ones.
+func TestLagCheck_BuildsBasicAuthConfig(t *testing.T) {
+	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        basic:
+          username: BASIC_USER
+          password: BASIC_PASS
+  clusterLink:`, 1)
+	}))
+	cfg, _, err := buildLagCheckConfig(g)
+	require.NoError(t, err)
+	assert.Equal(t, clusterlink.BasicAuth{Username: "BASIC_USER", Password: "BASIC_PASS"}, cfg.Auth)
+}
+
+// TestLagCheck_BuildsBearerAuthConfig — a bearer restCredentials block maps to
+// clusterlink.BearerAuth; the api_key/basic fallback in Config.authenticator()
+// must never be reached for this form.
+func TestLagCheck_BuildsBearerAuthConfig(t *testing.T) {
+	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        bearer:
+          token: BEARER_TOKEN
+  clusterLink:`, 1)
+	}))
+	cfg, _, err := buildLagCheckConfig(g)
+	require.NoError(t, err)
+	assert.Equal(t, clusterlink.BearerAuth{Token: "BEARER_TOKEN"}, cfg.Auth)
+}
+
+// TestLagCheck_BuildsMTLSAuthConfig — an mtls restCredentials block maps to
+// clusterlink.NoHeaderAuth (auth happens at the TLS layer), and the returned
+// HTTP client must actually present the client certificate, not just exist.
+func TestLagCheck_BuildsMTLSAuthConfig(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte(testClientCertPEM), 0600))
+	require.NoError(t, os.WriteFile(key, []byte(testClientKeyPEM), 0600))
+
+	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        mtls:
+          client_cert: `+cert+`
+          client_key: `+key+`
+  clusterLink:`, 1)
+	}))
+	cfg, httpClient, err := buildLagCheckConfig(g)
+	require.NoError(t, err)
+	assert.Equal(t, clusterlink.NoHeaderAuth{}, cfg.Auth)
+
+	client, ok := httpClient.(*http.Client)
+	require.True(t, ok, "expected *http.Client")
+	transport, ok := client.Transport.(*http.Transport)
+	require.True(t, ok, "expected *http.Transport")
+	require.NotNil(t, transport.TLSClientConfig)
+	assert.NotEmpty(t, transport.TLSClientConfig.Certificates, "mtls must present the client cert")
 }
 
 // TestLagCheck_HonoursRestTLSTrust — a private-CA or self-signed destination
@@ -161,6 +246,42 @@ func TestLagCheck_HonoursRestTLSTrust(t *testing.T) {
 	_, client, err := buildLagCheckConfig(g)
 	require.NoError(t, err)
 	require.NotNil(t, client, "an HTTP client carrying the REST leg's TLS trust must be built")
+}
+
+// TestLagCheck_HonoursPerBlockRestTLSTrust — basic, bearer and mtls each carry
+// their own ca_cert/insecure_skip_verify siblings, distinct from the
+// api_key-only top-level fields (internal/targets/credentials.go's
+// Credentials.CACert/InsecureSkipVerify). buildLagCheckConfig must read the
+// active block's own copy via restCreds.HTTPClient(), not a top-level field
+// that doesn't even apply to these forms.
+func TestLagCheck_HonoursPerBlockRestTLSTrust(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte(testClientCertPEM), 0600))
+	require.NoError(t, os.WriteFile(key, []byte(testClientKeyPEM), 0600))
+
+	for name, block := range map[string]string{
+		"basic":  "      restCredentials:\n        basic:\n          username: u\n          password: p\n          insecure_skip_verify: true\n",
+		"bearer": "      restCredentials:\n        bearer:\n          token: TOK\n          insecure_skip_verify: true\n",
+		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: " + cert + "\n          client_key: " + key + "\n          insecure_skip_verify: true\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+				return strings.Replace(doc, "  clusterLink:", block+"  clusterLink:", 1)
+			}))
+			_, httpClient, err := buildLagCheckConfig(g)
+			require.NoError(t, err)
+
+			client, ok := httpClient.(*http.Client)
+			require.True(t, ok, "expected *http.Client")
+			transport, ok := client.Transport.(*http.Transport)
+			require.True(t, ok, "expected *http.Transport")
+			require.NotNil(t, transport.TLSClientConfig)
+			assert.True(t, transport.TLSClientConfig.InsecureSkipVerify,
+				"the block's own insecure_skip_verify must be honoured")
+		})
+	}
 }
 
 // TestLagCheck_WorksBeforeInitHasEverRun — its standalone use is preserved: the
