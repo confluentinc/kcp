@@ -2,7 +2,9 @@ package lagcheck
 
 import (
 	"bytes"
+	"context"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -282,6 +284,117 @@ func TestLagCheck_HonoursPerBlockRestTLSTrust(t *testing.T) {
 				"the block's own insecure_skip_verify must be honoured")
 		})
 	}
+}
+
+// TestLagCheck_HonoursPerBlockRestCACert — the CA-trust sibling of
+// TestLagCheck_HonoursPerBlockRestTLSTrust: basic, bearer and mtls each accept
+// their own ca_cert, which must be loaded into the HTTP client's RootCAs, not
+// silently dropped because only the api_key-only top-level field was read.
+func TestLagCheck_HonoursPerBlockRestCACert(t *testing.T) {
+	certDir := t.TempDir()
+	caPath := filepath.Join(certDir, "ca.pem")
+	require.NoError(t, os.WriteFile(caPath, []byte(testClientCertPEM), 0600)) // any valid PEM certificate is loadable as a CA pool entry
+
+	clientCert := filepath.Join(certDir, "client.pem")
+	clientKey := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(clientCert, []byte(testClientCertPEM), 0600))
+	require.NoError(t, os.WriteFile(clientKey, []byte(testClientKeyPEM), 0600))
+
+	for name, block := range map[string]string{
+		"basic":  "      restCredentials:\n        basic:\n          username: u\n          password: p\n          ca_cert: " + caPath + "\n",
+		"bearer": "      restCredentials:\n        bearer:\n          token: TOK\n          ca_cert: " + caPath + "\n",
+		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: " + clientCert + "\n          client_key: " + clientKey + "\n          ca_cert: " + caPath + "\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+				return strings.Replace(doc, "  clusterLink:", block+"  clusterLink:", 1)
+			}))
+			_, httpClient, err := buildLagCheckConfig(g)
+			require.NoError(t, err)
+
+			client, ok := httpClient.(*http.Client)
+			require.True(t, ok, "expected *http.Client")
+			transport, ok := client.Transport.(*http.Transport)
+			require.True(t, ok, "expected *http.Transport")
+			require.NotNil(t, transport.TLSClientConfig)
+			assert.NotNil(t, transport.TLSClientConfig.RootCAs, "the block's own ca_cert must be loaded into RootCAs")
+		})
+	}
+}
+
+// TestLagCheck_PropagatesRestCredentialsResolutionError — when restCredentials
+// is omitted and the Kafka leg isn't sasl_plain, there's no principal to
+// derive a REST credential from; g.RestCredentials()'s error must surface
+// through buildLagCheckConfig's wrap, not be swallowed or panic.
+func TestLagCheck_PropagatesRestCredentialsResolutionError(t *testing.T) {
+	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+		return strings.Replace(doc, `      credentials:
+        sasl_plain:
+          username: CC_KEY
+          password: CC_SECRET
+          tls: true`, `      credentials:
+        sasl_scram:
+          username: CC_KEY
+          password: CC_SECRET
+          mechanism: SHA512`, 1)
+	}))
+	_, _, err := buildLagCheckConfig(g)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolving destination REST credentials")
+	assert.Contains(t, err.Error(), "restCredentials: required")
+}
+
+// TestLagCheck_PropagatesHTTPClientBuildError — an mtls client_cert/client_key
+// pair that exists on disk (so ValidateCredentials' os.Stat check passes) but
+// isn't valid certificate/key material fails at tls.LoadX509KeyPair; that
+// error must surface through buildLagCheckConfig's wrap.
+func TestLagCheck_PropagatesHTTPClientBuildError(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte("not a real certificate"), 0600))
+	require.NoError(t, os.WriteFile(key, []byte("not a real key"), 0600))
+
+	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        mtls:
+          client_cert: `+cert+`
+          client_key: `+key+`
+  clusterLink:`, 1)
+	}))
+	_, _, err := buildLagCheckConfig(g)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "building destination REST client")
+}
+
+// TestLagCheck_SendsConfiguredAuthOnWire — an end-to-end trip-wire for this
+// exact bug: it drives a bearer restCredentials block all the way through
+// buildLagCheckConfig and a real clusterlink.NewConfluentCloudService request,
+// and asserts the Authorization header actually placed on the wire, rather
+// than the Auth field's shape/value in isolation.
+func TestLagCheck_SendsConfiguredAuthOnWire(t *testing.T) {
+	var gotAuth string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"link_name":"msk-to-cc"}`))
+	}))
+	defer server.Close()
+
+	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
+		doc = strings.Replace(doc, "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443", server.URL, 1)
+		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
+        bearer:
+          token: BEARER_WIRE_TOKEN
+  clusterLink:`, 1)
+	}))
+	cfg, httpClient, err := buildLagCheckConfig(g)
+	require.NoError(t, err)
+
+	svc := clusterlink.NewConfluentCloudService(httpClient)
+	_, err = svc.GetClusterLink(context.Background(), cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "Bearer BEARER_WIRE_TOKEN", gotAuth)
 }
 
 // TestLagCheck_WorksBeforeInitHasEverRun — its standalone use is preserved: the
