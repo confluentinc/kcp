@@ -69,18 +69,18 @@ JVM — no additional configuration is required beyond the Jolokia agent.
 
 ## Prometheus PromQL queries
 
-| Metric                     | PromQL query                                                         |
-| -------------------------- | -------------------------------------------------------------------- |
-| `connector-count`          | `sum(kafka_connect_worker_connector_count)`                          |
-| `task-count`               | `sum(kafka_connect_worker_task_count)`                               |
-| `source-record-write-rate` | `sum(kafka_connect_source_task_source_record_write_rate)`            |
-| `source-record-poll-rate`  | `sum(kafka_connect_source_task_source_record_poll_rate)`             |
-| `sink-record-read-rate`    | `sum by (connector) (kafka_connect_sink_task_sink_record_read_rate)` |
-| `sink-record-send-rate`    | `sum by (connector) (kafka_connect_sink_task_sink_record_send_rate)` |
-| `incoming-byte-rate`       | `sum(kafka_connect_metrics_incoming_byte_rate)`                      |
-| `outgoing-byte-rate`       | `sum(kafka_connect_metrics_outgoing_byte_rate)`                      |
-| `connection-count`         | `sum(kafka_connect_metrics_connection_count)`                        |
-| `request-rate`             | `sum(kafka_connect_metrics_request_rate)`                            |
+| Metric                     | PromQL query                                                              |
+| -------------------------- | ------------------------------------------------------------------------- |
+| `connector-count`          | `sum(kafka_connect_worker_connector_count)`                               |
+| `task-count`               | `sum(kafka_connect_worker_task_count)`                                    |
+| `source-record-write-rate` | `sum by (connector) (kafka_connect_source_task_source_record_write_rate)` |
+| `source-record-poll-rate`  | `sum by (connector) (kafka_connect_source_task_source_record_poll_rate)`  |
+| `sink-record-read-rate`    | `sum by (connector) (kafka_connect_sink_task_sink_record_read_rate)`      |
+| `sink-record-send-rate`    | `sum by (connector) (kafka_connect_sink_task_sink_record_send_rate)`      |
+| `incoming-byte-rate`       | `sum(kafka_connect_metrics_incoming_byte_rate)`                           |
+| `outgoing-byte-rate`       | `sum(kafka_connect_metrics_outgoing_byte_rate)`                           |
+| `connection-count`         | `sum(kafka_connect_metrics_connection_count)`                             |
+| `request-rate`             | `sum(kafka_connect_metrics_request_rate)`                                 |
 
 These metric names are produced by the Prometheus JMX Exporter with standard
 Kafka Connect JMX rules. The worker-level and task-level metrics
