@@ -692,7 +692,7 @@ func TestConnectQueryDefinitions_NoOverrideRegression(t *testing.T) {
 
 func TestConnectQueryDefinitions_Override(t *testing.T) {
 	overrides := map[string]string{
-		"task-count":               "acme_connect_task_count",  // plain gauge
+		"task-count":               "acme_connect_task_count",   // plain gauge
 		"source-record-write-rate": "acme_connect_source_write", // per-connector
 	}
 	defs := ConnectQueryDefinitions(overrides)
