@@ -262,7 +262,7 @@ tables above:
 | | `--migration-state-file` | yes | Produced by `init`. |
 | | `--migration-id` | no | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
 | | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no | Per-run overrides of the matching `spec.defaultPolicies` field for this run only. |
-| `kcp migration lag-check` | `--migration-yaml` | yes | Path to this manifest. |
+| `kcp migration lag-check` | `--migration-yaml` | yes | Path to this manifest. Reads only the destination REST leg (`kafka.restCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
 | | `--poll-interval` | no (default `1`) | Poll interval in seconds, `1`-`60`. |
 
 Every path in the manifest resolves relative to the **process working
