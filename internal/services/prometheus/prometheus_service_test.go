@@ -641,7 +641,7 @@ func TestPrometheusService_CollectMetrics_GroupByConnector_MissingConnectorLabel
 }
 
 func TestConnectQueryDefinitions_GroupByConnector(t *testing.T) {
-	defs := ConnectQueryDefinitions()
+	defs := ConnectQueryDefinitions(nil)
 
 	grouped := map[string]MetricQuery{}
 	for _, mq := range defs {
@@ -671,4 +671,81 @@ func TestConnectQueryDefinitions_GroupByConnector(t *testing.T) {
 		assert.Contains(t, mq.Query, "sum(")
 		assert.NotContains(t, mq.Query, "by (connector)")
 	}
+}
+
+func TestConnectQueryDefinitions_NoOverrideRegression(t *testing.T) {
+	expected := []MetricQuery{
+		{Label: "connector-count", Query: "sum(kafka_connect_worker_connector_count)", PrometheusMetric: "kafka_connect_worker_connector_count"},
+		{Label: "task-count", Query: "sum(kafka_connect_worker_task_count)", PrometheusMetric: "kafka_connect_worker_task_count"},
+		{Label: "incoming-byte-rate", Query: "sum(kafka_connect_metrics_incoming_byte_rate)", PrometheusMetric: "kafka_connect_metrics_incoming_byte_rate"},
+		{Label: "outgoing-byte-rate", Query: "sum(kafka_connect_metrics_outgoing_byte_rate)", PrometheusMetric: "kafka_connect_metrics_outgoing_byte_rate"},
+		{Label: "connection-count", Query: "sum(kafka_connect_metrics_connection_count)", PrometheusMetric: "kafka_connect_metrics_connection_count"},
+		{Label: "request-rate", Query: "sum(kafka_connect_metrics_request_rate)", PrometheusMetric: "kafka_connect_metrics_request_rate"},
+		{Label: "source-record-write-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_write_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_write_rate", GroupByConnector: true},
+		{Label: "source-record-poll-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_poll_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_poll_rate", GroupByConnector: true},
+		{Label: "sink-record-read-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_read_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_read_rate", GroupByConnector: true},
+		{Label: "sink-record-send-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_send_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_send_rate", GroupByConnector: true},
+	}
+	assert.Equal(t, expected, ConnectQueryDefinitions(nil))
+	assert.Equal(t, expected, ConnectQueryDefinitions(map[string]string{}))
+}
+
+func TestConnectQueryDefinitions_Override(t *testing.T) {
+	overrides := map[string]string{
+		"task-count":               "acme_connect_task_count",  // plain gauge
+		"source-record-write-rate": "acme_connect_source_write", // per-connector
+	}
+	defs := ConnectQueryDefinitions(overrides)
+	byLabel := map[string]MetricQuery{}
+	for _, d := range defs {
+		byLabel[d.Label] = d
+	}
+
+	// Plain sum-wrapped.
+	tc := byLabel["task-count"]
+	assert.Equal(t, "sum(acme_connect_task_count)", tc.Query)
+	assert.Equal(t, "acme_connect_task_count", tc.PrometheusMetric)
+	assert.True(t, tc.Overridden)
+
+	// Per-connector: sum by (connector) wrapping + GroupByConnector preserved.
+	sw := byLabel["source-record-write-rate"]
+	assert.Equal(t, "sum by (connector) (acme_connect_source_write)", sw.Query)
+	assert.Equal(t, "acme_connect_source_write", sw.PrometheusMetric)
+	assert.True(t, sw.GroupByConnector)
+	assert.True(t, sw.Overridden)
+
+	// Non-overridden keeps default and is not flagged.
+	cc := byLabel["connector-count"]
+	assert.Equal(t, "sum(kafka_connect_worker_connector_count)", cc.Query)
+	assert.False(t, cc.Overridden)
+
+	// Empty override value ignored.
+	defsEmpty := ConnectQueryDefinitions(map[string]string{"task-count": ""})
+	for _, d := range defsEmpty {
+		if d.Label == "task-count" {
+			assert.Equal(t, "kafka_connect_worker_task_count", d.PrometheusMetric)
+			assert.False(t, d.Overridden)
+		}
+	}
+}
+
+func TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection(t *testing.T) {
+	defs := ConnectQueryDefinitions(map[string]string{"task-count": "acme_connect_task_count"})
+	var tc MetricQuery
+	for _, d := range defs {
+		if d.Label == "task-count" {
+			tc = d
+		}
+	}
+	filtered := applyLabelFilter(tc.Query, tc.PrometheusMetric, map[string]string{"job": "acme"})
+	assert.Equal(t, `sum(acme_connect_task_count{job="acme"})`, filtered)
+}
+
+func TestConnectQueryDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
+	var labels []string
+	for _, d := range ConnectQueryDefinitions(nil) {
+		labels = append(labels, d.Label)
+	}
+	assert.ElementsMatch(t, types.ValidConnectMetricLabels(), labels,
+		"ConnectQueryDefinitions labels must match the canonical Connect override label set")
 }

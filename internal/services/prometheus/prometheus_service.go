@@ -73,24 +73,42 @@ func BrokerQueryDefinitions(overrides map[string]string) []MetricQuery {
 	}
 }
 
-// ConnectQueryDefinitions returns Prometheus queries for Kafka Connect worker metrics.
-// Metric names match the JMX exporter naming convention (kafka_connect_worker_*).
-// Client-level metrics (incoming/outgoing-byte-rate, connection-count, request-rate)
-// require the JMX exporter to whitelist kafka.connect:client-id=*,type=connect-metrics.
-// Source/sink task metrics are grouped by connector (`sum by (connector) (...)`) so
-// per-connector series can be broken out in CollectMetrics.
-func ConnectQueryDefinitions() []MetricQuery {
+// ConnectQueryDefinitions returns the Kafka Connect worker Prometheus queries.
+// overrides maps a logical Connect label (e.g. "task-count") to the base series
+// name this cluster's exporter actually exposes; an entry with an empty value is
+// ignored. The overridden name is substituted into kcp's existing wrapping and set
+// as PrometheusMetric, so applyLabelFilter injection keeps working, and per-connector
+// metrics keep their sum by (connector) grouping. Pass nil for the defaults.
+func ConnectQueryDefinitions(overrides map[string]string) []MetricQuery {
+	name := func(label, def string) (string, bool) {
+		if v, ok := overrides[label]; ok && v != "" {
+			return v, true
+		}
+		return def, false
+	}
+
+	connectorCount, connectorCountOv := name("connector-count", "kafka_connect_worker_connector_count")
+	taskCount, taskCountOv := name("task-count", "kafka_connect_worker_task_count")
+	incomingByteRate, incomingByteRateOv := name("incoming-byte-rate", "kafka_connect_metrics_incoming_byte_rate")
+	outgoingByteRate, outgoingByteRateOv := name("outgoing-byte-rate", "kafka_connect_metrics_outgoing_byte_rate")
+	connectionCount, connectionCountOv := name("connection-count", "kafka_connect_metrics_connection_count")
+	requestRate, requestRateOv := name("request-rate", "kafka_connect_metrics_request_rate")
+	sourceWrite, sourceWriteOv := name("source-record-write-rate", "kafka_connect_source_task_source_record_write_rate")
+	sourcePoll, sourcePollOv := name("source-record-poll-rate", "kafka_connect_source_task_source_record_poll_rate")
+	sinkRead, sinkReadOv := name("sink-record-read-rate", "kafka_connect_sink_task_sink_record_read_rate")
+	sinkSend, sinkSendOv := name("sink-record-send-rate", "kafka_connect_sink_task_sink_record_send_rate")
+
 	return []MetricQuery{
-		{Label: "connector-count", Query: "sum(kafka_connect_worker_connector_count)", PrometheusMetric: "kafka_connect_worker_connector_count"},
-		{Label: "task-count", Query: "sum(kafka_connect_worker_task_count)", PrometheusMetric: "kafka_connect_worker_task_count"},
-		{Label: "incoming-byte-rate", Query: "sum(kafka_connect_metrics_incoming_byte_rate)", PrometheusMetric: "kafka_connect_metrics_incoming_byte_rate"},
-		{Label: "outgoing-byte-rate", Query: "sum(kafka_connect_metrics_outgoing_byte_rate)", PrometheusMetric: "kafka_connect_metrics_outgoing_byte_rate"},
-		{Label: "connection-count", Query: "sum(kafka_connect_metrics_connection_count)", PrometheusMetric: "kafka_connect_metrics_connection_count"},
-		{Label: "request-rate", Query: "sum(kafka_connect_metrics_request_rate)", PrometheusMetric: "kafka_connect_metrics_request_rate"},
-		{Label: "source-record-write-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_write_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_write_rate", GroupByConnector: true},
-		{Label: "source-record-poll-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_poll_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_poll_rate", GroupByConnector: true},
-		{Label: "sink-record-read-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_read_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_read_rate", GroupByConnector: true},
-		{Label: "sink-record-send-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_send_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_send_rate", GroupByConnector: true},
+		{Label: "connector-count", Query: "sum(" + connectorCount + ")", PrometheusMetric: connectorCount, Overridden: connectorCountOv},
+		{Label: "task-count", Query: "sum(" + taskCount + ")", PrometheusMetric: taskCount, Overridden: taskCountOv},
+		{Label: "incoming-byte-rate", Query: "sum(" + incomingByteRate + ")", PrometheusMetric: incomingByteRate, Overridden: incomingByteRateOv},
+		{Label: "outgoing-byte-rate", Query: "sum(" + outgoingByteRate + ")", PrometheusMetric: outgoingByteRate, Overridden: outgoingByteRateOv},
+		{Label: "connection-count", Query: "sum(" + connectionCount + ")", PrometheusMetric: connectionCount, Overridden: connectionCountOv},
+		{Label: "request-rate", Query: "sum(" + requestRate + ")", PrometheusMetric: requestRate, Overridden: requestRateOv},
+		{Label: "source-record-write-rate", Query: "sum by (connector) (" + sourceWrite + ")", PrometheusMetric: sourceWrite, GroupByConnector: true, Overridden: sourceWriteOv},
+		{Label: "source-record-poll-rate", Query: "sum by (connector) (" + sourcePoll + ")", PrometheusMetric: sourcePoll, GroupByConnector: true, Overridden: sourcePollOv},
+		{Label: "sink-record-read-rate", Query: "sum by (connector) (" + sinkRead + ")", PrometheusMetric: sinkRead, GroupByConnector: true, Overridden: sinkReadOv},
+		{Label: "sink-record-send-rate", Query: "sum by (connector) (" + sinkSend + ")", PrometheusMetric: sinkSend, GroupByConnector: true, Overridden: sinkSendOv},
 	}
 }
 
