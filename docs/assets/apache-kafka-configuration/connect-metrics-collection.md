@@ -212,16 +212,18 @@ jolokia:
   **WARN** (a plain missing default is logged at DEBUG) — the override was
   configured precisely to fix an empty result, so a still-empty result is worth
   surfacing.
-- **This WARN only covers a clean not-found, and only on Jolokia for eight of
-  the ten labels.** The four client-level aggregates (`incoming-byte-rate`,
-  `outgoing-byte-rate`, `connection-count`, `request-rate`) and the four
-  per-connector metrics are read via a wildcard MBean pattern rather than a
-  single object name. Jolokia only reports an error when that pattern matches
-  zero MBeans; if it matches MBeans that simply lack the expected attribute (or,
-  for per-connector metrics, the `connector` property), the read succeeds with
-  no error — the aggregate silently totals to `0` and a per-connector series is
-  silently omitted — so a matching-but-misconfigured override on these labels
-  may not produce a WARN at all.
+- **On Jolokia, this WARN's clean-not-found detection is fully reliable only
+  for the two single-object-name gauges, `connector-count` and `task-count`.**
+  The other eight labels — the four client-level aggregates
+  (`incoming-byte-rate`, `outgoing-byte-rate`, `connection-count`,
+  `request-rate`) and the four per-connector metrics — are read via a wildcard
+  MBean pattern rather than a single object name, so even a "not found" is only
+  detected when that pattern matches zero MBeans; if it matches MBeans that
+  simply lack the expected attribute (or, for per-connector metrics, the
+  `connector` property), the read succeeds with no error — the aggregate
+  silently totals to `0` and a per-connector series is silently omitted — so a
+  matching-but-misconfigured override on these eight labels may not produce a
+  WARN at all.
 - **An override is a rename, not a re-interpretation.** The series or bean you
   point at must have the same *shape* as the default — every Connect metric here
   is a gauge (a point-in-time count or an already-computed rate), not a raw

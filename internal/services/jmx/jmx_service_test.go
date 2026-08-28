@@ -553,6 +553,47 @@ func TestCollectRawSample_OverriddenCounterMBeanNotFoundIsLoud(t *testing.T) {
 		"a not-found for an overridden counter MBean is actionable and must be logged at WARN")
 }
 
+// TestCollectRawSample_OverriddenConnectAggregateMBeanNotFoundIsLoud is the
+// Connect client-aggregate counterpart of
+// TestCollectRawSample_OverriddenCounterMBeanNotFoundIsLoud: an overridden
+// client-level aggregate MBean (read via ReadMBeanAggregate, a wildcard
+// pattern) that resolves to zero matching MBeans is actionable and must be
+// logged at Warn, not Debug. This is belt-and-suspenders for the doc caveat
+// that this WARN's clean-not-found detection is the exception rather than the
+// rule for the eight wildcard-read Connect labels (four client aggregates,
+// four per-connector) — it still must fire on the total-zero-match case that
+// ReadMBeanAggregate/ReadMBeanAggregateByLabel do detect.
+func TestCollectRawSample_OverriddenConnectAggregateMBeanNotFoundIsLoud(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := map[string]any{"status": 404, "error": "javax.management.InstanceNotFoundException: acme.connect:client-id=*,type=connect-metrics-nonexistent"}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response)
+	}))
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	defs := ConnectMetricDefinitions(map[string]string{
+		"incoming-byte-rate": "acme.connect:client-id=*,type=connect-metrics-nonexistent",
+	})
+	svc := NewJMXService([]string{server.URL}, defs, "worker")
+
+	_, err := svc.collectRawSample(context.Background())
+	require.NoError(t, err)
+
+	var warnedOverriddenAggregate bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if strings.Contains(line, "level=WARN") && strings.Contains(line, "incoming-byte-rate") {
+			warnedOverriddenAggregate = true
+		}
+	}
+	assert.True(t, warnedOverriddenAggregate,
+		"a not-found (zero-match) for an overridden Connect client-aggregate MBean is actionable and must be logged at WARN")
+}
+
 // TestCollectOverDuration_OverriddenControllerMBeanMissingMentionsOverride is a
 // regression test: when the Controller MBean's label was overridden via
 // mbean_overrides and still isn't found on any broker, the caveat must point
