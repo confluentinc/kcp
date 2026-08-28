@@ -35,7 +35,10 @@ Press q to quit, p to toggle partition details, r to refresh, +/- to adjust inte
 
 Everything it needs — the destination REST endpoint, cluster id, link name and credentials —
 comes from the GatewayMigration manifest, so this command reads no state file and works
-before 'kcp migration init' has ever run.
+before 'kcp migration init' has ever run. The credentials are the destination REST leg
+(spec.target.kafka.restCredentials), honoured in whatever form the manifest resolves —
+api_key, basic, bearer, or mtls (derived from spec.target.kafka.credentials when that block
+is sasl_plain). lag-check never dials the source or destination Kafka legs directly.
 
 It always shows every mirror topic on the link; spec.topics does not narrow the view.`,
 		Example:       `  kcp migration lag-check --migration-yaml gateway-migration.yaml`,
