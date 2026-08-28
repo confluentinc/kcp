@@ -446,7 +446,7 @@ func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, creds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
-	jmxService := jmx.NewJMXService(creds.Jolokia.Endpoints, jmx.ConnectMetricDefinitions(), "worker", jolokiaOpts...)
+	jmxService := jmx.NewJMXService(creds.Jolokia.Endpoints, jmx.ConnectMetricDefinitions(creds.Jolokia.ConnectMBeanOverrides), "worker", jolokiaOpts...)
 	pcm, err := jmxService.CollectOverDuration(ctx, duration, interval)
 	if err != nil {
 		return nil, err
@@ -481,7 +481,7 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 	}
 
 	promClient := client.NewPrometheusClient(creds.Prometheus.URL, promOpts...)
-	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.ConnectQueryDefinitions(), labels)
+	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.ConnectQueryDefinitions(creds.Prometheus.ConnectMetricNames), labels)
 	pcm, err := promService.CollectMetrics(ctx, queryRange)
 	if err != nil {
 		return nil, err
