@@ -410,6 +410,11 @@ func TestConnectQueryDefinitions_CollectMetrics_OverriddenEmptyIsLoud(t *testing
 		}
 		if strings.Contains(line, "task-count") {
 			warnedTaskCount = true
+			// CollectMetrics is shared by broker scans (metric_names) and Connect
+			// scans (connect_metric_names) — the WARN text must stay key-agnostic
+			// rather than naming the broker-only "metric_names" key.
+			assert.NotContains(t, line, "metric_names",
+				"WARN for a Connect override must not name the broker-only metric_names key")
 		}
 		if strings.Contains(line, "incoming-byte-rate") {
 			warnedIncomingByteRate = true
@@ -785,6 +790,24 @@ func TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection(t *testin
 	}
 	filtered := applyLabelFilter(tc.Query, tc.PrometheusMetric, map[string]string{"job": "acme"})
 	assert.Equal(t, `sum(acme_connect_task_count{job="acme"})`, filtered)
+}
+
+// TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection_PerConnector
+// is the per-connector analog of
+// TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection: it proves
+// label-filter injection still lands inside the series selector — not outside
+// the `sum by (connector) (...)` wrapper — when the underlying series name has
+// been overridden.
+func TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection_PerConnector(t *testing.T) {
+	defs := ConnectQueryDefinitions(map[string]string{"source-record-write-rate": "acme_connect_source_write"})
+	var sw MetricQuery
+	for _, d := range defs {
+		if d.Label == "source-record-write-rate" {
+			sw = d
+		}
+	}
+	filtered := applyLabelFilter(sw.Query, sw.PrometheusMetric, map[string]string{"job": "acme"})
+	assert.Equal(t, `sum by (connector) (acme_connect_source_write{job="acme"})`, filtered)
 }
 
 func TestConnectQueryDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
