@@ -92,30 +92,65 @@ type Gateway struct {
 	// does not either.
 	Kubeconfig string     `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	CRs        GatewayCRs `yaml:"crs" json:"crs"`
-	// Fence names the route(s) kcp fences at cutover. There is no fenced-CR
-	// file: kcp reads the live initial CR, injects the fence block onto each
-	// named route, and applies the patched CR.
-	Fence GatewayFence `yaml:"fence" json:"fence"`
+	// Routes names the route(s) kcp fences and switches over at cutover, each
+	// paired with the streaming domain it switches to. There is no fenced-CR
+	// or switchover-CR file: kcp reads the live initial CR, injects the fence
+	// block onto each named route to block traffic, and — derived the same
+	// way from the same live CR — later flips each route's streamingDomain to
+	// its declared target. Fence and its rollback (which re-applies the same
+	// initial CR) are therefore exact inverses, and there is no second list
+	// to keep in sync with this one (D1).
+	Routes []GatewayRoute `yaml:"routes" json:"routes"`
 }
 
-// GatewayCRs holds the two gateway CRs the migration reads by different means,
-// inherited from --initial-cr-name vs the switchover file path.
+// GatewayCRs holds the gateway CR the migration reads live, plus a detector
+// for the retired switchover-file field.
 type GatewayCRs struct {
 	// Initial is a Kubernetes object NAME, read live from the cluster at init.
 	Initial string `yaml:"initial" json:"initial"`
-	// Switchover is a local FILE path, snapshotted into the state file at init.
-	Switchover string `yaml:"switchover" json:"switchover"`
+	// Switchover is retired (D2): the switchover CR is now a derived inline
+	// update to the initial CR (see Gateway.Routes), not an operator-authored
+	// file. This field stays as a plain string ONLY so Validate can detect a
+	// manifest that still sets it and reject with a migration hint — goccy
+	// silently drops unknown keys, so removing the field outright would turn a
+	// stale manifest into a silent no-op instead of a loud, actionable error.
+	// Nothing else reads it.
+	Switchover string `yaml:"switchover,omitempty" json:"switchover,omitempty"`
 }
 
-// GatewayFence declares which route(s) the fence step blocks. kcp derives the
-// fenced CR from the live initial CR by injecting
-// fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route,
-// so fence and its rollback (which re-applies the same initial CR) are exact
-// inverses. The switchover CR, which lifts the fence, stays file-based.
-type GatewayFence struct {
-	// Routes are the spec.routes[].name values to fence. Non-empty; each entry
-	// must be a non-blank, unique route name that exists in the initial CR.
-	Routes []string `yaml:"routes" json:"routes"`
+// GatewayRoute is one route kcp fences and switches over at cutover, paired
+// with the streaming domain it switches to. The pairing is structural (D4): a
+// route cannot be named here without also declaring where it switches,
+// because the FSM only supports init -> fence -> switch, with no
+// fence-without-switch path. Each entry must have a non-blank, unique route
+// name that exists in the initial CR, and a non-blank streaming domain
+// target.
+//
+// Because the route's security.cluster already carries pre-staged
+// ("redundant") auth for the target domain, the switch is a plain field flip
+// with no secret or auth change (see checkRedundantAuthStaged, which proves
+// that staging holds before any route is fenced).
+type GatewayRoute struct {
+	Name            string                    `yaml:"name" json:"name"`
+	StreamingDomain GatewayStreamingDomainRef `yaml:"streamingDomain" json:"streamingDomain"`
+}
+
+// GatewayStreamingDomainRef names a streaming domain declared in the gateway
+// CR's spec.streamingDomains, and the bootstrap server id on that domain to
+// bind the route to.
+type GatewayStreamingDomainRef struct {
+	Name              string `yaml:"name" json:"name"`
+	BootstrapServerId string `yaml:"bootstrapServerId" json:"bootstrapServerId"`
+}
+
+// RouteNames projects the gateway's routes to their plain names, the shape the
+// rest of kcp (state snapshots, drift detection) has always worked with.
+func (g Gateway) RouteNames() []string {
+	names := make([]string, len(g.Routes))
+	for i, r := range g.Routes {
+		names[i] = r.Name
+	}
+	return names
 }
 
 // DefaultPolicies is the execute-time knobs. Every value is optional and zero
@@ -300,22 +335,32 @@ func (g *GatewayMigration) Validate() []error {
 	if blank(g.Spec.Gateway.CRs.Initial) {
 		add("spec.gateway.crs.initial: must not be empty (a Kubernetes object name, read live)")
 	}
-	if blank(g.Spec.Gateway.CRs.Switchover) {
-		add("spec.gateway.crs.switchover: must not be empty (a local file path)")
+	// crs.switchover is retired (D2): setting it is a hard error with a
+	// migration hint, not a silent no-op.
+	if !blank(g.Spec.Gateway.CRs.Switchover) {
+		add("spec.gateway.crs.switchover: is no longer supported; declare a switchover target per route under gateway.routes[].streamingDomain instead")
 	}
-	if routes := g.Spec.Gateway.Fence.Routes; len(routes) == 0 {
-		add("spec.gateway.fence.routes: must name at least one route to fence")
+	if routes := g.Spec.Gateway.Routes; len(routes) == 0 {
+		add("spec.gateway.routes: must name at least one route")
 	} else {
 		seen := make(map[string]struct{}, len(routes))
-		for i, name := range routes {
-			if blank(name) {
-				add("spec.gateway.fence.routes[%d]: must not be blank", i)
-				continue
+		for i, route := range routes {
+			if blank(route.Name) {
+				add("spec.gateway.routes[%d]: name must not be blank", i)
+			} else {
+				if _, dup := seen[route.Name]; dup {
+					add("spec.gateway.routes: %q is listed more than once", route.Name)
+				}
+				seen[route.Name] = struct{}{}
 			}
-			if _, dup := seen[name]; dup {
-				add("spec.gateway.fence.routes: %q is listed more than once", name)
+			// D4: every route fences AND switches over — a route cannot be
+			// named here without also declaring its target.
+			if blank(route.StreamingDomain.Name) {
+				add("spec.gateway.routes[%d].streamingDomain.name: must not be empty", i)
 			}
-			seen[name] = struct{}{}
+			if blank(route.StreamingDomain.BootstrapServerId) {
+				add("spec.gateway.routes[%d].streamingDomain.bootstrapServerId: must not be empty", i)
+			}
 		}
 	}
 

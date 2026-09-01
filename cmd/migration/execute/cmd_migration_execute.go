@@ -1,15 +1,15 @@
 package execute
 
 import (
-	"bytes"
 	"fmt"
 	"log/slog"
-	"os"
+	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -131,19 +131,15 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", id, migrationStateFile)
 	}
 
+	if err := checkStateFilePredatesSwitchover(config); err != nil {
+		return err
+	}
+
 	// Record what this run will execute with — the effective policy (manifest
 	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
 	// this is the durable audit trail of the knobs a given execute used; the same
 	// values are also snapshotted into the state file as LastRunPolicies.
-	slog.Info("executing migration with effective policy",
-		"migration_id", id,
-		"state", config.CurrentState,
-		"lag_threshold", g.Spec.DefaultPolicies.LagThreshold,
-		"promote_batch_size", g.Spec.DefaultPolicies.PromoteBatchSize,
-		"rollout_timeout", g.Spec.DefaultPolicies.RolloutTimeout,
-		"detect_unrouted_producers_duration", g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
-		"consumer_offset_sync_drain_duration", g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
-	)
+	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, config.CurrentState, g.Spec.DefaultPolicies)...)
 
 	if err := checkSpecDrift(g, config); err != nil {
 		return err
@@ -157,6 +153,40 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// carry it straight from the flag onto the opts.
 	opts.RunReportPath = runReport
 	return NewMigrationExecutor(opts).Run()
+}
+
+// checkStateFilePredatesSwitchover refuses a migration-state.json written before
+// redundant-auth switchover existed. Such a file has fence routes but no
+// switchover targets, so execute cannot derive the switched gateway CR — and
+// left alone it fails deep in the switch step ("no switchover targets given")
+// after traffic is already fenced. Failing here, before any cluster contact,
+// points the operator at the fix instead. Runs before the drift check so its
+// specific message wins over the generic "config file has changed" one.
+func checkStateFilePredatesSwitchover(config *migration.MigrationConfig) error {
+	if len(config.FenceRoutes) > 0 && len(config.SwitchoverTargets) == 0 {
+		return fmt.Errorf("migration %q was initialised before redundant-auth switchover was supported: its state file records %d fence route(s) but no switchover targets, so execute cannot derive the switched gateway CR.\nRe-run 'kcp migration init' with the current manifest to record them (only possible before the migration has fenced)",
+			config.MigrationId, len(config.FenceRoutes))
+	}
+	return nil
+}
+
+// effectivePolicyLogArgs renders the effective execute-time policy as slog
+// key/value pairs for the audit log line. It is the single place the log's copy
+// of DefaultPolicies is spelled out, so it cannot drift field-by-field from the
+// LastRunPolicies snapshot the way the previous hand-inlined call already had
+// (hotReloadTimeout and gatewayConfigPort had been silently dropped).
+func effectivePolicyLogArgs(migrationID, state string, p manifest.DefaultPolicies) []any {
+	return []any{
+		"migration_id", migrationID,
+		"state", state,
+		"lag_threshold", p.LagThreshold,
+		"promote_batch_size", p.PromoteBatchSize,
+		"rollout_timeout", p.RolloutTimeout,
+		"detect_unrouted_producers_duration", p.DetectUnroutedProducersDuration,
+		"consumer_offset_sync_drain_duration", p.ConsumerOffsetSyncDrainDuration,
+		"hot_reload_timeout", p.HotReloadTimeout,
+		"gateway_config_port", p.GatewayConfigPort,
+	}
 }
 
 // resolveMigrationID prefers an explicit override. metadata.name is the
@@ -282,13 +312,13 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	if g.Spec.Gateway.CRs.Initial != config.InitialCrName {
 		gatewayChanges = append(gatewayChanges, "crs.initial")
 	}
-	// fence.routes drifts as a set (reordering is not a change). Counts only,
+	// routes drifts as a set (reordering is not a change). Counts only,
 	// never names — a bare flag, like the retired fenced-CR byte check.
-	if added, removed := diffCounts(g.Spec.Gateway.Fence.Routes, config.FenceRoutes); added > 0 || removed > 0 {
-		gatewayChanges = append(gatewayChanges, "fence.routes")
+	if added, removed := diffCounts(g.Spec.Gateway.RouteNames(), config.FenceRoutes); added > 0 || removed > 0 {
+		gatewayChanges = append(gatewayChanges, "routes")
 	}
-	if crChanged(g.Spec.Gateway.CRs.Switchover, config.SwitchoverCrYAML) {
-		gatewayChanges = append(gatewayChanges, "switchover CR")
+	if switchoverTargetsChanged(g.Spec.Gateway.Routes, config.SwitchoverTargets) {
+		gatewayChanges = append(gatewayChanges, "switchover targets")
 	}
 	if len(gatewayChanges) > 0 {
 		drift = append(drift, fmt.Sprintf("spec.gateway (%s)", strings.Join(gatewayChanges, ", ")))
@@ -307,17 +337,29 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	return drift
 }
 
-// crChanged reports whether the CR file on disk differs from the snapshot taken
-// at init. An unreadable file is NOT drift: execute may be re-run from a
-// different cwd or pod after a crash, possibly with the gateway already fenced,
-// and a moved file must not strand a mid-flight cutover.
-func crChanged(path string, snapshot []byte) bool {
-	current, err := os.ReadFile(path)
-	if err != nil {
-		slog.Warn("⚠️ could not verify CR drift; proceeding on the snapshot taken at init", "path", path, "error", err)
-		return false
+// switchoverTarget is the comparable half of gateway.RouteSwitchoverTarget
+// (routeName is the map key), so two target lists can be compared as sets —
+// reordering is not a change, matching routes' own drift semantics.
+type switchoverTarget struct {
+	streamingDomainName string
+	bootstrapServerId   string
+}
+
+// switchoverTargetsChanged reports whether the manifest's declared per-route
+// switchover targets differ from the snapshot taken at init. Unlike the
+// retired file-based switchover CR, there is no file to read and therefore no
+// "unreadable" case to degrade: the target is pure manifest data, resolved
+// the moment the document parses.
+func switchoverTargetsChanged(routes []manifest.GatewayRoute, snapshot []gateway.RouteSwitchoverTarget) bool {
+	want := make(map[string]switchoverTarget, len(routes))
+	for _, r := range routes {
+		want[r.Name] = switchoverTarget{r.StreamingDomain.Name, r.StreamingDomain.BootstrapServerId}
 	}
-	return !bytes.Equal(current, snapshot)
+	have := make(map[string]switchoverTarget, len(snapshot))
+	for _, t := range snapshot {
+		have[t.RouteName] = switchoverTarget{t.StreamingDomainName, t.BootstrapServerId}
+	}
+	return !maps.Equal(want, have)
 }
 
 // diffCounts returns how many entries want adds and drops relative to have.

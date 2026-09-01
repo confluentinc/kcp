@@ -31,6 +31,13 @@ spec:
       endpoint: gateway:9595
 `
 
+// testSwitchoverTargets pairs with testInitialCR's one fence route, so
+// SwitchGateway's cleanInitialCR + gateway.SwitchRoutesObj can derive a
+// switched CR from it in unit tests.
+var testSwitchoverTargets = []gateway.RouteSwitchoverTarget{
+	{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
+}
+
 // ===========================================================================
 // Initialize tests
 // ===========================================================================
@@ -65,7 +72,7 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -94,7 +101,7 @@ func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, v
 		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
 			return []byte(testInitialCR), nil
 		},
-		validateGatewayCRsFn: func(_ context.Context, _, _ string, _, _ []byte, _ []string) (gateway.CRValidationResult, error) {
+		checkRedundantAuthStagedFn: func(_ context.Context, _ string, _ []byte, _ []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error) {
 			return result, validationErr
 		},
 	}
@@ -118,7 +125,7 @@ func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, v
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}, "key", "secret")
 
 	return out.String() + errOut.String(), err
@@ -183,21 +190,22 @@ func TestWorkflow_Initialize_WarningsSurfaceEvenWhenValidationFails(t *testing.T
 	assert.Contains(t, output, "fence block that is not on a route")
 }
 
-func TestWorkflow_Initialize_PassesNamespaceAndGatewayToValidator(t *testing.T) {
-	// The live secret lookup is namespace-scoped, and the identity check needs the
-	// target gateway name — both come from the migration config.
-	var gotNamespace, gotGateway string
-	var gotInitial, gotSwitchover []byte
-	var gotFenceRoutes []string
+func TestWorkflow_Initialize_PassesNamespaceAndTargetsToValidator(t *testing.T) {
+	// The live secret lookup is namespace-scoped, so the namespace comes from
+	// the migration config; the initial CR and switchover targets are what the
+	// validator proves the redundant auth against.
+	var gotNamespace string
+	var gotInitial []byte
+	var gotTargets []gateway.RouteSwitchoverTarget
 
 	gw := &mockGatewayService{
 		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
 			return []byte(testInitialCR), nil
 		},
-		validateGatewayCRsFn: func(_ context.Context, namespace, name string, initial, switchover []byte, fenceRoutes []string) (gateway.CRValidationResult, error) {
-			gotNamespace, gotGateway = namespace, name
-			gotInitial, gotSwitchover = initial, switchover
-			gotFenceRoutes = fenceRoutes
+		checkRedundantAuthStagedFn: func(_ context.Context, namespace string, initial []byte, targets []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error) {
+			gotNamespace = namespace
+			gotInitial = initial
+			gotTargets = targets
 			return gateway.CRValidationResult{}, nil
 		},
 	}
@@ -218,15 +226,13 @@ func TestWorkflow_Initialize_PassesNamespaceAndGatewayToValidator(t *testing.T) 
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}, "key", "secret")
 
 	require.NoError(t, err)
 	assert.Equal(t, "kcp", gotNamespace)
-	assert.Equal(t, "migration-gateway", gotGateway)
 	assert.Equal(t, testInitialCR, string(gotInitial), "the live CR just fetched, not the stale config field")
-	assert.Equal(t, "switchover", string(gotSwitchover))
-	assert.Equal(t, []string{"migration-route"}, gotFenceRoutes)
+	assert.Equal(t, testSwitchoverTargets, gotTargets)
 }
 
 func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
@@ -272,7 +278,7 @@ func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
 		ClusterId:           "lkc-123",
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -307,7 +313,7 @@ func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
 		ClusterLinkName:     "link-1",
 		Topics:              []string{"topic-x"},
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -344,7 +350,7 @@ func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
 		ClusterLinkName:     "link-1",
 		Topics:              nil, // empty — should discover all
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -388,6 +394,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_Pass(t *testing.T) {
 		ClusterLinkName:         "link-pause",
 		PauseConsumerOffsetSync: true,
 		FenceRoutes:             []string{"migration-route"},
+		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -404,6 +411,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnFalse(t *testing.T) {
 		ClusterLinkName:         "link-falsey",
 		PauseConsumerOffsetSync: true,
 		FenceRoutes:             []string{"migration-route"},
+		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -421,6 +429,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnAbsentKey(t *testing.T) {
 		ClusterLinkName:         "link-absent",
 		PauseConsumerOffsetSync: true,
 		FenceRoutes:             []string{"migration-route"},
+		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -439,6 +448,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testi
 		ClusterLinkName:         "link-offset-disabled",
 		PauseConsumerOffsetSync: false,
 		FenceRoutes:             []string{"migration-route"},
+		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -463,6 +473,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t 
 		PauseConsumerOffsetSync:        true,
 		PauseConsumerOffsetSyncFlipped: true,
 		FenceRoutes:                    []string{"migration-route"},
+		SwitchoverTargets:              testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -494,6 +505,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t 
 		PauseConsumerOffsetSyncFlipped: true,
 		ClusterLinkConfigs:             preDisableSnapshot,
 		FenceRoutes:                    []string{"migration-route"},
+		SwitchoverTargets:              testSwitchoverTargets,
 	}
 
 	err := wf.Initialize(context.Background(), config, "key", "secret")
@@ -1262,9 +1274,11 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 
 func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	var callOrder []string
+	var appliedYAML []byte
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte, _ string) (string, error) {
-			callOrder = append(callOrder, fmt.Sprintf("apply:%s", string(yaml)))
+			appliedYAML = yaml
+			callOrder = append(callOrder, "apply")
 			return "", nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
@@ -1274,11 +1288,12 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), SwitchoverTargets: testSwitchoverTargets}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"apply:switchover", "wait"}, callOrder, "apply (switchover YAML) must precede wait")
+	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply (derived switched CR) must precede wait")
+	assert.Contains(t, string(appliedYAML), "confluent-cloud", "the applied CR must carry the target streaming domain")
 }
 
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
@@ -1290,7 +1305,7 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), SwitchoverTargets: testSwitchoverTargets}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1335,7 +1350,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), SwitchoverTargets: testSwitchoverTargets}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err, "a switchover the operator rejected must not be reported as a success")
@@ -1367,7 +1382,7 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), SwitchoverTargets: testSwitchoverTargets}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1383,7 +1398,7 @@ func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), SwitchoverTargets: testSwitchoverTargets}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1406,7 +1421,7 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
 	wf.SetRolloutTimeout(15 * time.Minute)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", SwitchoverCrYAML: []byte("switchover")}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", InitialCrYAML: []byte(testInitialCR), SwitchoverTargets: testSwitchoverTargets}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))
 	assert.Equal(t, 15*time.Minute, observedTimeout)

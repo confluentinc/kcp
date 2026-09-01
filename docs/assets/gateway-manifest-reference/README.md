@@ -132,13 +132,21 @@ it must restate the key and secret even if they match `credentials`.
 
 ## `spec.gateway`
 
+There is no `crs.fenced` or `crs.switchover` file: kcp derives both the fenced
+CR and the switched CR from the live initial CR at cutover — a fence block
+injected onto each named route, and each route's `streamingDomain` flipped to
+its declared switchover target. Setting `crs.switchover` is a validation
+error, not a silent no-op — it stays detectable on the manifest struct
+specifically so a stale manifest fails loudly instead of being read as valid.
+
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `namespace` | string | yes | Kubernetes namespace where the gateway is deployed. |
 | `kubeconfig` | string | no | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
 | `crs.initial` | string | yes | The **name** of the initial gateway custom resource — read live from the cluster at `init`, not a file path. |
-| `crs.fenced` | string | yes | Local **file path** to the gateway CR YAML that blocks traffic during migration. Snapshotted into the state file at `init`. |
-| `crs.switchover` | string | yes | Local **file path** to the gateway CR YAML that routes traffic to the destination. Snapshotted into the state file at `init`. |
+| `routes[].name` | string | yes | A `spec.routes[].name` in the initial CR to fence at cutover. Must be non-blank and unique within the list. |
+| `routes[].streamingDomain.name` | string | yes | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`. |
+| `routes[].streamingDomain.bootstrapServerId` | string | yes | A bootstrap server id declared on that streaming domain. |
 
 ## `spec.topics`
 
@@ -279,7 +287,11 @@ Key rules, beyond required/optional per field above:
 - Every `bootstrapServers` entry must be `host:port`.
 - `spec.clusterLink.name` must not be blank (existence itself isn't checked
   until `init` touches the destination).
-- `spec.gateway.namespace` and all three `crs` fields must not be blank.
+- `spec.gateway.namespace` and `crs.initial` must not be blank; `crs.switchover`
+  must not be set at all.
+- Every `routes[]` entry needs a non-blank, unique `name` and a non-blank
+  `streamingDomain.{name,bootstrapServerId}` — a route cannot be named here
+  without also declaring where it switches to.
 - `spec.topics`, if present, must be non-empty with no blank entries.
 - No `spec.defaultPolicies` field may be negative;
   `detectUnroutedProducersDuration`, if greater than zero, must be at least
@@ -310,8 +322,9 @@ Key rules, beyond required/optional per field above:
 | `spec.gateway.namespace` | string | yes | — | — |
 | `spec.gateway.kubeconfig` | string | no | — | `~/` expanded |
 | `spec.gateway.crs.initial` | string | yes | — | K8s object name |
-| `spec.gateway.crs.fenced` | string | yes | — | local file path |
-| `spec.gateway.crs.switchover` | string | yes | — | local file path |
+| `spec.gateway.routes[].name` | string | yes | — | must exist in the initial CR, unique |
+| `spec.gateway.routes[].streamingDomain.name` | string | yes | — | must be declared in the initial CR's `spec.streamingDomains` |
+| `spec.gateway.routes[].streamingDomain.bootstrapServerId` | string | yes | — | must be declared on that streaming domain |
 | `spec.topics` | `[]string` | no | omitted = every active mirror topic | non-empty if present, literal names |
 | `spec.defaultPolicies.lagThreshold` | int | no | `0` | `>= 0` |
 | `spec.defaultPolicies.promoteBatchSize` | int | no | `0` | `>= 0` |
