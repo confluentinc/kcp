@@ -30,6 +30,8 @@ var (
 	rolloutTimeoutOverride                  time.Duration
 	detectUnroutedProducersDurationOverride time.Duration
 	consumerOffsetSyncDrainDurationOverride time.Duration
+	hotReloadTimeoutOverride                time.Duration
+	gatewayConfigPortOverride               int
 	// runReport is the diagnostics knob carried over from #408. It stays a flag
 	// rather than a manifest policy field: the path is a per-run, machine-specific
 	// output location — operational, not versioned desired state — and the
@@ -87,6 +89,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Override spec.defaultPolicies.rolloutTimeout: max wait for the operator to report the gateway Ready during fence and switchover (e.g. 10m). 0 means no deadline.")
 	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: window to monitor source offsets after fencing for producers bypassing the gateway. 0 skips the check; minimum 10s when set.")
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override spec.defaultPolicies.consumerOffsetSyncDrainDuration: wait after fencing before disabling the link's consumer offset sync. Has no effect unless pauseConsumerOffsetSync is set. 0 means no wait.")
+	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override spec.defaultPolicies.hotReloadTimeout: max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
+	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 uses the persisted value, falling back to the gateway default (9180).")
 
 	// Hidden pending schema validation by the migration performance rig, its
 	// first consumer; intended to become user-facing, since the natural audience
@@ -184,6 +188,12 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 	}
 	if cmd.Flags().Changed("consumer-offset-sync-drain-duration") {
 		p.ConsumerOffsetSyncDrainDuration = consumerOffsetSyncDrainDurationOverride
+	}
+	if cmd.Flags().Changed("hot-reload-timeout") {
+		p.HotReloadTimeout = hotReloadTimeoutOverride
+	}
+	if cmd.Flags().Changed("gateway-config-port") {
+		p.GatewayConfigPort = gatewayConfigPortOverride
 	}
 }
 
@@ -367,6 +377,8 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		RolloutTimeout:                  g.Spec.DefaultPolicies.RolloutTimeout,
 		DetectUnroutedProducersDuration: g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
 		ConsumerOffsetSyncDrainDuration: g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
+		HotReloadTimeout:                g.Spec.DefaultPolicies.HotReloadTimeout,
+		GatewayConfigPort:               g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 
 	opts := MigrationExecutorOpts{
@@ -377,6 +389,8 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		ClusterBootstrap:   config.ClusterBootstrap,
 		SourceBootstrap:    config.SourceBootstrap,
 		RolloutTimeout:     g.Spec.DefaultPolicies.RolloutTimeout,
+		HotReloadTimeout:   g.Spec.DefaultPolicies.HotReloadTimeout,
+		GatewayConfigPort:  g.Spec.DefaultPolicies.GatewayConfigPort,
 		PromoteBatchSize:   g.Spec.DefaultPolicies.PromoteBatchSize,
 
 		// The destination Kafka leg authenticates with the KAFKA block. When
