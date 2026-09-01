@@ -57,6 +57,28 @@ spec:
       bootstrapServers:
         - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+      # credentials and restCredentials authenticate two DIFFERENT servers:
+      # credentials dials bootstrapServers directly over the Kafka wire
+      # protocol (reads/writes destination-side offsets); restCredentials
+      # calls restEndpoint's Admin REST API, which is what actually manages
+      # the cluster link (status, list/promote mirror topics, alter
+      # configs) — the link itself must ALREADY EXIST; kcp never creates
+      # one. On self-managed Confluent Platform these are
+      # backed by two INDEPENDENT credential stores configured separately on
+      # the cluster itself — the Kafka SASL/SCRAM (or mTLS) listener has its
+      # own store; the REST API's auth (kafka.rest.authentication.method: a
+      # Basic realm file, MDS for bearer, or its own mTLS trust store) has
+      # another. A valid Kafka credential is NOT automatically a valid REST
+      # credential, even against the same broker process — the two stores
+      # only match if you provisioned the same principal into both yourself.
+      #
+      # The one case where reuse is automatic is Confluent Cloud's sasl_plain
+      # key below: Confluent Cloud issues it as a single artifact valid as
+      # both the Kafka SASL/PLAIN credential and the REST Basic-auth
+      # credential, so kcp can safely derive restCredentials from it. No such
+      # platform guarantee exists for sasl_scram/mtls/unauthenticated_*,
+      # which is why restCredentials must be spelled out explicitly there.
+      #
       # The destination KAFKA leg, dialled directly to read destination-side
       # offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or
       # unauthenticated_plaintext — iam is rejected (the destination is
