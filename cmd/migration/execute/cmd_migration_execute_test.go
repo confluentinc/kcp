@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -751,7 +752,7 @@ func TestExecute_InsecureSkipReachesAllThreeLegs(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
-	assert.True(t, opts.RestInsecureSkipTLSVerify)
+	assert.True(t, opts.RestCreds.InsecureSkipVerify)
 
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
@@ -764,8 +765,49 @@ func TestExecute_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
-	assert.Equal(t, "CC_KEY", opts.ClusterApiKey)
-	assert.Equal(t, "CC_SECRET", opts.ClusterApiSecret)
+	assert.Equal(t, types.AuthTypeSASLPlain, opts.DestAuthType)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
+}
+
+// TestExecute_DestSASLPlainDefaultsToTLS is the ⚠️ backward-compat fix (A.3):
+// the old destination client always dialled SASL_SSL over the public trust
+// store. AdminOptionForAuthMethod maps sasl_plain with no ca_cert/tls to
+// cleartext SASL_PLAINTEXT, so buildExecutorOpts must default UseTLS=true when
+// neither is set — the single most important regression to prove, since every
+// existing manifest never sets tls: nor ca_cert: on the destination.
+func TestExecute_DestSASLPlainDefaultsToTLS(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc,
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET", 1)
+	})
+	g := loadGateway(t, f.manifestPath)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.True(t, opts.DestAuthMethod.SASLPlain.UseTLS, "no ca_cert/tls set must still default to SASL_SSL, not a silent downgrade to SASL_PLAINTEXT")
+}
+
+// TestExecute_DestSASLPlainCACertIsNotOverridden — the compat default must not
+// clobber an explicit ca_cert (already selects SASL_SSL) nor flip UseTLS when
+// one is already set.
+func TestExecute_DestSASLPlainCACertIsNotOverridden(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
+
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc,
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca, 1)
+	})
+	g := loadGateway(t, f.manifestPath)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.Equal(t, ca, opts.DestAuthMethod.SASLPlain.CACert)
+	assert.False(t, opts.DestAuthMethod.SASLPlain.UseTLS, "ca_cert already selects SASL_SSL; the compat default must not also flip UseTLS")
 }
 
 // --- ported preRunE errors (§6) ---
@@ -841,7 +883,7 @@ func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify, "the source asked for it")
 	assert.False(t, opts.DestKafkaInsecureSkipTLSVerify, "the destination Kafka leg did not")
-	assert.False(t, opts.RestInsecureSkipTLSVerify, "nor the destination REST leg")
+	assert.False(t, opts.RestCreds.InsecureSkipVerify, "nor the destination REST leg")
 }
 
 // TestExecute_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
@@ -855,7 +897,7 @@ func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 
 	assert.False(t, opts.SourceInsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
-	assert.True(t, opts.RestInsecureSkipTLSVerify, "a DERIVED REST leg inherits from the Kafka block")
+	assert.True(t, opts.RestCreds.InsecureSkipVerify, "a DERIVED REST leg inherits from the Kafka block")
 }
 
 // TestExecute_ExplicitRestCredentialsGovernTheRestLeg — with restCredentials
@@ -875,7 +917,7 @@ func TestExecute_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
-	assert.False(t, opts.RestInsecureSkipTLSVerify,
+	assert.False(t, opts.RestCreds.InsecureSkipVerify,
 		"an explicit REST block that did not ask for it must keep verifying")
 }
 
@@ -895,10 +937,11 @@ func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
-	assert.Equal(t, "CC_KEY", opts.ClusterApiKey, "the Kafka leg uses spec.target.kafka.credentials")
-	assert.Equal(t, "CC_SECRET", opts.ClusterApiSecret)
-	assert.Equal(t, "REST_ONLY_KEY", opts.RestApiKey, "the REST leg uses restCredentials")
-	assert.Equal(t, "REST_ONLY_SECRET", opts.RestApiSecret)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.credentials")
+	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
+	assert.Equal(t, "REST_ONLY_KEY", opts.RestCreds.APIKey, "the REST leg uses restCredentials")
+	assert.Equal(t, "REST_ONLY_SECRET", opts.RestCreds.APISecret)
 }
 
 // TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg — the common case is
@@ -907,6 +950,7 @@ func TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg(t *testing.T) {
 	f := newFixture(t, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
-	assert.Equal(t, "CC_KEY", opts.ClusterApiKey)
-	assert.Equal(t, "CC_KEY", opts.RestApiKey)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_KEY", opts.RestCreds.APIKey)
 }

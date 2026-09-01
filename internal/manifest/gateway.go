@@ -254,7 +254,7 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 //
 // It does no I/O, so a credentials slot spelled as a path is checked for
 // presence only; the rules that need the block's contents (source auth gating,
-// the sasl_plain-only destination rule) run here for an inline block and again
+// the destination iam rejection) run here for an inline block and again
 // in SourceCredentials / DestinationKafkaCredentials for both spellings.
 func (g *GatewayMigration) Validate() []error {
 	var errs []error
@@ -309,16 +309,15 @@ func (g *GatewayMigration) Validate() []error {
 			add("spec.target.kafka.credentials: must not be empty")
 		} else if k.Credentials.IsInline() {
 			if mc, ok := peekMigrateCreds(k.Credentials); ok {
-				errs = append(errs, checkDestinationIsSASLPlain(mc)...)
+				errs = append(errs, checkDestinationKafkaAuth(mc)...)
+				if k.RestCredentials == nil && mc.SASLPlain == nil {
+					add("spec.target.kafka.restCredentials: required — it can only be derived from spec.target.kafka.credentials when that block is sasl_plain")
+				}
 			}
 		}
 		if k.RestCredentials != nil {
 			if blankRef(*k.RestCredentials) {
-				add("spec.target.kafka.restCredentials: present but empty — omit it to derive from credentials, or fill it in")
-			} else if k.RestCredentials.IsInline() {
-				if tc, ok := peekTargetCreds(*k.RestCredentials); ok {
-					errs = append(errs, checkRestIsAPIKeyForm(tc)...)
-				}
+				add("spec.target.kafka.restCredentials: present but empty — fill it in, or omit it entirely to derive from credentials (only possible when that block is sasl_plain)")
 			}
 		}
 	}
@@ -437,62 +436,19 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 	return nil
 }
 
-// checkDestinationIsSASLPlain rejects every destination block other than
-// sasl_plain. The destination Kafka client is hardcoded to SASL/PLAIN over TLS,
-// so any other block would be accepted and then silently ignored — worse than
-// the flag surface this replaces.
-func checkDestinationIsSASLPlain(mc types.MigrateClusterCredentials) []error {
-	if mc.SASLPlain != nil {
-		// The destination Kafka client dials SASL/PLAIN over the public trust
-		// store — createDestinationOffset hardcodes an empty ca_cert — and a
-		// derived REST leg drops ca_cert too. A ca_cert here would therefore be
-		// accepted and then silently ignored, so a private-CA destination would
-		// read as configured while actually connecting on the system roots.
-		// Refuse it, the same call as the sasl_plain-only and api_key-only rules.
-		// (tls stays permitted: it names the exact transport the destination
-		// already uses, so it is honoured rather than dropped.)
-		if strings.TrimSpace(mc.SASLPlain.CACert) != "" {
-			return []error{fmt.Errorf(
-				"spec.target.kafka.credentials.sasl_plain.ca_cert: a custom CA is not supported for the destination in this release (it dials the public trust store); remove ca_cert")}
-		}
-		return nil
-	}
-	if mc.IAM == nil && mc.SASLScram == nil && mc.MTLS == nil &&
-		mc.UnauthenticatedTLS == nil && mc.UnauthenticatedPlaintext == nil {
-		return nil // no block at all — the shared validator reports that
-	}
-	return []error{fmt.Errorf(
-		"spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")}
-}
-
-// peekTargetCreds decodes an inline REST credentials block for validation
-// without I/O.
-func peekTargetCreds(ref CredentialsRef) (targets.Credentials, bool) {
-	var tc targets.Credentials
-	if err := yaml.Unmarshal(ref.Inline, &tc); err != nil {
-		return tc, false
-	}
-	return tc, true
-}
-
-// checkRestIsAPIKeyForm rejects every REST credentials form other than the flat
-// api_key pair.
-//
-// targets.Credentials can express basic, bearer and mtls, and its own
-// HTTPClient/Authenticator handle all of them — but every kcp migration command
-// reads only APIKey/APISecret/CACert/InsecureSkipVerify. A bearer block would
-// therefore be accepted, then dropped, and the request would go out as
-// anonymous Basic auth with the declared ca_cert ignored. Refusing is the same
-// call as the sasl_plain-only rule on the destination Kafka leg: a credential
-// that is silently not used is worse than one that is rejected.
-func checkRestIsAPIKeyForm(tc targets.Credentials) []error {
-	switch {
-	case tc.Bearer != nil:
-		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got bearer)")}
-	case tc.MTLS != nil:
-		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got mtls)")}
-	case tc.Basic != nil:
-		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got basic)")}
+// checkDestinationKafkaAuth rejects iam on the destination Kafka leg. iam is
+// MSK-only (SigV4 token signing against AWS), and the destination is Confluent
+// Cloud or Confluent Platform — never MSK — so it would be accepted here and
+// then fail opaquely at connection time. Every other method (sasl_plain,
+// sasl_scram, mtls, unauthenticated_tls, unauthenticated_plaintext) is honoured
+// end-to-end via AdminOptionForAuthMethod, the same mapper the source leg
+// already uses — including a custom ca_cert on sasl_plain, now that
+// createDestinationOffset routes through the mapper instead of a hardcoded
+// empty-CA client.
+func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
+	if mc.IAM != nil {
+		return []error{fmt.Errorf(
+			"spec.target.kafka.credentials.iam: not supported for the destination (the destination is Confluent Cloud/Platform, never MSK)")}
 	}
 	return nil
 }
@@ -509,9 +465,9 @@ func (g *GatewayMigration) SourceCredentials() (types.MigrateClusterCredentials,
 	return mc, nil
 }
 
-// DestinationKafkaCredentials resolves the destination Kafka leg — the API
-// key/secret used as SASL/PLAIN against the destination bootstrap, not only as
-// HTTP basic over REST.
+// DestinationKafkaCredentials resolves the destination Kafka leg. Any auth
+// method is accepted except iam — the destination is Confluent Cloud/Platform,
+// never MSK.
 func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCredentials, []error) {
 	if g.Spec.Target.Kafka == nil {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("spec.target.kafka: required")}
@@ -520,7 +476,7 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 	if len(errs) > 0 {
 		return mc, errs
 	}
-	if errs := checkDestinationIsSASLPlain(mc); len(errs) > 0 {
+	if errs := checkDestinationKafkaAuth(mc); len(errs) > 0 {
 		return mc, errs
 	}
 	return mc, nil
@@ -528,25 +484,21 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 
 // RestCredentials resolves the destination REST leg.
 //
-// When spec.target.kafka.restCredentials is omitted it is DERIVED, in full,
-// from the Kafka leg: one flag pair feeds both legs today, so requiring both
-// blocks would make the operator type the same secret twice for the
-// overwhelmingly common case. Derivation is full-or-nothing — a block that is
-// present is used exactly as written, because a block that reads as complete
-// while silently acquiring fields from elsewhere is worse than either.
+// When spec.target.kafka.restCredentials is omitted AND the Kafka leg is
+// sasl_plain, it is DERIVED, in full, from that leg: one flag pair feeds both
+// destination legs today, so requiring both blocks would make the operator
+// type the same secret twice for the overwhelmingly common case. Derivation
+// is full-or-nothing — a block that is present is used exactly as written,
+// because a block that reads as complete while silently acquiring fields from
+// elsewhere is worse than either. For every other Kafka auth method there is
+// no principal to derive a REST credential from, so restCredentials becomes
+// required.
 func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 	if g.Spec.Target.Kafka == nil {
 		return nil, fmt.Errorf("spec.target.kafka: required")
 	}
 	if ref := g.Spec.Target.Kafka.RestCredentials; ref != nil {
-		tc, err := ref.ResolveTarget(g.Interpolate)
-		if err != nil {
-			return nil, err
-		}
-		if errs := checkRestIsAPIKeyForm(*tc); len(errs) > 0 {
-			return nil, errs[0]
-		}
-		return tc, nil
+		return ref.ResolveTarget(g.Interpolate)
 	}
 
 	mc, errs := g.DestinationKafkaCredentials()
@@ -554,14 +506,16 @@ func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 		return nil, fmt.Errorf("deriving spec.target.kafka.restCredentials from credentials: %w", errs[0])
 	}
 	if mc.SASLPlain == nil {
-		return nil, fmt.Errorf("spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")
+		return nil, fmt.Errorf("spec.target.kafka.restCredentials: required — it can only be derived from spec.target.kafka.credentials when that block is sasl_plain")
 	}
 	derived := &targets.Credentials{
 		APIKey:    mc.SASLPlain.Username,
 		APISecret: mc.SASLPlain.Password,
-		// Inherited so the single fan-out --insecure-skip-tls-verify had today
-		// is preserved: a derived REST leg must not silently verify while the
-		// Kafka leg does not.
+		// Inherited so the single fan-out --insecure-skip-tls-verify (and, now,
+		// a private destination CA) has today is preserved: a derived REST leg
+		// must not silently verify — or trust a different CA — while the Kafka
+		// leg does not.
+		CACert:             mc.SASLPlain.CACert,
 		InsecureSkipVerify: mc.InsecureSkipTLSVerify,
 	}
 	if err := targets.ValidateCredentials(derived); err != nil {

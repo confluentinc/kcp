@@ -164,13 +164,10 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := MigrationInitializerOpts{
-		MigrationStateFile:    migrationStateFile,
-		MigrationState:        *migrationState,
-		MigrationConfig:       config,
-		RestApiKey:            restCreds.APIKey,
-		RestApiSecret:         restCreds.APISecret,
-		ClusterRestCACert:     restCreds.CACert,
-		InsecureSkipTLSVerify: restCreds.InsecureSkipVerify,
+		MigrationStateFile: migrationStateFile,
+		MigrationState:     *migrationState,
+		MigrationConfig:    config,
+		RestCreds:          restCreds,
 	}
 	if err := NewMigrationInitializer(opts).Run(); err != nil {
 		return err
