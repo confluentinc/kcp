@@ -1567,8 +1567,8 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 // and ready". detectUnroutedProducers' two-point source-offset comparison
 // cannot distinguish that from an actual rogue producer.
 //
-// This test currently FAILS against the shipped detector: it documents the
-// false positive so a fix has a concrete, automated target to turn green.
+// This is a regression guard: the detector drains the old gateway pods before
+// taking its first offset snapshot (29fb8804), which is what keeps it green.
 func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 	cfg := loadEnvConfig(t, scenarioRogueProducerFalsePositive)
 

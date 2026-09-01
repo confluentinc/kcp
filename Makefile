@@ -80,7 +80,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-osk-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -119,6 +119,19 @@ test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
 
 test-migration-teardown: ## Tear down migration E2E infrastructure
 	@bash integration-tests/migration/testdata/teardown.sh
+
+test-migration-hot-reload: test-migration-hot-reload-setup ## Run gateway hot-reload E2E (own cluster; needs a CP Enterprise licence)
+	@trap 'echo ""; echo "Tearing down hot-reload E2E infrastructure..."; bash integration-tests/migration-hot-reload/teardown.sh' EXIT; \
+	bash integration-tests/migration-hot-reload/run.sh
+
+test-migration-hot-reload-setup: ## Set up the licensed hot-reload gateway cluster (separate Minikube profile)
+	@bash integration-tests/migration-hot-reload/setup.sh
+
+test-migration-hot-reload-run: ## Run the hot-reload E2E against an already-provisioned cluster (no teardown)
+	@bash integration-tests/migration-hot-reload/run.sh
+
+test-migration-hot-reload-teardown: ## Tear down the hot-reload E2E cluster
+	@bash integration-tests/migration-hot-reload/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
