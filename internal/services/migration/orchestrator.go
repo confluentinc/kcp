@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/looplab/fsm"
 )
 
@@ -368,14 +369,31 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 // The FSM is deliberately untouched: the fence transition was cancelled, so the
 // machine still sits at its pre-fence state, which is already the truth.
 func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context, stepFailure error) error {
-	o.reporter.warn("Fence could not be confirmed on every gateway pod — restoring the initial gateway CR")
+	// A definite rejection is not the ambiguous timeout the rest of this path is
+	// written for: CFK explicitly refused the fenced spec, so it never took effect
+	// on any pod. Restoring is still right — the refused spec is live in etcd and
+	// would fence if the operator's objection later clears — but the operator must
+	// hear the definite story and CFK's own reason, not be sent hunting for a
+	// partial application that cannot exist.
+	var rejected *gateway.GatewayRejectedError
+	definiteRejection := errors.As(stepFailure, &rejected)
+
+	if definiteRejection {
+		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; restoring the initial gateway CR", rejected.Reason)
+	} else {
+		o.reporter.warn("Fence could not be confirmed on every gateway pod — restoring the initial gateway CR")
+	}
 
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to restore the gateway after an unconfirmed fence", "error", err)
 		return fmt.Errorf("%w; additionally, restoring the initial gateway CR failed: %w; the gateway may still be holding the fenced config on some pods, so inspect it before re-running", stepFailure, err)
 	}
 
-	o.reporter.success("Initial gateway CR restored — the fenced config cannot take effect later")
+	if definiteRejection {
+		o.reporter.success("Initial gateway CR restored — the rejected fenced spec has been superseded")
+	} else {
+		o.reporter.success("Initial gateway CR restored — the fenced config cannot take effect later")
+	}
 	return stepFailure
 }
 

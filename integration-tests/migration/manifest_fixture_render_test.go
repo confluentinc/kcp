@@ -26,8 +26,7 @@ func baselineOpts() manifestOpts {
 		APISecret:       "testpassword",
 		Namespace:       "confluent",
 		GatewayName:     "migration-gateway-baseline",
-		FenceRoutes:     []string{"migration-route"},
-		SwitchoverCR:    "/workspace/gateway-switchover-baseline.yaml",
+		FenceRoutes:     []fenceRouteOpts{{Name: "migration-route", SwitchoverDomainName: "destination-kafka-cluster", SwitchoverBootstrapServerId: "SASL_PLAIN"}},
 		KubePath:        "/workspace/kubeconfig",
 	}
 }
@@ -84,8 +83,14 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.Equal(t, opts.Namespace, g.Spec.Gateway.Namespace)
 	assert.Equal(t, opts.KubePath, g.Spec.Gateway.Kubeconfig)
 	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CRs.Initial)
-	assert.Equal(t, opts.FenceRoutes, g.Spec.Gateway.Fence.Routes)
-	assert.Equal(t, opts.SwitchoverCR, g.Spec.Gateway.CRs.Switchover)
+	assert.Empty(t, g.Spec.Gateway.CRs.Switchover, "the rendered fixture never sets the retired field")
+	require.Len(t, g.Spec.Gateway.Routes, len(opts.FenceRoutes))
+	for i, want := range opts.FenceRoutes {
+		got := g.Spec.Gateway.Routes[i]
+		assert.Equal(t, want.Name, got.Name)
+		assert.Equal(t, want.SwitchoverDomainName, got.StreamingDomain.Name)
+		assert.Equal(t, want.SwitchoverBootstrapServerId, got.StreamingDomain.BootstrapServerId)
+	}
 
 	// The destination Kafka leg carries the API key/secret and the only
 	// load-bearing insecure-skip in the suite (CFK's cert is signed by the
@@ -339,7 +344,7 @@ func TestManifestForLog_RedactsCredentialsButKeepsTopology(t *testing.T) {
 	assert.Contains(t, logged, opts.SourceBootstrap)
 	assert.Contains(t, logged, opts.ClusterLinkName)
 	assert.Contains(t, logged, opts.DestClusterID)
-	assert.Contains(t, logged, opts.FenceRoutes[0])
+	assert.Contains(t, logged, opts.FenceRoutes[0].Name)
 }
 
 // TestManifestForLog_RedactsByKeyPathNotValue is what forces key-path redaction.

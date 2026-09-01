@@ -62,8 +62,7 @@ type envConfig struct {
 	TopicName       string   // single-topic scenarios (producer/consumer target)
 	TopicNames      []string // all mirror topics for the scenario (>=1)
 	GatewayName     string
-	FenceRoutes     []string // spec.gateway.fence.routes — derived from the live initial CR
-	SwitchoverCR    string   // in-pod fixture path
+	FenceRoutes     []string // spec.gateway.routes[].name — derived from the live initial CR
 }
 
 func loadEnvConfig(t *testing.T, scenario string) envConfig {
@@ -137,7 +136,6 @@ func loadEnvConfig(t *testing.T, scenario string) envConfig {
 		TopicNames:      topicNames,
 		GatewayName:     vars[prefix+"GATEWAY_NAME"],
 		FenceRoutes:     fenceRoutes,
-		SwitchoverCR:    vars[prefix+"SWITCHOVER_CR"],
 	}
 }
 
@@ -226,15 +224,17 @@ func assertGatewaySpec(t *testing.T, dynClient dynamic.Interface, namespace, nam
 	_, hasFence := route["fence"]
 	assert.False(t, hasFence, "Gateway CR must not have fence config")
 
+	// Redundant auth pre-stages BOTH the source and destination streaming
+	// domains on the initial CR for the life of the migration — a switchover
+	// only flips route.streamingDomain, it never adds or removes a domain — so
+	// which one is live is read off the route, not off streamingDomains' length.
 	streamingDomains, found, err := unstructured.NestedSlice(spec, "streamingDomains")
 	require.NoError(t, err)
 	require.True(t, found)
-	require.Len(t, streamingDomains, 1)
+	require.Len(t, streamingDomains, 2, "both source and destination streaming domains must stay declared")
 
-	domain, ok := streamingDomains[0].(map[string]interface{})
-	require.True(t, ok, "expected streaming domain to be a map")
-	domainName, _, _ := unstructured.NestedString(domain, "name")
-	assert.Equal(t, wantDomain, domainName, "Gateway CR must point at the %s streaming domain", wantDomain)
+	domainName, _, _ := unstructured.NestedString(route, "streamingDomain", "name")
+	assert.Equal(t, wantDomain, domainName, "Gateway CR's route must point at the %s streaming domain", wantDomain)
 
 	assertGatewayAccepted(t, cr)
 }
@@ -723,39 +723,7 @@ func TestMigrationE2E(t *testing.T) {
 
 	// --- Step 3: Verify Gateway CR matches switchover fixture ---
 	t.Run("verify_gateway_cr", func(t *testing.T) {
-		cr := getGatewayCR(t, dynClient, cfg.Namespace, cfg.GatewayName)
-
-		// Extract spec.routes[0] for targeted field comparison
-		spec, found, err := unstructured.NestedMap(cr.Object, "spec")
-		require.NoError(t, err)
-		require.True(t, found, "spec not found in Gateway CR")
-
-		// Verify no fence config (switchover removes the fence)
-		routes, found, err := unstructured.NestedSlice(spec, "routes")
-		require.NoError(t, err)
-		require.True(t, found, "routes not found in spec")
-		require.Len(t, routes, 1)
-
-		route, ok := routes[0].(map[string]interface{})
-		require.True(t, ok, "expected route to be a map")
-		_, hasFence := route["fence"]
-		assert.False(t, hasFence, "switchover CR should not have fence config")
-
-		// Verify streaming domain points to destination
-		streamingDomains, found, err := unstructured.NestedSlice(spec, "streamingDomains")
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Len(t, streamingDomains, 1)
-
-		domain, ok := streamingDomains[0].(map[string]interface{})
-		require.True(t, ok, "expected streaming domain to be a map")
-		domainName, _, _ := unstructured.NestedString(domain, "name")
-		assert.Equal(t, "destination-kafka-cluster", domainName, "switchover should point to destination streaming domain")
-
-		// Everything above reads spec, which a *rejected* apply still updates —
-		// server-side apply succeeds and bumps metadata.generation even when the
-		// operator then refuses to reconcile it. Assert acceptance directly.
-		assertGatewayAccepted(t, cr)
+		assertGatewaySpec(t, dynClient, cfg.Namespace, cfg.GatewayName, "destination-kafka-cluster")
 	})
 
 	if t.Failed() {
@@ -1452,35 +1420,10 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 	}
 
 	// --- Verify the live Gateway CR was restored to the initial spec ---
+	// Distinguishes "initial restored" from "accidentally switched over": both
+	// lack a fence, but only the initial CR's route still points at source.
 	t.Run("verify_gateway_restored_to_initial", func(t *testing.T) {
-		cr := getGatewayCR(t, dynClient, cfg.Namespace, cfg.GatewayName)
-
-		spec, found, err := unstructured.NestedMap(cr.Object, "spec")
-		require.NoError(t, err)
-		require.True(t, found, "spec not found in Gateway CR")
-
-		routes, found, err := unstructured.NestedSlice(spec, "routes")
-		require.NoError(t, err)
-		require.True(t, found, "routes not found in spec")
-		require.Len(t, routes, 1)
-
-		route, ok := routes[0].(map[string]interface{})
-		require.True(t, ok, "expected route to be a map")
-		_, hasFence := route["fence"]
-		assert.False(t, hasFence, "restored initial CR must not have fence config")
-
-		// Distinguishes "initial restored" from "accidentally switched over":
-		// both lack a fence, but only the initial CR still points at source.
-		streamingDomains, found, err := unstructured.NestedSlice(spec, "streamingDomains")
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Len(t, streamingDomains, 1)
-
-		domain, ok := streamingDomains[0].(map[string]interface{})
-		require.True(t, ok, "expected streaming domain to be a map")
-		domainName, _, _ := unstructured.NestedString(domain, "name")
-		assert.Equal(t, "source-kafka-cluster", domainName,
-			"rollback must restore the initial CR pointing at source, not the switchover CR")
+		assertGatewaySpec(t, dynClient, cfg.Namespace, cfg.GatewayName, "source-kafka-cluster")
 	})
 
 	t.Run("verify_gateway_rolled_out_on_abort", func(t *testing.T) {
@@ -1525,32 +1468,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 
 	// --- Verify the Gateway CR now matches the switchover spec ---
 	t.Run("verify_gateway_switched_over", func(t *testing.T) {
-		cr := getGatewayCR(t, dynClient, cfg.Namespace, cfg.GatewayName)
-
-		spec, found, err := unstructured.NestedMap(cr.Object, "spec")
-		require.NoError(t, err)
-		require.True(t, found, "spec not found in Gateway CR")
-
-		routes, found, err := unstructured.NestedSlice(spec, "routes")
-		require.NoError(t, err)
-		require.True(t, found, "routes not found in spec")
-		require.Len(t, routes, 1)
-
-		route, ok := routes[0].(map[string]interface{})
-		require.True(t, ok, "expected route to be a map")
-		_, hasFence := route["fence"]
-		assert.False(t, hasFence, "switchover CR should not have fence config")
-
-		streamingDomains, found, err := unstructured.NestedSlice(spec, "streamingDomains")
-		require.NoError(t, err)
-		require.True(t, found)
-		require.Len(t, streamingDomains, 1)
-
-		domain, ok := streamingDomains[0].(map[string]interface{})
-		require.True(t, ok, "expected streaming domain to be a map")
-		domainName, _, _ := unstructured.NestedString(domain, "name")
-		assert.Equal(t, "destination-kafka-cluster", domainName,
-			"switchover should point at the destination streaming domain")
+		assertGatewaySpec(t, dynClient, cfg.Namespace, cfg.GatewayName, "destination-kafka-cluster")
 	})
 }
 

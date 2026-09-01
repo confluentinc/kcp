@@ -59,7 +59,7 @@ type Service interface {
 	GetGatewayYAML(ctx context.Context, namespace, gatewayName string) ([]byte, error)
 	DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error)
 	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
-	ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, switchoverYAML []byte, fenceRoutes []string) (CRValidationResult, error)
+	CheckRedundantAuthStaged(ctx context.Context, namespace string, initialYAML []byte, targets []RouteSwitchoverTarget) (CRValidationResult, error)
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error)
 	ApplyGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error)
