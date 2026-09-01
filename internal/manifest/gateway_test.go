@@ -216,48 +216,66 @@ func TestGateway_RequiresTargetKafkaBootstrapServers(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.target.kafka.bootstrapServers")
 }
 
-// TestGateway_RejectsNonSASLPlainDestination is the rule decision 29 forces:
-// migration_executor.go dials the destination as SASL/PLAIN unconditionally, so
-// any other block would be silently ignored — worse than the flag surface it
-// replaces.
-func TestGateway_RejectsNonSASLPlainDestination(t *testing.T) {
-	for _, block := range []string{
-		"        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
-		"        mtls:\n          client_cert: /c.pem\n          client_key: /k.pem",
-		"        unauthenticated_plaintext: {}",
-		"        unauthenticated_tls: {}",
-		"        iam:\n          region: us-east-1",
+// TestGateway_AcceptsEveryDestinationMethodExceptIAM. All the auth/TLS
+// machinery on the destination Kafka leg already exists and is now routed
+// through AdminOptionForAuthMethod, the same mapper the source leg uses — so
+// sasl_scram, mtls, and both unauthenticated forms validate like any other
+// leg. Non-sasl_plain destinations can no longer derive restCredentials (there
+// is no principal to derive from), so each case supplies an explicit block.
+func TestGateway_AcceptsEveryDestinationMethodExceptIAM(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte("cert"), 0600))
+	require.NoError(t, os.WriteFile(key, []byte("key"), 0600))
+
+	for name, block := range map[string]string{
+		"sasl_scram":                "        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
+		"mtls":                      "        mtls:\n          client_cert: " + cert + "\n          client_key: " + key,
+		"unauthenticated_plaintext": "        unauthenticated_plaintext: {}",
+		"unauthenticated_tls":       "        unauthenticated_tls: {}",
 	} {
-		t.Run(strings.TrimSpace(strings.SplitN(block, ":", 2)[0]), func(t *testing.T) {
-			doc := strings.Replace(validGatewayDoc,
+		t.Run(name, func(t *testing.T) {
+			doc := withRestCredentials(t, "      restCredentials:\n        api_key: K\n        api_secret: S\n")
+			doc = strings.Replace(doc,
 				"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
 				block, 1)
 			g := parseGateway(t, doc)
-			requireErrContains(t, g.Validate(), "sasl_plain")
+			assert.Empty(t, g.Validate())
 		})
 	}
 }
 
-// TestGateway_RejectsDestinationSASLPlainCACert. The destination Kafka client
-// dials the public trust store unconditionally (createDestinationOffset passes an
-// empty ca_cert) and a derived REST leg drops ca_cert, so a ca_cert on the
-// destination sasl_plain block would be accepted and then silently ignored — a
-// private-CA destination would read as configured while connecting on the system
-// roots. Refuse it, mirroring the sasl_plain-only and api_key-only rules.
-func TestGateway_RejectsDestinationSASLPlainCACert(t *testing.T) {
+// TestGateway_RejectsIAMDestination. iam is MSK-only (SigV4 signing against
+// AWS), and the destination is Confluent Cloud or Confluent Platform — never
+// MSK — so it would otherwise fail opaquely at connection time.
+func TestGateway_RejectsIAMDestination(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
 		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: /dest-ca.pem",
+		"        iam:\n          region: us-east-1",
 		1)
 	g := parseGateway(t, doc)
-	requireErrContains(t, g.Validate(), "ca_cert")
+	requireErrContains(t, g.Validate(), "iam")
+}
 
-	// Resolution must refuse it too, not only Validate — including via the
-	// derived REST leg, which routes through DestinationKafkaCredentials.
-	_, errs := g.DestinationKafkaCredentials()
-	require.NotEmpty(t, errs)
-	_, err := g.RestCredentials()
-	require.Error(t, err)
+// TestGateway_AllowsDestinationSASLPlainCACert — the validator relaxation in
+// A.1 unlocks a private-CA sasl_plain destination now that
+// createDestinationOffset routes through AdminOptionForAuthMethod instead of
+// a hardcoded empty-CA client.
+func TestGateway_AllowsDestinationSASLPlainCACert(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
+
+	doc := strings.Replace(validGatewayDoc,
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca,
+		1)
+	g := parseGateway(t, doc)
+	require.Empty(t, g.Validate())
+
+	mc, errs := g.DestinationKafkaCredentials()
+	require.Empty(t, errs)
+	assert.Equal(t, ca, mc.SASLPlain.CACert)
 }
 
 // TestGateway_AllowsDestinationSASLPlainTLS keeps the counterpart honest: tls
@@ -296,6 +314,44 @@ func TestGateway_DerivedRestCredentialsInheritInsecureSkip(t *testing.T) {
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
 	assert.True(t, rest.InsecureSkipVerify)
+}
+
+// TestGateway_DerivedRestCredentialsInheritCACert closes the gap A.5 fixes:
+// derivation copied insecure_skip_tls_verify but not ca_cert, so a private-CA
+// sasl_plain destination would derive a Kafka leg that trusts the CA and a
+// REST leg that does not — a TLS failure against the very same cluster.
+func TestGateway_DerivedRestCredentialsInheritCACert(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
+
+	doc := strings.Replace(validGatewayDoc,
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca,
+		1)
+	g := parseGateway(t, doc)
+	require.Empty(t, g.Validate())
+
+	rest, err := g.RestCredentials()
+	require.NoError(t, err)
+	assert.Equal(t, ca, rest.CACert)
+}
+
+// TestGateway_RestCredentialsRequiredWhenNotSASLPlain — there is no principal
+// to derive a REST credential from when the Kafka leg isn't sasl_plain, so
+// omitting restCredentials must fail with a clear, field-naming error rather
+// than silently deriving nothing.
+func TestGateway_RestCredentialsRequiredWhenNotSASLPlain(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc,
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+		"        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
+		1)
+	g := parseGateway(t, doc)
+
+	requireErrContains(t, g.Validate(), "spec.target.kafka.restCredentials")
+
+	_, err := g.RestCredentials()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restCredentials")
 }
 
 // TestGateway_DerivedEqualsHandWritten is the §7.1 parity test: a derived block
@@ -797,24 +853,27 @@ func TestGateway_ManifestParseErrorDoesNotEchoInlineSecrets(t *testing.T) {
 
 // --- security review F3: a restCredentials form kcp cannot honour must be refused ---
 
-// TestGateway_RejectsNonAPIKeyRestCredentials. targets.ValidateCredentials
-// accepts basic/bearer/mtls and the generated schema advertises them, but every
-// command reads only the flat api_key form — so a bearer token is dropped and
-// the request goes out as anonymous Basic auth, with the declared ca_cert
-// ignored. Refuse rather than silently degrade, mirroring the sasl_plain-only
-// rule on the destination Kafka leg.
-func TestGateway_RejectsNonAPIKeyRestCredentials(t *testing.T) {
+// TestGateway_AcceptsEveryRestCredentialsForm. targets.Credentials already
+// implements Authenticator/HTTPClient for basic, bearer and mtls — B.4 stops
+// refusing them so a CP destination behind RBAC or mTLS can be reached.
+func TestGateway_AcceptsEveryRestCredentialsForm(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte("cert"), 0600))
+	require.NoError(t, os.WriteFile(key, []byte("key"), 0600))
+
 	for name, block := range map[string]string{
 		"bearer": "      restCredentials:\n        bearer:\n          token: TOK\n",
 		"basic":  "      restCredentials:\n        basic:\n          username: u\n          password: p\n",
-		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: /c.pem\n          client_key: /k.pem\n",
+		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: " + cert + "\n          client_key: " + key + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := parseGateway(t, withRestCredentials(t, block))
-			requireErrContains(t, g.Validate(), "restCredentials")
+			assert.Empty(t, g.Validate())
 
 			_, err := g.RestCredentials()
-			require.Error(t, err, "resolution must refuse it too, not only Validate")
+			require.NoError(t, err)
 		})
 	}
 }

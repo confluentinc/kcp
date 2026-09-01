@@ -394,11 +394,30 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	if len(errs) > 0 {
 		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.credentials", errs)
 	}
-	// The sasl_plain-only rule is enforced in two validators upstream; assert it
-	// here rather than dereferencing on an invariant that lives elsewhere,
-	// because the alternative failure is a nil panic mid-cutover.
-	if dstCreds.SASLPlain == nil {
-		return MigrationExecutorOpts{}, fmt.Errorf("spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")
+
+	// A nil bootstrap is fine here: MigrateConn folds it straight into
+	// KafkaSourceConn.BootstrapServers, which auth-type mapping never reads
+	// (see TestMigrateConn_NilBootstrapServers_AuthMappingUnaffected).
+	destConn := types.MigrateConn(nil, dstCreds)
+	destAuthType, err := destConn.GetSelectedAuthType()
+	if err != nil {
+		// The validators upstream already enforce exactly one method (and
+		// reject iam), so this is an invariant, not an expected user error —
+		// but failing loudly here beats a nil dereference mid-cutover.
+		return MigrationExecutorOpts{}, fmt.Errorf("resolving destination auth method: %w", err)
+	}
+	destAuthMethod := destConn.AuthMethod
+
+	// Backward-compat trap: the old destination client always dialled SASL/PLAIN
+	// over TLS against the public trust store (WithSASLPlainAuth with an empty
+	// ca_cert). AdminOptionForAuthMethod maps sasl_plain with NEITHER ca_cert nor
+	// tls set to cleartext SASL_PLAINTEXT — a silent downgrade for a Confluent
+	// Cloud destination. Default UseTLS=true in that case: the destination is a
+	// managed/production cluster, always TLS, unlike a source which may
+	// legitimately be on-prem plaintext. Every existing manifest (which never
+	// set tls: nor ca_cert:) keeps dialling exactly as before.
+	if sp := destAuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
+		sp.UseTLS = true
 	}
 
 	// Policy is re-read fresh from the manifest on every run and overwrites
@@ -438,19 +457,20 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		// The destination Kafka leg authenticates with the KAFKA block. When
 		// restCredentials is spelled out it may name a different, broader
 		// principal, and sending that to the broker would invert least privilege.
-		ClusterApiKey:    dstCreds.SASLPlain.Username,
-		ClusterApiSecret: dstCreds.SASLPlain.Password,
+		DestAuthType:   destAuthType,
+		DestAuthMethod: destAuthMethod,
 
-		RestApiKey:        restCreds.APIKey,
-		RestApiSecret:     restCreds.APISecret,
-		ClusterRestCACert: restCreds.CACert,
+		// The full resolved REST credential — basic, bearer, mtls, or the
+		// api_key form — carried through rather than flattened to a scalar
+		// key/secret pair, so bearer/basic/mTLS headers and client certs reach
+		// the REST leg.
+		RestCreds: restCreds,
 
 		// Each leg carries only what its own block asked for. Collapsing these
 		// would mean relaxing TLS for a self-signed source also stops verifying
 		// the destination connections that carry the destination API key.
 		SourceInsecureSkipTLSVerify:    srcCreds.InsecureSkipTLSVerify,
 		DestKafkaInsecureSkipTLSVerify: dstCreds.InsecureSkipTLSVerify,
-		RestInsecureSkipTLSVerify:      restCreds.InsecureSkipVerify,
 	}
 	applySourceAuth(&opts, srcCreds)
 	return opts, nil

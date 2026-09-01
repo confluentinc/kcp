@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
+	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -20,8 +21,6 @@ type MigrationExecutorOpts struct {
 	MigrationState     migration.MigrationState
 	MigrationConfig    migration.MigrationConfig
 	LagThreshold       int64
-	ClusterApiKey      string
-	ClusterApiSecret   string
 	ClusterBootstrap   string
 	SourceBootstrap    string
 	AWSRegion          string
@@ -34,23 +33,29 @@ type MigrationExecutorOpts struct {
 	// SaslPlainUseTLS selects SASL_SSL over the system trust store when no
 	// ca_cert is supplied. Without it a `tls: true` source block would be
 	// silently downgraded to cleartext SASL_PLAINTEXT.
-	SaslPlainUseTLS   bool
-	TlsCaCert         string
-	TlsClientCert     string
-	TlsClientKey      string
-	ClusterRestCACert string
-	// RestApiKey / RestApiSecret authenticate the destination REST surface.
-	// They are separate from ClusterApiKey/ClusterApiSecret because an explicit
-	// spec.target.kafka.restCredentials may name a different principal, and the
-	// Kafka leg must not silently authenticate as the REST one.
-	RestApiKey    string
-	RestApiSecret string
+	SaslPlainUseTLS bool
+	TlsCaCert       string
+	TlsClientCert   string
+	TlsClientKey    string
+	// DestAuthType / DestAuthMethod select and configure the destination Kafka
+	// leg's auth, mapped via client.AdminOptionForAuthMethod — the same mapper
+	// the source leg uses. Carrying the full per-method config (rather than a
+	// scalar key/secret pair) is what makes SASL/SCRAM, mTLS and unauthenticated
+	// destinations possible, not just SASL/PLAIN.
+	DestAuthType   types.AuthType
+	DestAuthMethod types.AuthMethodConfig
+	// RestCreds authenticates the destination cluster-link REST surface. It is
+	// the full resolved credential (basic, bearer, mtls, or the api_key form),
+	// not just an api_key/api_secret pair, and is kept separate from the Kafka
+	// leg's DestAuthMethod because an explicit spec.target.kafka.restCredentials
+	// may name a different principal — the Kafka leg must not silently
+	// authenticate as the REST one.
+	RestCreds *targets.Credentials
 	// TLS trust is per leg. One shared boolean meant relaxing verification for a
 	// self-signed source also stopped verifying the destination connections,
 	// which carry the destination API key as SASL/PLAIN and as HTTP Basic.
 	SourceInsecureSkipTLSVerify    bool
 	DestKafkaInsecureSkipTLSVerify bool
-	RestInsecureSkipTLSVerify      bool
 	// RolloutTimeout bounds the gateway-readiness wait during fence and
 	// switch. A value of 0 means no deadline — the wait runs until the
 	// operator reports ready or the user cancels.
@@ -101,9 +106,9 @@ func (m *MigrationExecutor) Run() error {
 	}
 	defer func() { _ = destinationOffset.Close() }()
 
-	// REST client for the destination cluster-link API: trusts a private CA
-	// (--cluster-rest-ca-cert) and/or skips verification, else system roots (CC public CA).
-	httpClient, err := migration.NewRESTHTTPClient(m.opts.ClusterRestCACert, m.opts.RestInsecureSkipTLSVerify)
+	// REST client for the destination cluster-link API: presents whichever TLS
+	// trust (and, for mTLS, client cert) the resolved REST credentials carry.
+	httpClient, err := m.opts.RestCreds.HTTPClient()
 	if err != nil {
 		return fmt.Errorf("building destination REST client: %w", err)
 	}
@@ -175,13 +180,14 @@ func (m *MigrationExecutor) Run() error {
 	// The cluster-link REST API authenticates with the REST credentials, which
 	// may name a broader principal than the destination KAFKA credentials — the
 	// two are kept separate so neither leg silently authenticates as the other.
-	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, m.opts.RestApiKey, m.opts.RestApiSecret)
+	restAuth := m.opts.RestCreds.Authenticator()
+	clusterLinkConfig := migration.BuildClusterLinkConfig(&config, restAuth)
 
 	// The consumer-offset-sync pause runs INSIDE the FSM (the
 	// pause_offset_sync stage, right after fencing) so destination offsets
 	// stay fresh through the lag and fence phases instead of going stale for
 	// the whole run. Only the restore below remains a bookend.
-	if execErr = orchestrator.Execute(ctx, m.opts.LagThreshold, m.opts.RestApiKey, m.opts.RestApiSecret); execErr != nil {
+	if execErr = orchestrator.Execute(ctx, m.opts.LagThreshold, restAuth); execErr != nil {
 		migration.WarnIfPausedOnExecuteFailure(&config, execErr)
 		return fmt.Errorf("failed to execute migration: %w", execErr)
 	}
@@ -268,14 +274,19 @@ func (m *MigrationExecutor) createSourceOffset(_ context.Context) (*offset.Servi
 
 func (m *MigrationExecutor) createDestinationOffset() (*offset.Service, error) {
 	ccBrokers := strings.Split(m.opts.ClusterBootstrap, ",")
-	slog.Debug("connecting to destination cluster (Confluent Cloud)",
+	slog.Debug("connecting to destination cluster",
 		"brokers", len(ccBrokers),
+		"auth_type", m.opts.DestAuthType,
 		"insecure_skip_tls_verify", m.opts.DestKafkaInsecureSkipTLSVerify,
 	)
-	// SASL/PLAIN over TLS (SASL_SSL), public CA (no ca_cert). The credential is
-	// the destination KAFKA one, not the REST one — they may differ.
-	destOpts := []client.AdminOption{client.WithSASLPlainAuth(m.opts.ClusterApiKey, m.opts.ClusterApiSecret, "", m.opts.DestKafkaInsecureSkipTLSVerify)}
-	destClient, err := client.NewKafkaClient(ccBrokers, "", destOpts...)
+	// The credential is the destination KAFKA one, not the REST one — they may
+	// differ. skipTLSVerify is threaded through the mapper into every TLS path,
+	// mirroring createSourceOffset.
+	authOpt, err := client.AdminOptionForAuthMethod(m.opts.DestAuthType, m.opts.DestAuthMethod, m.opts.DestKafkaInsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("resolving destination auth option: %w", err)
+	}
+	destClient, err := client.NewKafkaClient(ccBrokers, "", authOpt)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to destination cluster: %w", err)
 	}

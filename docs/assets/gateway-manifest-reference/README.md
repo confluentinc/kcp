@@ -39,18 +39,18 @@ CLI flag can override for a single run, without editing the file.
 ## At a glance
 
 ```yaml
-apiVersion: kcp.confluent.io/v1alpha1   # required, exact literal
-kind: GatewayMigration                   # required, exact literal
+apiVersion: kcp.confluent.io/v1alpha1 # required, exact literal
+kind: GatewayMigration # required, exact literal
 metadata:
-  name: my-migration                     # required, non-blank — the migration identity
-interpolate: true                        # optional; opt this file in to ${ENV_VAR} resolution
+  name: my-migration # required, non-blank — the migration identity
+interpolate: true # optional; opt this file in to ${ENV_VAR} resolution
 spec:
-  source:          { ... }               # required — cluster being migrated from
-  target:          { ... }               # required — cluster being migrated to
-  clusterLink:     { ... }               # required — an ALREADY-EXISTING cluster link
-  gateway:          { ... }              # required — namespace, kubeconfig, gateway CRs
-  topics:          [ ... ]               # optional — literal topic names; omit = every active mirror
-  defaultPolicies: { ... }               # optional — execute-time policy defaults
+  source: { ... } # required — cluster being migrated from
+  target: { ... } # required — cluster being migrated to
+  clusterLink: { ... } # required — an ALREADY-EXISTING cluster link
+  gateway: { ... } # required — namespace, kubeconfig, gateway CRs
+  topics: [...] # optional — literal topic names; omit = every active mirror
+  defaultPolicies: { ... } # optional — execute-time policy defaults
 ```
 
 `apiVersion` must equal `kcp.confluent.io/v1alpha1` and `kind` must equal
@@ -82,11 +82,11 @@ true` to opt in independently.
 
 The cluster being migrated from. `kcp` only ever reads from it.
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `type` | enum | yes | `msk` or `apache-kafka`. Gates auth: `iam` is valid only for `msk`. |
-| `bootstrapServers` | `[]string` | yes | Non-empty; each entry `host:port`. |
-| `credentials` | path or inline | yes | Kafka-family credentials — see [Credentials](#credentials) below. |
+| Field              | Type           | Required | Notes                                                               |
+| ------------------ | -------------- | -------- | ------------------------------------------------------------------- |
+| `type`             | enum           | yes      | `msk` or `apache-kafka`. Gates auth: `iam` is valid only for `msk`. |
+| `bootstrapServers` | `[]string`     | yes      | Non-empty; each entry `host:port`.                                  |
+| `credentials`      | path or inline | yes      | Kafka-family credentials — see [Credentials](#credentials) below.   |
 
 `confluent-platform` is not a valid value here — this manifest only ever
 points at a link that already exists, so it never needs to act as a
@@ -96,39 +96,66 @@ source-side link initiator.
 
 The cluster being migrated to.
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `type` | enum | yes | `confluent-cloud` or `confluent-platform`. |
-| `clusterId` | string | yes | Required for **both** destination types — this kind never discovers it live. |
-| `kafka.bootstrapServers` | `[]string` | yes | Destination Kafka bootstrap. |
-| `kafka.restEndpoint` | string | yes | Destination Admin REST endpoint (cluster link + topic operations). |
-| `kafka.credentials` | path or inline | yes | Destination Kafka leg, used as SASL/PLAIN against the bootstrap. **Only `sasl_plain` is accepted** — see below. |
-| `kafka.restCredentials` | path or inline | no | Destination REST leg. Optional — derived from `credentials` when omitted. See below. |
+| Field                    | Type           | Required                                                      | Notes                                                                                                                                                                                    |
+| ------------------------ | -------------- | ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `type`                   | enum           | yes                                                           | `confluent-cloud` or `confluent-platform`.                                                                                                                                               |
+| `clusterId`              | string         | yes                                                           | Required for **both** destination types — this kind never discovers it live.                                                                                                             |
+| `kafka.bootstrapServers` | `[]string`     | yes                                                           | Destination Kafka bootstrap.                                                                                                                                                             |
+| `kafka.restEndpoint`     | string         | yes                                                           | Destination Admin REST endpoint (cluster link + topic operations).                                                                                                                       |
+| `kafka.credentials`      | path or inline | yes                                                           | Destination Kafka leg, dialled directly to read destination-side offsets. Accepts `sasl_plain`, `sasl_scram`, `mtls`, `unauthenticated_tls`, or `unauthenticated_plaintext` — see below. |
+| `kafka.restCredentials`  | path or inline | no (except when `credentials` isn't `sasl_plain` — see below) | Destination REST leg.                                                                                                                                                                    |
 
-`kafka.credentials` is checked against the destination client, which is
-hardcoded to SASL/PLAIN over TLS: any other auth block is rejected outright
-rather than silently accepted and ignored. A `ca_cert` inside `sasl_plain` is
-also rejected for the destination in this release — the client always dials
-the public trust store, so a private CA here would read as configured while
-actually connecting on system roots. Set `tls: true` (no `ca_cert`) for a
-public-CA destination.
+`kafka.credentials` accepts any Kafka auth method **except** `iam` — the
+destination is Confluent Cloud or Confluent Platform, never MSK, so `iam` is
+rejected outright rather than silently accepted and then failing opaquely at
+connection time. Unlike the source leg, a `ca_cert` inside `sasl_plain` is
+honoured here too: it names a private CA the destination client trusts
+directly, on top of (or instead of) the public trust store `tls: true`
+selects.
+
+Unlike the shared table above, a destination `sasl_plain` with **neither**
+`ca_cert` nor `tls` set does not fall back to `SASL_PLAINTEXT`: it defaults to
+`tls: true` against the public trust store, matching the destination client's
+pre-existing behavior — the destination is always a managed/production
+cluster, never on-prem plaintext like a source may legitimately be. There is
+no `sasl_plain` field that opts back into `SASL_PLAINTEXT` against the
+destination; use `unauthenticated_plaintext` for a genuinely plaintext
+destination (test/lab only).
 
 `kafka.restCredentials` is **optional and derived in full** from `credentials`
-when omitted: `api_key`/`api_secret` come from `sasl_plain.username`/`password`,
-and `insecure_skip_verify` from the sibling `insecure_skip_tls_verify`. Spell it
-out only when the REST endpoint sits behind a different, private CA than the
-Kafka listener — and when you do, only the flat `api_key`/`api_secret` form is
-accepted (`basic`, `bearer`, `mtls` are all rejected, for the same reason as
-above: a form the client can't act on is worse silently dropped than refused).
-A block that is present is used exactly as written, never partially derived, so
-it must restate the key and secret even if they match `credentials`.
+**only when that block is `sasl_plain`**: `api_key`/`api_secret` come from
+`sasl_plain.username`/`password`, and `ca_cert`/`insecure_skip_verify` are
+inherited from their `sasl_plain` siblings. For every other `credentials`
+method there is no principal to derive a REST credential from, so
+`restCredentials` becomes **required** — spell out any of `api_key`/`api_secret`,
+`basic`, `bearer`, or `mtls` (see the REST credentials table below). A block
+that is present is always used exactly as written, never partially derived, so
+a `sasl_plain` destination that spells it out anyway must restate the key and
+secret even if they match `credentials`.
+
+**Why two credentials at all?** `kafka.credentials` authenticates a direct
+Kafka-protocol connection to `bootstrapServers`; `kafka.restCredentials`
+authenticates HTTP calls to `restEndpoint`'s Admin REST API, which is what
+actually manages the cluster link (status, list/promote mirror topics,
+alter configs). These are two different servers speaking two
+different protocols. On self-managed Confluent Platform they are backed by two
+independent credential stores the operator configures separately on the
+cluster: the Kafka SASL/SCRAM (or mTLS) listener has its own store, while the
+REST API's auth (`kafka.rest.authentication.method` — a Basic realm file, MDS
+for bearer, or its own mTLS trust store) has another. A valid Kafka SASL/SCRAM
+credential is **not** automatically a valid REST credential, even against the
+same broker process — the two stores only match if the operator has explicitly
+provisioned the same principal into both. Confluent Cloud's `sasl_plain` API
+key is the one exception: Confluent Cloud issues it as a single artifact valid
+in both places by platform design, which is exactly why it's the only method
+kcp can safely derive from.
 
 ## `spec.clusterLink`
 
-| Field | Type | Required | Default | Notes |
-|---|---|---|---|---|
-| `name` | string | yes | — | Name of a cluster link that **already exists** on the destination. This kind never creates one. |
-| `pauseConsumerOffsetSync` | bool | no | `false` | Disable the link's `consumer.offset.sync.enable` during execute and restore it after switchover. Requires the link to currently have it enabled. |
+| Field                     | Type   | Required | Default | Notes                                                                                                                                            |
+| ------------------------- | ------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                    | string | yes      | —       | Name of a cluster link that **already exists** on the destination. This kind never creates one.                                                  |
+| `pauseConsumerOffsetSync` | bool   | no       | `false` | Disable the link's `consumer.offset.sync.enable` during execute and restore it after switchover. Requires the link to currently have it enabled. |
 
 ## `spec.gateway`
 
@@ -139,14 +166,14 @@ its declared switchover target. Setting `crs.switchover` is a validation
 error, not a silent no-op — it stays detectable on the manifest struct
 specifically so a stale manifest fails loudly instead of being read as valid.
 
-| Field | Type | Required | Notes |
-|---|---|---|---|
-| `namespace` | string | yes | Kubernetes namespace where the gateway is deployed. |
-| `kubeconfig` | string | no | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
-| `crs.initial` | string | yes | The **name** of the initial gateway custom resource — read live from the cluster at `init`, not a file path. |
-| `routes[].name` | string | yes | A `spec.routes[].name` in the initial CR to fence at cutover. Must be non-blank and unique within the list. |
-| `routes[].streamingDomain.name` | string | yes | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`. |
-| `routes[].streamingDomain.bootstrapServerId` | string | yes | A bootstrap server id declared on that streaming domain. |
+| Field                                        | Type   | Required | Notes                                                                                                                            |
+| -------------------------------------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `namespace`                                  | string | yes      | Kubernetes namespace where the gateway is deployed.                                                                              |
+| `kubeconfig`                                 | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded.                              |
+| `crs.initial`                                | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster at `init`, not a file path.                     |
+| `routes[].name`                              | string | yes      | A `spec.routes[].name` in the initial CR to fence at cutover. Must be non-blank and unique within the list.                      |
+| `routes[].streamingDomain.name`              | string | yes      | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`. |
+| `routes[].streamingDomain.bootstrapServerId` | string | yes      | A bootstrap server id declared on that streaming domain.                                                                         |
 
 ## `spec.topics`
 
@@ -163,15 +190,15 @@ Optional. Every field is a default that a matching `kcp migration execute` flag
 can override for a single run; the section is re-read fresh from the manifest
 on every `execute`, never frozen at `init`.
 
-| Field | Type | Default | Override flag | Notes |
-|---|---|---|---|---|
-| `lagThreshold` | int | `0` | `--lag-threshold` | Total replication lag (sum of all partition lags) tolerated before proceeding. `0` is the strictest. |
-| `promoteBatchSize` | int | `0` | `--promote-batch-size` | Max mirror topics promoted per batch. `0` promotes all at once; when set, each batch is promoted and confirmed stopped before the next is submitted. |
-| `rolloutTimeout` | duration | `0` | `--rollout-timeout` | Max wait for the operator to report the gateway `Ready` during fence and switchover (e.g. `10m`). `0` means no deadline — waits until convergence or cancellation. |
-| `detectUnroutedProducersDuration` | duration | `0` | `--detect-unrouted-producers-duration` | Window to monitor source offsets after fencing for producers still bypassing the gateway; a detected increase aborts before switchover. `0` **skips the check entirely**; minimum `10s` when set — shorter can't span a producer's metadata refresh. |
-| `consumerOffsetSyncDrainDuration` | duration | `0` | `--consumer-offset-sync-drain-duration` | Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set. `0` means no wait. |
-| `hotReloadTimeout` | duration | `0` | `--hot-reload-timeout` | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0` uses the built-in 90s budget rather than waiting forever. |
-| `gatewayConfigPort` | int | `0` | `--gateway-config-port` | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the persisted value, falling back to the gateway default (`9180`). |
+| Field                             | Type     | Default | Override flag                           | Notes                                                                                                                                                                                                                                                                          |
+| --------------------------------- | -------- | ------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `lagThreshold`                    | int      | `0`     | `--lag-threshold`                       | Total replication lag (sum of all partition lags) tolerated before proceeding. `0` is the strictest.                                                                                                                                                                           |
+| `promoteBatchSize`                | int      | `0`     | `--promote-batch-size`                  | Max mirror topics promoted per batch. `0` promotes all at once; when set, each batch is promoted and confirmed stopped before the next is submitted.                                                                                                                           |
+| `rolloutTimeout`                  | duration | `0`     | `--rollout-timeout`                     | Max wait for the operator to report the gateway `Ready` during fence and switchover (e.g. `10m`). `0` means no deadline — waits until convergence or cancellation.                                                                                                             |
+| `detectUnroutedProducersDuration` | duration | `0`     | `--detect-unrouted-producers-duration`  | Window to monitor source offsets after fencing for producers still bypassing the gateway; a detected increase aborts before switchover. `0` **skips the check entirely**; minimum `10s` when set — shorter can't span a producer's metadata refresh.                           |
+| `consumerOffsetSyncDrainDuration` | duration | `0`     | `--consumer-offset-sync-drain-duration` | Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless `pauseConsumerOffsetSync` is set. `0` means no wait.                                                                                               |
+| `hotReloadTimeout`                | duration | `0`     | `--hot-reload-timeout`                  | Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. `90s`). Unlike `rolloutTimeout` this is never unbounded: a hot-reload moves no Kubernetes signal, so `0` uses the built-in 90s budget rather than waiting forever. |
+| `gatewayConfigPort`               | int      | `0`     | `--gateway-config-port`                 | Port serving the gateway's `/config` endpoint, polled per pod to confirm a config revision was applied. `0` uses the persisted value, falling back to the gateway default (`9180`).                                                                                            |
 
 ## Credentials
 
@@ -204,14 +231,14 @@ Specify **exactly one** method block — its **presence** selects it (no
 `auth_method:` wrapper, no `use:` flag). An optional top-level
 `insecure_skip_tls_verify: false` sibling applies to test environments only.
 
-| Method | Required fields | Notes |
-|---|---|---|
-| `iam` | `region` | MSK source only; Confluent Cloud can't present IAM (a link to MSK uses SCRAM instead). |
-| `sasl_scram` | `username`, `password` | Optional `mechanism` (`SHA256`/`SHA512`; MSK requires `SHA512`), `ca_cert`. Always TLS (SASL_SSL). |
-| `sasl_plain` | `username`, `password` | Optional `ca_cert`, `tls`. `ca_cert` present ⇒ SASL_SSL against that CA; `tls: true` ⇒ SASL_SSL over the system/public trust store; neither ⇒ SASL_PLAINTEXT. |
-| `mtls` | `client_cert`, `client_key` | Optional `ca_cert`. Client is authenticated via its certificate. |
-| `unauthenticated_tls` | — | Optional `ca_cert`. One-way TLS; client is not authenticated. |
-| `unauthenticated_plaintext` | — | No auth, no TLS. Test/lab only. |
+| Method                      | Required fields             | Notes                                                                                                                                                         |
+| --------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `iam`                       | `region`                    | MSK source only; Confluent Cloud can't present IAM (a link to MSK uses SCRAM instead).                                                                        |
+| `sasl_scram`                | `username`, `password`      | Optional `mechanism` (`SHA256`/`SHA512`; MSK requires `SHA512`), `ca_cert`. Always TLS (SASL_SSL).                                                            |
+| `sasl_plain`                | `username`, `password`      | Optional `ca_cert`, `tls`. `ca_cert` present ⇒ SASL_SSL against that CA; `tls: true` ⇒ SASL_SSL over the system/public trust store; neither ⇒ SASL_PLAINTEXT. |
+| `mtls`                      | `client_cert`, `client_key` | Optional `ca_cert`. Client is authenticated via its certificate.                                                                                              |
+| `unauthenticated_tls`       | —                           | Optional `ca_cert`. One-way TLS; client is not authenticated.                                                                                                 |
+| `unauthenticated_plaintext` | —                           | No auth, no TLS. Test/lab only.                                                                                                                               |
 
 `ca_cert` (on `sasl_scram`, `sasl_plain`, `mtls`, `unauthenticated_tls`) is a
 PEM file path used to verify the broker's TLS certificate. Supply it only for a
@@ -222,41 +249,38 @@ against the system trust store and need no `ca_cert`.
 
 Specify **exactly one** block (or the `api_key`/`api_secret` pair).
 
-| Method | Required fields | Notes |
-|---|---|---|
-| `api_key` + `api_secret` | `api_key`, `api_secret` | Confluent Cloud; flat top-level pair; public CA. |
-| `basic` | `username`, `password` | e.g. Confluent Platform MDS. |
-| `bearer` | `token` | e.g. MDS/OAuth. |
-| `mtls` | `client_cert`, `client_key` | Auth at the TLS layer. |
+| Method                   | Required fields             | Notes                                            |
+| ------------------------ | --------------------------- | ------------------------------------------------ |
+| `api_key` + `api_secret` | `api_key`, `api_secret`     | Confluent Cloud; flat top-level pair; public CA. |
+| `basic`                  | `username`, `password`      | e.g. Confluent Platform MDS.                     |
+| `bearer`                 | `token`                     | e.g. MDS/OAuth.                                  |
+| `mtls`                   | `client_cert`, `client_key` | Auth at the TLS layer.                           |
 
 `basic`, `bearer`, and `mtls` each accept an optional `ca_cert` and
 `insecure_skip_verify` to reach a TLS endpoint fronted by a private/internal CA
 (e.g. self-managed CP/MDS). Public-CA endpoints (Confluent Cloud via `api_key`)
 need neither.
 
-Two restrictions are specific to **this** manifest, narrower than the two
+One restriction is specific to **this** manifest, narrower than the two
 tables above:
 
 - `spec.source.credentials.iam` is valid only when `spec.source.type: msk`.
-- `spec.target.kafka.credentials` accepts **only `sasl_plain`**, and
-  `spec.target.kafka.restCredentials`, if spelled out, accepts **only the flat
-  `api_key`/`api_secret` form** — every other block in the tables above is
-  rejected on these two slots specifically, because the destination clients
-  this manifest drives can't act on it.
+  `spec.target.kafka.credentials.iam` is rejected outright, on both source and
+  destination legs — the destination is Confluent Cloud/Platform, never MSK.
 
 ## How the commands read this file
 
-| Command | Flag | Required | Notes |
-|---|---|---|---|
-| `kcp migration init` | `--migration-yaml` | yes | Path to this manifest. |
-| | `--migration-state-file` | no (default `migration-state.json`) | Created if absent; the new migration is appended if it exists. |
-| | `--skip-validate` | no | Skip infrastructure validation and credential resolution — creates migration metadata only. |
-| `kcp migration execute` | `--migration-yaml` | yes | Path to this manifest. |
-| | `--migration-state-file` | yes | Produced by `init`. |
-| | `--migration-id` | no | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
-| | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no | Per-run overrides of the matching `spec.defaultPolicies` field for this run only. |
-| `kcp migration lag-check` | `--migration-yaml` | yes | Path to this manifest. |
-| | `--poll-interval` | no (default `1`) | Poll interval in seconds, `1`-`60`. |
+| Command                   | Flag                                                                                                                                                                                             | Required                            | Notes                                                                                                                                    |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `kcp migration init`      | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
+|                           | `--migration-state-file`                                                                                                                                                                         | no (default `migration-state.json`) | Created if absent; the new migration is appended if it exists.                                                                           |
+|                           | `--skip-validate`                                                                                                                                                                                | no                                  | Skip infrastructure validation and credential resolution — creates migration metadata only.                                              |
+| `kcp migration execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
+|                           | `--migration-state-file`                                                                                                                                                                         | yes                                 | Produced by `init`.                                                                                                                      |
+|                           | `--migration-id`                                                                                                                                                                                 | no                                  | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
+|                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no                                  | Per-run overrides of the matching `spec.defaultPolicies` field for this run only.                                                        |
+| `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
+|                           | `--poll-interval`                                                                                                                                                                                | no (default `1`)                    | Poll interval in seconds, `1`-`60`.                                                                                                      |
 
 Every path in the manifest resolves relative to the **process working
 directory**, not the manifest's own location — the one exception is
@@ -302,37 +326,37 @@ Key rules, beyond required/optional per field above:
 
 ## Field reference
 
-| Path | Type | Required | Default | Allowed values |
-|---|---|---|---|---|
-| `apiVersion` | string | yes | — | `kcp.confluent.io/v1alpha1` |
-| `kind` | string | yes | — | `GatewayMigration` |
-| `metadata.name` | string | yes | — | non-blank |
-| `interpolate` | bool | no | `false` | — |
-| `spec.source.type` | enum | yes | — | `msk`, `apache-kafka` |
-| `spec.source.bootstrapServers` | `[]string` | yes | — | `host:port` |
-| `spec.source.credentials` | path or inline | yes | — | Kafka family; `iam` only if `type: msk` |
-| `spec.target.type` | enum | yes | — | `confluent-cloud`, `confluent-platform` |
-| `spec.target.clusterId` | string | yes | — | required for both target types |
-| `spec.target.kafka.bootstrapServers` | `[]string` | yes | — | `host:port` |
-| `spec.target.kafka.restEndpoint` | string | yes | — | URL |
-| `spec.target.kafka.credentials` | path or inline | yes | — | `sasl_plain` only |
-| `spec.target.kafka.restCredentials` | path or inline | no | derived from `credentials` | `api_key`/`api_secret` form only |
-| `spec.clusterLink.name` | string | yes | — | must reference an existing link |
-| `spec.clusterLink.pauseConsumerOffsetSync` | bool | no | `false` | — |
-| `spec.gateway.namespace` | string | yes | — | — |
-| `spec.gateway.kubeconfig` | string | no | — | `~/` expanded |
-| `spec.gateway.crs.initial` | string | yes | — | K8s object name |
-| `spec.gateway.routes[].name` | string | yes | — | must exist in the initial CR, unique |
-| `spec.gateway.routes[].streamingDomain.name` | string | yes | — | must be declared in the initial CR's `spec.streamingDomains` |
-| `spec.gateway.routes[].streamingDomain.bootstrapServerId` | string | yes | — | must be declared on that streaming domain |
-| `spec.topics` | `[]string` | no | omitted = every active mirror topic | non-empty if present, literal names |
-| `spec.defaultPolicies.lagThreshold` | int | no | `0` | `>= 0` |
-| `spec.defaultPolicies.promoteBatchSize` | int | no | `0` | `>= 0` |
-| `spec.defaultPolicies.rolloutTimeout` | duration | no | `0` | `>= 0` |
-| `spec.defaultPolicies.detectUnroutedProducersDuration` | duration | no | `0` | `0`, or `>= 10s` |
-| `spec.defaultPolicies.consumerOffsetSyncDrainDuration` | duration | no | `0` | `>= 0` |
-| `spec.defaultPolicies.hotReloadTimeout` | duration | no | `0` | `>= 0` |
-| `spec.defaultPolicies.gatewayConfigPort` | int | no | `0` | `>= 0` |
+| Path                                                      | Type           | Required                                               | Default                                      | Allowed values                                               |
+| --------------------------------------------------------- | -------------- | ------------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------ |
+| `apiVersion`                                              | string         | yes                                                    | —                                            | `kcp.confluent.io/v1alpha1`                                  |
+| `kind`                                                    | string         | yes                                                    | —                                            | `GatewayMigration`                                           |
+| `metadata.name`                                           | string         | yes                                                    | —                                            | non-blank                                                    |
+| `interpolate`                                             | bool           | no                                                     | `false`                                      | —                                                            |
+| `spec.source.type`                                        | enum           | yes                                                    | —                                            | `msk`, `apache-kafka`                                        |
+| `spec.source.bootstrapServers`                            | `[]string`     | yes                                                    | —                                            | `host:port`                                                  |
+| `spec.source.credentials`                                 | path or inline | yes                                                    | —                                            | Kafka family; `iam` only if `type: msk`                      |
+| `spec.target.type`                                        | enum           | yes                                                    | —                                            | `confluent-cloud`, `confluent-platform`                      |
+| `spec.target.clusterId`                                   | string         | yes                                                    | —                                            | required for both target types                               |
+| `spec.target.kafka.bootstrapServers`                      | `[]string`     | yes                                                    | —                                            | `host:port`                                                  |
+| `spec.target.kafka.restEndpoint`                          | string         | yes                                                    | —                                            | URL                                                          |
+| `spec.target.kafka.credentials`                           | path or inline | yes                                                    | —                                            | Kafka family except `iam`                                    |
+| `spec.target.kafka.restCredentials`                       | path or inline | no if `credentials` is `sasl_plain`; **yes** otherwise | derived from `credentials` when `sasl_plain` | `api_key`/`api_secret`, `basic`, `bearer`, or `mtls`         |
+| `spec.clusterLink.name`                                   | string         | yes                                                    | —                                            | must reference an existing link                              |
+| `spec.clusterLink.pauseConsumerOffsetSync`                | bool           | no                                                     | `false`                                      | —                                                            |
+| `spec.gateway.namespace`                                  | string         | yes                                                    | —                                            | —                                                            |
+| `spec.gateway.kubeconfig`                                 | string         | no                                                     | —                                            | `~/` expanded                                                |
+| `spec.gateway.crs.initial`                                | string         | yes                                                    | —                                            | K8s object name                                              |
+| `spec.gateway.routes[].name`                              | string         | yes                                                    | —                                            | must exist in the initial CR, unique                         |
+| `spec.gateway.routes[].streamingDomain.name`              | string         | yes                                                    | —                                            | must be declared in the initial CR's `spec.streamingDomains` |
+| `spec.gateway.routes[].streamingDomain.bootstrapServerId` | string         | yes                                                    | —                                            | must be declared on that streaming domain                    |
+| `spec.topics`                                             | `[]string`     | no                                                     | omitted = every active mirror topic          | non-empty if present, literal names                          |
+| `spec.defaultPolicies.lagThreshold`                       | int            | no                                                     | `0`                                          | `>= 0`                                                       |
+| `spec.defaultPolicies.promoteBatchSize`                   | int            | no                                                     | `0`                                          | `>= 0`                                                       |
+| `spec.defaultPolicies.rolloutTimeout`                     | duration       | no                                                     | `0`                                          | `>= 0`                                                       |
+| `spec.defaultPolicies.detectUnroutedProducersDuration`    | duration       | no                                                     | `0`                                          | `0`, or `>= 10s`                                             |
+| `spec.defaultPolicies.consumerOffsetSyncDrainDuration`    | duration       | no                                                     | `0`                                          | `>= 0`                                                       |
+| `spec.defaultPolicies.hotReloadTimeout`                   | duration       | no                                                     | `0`                                          | `>= 0`                                                       |
+| `spec.defaultPolicies.gatewayConfigPort`                  | int            | no                                                     | `0`                                          | `>= 0`                                                       |
 
 ## Editor support
 

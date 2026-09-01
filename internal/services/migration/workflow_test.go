@@ -75,7 +75,7 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, testInitialCR, string(config.InitialCrYAML))
@@ -126,7 +126,7 @@ func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, v
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
 		SwitchoverTargets:   testSwitchoverTargets,
-	}, "key", "secret")
+	}, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 
 	return out.String() + errOut.String(), err
 }
@@ -227,7 +227,7 @@ func TestWorkflow_Initialize_PassesNamespaceAndTargetsToValidator(t *testing.T) 
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
 		SwitchoverTargets:   testSwitchoverTargets,
-	}, "key", "secret")
+	}, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 
 	require.NoError(t, err)
 	assert.Equal(t, "kcp", gotNamespace)
@@ -249,7 +249,7 @@ func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
 		InitialCrName: "my-gw",
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "failed to get initial CR YAML: k8s unreachable", err.Error())
 }
@@ -281,7 +281,7 @@ func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "1 mirror topics are not active: topic-b (status: PAUSED)", err.Error())
 }
@@ -316,7 +316,7 @@ func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "failed to validate topics in cluster link: topic topic-x not found in cluster link", err.Error())
 }
@@ -353,7 +353,7 @@ func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 
 	require.Len(t, config.Topics, 3)
@@ -397,7 +397,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_Pass(t *testing.T) {
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 	assert.True(t, config.PauseConsumerOffsetSync, "intent should be retained on config")
 	assert.False(t, config.PauseConsumerOffsetSyncFlipped, "flipped marker must remain false at init time")
@@ -414,7 +414,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnFalse(t *testing.T) {
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "link-falsey")
 	assert.Contains(t, err.Error(), "consumer.offset.sync.enable")
@@ -432,7 +432,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnAbsentKey(t *testing.T) {
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "link-absent")
 	assert.Contains(t, err.Error(), "no consumer.offset.sync.enable config key", "error must distinguish absent key from false value")
@@ -451,7 +451,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testi
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "flag off must not assert offset-sync state")
 }
 
@@ -476,7 +476,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t 
 		SwitchoverTargets:              testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "Initialize must not refuse when kcp already flipped the config (Flipped=true)")
 }
 
@@ -508,7 +508,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t 
 		SwitchoverTargets:              testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, "key", "secret")
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "true", config.ClusterLinkConfigs["consumer.offset.sync.enable"],
@@ -541,7 +541,7 @@ func TestWorkflow_CheckLags_ImmediatelyBelowThreshold(t *testing.T) {
 		Topics: []string{"topic-1", "topic-2"},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 }
 
@@ -565,7 +565,7 @@ func TestWorkflow_CheckLags_NoTopics(t *testing.T) {
 		Topics: []string{},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 }
 
@@ -578,7 +578,7 @@ func TestWorkflow_CheckLags_NilOffsetServices(t *testing.T) {
 		Topics: []string{"topic-1"},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "source and destination offset services are required", err.Error())
 }
@@ -607,7 +607,7 @@ func TestWorkflow_CheckLags_ContextCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel
 
-	err := wf.CheckLags(ctx, config, 10, "key", "secret")
+	err := wf.CheckLags(ctx, config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, context.Canceled)
 }
@@ -632,7 +632,7 @@ func TestWorkflow_CheckLags_DestinationAhead(t *testing.T) {
 		Topics: []string{"topic-1"},
 	}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "negative lag (destination ahead) should be treated as 0 and pass threshold")
 }
 
@@ -685,7 +685,7 @@ func TestWorkflow_PromoteTopics_AllAtZeroLag(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 	assert.True(t, promoted["topic-1"], "topic-1 should have been promoted")
 	assert.True(t, promoted["topic-2"], "topic-2 should have been promoted")
@@ -741,7 +741,7 @@ func TestWorkflow_PromoteTopics_PartialPromotionError(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "retry should succeed")
 
 	finalCallCount := atomic.LoadInt64(&callCount)
@@ -797,7 +797,7 @@ func TestWorkflow_PromoteTopics_StuckPendingStoppedDoesNotSucceed(t *testing.T) 
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	err := wf.PromoteTopics(ctx, config, "key", "secret")
+	err := wf.PromoteTopics(ctx, config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err, "must not report success while topic is stuck in PENDING_STOPPED")
 	assert.ErrorIs(t, err, context.DeadlineExceeded)
 }
@@ -850,7 +850,7 @@ func TestWorkflow_PromoteTopics_WaitsForStoppedStatus(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&listCalls), int64(3),
 		"expected PromoteTopics to poll mirror status until STOPPED was observed")
@@ -937,7 +937,7 @@ func TestWorkflow_PromoteTopics_BatchSizeProcessesSequentially(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -982,7 +982,7 @@ func TestWorkflow_PromoteTopics_MaxRetriesExceeded(t *testing.T) {
 		ClusterLinkName:     "link-1",
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "topic topic-1 failed promotion after 3 attempts: persistent error", err.Error())
 }
@@ -996,7 +996,7 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 		Topics: []string{"topic-1"},
 	}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Equal(t, "source and destination offset services are required", err.Error())
 }
@@ -1670,7 +1670,7 @@ func TestWorkflow_PromoteTopics_IgnoresDetectionConfig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	err := wf.PromoteTopics(ctx, config, "key", "secret")
+	err := wf.PromoteTopics(ctx, config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "PromoteTopics should not run unrouted-producer detection")
 	assert.True(t, promoted["topic-1"])
 }
@@ -1865,7 +1865,7 @@ func TestWorkflow_CheckLags_ToleratesTransientSweepFailures(t *testing.T) {
 	wf.lagPollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "two transient sweep failures must be ridden out")
 	assert.GreaterOrEqual(t, calls.Load(), int32(3), "expected the sweep to be retried on later ticks")
 }
@@ -1891,7 +1891,7 @@ func TestWorkflow_CheckLags_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T)
 	wf.lagPollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf("%d consecutive", maxConsecutiveSweepFailures))
 	assert.Contains(t, err.Error(), "broker unreachable", "the underlying cause must be preserved")
@@ -1929,7 +1929,7 @@ func TestWorkflow_CheckLags_SweepFailureCounterResetsOnSuccess(t *testing.T) {
 	wf.lagPollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.CheckLags(context.Background(), config, 10, "key", "secret")
+	err := wf.CheckLags(context.Background(), config, 10, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "four non-consecutive failures must not abort")
 	assert.Equal(t, int32(6), calls.Load())
 }
@@ -1981,7 +1981,7 @@ func TestWorkflow_PromoteTopics_ToleratesTransientSweepFailures(t *testing.T) {
 	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.NoError(t, err, "two transient sweep failures must be ridden out")
 	assert.True(t, promoted["topic-1"], "topic must still be promoted after tolerated failures")
 }
@@ -2007,7 +2007,7 @@ func TestWorkflow_PromoteTopics_AbortsAfterMaxConsecutiveSweepFailures(t *testin
 	wf.promotePollInterval = time.Millisecond
 	config := &MigrationConfig{Topics: []string{"topic-1"}}
 
-	err := wf.PromoteTopics(context.Background(), config, "key", "secret")
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), fmt.Sprintf("%d consecutive", maxConsecutiveSweepFailures))
 	assert.Contains(t, err.Error(), "broker unreachable", "the underlying cause must be preserved")
