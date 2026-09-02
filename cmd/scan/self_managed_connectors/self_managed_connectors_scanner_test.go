@@ -1078,13 +1078,13 @@ func TestParseOpts_AutoDetectsOSKFromNonArn(t *testing.T) {
 }
 
 func TestParseOpts_ExplicitSourceTypeOverridesAutoDetect(t *testing.T) {
-	// An ARN-shaped cluster id, but explicit --source-type osk must win.
+	// An ARN-shaped cluster id, but explicit --source-type apache-kafka must win.
 	resetCmdGlobals()
 	st := &types.State{OSKSources: &types.OSKSourcesState{Clusters: []types.OSKDiscoveredCluster{{ID: testArn}}}}
 	stateFile = writeStateFile(t, st)
 	connectRestURL = "http://localhost:8083"
 	clusterID = testArn
-	sourceType = "osk"
+	sourceType = "apache-kafka"
 	useUnauthenticated = true
 
 	opts, err := parseScanSelfManagedConnectorsOpts()
