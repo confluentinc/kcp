@@ -121,15 +121,9 @@ func GenerateGateway() ([]byte, error) {
 	// silently inherit that default by leaving it out.
 	policy.Required = []string{"lagThreshold"}
 
-	// The old crs/routes/topics shape is retired (O2): kcp uses a flat
-	// gateway.cr-name plus a spec.topicGroup. The struct still carries the old
-	// fields until their consumers are rewired, so reflection still emits them —
-	// drop them from the schema so an editor flags a stale key rather than
-	// offering it as legal. Once the fields are removed these become no-ops.
+	// gateway carries only namespace + cr-name; the retired crs/routes shape (O2)
+	// is gone from the struct, so reflection no longer emits it.
 	gateway.Required = []string{"namespace", "cr-name"}
-	delete(gateway.Properties, "crs")
-	delete(gateway.Properties, "routes")
-	delete(spec.Properties, "topics")
 
 	// spec.topicGroup: each entry pairs a topic selection with its route and
 	// target streaming domain. The item's required set (route,

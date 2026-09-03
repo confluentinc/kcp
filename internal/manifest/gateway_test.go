@@ -449,6 +449,30 @@ func TestGateway_RequiresCrName(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.gateway.cr-name")
 }
 
+// TestGateway_RejectsRetiredKeys — the old crs/routes/topics shape is removed
+// from the struct, so a stale manifest that still uses any of them fails at the
+// strict decode with an unknown-field error. This is where the retired
+// crs.switchover rejection now lives (D2): a manifest setting it trips the crs
+// unknown-field error rather than a bespoke migration hint (an accepted UX
+// downgrade — see the plan's Risks).
+func TestGateway_RejectsRetiredKeys(t *testing.T) {
+	withGatewayKey := func(block string) string {
+		return strings.Replace(validGatewayDoc, "    cr-name: gateway-initial\n",
+			"    cr-name: gateway-initial\n"+block, 1)
+	}
+	for name, doc := range map[string]string{
+		"crs":            withGatewayKey("    crs:\n      initial: gateway-initial\n"),
+		"crs.switchover": withGatewayKey("    crs:\n      switchover: /etc/kcp/switchover.yaml\n"),
+		"gateway.routes": withGatewayKey("    routes:\n      - name: migration-route\n"),
+		"spec.topics":    validGatewayDoc + "  topics: ['t1.order']\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseGatewayMigration([]byte(doc))
+			require.Error(t, err, "a retired key must fail the strict decode")
+		})
+	}
+}
+
 // --- topicGroup (D1/D2/D3/D5) ---
 
 // TestGateway_RequiresExactlyOneTopicGroupEntry — the doc pins one route, one

@@ -44,15 +44,12 @@ func writeManifestToPod(t *testing.T, cfg envConfig, podPath string, opts manife
 	require.NoError(t, cmd.Run(), "writing %s into the pod: %s", podPath, stderr.String())
 }
 
-// e2eSwitchoverDomainName and e2eSwitchoverBootstrapServerId are the target
-// every converted e2e scenario switches to — the destination streaming domain
-// the initial CR fixture (testdata/manifests/templates/gateway-initial.yaml)
-// already declares. There is no per-scenario variation today, so this is a
-// fixed pairing rather than something setup.sh needs to publish per route.
-const (
-	e2eSwitchoverDomainName        = "destination-kafka-cluster"
-	e2eSwitchoverBootstrapServerId = "SASL_PLAIN"
-)
+// e2eSwitchoverDomainName is the target every converted e2e scenario switches
+// to — the destination streaming domain the initial CR fixture
+// (testdata/manifests/templates/gateway-initial.yaml) already declares. The
+// bootstrap server id kcp binds to is derived from that CR at init (D1), not set
+// per route, so it is no longer named here.
+const e2eSwitchoverDomainName = "destination-kafka-cluster"
 
 // manifestOptsFor builds the manifest options every scenario shares, from the
 // topology setup.sh published into .env. Callers set metadata.name, the manifest
@@ -61,9 +58,8 @@ func manifestOptsFor(cfg envConfig) manifestOpts {
 	fenceRoutes := make([]fenceRouteOpts, len(cfg.FenceRoutes))
 	for i, name := range cfg.FenceRoutes {
 		fenceRoutes[i] = fenceRouteOpts{
-			Name:                        name,
-			SwitchoverDomainName:        e2eSwitchoverDomainName,
-			SwitchoverBootstrapServerId: e2eSwitchoverBootstrapServerId,
+			Name:                 name,
+			SwitchoverDomainName: e2eSwitchoverDomainName,
 		}
 	}
 	return manifestOpts{

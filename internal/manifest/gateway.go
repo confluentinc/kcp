@@ -52,18 +52,12 @@ type GatewaySpec struct {
 	Target      GatewayTarget      `yaml:"target" json:"target"`
 	ClusterLink GatewayClusterLink `yaml:"clusterLink" json:"clusterLink"`
 	Gateway     Gateway            `yaml:"gateway" json:"gateway"`
-	// Topics is a flat list of LITERAL topic names, exact-matched against the
-	// link's active mirror topics — not globs. A pointer so that omitted ("every
-	// active mirror topic") stays distinguishable from an explicitly empty list,
-	// which means the opposite and is rejected.
-	Topics *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
-	// TopicGroup is the new unified shape that replaces both spec.topics and
-	// gateway.routes: each entry pairs a topic selection (literal names and/or
-	// anchored regex patterns) with the route it migrates and the target
-	// streaming domain that route switches to. Exactly one entry is supported
-	// today (one route, one mode per migration). The bootstrap server id is NOT
-	// carried here — it is derived from the live CR at init (D1) — and there is
-	// no mode field: mode is resolved from the CR's route-scoped binding (D5).
+	// TopicGroup pairs a topic selection (literal names and/or anchored regex
+	// patterns) with the route it migrates and the target streaming domain that
+	// route switches to. Exactly one entry is supported today (one route, one
+	// mode per migration). The bootstrap server id is NOT carried here — it is
+	// derived from the live CR at init (D1) — and there is no mode field: mode is
+	// resolved from the CR's route-scoped binding (D5).
 	TopicGroup []TopicGroupEntry `yaml:"topicGroup" json:"topicGroup"`
 	// DefaultPolicies is read fresh on every execute and never snapshotted, which
 	// is what lets a caller vary execute-time policy between init and execute.
@@ -117,68 +111,11 @@ type Gateway struct {
 	// does not either.
 	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
-	// from the cluster at init. It flattens the old crs.initial nesting (O2).
-	CrName string     `yaml:"cr-name" json:"cr-name"`
-	CRs    GatewayCRs `yaml:"crs" json:"crs"`
-	// Routes names the route(s) kcp fences and switches over at cutover, each
-	// paired with the streaming domain it switches to. There is no fenced-CR
-	// or switchover-CR file: kcp reads the live initial CR, injects the fence
-	// block onto each named route to block traffic, and — derived the same
-	// way from the same live CR — later flips each route's streamingDomain to
-	// its declared target. Fence and its rollback (which re-applies the same
-	// initial CR) are therefore exact inverses, and there is no second list
-	// to keep in sync with this one (D1).
-	Routes []GatewayRoute `yaml:"routes" json:"routes"`
-}
-
-// GatewayCRs holds the gateway CR the migration reads live, plus a detector
-// for the retired switchover-file field.
-type GatewayCRs struct {
-	// Initial is a Kubernetes object NAME, read live from the cluster at init.
-	Initial string `yaml:"initial" json:"initial"`
-	// Switchover is retired (D2): the switchover CR is now a derived inline
-	// update to the initial CR (see Gateway.Routes), not an operator-authored
-	// file. This field stays as a plain string ONLY so Validate can detect a
-	// manifest that still sets it and reject with a migration hint — goccy
-	// silently drops unknown keys, so removing the field outright would turn a
-	// stale manifest into a silent no-op instead of a loud, actionable error.
-	// Nothing else reads it.
-	Switchover string `yaml:"switchover,omitempty" json:"switchover,omitempty"`
-}
-
-// GatewayRoute is one route kcp fences and switches over at cutover, paired
-// with the streaming domain it switches to. The pairing is structural (D4): a
-// route cannot be named here without also declaring where it switches,
-// because the FSM only supports init -> fence -> switch, with no
-// fence-without-switch path. Each entry must have a non-blank, unique route
-// name that exists in the initial CR, and a non-blank streaming domain
-// target.
-//
-// Because the route's security.cluster already carries pre-staged
-// ("redundant") auth for the target domain, the switch is a plain field flip
-// with no secret or auth change (see checkRedundantAuthStaged, which proves
-// that staging holds before any route is fenced).
-type GatewayRoute struct {
-	Name            string                    `yaml:"name" json:"name"`
-	StreamingDomain GatewayStreamingDomainRef `yaml:"streamingDomain" json:"streamingDomain"`
-}
-
-// GatewayStreamingDomainRef names a streaming domain declared in the gateway
-// CR's spec.streamingDomains, and the bootstrap server id on that domain to
-// bind the route to.
-type GatewayStreamingDomainRef struct {
-	Name              string `yaml:"name" json:"name"`
-	BootstrapServerId string `yaml:"bootstrapServerId" json:"bootstrapServerId"`
-}
-
-// RouteNames projects the gateway's routes to their plain names, the shape the
-// rest of kcp (state snapshots, drift detection) has always worked with.
-func (g Gateway) RouteNames() []string {
-	names := make([]string, len(g.Routes))
-	for i, r := range g.Routes {
-		names[i] = r.Name
-	}
-	return names
+	// from the cluster at init. It flattens the old crs.initial nesting (O2). The
+	// route(s) kcp fences and the streaming domain each switches to now live in
+	// spec.topicGroup; there is no fenced-CR or switchover-CR file — both are
+	// derived from this live CR at cutover (D1).
+	CrName string `yaml:"cr-name" json:"cr-name"`
 }
 
 // DefaultPolicies is the execute-time knobs. Every value is optional and zero
