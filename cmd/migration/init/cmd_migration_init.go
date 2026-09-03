@@ -16,8 +16,8 @@ import (
 )
 
 // fetchInitialCR reads the live initial gateway CR as YAML for the early
-// id/mode derivation (D1c). A package var so tests inject a fixture CR without a
-// live cluster — the concrete client is otherwise built deep in the initializer,
+// id/mode derivation. A package var so tests inject a fixture CR without a live
+// cluster — the concrete client is otherwise built deep in the initializer,
 // after the early write that the derivation must precede.
 var fetchInitialCR = func(ctx context.Context, kubeConfigPath, namespace, crName string) ([]byte, error) {
 	return gateway.NewK8sService(kubeConfigPath).GetGatewayYAML(ctx, namespace, crName)
@@ -121,19 +121,19 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
-	// D1c: read the live initial CR HERE — before the early write — because both
-	// the route's mode (D5) and the derived bootstrap server id (D1) come from it
-	// and must land in the snapshot. --skip-validate still performs this read; it
-	// skips credential resolution and gateway/Kubernetes resource *validation*,
-	// not the read the snapshot's derived id depends on.
+	// Read the live initial CR HERE — before the early write — because both the
+	// route's mode and the derived bootstrap server id come from it and must land
+	// in the snapshot. --skip-validate still performs this read; it skips
+	// credential resolution and gateway/Kubernetes resource *validation*, not the
+	// read the snapshot's derived id depends on.
 	entry := g.Spec.TopicGroup[0] // Validate guarantees exactly one entry
 	crYAML, err := fetchInitialCR(cmd.Context(), kubeConfigPathResolved, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName)
 	if err != nil {
 		return fmt.Errorf("reading the initial gateway CR %q in namespace %q: %w", g.Spec.Gateway.CrName, g.Spec.Gateway.Namespace, err)
 	}
 
-	// D5: the migration mode is resolved solely from the CR's route-scoped
-	// binding shape. A dynamic (topic-based) route cannot run the static path.
+	// The migration mode is resolved solely from the CR's route-scoped binding
+	// shape. A dynamic (topic-based) route cannot run the static path.
 	mode, err := gateway.ResolveRouteMode(crYAML, entry.Route)
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("route %q resolves to a topic-based (dynamic) migration; kcp does not yet implement the topic-based migration engine", entry.Route)
 	}
 
-	// Static path: derive the id (D1) and resolve the topic list (O4).
+	// Static path: derive the id and resolve the topic list.
 	bootstrapServerID, err := gateway.DeriveBootstrapServerID(crYAML, entry.TargetStreamingDomain)
 	if err != nil {
 		return err
@@ -278,15 +278,14 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 	return filepath.Join(homeDir, ".kube", "config"), nil
 }
 
-// matchAllPattern is the documented match-all topicPatterns token (O3/O4).
+// matchAllPattern is the documented match-all topicPatterns token.
 const matchAllPattern = ".*"
 
 // staticTopicsOf resolves a static route's topic list from its topicGroup entry.
 // Literal topics pass through unchanged. A match-all pattern (.*) leaves the list
-// empty so the Initialize FSM step back-fills every active mirror topic — the
-// same back-fill the removed omit-topics sentinel used (O4). Any other
-// (non-match-all) pattern on a static route is not yet supported this piece:
-// general static expansion is deferred with the TBM engine.
+// empty so the Initialize FSM step back-fills every active mirror topic. Any
+// other (non-match-all) pattern on a static route is not yet supported: general
+// static expansion is deferred with the topic-based migration engine.
 func staticTopicsOf(entry manifest.TopicGroupEntry) ([]string, error) {
 	if entry.TopicPatterns != nil {
 		for _, p := range *entry.TopicPatterns {
@@ -298,7 +297,7 @@ func staticTopicsOf(entry manifest.TopicGroupEntry) ([]string, error) {
 		// the Initialize step back-fill it, subsuming any topics also listed.
 		return []string{}, nil
 	}
-	// Validate guarantees Topics is non-nil when TopicPatterns is nil (D2).
+	// Validate guarantees Topics is non-nil when TopicPatterns is nil.
 	return *entry.Topics, nil
 }
 

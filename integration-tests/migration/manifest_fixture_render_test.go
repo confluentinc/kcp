@@ -88,7 +88,7 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 		got := g.Spec.TopicGroup[i]
 		assert.Equal(t, want.Name, got.Route)
 		assert.Equal(t, want.SwitchoverDomainName, got.TargetStreamingDomain)
-		// The id is derived from the live CR at init (D1), not carried in the
+		// The id is derived from the live CR at init, not carried in the
 		// manifest, and a match-all pattern selects every active mirror topic.
 		require.NotNil(t, got.TopicPatterns)
 		assert.Equal(t, []string{".*"}, *got.TopicPatterns)

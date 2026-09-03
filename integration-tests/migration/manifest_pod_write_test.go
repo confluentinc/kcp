@@ -47,7 +47,7 @@ func writeManifestToPod(t *testing.T, cfg envConfig, podPath string, opts manife
 // e2eSwitchoverDomainName is the target every converted e2e scenario switches
 // to — the destination streaming domain the initial CR fixture
 // (testdata/manifests/templates/gateway-initial.yaml) already declares. The
-// bootstrap server id kcp binds to is derived from that CR at init (D1), not set
+// bootstrap server id kcp binds to is derived from that CR at init, not set
 // per route, so it is no longer named here.
 const e2eSwitchoverDomainName = "destination-kafka-cluster"
 

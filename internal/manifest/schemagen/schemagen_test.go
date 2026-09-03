@@ -244,18 +244,18 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "credentials"},
 		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
 	require.ElementsMatch(t, []any{"namespace", "cr-name"}, requiredOf(spec["gateway"].(map[string]any)))
-	// The old crs/routes/topics shape is gone from the schema entirely (O2): a
+	// The old crs/routes/topics shape is gone from the schema entirely: a
 	// stale key must be flagged by the editor, not offered as legal.
 	gwProps := props(t, spec["gateway"].(map[string]any))
 	require.NotContains(t, gwProps, "crs", "the crs block is retired — see cr-name")
 	require.NotContains(t, gwProps, "routes", "routes are retired — see topicGroup")
 	require.NotContains(t, spec, "topics", "spec.topics is retired — see topicGroup")
 	// Each topicGroup entry pairs a route with its target streaming domain. The
-	// bootstrap server id is derived from the live CR (D1) and mode from the CR
-	// (D5), so neither is a required manifest field.
+	// bootstrap server id is derived from the live CR and mode from the CR
+	// so neither is a required manifest field.
 	item := spec["topicGroup"].(map[string]any)["items"].(map[string]any)
 	require.ElementsMatch(t, []any{"route", "targetStreamingDomain"}, item["required"])
-	// D2: at least one of topics/topicPatterns, hand-patched as an anyOf since
+	// At least one of topics/topicPatterns, hand-patched as an anyOf since
 	// the constraint isn't expressible on the struct.
 	anyOf, ok := item["anyOf"].([]any)
 	require.True(t, ok, "the topicGroup item must carry an anyOf for the at-least-one topics/topicPatterns rule")

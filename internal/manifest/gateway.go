@@ -54,10 +54,8 @@ type GatewaySpec struct {
 	Gateway     Gateway            `yaml:"gateway" json:"gateway"`
 	// TopicGroup pairs a topic selection (literal names and/or anchored regex
 	// patterns) with the route it migrates and the target streaming domain that
-	// route switches to. Exactly one entry is supported today (one route, one
-	// mode per migration). The bootstrap server id is NOT carried here — it is
-	// derived from the live CR at init (D1) — and there is no mode field: mode is
-	// resolved from the CR's route-scoped binding (D5).
+	// route switches to. Exactly one entry today. The bootstrap server id and the
+	// migration mode are not carried here: both are read from the live CR at init.
 	TopicGroup []TopicGroupEntry `yaml:"topicGroup" json:"topicGroup"`
 	// DefaultPolicies is read fresh on every execute and never snapshotted, which
 	// is what lets a caller vary execute-time policy between init and execute.
@@ -90,13 +88,11 @@ type GatewayClusterLink struct {
 
 // TopicGroupEntry pairs a topic selection with the route it migrates and the
 // target streaming domain that route switches to. The field set is identical
-// for both migration modes (static all-at-once and dynamic topic-based); mode
-// only changes whether the id is derived (static) and how patterns expand.
+// for the static (all-at-once) and dynamic (topic-based) modes.
 //
-// Topics and TopicPatterns are pointers so nil (omitted) stays distinct from
-// [] (present but empty, rejected), matching the old spec.topics semantics. At
-// least one of the two is required (D2). No bootstrapServerId — kcp derives it
-// from the live CR at init (D1). No mode — resolved from the CR (D5).
+// Topics and TopicPatterns are pointers so nil (omitted) stays distinct from []
+// (present but empty, rejected). At least one of the two must be set. There is
+// no bootstrapServerId or mode field: both are read from the live CR at init.
 type TopicGroupEntry struct {
 	Topics                *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
 	TopicPatterns         *[]string `yaml:"topicPatterns,omitempty" json:"topicPatterns,omitempty"`
@@ -111,10 +107,9 @@ type Gateway struct {
 	// does not either.
 	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
 	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
-	// from the cluster at init. It flattens the old crs.initial nesting (O2). The
-	// route(s) kcp fences and the streaming domain each switches to now live in
-	// spec.topicGroup; there is no fenced-CR or switchover-CR file — both are
-	// derived from this live CR at cutover (D1).
+	// from the cluster at init. The route to fence and the domain it switches to
+	// live in spec.topicGroup; there is no fenced-CR or switchover-CR file — both
+	// are derived from this live CR at cutover.
 	CrName string `yaml:"cr-name" json:"cr-name"`
 }
 
@@ -311,10 +306,9 @@ func (g *GatewayMigration) Validate() []error {
 
 // validateTopicGroup applies the structural rules for spec.topicGroup: exactly
 // one entry, a non-blank route and target streaming domain, and at least one of
-// topics/topicPatterns (D2) with each pattern compiling as an anchored RE2
-// full-match (O3). It carries no mode knowledge and does no I/O — mode (static
-// vs dynamic) and the bootstrap server id are both resolved from the live CR at
-// init (D1/D5), not the manifest.
+// topics/topicPatterns, each pattern compiling as an anchored RE2 full-match. It
+// does no I/O — the mode and the bootstrap server id are resolved from the live
+// CR at init, not the manifest.
 func validateTopicGroup(entries []TopicGroupEntry) []error {
 	var errs []error
 	add := func(format string, args ...any) {
@@ -365,9 +359,9 @@ func validateTopicGroup(entries []TopicGroupEntry) []error {
 	return errs
 }
 
-// anchoredPattern compiles p as an anchored RE2 full-match (O3): the Gateway
-// matches topicPatterns Java-style (anchored full-match), but Go's regexp
-// default is unanchored/partial, so kcp must anchor with \A…\z.
+// anchoredPattern compiles p as an anchored RE2 full-match: the Gateway matches
+// topicPatterns Java-style (anchored full-match), but Go's regexp default is
+// unanchored/partial, so kcp must anchor with \A…\z.
 //
 // p is validated on its OWN terms first. Splicing p directly into `\A(?:` + p +
 // `)\z` is unsafe: a pattern carrying an unbalanced paren (e.g. "foo)|(evil")

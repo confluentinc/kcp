@@ -47,7 +47,7 @@ func TestDeriveBootstrapServerID_MultiHomed(t *testing.T) {
 	assert.Contains(t, err.Error(), "SASL_SCRAM")
 }
 
-// TestDeriveBootstrapServerID_DomainAbsent is the D1 zero case: a
+// TestDeriveBootstrapServerID_DomainAbsent is the zero case: a
 // targetStreamingDomain the CR does not declare (a typo) is a hard error.
 func TestDeriveBootstrapServerID_DomainAbsent(t *testing.T) {
 	_, err := DeriveBootstrapServerID([]byte(crWithDomains), "typo-domain")
@@ -56,7 +56,7 @@ func TestDeriveBootstrapServerID_DomainAbsent(t *testing.T) {
 }
 
 // TestDeriveBootstrapServerID_DomainDeclaredWithNoIDs — declared but with an
-// empty bootstrapServers set collapses to the same zero case (D1).
+// empty bootstrapServers set collapses to the same zero case.
 func TestDeriveBootstrapServerID_DomainDeclaredWithNoIDs(t *testing.T) {
 	cr := strings.Replace(crWithDomains,
 		"      kafkaCluster:\n        bootstrapServers:\n          - id: SASL_PLAIN\n",
@@ -90,7 +90,7 @@ func TestResolveRouteMode_RouteAbsent(t *testing.T) {
 }
 
 // TestResolveRouteMode_Neither — a hand-edited CR with a route binding neither
-// singular nor plural cannot resolve a mode (D5).
+// singular nor plural cannot resolve a mode.
 func TestResolveRouteMode_Neither(t *testing.T) {
 	cr := strings.Replace(crWithDomains,
 		"    - name: migration-route\n      streamingDomain:\n        name: source-domain\n        bootstrapServerId: SOURCE_ID\n",

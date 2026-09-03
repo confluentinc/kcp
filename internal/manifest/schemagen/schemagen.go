@@ -121,15 +121,15 @@ func GenerateGateway() ([]byte, error) {
 	// silently inherit that default by leaving it out.
 	policy.Required = []string{"lagThreshold"}
 
-	// gateway carries only namespace + cr-name; the retired crs/routes shape (O2)
-	// is gone from the struct, so reflection no longer emits it.
+	// gateway carries only namespace + cr-name; the retired crs/routes shape is
+	// gone from the struct, so reflection no longer emits it.
 	gateway.Required = []string{"namespace", "cr-name"}
 
 	// spec.topicGroup: each entry pairs a topic selection with its route and
 	// target streaming domain. The item's required set (route,
-	// targetStreamingDomain) reflects from the non-omitempty struct tags; D2's
-	// "at least one of topics/topicPatterns" is not expressible on the struct,
-	// so hand-patch it as an anyOf on the item.
+	// targetStreamingDomain) reflects from the non-omitempty struct tags; the "at
+	// least one of topics/topicPatterns" rule is not expressible on the struct, so
+	// hand-patch it as an anyOf on the item.
 	topicGroup := spec.Properties["topicGroup"]
 	tgItem := topicGroup.Items
 	tgItem.AnyOf = []*jsonschema.Schema{

@@ -363,8 +363,8 @@ func routeNamesFromTopicGroup(g *manifest.GatewayMigration) []string {
 // taken at init. Compared as a map, so reordering is not a change.
 //
 // The bootstrap server id is intentionally NOT compared: it is derived from the
-// live CR (D1), not authored in the manifest, so there is nothing manifest-side
-// to diff it against. A CR-side id change between init and execute is caught by
+// live CR, not authored in the manifest, so there is nothing manifest-side to
+// diff it against. A CR-side id change between init and execute is caught by
 // neither old nor new drift by design — at cutover the switch reapplies the
 // snapshotted initial CR wholesale, so a live CR edit is overwritten regardless;
 // a CR id change is a re-init concern, not a drift signal.

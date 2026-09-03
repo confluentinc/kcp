@@ -58,7 +58,7 @@ spec:
       targetStreamingDomain: confluent-cloud
 `
 
-// defaultFixtureCR is the live initial CR the early derivation reads (D1c). It
+// defaultFixtureCR is the live initial CR the early derivation reads. It
 // declares the domain the manifest targets — confluent-cloud, single-homed with
 // id SASL_PLAIN — and the static route migration-route (singular streamingDomain
 // binding). TestMain installs it for every test; a test needing a different CR
@@ -81,7 +81,7 @@ spec:
 `
 
 func TestMain(m *testing.M) {
-	// Every init success path now reads the initial CR early (D1c). Default all
+	// Every init success path now reads the initial CR early. Default all
 	// tests to the working single-homed fixture; tests needing a different CR
 	// (or a fetch error) override it via stubCR.
 	fetchInitialCR = func(_ context.Context, _, _, _ string) ([]byte, error) {
@@ -117,7 +117,7 @@ func stubCRError(t *testing.T, err error) {
 const defaultTopicsBlock = "    - topics:\n        - t1.order\n        - t2.inventory\n"
 
 // matchAllTopicPatterns swaps the literal topics for a match-all topicPatterns
-// entry (O4).
+// entry.
 func matchAllTopicPatterns(doc string) string {
 	return strings.Replace(doc, defaultTopicsBlock, "    - topicPatterns:\n        - '.*'\n", 1)
 }
@@ -296,7 +296,7 @@ func TestInit_TopicsCarryThrough(t *testing.T) {
 }
 
 // TestInit_MatchAllPatternMeansEveryMirror — a static match-all topicPatterns
-// (.*) leaves Topics empty (O4), which the Initialize step back-fills with every
+// (.*) leaves Topics empty, which the Initialize step back-fills with every
 // active mirror topic — the same back-fill the removed omit-topics sentinel used.
 func TestInit_MatchAllPatternMeansEveryMirror(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
@@ -311,7 +311,7 @@ func TestInit_MatchAllPatternMeansEveryMirror(t *testing.T) {
 	assert.Empty(t, cfg.Topics, "a match-all pattern leaves Topics empty for the FSM to back-fill")
 }
 
-// TestInit_NonMatchAllStaticPatternIsNotYetSupported — O4: only the match-all
+// TestInit_NonMatchAllStaticPatternIsNotYetSupported — only the match-all
 // pattern is expanded on a static route this piece; any other pattern errors.
 func TestInit_NonMatchAllStaticPatternIsNotYetSupported(t *testing.T) {
 	manifest := writeManifest(t, func(doc string) string {
@@ -323,7 +323,7 @@ func TestInit_NonMatchAllStaticPatternIsNotYetSupported(t *testing.T) {
 	assert.Contains(t, err.Error(), "not yet supported")
 }
 
-// --- CR-derived bootstrap id (D1) and route mode (D5) ---
+// --- CR-derived bootstrap id and route mode ---
 
 // TestInit_DerivesBootstrapServerIdFromCR — the id in the snapshot is DERIVED
 // from the live CR's single-homed declaration, not authored in the manifest.
@@ -352,7 +352,7 @@ func TestInit_MultiHomedDomainIsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "confluent-cloud")
 }
 
-// TestInit_TargetDomainAbsentFromCRIsError is the D1 zero case: a
+// TestInit_TargetDomainAbsentFromCRIsError is the zero case: a
 // targetStreamingDomain the CR does not declare (a typo) is a hard error.
 func TestInit_TargetDomainAbsentFromCRIsError(t *testing.T) {
 	stubCR(t, strings.Replace(defaultFixtureCR, "    - name: confluent-cloud\n", "    - name: other-domain\n", 1))
@@ -361,7 +361,7 @@ func TestInit_TargetDomainAbsentFromCRIsError(t *testing.T) {
 	assert.Contains(t, err.Error(), "confluent-cloud")
 }
 
-// TestInit_DynamicRouteIsNotYetImplemented is O1: a route resolving to the
+// TestInit_DynamicRouteIsNotYetImplemented refuses a route resolving to the
 // plural (topic-based) binding cannot be run through the static path — init
 // refuses rather than silently treating it as static.
 func TestInit_DynamicRouteIsNotYetImplemented(t *testing.T) {
@@ -374,7 +374,7 @@ func TestInit_DynamicRouteIsNotYetImplemented(t *testing.T) {
 }
 
 // TestInit_RouteAbsentFromCRIsError — a manifest route missing from the CR is an
-// error (D5), never a silent fall-through.
+// error, never a silent fall-through.
 func TestInit_RouteAbsentFromCRIsError(t *testing.T) {
 	stubCR(t, strings.Replace(defaultFixtureCR, "    - name: migration-route\n", "    - name: other-route\n", 1))
 	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")

@@ -277,10 +277,10 @@ func TestDrift_DetectsChangedTopology(t *testing.T) {
 	}
 }
 
-// TestDrift_MatchAllTopicsMatchTheExpandedSnapshot is the §13 asymmetry: after
-// the first execute a match-all topicGroup selection compares against a snapshot
-// back-filled with every active mirror, so match-all (no literal topics) must
-// equal "whatever was expanded", not an empty list.
+// TestDrift_MatchAllTopicsMatchTheExpandedSnapshot covers the drift asymmetry:
+// after the first execute a match-all topicGroup selection compares against a
+// snapshot back-filled with every active mirror, so match-all (no literal
+// topics) must equal "whatever was expanded", not an empty list.
 func TestDrift_MatchAllTopicsMatchTheExpandedSnapshot(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
@@ -315,7 +315,7 @@ func TestDrift_NeverNamesTopics(t *testing.T) {
 
 // TestDrift_DetectsChangedSwitchoverTarget — editing a route's target streaming
 // domain after init is drift. The bootstrap server id is NOT part of the diff:
-// it is derived from the live CR (D1), not authored in the manifest, so there is
+// it is derived from the live CR, not authored in the manifest, so there is
 // nothing manifest-side to compare it against.
 func TestDrift_DetectsChangedSwitchoverTarget(t *testing.T) {
 	f := newFixture(t, func(doc string) string {

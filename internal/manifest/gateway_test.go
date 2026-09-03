@@ -452,7 +452,7 @@ func TestGateway_RequiresCrName(t *testing.T) {
 // TestGateway_RejectsRetiredKeys — the old crs/routes/topics shape is removed
 // from the struct, so a stale manifest that still uses any of them fails at the
 // strict decode with an unknown-field error. This is where the retired
-// crs.switchover rejection now lives (D2): a manifest setting it trips the crs
+// crs.switchover rejection now lives: a manifest setting it trips the crs
 // unknown-field error rather than a bespoke migration hint (an accepted UX
 // downgrade — see the plan's Risks).
 func TestGateway_RejectsRetiredKeys(t *testing.T) {
@@ -473,7 +473,7 @@ func TestGateway_RejectsRetiredKeys(t *testing.T) {
 	}
 }
 
-// --- topicGroup (D1/D2/D3/D5) ---
+// --- topicGroup ---
 
 // TestGateway_RequiresExactlyOneTopicGroupEntry — the doc pins one route, one
 // mode per migration, so both an absent block and more than one entry are
@@ -511,7 +511,7 @@ func TestGateway_RejectsBlankTargetStreamingDomain(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.topicGroup")
 }
 
-// TestGateway_RejectsEntryWithNeitherTopicsNorPatterns is D2: at least one of
+// TestGateway_RejectsEntryWithNeitherTopicsNorPatterns requires at least one of
 // topics/topicPatterns is required on every entry (both modes). Both absent is
 // a structural error, no mode knowledge needed.
 func TestGateway_RejectsEntryWithNeitherTopicsNorPatterns(t *testing.T) {
@@ -545,7 +545,7 @@ func TestGateway_TopicsOnlyValidates(t *testing.T) {
 }
 
 // TestGateway_TopicPatternsOnlyValidates — topicPatterns set, topics omitted,
-// satisfies D2 on its own.
+// satisfies the at-least-one rule on its own.
 func TestGateway_TopicPatternsOnlyValidates(t *testing.T) {
 	block := "  topicGroup:\n    - topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
@@ -567,7 +567,7 @@ func TestGateway_RejectsBlankTopicPattern(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.topicGroup")
 }
 
-// TestGateway_RejectsInvalidTopicPatternRegex is O3: each pattern must compile
+// TestGateway_RejectsInvalidTopicPatternRegex — each pattern must compile
 // as an anchored RE2 full-match, a cheap guard mirroring the Gateway's
 // parse-time rejection. A bare `*` has nothing to repeat and fails to compile.
 func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
@@ -576,7 +576,7 @@ func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.topicGroup")
 }
 
-// TestGateway_RejectsAnchorEscapingPattern is security finding SEC-001: a
+// TestGateway_RejectsAnchorEscapingPattern rejects a
 // pattern carrying an unbalanced paren (e.g. "foo)|(evil") must be rejected —
 // not silently spliced into \A(?:…)\z where its ")" closes the wrapper group and
 // promotes a top-level alternation, escaping the intended full-match anchor. The
@@ -603,14 +603,14 @@ func TestAnchoredPattern_IsAFullMatch(t *testing.T) {
 }
 
 // TestGateway_MatchAllTopicPatternCompiles — the "all topics" token is `.*`
-// (O3), which must compile cleanly (a bare `*` would not).
+// which must compile cleanly (a bare `*` would not).
 func TestGateway_MatchAllTopicPatternCompiles(t *testing.T) {
 	block := "  topicGroup:\n    - topicPatterns:\n        - '.*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
 	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
 	require.Empty(t, g.Validate())
 }
 
-// TestGateway_BothTopicsAndPatternsIsAllowed is D2: both set is a combined set,
+// TestGateway_BothTopicsAndPatternsIsAllowed — both set is a combined set,
 // not a structural error, on either mode.
 func TestGateway_BothTopicsAndPatternsIsAllowed(t *testing.T) {
 	block := "  topicGroup:\n    - topics:\n        - t1.order\n      topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
