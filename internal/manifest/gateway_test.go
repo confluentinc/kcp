@@ -576,6 +576,32 @@ func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.topicGroup")
 }
 
+// TestGateway_RejectsAnchorEscapingPattern is security finding SEC-001: a
+// pattern carrying an unbalanced paren (e.g. "foo)|(evil") must be rejected —
+// not silently spliced into \A(?:…)\z where its ")" closes the wrapper group and
+// promotes a top-level alternation, escaping the intended full-match anchor. The
+// pattern is validated on its own terms first, so a malformed one is rejected.
+func TestGateway_RejectsAnchorEscapingPattern(t *testing.T) {
+	block := "  topicGroup:\n    - topicPatterns:\n        - 'foo)|(evil'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+// TestAnchoredPattern_IsAFullMatch pins the anchoring: a compiled topicPattern
+// must match the whole topic name, never a prefix or suffix, and a pattern that
+// tries to break out of the wrapper group must be refused rather than compiled
+// into a partial match.
+func TestAnchoredPattern_IsAFullMatch(t *testing.T) {
+	re, err := anchoredPattern("orders")
+	require.NoError(t, err)
+	assert.True(t, re.MatchString("orders"))
+	assert.False(t, re.MatchString("orders.v2"), "must not match a superstring")
+	assert.False(t, re.MatchString("my-orders"), "must not match a prefix-extended string")
+
+	_, err = anchoredPattern("foo)|(evil")
+	require.Error(t, err, "an anchor-escaping pattern must be refused")
+}
+
 // TestGateway_MatchAllTopicPatternCompiles — the "all topics" token is `.*`
 // (O3), which must compile cleanly (a bare `*` would not).
 func TestGateway_MatchAllTopicPatternCompiles(t *testing.T) {

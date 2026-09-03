@@ -357,7 +357,7 @@ func validateTopicGroup(entries []TopicGroupEntry) []error {
 				add("spec.topicGroup[0].topicPatterns[%d]: must not be blank", i)
 				continue
 			}
-			if _, err := regexp.Compile(anchoredPattern(pat)); err != nil {
+			if _, err := anchoredPattern(pat); err != nil {
 				add("spec.topicGroup[0].topicPatterns[%d]: not a valid regular expression: %v", i, err)
 			}
 		}
@@ -365,13 +365,22 @@ func validateTopicGroup(entries []TopicGroupEntry) []error {
 	return errs
 }
 
-// anchoredPattern wraps a topicPatterns entry as an anchored RE2 full-match
-// (O3): the Gateway matches patterns Java-style (anchored full-match), but Go's
-// regexp default is unanchored/partial, so kcp must anchor. \A…\z pins both
-// ends and the (?:…) group keeps a top-level alternation from binding only one
-// branch. RE2 is linear-time, so there is no ReDoS surface in this compile.
-func anchoredPattern(p string) string {
-	return `\A(?:` + p + `)\z`
+// anchoredPattern compiles p as an anchored RE2 full-match (O3): the Gateway
+// matches topicPatterns Java-style (anchored full-match), but Go's regexp
+// default is unanchored/partial, so kcp must anchor with \A…\z.
+//
+// p is validated on its OWN terms first. Splicing p directly into `\A(?:` + p +
+// `)\z` is unsafe: a pattern carrying an unbalanced paren (e.g. "foo)|(evil")
+// would close the wrapper group early and promote a top-level alternation,
+// escaping the anchor into a prefix/suffix match. A pattern that compiles
+// standalone has balanced groups, so the subsequent splice cannot restructure
+// the wrapper. RE2 is linear-time, so there is no ReDoS surface in either
+// compile.
+func anchoredPattern(p string) (*regexp.Regexp, error) {
+	if _, err := regexp.Compile(p); err != nil {
+		return nil, err
+	}
+	return regexp.Compile(`\A(?:` + p + `)\z`)
 }
 
 // Validate checks the policy block. It is exported because `kcp migration
