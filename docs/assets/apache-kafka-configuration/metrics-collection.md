@@ -5,7 +5,8 @@ title: Metrics collection
 # Metrics collection — Apache Kafka®
 
 For MSK, `kcp discover` pulls cluster metrics straight from CloudWatch. Apache Kafka
-clusters do not have an equivalent metrics surface, so [`kcp scan clusters`](../command-reference/scan/clusters.md)
+clusters (including Confluent Platform and other Kafka-API-compatible distributions) do not have an
+equivalent metrics surface, so [`kcp scan clusters`](../command-reference/scan/clusters.md)
 supports two collection backends, selected with `--metrics <source>`:
 
 > [!TIP]

@@ -60,7 +60,7 @@ func NewScanClustersCmd() *cobra.Command {
 	scanClustersCmd := &cobra.Command{
 		Use:   "clusters",
 		Short: "Scan Kafka clusters using the Kafka Admin API",
-		Long: `Scan MSK or Apache Kafka clusters to discover topics, ACLs, and other metadata via the Kafka Admin API. Results are merged into the kcp-state.json file.
+		Long: `Scan MSK or Apache Kafka clusters — including Confluent Platform and other Kafka-API-compatible distributions — to discover topics, ACLs, and other metadata via the Kafka Admin API. Results are merged into the kcp-state.json file.
 
 Source-specific notes:
 
