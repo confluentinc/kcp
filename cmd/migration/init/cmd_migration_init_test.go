@@ -323,6 +323,46 @@ func TestInit_NonMatchAllStaticPatternIsNotYetSupported(t *testing.T) {
 	assert.Contains(t, err.Error(), "not yet supported")
 }
 
+// TestInit_ExplicitTopicsWinsOverMatchAllPattern — when both topics and a
+// match-all topicPatterns are set, the literal topics list carries through
+// unchanged rather than being back-filled to every mirror topic. Back-filling
+// past it would make execute's drift check, which diffs the manifest's still-
+// literal topics field against the snapshot, a permanent false positive.
+func TestInit_ExplicitTopicsWinsOverMatchAllPattern(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		return strings.Replace(doc, defaultTopicsBlock,
+			defaultTopicsBlock+"      topicPatterns:\n        - '.*'\n", 1)
+	})
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err)
+
+	state, err := migration.NewMigrationStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"t1.order", "t2.inventory"}, cfg.Topics)
+}
+
+// TestInit_ExplicitTopicsWinsOverNonMatchAllPattern — an explicit topics list
+// is authoritative regardless of topicPatterns, so a non-match-all pattern
+// alongside it does not hit the "not yet supported" rejection.
+func TestInit_ExplicitTopicsWinsOverNonMatchAllPattern(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		return strings.Replace(doc, defaultTopicsBlock,
+			defaultTopicsBlock+"      topicPatterns:\n        - 'orders\\..*'\n", 1)
+	})
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err)
+
+	state, err := migration.NewMigrationStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"t1.order", "t2.inventory"}, cfg.Topics)
+}
+
 // --- CR-derived bootstrap id and route mode ---
 
 // TestInit_DerivesBootstrapServerIdFromCR — the id in the snapshot is DERIVED

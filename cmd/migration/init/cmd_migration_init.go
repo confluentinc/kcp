@@ -62,7 +62,9 @@ reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: t
 		Example: `  # Initialize from a manifest
   kcp migration init --migration-yaml gateway-migration.yaml
 
-  # Register the migration without contacting the gateway or destination
+  # Register the migration, skipping credential resolution and destination
+  # validation (the initial gateway CR is still read to derive the route mode
+  # and bootstrap server id)
   kcp migration init --migration-yaml gateway-migration.yaml --skip-validate`,
 		SilenceErrors: true,
 		// A runtime failure must not bury the error under Cobra's usage block.
@@ -74,7 +76,7 @@ reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: t
 
 	migrationInitCmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
 	migrationInitCmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
-	migrationInitCmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "Skip infrastructure validation. Creates migration metadata without resolving credentials or validating gateway/Kubernetes resources. Useful for testing.")
+	migrationInitCmd.Flags().BoolVar(&skipValidate, "skip-validate", false, "Skip credential resolution and destination/Kubernetes resource validation. The initial gateway CR is still read to derive the route mode and bootstrap server id. Useful for testing.")
 
 	_ = migrationInitCmd.MarkFlagRequired("migration-yaml")
 
@@ -282,23 +284,28 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 const matchAllPattern = ".*"
 
 // staticTopicsOf resolves a static route's topic list from its topicGroup entry.
-// Literal topics pass through unchanged. A match-all pattern (.*) leaves the list
-// empty so the Initialize FSM step back-fills every active mirror topic. Any
-// other (non-match-all) pattern on a static route is not yet supported: general
-// static expansion is deferred with the topic-based migration engine.
+// An explicit topics list is authoritative and passes through unchanged
+// regardless of topicPatterns: detectDrift diffs the manifest's literal
+// topics field against this snapshot on every execute, so resolving to
+// anything else here (e.g. back-filling past it) would make that diff a
+// permanent false positive. topicPatterns is only consulted when topics is
+// absent: a match-all pattern (.*) leaves the list empty so the Initialize
+// FSM step back-fills every active mirror topic; any other (non-match-all)
+// pattern is not yet supported on a static route — general pattern expansion
+// is deferred with the topic-based migration engine.
 func staticTopicsOf(entry manifest.TopicGroupEntry) ([]string, error) {
-	if entry.TopicPatterns != nil {
-		for _, p := range *entry.TopicPatterns {
-			if !isMatchAllPattern(p) {
-				return nil, fmt.Errorf("spec.topicGroup: topic-pattern expansion is not yet supported on a static (all-at-once) route — only the match-all pattern %q is; list the topics explicitly instead", matchAllPattern)
-			}
-		}
-		// Match-all selects every active mirror topic: leaving Topics empty makes
-		// the Initialize step back-fill it, subsuming any topics also listed.
-		return []string{}, nil
+	if entry.Topics != nil {
+		return *entry.Topics, nil
 	}
-	// Validate guarantees Topics is non-nil when TopicPatterns is nil.
-	return *entry.Topics, nil
+	// Validate guarantees TopicPatterns is non-nil when Topics is nil.
+	for _, p := range *entry.TopicPatterns {
+		if !isMatchAllPattern(p) {
+			return nil, fmt.Errorf("spec.topicGroup: topic-pattern expansion is not yet supported on a static (all-at-once) route — only the match-all pattern %q is; list the topics explicitly instead", matchAllPattern)
+		}
+	}
+	// Match-all selects every active mirror topic: leaving Topics empty makes
+	// the Initialize step back-fill it.
+	return []string{}, nil
 }
 
 // isMatchAllPattern reports whether p is the documented match-all token.
