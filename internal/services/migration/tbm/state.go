@@ -13,6 +13,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/atomicwrite"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -120,7 +121,7 @@ func (ts *TBMState) WriteToFile(filePath string) error {
 		return fmt.Errorf("failed to marshal tbm state: %w", err)
 	}
 
-	return writeFileAtomic(filePath, data, 0600)
+	return atomicwrite.WriteFile(filePath, data, 0600)
 }
 
 // UpsertMigration adds a new migration or updates an existing one by id.
