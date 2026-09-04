@@ -35,7 +35,7 @@ func (r *reporter) mirror(msg string) {
 }
 
 // section prints a blank line then a cyan banner announcing a major step.
-func (r *reporter) section(msg string) { //nolint:unused // used by orchestrator (Task 3)
+func (r *reporter) section(msg string) {
 	r.printf("\n%s\n", color.CyanString(msg))
 	r.mirror(msg)
 }
@@ -48,12 +48,12 @@ func (r *reporter) success(format string, a ...any) {
 }
 
 // stepDone prints the per-step completion marker.
-func (r *reporter) stepDone() { //nolint:unused // used by orchestrator (Task 3)
+func (r *reporter) stepDone() {
 	r.printf("%s\n", color.GreenString("✅ Done"))
 }
 
 // complete prints the final green completion banner (blank line first).
-func (r *reporter) complete(msg string) { //nolint:unused // used by orchestrator (Task 3)
+func (r *reporter) complete(msg string) {
 	r.printf("\n%s\n", color.GreenString(msg))
 	r.mirror(msg)
 }
