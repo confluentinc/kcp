@@ -31,15 +31,14 @@ const defaultKafkaVersion = "3.6.0"
 // topics/patterns) comes from flags because the working-tree manifest has no
 // spec.topicGroup yet; the connections come from the manifest.
 type reconcileFlags struct {
-	manifestPath      string
-	gatewayConfig     string
-	route             string
-	targetDomain      string
-	topics            []string
-	topicPatterns     []string
-	dryRun            bool
-	outDir            string
-	offsetSyncEnabled bool
+	manifestPath  string
+	gatewayConfig string
+	route         string
+	targetDomain  string
+	topics        []string
+	topicPatterns []string
+	dryRun        bool
+	outDir        string
 }
 
 func NewMigrationReconcileCmd() *cobra.Command {
@@ -77,7 +76,6 @@ The command never mutates the gateway; it only reads and writes local files.`,
 	cmd.Flags().StringSliceVar(&f.topicPatterns, "topic-patterns", nil, "Topic name regex patterns to migrate (comma-separated, repeatable).")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "Render the report but do not write artifacts.")
 	cmd.Flags().StringVar(&f.outDir, "out-dir", ".", "Directory to write the reconciliation artifacts into.")
-	cmd.Flags().BoolVar(&f.offsetSyncEnabled, "offset-sync-enabled", false, "Interim flag: whether the cluster link has consumer offset sync enabled (a live read will replace this later).")
 
 	for _, name := range []string{"migration-yaml", "gateway-config", "route", "target-domain"} {
 		_ = cmd.MarkFlagRequired(name)
@@ -99,7 +97,7 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 
 	gw := providers.NewGatewayFile(f.gatewayConfig, f.route)
 
-	link, err := buildLinkStatusProvider(g, f.offsetSyncEnabled)
+	link, err := buildLinkStatusProvider(g)
 	if err != nil {
 		return err
 	}
@@ -155,7 +153,7 @@ func buildReconcileInput(f reconcileFlags) (reconcile.ReconcileInput, error) {
 // buildLinkStatusProvider mirrors lagcheck.buildLagCheckConfig: the destination
 // REST leg (whichever auth form the manifest resolves) drives the cluster-link
 // service. Topics is empty ⇒ the provider reports every mirror on the link.
-func buildLinkStatusProvider(g *manifest.GatewayMigration, offsetSyncEnabled bool) (migplan.LinkStatusProvider, error) {
+func buildLinkStatusProvider(g *manifest.GatewayMigration) (migplan.LinkStatusProvider, error) {
 	if g.Spec.Target.Kafka == nil {
 		return nil, fmt.Errorf("spec.target.kafka: required")
 	}
@@ -175,7 +173,7 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration, offsetSyncEnabled boo
 		Auth:         restCreds.Authenticator(),
 		Topics:       []string{}, // empty ⇒ all mirrors
 	}
-	return providers.NewClusterLinkStatus(svc, cfg, offsetSyncEnabled), nil
+	return providers.NewClusterLinkStatus(svc, cfg), nil
 }
 
 // buildSourceTopicLister builds the source-cluster topic lister from the

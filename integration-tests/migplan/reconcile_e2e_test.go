@@ -31,7 +31,7 @@ func newLiveEngine(t *testing.T) *migplan.ReconciliationEngine {
 		Topics:       []string{},
 		Auth:         nil,
 	}
-	link := providers.NewClusterLinkStatus(svc, cfg, false)
+	link := providers.NewClusterLinkStatus(svc, cfg)
 
 	return migplan.NewReconciliationEngine(gw, source, target, link)
 }

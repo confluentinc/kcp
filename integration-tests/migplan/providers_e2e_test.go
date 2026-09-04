@@ -93,7 +93,8 @@ func TestTargetTopicListerLive(t *testing.T) {
 
 // TestClusterLinkStatusLive asserts the cluster-link provider reads the real
 // link: three ACTIVE mirrors keyed by SOURCE topic name, the un-mirrored
-// team-b.audit absent from the map, and OffsetSyncEnabled == false.
+// team-b.audit absent from the map, and OffsetSyncEnabled read live from the
+// link's own consumer.offset.sync.enable config (setup.sh leaves it off ⇒ false).
 func TestClusterLinkStatusLive(t *testing.T) {
 	svc := clusterlink.NewConfluentCloudService(http.DefaultClient)
 	cfg := clusterlink.Config{
@@ -106,7 +107,7 @@ func TestClusterLinkStatusLive(t *testing.T) {
 		Auth: nil,
 	}
 
-	ls, err := providers.NewClusterLinkStatus(svc, cfg, false).LinkStatus(context.Background())
+	ls, err := providers.NewClusterLinkStatus(svc, cfg).LinkStatus(context.Background())
 	if err != nil {
 		t.Fatalf("LinkStatus: %v", err)
 	}
