@@ -214,6 +214,9 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		MigrationState:     *migrationState,
 		MigrationConfig:    config,
 		RestCreds:          restCreds,
+		// Reuse the CR already fetched above for mode/id derivation instead
+		// of letting Initialize fetch it again moments later.
+		InitialCrYAML: crYAML,
 	}
 	if err := NewMigrationInitializer(opts).Run(); err != nil {
 		return err
