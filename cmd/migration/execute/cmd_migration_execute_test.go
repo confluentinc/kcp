@@ -48,13 +48,12 @@ spec:
     name: msk-to-cc
   gateway:
     namespace: confluent
-    crs:
-      initial: gateway-initial
-    routes:
-      - name: migration-route
-        streamingDomain:
-          name: confluent-cloud
-          bootstrapServerId: SASL_PLAIN
+    cr-name: gateway-initial
+  topicGroup:
+    - topicPatterns:
+        - '.*'
+      route: migration-route
+      targetStreamingDomain: confluent-cloud
 `
 
 type fixture struct {
@@ -108,6 +107,18 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 	state := migration.NewMigrationState()
 	state.UpsertMigration(cfg)
 	require.NoError(t, state.WriteToFile(f.stateFile))
+}
+
+// explicitTopics swaps the canonical manifest's match-all topicPatterns for a
+// literal topics list, so a drift test can compare an explicit selection.
+func explicitTopics(names ...string) func(string) string {
+	block := "    - topics:\n"
+	for _, n := range names {
+		block += "        - " + n + "\n"
+	}
+	return func(doc string) string {
+		return strings.Replace(doc, "    - topicPatterns:\n        - '.*'\n", block, 1)
+	}
 }
 
 func runExecute(t *testing.T, args ...string) (string, error) {
@@ -266,10 +277,11 @@ func TestDrift_DetectsChangedTopology(t *testing.T) {
 	}
 }
 
-// TestDrift_OmittedTopicsMatchTheExpandedSnapshot is the §13 asymmetry: after
-// the first execute an omitted spec.topics compares against a snapshot back-filled
-// with every active mirror, so "omitted" must equal "whatever was expanded".
-func TestDrift_OmittedTopicsMatchTheExpandedSnapshot(t *testing.T) {
+// TestDrift_MatchAllTopicsMatchTheExpandedSnapshot covers the drift asymmetry:
+// after the first execute a match-all topicGroup selection compares against a
+// snapshot back-filled with every active mirror, so match-all (no literal
+// topics) must equal "whatever was expanded", not an empty list.
+func TestDrift_MatchAllTopicsMatchTheExpandedSnapshot(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.Topics = []string{"anything", "at", "all"}
@@ -278,16 +290,14 @@ func TestDrift_OmittedTopicsMatchTheExpandedSnapshot(t *testing.T) {
 }
 
 func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return doc + "  topics: ['t1.order', 't3.new']\n"
-	})
+	f := newFixture(t, explicitTopics("t1.order", "t3.new"))
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.Topics = []string{"t1.order", "t2.inventory"}
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	joined := strings.Join(drift, " ")
-	assert.Contains(t, joined, "spec.topics")
+	assert.Contains(t, joined, "spec.topicGroup")
 	assert.Contains(t, joined, "1 added")
 	assert.Contains(t, joined, "1 removed")
 }
@@ -295,9 +305,7 @@ func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
 // TestDrift_NeverNamesTopics — counts only. Dumping a topic list into a
 // terminal error is the one thing this project's error copy must not do.
 func TestDrift_NeverNamesTopics(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return doc + "  topics: ['secret-topic-name']\n"
-	})
+	f := newFixture(t, explicitTopics("secret-topic-name"))
 	f.writeState(t, func(c *migration.MigrationConfig) { c.Topics = []string{"other-topic"} })
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	joined := strings.Join(drift, " ")
@@ -305,53 +313,33 @@ func TestDrift_NeverNamesTopics(t *testing.T) {
 	assert.NotContains(t, joined, "other-topic")
 }
 
-// TestDrift_DetectsChangedSwitchoverTarget — editing a fence route's
-// switchover target after init is drift. Unlike the retired file-based
-// switchover CR there is no file to edit or lose, so there is no
-// "unreadable" case either: the target is pure manifest data.
+// TestDrift_DetectsChangedSwitchoverTarget — editing a route's target streaming
+// domain after init is drift. The bootstrap server id is NOT part of the diff:
+// it is derived from the live CR, not authored in the manifest, so there is
+// nothing manifest-side to compare it against.
 func TestDrift_DetectsChangedSwitchoverTarget(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "bootstrapServerId: SASL_PLAIN", "bootstrapServerId: SASL_SCRAM", 1)
+		return strings.Replace(doc, "targetStreamingDomain: confluent-cloud", "targetStreamingDomain: confluent-cloud-2", 1)
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	assert.Contains(t, strings.Join(drift, " "), "switchover targets")
 }
 
-// TestDrift_DetectsChangedRoutes — editing spec.gateway.routes after init is
-// drift, reported as a bare flag: counts/flag only, never route names.
+// TestDrift_DetectsChangedRoutes — a fence-route set that no longer matches the
+// snapshot is drift, reported as a bare flag: counts/flag only, never route
+// names. With one topicGroup entry the change is a snapshot that fenced an extra
+// route the manifest no longer names.
 func TestDrift_DetectsChangedRoutes(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc,
-			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
-			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
-				"      - name: extra-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n", 1)
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.FenceRoutes = []string{"migration-route", "extra-route"}
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	joined := strings.Join(drift, " ")
 	assert.Contains(t, joined, "routes")
 	assert.NotContains(t, joined, "extra-route", "drift output must never name routes")
-}
-
-// TestDrift_ReorderedRoutesIsNotDrift — routes drift as a set, so a reorder of
-// the same names is not a change.
-func TestDrift_ReorderedRoutesIsNotDrift(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc,
-			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
-			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
-				"      - name: second-route\n        streamingDomain:\n          name: confluent-cloud-2\n          bootstrapServerId: SASL_PLAIN\n", 1)
-	})
-	// Snapshot carries the two routes (and their targets) in the opposite order.
-	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.FenceRoutes = []string{"second-route", "migration-route"}
-		c.SwitchoverTargets = []gateway.RouteSwitchoverTarget{
-			{RouteName: "second-route", StreamingDomainName: "confluent-cloud-2", BootstrapServerId: "SASL_PLAIN"},
-			{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
-		}
-	})
-	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
 }
 
 // TestDrift_KubeconfigPathIsNotCompared — for the same reason: execute may

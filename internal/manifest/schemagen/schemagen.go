@@ -121,18 +121,21 @@ func GenerateGateway() ([]byte, error) {
 	// silently inherit that default by leaving it out.
 	policy.Required = []string{"lagThreshold"}
 
-	// crs.switchover is retired (D2): Validate() hard-rejects a manifest that
-	// still sets it, so offering it as a legal-looking key would mislead an
-	// editor into typing something that always fails. Drop it from the schema
-	// entirely, the same call as the kind:Migration-only credentials fields
-	// above.
-	crs := gateway.Properties["crs"]
-	delete(crs.Properties, "switchover")
-	crs.Required = []string{"initial"}
+	// gateway carries only namespace + cr-name; the retired crs/routes shape is
+	// gone from the struct, so reflection no longer emits it.
+	gateway.Required = []string{"namespace", "cr-name"}
 
-	// The streaming domain target's two leaf fields have no omitempty tag, so
-	// the reflected schema already requires them; nothing to patch beyond that.
-	routeItem := gateway.Properties["routes"].Items
+	// spec.topicGroup: each entry pairs a topic selection with its route and
+	// target streaming domain. The item's required set (route,
+	// targetStreamingDomain) reflects from the non-omitempty struct tags; the "at
+	// least one of topics/topicPatterns" rule is not expressible on the struct, so
+	// hand-patch it as an anyOf on the item.
+	topicGroup := spec.Properties["topicGroup"]
+	tgItem := topicGroup.Items
+	tgItem.AnyOf = []*jsonschema.Schema{
+		{Required: []string{"topics"}},
+		{Required: []string{"topicPatterns"}},
+	}
 
 	// Durations parse as "10m", not as an integer count.
 	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
@@ -169,15 +172,13 @@ func GenerateGateway() ([]byte, error) {
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
 
-		crs.Properties["initial"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
+		gateway.Properties["cr-name"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
 
-		gateway.Properties["routes"]:                                            "Route(s) kcp fences and switches over at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced.",
-		routeItem.Properties["name"]:                                            "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR.",
-		routeItem.Properties["streamingDomain"]:                                 "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
-		routeItem.Properties["streamingDomain"].Properties["name"]:              "Name of a streaming domain already declared in the initial CR's spec.streamingDomains.",
-		routeItem.Properties["streamingDomain"].Properties["bootstrapServerId"]: "A bootstrap server id declared on that streaming domain.",
-
-		spec.Properties["topics"]: "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected.",
+		topicGroup:                                 "Pairs the topic selection with the route it migrates and the streaming domain that route switches to. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here.",
+		tgItem.Properties["topics"]:                "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. At least one of topics or topicPatterns is required. If topics is set, it is authoritative and topicPatterns is ignored.",
+		tgItem.Properties["topicPatterns"]:         "Topic selection as a list of anchored full-match regular expressions (RE2). Use ['.*'] to cut over every active mirror topic. At least one of topics or topicPatterns is required. Only consulted when topics is absent; only the match-all pattern is currently supported (union with topics is not yet implemented).",
+		tgItem.Properties["route"]:                 "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced.",
+		tgItem.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init.",
 
 		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",
 		policy.Properties["promoteBatchSize"]:                "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.",
