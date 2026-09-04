@@ -1,0 +1,47 @@
+version: v1.0
+name: static-analysis
+agent:
+  machine:
+    type: s1-prod-ubuntu24-04-amd64-1
+
+execution_time_limit:
+  hours: 1
+
+# Auto-promoted from build-test (see semaphore.yml). Runs on every workflow but
+# reports its own `static-analysis` status check, so a lint or vuln-scan failure
+# is visible without gating the merge of the build-test pipeline.
+global_job_config:
+  prologue:
+    commands:
+      - sem-version node 24.6.0
+      - npm install -g yarn@1.22.22
+      - sem-version go 1.26.7
+      - export "GOPATH=$(go env GOPATH)"
+      - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
+      - export "PATH=${GOPATH}/bin:${PATH}"
+      - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
+      - checkout
+
+blocks:
+  - name: 'static analysis'
+    dependencies: []
+    task:
+      env_vars:
+        - name: TRIVY_DB_REPOSITORIES
+          value: 'ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db'
+      prologue:
+        commands:
+          - cache restore frontend-dependencies
+          - cache restore go-mod-cache
+          - cache restore go-build-cache
+          - cd cmd/ui/frontend && yarn install && yarn build && cd -
+      jobs:
+        - name: 'golangci-lint'
+          commands:
+            - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.3/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.3
+            - git fetch origin main
+            - golangci-lint run --config .golangci.yml ./...
+
+        - name: 'trivy scan'
+          commands:
+            - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
