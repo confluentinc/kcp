@@ -128,6 +128,10 @@ func (rt *RulesTree) PrependCondition(topics []string, domain string) {
 	routing["conditions"] = append([]any{entry}, existing...)
 }
 
+// Serialize renders the artifact as the whole hot-reloadable `rules` subtree,
+// wrapped under a top-level `rules:` key — the KCP-patched subtree the gateway
+// consumes (see Gateway Dynamic Routing Configuration). The FSM applies it as a
+// whole-subtree replacement of the route's `rules`.
 func (rt *RulesTree) Serialize() ([]byte, error) {
-	return yaml.Marshal(rt.root)
+	return yaml.Marshal(map[string]any{"rules": rt.root})
 }

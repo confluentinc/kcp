@@ -76,6 +76,15 @@ func TestEngineHappyPathLive(t *testing.T) {
 	t.Logf("fence-rules.yaml:\n%s", fence)
 	t.Logf("switchover-rules.yaml:\n%s", switchover)
 
+	// Both artifacts must be the whole `rules` subtree, wrapped under a
+	// top-level rules: key (the hot-reloadable, KCP-patched subtree the
+	// gateway consumes).
+	for _, a := range []struct{ name, body string }{{"FenceRules", fence}, {"SwitchoverRules", switchover}} {
+		if !strings.HasPrefix(strings.TrimSpace(a.body), "rules:") {
+			t.Errorf("%s must be wrapped under a top-level rules: key:\n%s", a.name, a.body)
+		}
+	}
+
 	for _, topic := range wantTopics {
 		if !strings.Contains(fence, topic) {
 			t.Errorf("FenceRules missing topic %q:\n%s", topic, fence)

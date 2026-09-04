@@ -17,7 +17,13 @@ func fencingSection(t *testing.T, raw []byte) string {
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("unmarshal rules block: %v", err)
 	}
-	b, err := yaml.Marshal(doc["fencing"])
+	// The artifact is the whole `rules` subtree, wrapped under a top-level
+	// rules: key — navigate into it before isolating fencing.
+	rules, ok := doc["rules"].(map[string]any)
+	if !ok {
+		t.Fatalf("serialized artifact must have a top-level rules: key, got: %s", raw)
+	}
+	b, err := yaml.Marshal(rules["fencing"])
 	if err != nil {
 		t.Fatalf("marshal fencing section: %v", err)
 	}
