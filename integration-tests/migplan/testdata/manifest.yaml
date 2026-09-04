@@ -1,0 +1,45 @@
+# GatewayMigration manifest for the migplan command-level e2e (the plaintext
+# docker env). It stands in for Omar's declared migration intent: the connection
+# topology plus (via the reconcile command's interim selector flags) which topics
+# move where. Plaintext everywhere; the unauthenticated cp-server REST ignores the
+# bogus `basic` restCredentials block (the schema has no unauthenticated-REST form).
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: migplan-e2e
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - localhost:19092
+    credentials:
+      unauthenticated_plaintext: {}
+
+  target:
+    type: confluent-platform
+    clusterId: LKsbYRvfTM-TVXKjdjgdxA
+    kafka:
+      bootstrapServers:
+        - localhost:29092
+      restEndpoint: http://localhost:28090
+      credentials:
+        unauthenticated_plaintext: {}
+      restCredentials:
+        basic:
+          username: ignored
+          password: ignored
+
+  clusterLink:
+    name: migplan-link
+
+  # Not read by `migration reconcile` (it uses --gateway-config), but the manifest
+  # still validates the gateway section. Minimal satisfying values.
+  gateway:
+    namespace: confluent
+    crs:
+      initial: migplan-e2e
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: cc
+          bootstrapServerId: PLAINTEXT

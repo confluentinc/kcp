@@ -1,6 +1,9 @@
 package reconcile
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestClassify(t *testing.T) {
 	cases := []struct {
@@ -28,6 +31,76 @@ func TestClassify(t *testing.T) {
 			}
 			if c.wantReasonHas != "" && !contains(v.Reason, c.wantReasonHas) {
 				t.Fatalf("reason = %q, want it to contain %q", v.Reason, c.wantReasonHas)
+			}
+		})
+	}
+}
+
+// TestClassifyExhaustive pins EVERY cell of the input space — onSource(2) ×
+// onTarget(2) × mirror(4) × routesToTarget(2) = 32 combinations — to its exact
+// verdict. This locks not just the eight outcomes but the first-match ORDERING
+// of the switch (e.g. F6-before-F3, F1-before-F5, the Stopped∧onTarget Unchanged
+// quirk) against future edits. The one cell that reaches the `default` arm
+// (onSource, Stopped, routes-to-target, NOT on target — promoted+switched yet
+// absent on target) is asserted here so that reachable inconsistency stays
+// classified as fail-fast rather than silently changing shape.
+func TestClassifyExhaustive(t *testing.T) {
+	const F, T = false, true
+	type cell struct {
+		onSource, onTarget bool
+		mirror             MirrorState
+		routesToTarget     bool
+		want               Verdict
+		reasonHas          string
+	}
+	cells := []cell{
+		// onSource = false — nothing to migrate; case order still matters.
+		{F, F, MirrorNone, F, FailFast, "F4"},
+		{F, F, MirrorNone, T, FailFast, "F4"},
+		{F, F, MirrorActive, F, FailFast, "F4"},
+		{F, F, MirrorActive, T, FailFast, "F1"},
+		{F, F, MirrorStopped, F, FailFast, "F2"},
+		{F, F, MirrorStopped, T, FailFast, "F4"},
+		{F, F, MirrorBad, F, FailFast, "F5"},
+		{F, F, MirrorBad, T, FailFast, "F5"},
+		{F, T, MirrorNone, F, FailFast, "F4"},
+		{F, T, MirrorNone, T, FailFast, "F4"},
+		{F, T, MirrorActive, F, FailFast, "F4"},
+		{F, T, MirrorActive, T, FailFast, "F1"},
+		{F, T, MirrorStopped, F, FailFast, "F2"},
+		{F, T, MirrorStopped, T, Unchanged, ""}, // case2 matches even without source presence
+		{F, T, MirrorBad, F, FailFast, "F5"},
+		{F, T, MirrorBad, T, FailFast, "F5"},
+		// onSource = true.
+		{T, F, MirrorNone, F, FailFast, "F3"},
+		{T, F, MirrorNone, T, FailFast, "F3"},
+		{T, F, MirrorActive, F, Migratable, ""},
+		{T, F, MirrorActive, T, FailFast, "F1"},
+		{T, F, MirrorStopped, F, FailFast, "F2"},
+		{T, F, MirrorStopped, T, FailFast, "unclassified"}, // the reachable default arm
+		{T, F, MirrorBad, F, FailFast, "F5"},
+		{T, F, MirrorBad, T, FailFast, "F5"},
+		{T, T, MirrorNone, F, FailFast, "F6"},
+		{T, T, MirrorNone, T, FailFast, "F6"},
+		{T, T, MirrorActive, F, Migratable, ""},
+		{T, T, MirrorActive, T, FailFast, "F1"},
+		{T, T, MirrorStopped, F, FailFast, "F2"},
+		{T, T, MirrorStopped, T, Unchanged, ""},
+		{T, T, MirrorBad, F, FailFast, "F5"},
+		{T, T, MirrorBad, T, FailFast, "F5"},
+	}
+	if len(cells) != 32 {
+		t.Fatalf("table must enumerate all 32 combinations, got %d", len(cells))
+	}
+	for _, c := range cells {
+		name := fmt.Sprintf("S=%v/T=%v/M=%s/R=%v", c.onSource, c.onTarget, c.mirror, c.routesToTarget)
+		t.Run(name, func(t *testing.T) {
+			v := Classify("topic", c.onSource, c.onTarget, c.mirror, c.routesToTarget)
+			if v.Verdict != c.want {
+				t.Fatalf("verdict = %v (%q), want %v", v.Verdict, v.Reason, c.want)
+			}
+			if !contains(v.Reason, c.reasonHas) {
+				t.Fatalf("reason = %q, want it to contain %q", v.Reason, c.reasonHas)
 			}
 		})
 	}

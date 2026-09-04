@@ -183,3 +183,65 @@ func TestReconcileNoopWhenAllUnchanged(t *testing.T) {
 		t.Fatal("an all-Unchanged batch (nothing migratable) must emit no artifacts")
 	}
 }
+
+// TestReconcileWiresExplodeError proves the P2 selector-explosion error is
+// surfaced through Reconcile (not just by Explode in isolation): a syntactically
+// invalid --topic-pattern must land as a failed "selector patterns compile"
+// precondition, refuse the run, and emit no artifacts.
+func TestReconcileWiresExplodeError(t *testing.T) {
+	gw := dynGateway()
+	// "[" anchors to ^(?:[)$ — an unterminated character class, a compile error.
+	in := ReconcileInput{TopicPatterns: []string{"["}, Route: "migration-route", TargetDomain: "cc"}
+
+	p := Reconcile(in, gw, []string{"team-a.orders"}, nil, map[string]MirrorState{}, false)
+
+	if !p.Report.Refused() {
+		t.Fatal("a bad selector pattern must refuse the run")
+	}
+	if p.Artifacts != nil {
+		t.Fatal("a refused run must emit no artifacts")
+	}
+	found := false
+	for _, pc := range p.Report.Preconditions {
+		if pc.Name == "selector patterns compile" && !pc.OK {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a failed %q precondition, got %+v", "selector patterns compile", p.Report.Preconditions)
+	}
+}
+
+// TestReconcileEmitsShadowWarning covers I10: when a migratable topic also
+// appears in one of the operator's existing EXACT-name routing conditions, the
+// prepend shadows it, and the run must WARN (never remove the operator's entry).
+// The topic still migrates — the warning is advisory, not a refusal.
+func TestReconcileEmitsShadowWarning(t *testing.T) {
+	gw := dynGateway()
+	// Operator already routes team-a.orders to the source domain by exact name.
+	// Migrating it prepends an exact ->cc condition that shadows this entry.
+	gw.Route.Rules = map[string]any{"routing": map[string]any{
+		"coordination": map[string]any{"group": "msk"},
+		"conditions":   []any{map[string]any{"topics": []any{"team-a.orders"}, "streamingDomain": "msk"}},
+		"default":      "msk",
+	}}
+	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "cc"}
+	source := []string{"team-a.orders"}
+	target := []string{"team-a.orders"}
+	mirrors := map[string]MirrorState{"team-a.orders": MirrorActive}
+
+	p := Reconcile(in, gw, source, target, mirrors, false)
+
+	if p.Report.Refused() {
+		t.Fatalf("a shadowing migration must warn, not refuse: %+v", p.Report)
+	}
+	if p.Artifacts == nil {
+		t.Fatal("the topic still migrates — artifacts must be emitted")
+	}
+	if len(p.Report.Warnings) == 0 {
+		t.Fatal("expected a shadow warning, got none")
+	}
+	if !strings.Contains(p.Report.Warnings[0], "team-a.orders") || !strings.Contains(p.Report.Warnings[0], "shadowed") {
+		t.Fatalf("shadow warning must name the shadowed topic, got %q", p.Report.Warnings[0])
+	}
+}
