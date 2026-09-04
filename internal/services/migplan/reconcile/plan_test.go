@@ -16,7 +16,7 @@ func TestReportRefused(t *testing.T) {
 	if ok.Refused() {
 		t.Fatal("report with only migratable+unchanged must not be refused")
 	}
-	ff := Report{FailFast: []TopicVerdict{{Topic: "c", Reason: "F3"}}}
+	ff := Report{FailFast: []TopicVerdict{{Topic: "c", Reason: "not on the cluster link"}}}
 	if !ff.Refused() {
 		t.Fatal("report with a fail-fast topic must be refused")
 	}

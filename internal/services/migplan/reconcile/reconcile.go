@@ -12,14 +12,17 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 
 	report := Report{}
 
-	// P1 — preconditions
+	// Run-level gate: the route must be a dynamic route bound to exactly the
+	// source and target domains, with coordination pinned to source and offset
+	// sync off. A failure here stops the run before any per-topic work.
 	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled)
 	report.Preconditions = pcs
 	if !ok {
 		return &Plan{Report: report}
 	}
 
-	// P2 — explode
+	// Resolve the selector (exact names + patterns) to concrete topic names by
+	// matching it against the live source topics.
 	batch, err := Explode(in.Topics, in.TopicPatterns, sourceTopics)
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("selector patterns compile", err.Error()))
@@ -29,7 +32,8 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	srcSet := toSet(sourceTopics)
 	tgtSet := toSet(targetTopics)
 
-	// P3 — verdicts
+	// Classify each resolved topic against source/target presence, mirror state
+	// and current routing.
 	var migratable []string
 	for _, topic := range batch {
 		_, onSource := srcSet[topic]
@@ -50,11 +54,13 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 		}
 	}
 
-	// P5 — shadow warnings (I10): a prepended exact entry that shadows an
-	// operator's existing EXACT entry for the same topic.
+	// Warn when a topic we are about to migrate already appears in an
+	// operator-authored exact-name routing condition: our prepended entry will
+	// shadow theirs. Advisory only — we never remove the operator's condition.
 	report.Warnings = append(report.Warnings, shadowWarnings(migratable, view.Conditions)...)
 
-	// P4 — refusal gate
+	// Refusal gate: any failed precondition or fail-fast topic means we emit no
+	// artifacts at all (all-or-nothing).
 	if report.Refused() {
 		return &Plan{Report: report}
 	}
@@ -62,7 +68,8 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 		return &Plan{Report: report} // nothing to do; artifacts nil (no-op)
 	}
 
-	// P5 — build artifacts from ONE pristine tree
+	// Build both artifacts from one pristine copy of the operator's rules, so the
+	// fence and switchover derive independently from the same baseline.
 	base, _ := ParseRules(gw.Route.Rules)
 	fence := base.Clone()
 	fence.PrependFence(migratable)
@@ -72,7 +79,7 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	fenceBytes, _ := fence.Serialize()
 	switchBytes, _ := switchover.Serialize()
 
-	// P6 — size guardrail (measure the larger of the two)
+	// Guardrail: refuse if either serialized rules block exceeds the size limit.
 	if len(fenceBytes) > MaxRulesBytes || len(switchBytes) > MaxRulesBytes {
 		report.Preconditions = append(report.Preconditions, fail("rules block within size limit",
 			fmt.Sprintf("rules block is %d bytes (> %d) — narrow the selector or migrate a smaller batch", max(len(fenceBytes), len(switchBytes)), MaxRulesBytes)))

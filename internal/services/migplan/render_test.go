@@ -21,7 +21,7 @@ func TestRenderReport(t *testing.T) {
 		},
 		Migratable: []reconcile.TopicVerdict{{Topic: "orders"}},
 		Unchanged:  []reconcile.TopicVerdict{{Topic: "legacy"}},
-		FailFast:   []reconcile.TopicVerdict{{Topic: "broken", Reason: "F3: not on the cluster link"}},
+		FailFast:   []reconcile.TopicVerdict{{Topic: "broken", Reason: "not on the cluster link"}},
 		Warnings:   []string{"shadowed condition for x"},
 	}
 	var buf bytes.Buffer
@@ -29,7 +29,7 @@ func TestRenderReport(t *testing.T) {
 	out := buf.String()
 	for _, want := range []string{
 		"route is dynamic", "offset sync disabled", "sync is enabled",
-		"orders", "legacy", "broken", "F3: not on the cluster link", "shadowed condition for x",
+		"orders", "legacy", "broken", "not on the cluster link", "shadowed condition for x",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report output missing %q; got:\n%s", want, out)

@@ -77,7 +77,7 @@ The command never mutates the gateway; it only reads and writes local files.`,
 	cmd.Flags().StringSliceVar(&f.topicPatterns, "topic-patterns", nil, "Topic name regex patterns to migrate (comma-separated, repeatable).")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "Render the report but do not write artifacts.")
 	cmd.Flags().StringVar(&f.outDir, "out-dir", ".", "Directory to write the reconciliation artifacts into.")
-	cmd.Flags().BoolVar(&f.offsetSyncEnabled, "offset-sync-enabled", false, "Interim flag: whether the cluster link has consumer offset sync enabled (live read lands in Phase C).")
+	cmd.Flags().BoolVar(&f.offsetSyncEnabled, "offset-sync-enabled", false, "Interim flag: whether the cluster link has consumer offset sync enabled (a live read will replace this later).")
 
 	for _, name := range []string{"migration-yaml", "gateway-config", "route", "target-domain"} {
 		_ = cmd.MarkFlagRequired(name)

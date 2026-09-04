@@ -128,7 +128,7 @@ func TestEngineFailFastLive(t *testing.T) {
 
 	reason := plan.Report.FailFast[0].Reason
 	t.Logf("fail-fast: %s -> %s", plan.Report.FailFast[0].Topic, reason)
-	// F3 reason: "... is not on the cluster link — start mirroring it first"
+	// reason reads: "<topic> is not on the cluster link"
 	if !strings.Contains(reason, "cluster link") {
 		t.Errorf("fail-fast reason should mention the cluster link, got %q", reason)
 	}

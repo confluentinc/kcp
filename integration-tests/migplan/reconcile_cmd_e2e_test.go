@@ -18,18 +18,20 @@ import (
 // TestReconcileCommandArtifactsReflectManifest drives the WHOLE user-facing path
 // — the real `kcp migration reconcile` cobra command: manifest load → live
 // providers → engine → WriteArtifacts to disk — against the docker env, then
-// asserts the three written artifacts faithfully encode Omar's declared intent:
+// asserts the three written artifacts faithfully encode the operator's declared
+// intent from the manifest:
 //
-//   - topics.json is the resolved selector (the FSM's promote list);
+//   - topics.json is the resolved selector (the promote list the caller feeds to
+//     cluster-link promotion);
 //   - both rules artifacts are wrapped under a top-level rules: key;
 //   - the fence artifact fences exactly the selected batch;
 //   - the switchover artifact routes exactly that batch to the manifest's
 //     target streaming-domain (cc), and nothing else.
 //
-// This is the validation that the artifacts REFLECT the manifest change. Whether
-// they APPLY correctly against a running gateway (routing actually flips) is C3,
-// deferred until the TBR gateway image is available — a static gateway fixture
-// cannot observe applied routing.
+// This validates that the artifacts REFLECT the manifest change. Whether they
+// APPLY correctly against a running gateway (routing actually flips) is not
+// covered here — a static gateway fixture cannot observe applied routing; that
+// needs a live topic-based-routing gateway.
 func TestReconcileCommandArtifactsReflectManifest(t *testing.T) {
 	out := t.TempDir()
 
@@ -50,7 +52,7 @@ func TestReconcileCommandArtifactsReflectManifest(t *testing.T) {
 
 	want := []string{"billing-v2", "team-a.orders", "team-a.payments"} // sorted
 
-	// topics.json — the promote list the FSM feeds to cluster-link promotion.
+	// topics.json — the promote list the caller feeds to cluster-link promotion.
 	var topics []string
 	readJSON(t, filepath.Join(out, "topics.json"), &topics)
 	if !reflect.DeepEqual(topics, want) {

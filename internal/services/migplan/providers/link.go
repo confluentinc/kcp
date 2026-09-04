@@ -19,8 +19,9 @@ var _ migplan.LinkStatusProvider = (*ClusterLinkStatus)(nil)
 // topic name) and its offset-sync setting. It implements migplan.LinkStatusProvider.
 //
 // offsetSyncEnabled is supplied by the caller: the clusterlink service on this
-// branch exposes no read for the link's consumer.offset.sync.enable config. A
-// live DescribeLinkConfigs read is added in Phase C.
+// branch exposes no read for the link's consumer.offset.sync.enable config, so
+// the value is passed in rather than read live. Reading it live (via a link
+// config describe) is a later addition.
 type ClusterLinkStatus struct {
 	svc               mirrorLister
 	cfg               clusterlink.Config

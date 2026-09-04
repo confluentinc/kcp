@@ -26,7 +26,7 @@ func fail(name, detail string) PreconditionResult {
 	return PreconditionResult{Name: name, OK: false, Detail: detail}
 }
 
-// CheckPreconditions runs the dynamic-route (TBM) run-level checks. ok is true
+// CheckPreconditions runs the dynamic-route run-level checks. ok is true
 // only if every check passed; on success view carries the resolved domains.
 func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled bool) ([]PreconditionResult, RouteView, bool) {
 	var res []PreconditionResult

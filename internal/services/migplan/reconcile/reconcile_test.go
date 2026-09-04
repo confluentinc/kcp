@@ -112,7 +112,7 @@ func TestReconcileRefusesOnPrecondition(t *testing.T) {
 	}
 }
 
-// TestReconcileRefusesOnOversizedRules exercises the P6 size guardrail: a
+// TestReconcileRefusesOnOversizedRules exercises the size guardrail: a
 // migratable batch large enough that the serialized rules block exceeds
 // MaxRulesBytes (512*1024) must refuse with no artifacts, not silently emit
 // an oversized rules file.
@@ -184,7 +184,7 @@ func TestReconcileNoopWhenAllUnchanged(t *testing.T) {
 	}
 }
 
-// TestReconcileWiresExplodeError proves the P2 selector-explosion error is
+// TestReconcileWiresExplodeError proves the selector-explosion error is
 // surfaced through Reconcile (not just by Explode in isolation): a syntactically
 // invalid --topic-pattern must land as a failed "selector patterns compile"
 // precondition, refuse the run, and emit no artifacts.
@@ -212,10 +212,10 @@ func TestReconcileWiresExplodeError(t *testing.T) {
 	}
 }
 
-// TestReconcileEmitsShadowWarning covers I10: when a migratable topic also
-// appears in one of the operator's existing EXACT-name routing conditions, the
-// prepend shadows it, and the run must WARN (never remove the operator's entry).
-// The topic still migrates — the warning is advisory, not a refusal.
+// TestReconcileEmitsShadowWarning: when a migratable topic also appears in one of
+// the operator's existing EXACT-name routing conditions, the prepend shadows it,
+// and the run must WARN (never remove the operator's entry). The topic still
+// migrates — the warning is advisory, not a refusal.
 func TestReconcileEmitsShadowWarning(t *testing.T) {
 	gw := dynGateway()
 	// Operator already routes team-a.orders to the source domain by exact name.
