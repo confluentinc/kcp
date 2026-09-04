@@ -1,0 +1,28 @@
+# Static gateway CR fixture for the migplan engine integration test.
+#
+# The engine reaches the live Kafka clusters + cluster link through the
+# providers, NOT through this file — this only supplies the routing rules the
+# reconcile core reasons over. Domain names are arbitrary labels:
+#   msk = source streaming domain, cc = target streaming domain.
+#
+# The route is dynamic, binds exactly two domains, pins coordination.group to
+# the source domain (msk), and defaults routing to the source (msk) so that a
+# not-yet-migrated topic routes to source (a precondition for MIGRATABLE).
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-e2e
+spec:
+  routes:
+    - name: migration-route
+      mode: dynamic
+      streamingDomains:
+        - name: msk
+          bootstrapServers: localhost:19092
+        - name: cc
+          bootstrapServers: localhost:29092
+      rules:
+        routing:
+          coordination:
+            group: msk
+          default: msk
