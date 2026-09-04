@@ -189,10 +189,11 @@ migrates and the target streaming domain that route switches to.
 | `route`                 | string     | yes      | A `spec.routes[].name` in the initial CR to fence and switch over. Must be non-blank and exist in the CR.                                                 |
 | `targetStreamingDomain` | string     | yes      | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`.                          |
 
-**At least one of `topics` / `topicPatterns` is required** (both may be set —
-their union is used). There is no omit-`topics`-means-all default anymore: to
-migrate every active mirror topic, write an explicit match-all pattern,
-`topicPatterns: ['.*']`.
+**At least one of `topics` / `topicPatterns` is required.** If `topics` is set
+it is authoritative — `topicPatterns` is ignored. There is no
+omit-`topics`-means-all default anymore: to migrate every active mirror topic,
+write an explicit match-all pattern, `topicPatterns: ['.*']`, with `topics`
+absent.
 
 The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
 — is **not** declared here; kcp reads it from the live CR's route binding at
@@ -200,9 +201,11 @@ The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR at `init`, not written in
 the manifest. (Topic-based/dynamic routes are not yet implemented; a route that
-resolves to dynamic is refused at `init`. On a static route, only the match-all
-pattern is expanded — any other pattern is refused until general expansion
-lands.)
+resolves to dynamic is refused at `init`. On a static route, `topicPatterns` is
+only consulted when `topics` is absent, and only the match-all pattern is
+expanded — any other pattern is refused, and a union with `topics` isn't
+implemented, until general pattern expansion lands alongside the topic-based
+migration engine.)
 
 `lag-check` ignores the topic selection entirely and always watches every mirror
 topic.

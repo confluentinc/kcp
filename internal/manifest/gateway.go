@@ -333,22 +333,12 @@ func validateTopicGroup(entries []TopicGroupEntry) []error {
 		add("spec.topicGroup[0]: at least one of topics or topicPatterns is required")
 	}
 	if e.Topics != nil {
-		if len(*e.Topics) == 0 {
-			add("spec.topicGroup[0].topics: must not be an empty list")
-		}
-		for i, name := range *e.Topics {
-			if blank(name) {
-				add("spec.topicGroup[0].topics[%d]: must not be blank", i)
-			}
-		}
+		errs = append(errs, validateSelection("spec.topicGroup[0].topics", *e.Topics)...)
 	}
 	if e.TopicPatterns != nil {
-		if len(*e.TopicPatterns) == 0 {
-			add("spec.topicGroup[0].topicPatterns: must not be an empty list")
-		}
+		errs = append(errs, validateSelection("spec.topicGroup[0].topicPatterns", *e.TopicPatterns)...)
 		for i, pat := range *e.TopicPatterns {
 			if blank(pat) {
-				add("spec.topicGroup[0].topicPatterns[%d]: must not be blank", i)
 				continue
 			}
 			if _, err := anchoredPattern(pat); err != nil {
