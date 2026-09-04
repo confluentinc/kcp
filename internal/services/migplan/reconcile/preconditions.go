@@ -40,13 +40,13 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 	if rc.Mode == "dynamic" {
 		res = append(res, pass("route is dynamic"))
 	} else {
-		res = append(res, fail("route is dynamic", fmt.Sprintf("route %q is %q; this engine handles dynamic routes only", rc.Name, rc.Mode)))
+		res = append(res, fail("route is dynamic", fmt.Sprintf("route %q is %q; only dynamic (topic-based) routes are currently supported", rc.Name, rc.Mode)))
 	}
 
 	if len(rc.BoundDomains) == 2 {
 		res = append(res, pass("route binds exactly two domains"))
 	} else {
-		res = append(res, fail("route binds exactly two domains", fmt.Sprintf("route binds %d domains %v; v1 requires exactly two", len(rc.BoundDomains), rc.BoundDomains)))
+		res = append(res, fail("route binds exactly two domains", fmt.Sprintf("route binds %d domains %v; a migration route must bind exactly two (source and target)", len(rc.BoundDomains), rc.BoundDomains)))
 	}
 
 	bound := false

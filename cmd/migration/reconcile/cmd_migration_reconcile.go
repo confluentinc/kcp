@@ -120,7 +120,17 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 		return err
 	}
 
-	migplan.RenderReport(cmd.OutOrStdout(), plan.Report)
+	verbose, _ := cmd.Flags().GetBool("verbose")
+	note := "artifacts → " + f.outDir
+	if f.dryRun {
+		note = "dry-run — not written"
+	}
+	migplan.RenderReport(cmd.OutOrStdout(), plan.Report, migplan.RenderView{
+		Route:        in.Route,
+		TargetDomain: in.TargetDomain,
+		Verbose:      verbose,
+		ArtifactNote: note,
+	})
 
 	if !f.dryRun && plan.Artifacts != nil {
 		if err := migplan.WriteArtifacts(f.outDir, plan.Artifacts); err != nil {
