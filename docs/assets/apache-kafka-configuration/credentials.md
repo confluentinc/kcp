@@ -9,6 +9,8 @@ hand-author an `apache-kafka-credentials.yaml` describing how `kcp` should conne
 your cluster(s). It is consumed by [`kcp scan clusters --source-type apache-kafka`](../command-reference/scan/clusters.md)
 and any downstream `kcp create-asset` commands that target an Apache Kafka source.
 
+This covers self-managed Apache Kafka, Confluent Platform, and other Kafka-API-compatible distributions.
+
 For comparison, the MSK equivalent (`msk-credentials.yaml`) is generated for
 you by [`kcp discover`](../command-reference/discover.md) — there is no MSK
 counterpart to this file because MSK metadata comes from the AWS APIs.
