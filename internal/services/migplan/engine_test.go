@@ -64,12 +64,28 @@ func TestEngineRunHappyPath(t *testing.T) {
 	}
 }
 
+// TestEngineRunProviderErrorIsError proves that a failure in ANY of the four
+// providers surfaces as a Go error (an I/O failure the caller must handle), never
+// swallowed into a feasibility refusal — a refusal means "read everything, the
+// plan is infeasible", which is a different outcome from "could not read".
 func TestEngineRunProviderErrorIsError(t *testing.T) {
-	eng := NewReconciliationEngine(
-		&fakeGateway{err: errors.New("k8s down")},
-		&fakeLister{}, &fakeLister{}, &fakeLink{},
-	)
-	if _, err := eng.Run(context.Background(), reconcile.ReconcileInput{}); err == nil {
-		t.Fatal("a provider I/O error must be returned as a Go error, not swallowed into a plan")
+	boom := errors.New("boom")
+	okLink := &fakeLink{ls: &LinkStatus{Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorActive}}}
+	cases := []struct {
+		name string
+		eng  *ReconciliationEngine
+	}{
+		{"gateway", NewReconciliationEngine(&fakeGateway{err: boom}, &fakeLister{}, &fakeLister{}, okLink)},
+		{"source", NewReconciliationEngine(&fakeGateway{gw: dynGatewayConfig()}, &fakeLister{err: boom}, &fakeLister{}, okLink)},
+		{"target", NewReconciliationEngine(&fakeGateway{gw: dynGatewayConfig()}, &fakeLister{}, &fakeLister{err: boom}, okLink)},
+		{"link", NewReconciliationEngine(&fakeGateway{gw: dynGatewayConfig()}, &fakeLister{}, &fakeLister{}, &fakeLink{err: boom})},
+	}
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if _, err := c.eng.Run(context.Background(), in); err == nil {
+				t.Fatalf("a %s-provider error must be returned as a Go error, not swallowed into a plan", c.name)
+			}
+		})
 	}
 }
