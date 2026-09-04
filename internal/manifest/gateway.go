@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,11 +52,11 @@ type GatewaySpec struct {
 	Target      GatewayTarget      `yaml:"target" json:"target"`
 	ClusterLink GatewayClusterLink `yaml:"clusterLink" json:"clusterLink"`
 	Gateway     Gateway            `yaml:"gateway" json:"gateway"`
-	// Topics is a flat list of LITERAL topic names, exact-matched against the
-	// link's active mirror topics — not globs. A pointer so that omitted ("every
-	// active mirror topic") stays distinguishable from an explicitly empty list,
-	// which means the opposite and is rejected.
-	Topics *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
+	// TopicGroup pairs a topic selection (literal names and/or anchored regex
+	// patterns) with the route it migrates and the target streaming domain that
+	// route switches to. Exactly one entry today. The bootstrap server id and the
+	// migration mode are not carried here: both are read from the live CR at init.
+	TopicGroup []TopicGroupEntry `yaml:"topicGroup" json:"topicGroup"`
 	// DefaultPolicies is read fresh on every execute and never snapshotted, which
 	// is what lets a caller vary execute-time policy between init and execute.
 	// Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
@@ -85,72 +86,31 @@ type GatewayClusterLink struct {
 	PauseConsumerOffsetSync bool   `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
 }
 
+// TopicGroupEntry pairs a topic selection with the route it migrates and the
+// target streaming domain that route switches to. The field set is identical
+// for the static (all-at-once) and dynamic (topic-based) modes.
+//
+// Topics and TopicPatterns are pointers so nil (omitted) stays distinct from []
+// (present but empty, rejected). At least one of the two must be set. There is
+// no bootstrapServerId or mode field: both are read from the live CR at init.
+type TopicGroupEntry struct {
+	Topics                *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
+	TopicPatterns         *[]string `yaml:"topicPatterns,omitempty" json:"topicPatterns,omitempty"`
+	Route                 string    `yaml:"route" json:"route"`
+	TargetStreamingDomain string    `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
+}
+
 type Gateway struct {
 	Namespace string `yaml:"namespace" json:"namespace"`
 	// Kubeconfig is the one field in the manifest where a leading ~/ is
 	// expanded — nothing else in the repo expands ~, and client-go's loader
 	// does not either.
-	Kubeconfig string     `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
-	CRs        GatewayCRs `yaml:"crs" json:"crs"`
-	// Routes names the route(s) kcp fences and switches over at cutover, each
-	// paired with the streaming domain it switches to. There is no fenced-CR
-	// or switchover-CR file: kcp reads the live initial CR, injects the fence
-	// block onto each named route to block traffic, and — derived the same
-	// way from the same live CR — later flips each route's streamingDomain to
-	// its declared target. Fence and its rollback (which re-applies the same
-	// initial CR) are therefore exact inverses, and there is no second list
-	// to keep in sync with this one (D1).
-	Routes []GatewayRoute `yaml:"routes" json:"routes"`
-}
-
-// GatewayCRs holds the gateway CR the migration reads live, plus a detector
-// for the retired switchover-file field.
-type GatewayCRs struct {
-	// Initial is a Kubernetes object NAME, read live from the cluster at init.
-	Initial string `yaml:"initial" json:"initial"`
-	// Switchover is retired (D2): the switchover CR is now a derived inline
-	// update to the initial CR (see Gateway.Routes), not an operator-authored
-	// file. This field stays as a plain string ONLY so Validate can detect a
-	// manifest that still sets it and reject with a migration hint — goccy
-	// silently drops unknown keys, so removing the field outright would turn a
-	// stale manifest into a silent no-op instead of a loud, actionable error.
-	// Nothing else reads it.
-	Switchover string `yaml:"switchover,omitempty" json:"switchover,omitempty"`
-}
-
-// GatewayRoute is one route kcp fences and switches over at cutover, paired
-// with the streaming domain it switches to. The pairing is structural (D4): a
-// route cannot be named here without also declaring where it switches,
-// because the FSM only supports init -> fence -> switch, with no
-// fence-without-switch path. Each entry must have a non-blank, unique route
-// name that exists in the initial CR, and a non-blank streaming domain
-// target.
-//
-// Because the route's security.cluster already carries pre-staged
-// ("redundant") auth for the target domain, the switch is a plain field flip
-// with no secret or auth change (see checkRedundantAuthStaged, which proves
-// that staging holds before any route is fenced).
-type GatewayRoute struct {
-	Name            string                    `yaml:"name" json:"name"`
-	StreamingDomain GatewayStreamingDomainRef `yaml:"streamingDomain" json:"streamingDomain"`
-}
-
-// GatewayStreamingDomainRef names a streaming domain declared in the gateway
-// CR's spec.streamingDomains, and the bootstrap server id on that domain to
-// bind the route to.
-type GatewayStreamingDomainRef struct {
-	Name              string `yaml:"name" json:"name"`
-	BootstrapServerId string `yaml:"bootstrapServerId" json:"bootstrapServerId"`
-}
-
-// RouteNames projects the gateway's routes to their plain names, the shape the
-// rest of kcp (state snapshots, drift detection) has always worked with.
-func (g Gateway) RouteNames() []string {
-	names := make([]string, len(g.Routes))
-	for i, r := range g.Routes {
-		names[i] = r.Name
-	}
-	return names
+	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
+	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
+	// from the cluster at init. The route to fence and the domain it switches to
+	// live in spec.topicGroup; there is no fenced-CR or switchover-CR file — both
+	// are derived from this live CR at cutover.
+	CrName string `yaml:"cr-name" json:"cr-name"`
 }
 
 // DefaultPolicies is the execute-time knobs. Every value is optional and zero
@@ -331,54 +291,90 @@ func (g *GatewayMigration) Validate() []error {
 	if blank(g.Spec.Gateway.Namespace) {
 		add("spec.gateway.namespace: must not be empty")
 	}
-	if blank(g.Spec.Gateway.CRs.Initial) {
-		add("spec.gateway.crs.initial: must not be empty (a Kubernetes object name, read live)")
-	}
-	// crs.switchover is retired (D2): setting it is a hard error with a
-	// migration hint, not a silent no-op.
-	if !blank(g.Spec.Gateway.CRs.Switchover) {
-		add("spec.gateway.crs.switchover: is no longer supported; declare a switchover target per route under gateway.routes[].streamingDomain instead")
-	}
-	if routes := g.Spec.Gateway.Routes; len(routes) == 0 {
-		add("spec.gateway.routes: must name at least one route")
-	} else {
-		seen := make(map[string]struct{}, len(routes))
-		for i, route := range routes {
-			if blank(route.Name) {
-				add("spec.gateway.routes[%d]: name must not be blank", i)
-			} else {
-				if _, dup := seen[route.Name]; dup {
-					add("spec.gateway.routes: %q is listed more than once", route.Name)
-				}
-				seen[route.Name] = struct{}{}
-			}
-			// D4: every route fences AND switches over — a route cannot be
-			// named here without also declaring its target.
-			if blank(route.StreamingDomain.Name) {
-				add("spec.gateway.routes[%d].streamingDomain.name: must not be empty", i)
-			}
-			if blank(route.StreamingDomain.BootstrapServerId) {
-				add("spec.gateway.routes[%d].streamingDomain.bootstrapServerId: must not be empty", i)
-			}
-		}
+	if blank(g.Spec.Gateway.CrName) {
+		add("spec.gateway.cr-name: must not be empty (a Kubernetes object name, read live)")
 	}
 
-	// --- topics ---
-	if g.Spec.Topics != nil {
-		if len(*g.Spec.Topics) == 0 {
-			add("spec.topics: must not be an empty list — omit the key entirely to migrate every active mirror topic")
-		}
-		for i, name := range *g.Spec.Topics {
-			if blank(name) {
-				add("spec.topics[%d]: must not be blank", i)
-			}
-		}
-	}
+	// --- topicGroup ---
+	errs = append(errs, validateTopicGroup(g.Spec.TopicGroup)...)
 
 	// --- defaultPolicies ---
 	errs = append(errs, g.Spec.DefaultPolicies.Validate()...)
 
 	return errs
+}
+
+// validateTopicGroup applies the structural rules for spec.topicGroup: exactly
+// one entry, a non-blank route and target streaming domain, and at least one of
+// topics/topicPatterns, each pattern compiling as an anchored RE2 full-match. It
+// does no I/O — the mode and the bootstrap server id are resolved from the live
+// CR at init, not the manifest.
+func validateTopicGroup(entries []TopicGroupEntry) []error {
+	var errs []error
+	add := func(format string, args ...any) {
+		errs = append(errs, fmt.Errorf(format, args...))
+	}
+
+	if len(entries) != 1 {
+		add("spec.topicGroup: must have exactly one entry (got %d)", len(entries))
+		if len(entries) == 0 {
+			return errs
+		}
+	}
+
+	e := entries[0]
+	if blank(e.Route) {
+		add("spec.topicGroup[0].route: must not be blank")
+	}
+	if blank(e.TargetStreamingDomain) {
+		add("spec.topicGroup[0].targetStreamingDomain: must not be blank")
+	}
+	if e.Topics == nil && e.TopicPatterns == nil {
+		add("spec.topicGroup[0]: at least one of topics or topicPatterns is required")
+	}
+	if e.Topics != nil {
+		if len(*e.Topics) == 0 {
+			add("spec.topicGroup[0].topics: must not be an empty list")
+		}
+		for i, name := range *e.Topics {
+			if blank(name) {
+				add("spec.topicGroup[0].topics[%d]: must not be blank", i)
+			}
+		}
+	}
+	if e.TopicPatterns != nil {
+		if len(*e.TopicPatterns) == 0 {
+			add("spec.topicGroup[0].topicPatterns: must not be an empty list")
+		}
+		for i, pat := range *e.TopicPatterns {
+			if blank(pat) {
+				add("spec.topicGroup[0].topicPatterns[%d]: must not be blank", i)
+				continue
+			}
+			if _, err := anchoredPattern(pat); err != nil {
+				add("spec.topicGroup[0].topicPatterns[%d]: not a valid regular expression: %v", i, err)
+			}
+		}
+	}
+	return errs
+}
+
+// anchoredPattern compiles p as an anchored RE2 full-match: the Gateway matches
+// topicPatterns Java-style (anchored full-match), but Go's regexp default is
+// unanchored/partial, so kcp must anchor with \A…\z.
+//
+// p is validated on its OWN terms first. Splicing p directly into `\A(?:` + p +
+// `)\z` is unsafe: a pattern carrying an unbalanced paren (e.g. "foo)|(evil")
+// would close the wrapper group early and promote a top-level alternation,
+// escaping the anchor into a prefix/suffix match. A pattern that compiles
+// standalone has balanced groups, so the subsequent splice cannot restructure
+// the wrapper. RE2 is linear-time, so there is no ReDoS surface in either
+// compile.
+func anchoredPattern(p string) (*regexp.Regexp, error) {
+	if _, err := regexp.Compile(p); err != nil {
+		return nil, err
+	}
+	return regexp.Compile(`\A(?:` + p + `)\z`)
 }
 
 // Validate checks the policy block. It is exported because `kcp migration

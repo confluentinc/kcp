@@ -309,55 +309,73 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	if g.Spec.Gateway.Namespace != config.K8sNamespace {
 		gatewayChanges = append(gatewayChanges, "namespace")
 	}
-	if g.Spec.Gateway.CRs.Initial != config.InitialCrName {
-		gatewayChanges = append(gatewayChanges, "crs.initial")
-	}
-	// routes drifts as a set (reordering is not a change). Counts only,
-	// never names — a bare flag, like the retired fenced-CR byte check.
-	if added, removed := diffCounts(g.Spec.Gateway.RouteNames(), config.FenceRoutes); added > 0 || removed > 0 {
-		gatewayChanges = append(gatewayChanges, "routes")
-	}
-	if switchoverTargetsChanged(g.Spec.Gateway.Routes, config.SwitchoverTargets) {
-		gatewayChanges = append(gatewayChanges, "switchover targets")
+	if g.Spec.Gateway.CrName != config.InitialCrName {
+		gatewayChanges = append(gatewayChanges, "cr-name")
 	}
 	if len(gatewayChanges) > 0 {
 		drift = append(drift, fmt.Sprintf("spec.gateway (%s)", strings.Join(gatewayChanges, ", ")))
 	}
 
-	// An omitted spec.topics means "every active mirror topic", and after the
-	// first execute the snapshot holds whatever that expanded to — so omitted
-	// must compare equal to the expansion, not to an empty list.
-	if g.Spec.Topics != nil {
-		added, removed := diffCounts(*g.Spec.Topics, config.Topics)
-		if added > 0 || removed > 0 {
-			drift = append(drift, fmt.Sprintf("spec.topics (%d added, %d removed)", added, removed))
+	// The route/topic topology now lives in spec.topicGroup, but the snapshot
+	// still holds it split across FenceRoutes/SwitchoverTargets/Topics, so the
+	// comparisons are unchanged in spirit — only the manifest-side projection
+	// moves.
+	var topicGroupChanges []string
+	// Fence routes drift as a set (reordering is not a change). Counts only,
+	// never names — a bare flag, like the retired fenced-CR byte check.
+	if added, removed := diffCounts(routeNamesFromTopicGroup(g), config.FenceRoutes); added > 0 || removed > 0 {
+		topicGroupChanges = append(topicGroupChanges, "routes")
+	}
+	if switchoverTargetsChanged(g.Spec.TopicGroup, config.SwitchoverTargets) {
+		topicGroupChanges = append(topicGroupChanges, "switchover targets")
+	}
+	// A match-all topicGroup selection means "every active mirror topic", and
+	// after the first execute the snapshot holds whatever that expanded to — so
+	// a match-all entry (no literal topics) must compare equal to the expansion,
+	// not to an empty list. When the entry lists literal topics, diff those.
+	if len(g.Spec.TopicGroup) > 0 {
+		if topics := g.Spec.TopicGroup[0].Topics; topics != nil {
+			added, removed := diffCounts(*topics, config.Topics)
+			if added > 0 || removed > 0 {
+				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topics: %d added, %d removed", added, removed))
+			}
 		}
+	}
+	if len(topicGroupChanges) > 0 {
+		drift = append(drift, fmt.Sprintf("spec.topicGroup (%s)", strings.Join(topicGroupChanges, ", ")))
 	}
 
 	return drift
 }
 
-// switchoverTarget is the comparable half of gateway.RouteSwitchoverTarget
-// (routeName is the map key), so two target lists can be compared as sets —
-// reordering is not a change, matching routes' own drift semantics.
-type switchoverTarget struct {
-	streamingDomainName string
-	bootstrapServerId   string
+// routeNamesFromTopicGroup projects the manifest's topicGroup entries to their
+// route names, the shape the fence-route drift set compares against.
+func routeNamesFromTopicGroup(g *manifest.GatewayMigration) []string {
+	names := make([]string, len(g.Spec.TopicGroup))
+	for i, e := range g.Spec.TopicGroup {
+		names[i] = e.Route
+	}
+	return names
 }
 
 // switchoverTargetsChanged reports whether the manifest's declared per-route
-// switchover targets differ from the snapshot taken at init. Unlike the
-// retired file-based switchover CR, there is no file to read and therefore no
-// "unreadable" case to degrade: the target is pure manifest data, resolved
-// the moment the document parses.
-func switchoverTargetsChanged(routes []manifest.GatewayRoute, snapshot []gateway.RouteSwitchoverTarget) bool {
-	want := make(map[string]switchoverTarget, len(routes))
-	for _, r := range routes {
-		want[r.Name] = switchoverTarget{r.StreamingDomain.Name, r.StreamingDomain.BootstrapServerId}
+// switchover target (route → target streaming domain) differs from the snapshot
+// taken at init. Compared as a map, so reordering is not a change.
+//
+// The bootstrap server id is intentionally NOT compared: it is derived from the
+// live CR, not authored in the manifest, so there is nothing manifest-side to
+// diff it against. A CR-side id change between init and execute is caught by
+// neither old nor new drift by design — at cutover the switch reapplies the
+// snapshotted initial CR wholesale, so a live CR edit is overwritten regardless;
+// a CR id change is a re-init concern, not a drift signal.
+func switchoverTargetsChanged(entries []manifest.TopicGroupEntry, snapshot []gateway.RouteSwitchoverTarget) bool {
+	want := make(map[string]string, len(entries))
+	for _, e := range entries {
+		want[e.Route] = e.TargetStreamingDomain
 	}
-	have := make(map[string]switchoverTarget, len(snapshot))
+	have := make(map[string]string, len(snapshot))
 	for _, t := range snapshot {
-		have[t.RouteName] = switchoverTarget{t.StreamingDomainName, t.BootstrapServerId}
+		have[t.RouteName] = t.StreamingDomainName
 	}
 	return !maps.Equal(want, have)
 }

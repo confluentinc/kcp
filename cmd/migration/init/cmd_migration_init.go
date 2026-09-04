@@ -1,6 +1,7 @@
 package init
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,14 @@ import (
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
+
+// fetchInitialCR reads the live initial gateway CR as YAML for the early
+// id/mode derivation. A package var so tests inject a fixture CR without a live
+// cluster — the concrete client is otherwise built deep in the initializer,
+// after the early write that the derivation must precede.
+var fetchInitialCR = func(ctx context.Context, kubeConfigPath, namespace, crName string) ([]byte, error) {
+	return gateway.NewK8sService(kubeConfigPath).GetGatewayYAML(ctx, namespace, crName)
+}
 
 var (
 	manifestFile       string
@@ -112,19 +121,54 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 	slog.Debug("using kube config path", "path", kubeConfigPathResolved)
 
+	// Read the live initial CR HERE — before the early write — because both the
+	// route's mode and the derived bootstrap server id come from it and must land
+	// in the snapshot. --skip-validate still performs this read; it skips
+	// credential resolution and gateway/Kubernetes resource *validation*, not the
+	// read the snapshot's derived id depends on.
+	entry := g.Spec.TopicGroup[0] // Validate guarantees exactly one entry
+	crYAML, err := fetchInitialCR(cmd.Context(), kubeConfigPathResolved, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName)
+	if err != nil {
+		return fmt.Errorf("reading the initial gateway CR %q in namespace %q: %w", g.Spec.Gateway.CrName, g.Spec.Gateway.Namespace, err)
+	}
+
+	// The migration mode is resolved solely from the CR's route-scoped binding
+	// shape. A dynamic (topic-based) route cannot run the static path.
+	mode, err := gateway.ResolveRouteMode(crYAML, entry.Route)
+	if err != nil {
+		return err
+	}
+	if mode == gateway.RouteModeDynamic {
+		return fmt.Errorf("route %q resolves to a topic-based (dynamic) migration; kcp does not yet implement the topic-based migration engine", entry.Route)
+	}
+
+	// Static path: derive the id and resolve the topic list.
+	bootstrapServerID, err := gateway.DeriveBootstrapServerID(crYAML, entry.TargetStreamingDomain)
+	if err != nil {
+		return err
+	}
+	topics, err := staticTopicsOf(entry)
+	if err != nil {
+		return err
+	}
+
 	config := migration.MigrationConfig{
-		MigrationId:             g.Metadata.Name,
-		SourceBootstrap:         strings.Join(g.Spec.Source.BootstrapServers, ","),
-		ClusterBootstrap:        strings.Join(g.Spec.Target.Kafka.BootstrapServers, ","),
-		K8sNamespace:            g.Spec.Gateway.Namespace,
-		InitialCrName:           g.Spec.Gateway.CRs.Initial,
-		KubeConfigPath:          kubeConfigPathResolved,
-		ClusterId:               g.Spec.Target.ClusterID,
-		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
-		ClusterLinkName:         g.Spec.ClusterLink.Name,
-		Topics:                  topicsOf(g),
-		FenceRoutes:             g.Spec.Gateway.RouteNames(),
-		SwitchoverTargets:       switchoverTargetsOf(g),
+		MigrationId:         g.Metadata.Name,
+		SourceBootstrap:     strings.Join(g.Spec.Source.BootstrapServers, ","),
+		ClusterBootstrap:    strings.Join(g.Spec.Target.Kafka.BootstrapServers, ","),
+		K8sNamespace:        g.Spec.Gateway.Namespace,
+		InitialCrName:       g.Spec.Gateway.CrName,
+		KubeConfigPath:      kubeConfigPathResolved,
+		ClusterId:           g.Spec.Target.ClusterID,
+		ClusterRestEndpoint: g.Spec.Target.Kafka.RestEndpoint,
+		ClusterLinkName:     g.Spec.ClusterLink.Name,
+		Topics:              topics,
+		FenceRoutes:         []string{entry.Route},
+		SwitchoverTargets: []gateway.RouteSwitchoverTarget{{
+			RouteName:           entry.Route,
+			StreamingDomainName: entry.TargetStreamingDomain,
+			BootstrapServerId:   bootstrapServerID,
+		}},
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
 		// The init-time capability probe dials /config on this port; without it the
@@ -234,29 +278,30 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 	return filepath.Join(homeDir, ".kube", "config"), nil
 }
 
-// topicsOf flattens spec.topics. Omitted stays an empty list, which the
-// Initialize FSM step back-fills with every active mirror topic.
-func topicsOf(g *manifest.GatewayMigration) []string {
-	if g.Spec.Topics == nil {
-		return []string{}
+// matchAllPattern is the documented match-all topicPatterns token.
+const matchAllPattern = ".*"
+
+// staticTopicsOf resolves a static route's topic list from its topicGroup entry.
+// Literal topics pass through unchanged. A match-all pattern (.*) leaves the list
+// empty so the Initialize FSM step back-fills every active mirror topic. Any
+// other (non-match-all) pattern on a static route is not yet supported: general
+// static expansion is deferred with the topic-based migration engine.
+func staticTopicsOf(entry manifest.TopicGroupEntry) ([]string, error) {
+	if entry.TopicPatterns != nil {
+		for _, p := range *entry.TopicPatterns {
+			if !isMatchAllPattern(p) {
+				return nil, fmt.Errorf("spec.topicGroup: topic-pattern expansion is not yet supported on a static (all-at-once) route — only the match-all pattern %q is; list the topics explicitly instead", matchAllPattern)
+			}
+		}
+		// Match-all selects every active mirror topic: leaving Topics empty makes
+		// the Initialize step back-fill it, subsuming any topics also listed.
+		return []string{}, nil
 	}
-	return *g.Spec.Topics
+	// Validate guarantees Topics is non-nil when TopicPatterns is nil.
+	return *entry.Topics, nil
 }
 
-// switchoverTargetsOf projects each route's streaming domain target — one
-// entry per route, since a target is required on every entry (D4). There is
-// no separately-snapshotted switched CR: execute derives it from
-// InitialCrYAML plus these targets, the same way it derives the fenced CR
-// from InitialCrYAML plus FenceRoutes.
-func switchoverTargetsOf(g *manifest.GatewayMigration) []gateway.RouteSwitchoverTarget {
-	routes := g.Spec.Gateway.Routes
-	targets := make([]gateway.RouteSwitchoverTarget, len(routes))
-	for i, r := range routes {
-		targets[i] = gateway.RouteSwitchoverTarget{
-			RouteName:           r.Name,
-			StreamingDomainName: r.StreamingDomain.Name,
-			BootstrapServerId:   r.StreamingDomain.BootstrapServerId,
-		}
-	}
-	return targets
+// isMatchAllPattern reports whether p is the documented match-all token.
+func isMatchAllPattern(p string) bool {
+	return strings.TrimSpace(p) == matchAllPattern
 }
