@@ -1,4 +1,4 @@
-# Static gateway CR fixture for the migplan engine integration test.
+# Static gateway CR fixture for the migplan engine integration tests.
 #
 # The engine reaches the live Kafka clusters + cluster link through the
 # providers, NOT through this file — this only supplies the routing rules the
@@ -8,6 +8,11 @@
 # The route is dynamic, binds exactly two domains, pins coordination.group to
 # the source domain (msk), and defaults routing to the source (msk) so that a
 # not-yet-migrated topic routes to source (a precondition for MIGRATABLE).
+#
+# This fixture is deliberately RICH: it carries the operator's ("Omar's") own
+# pre-existing edits — two fencing entries and a routing condition — so the
+# integration tests prove end-to-end that reconcile PRESERVES them (never
+# clobbers, reorders, or drops operator config) while prepending the batch.
 apiVersion: gateway.confluent.io/v1
 kind: Gateway
 metadata:
@@ -22,7 +27,15 @@ spec:
         - name: cc
           bootstrapServers: localhost:29092
       rules:
+        # operator's own fences — must survive both artifacts untouched
+        fencing:
+          - trafficType: TRANSACTION
+          - topics: [ops-audit]
         routing:
           coordination:
             group: msk
+          # operator's own namespace rule — must be preserved below our prepend
+          conditions:
+            - topicPatterns: ["team-a.*"]
+              streamingDomain: msk
           default: msk

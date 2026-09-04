@@ -1,0 +1,20 @@
+# Permutation fixture: a STATIC route. The engine handles dynamic (topic-based)
+# routes only, so the "route is dynamic" precondition must fail and refuse.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-static
+spec:
+  routes:
+    - name: migration-route
+      mode: static
+      streamingDomains:
+        - name: msk
+          bootstrapServers: localhost:19092
+        - name: cc
+          bootstrapServers: localhost:29092
+      rules:
+        routing:
+          coordination:
+            group: msk
+          default: msk

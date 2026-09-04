@@ -16,10 +16,16 @@ import (
 )
 
 // newLiveEngine wires the reconciliation engine to the live source + dest
-// clusters and cluster link, plus the static gateway-config fixture.
+// clusters and cluster link, plus the default (rich) gateway-config fixture.
 func newLiveEngine(t *testing.T) *migplan.ReconciliationEngine {
+	return newLiveEngineFor(t, "testdata/gateway.yaml", "migration-route")
+}
+
+// newLiveEngineFor is newLiveEngine parameterised by gateway fixture + route, so
+// tests can drive the same live providers against different gateway shapes.
+func newLiveEngineFor(t *testing.T, gatewayFile, route string) *migplan.ReconciliationEngine {
 	t.Helper()
-	gw := providers.NewGatewayFile("testdata/gateway.yaml", "migration-route")
+	gw := providers.NewGatewayFile(gatewayFile, route)
 	source := newPlaintextLister(t, sourceBroker)
 	target := newPlaintextLister(t, destBroker)
 

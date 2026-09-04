@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 
 	cmdreconcile "github.com/confluentinc/kcp/cmd/migration/reconcile"
@@ -74,6 +75,41 @@ func TestReconcileCommandArtifactsReflectManifest(t *testing.T) {
 	if !reflect.DeepEqual(condTopics, want) {
 		t.Errorf("switchover condition topics = %v, want %v", condTopics, want)
 	}
+
+	// PRESERVATION — the whole point of the engine: the operator's ("Omar's")
+	// pre-existing gateway edits in the rich fixture must survive untouched, our
+	// batch merely prepended. Assert against the real written artifacts.
+	fenceRaw := readFile(t, filepath.Join(out, "fence-rules.yaml"))
+	swRaw := readFile(t, filepath.Join(out, "switchover-rules.yaml"))
+
+	// The fence artifact keeps our batch fence AND both operator fences.
+	for _, must := range []string{"TRANSACTION", "ops-audit"} {
+		if !strings.Contains(fenceRaw, must) {
+			t.Errorf("fence-rules.yaml dropped the operator's fencing entry %q:\n%s", must, fenceRaw)
+		}
+	}
+
+	// The switchover reverts fencing to baseline: it keeps the operator's fences
+	// but must NOT carry our batch fence (that unfencing is what the switchover is).
+	for _, must := range []string{"TRANSACTION", "ops-audit"} {
+		if !strings.Contains(swRaw, must) {
+			t.Errorf("switchover-rules.yaml dropped the operator's fencing entry %q:\n%s", must, swRaw)
+		}
+	}
+	// The operator's own routing condition (team-a.* pattern) must be preserved,
+	// sitting below our prepended exact-name condition.
+	if !strings.Contains(swRaw, "team-a.*") {
+		t.Errorf("switchover-rules.yaml dropped the operator's routing condition (team-a.* pattern):\n%s", swRaw)
+	}
+}
+
+func readFile(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
 }
 
 func readJSON(t *testing.T, path string, v any) {
