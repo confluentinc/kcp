@@ -38,13 +38,17 @@ for t in "${SRC_TOPICS[@]}"; do
 done
 
 echo "==> creating cluster link $LINK on dest (reaches source at source:29092)"
-# 409 if the link already exists — tolerate it.
-code=$(curl -s -o /dev/null -w '%{http_code}' -X POST \
+# An already-existing link is reported as 400 by cp-server (not 409), with an
+# "already exists" message — same quirk as the duplicate-mirror case below. Keep
+# setup.sh idempotent by tolerating that specific 400, but nothing else.
+resp=$(curl -s -w $'\n%{http_code}' -X POST \
   -H 'Content-Type: application/json' \
   "$DST_REST/kafka/v3/clusters/$DST_CID/links?link_name=$LINK" \
   -d "{\"source_cluster_id\":\"$SRC_CID\",\"configs\":[{\"name\":\"bootstrap.servers\",\"value\":\"source:29092\"}]}")
-if [[ "$code" != "200" && "$code" != "201" && "$code" != "409" ]]; then
-  echo "unexpected status $code creating link" >&2; exit 1
+code=$(tail -n1 <<<"$resp"); body=$(sed '$d' <<<"$resp")
+if [[ "$code" != "200" && "$code" != "201" && "$code" != "409" ]] \
+   && ! { [[ "$code" == "400" ]] && grep -qi 'already exists' <<<"$body"; }; then
+  echo "unexpected status $code creating link: $body" >&2; exit 1
 fi
 
 echo "==> creating mirror topics"
