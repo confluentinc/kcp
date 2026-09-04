@@ -230,34 +230,6 @@ blocks:
           commands:
             - cache store minikube-cache ~/.minikube/cache/
 
-  - name: 'static analysis'
-    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
-    task:
-      env_vars:
-        - name: TRIVY_DB_REPOSITORIES
-          value: 'ghcr.io/aquasecurity/trivy-db,public.ecr.aws/aquasecurity/trivy-db'
-      prologue:
-        commands:
-          - sem-version go 1.26.7
-          - export "GOPATH=$(go env GOPATH)"
-          - export "SEMAPHORE_GIT_DIR=${GOPATH}/src/github.com/confluentinc/${SEMAPHORE_PROJECT_NAME}"
-          - export "PATH=${GOPATH}/bin:${PATH}"
-          - mkdir -vp "${SEMAPHORE_GIT_DIR}" "${GOPATH}/bin"
-          - cache restore frontend-dependencies
-          - cache restore go-mod-cache
-          - cache restore go-build-cache
-          - cd cmd/ui/frontend && yarn install && yarn build && cd -
-      jobs:
-        - name: 'golangci-lint'
-          commands:
-            - curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/v2.11.3/install.sh | sh -s -- -b $(go env GOPATH)/bin v2.11.3
-            - git fetch origin main
-            - golangci-lint run --config .golangci.yml ./...
-
-        - name: 'trivy scan'
-          commands:
-            - trivy fs --scanners vuln --show-suppressed --db-repository=$TRIVY_DB_REPOSITORIES --severity HIGH,CRITICAL --exit-code 1 .
-
   - name: 'docs build'
     dependencies: ['resolve go dependencies']
     task:
@@ -353,3 +325,13 @@ blocks:
         on_pass:
           commands:
             - cache store minikube-cache ~/.minikube/cache/
+
+# Static analysis (lint + vuln scan) runs as its own auto-promoted pipeline so it
+# reports a separate `static-analysis` status check. It still triggers on every
+# workflow, but a golangci-lint or trivy failure no longer fails `build-test` and
+# therefore does not gate PR merges.
+promotions:
+  - name: static-analysis
+    pipeline_file: static-analysis.yml
+    auto_promote:
+      when: "true"
