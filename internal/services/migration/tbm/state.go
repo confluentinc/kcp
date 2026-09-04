@@ -32,7 +32,7 @@ const (
 // isKnownState reports whether s is a state value this binary understands.
 // Execute refuses unknown values so a corrupted state file — or one written
 // by a newer kcp — fails loudly instead of skipping every workflow step.
-func isKnownState(s string) bool {
+func isKnownState(s string) bool { //nolint:unused // used by Execute (not yet implemented)
 	switch s {
 	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
 		StateFenceVerified, StatePromoted, StateDone:
