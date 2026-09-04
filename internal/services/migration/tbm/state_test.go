@@ -26,7 +26,7 @@ func TestTBMState_WriteAndRead_RoundTrip(t *testing.T) {
 	state := NewTBMState()
 	state.Migrations = []TBMConfig{
 		{MigrationId: "tbm-1", CurrentState: StateInitialized, ManifestHash: "hash1"},
-		{MigrationId: "tbm-2", CurrentState: StateDone, ManifestHash: "hash2"},
+		{MigrationId: "tbm-2", CurrentState: StateSwitched, ManifestHash: "hash2"},
 	}
 
 	filePath := filepath.Join(t.TempDir(), "tbm-state.json")
@@ -61,12 +61,12 @@ func TestTBMState_UpsertMigration_InsertThenUpdate(t *testing.T) {
 	state.UpsertMigration(TBMConfig{MigrationId: "tbm-2", CurrentState: StateUninitialized})
 	require.Len(t, state.Migrations, 2)
 
-	state.UpsertMigration(TBMConfig{MigrationId: "tbm-1", CurrentState: StateDone, ManifestHash: "h"})
+	state.UpsertMigration(TBMConfig{MigrationId: "tbm-1", CurrentState: StateSwitched, ManifestHash: "h"})
 	require.Len(t, state.Migrations, 2, "update must not append a new row")
 
 	got, err := state.GetMigrationById("tbm-1")
 	require.NoError(t, err)
-	assert.Equal(t, StateDone, got.CurrentState)
+	assert.Equal(t, StateSwitched, got.CurrentState)
 	assert.Equal(t, "h", got.ManifestHash)
 }
 

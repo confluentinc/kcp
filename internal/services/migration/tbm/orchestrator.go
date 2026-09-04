@@ -28,7 +28,7 @@ var canonicalWorkflow = []WorkflowStep{
 	{EventFence, "fencing batch", StateLagsOk, StateFenced},
 	{EventVerifyFence, "verifying fence", StateFenced, StateFenceVerified},
 	{EventPromote, "promoting batch", StateFenceVerified, StatePromoted},
-	{EventSwitch, "switching batch", StatePromoted, StateDone},
+	{EventSwitch, "switching batch", StatePromoted, StateSwitched},
 }
 
 // stepHeaders maps a workflow event to the banner the Execute loop prints as

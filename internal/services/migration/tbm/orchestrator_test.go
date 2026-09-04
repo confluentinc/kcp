@@ -31,14 +31,14 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 
 	require.NoError(t, orchestrator.Execute(context.Background()))
 
-	assert.Equal(t, StateDone, config.CurrentState)
+	assert.Equal(t, StateSwitched, config.CurrentState)
 	assert.False(t, orchestrator.HasPendingWork())
 
 	loaded, err := NewTBMStateFromFile(stateFile)
 	require.NoError(t, err)
 	persisted, err := loaded.GetMigrationById("test-tbm-1")
 	require.NoError(t, err)
-	assert.Equal(t, StateDone, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
 }
 
 func TestTBMOrchestrator_Execute_ResumesFromPartialState(t *testing.T) {
@@ -46,7 +46,7 @@ func TestTBMOrchestrator_Execute_ResumesFromPartialState(t *testing.T) {
 
 	require.NoError(t, orchestrator.Execute(context.Background()))
 
-	assert.Equal(t, StateDone, config.CurrentState)
+	assert.Equal(t, StateSwitched, config.CurrentState)
 }
 
 func TestTBMOrchestrator_HasPendingWork(t *testing.T) {
@@ -56,7 +56,7 @@ func TestTBMOrchestrator_HasPendingWork(t *testing.T) {
 		want  bool
 	}{
 		{"uninitialized has work", StateUninitialized, true},
-		{"done has no work", StateDone, false},
+		{"switched has no work", StateSwitched, false},
 		{"unknown state reports pending", "some-future-state", true},
 	}
 	for _, tt := range tests {
@@ -88,5 +88,5 @@ func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *test
 	err := orchestrator.Execute(ctx)
 
 	require.Error(t, err)
-	assert.NotEqual(t, StateDone, config.CurrentState)
+	assert.NotEqual(t, StateSwitched, config.CurrentState)
 }

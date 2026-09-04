@@ -26,7 +26,7 @@ const (
 	StateFenced        = "fenced"
 	StateFenceVerified = "fence_verified"
 	StatePromoted      = "promoted"
-	StateDone          = "done"
+	StateSwitched      = "switched"
 )
 
 // isKnownState reports whether s is a state value this binary understands.
@@ -35,7 +35,7 @@ const (
 func isKnownState(s string) bool {
 	switch s {
 	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
-		StateFenceVerified, StatePromoted, StateDone:
+		StateFenceVerified, StatePromoted, StateSwitched:
 		return true
 	}
 	return false

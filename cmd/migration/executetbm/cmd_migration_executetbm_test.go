@@ -133,7 +133,7 @@ func TestResolveTBMConfig_HashMatches_ResumesExisting(t *testing.T) {
 }
 
 func TestResolveTBMConfig_HashDiffers_RefusesUnconditionally(t *testing.T) {
-	for _, currentState := range []string{tbm.StateUninitialized, tbm.StateFenced, tbm.StateDone} {
+	for _, currentState := range []string{tbm.StateUninitialized, tbm.StateFenced, tbm.StateSwitched} {
 		t.Run(currentState, func(t *testing.T) {
 			state := tbm.NewTBMState()
 			state.UpsertMigration(tbm.TBMConfig{MigrationId: "mig-1", CurrentState: currentState, ManifestHash: "hash-1"})
@@ -161,7 +161,7 @@ func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 	require.NoError(t, err)
 	cfg, err := state.GetMigrationById("tbm-batch-2")
 	require.NoError(t, err)
-	assert.Equal(t, tbm.StateDone, cfg.CurrentState)
+	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState)
 
 	// Second run against the identical file: hash matches, already done ->
 	// short-circuits via HasPendingWork without re-running the workflow.
@@ -191,5 +191,5 @@ func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	require.NoError(t, err)
 	cfg, err := state.GetMigrationById("tbm-batch-3")
 	require.NoError(t, err)
-	assert.Equal(t, tbm.StateDone, cfg.CurrentState, "the stale entry must be untouched by the refused run")
+	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState, "the stale entry must be untouched by the refused run")
 }
