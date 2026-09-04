@@ -198,7 +198,7 @@ test-env-down-migplan: ## Stop the migplan reconciliation-engine test env
 
 test-migplan: build-frontend ## Run the migplan reconciliation-engine E2E tests (live source + dest + cluster link; no gateway — TBR gateway apply deferred)
 	$(MAKE) test-env-up-migplan
-	go test -tags e2e -v ./integration-tests/migplan/... ; \
+	go test -tags e2e -v -count=1 ./integration-tests/migplan/... ; \
 	  status=$$? ; $(MAKE) test-env-down-migplan ; exit $$status
 
 # ==============================================================================
