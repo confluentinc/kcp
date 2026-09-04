@@ -37,6 +37,7 @@ func NewMigrationExecuteTBMCmd() *cobra.Command {
 		Short:         "Execute a Topic-Batch Migration run (scaffold: noop transitions)",
 		Long:          executeTBMLong,
 		Example:       `  kcp migration execute-tbm --migration-yaml gateway-migration.yaml --tbm-state-file tbm-state.json`,
+		Hidden:        true, // noop scaffold pending real transition logic; kept in the binary but not user-facing (cascades to --help and gen-docs)
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
