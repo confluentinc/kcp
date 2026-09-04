@@ -23,10 +23,11 @@ import (
 
 // orchestratorOverrides allows tests to customize mock behavior before construction.
 type orchestratorOverrides struct {
-	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
-	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
-	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
-	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
+	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
+	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
+	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	promoteMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
 // newHappyPathOrchestrator builds an orchestrator where every workflow step succeeds.
@@ -53,7 +54,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		K8sNamespace:        "confluent",
 		InitialCrYAML:       []byte(testInitialCR),
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("switchover-yaml"),
+		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
 	// Default mock implementations. The initial CR must be a real routed gateway
@@ -62,8 +63,8 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	getGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
 		return []byte(testInitialCR), nil
 	}
-	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte) error {
-		return nil
+	applyGatewayYAMLFn := func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
+		return configID, nil
 	}
 
 	// Track promoted topics so ListMirrorTopics can model the realistic
@@ -89,7 +90,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 	}
 
 	// Default nil → mock returns success
-	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	var waitForGatewayReadyFn func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	// Default nil → mock treats the spec as accepted by the operator
+	var waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 
 	// Apply overrides if provided
 	if len(overrides) > 0 {
@@ -103,6 +106,9 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		if o.waitForGatewayReadyFn != nil {
 			waitForGatewayReadyFn = o.waitForGatewayReadyFn
 		}
+		if o.waitForGatewayAcceptedFn != nil {
+			waitForGatewayAcceptedFn = o.waitForGatewayAcceptedFn
+		}
 		if o.promoteMirrorTopicsFn != nil {
 			promoteMirrorTopicsFn = o.promoteMirrorTopicsFn
 		}
@@ -110,7 +116,7 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 
 	gw := &mockGatewayService{
 		getGatewayYAMLFn: getGatewayYAMLFn,
-		// validateGatewayCRsFn left unset: the mock's default passes validation.
+		// checkRedundantAuthStagedFn left unset: the mock's default passes validation.
 		applyGatewayYAMLFn: applyGatewayYAMLFn,
 		getGatewayPodUIDsFn: func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
 			return map[k8stypes.UID]struct{}{
@@ -118,10 +124,11 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 				"uid-2": {},
 			}, nil
 		},
-		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+		waitForGatewayPodsFn: func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 			return nil
 		},
-		waitForGatewayReadyFn: waitForGatewayReadyFn,
+		waitForGatewayReadyFn:    waitForGatewayReadyFn,
+		waitForGatewayAcceptedFn: waitForGatewayAcceptedFn,
 	}
 
 	cl := &mockClusterLinkService{
@@ -192,7 +199,7 @@ func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *Mi
 func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	err := orch.Initialize(context.Background(), "api-key", "api-secret")
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, StateInitialized, config.CurrentState)
@@ -204,7 +211,7 @@ func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
@@ -226,7 +233,7 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, startState, nil, overrides)
 
-			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 			require.NoError(t, err)
 
 			assert.Equal(t, StateSwitched, config.CurrentState)
@@ -244,6 +251,45 @@ func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 	}
 }
 
+// TestHasPendingWork pins the predicate cmd/migration/execute uses to decide
+// whether to touch the gateway at all before Execute runs — see
+// migration_executor.go. It must agree with what Execute would actually do:
+// true for every state Execute walks at least one step for, false only once
+// there is nothing left.
+func TestHasPendingWork(t *testing.T) {
+	t.Run("true for a fresh migration", func(t *testing.T) {
+		orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
+		assert.True(t, orch.HasPendingWork())
+	})
+
+	t.Run("true for every state short of switched", func(t *testing.T) {
+		for _, s := range []string{StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted} {
+			t.Run(s, func(t *testing.T) {
+				orch, _, _ := newHappyPathOrchestrator(t, s, nil)
+				assert.True(t, orch.HasPendingWork())
+			})
+		}
+	})
+
+	t.Run("false once switched", func(t *testing.T) {
+		orch, _, _ := newHappyPathOrchestrator(t, StateSwitched, nil)
+		assert.False(t, orch.HasPendingWork(),
+			"a completed migration must report no pending work, so a re-run touches nothing")
+	})
+
+	t.Run("true for an unrecognized state, deferring to Execute's own refusal", func(t *testing.T) {
+		// A corrupted file or one written by a newer kcp must fail loudly at
+		// Execute (see isKnownState), not be silently read here as "nothing to
+		// do" — that would report a bogus success instead of the refusal.
+		orch, _, _ := newHappyPathOrchestrator(t, "some-future-state", nil)
+		require.True(t, orch.HasPendingWork())
+
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unrecognized migration state")
+	})
+}
+
 // --- Error handling tests ---
 
 func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
@@ -255,7 +301,7 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
-	err := orch.Initialize(context.Background(), "api-key", "api-secret")
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// Config state should NOT have advanced
@@ -280,14 +326,14 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 
 func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-			return fmt.Errorf("apply gateway failed: forbidden")
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// The orchestrator should have persisted state after each successful step.
@@ -306,13 +352,13 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 	var appliedYAMLs []string
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			// Record every applied CR so the unfence (the round-tripped initial
 			// CR, distinct from the literal fenced-yaml) can be asserted below.
 			mu.Lock()
 			appliedYAMLs = append(appliedYAMLs, string(yaml))
 			mu.Unlock()
-			return nil
+			return "", nil
 		},
 	}
 
@@ -340,7 +386,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -375,14 +421,14 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 	var applyCallCount int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCallCount, 1)
 			if n == 1 {
 				// First apply is the fence — succeed
-				return nil
+				return "", nil
 			}
 			// Second apply is the unfence — fail
-			return fmt.Errorf("k8s API unavailable")
+			return "", fmt.Errorf("k8s API unavailable")
 		},
 	}
 
@@ -400,7 +446,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	// Unrouted producers were detected, so the surfaced error still wraps
 	// ErrUnroutedProducers; the unfence happens on the abort_fence rollback and
@@ -428,7 +474,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		// (the builder's default, which succeeds), so WaitForGatewayReady is
 		// reached only by the unfence rollout — fail it to exercise the
 		// "unfence never converges" path.
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			atomic.AddInt64(&waitCallCount, 1)
 			return fmt.Errorf("gateway pods did not converge")
 		},
@@ -448,7 +494,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -476,7 +522,7 @@ func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
 	config.DetectUnroutedProducersDuration = time.Millisecond
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// The verify step succeeded (stable offsets) and was persisted; the promote
@@ -570,7 +616,7 @@ func TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection(t *test
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&getCalls), int64(2),
@@ -592,17 +638,17 @@ func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T
 			var mu sync.Mutex
 			var appliedYAMLs []string
 			overrides := orchestratorOverrides{
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 					mu.Lock()
 					appliedYAMLs = append(appliedYAMLs, string(yaml))
 					mu.Unlock()
-					return nil
+					return "", nil
 				},
 			}
 
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, state, nil, overrides)
 
-			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 			require.NoError(t, err)
 
 			mu.Lock()
@@ -631,13 +677,13 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 	var stateDir string
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			if atomic.AddInt64(&applyCalls, 1) == 2 {
 				// The unfence apply: remove the state directory so every
 				// subsequent persist fails while the unfence itself succeeds.
 				require.NoError(t, os.RemoveAll(stateDir))
 			}
-			return nil
+			return "", nil
 		},
 	}
 
@@ -655,7 +701,7 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers,
 		"the step error must keep its classification through the persist-failure wrap")
@@ -680,9 +726,9 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 	}
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			record("apply")
-			return nil
+			return "", nil
 		},
 	}
 
@@ -715,7 +761,7 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -756,11 +802,11 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 	var applyCalls, waitCalls, alterCalls int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
-			return nil
+			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			atomic.AddInt64(&waitCalls, 1)
 			return nil
 		},
@@ -780,7 +826,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
@@ -798,6 +844,176 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		"only the failed disable attempt — no restore call when nothing was flipped")
 }
 
+// TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR covers the state
+// that per-pod verification made reachable for the first time: the fenced CR is
+// live in the cluster but was never confirmed on the serving pods. Leaving it
+// there means either traffic blocked on part of the fleet, or a promotion still
+// in flight that lands after kcp exits. Either way kcp must put back what it
+// changed.
+func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
+	var appliedYAML [][]byte
+	var mu sync.Mutex
+	var readyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			mu.Lock()
+			appliedYAML = append(appliedYAML, yaml)
+			mu.Unlock()
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			// First call is the fence's own verification — fail it. The second is
+			// the restore's, which must succeed for the compensation to complete.
+			if atomic.AddInt64(&readyCalls, 1) == 1 {
+				return fmt.Errorf("gateway pods did not converge")
+			}
+			return nil
+		},
+	}
+
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Contains(t, err.Error(), "gateway pods did not converge",
+		"the original cause must survive the compensation")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, appliedYAML, 2, "the fence apply must be followed by a restoring apply")
+	wantFenced, err := deriveFencedCRYAML(config)
+	require.NoError(t, err)
+	assert.Equal(t, wantFenced, appliedYAML[0])
+	assert.Contains(t, string(appliedYAML[1]), "kind: Gateway",
+		"the second apply must be the initial CR, not the fenced one")
+	assert.NotEqual(t, wantFenced, appliedYAML[1])
+
+	// The fence transition was cancelled, so the machine never left lags_ok —
+	// which is already the truth once the fence has been undone. No transition
+	// completed, so there is nothing to persist and no state file to read.
+	assert.Equal(t, StateLagsOk, orch.fsm.Current())
+	assert.NoFileExists(t, stateFilePath,
+		"a run that completed no transition must not write state")
+}
+
+func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testing.T) {
+	// The worst case: the fence is unconfirmed AND cannot be undone. Silence here
+	// would strand an operator with a gateway that may be fencing traffic, so the
+	// surfaced error has to name both halves.
+	var applyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			if atomic.AddInt64(&applyCalls, 1) == 2 {
+				return "", fmt.Errorf("k8s API unavailable")
+			}
+			return "", nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			return fmt.Errorf("gateway pods did not converge")
+		},
+	}
+
+	orch, _, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Contains(t, err.Error(), "gateway pods did not converge", "the fence failure")
+	assert.Contains(t, err.Error(), "k8s API unavailable", "the restore failure")
+	assert.Contains(t, err.Error(), "inspect it before re-running")
+
+	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls), "the restore must have been attempted")
+
+	assert.Equal(t, StateLagsOk, orch.fsm.Current())
+	assert.NoFileExists(t, stateFilePath)
+}
+
+func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
+	// The fenced CR never reached the cluster, so there is nothing to undo and
+	// kcp must not write to a gateway it did not change.
+	var applyCalls int64
+
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return "", fmt.Errorf("admission webhook denied the request")
+		},
+	}
+
+	orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"a failed fence apply must not be followed by a restoring apply")
+}
+
+func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *testing.T) {
+	// A definite rejection (CFK explicitly refused the fenced spec) must not be
+	// dressed up as the ambiguous "could not be confirmed on every gateway pod"
+	// timeout wording: the operator needs to know the fence never took effect and
+	// see CFK's own reason, not be pointed at a partial-application hunt.
+	rejection := &gateway.GatewayRejectedError{
+		Gateway:            "my-gateway",
+		ConditionType:      "platform.confluent.io/cluster-ready",
+		Reason:             "ApplyFailed",
+		Message:            "secretRef kcp-plain not found",
+		Generation:         5,
+		ObservedGeneration: 4,
+	}
+
+	var appliedYAML [][]byte
+	var mu sync.Mutex
+	var acceptCalls int64
+	overrides := orchestratorOverrides{
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+			mu.Lock()
+			appliedYAML = append(appliedYAML, yaml)
+			mu.Unlock()
+			return "", nil
+		},
+		waitForGatewayAcceptedFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
+			// Reject the fence's acceptance wait; let the restore's own wait pass.
+			if atomic.AddInt64(&acceptCalls, 1) == 1 {
+				return rejection
+			}
+			return nil
+		},
+	}
+
+	// Build inside the capture: the reporter binds os.Stdout/os.Stderr at
+	// construction, so the orchestrator must be created after the pipes are swapped.
+	var err error
+	var stdout string
+	stderr := captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
+			err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+		})
+	})
+	out := stdout + stderr
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
+	var rejected *gateway.GatewayRejectedError
+	assert.ErrorAs(t, err, &rejected, "the operator's rejection must survive in the error chain")
+
+	// The restore still runs — the refused spec is live in etcd and would fence if
+	// the objection later clears — but the message must be the definite-rejection one.
+	assert.Contains(t, out, "rejected", "must say the operator rejected the spec")
+	assert.Contains(t, out, "ApplyFailed", "must surface the operator's own reason")
+	assert.NotContains(t, out, "could not be confirmed on every gateway pod",
+		"the ambiguous-timeout wording must not be used for a definite rejection")
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.Len(t, appliedYAML, 2, "the rejected fence must still be followed by a restoring apply")
+}
+
 func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T) {
 	// AE4: the pause failed and the unfence also fails. The rollback cancels:
 	// state stays fenced (memory and disk, honestly reflecting the gateway),
@@ -805,12 +1021,12 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	var applyCalls int64
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 2 {
-				return fmt.Errorf("k8s API unavailable") // the unfence attempt
+				return "", fmt.Errorf("k8s API unavailable") // the unfence attempt
 			}
-			return nil // fence (run 1), and the re-run's fence/switch applies
+			return "", nil // fence (run 1), and the re-run's fence/switch applies
 		},
 	}
 
@@ -836,7 +1052,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom")
 
@@ -849,7 +1065,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	// Re-run recovery: the transient pause failure is gone; execute resumes
 	// from fenced, pauses, and completes — no pending-rollback bookkeeping.
 	atomic.StoreInt32(&alterFail, 0)
-	err = orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err, "a re-run after a failed rollback must retry the pause and proceed")
 	persisted = loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
@@ -863,13 +1079,13 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(c context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(c context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			n := atomic.AddInt64(&applyCalls, 1)
 			if n == 1 {
-				return nil // fence
+				return "", nil // fence
 			}
 			cancel() // ctx dies mid-unfence
-			return c.Err()
+			return "", c.Err()
 		},
 	}
 
@@ -887,7 +1103,7 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 		},
 	}
 
-	err := orch.Execute(ctx, 0, "api-key", "api-secret")
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
@@ -912,11 +1128,11 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 	}
 
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			record("apply")
-			return nil
+			return "", nil
 		},
-		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			record("wait-ready")
 			return nil
 		},
@@ -955,7 +1171,7 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -1013,7 +1229,7 @@ func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *test
 	}
 
 	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnroutedProducers)
 	})
@@ -1073,7 +1289,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 	}
 
 	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnroutedProducers)
 	})
@@ -1126,11 +1342,11 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 				// the route; the rollback's unfence applies the fence-free initial
 				// CR. Failing only the latter (the apply with no fence block) cancels
 				// abort_fence, so the FSM honestly rests at offset_sync_paused.
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 					if !strings.Contains(string(yaml), "fence") {
-						return fmt.Errorf("k8s API unavailable")
+						return "", fmt.Errorf("k8s API unavailable")
 					}
-					return nil
+					return "", nil
 				},
 			},
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
@@ -1186,11 +1402,15 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			overrides: orchestratorOverrides{
 				// Fence and switchover both apply; only the switchover CR fails,
 				// leaving the FSM at promoted (switch failures do not roll back).
-				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-					if strings.Contains(string(yaml), "switchover") {
-						return fmt.Errorf("switchover apply failed")
+				// The switch apply is the only one that flips the route's
+				// streamingDomain to the switchover target, so its presence is
+				// the discriminator (the fence apply carries a fence block
+				// instead, never the target domain).
+				applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
+					if strings.Contains(string(yaml), "confluent-cloud") {
+						return "", fmt.Errorf("switchover apply failed")
 					}
-					return nil
+					return "", nil
 				},
 			},
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
@@ -1217,7 +1437,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, tc.overrides)
 			tc.configure(orch, config)
 
-			err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 			require.Error(t, err)
 
 			// The FSM rests in the expected urgent state, in memory (the value
@@ -1266,7 +1486,7 @@ func TestOrchestrator_Execute_NoOptIn_NeverTouchesClusterLinkConfig(t *testing.T
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls),
@@ -1302,7 +1522,7 @@ func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *tes
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls), "no second pause")
@@ -1370,7 +1590,7 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 	var stdout string
 	stderrOut := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
-			err := orch.Execute(context.Background(), 0, "api-key", "super-secret-value")
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "super-secret-value"})
 			require.Error(t, err)
 		})
 	})
@@ -1390,7 +1610,7 @@ func TestOrchestrator_Execute_UnknownState_Fails(t *testing.T) {
 	// and printing "Migration complete!" is the failure mode this guards.
 	orch, config, _ := newHappyPathOrchestrator(t, "bogus_state", nil)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err, "an unrecognized persisted state must not execute as a silent no-op")
 	assert.Contains(t, err.Error(), "bogus_state")
 	assert.Equal(t, "bogus_state", config.CurrentState,
@@ -1421,7 +1641,7 @@ func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := orch.Execute(ctx, 0, "api-key", "api-secret")
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err,
 		"resume from fence_verified must re-run detection and catch the rogue producer")
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
@@ -1438,9 +1658,9 @@ func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
 	// Re-running execute resumes from offset_sync_paused and retries verification.
 	var applyCalls int64
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, _ string) (string, error) {
 			atomic.AddInt64(&applyCalls, 1)
-			return nil
+			return "", nil
 		},
 	}
 
@@ -1458,7 +1678,7 @@ func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
 		"a fetch failure must not be classified as a detection")
@@ -1481,7 +1701,7 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, err)
 
 	// The verify_fence transition succeeded first (detection disabled → no-op),

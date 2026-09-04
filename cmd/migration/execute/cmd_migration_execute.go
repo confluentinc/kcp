@@ -1,15 +1,15 @@
 package execute
 
 import (
-	"bytes"
 	"fmt"
 	"log/slog"
-	"os"
+	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -30,6 +30,8 @@ var (
 	rolloutTimeoutOverride                  time.Duration
 	detectUnroutedProducersDurationOverride time.Duration
 	consumerOffsetSyncDrainDurationOverride time.Duration
+	hotReloadTimeoutOverride                time.Duration
+	gatewayConfigPortOverride               int
 	// runReport is the diagnostics knob carried over from #408. It stays a flag
 	// rather than a manifest policy field: the path is a per-run, machine-specific
 	// output location — operational, not versioned desired state — and the
@@ -87,6 +89,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Override spec.defaultPolicies.rolloutTimeout: max wait for the operator to report the gateway Ready during fence and switchover (e.g. 10m). 0 means no deadline.")
 	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: window to monitor source offsets after fencing for producers bypassing the gateway. 0 skips the check; minimum 10s when set.")
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override spec.defaultPolicies.consumerOffsetSyncDrainDuration: wait after fencing before disabling the link's consumer offset sync. Has no effect unless pauseConsumerOffsetSync is set. 0 means no wait.")
+	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override spec.defaultPolicies.hotReloadTimeout: max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
+	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 uses the persisted value, falling back to the gateway default (9180).")
 
 	// Hidden pending schema validation by the migration performance rig, its
 	// first consumer; intended to become user-facing, since the natural audience
@@ -127,19 +131,15 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", id, migrationStateFile)
 	}
 
+	if err := checkStateFilePredatesSwitchover(config); err != nil {
+		return err
+	}
+
 	// Record what this run will execute with — the effective policy (manifest
 	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
 	// this is the durable audit trail of the knobs a given execute used; the same
 	// values are also snapshotted into the state file as LastRunPolicies.
-	slog.Info("executing migration with effective policy",
-		"migration_id", id,
-		"state", config.CurrentState,
-		"lag_threshold", g.Spec.DefaultPolicies.LagThreshold,
-		"promote_batch_size", g.Spec.DefaultPolicies.PromoteBatchSize,
-		"rollout_timeout", g.Spec.DefaultPolicies.RolloutTimeout,
-		"detect_unrouted_producers_duration", g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
-		"consumer_offset_sync_drain_duration", g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
-	)
+	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, config.CurrentState, g.Spec.DefaultPolicies)...)
 
 	if err := checkSpecDrift(g, config); err != nil {
 		return err
@@ -153,6 +153,40 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// carry it straight from the flag onto the opts.
 	opts.RunReportPath = runReport
 	return NewMigrationExecutor(opts).Run()
+}
+
+// checkStateFilePredatesSwitchover refuses a migration-state.json written before
+// redundant-auth switchover existed. Such a file has fence routes but no
+// switchover targets, so execute cannot derive the switched gateway CR — and
+// left alone it fails deep in the switch step ("no switchover targets given")
+// after traffic is already fenced. Failing here, before any cluster contact,
+// points the operator at the fix instead. Runs before the drift check so its
+// specific message wins over the generic "config file has changed" one.
+func checkStateFilePredatesSwitchover(config *migration.MigrationConfig) error {
+	if len(config.FenceRoutes) > 0 && len(config.SwitchoverTargets) == 0 {
+		return fmt.Errorf("migration %q was initialised before redundant-auth switchover was supported: its state file records %d fence route(s) but no switchover targets, so execute cannot derive the switched gateway CR.\nRe-run 'kcp migration init' with the current manifest to record them (only possible before the migration has fenced)",
+			config.MigrationId, len(config.FenceRoutes))
+	}
+	return nil
+}
+
+// effectivePolicyLogArgs renders the effective execute-time policy as slog
+// key/value pairs for the audit log line. It is the single place the log's copy
+// of DefaultPolicies is spelled out, so it cannot drift field-by-field from the
+// LastRunPolicies snapshot the way the previous hand-inlined call already had
+// (hotReloadTimeout and gatewayConfigPort had been silently dropped).
+func effectivePolicyLogArgs(migrationID, state string, p manifest.DefaultPolicies) []any {
+	return []any{
+		"migration_id", migrationID,
+		"state", state,
+		"lag_threshold", p.LagThreshold,
+		"promote_batch_size", p.PromoteBatchSize,
+		"rollout_timeout", p.RolloutTimeout,
+		"detect_unrouted_producers_duration", p.DetectUnroutedProducersDuration,
+		"consumer_offset_sync_drain_duration", p.ConsumerOffsetSyncDrainDuration,
+		"hot_reload_timeout", p.HotReloadTimeout,
+		"gateway_config_port", p.GatewayConfigPort,
+	}
 }
 
 // resolveMigrationID prefers an explicit override. metadata.name is the
@@ -184,6 +218,12 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 	}
 	if cmd.Flags().Changed("consumer-offset-sync-drain-duration") {
 		p.ConsumerOffsetSyncDrainDuration = consumerOffsetSyncDrainDurationOverride
+	}
+	if cmd.Flags().Changed("hot-reload-timeout") {
+		p.HotReloadTimeout = hotReloadTimeoutOverride
+	}
+	if cmd.Flags().Changed("gateway-config-port") {
+		p.GatewayConfigPort = gatewayConfigPortOverride
 	}
 }
 
@@ -272,13 +312,13 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	if g.Spec.Gateway.CRs.Initial != config.InitialCrName {
 		gatewayChanges = append(gatewayChanges, "crs.initial")
 	}
-	// fence.routes drifts as a set (reordering is not a change). Counts only,
+	// routes drifts as a set (reordering is not a change). Counts only,
 	// never names — a bare flag, like the retired fenced-CR byte check.
-	if added, removed := diffCounts(g.Spec.Gateway.Fence.Routes, config.FenceRoutes); added > 0 || removed > 0 {
-		gatewayChanges = append(gatewayChanges, "fence.routes")
+	if added, removed := diffCounts(g.Spec.Gateway.RouteNames(), config.FenceRoutes); added > 0 || removed > 0 {
+		gatewayChanges = append(gatewayChanges, "routes")
 	}
-	if crChanged(g.Spec.Gateway.CRs.Switchover, config.SwitchoverCrYAML) {
-		gatewayChanges = append(gatewayChanges, "switchover CR")
+	if switchoverTargetsChanged(g.Spec.Gateway.Routes, config.SwitchoverTargets) {
+		gatewayChanges = append(gatewayChanges, "switchover targets")
 	}
 	if len(gatewayChanges) > 0 {
 		drift = append(drift, fmt.Sprintf("spec.gateway (%s)", strings.Join(gatewayChanges, ", ")))
@@ -297,17 +337,29 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	return drift
 }
 
-// crChanged reports whether the CR file on disk differs from the snapshot taken
-// at init. An unreadable file is NOT drift: execute may be re-run from a
-// different cwd or pod after a crash, possibly with the gateway already fenced,
-// and a moved file must not strand a mid-flight cutover.
-func crChanged(path string, snapshot []byte) bool {
-	current, err := os.ReadFile(path)
-	if err != nil {
-		slog.Warn("⚠️ could not verify CR drift; proceeding on the snapshot taken at init", "path", path, "error", err)
-		return false
+// switchoverTarget is the comparable half of gateway.RouteSwitchoverTarget
+// (routeName is the map key), so two target lists can be compared as sets —
+// reordering is not a change, matching routes' own drift semantics.
+type switchoverTarget struct {
+	streamingDomainName string
+	bootstrapServerId   string
+}
+
+// switchoverTargetsChanged reports whether the manifest's declared per-route
+// switchover targets differ from the snapshot taken at init. Unlike the
+// retired file-based switchover CR, there is no file to read and therefore no
+// "unreadable" case to degrade: the target is pure manifest data, resolved
+// the moment the document parses.
+func switchoverTargetsChanged(routes []manifest.GatewayRoute, snapshot []gateway.RouteSwitchoverTarget) bool {
+	want := make(map[string]switchoverTarget, len(routes))
+	for _, r := range routes {
+		want[r.Name] = switchoverTarget{r.StreamingDomain.Name, r.StreamingDomain.BootstrapServerId}
 	}
-	return !bytes.Equal(current, snapshot)
+	have := make(map[string]switchoverTarget, len(snapshot))
+	for _, t := range snapshot {
+		have[t.RouteName] = switchoverTarget{t.StreamingDomainName, t.BootstrapServerId}
+	}
+	return !maps.Equal(want, have)
 }
 
 // diffCounts returns how many entries want adds and drops relative to have.
@@ -342,11 +394,30 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	if len(errs) > 0 {
 		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.credentials", errs)
 	}
-	// The sasl_plain-only rule is enforced in two validators upstream; assert it
-	// here rather than dereferencing on an invariant that lives elsewhere,
-	// because the alternative failure is a nil panic mid-cutover.
-	if dstCreds.SASLPlain == nil {
-		return MigrationExecutorOpts{}, fmt.Errorf("spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")
+
+	// A nil bootstrap is fine here: MigrateConn folds it straight into
+	// KafkaSourceConn.BootstrapServers, which auth-type mapping never reads
+	// (see TestMigrateConn_NilBootstrapServers_AuthMappingUnaffected).
+	destConn := types.MigrateConn(nil, dstCreds)
+	destAuthType, err := destConn.GetSelectedAuthType()
+	if err != nil {
+		// The validators upstream already enforce exactly one method (and
+		// reject iam), so this is an invariant, not an expected user error —
+		// but failing loudly here beats a nil dereference mid-cutover.
+		return MigrationExecutorOpts{}, fmt.Errorf("resolving destination auth method: %w", err)
+	}
+	destAuthMethod := destConn.AuthMethod
+
+	// Backward-compat trap: the old destination client always dialled SASL/PLAIN
+	// over TLS against the public trust store (WithSASLPlainAuth with an empty
+	// ca_cert). AdminOptionForAuthMethod maps sasl_plain with NEITHER ca_cert nor
+	// tls set to cleartext SASL_PLAINTEXT — a silent downgrade for a Confluent
+	// Cloud destination. Default UseTLS=true in that case: the destination is a
+	// managed/production cluster, always TLS, unlike a source which may
+	// legitimately be on-prem plaintext. Every existing manifest (which never
+	// set tls: nor ca_cert:) keeps dialling exactly as before.
+	if sp := destAuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
+		sp.UseTLS = true
 	}
 
 	// Policy is re-read fresh from the manifest on every run and overwrites
@@ -367,6 +438,8 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		RolloutTimeout:                  g.Spec.DefaultPolicies.RolloutTimeout,
 		DetectUnroutedProducersDuration: g.Spec.DefaultPolicies.DetectUnroutedProducersDuration,
 		ConsumerOffsetSyncDrainDuration: g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration,
+		HotReloadTimeout:                g.Spec.DefaultPolicies.HotReloadTimeout,
+		GatewayConfigPort:               g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 
 	opts := MigrationExecutorOpts{
@@ -377,24 +450,27 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		ClusterBootstrap:   config.ClusterBootstrap,
 		SourceBootstrap:    config.SourceBootstrap,
 		RolloutTimeout:     g.Spec.DefaultPolicies.RolloutTimeout,
+		HotReloadTimeout:   g.Spec.DefaultPolicies.HotReloadTimeout,
+		GatewayConfigPort:  g.Spec.DefaultPolicies.GatewayConfigPort,
 		PromoteBatchSize:   g.Spec.DefaultPolicies.PromoteBatchSize,
 
 		// The destination Kafka leg authenticates with the KAFKA block. When
 		// restCredentials is spelled out it may name a different, broader
 		// principal, and sending that to the broker would invert least privilege.
-		ClusterApiKey:    dstCreds.SASLPlain.Username,
-		ClusterApiSecret: dstCreds.SASLPlain.Password,
+		DestAuthType:   destAuthType,
+		DestAuthMethod: destAuthMethod,
 
-		RestApiKey:        restCreds.APIKey,
-		RestApiSecret:     restCreds.APISecret,
-		ClusterRestCACert: restCreds.CACert,
+		// The full resolved REST credential — basic, bearer, mtls, or the
+		// api_key form — carried through rather than flattened to a scalar
+		// key/secret pair, so bearer/basic/mTLS headers and client certs reach
+		// the REST leg.
+		RestCreds: restCreds,
 
 		// Each leg carries only what its own block asked for. Collapsing these
 		// would mean relaxing TLS for a self-signed source also stops verifying
 		// the destination connections that carry the destination API key.
 		SourceInsecureSkipTLSVerify:    srcCreds.InsecureSkipTLSVerify,
 		DestKafkaInsecureSkipTLSVerify: dstCreds.InsecureSkipTLSVerify,
-		RestInsecureSkipTLSVerify:      restCreds.InsecureSkipVerify,
 	}
 	applySourceAuth(&opts, srcCreds)
 	return opts, nil

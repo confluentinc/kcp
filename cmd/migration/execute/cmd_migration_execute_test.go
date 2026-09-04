@@ -10,7 +10,9 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/types"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,22 +50,22 @@ spec:
     namespace: confluent
     crs:
       initial: gateway-initial
-      switchover: SWITCHOVER_PATH
-    fence:
-      routes:
-        - migration-route
+    routes:
+      - name: migration-route
+        streamingDomain:
+          name: confluent-cloud
+          bootstrapServerId: SASL_PLAIN
 `
 
 type fixture struct {
 	manifestPath string
 	stateFile    string
-	switchPath   string
 	dir          string
 }
 
-// newFixture writes a manifest, its switchover CR file, and a state file holding
-// a migration whose persisted config matches the manifest. There is no fenced CR
-// file — the fence is derived from the live initial CR at cutover.
+// newFixture writes a manifest and a state file holding a migration whose
+// persisted config matches the manifest. There is no fenced or switchover CR
+// file — both are derived from the live initial CR at cutover.
 func newFixture(t *testing.T, mutate func(string) string) fixture {
 	t.Helper()
 	dir := t.TempDir()
@@ -71,11 +73,9 @@ func newFixture(t *testing.T, mutate func(string) string) fixture {
 		dir:          dir,
 		manifestPath: filepath.Join(dir, "gateway-migration.yaml"),
 		stateFile:    filepath.Join(dir, "migration-state.json"),
-		switchPath:   filepath.Join(dir, "switchover.yaml"),
 	}
-	require.NoError(t, os.WriteFile(f.switchPath, []byte("kind: Gateway\nname: switchover\n"), 0600))
 
-	doc := strings.ReplaceAll(executeManifest, "SWITCHOVER_PATH", f.switchPath)
+	doc := executeManifest
 	if mutate != nil {
 		doc = mutate(doc)
 	}
@@ -101,7 +101,7 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 		ClusterLinkName:     "msk-to-cc",
 		Topics:              []string{"t1.order", "t2.inventory"},
 		FenceRoutes:         []string{"migration-route"},
-		SwitchoverCrYAML:    []byte("kind: Gateway\nname: switchover\n"),
+		SwitchoverTargets:   []gateway.RouteSwitchoverTarget{{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"}},
 		CurrentState:        migration.StateInitialized,
 	}
 	edit(&cfg)
@@ -168,6 +168,7 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"migration-yaml", "migration-state-file", "migration-id",
 		"lag-threshold", "promote-batch-size", "rollout-timeout",
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
+		"hot-reload-timeout", "gateway-config-port",
 	}, visible)
 
 	runReport := cmd.Flags().Lookup("run-report")
@@ -304,52 +305,53 @@ func TestDrift_NeverNamesTopics(t *testing.T) {
 	assert.NotContains(t, joined, "other-topic")
 }
 
-func TestDrift_DetectsChangedSwitchoverCRBytes(t *testing.T) {
-	f := newFixture(t, nil)
-	require.NoError(t, os.WriteFile(f.switchPath, []byte("kind: Gateway\nname: EDITED\n"), 0600))
+// TestDrift_DetectsChangedSwitchoverTarget — editing a fence route's
+// switchover target after init is drift. Unlike the retired file-based
+// switchover CR there is no file to edit or lose, so there is no
+// "unreadable" case either: the target is pure manifest data.
+func TestDrift_DetectsChangedSwitchoverTarget(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "bootstrapServerId: SASL_PLAIN", "bootstrapServerId: SASL_SCRAM", 1)
+	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
-	assert.Contains(t, strings.Join(drift, " "), "switchover CR")
+	assert.Contains(t, strings.Join(drift, " "), "switchover targets")
 }
 
-// TestDrift_DetectsChangedFenceRoutes — editing spec.gateway.fence.routes after
-// init is drift, reported as a bare flag: counts/flag only, never route names.
-func TestDrift_DetectsChangedFenceRoutes(t *testing.T) {
+// TestDrift_DetectsChangedRoutes — editing spec.gateway.routes after init is
+// drift, reported as a bare flag: counts/flag only, never route names.
+func TestDrift_DetectsChangedRoutes(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc,
-			"        - migration-route\n",
-			"        - migration-route\n        - extra-route\n", 1)
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
+				"      - name: extra-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	joined := strings.Join(drift, " ")
-	assert.Contains(t, joined, "fence.routes")
+	assert.Contains(t, joined, "routes")
 	assert.NotContains(t, joined, "extra-route", "drift output must never name routes")
 }
 
-// TestDrift_ReorderedFenceRoutesIsNotDrift — fence.routes drifts as a set, so a
-// reorder of the same names is not a change.
-func TestDrift_ReorderedFenceRoutesIsNotDrift(t *testing.T) {
+// TestDrift_ReorderedRoutesIsNotDrift — routes drift as a set, so a reorder of
+// the same names is not a change.
+func TestDrift_ReorderedRoutesIsNotDrift(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc,
-			"      routes:\n        - migration-route\n",
-			"      routes:\n        - migration-route\n        - second-route\n", 1)
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n",
+			"      - name: migration-route\n        streamingDomain:\n          name: confluent-cloud\n          bootstrapServerId: SASL_PLAIN\n"+
+				"      - name: second-route\n        streamingDomain:\n          name: confluent-cloud-2\n          bootstrapServerId: SASL_PLAIN\n", 1)
 	})
-	// Snapshot carries the two routes in the opposite order.
+	// Snapshot carries the two routes (and their targets) in the opposite order.
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.FenceRoutes = []string{"second-route", "migration-route"}
+		c.SwitchoverTargets = []gateway.RouteSwitchoverTarget{
+			{RouteName: "second-route", StreamingDomainName: "confluent-cloud-2", BootstrapServerId: "SASL_PLAIN"},
+			{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
+		}
 	})
 	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
-}
-
-// TestDrift_UnreadableCRIsNotFatal — execute is resume-safe and may run from a
-// different cwd or pod after a crash, possibly with the gateway already fenced.
-// A moved CR file must not strand a mid-flight cutover.
-func TestDrift_UnreadableCRIsNotFatal(t *testing.T) {
-	f := newFixture(t, nil)
-	require.NoError(t, os.Remove(f.switchPath))
-	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)),
-		"an unreadable CR degrades to a warning, never a drift error")
 }
 
 // TestDrift_KubeconfigPathIsNotCompared — for the same reason: execute may
@@ -405,7 +407,7 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		"K8sNamespace":            true,
 		"InitialCrName":           true,
 		"FenceRoutes":             true,
-		"SwitchoverCrYAML":        true,
+		"SwitchoverTargets":       true,
 	}
 	// Deliberately not compared by detectDrift — each entry says why.
 	driftExempt := map[string]bool{
@@ -433,6 +435,12 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		// written for humans/support, never read back by kcp, so it can no more
 		// drift than policy itself (TestExecute_RecordsLastRunPolicies)
 		"LastRunPolicies": true,
+		// resolved live against the cluster's Gateway CRD/CR at init, and
+		// re-resolved authoritatively at execute — reflects the cluster's
+		// capability, not something the operator's manifest declares
+		"GatewayVerificationMode": true,
+		"GatewayHotReloadEnabled": true,
+		"GatewayConfigPort":       true,
 	}
 
 	typ := reflect.TypeOf(migration.MigrationConfig{})
@@ -562,7 +570,7 @@ func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
 // and that it captures the OVERRIDE rather than the manifest default.
 func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n"
+		return doc + "  defaultPolicies:\n    lagThreshold: 5\n    promoteBatchSize: 3\n    rolloutTimeout: 2m\n    detectUnroutedProducersDuration: 30s\n    hotReloadTimeout: 45s\n    gatewayConfigPort: 9090\n"
 	})
 	cmd := NewMigrationExecuteCmd()
 	require.NoError(t, cmd.Flags().Parse([]string{
@@ -584,6 +592,79 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	assert.Equal(t, 2*time.Minute, rec.RolloutTimeout)
 	assert.Equal(t, 30*time.Second, rec.DetectUnroutedProducersDuration)
 	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration, "an unset knob is recorded as its zero")
+	assert.Equal(t, 45*time.Second, rec.HotReloadTimeout)
+	assert.Equal(t, 9090, rec.GatewayConfigPort)
+}
+
+// TestExecute_RefusesStateFilePredatingSwitchover — a migration-state.json
+// written before redundant-auth switchover existed has fence routes but no
+// switchover targets. Left alone it fails deep in the switch step ("no
+// switchover targets given") after traffic is already fenced; execute must
+// refuse it up front, before any cluster contact, and point at the fix.
+func TestExecute_RefusesStateFilePredatingSwitchover(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.SwitchoverTargets = nil // the shape only a pre-feature state file has
+	})
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "redundant-auth switchover",
+		"the message must name the feature the state file predates")
+	assert.Contains(t, strings.ToLower(err.Error()), "init",
+		"the message must point the operator at re-running init")
+	assert.NotContains(t, err.Error(), "no switchover targets given",
+		"it must fail here, not late at the switch step")
+}
+
+// TestExecute_PolicyLogArgsCoverEveryDefaultPolicy — the audit log line that
+// records "executing migration with effective policy" is hand-mirrored from
+// DefaultPolicies and has already drifted (hotReloadTimeout and gatewayConfigPort
+// were silently dropped). effectivePolicyLogArgs is the single place the log's
+// copy lives; this pins every field to it so a future field cannot slip out of
+// the audit trail unnoticed.
+func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
+	p := manifest.DefaultPolicies{
+		LagThreshold:                    11,
+		PromoteBatchSize:                22,
+		RolloutTimeout:                  33 * time.Second,
+		DetectUnroutedProducersDuration: 44 * time.Second,
+		ConsumerOffsetSyncDrainDuration: 55 * time.Second,
+		HotReloadTimeout:                66 * time.Second,
+		GatewayConfigPort:               9099,
+	}
+	kv := kvMap(t, effectivePolicyLogArgs("mig-1", "initialized", p))
+
+	// The two the audit line silently dropped — the whole point of this test.
+	assert.Equal(t, 66*time.Second, kv["hot_reload_timeout"])
+	assert.Equal(t, 9099, kv["gateway_config_port"])
+
+	// And the rest, so no field drops out unnoticed later.
+	assert.Equal(t, "mig-1", kv["migration_id"])
+	assert.Equal(t, "initialized", kv["state"])
+	assert.Equal(t, 11, kv["lag_threshold"])
+	assert.Equal(t, 22, kv["promote_batch_size"])
+	assert.Equal(t, 33*time.Second, kv["rollout_timeout"])
+	assert.Equal(t, 44*time.Second, kv["detect_unrouted_producers_duration"])
+	assert.Equal(t, 55*time.Second, kv["consumer_offset_sync_drain_duration"])
+
+	// Every DefaultPolicies field must appear as a policy key (plus migration_id
+	// and state): the count guards against a new field being added to the struct
+	// but not to the log.
+	assert.Len(t, kv, reflect.TypeOf(p).NumField()+2)
+}
+
+// kvMap turns slog-style key/value args into a map, requiring string keys.
+func kvMap(t *testing.T, args []any) map[string]any {
+	t.Helper()
+	require.Zero(t, len(args)%2, "log args must be key/value pairs")
+	m := make(map[string]any, len(args)/2)
+	for i := 0; i < len(args); i += 2 {
+		key, ok := args[i].(string)
+		require.True(t, ok, "log arg %d must be a string key", i)
+		m[key] = args[i+1]
+	}
+	return m
 }
 
 // TestExecute_InitDoesNotCarryLastRunPolicies — the record is absent until the
@@ -671,7 +752,7 @@ func TestExecute_InsecureSkipReachesAllThreeLegs(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
-	assert.True(t, opts.RestInsecureSkipTLSVerify)
+	assert.True(t, opts.RestCreds.InsecureSkipVerify)
 
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
@@ -684,8 +765,49 @@ func TestExecute_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
-	assert.Equal(t, "CC_KEY", opts.ClusterApiKey)
-	assert.Equal(t, "CC_SECRET", opts.ClusterApiSecret)
+	assert.Equal(t, types.AuthTypeSASLPlain, opts.DestAuthType)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
+}
+
+// TestExecute_DestSASLPlainDefaultsToTLS is the ⚠️ backward-compat fix (A.3):
+// the old destination client always dialled SASL_SSL over the public trust
+// store. AdminOptionForAuthMethod maps sasl_plain with no ca_cert/tls to
+// cleartext SASL_PLAINTEXT, so buildExecutorOpts must default UseTLS=true when
+// neither is set — the single most important regression to prove, since every
+// existing manifest never sets tls: nor ca_cert: on the destination.
+func TestExecute_DestSASLPlainDefaultsToTLS(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc,
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET", 1)
+	})
+	g := loadGateway(t, f.manifestPath)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.True(t, opts.DestAuthMethod.SASLPlain.UseTLS, "no ca_cert/tls set must still default to SASL_SSL, not a silent downgrade to SASL_PLAINTEXT")
+}
+
+// TestExecute_DestSASLPlainCACertIsNotOverridden — the compat default must not
+// clobber an explicit ca_cert (already selects SASL_SSL) nor flip UseTLS when
+// one is already set.
+func TestExecute_DestSASLPlainCACertIsNotOverridden(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
+
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc,
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca, 1)
+	})
+	g := loadGateway(t, f.manifestPath)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	require.NoError(t, err)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.Equal(t, ca, opts.DestAuthMethod.SASLPlain.CACert)
+	assert.False(t, opts.DestAuthMethod.SASLPlain.UseTLS, "ca_cert already selects SASL_SSL; the compat default must not also flip UseTLS")
 }
 
 // --- ported preRunE errors (§6) ---
@@ -761,7 +883,7 @@ func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify, "the source asked for it")
 	assert.False(t, opts.DestKafkaInsecureSkipTLSVerify, "the destination Kafka leg did not")
-	assert.False(t, opts.RestInsecureSkipTLSVerify, "nor the destination REST leg")
+	assert.False(t, opts.RestCreds.InsecureSkipVerify, "nor the destination REST leg")
 }
 
 // TestExecute_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
@@ -775,7 +897,7 @@ func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 
 	assert.False(t, opts.SourceInsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
-	assert.True(t, opts.RestInsecureSkipTLSVerify, "a DERIVED REST leg inherits from the Kafka block")
+	assert.True(t, opts.RestCreds.InsecureSkipVerify, "a DERIVED REST leg inherits from the Kafka block")
 }
 
 // TestExecute_ExplicitRestCredentialsGovernTheRestLeg — with restCredentials
@@ -795,7 +917,7 @@ func TestExecute_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
-	assert.False(t, opts.RestInsecureSkipTLSVerify,
+	assert.False(t, opts.RestCreds.InsecureSkipVerify,
 		"an explicit REST block that did not ask for it must keep verifying")
 }
 
@@ -815,10 +937,11 @@ func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
-	assert.Equal(t, "CC_KEY", opts.ClusterApiKey, "the Kafka leg uses spec.target.kafka.credentials")
-	assert.Equal(t, "CC_SECRET", opts.ClusterApiSecret)
-	assert.Equal(t, "REST_ONLY_KEY", opts.RestApiKey, "the REST leg uses restCredentials")
-	assert.Equal(t, "REST_ONLY_SECRET", opts.RestApiSecret)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.credentials")
+	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
+	assert.Equal(t, "REST_ONLY_KEY", opts.RestCreds.APIKey, "the REST leg uses restCredentials")
+	assert.Equal(t, "REST_ONLY_SECRET", opts.RestCreds.APISecret)
 }
 
 // TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg — the common case is
@@ -827,6 +950,7 @@ func TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg(t *testing.T) {
 	f := newFixture(t, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
-	assert.Equal(t, "CC_KEY", opts.ClusterApiKey)
-	assert.Equal(t, "CC_KEY", opts.RestApiKey)
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
+	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
+	assert.Equal(t, "CC_KEY", opts.RestCreds.APIKey)
 }

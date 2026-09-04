@@ -1,6 +1,6 @@
 module github.com/confluentinc/kcp/utils/transaction-discovery
 
-go 1.25.12
+go 1.26.7
 
 require (
 	github.com/spf13/cobra v1.10.2
@@ -15,5 +15,5 @@ require (
 	github.com/klauspost/compress v1.18.7 // indirect
 	github.com/pierrec/lz4/v4 v4.1.26 // indirect
 	github.com/spf13/pflag v1.0.9 // indirect
-	golang.org/x/crypto v0.52.0 // indirect
+	golang.org/x/crypto v0.55.0 // indirect
 )

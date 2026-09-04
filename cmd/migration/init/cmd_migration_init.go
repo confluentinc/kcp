@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -30,9 +31,11 @@ and destination topology, the cluster link, the gateway CRs, and the credentials
 connection leg. See docs/assets/gateway-examples/gateway-migration.yaml.
 
 This command validates the cluster link and mirror topics on the destination cluster,
-fetches the current gateway CR from Kubernetes, validates the initial, fenced and switchover
-gateway CRs against each other — including that the Kubernetes secrets they reference exist
-in the namespace — and writes the migration configuration to the state file.
+fetches the current gateway CR from Kubernetes, and proves the redundant auth each
+fence route's switchover depends on is already staged — the target streaming domain
+is declared, the route carries pre-staged auth for it, and every secret that auth
+references exists in the namespace — before writing the migration configuration to
+the state file.
 
 Validating up front matters because the alternative is discovering the problem at cutover,
 after client traffic has already been fenced.
@@ -102,17 +105,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	// ===== PHASE 2: Read the switchover CR file =====
-	// The switchover CR is snapshotted into the state file and applied FROM there
-	// at cutover, so a file edited or deleted after init cannot change what gets
-	// applied mid-flight. There is no fenced CR to read: the fence is derived at
-	// cutover from the live initial CR by injecting a fence block onto the routes
-	// named in spec.gateway.fence.routes.
-	switchoverCrYAML, err := os.ReadFile(g.Spec.Gateway.CRs.Switchover)
-	if err != nil {
-		return fmt.Errorf("failed to read spec.gateway.crs.switchover: %w", err)
-	}
-
+	// ===== PHASE 2: Build the config =====
 	kubeConfigPathResolved, err := resolveKubeConfigPath(g)
 	if err != nil {
 		return err
@@ -130,10 +123,14 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
 		ClusterLinkName:         g.Spec.ClusterLink.Name,
 		Topics:                  topicsOf(g),
-		FenceRoutes:             g.Spec.Gateway.Fence.Routes,
-		SwitchoverCrYAML:        switchoverCrYAML,
+		FenceRoutes:             g.Spec.Gateway.RouteNames(),
+		SwitchoverTargets:       switchoverTargetsOf(g),
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
+		// The init-time capability probe dials /config on this port; without it the
+		// probe falls back to the hardcoded default and fails on a non-default port
+		// that execute (which reads the manifest fresh) would resolve correctly.
+		GatewayConfigPort: g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 
 	// ===== PHASE 3: Early write =====
@@ -167,13 +164,10 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 	}
 
 	opts := MigrationInitializerOpts{
-		MigrationStateFile:    migrationStateFile,
-		MigrationState:        *migrationState,
-		MigrationConfig:       config,
-		RestApiKey:            restCreds.APIKey,
-		RestApiSecret:         restCreds.APISecret,
-		ClusterRestCACert:     restCreds.CACert,
-		InsecureSkipTLSVerify: restCreds.InsecureSkipVerify,
+		MigrationStateFile: migrationStateFile,
+		MigrationState:     *migrationState,
+		MigrationConfig:    config,
+		RestCreds:          restCreds,
 	}
 	if err := NewMigrationInitializer(opts).Run(); err != nil {
 		return err
@@ -247,4 +241,22 @@ func topicsOf(g *manifest.GatewayMigration) []string {
 		return []string{}
 	}
 	return *g.Spec.Topics
+}
+
+// switchoverTargetsOf projects each route's streaming domain target — one
+// entry per route, since a target is required on every entry (D4). There is
+// no separately-snapshotted switched CR: execute derives it from
+// InitialCrYAML plus these targets, the same way it derives the fenced CR
+// from InitialCrYAML plus FenceRoutes.
+func switchoverTargetsOf(g *manifest.GatewayMigration) []gateway.RouteSwitchoverTarget {
+	routes := g.Spec.Gateway.Routes
+	targets := make([]gateway.RouteSwitchoverTarget, len(routes))
+	for i, r := range routes {
+		targets[i] = gateway.RouteSwitchoverTarget{
+			RouteName:           r.Name,
+			StreamingDomainName: r.StreamingDomain.Name,
+			BootstrapServerId:   r.StreamingDomain.BootstrapServerId,
+		}
+	}
+	return targets
 }

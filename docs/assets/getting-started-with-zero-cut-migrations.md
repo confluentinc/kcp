@@ -147,6 +147,33 @@ The following permissions are required specifically for the three migration comm
 - `get`, `patch`, `update` on `Gateway` resources in the gateway namespace
 - Validate with: `kubectl auth can-i patch gateways -n confluent`
 
+**Kubernetes (only when the gateway has hot reload enabled):**
+
+- `get` on `customresourcedefinitions.apiextensions.k8s.io` at the cluster scope
+- Validate with: `kubectl auth can-i get customresourcedefinitions`
+
+This one is conditional: it is required only when the **live** Gateway CR has `spec.hotReload.enabled: true`, and KCP does not read the CRD at all otherwise. The reason it becomes necessary is that hot reload changes what there is to observe. CFK applies the new config to the running pods in place, so no pod ever rolls, and KCP cannot confirm a fence or switchover landed by watching a rollout — it confirms instead by reading back a per-pod config revision (`spec.configId`), and it reads the CRD to check the installed CFK operator declares that field before writing it.
+
+Without the permission KCP stops at `kcp migration init` with a message naming it, rather than falling back to rollout verification: with hot reload on, that fallback would report success having observed nothing, potentially promoting topics against a source that was never fenced. If cluster-scoped read cannot be granted, set `spec.hotReload.enabled: false` on the gateway for the duration of the migration. CFK then rolls the pods on each transition, which KCP can verify without reading the CRD.
+
+### Your migration CRs must not change the gateway's hot-reload setting
+
+KCP applies the fenced and switchover CRs you supply, so those files can change how your running gateway behaves. KCP will not make that change on your behalf in either direction, and refuses before touching anything if one of them would:
+
+| Live gateway | Your fenced/switchover CR | Result |
+| --- | --- | --- |
+| `true` | `true` | Migration proceeds, verified by config revision |
+| `true` | omits `spec.hotReload` | Migration proceeds — an omitted field is inherited, not cleared |
+| `false` or unset | omits it, or `false` | Migration proceeds, verified by pod rollout |
+| `false` or unset | `true` | **Refused** — applying it would stop your pods rolling |
+| `true` | `false` | **Refused** — applying it would start rolling pods that were not rolling |
+
+Omitting `spec.hotReload` is the normal case and always safe: server-side apply leaves a field alone when the applier does not own it, so the gateway keeps whatever it was running. None of the worked examples under `docs/assets/gateway-switchover` mention the field.
+
+One extra rule applies when the gateway has hot reload **on**: the fenced and switchover CRs must either both mention `spec.hotReload` or both omit it. KCP applies them in turn, and server-side apply *deletes* a field that an earlier apply from the same field manager declared once a later one leaves it out — so a fenced CR that declares hot reload followed by a switchover CR that does not would switch hot reload off part-way through the migration, with traffic already fenced.
+
+Every refusal names the file to change and lists the ways forward, and all of these checks run again at `kcp migration execute`, because the gateway can be changed between the two commands.
+
 ---
 
 ## 8. Client Experience During Cutover

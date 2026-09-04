@@ -1,0 +1,98 @@
+# Runner pod for the hot-reload suite.
+#
+# The test binary runs IN the cluster rather than on the developer's machine
+# because kcp verifies a transition by dialling each gateway pod's IP on the
+# /config port. Pod IPs are not routable from the host under the minikube docker
+# driver, so a host-side run could only ever test a port-forwarded stand-in — and
+# the per-pod distinction is the whole point of the mechanism being tested.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: kcp-hotreload-runner
+  namespace: confluent
+---
+# CRD reads are cluster-scoped, so the capability gate needs a ClusterRole. This
+# is the first thing kcp does: without it DetectCapability cannot tell a
+# configId-capable operator from an old one and downgrades to rollout
+# verification, which would make the suite pass while testing nothing.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kcp-hotreload-runner-crd-reader
+rules:
+- apiGroups: ["apiextensions.k8s.io"]
+  resources: ["customresourcedefinitions"]
+  verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kcp-hotreload-runner-crd-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kcp-hotreload-runner-crd-reader
+subjects:
+- kind: ServiceAccount
+  name: kcp-hotreload-runner
+  namespace: confluent
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kcp-hotreload-runner
+  namespace: confluent
+rules:
+- apiGroups: ["platform.confluent.io"]
+  resources: ["gateways"]
+  # patch covers server-side apply, which is how kcp writes a CR.
+  verbs: ["get", "list", "patch", "update"]
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list"]
+- apiGroups: ["apps"]
+  resources: ["deployments"]
+  verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kcp-hotreload-runner
+  namespace: confluent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kcp-hotreload-runner
+subjects:
+- kind: ServiceAccount
+  name: kcp-hotreload-runner
+  namespace: confluent
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kcp-hotreload-runner
+  namespace: confluent
+  labels:
+    app: kcp-hotreload-runner
+spec:
+  serviceAccountName: kcp-hotreload-runner
+  containers:
+  - name: runner
+    image: __RUNNER_IMAGE__
+    imagePullPolicy: Never
+    command: ["sleep", "infinity"]
+    workingDir: /workspace
+    volumeMounts:
+    - name: workspace
+      mountPath: /workspace
+    resources:
+      requests:
+        cpu: "100m"
+        memory: "128Mi"
+      limits:
+        cpu: "1000m"
+        memory: "512Mi"
+  volumes:
+  - name: workspace
+    emptyDir: {}

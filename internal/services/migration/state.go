@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -146,16 +147,42 @@ type MigrationConfig struct {
 	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
 
 	// Gateway CR configuration
-	InitialCrName    string `json:"initial_cr_name"`
-	K8sNamespace     string `json:"k8s_namespace"`
-	InitialCrYAML    []byte `json:"initial_cr_yaml"`
-	SwitchoverCrYAML []byte `json:"switchover_cr_yaml"`
+	InitialCrName string `json:"initial_cr_name"`
+	K8sNamespace  string `json:"k8s_namespace"`
+	InitialCrYAML []byte `json:"initial_cr_yaml"`
+
+	// GatewayVerificationMode is how kcp confirms a gateway state transition
+	// landed, as resolved against the live cluster at init time. It records what
+	// the operator was told to expect; execute re-derives it and the re-derived
+	// value is the one that governs the run, because the cluster can be upgraded
+	// (or rolled back) between init and execute.
+	GatewayVerificationMode string `json:"gateway_verification_mode"`
+
+	// GatewayHotReloadEnabled records whether spec.hotReload.enabled was declared
+	// at init time by the live Gateway CR or by either of the CRs this migration
+	// will apply — the fence apply is what puts hot-reload into force, so the files
+	// count. Diagnostic: it explains which gate produced GatewayVerificationMode.
+	GatewayHotReloadEnabled bool `json:"gateway_hot_reload_enabled"`
+
+	// GatewayConfigPort is the port the gateway's GET /config endpoint is served
+	// on. Configurable because the contract requires it to be; nothing fronts
+	// this port, so kcp dials pod IPs on it directly.
+	GatewayConfigPort int `json:"gateway_config_port"`
+
 	// FenceRoutes are the spec.routes[].name values fenced at cutover. There is
 	// no snapshotted fenced CR: FenceGateway derives it at fence time by
 	// injecting a fence block onto these routes in the (metadata-stripped) live
 	// initial CR snapshot — see gateway.FenceRoutes. Deriving fence from the same
 	// InitialCrYAML that unfence re-applies makes the two exact inverses.
 	FenceRoutes []string `json:"fence_routes"`
+
+	// SwitchoverTargets names, for each route, the streaming domain the
+	// redundant-auth switch flips it to at cutover — projected from
+	// spec.gateway.routes[].streamingDomain (one entry per route, since a
+	// target is required on every entry). There is no snapshotted switched CR
+	// either: SwitchGateway derives it the same way FenceGateway derives the
+	// fenced CR, from InitialCrYAML plus these targets.
+	SwitchoverTargets []gateway.RouteSwitchoverTarget `json:"switchover_targets"`
 
 	// LastRunPolicies records the effective execute-time policy the most recent
 	// `kcp migration execute` ran with — the manifest's spec.defaultPolicies with
@@ -178,6 +205,10 @@ type LastRunPolicies struct {
 	RolloutTimeout                  time.Duration `json:"rollout_timeout"`
 	DetectUnroutedProducersDuration time.Duration `json:"detect_unrouted_producers_duration"`
 	ConsumerOffsetSyncDrainDuration time.Duration `json:"consumer_offset_sync_drain_duration"`
+	// HotReloadTimeout mirrors manifest.DefaultPolicies.HotReloadTimeout.
+	HotReloadTimeout time.Duration `json:"hot_reload_timeout"`
+	// GatewayConfigPort mirrors manifest.DefaultPolicies.GatewayConfigPort.
+	GatewayConfigPort int `json:"gateway_config_port"`
 }
 
 // ----- migration state file -----

@@ -43,7 +43,17 @@ type MigrationActions struct {
 	// FenceGateway and SwitchGateway. A value of 0 means no deadline — the
 	// wait runs until the operator reports ready or the user cancels.
 	rolloutTimeout time.Duration
-	reporter       *reporter // user-facing terminal output
+	// hotReloadTimeout is the deadline applied to per-pod configId verification.
+	// Unlike rolloutTimeout this has a real default: a hot-reload does not move
+	// any Kubernetes signal, so without a deadline a gateway whose config
+	// watcher never started would hang forever with nothing to show for it.
+	hotReloadTimeout time.Duration
+	// gatewayCapability is how gateway transitions are verified for this run.
+	// Zero value (VerifyRollout, no configId) is deliberately the safe default:
+	// an unresolved capability behaves exactly as kcp did before hot-reload
+	// support existed.
+	gatewayCapability gateway.Capability
+	reporter          *reporter // user-facing terminal output
 }
 
 func NewMigrationActions(
@@ -82,6 +92,310 @@ func (s *MigrationActions) SetRolloutTimeout(d time.Duration) {
 	s.rolloutTimeout = d
 }
 
+// SetHotReloadTimeout sets the deadline for per-pod configId verification.
+// A value of 0 falls back to gateway.DefaultHotReloadTimeout — unlike the
+// rollout waits, this one is never allowed to run unbounded.
+func (s *MigrationActions) SetHotReloadTimeout(d time.Duration) {
+	s.hotReloadTimeout = d
+}
+
+// ResolveGatewayCapability determines how gateway state transitions will be
+// verified on the live cluster, adopts it for this run, and records it on the
+// migration config.
+//
+// Called twice in a migration's life, for different reasons. At init it is an
+// advisory: it tells the operator what to expect before they commit to a
+// migration. At execute it is authoritative, because the cluster may have been
+// upgraded — or rolled back — in between, and the value that governs the run has
+// to reflect the cluster as it is now rather than as it was at init.
+func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
+	// Settle the port first: the last gate probes /config, so detection needs it.
+	if config.GatewayConfigPort == 0 {
+		config.GatewayConfigPort = gateway.DefaultGatewayConfigPort
+	}
+
+	// The fenced and switched CRs are inputs to detection, not just payloads to
+	// apply later: applying one is what puts spec.hotReload into force, so a
+	// detector shown only the live gateway can pick rollout verification for a
+	// migration that will hot-reload — and then observe nothing. Neither is
+	// snapshotted: both are derived the same way, injecting onto the live
+	// initial CR (a fence block for the fenced CR, a streamingDomain flip for
+	// the switched CR).
+	fencedCrYAML, err := deriveFencedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to derive fenced gateway CR: %w", err)
+	}
+	switchedCrYAML, err := deriveSwitchedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to derive switched gateway CR: %w", err)
+	}
+	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName,
+		gatewayConfigPort(config), fencedCrYAML, switchedCrYAML)
+	if err != nil {
+		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
+	}
+
+	previous := config.GatewayVerificationMode
+	s.gatewayCapability = capability
+	config.GatewayVerificationMode = string(capability.Mode)
+	config.GatewayHotReloadEnabled = capability.HotReloadEnabled
+
+	// A change since init is worth saying out loud either way: it means the
+	// cluster moved under the migration.
+	if previous != "" && previous != string(capability.Mode) {
+		s.reporter.warn("Gateway verification changed since this migration was initialised: %q -> %q. Using the live cluster's capability.",
+			previous, capability.Mode)
+	}
+
+	if capability.Advisory != "" {
+		s.reporter.detail("%s", capability.Advisory)
+	}
+	slog.Debug("resolved gateway verification capability",
+		"mode", capability.Mode, "crdSupportsConfigId", capability.CRDSupportsConfigID,
+		"hotReloadEnabled", capability.HotReloadEnabled, "previousMode", previous)
+
+	return nil
+}
+
+// gatewayApplyResult carries what an apply produced that a later verification
+// needs to interpret the cluster's response.
+type gatewayApplyResult struct {
+	// ConfigID is the config revision the API server stored, or "" when the
+	// cluster cannot report one — which is the signal to verify by pod rollout
+	// instead.
+	ConfigID string
+	// BaselineDeploymentGeneration is the backing Deployment's
+	// metadata.generation read immediately BEFORE the apply. The rollout waits
+	// compare against it to tell a roll this apply caused from a Deployment that
+	// was simply already healthy. 0 means it could not be read, which those waits
+	// treat as "any generation counts as a bump" — the conservative direction.
+	BaselineDeploymentGeneration int64
+}
+
+// gatewayDeploymentBaseline reads the backing Deployment's generation
+// immediately before an apply, so a later rollout wait can recognise a roll
+// that apply caused. A read failure is not fatal: the baseline is only an
+// input to the rollout path, and 0 makes that path conservative rather than
+// wrong. Failing the migration here would be a regression for the configId
+// path, which never consults it.
+func (s *MigrationActions) gatewayDeploymentBaseline(ctx context.Context, config *MigrationConfig, step string) int64 {
+	baseline, err := s.gatewayService.GetGatewayDeploymentGeneration(ctx, config.K8sNamespace, config.InitialCrName)
+	if err != nil {
+		slog.Debug("could not read the gateway deployment generation before applying; "+
+			"any generation will count as a rollout", "step", step, "error", err)
+		return 0
+	}
+	return baseline
+}
+
+// applyGatewayCR applies a gateway CR, attaching a fresh config revision id when
+// the cluster supports one.
+//
+// A fresh id on every apply has a second benefit beyond verification: it
+// guarantees the spec changes, so metadata.generation always advances. That
+// closes the no-op blind spot where an apply that changed nothing leaves
+// observedGeneration already satisfied and every downstream wait reports success
+// for a transition that never happened.
+func (s *MigrationActions) applyGatewayCR(ctx context.Context, config *MigrationConfig, yamlData []byte, step string) (gatewayApplyResult, error) {
+	var configID string
+	if s.gatewayCapability.InjectsConfigID() {
+		var err error
+		configID, err = gateway.NewConfigID()
+		if err != nil {
+			return gatewayApplyResult{}, err
+		}
+	}
+
+	baseline := s.gatewayDeploymentBaseline(ctx, config, step)
+
+	slog.Debug("applying gateway CR", "step", step, "gateway", config.InitialCrName,
+		"configId", configID, "baselineDeploymentGeneration", baseline)
+
+	storedConfigID, err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, yamlData, configID)
+	if err != nil {
+		return gatewayApplyResult{}, err
+	}
+	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+}
+
+// applyGatewayConfigIDOnly stamps a fresh configId on the gateway without
+// applying — or owning — anything else. Used only by VerifyHotReloadCapability;
+// every other caller needs the CR's actual spec change and uses applyGatewayCR.
+// Callers must only reach this when InjectsConfigID() is true.
+func (s *MigrationActions) applyGatewayConfigIDOnly(ctx context.Context, config *MigrationConfig, step string) (gatewayApplyResult, error) {
+	configID, err := gateway.NewConfigID()
+	if err != nil {
+		return gatewayApplyResult{}, err
+	}
+
+	baseline := s.gatewayDeploymentBaseline(ctx, config, step)
+
+	slog.Debug("applying gateway configId only", "step", step, "gateway", config.InitialCrName,
+		"configId", configID, "baselineDeploymentGeneration", baseline)
+
+	storedConfigID, err := s.gatewayService.ApplyGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, configID)
+	if err != nil {
+		return gatewayApplyResult{}, err
+	}
+	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+}
+
+// waitForGatewayConfigApplied blocks until every ready gateway pod reports the
+// applied configId. This is the mechanism-agnostic check: it holds whether CFK
+// chose a hot-reload or a pod roll, so kcp never has to predict which.
+//
+// Correctness does not depend on the mechanism, but the budget does. A
+// hot-reload converges in seconds and gets the bounded hot-reload budget; a roll
+// has to pull images and pass readiness probes, so the moment one is observed the
+// wait switches to the user's --rollout-timeout. Without that switch a
+// transition that legitimately rolls — a switchover whose CR adds a route or a
+// TLS secret, exactly the case that motivated per-pod verification — would be cut
+// off at 90s with traffic already fenced.
+func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, config *MigrationConfig, applied gatewayApplyResult, step string) error {
+	s.reporter.detail("Waiting for every gateway pod to apply the new config...")
+	slog.Debug("waiting for per-pod configId", "step", step, "configId", applied.ConfigID,
+		"port", gatewayConfigPort(config), "hotReloadTimeout", s.gatewayHotReloadTimeout(),
+		"rollTimeout", s.rolloutTimeout, "baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
+
+	err := s.gatewayService.WaitForGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, gateway.ConfigWaitOptions{
+		ConfigID:                     applied.ConfigID,
+		Port:                         gatewayConfigPort(config),
+		BaselineDeploymentGeneration: applied.BaselineDeploymentGeneration,
+		// Load-bearing for fence correctness, not just a latency knob. This wait
+		// returns up to one interval after the gateway actually converged, and
+		// detectUnroutedProducers takes its first offset snapshot the instant it
+		// returns — with no tolerance, so a single late message aborts the
+		// migration for a rogue producer that does not exist. Measured against a
+		// real licensed gateway (see integration-tests/migration-hot-reload), the
+		// last acknowledged write landed 0.4s-2.5s BEFORE this returned, scattered
+		// across the interval: that margin is supplied by this poll lag, not by
+		// the fence, whose own settle time looks like roughly zero. Shrinking this
+		// shrinks the margin toward zero with it.
+		PollInterval:     2 * time.Second,
+		HotReloadTimeout: s.gatewayHotReloadTimeout(),
+		RollTimeout:      s.rolloutTimeout,
+		OnProgress:       s.printConfigWaitProgress,
+	})
+	if err != nil {
+		return fmt.Errorf("failed waiting for the gateway to apply the %s config on every pod: %w", step, err)
+	}
+
+	s.reporter.success("All gateway pods have applied the new config")
+	return nil
+}
+
+// verifyGatewayTransition confirms a transition landed, by whichever means the
+// cluster supports. An empty applied.ConfigID means the cluster cannot report a
+// config revision, so this falls back to the Deployment rollout wait.
+func (s *MigrationActions) verifyGatewayTransition(ctx context.Context, config *MigrationConfig, applied gatewayApplyResult, step string) error {
+	if applied.ConfigID != "" {
+		return s.waitForGatewayConfigApplied(ctx, config, applied, step)
+	}
+
+	s.reporter.detail("Waiting for gateway readiness...")
+	slog.Debug("waiting for gateway readiness", "step", step, "rolloutTimeout", s.rolloutTimeout,
+		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
+
+	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName,
+		applied.BaselineDeploymentGeneration, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
+		return fmt.Errorf("failed waiting for gateway readiness during %s: %w", step, err)
+	}
+	return nil
+}
+
+// VerifyHotReloadCapability proves the gateway really does apply config
+// revisions, before any traffic-affecting change is made.
+//
+// This closes a hole that no Kubernetes or CFK signal can: the gateway gates its
+// config-file watcher on an Enterprise licence, so with a trial licence
+// spec.hotReload.enabled is true, CFK renders the new config, promotes the
+// shared ConfigMap, projects it into every pod, and reports
+// hot-reload-status=Succeeded — while the gateway never applies it and /config
+// keeps serving the previous revision. Detecting that after fencing would mean
+// discovering it with traffic already blocked.
+//
+// The check applies spec.configId alone, under its own field manager
+// (gateway.ApplyGatewayConfigID) rather than re-applying the live spec under
+// kcp-migration. That used to be the design — re-apply the live CR verbatim
+// plus a fresh configId — and it was safe to run at any point in a migration
+// for the same reason it was dangerous: server-side apply shares field
+// ownership by manager, so declaring the whole live spec under the same
+// manager the fence and switchover CRs apply under pre-seeded kcp's ownership
+// of every field on the gateway. The fence apply — which typically omits
+// fields the live spec carries and the fenced CR does not repeat, e.g.
+// spec.hotReload when the fenced CR relies on inheriting it — then became a
+// narrowing apply under that same manager, and server-side apply prunes a
+// field an earlier apply from the same manager declared once a later one
+// omits it. A dedicated, disjoint field manager that owns nothing but
+// spec.configId can't create that hazard, which is what makes this safe to
+// run at any point in a migration, including a resume.
+func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config *MigrationConfig) error {
+	if !s.gatewayCapability.InjectsConfigID() {
+		return nil
+	}
+
+	s.reporter.detail("Checking the gateway applies config revisions in place...")
+
+	applied, err := s.applyGatewayConfigIDOnly(ctx, config, "hot-reload check")
+	if err != nil {
+		return fmt.Errorf("failed to apply the gateway hot-reload check: %w", err)
+	}
+	if applied.ConfigID == "" {
+		return fmt.Errorf("the gateway hot-reload check applied no config revision")
+	}
+
+	if err := s.waitForGatewayAccepted(ctx, config, "hot-reload check"); err != nil {
+		return err
+	}
+
+	if err := s.waitForGatewayConfigApplied(ctx, config, applied, "hot-reload check"); err != nil {
+		s.reporter.remediation("A configId-only change must hot-reload without restarting pods. When it never reaches the pods, the\n"+
+			"   gateway's config watcher is not running — most often because the gateway holds a trial rather than an\n"+
+			"   Enterprise licence. CFK reports success regardless, so check the gateway itself:\n"+
+			"   kubectl -n %s logs -l app=%s | grep -i hot-reload", config.K8sNamespace, config.InitialCrName)
+		return err
+	}
+
+	return nil
+}
+
+// printConfigWaitProgress renders one line per poll tick of the per-pod configId
+// wait. The converged tick is silent — the caller prints the success line.
+func (s *MigrationActions) printConfigWaitProgress(p gateway.ConfigWaitProgress) {
+	if p.Converged {
+		return
+	}
+	// Naming the mechanism explains why a wait is taking as long as it is: a
+	// roll has pods to replace, an in-place apply does not. It is only ever a
+	// description of what has been observed — the verdict comes from the pods
+	// reporting the configId, never from the mechanism.
+	if p.Mechanism == gateway.MechanismPodRoll {
+		s.reporter.detail("Gateway pods are rolling — %d/%d have applied the new config (elapsed %s)",
+			p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
+		return
+	}
+	s.reporter.detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config (elapsed %s)",
+		p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
+}
+
+// gatewayConfigPort returns the port to poll GET /config on, tolerating a
+// migration state file written before the field existed.
+func gatewayConfigPort(config *MigrationConfig) int {
+	if config.GatewayConfigPort <= 0 {
+		return gateway.DefaultGatewayConfigPort
+	}
+	return config.GatewayConfigPort
+}
+
+// gatewayHotReloadTimeout returns the configId verification deadline, never
+// unbounded — see the field comment.
+func (s *MigrationActions) gatewayHotReloadTimeout() time.Duration {
+	if s.hotReloadTimeout <= 0 {
+		return gateway.DefaultHotReloadTimeout
+	}
+	return s.hotReloadTimeout
+}
+
 // SetPromoteBatchSize caps how many mirror topics are promoted per batch during
 // PromoteTopics. A value of 0 (the default) means unlimited — all zero-lag
 // topics are promoted at once. When set (>0), each batch is promoted and fully
@@ -93,7 +407,7 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 ) error {
 	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
@@ -104,12 +418,12 @@ func (s *MigrationActions) Initialize(
 	}
 	config.InitialCrYAML = initialCrYAML
 
-	// Validate all three gateway CRs are consistent, and that the secrets they
-	// reference exist. Report what was actually verified rather than a bare tick:
-	// the live secret check can legitimately be skipped (no RBAC to read
-	// secrets), and claiming a check ran when it did not is how a missing
-	// secretRef reached a cutover in the first place.
-	validation, err := s.gatewayService.ValidateGatewayCRs(ctx, config.K8sNamespace, config.InitialCrName, config.InitialCrYAML, config.SwitchoverCrYAML, config.FenceRoutes)
+	// Prove the redundant auth this migration depends on is actually staged,
+	// and that the secrets it references exist. Report what was actually
+	// verified rather than a bare tick: the live secret check can legitimately
+	// be skipped (no RBAC to read secrets), and claiming a check ran when it
+	// did not is how a missing secretRef reached a cutover in the first place.
+	validation, err := s.gatewayService.CheckRedundantAuthStaged(ctx, config.K8sNamespace, config.InitialCrYAML, config.SwitchoverTargets)
 	for _, warning := range validation.Warnings {
 		s.reporter.warn("%s", warning)
 	}
@@ -131,13 +445,23 @@ func (s *MigrationActions) Initialize(
 		s.reporter.success("Gateway CRs validated (no secret references)")
 	}
 
+	// Resolve how transitions will be verified, and tell the operator now rather
+	// than mid-cutover. This is read-only — it inspects the CRD and the live CR
+	// and changes nothing — so it is safe to run before InitialCrYAML above has
+	// been used for anything. Execute re-derives it authoritatively.
+	if err := s.ResolveGatewayCapability(ctx, config); err != nil {
+		return err
+	}
+	if s.gatewayCapability.Mode == gateway.VerifyPerPodConfigID {
+		s.reporter.success("Gateway transitions will be verified per pod via %s", gateway.GatewayConfigEndpointPath)
+	}
+
 	// Validate cluster link and topics
 	clusterLinkConfig := clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
 		LinkName:     config.ClusterLinkName,
-		APIKey:       clusterApiKey,
-		APISecret:    clusterApiSecret,
+		Auth:         restAuth,
 		Topics:       config.Topics,
 	}
 
@@ -216,7 +540,7 @@ func (s *MigrationActions) CheckLags(
 	ctx context.Context,
 	config *MigrationConfig,
 	lagThreshold int64,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 ) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
@@ -372,12 +696,13 @@ func formatLag64(n int64) string {
 //
 // Those waits only ever look at the apps/v1 Deployment. When the operator
 // rejects a CR it never touches the Deployment, so the Deployment sits complete
-// and healthy running the *previous* generation's pods — the readiness wait's
-// detection window expires, reports "No pod restart required" and returns nil.
-// That is how a switchover whose CR referenced a missing secret was reported as
-// a completed migration while the gateway stayed fenced and every client stayed
-// blocked. Confirming the operator accepted the spec is the only signal that
-// distinguishes a genuine no-op apply from a refused one.
+// and healthy running the *previous* generation's pods, still at the generation
+// the baseline captured — the readiness wait sees no rollout to converge on,
+// reports "No pod restart required" and returns nil. That is how a switchover
+// whose CR referenced a missing secret was reported as a completed migration
+// while the gateway stayed fenced and every client stayed blocked. Confirming the
+// operator accepted the spec is the only signal that distinguishes a genuine
+// no-op apply from a refused one.
 //
 // step names the phase for the error message ("fence", "switchover",
 // "unfence"). An operator rejection is returned as-is: gateway.GatewayRejectedError
@@ -425,8 +750,16 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// detection is requested.
 	detecting := config.DetectUnroutedProducersDuration > 0
 
+	// The pod-replacement wait is only usable when the fence is expected to
+	// replace pods at all. Under a hot-reload the running pods apply the fence in
+	// place and are never replaced, so waiting for the pre-fence pods to
+	// disappear could never be satisfied. Per-pod configId verification gives the
+	// detector a strictly stronger guarantee anyway: it proves every serving pod
+	// has the fenced config, rather than inferring it from pod turnover.
+	capturePods := detecting && !s.gatewayCapability.InjectsConfigID()
+
 	var oldPodUIDs map[k8stypes.UID]struct{}
-	if detecting {
+	if capturePods {
 		var err error
 		oldPodUIDs, err = s.gatewayService.GetGatewayPodUIDs(ctx, config.K8sNamespace, config.InitialCrName)
 		if err != nil {
@@ -437,49 +770,107 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	// Derive the fenced CR from the same metadata-stripped initial snapshot that
 	// unfence re-applies: fence = InitialCrYAML + fence-block on the named
 	// route(s), so fence and its removal are exact inverses. There is no
-	// separately-snapshotted fenced CR. Passing the already-parsed tree to
-	// gateway.FenceRoutesObj spares a redundant parse/marshal round trip —
-	// cleanInitialCR would otherwise marshal it back to bytes only for
-	// FenceRoutes to immediately re-parse them.
-	base, err := cleanInitialCR(config.InitialCrYAML)
-	if err != nil {
-		return err
-	}
-	fencedCrYAML, err := gateway.FenceRoutesObj(base, config.FenceRoutes)
+	// separately-snapshotted fenced CR.
+	fencedCrYAML, err := deriveFencedCRYAML(config)
 	if err != nil {
 		return fmt.Errorf("failed to build fenced gateway CR: %w", err)
 	}
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, fencedCrYAML); err != nil {
+
+	applied, err := s.applyGatewayCR(ctx, config, fencedCrYAML, "fence")
+	if err != nil {
+		if errors.Is(err, gateway.ErrApplyUnverified) {
+			// The server-side apply itself succeeded and the fenced spec is live
+			// in the cluster; only kcp's own read-back of the stored configId
+			// failed. That is exactly the state confirmFence's failures leave
+			// behind, so — unlike an apply that never reached the cluster — it
+			// earns the same restore.
+			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", ErrFenceUnconfirmed, err)
+		}
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
 	s.reporter.success("Fenced gateway CR applied")
 
-	// Gate both waits below on the operator having accepted the fenced spec.
+	// The fenced spec is now live in the cluster, so from here on every failure
+	// leaves it there — possibly holding client traffic on some or all pods.
+	// Marking them all lets the orchestrator restore the initial CR rather than
+	// exiting with the gateway in a state kcp created and did not resolve. The
+	// pod-UID capture failure above is deliberately outside the mark: it runs
+	// strictly before the apply, so nothing has reached the cluster yet to undo.
+	if err := s.confirmFence(ctx, config, applied, oldPodUIDs, capturePods); err != nil {
+		return fmt.Errorf("%w: %w", ErrFenceUnconfirmed, err)
+	}
+
+	slog.Debug("gateway fenced and ready")
+	s.reporter.success("Gateway fenced and ready")
+	return nil
+}
+
+// confirmFence blocks until the applied fenced spec is confirmed in force, by
+// whichever means the cluster supports. Split from FenceGateway so that every
+// path that can leave the fenced spec live is inside one unit its caller can
+// mark ErrFenceUnconfirmed — a failure added here cannot forget to be restorable.
+func (s *MigrationActions) confirmFence(
+	ctx context.Context,
+	config *MigrationConfig,
+	applied gatewayApplyResult,
+	oldPodUIDs map[k8stypes.UID]struct{},
+	capturePods bool,
+) error {
+	// Gate the waits below on the operator having accepted the fenced spec.
 	// The Deployment-based waits cannot tell "no restart needed" apart from
 	// "operator refused the spec" — see waitForGatewayAccepted.
 	if err := s.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
 		return err
 	}
 
-	s.reporter.detail("Waiting for gateway readiness...")
-	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout, "detecting", detecting)
-
-	// With detection on, wait until the old unfenced pods are gone, not just
-	// until the new pod is Ready — see the comment above.
-	if detecting {
-		if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, oldPodUIDs, 5*time.Second, s.rolloutTimeout, s.printPodRolloutProgress); err != nil {
+	switch {
+	case applied.ConfigID != "":
+		// Covers both mechanisms, and subsumes the pod-replacement wait below.
+		return s.waitForGatewayConfigApplied(ctx, config, applied, "fence")
+	case capturePods:
+		// With detection on and no configId to verify, wait until the old
+		// unfenced pods are gone rather than just until the new pod is Ready —
+		// see the comment in FenceGateway.
+		s.reporter.detail("Waiting for gateway readiness...")
+		slog.Debug("waiting for gateway pod replacement", "rolloutTimeout", s.rolloutTimeout,
+			"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
+		if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, oldPodUIDs,
+			applied.BaselineDeploymentGeneration, 5*time.Second, s.rolloutTimeout, s.printPodRolloutProgress); err != nil {
 			return fmt.Errorf("failed waiting for gateway pod rollout: %w", err)
 		}
-	} else {
-		if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
-			return fmt.Errorf("failed waiting for gateway readiness: %w", err)
-		}
+		return nil
+	default:
+		return s.verifyGatewayTransition(ctx, config, applied, "fence")
 	}
+}
 
-	slog.Debug("gateway fenced and ready")
-	s.reporter.success("Gateway fenced and ready")
-	return nil
+// deriveFencedCRYAML builds the fenced CR bytes from the live initial CR
+// snapshot by injecting a fence block onto config.FenceRoutes (see
+// gateway.FenceRoutesObj). There is no separately-snapshotted fenced CR:
+// FenceGateway's apply and ResolveGatewayCapability's detection both derive
+// from the same source, so they can never drift from each other.
+func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
+	base, err := cleanInitialCR(config.InitialCrYAML)
+	if err != nil {
+		return nil, err
+	}
+	return gateway.FenceRoutesObj(base, config.FenceRoutes)
+}
+
+// deriveSwitchedCRYAML builds the switched CR bytes from the live initial CR
+// snapshot by flipping each fence route's streamingDomain to its
+// config.SwitchoverTargets entry (see gateway.SwitchRoutesObj). There is no
+// separately-snapshotted switched CR: SwitchGateway's apply and
+// ResolveGatewayCapability's detection both derive from the same source, so
+// they can never drift from each other — the same property deriveFencedCRYAML
+// gives the fenced CR.
+func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
+	base, err := cleanInitialCR(config.InitialCrYAML)
+	if err != nil {
+		return nil, err
+	}
+	return gateway.SwitchRoutesObj(base, config.SwitchoverTargets)
 }
 
 // cleanInitialCR parses the initial CR YAML and strips the server-managed
@@ -531,7 +922,12 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
 	}
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, cleanYAML); err != nil {
+	// The rollback apply gets a fresh configId too. Without one it would carry
+	// whatever revision the initial CR was captured with, and the verification
+	// below would match against a value the pods already report — passing
+	// instantly while the gateway is still fenced.
+	applied, err := s.applyGatewayCR(ctx, config, cleanYAML, "unfence")
+	if err != nil {
 		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
 	}
 	slog.Debug("initial gateway CR applied")
@@ -544,13 +940,7 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 		return err
 	}
 
-	s.reporter.detail("Waiting for gateway readiness...")
-	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
-
-	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway readiness after unfence: %w", err)
-	}
-	return nil
+	return s.verifyGatewayTransition(ctx, config, applied, "unfence")
 }
 
 // detectUnroutedProducers takes two source offset snapshots separated by the
@@ -613,7 +1003,7 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 func (s *MigrationActions) PauseOffsetSync(
 	ctx context.Context,
 	config *MigrationConfig,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 	persist func() error,
 ) error {
 	if !config.PauseConsumerOffsetSync {
@@ -627,7 +1017,7 @@ func (s *MigrationActions) PauseOffsetSync(
 		return nil
 	}
 
-	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+	clCfg := BuildClusterLinkConfig(config, restAuth)
 
 	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
 
@@ -696,10 +1086,10 @@ func (s *MigrationActions) PauseOffsetSync(
 // refusal), which also keeps externally-set config untouched.
 func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 	config *MigrationConfig,
-	clusterApiKey, clusterApiSecret string,
+	restAuth clusterlink.Authenticator,
 	persist func() error,
 ) {
-	clCfg := BuildClusterLinkConfig(config, clusterApiKey, clusterApiSecret)
+	clCfg := BuildClusterLinkConfig(config, restAuth)
 	restoreOffsetSync(s.clusterLinkService, clCfg, config, persist, "Gateway unfenced but")
 }
 
@@ -732,7 +1122,7 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 }
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
-func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, clusterApiKey, clusterApiSecret string) error {
+func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -745,8 +1135,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
 		LinkName:     config.ClusterLinkName,
-		APIKey:       clusterApiKey,
-		APISecret:    clusterApiSecret,
+		Auth:         restAuth,
 		Topics:       config.Topics,
 	}
 
@@ -927,10 +1316,18 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 	}
 }
 
-// SwitchGateway applies the switchover gateway CR YAML to point to Confluent
-// Cloud, confirms the operator accepted the new spec, then waits for it to
-// report the gateway as Ready. The wait uses the same no-deadline-by-default
-// behavior as FenceGateway.
+// SwitchGateway derives the switched gateway CR from the live initial CR
+// snapshot — cleanInitialCR(config.InitialCrYAML) with each fence route's
+// streamingDomain flipped to its config.SwitchoverTargets entry (see
+// gateway.SwitchRoutesObj) — applies it, confirms the operator accepted the
+// new spec, then waits for it to report the gateway as Ready. The wait uses
+// the same no-deadline-by-default behavior as FenceGateway.
+//
+// Because the initial CR is unfenced and its routes already carry pre-staged
+// ("redundant") auth for the target domain (proved at init by
+// checkRedundantAuthStaged), this one apply yields unfenced + target-domain +
+// target-auth with no secret or auth change at cutover — there is no
+// separately-authored switchover CR to apply.
 //
 // The acceptance check is what stops this reporting a completed migration for a
 // switchover the operator refused — the failure mode described on
@@ -939,7 +1336,13 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
-	if err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, config.SwitchoverCrYAML); err != nil {
+	switchedCrYAML, err := deriveSwitchedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to build switched gateway CR: %w", err)
+	}
+
+	applied, err := s.applyGatewayCR(ctx, config, switchedCrYAML, "switchover")
+	if err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	slog.Debug("switchover gateway CR applied")
@@ -949,11 +1352,8 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 		return err
 	}
 
-	s.reporter.detail("Waiting for gateway readiness...")
-	slog.Debug("waiting for gateway readiness", "rolloutTimeout", s.rolloutTimeout)
-
-	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway readiness: %w", err)
+	if err := s.verifyGatewayTransition(ctx, config, applied, "switchover"); err != nil {
+		return err
 	}
 
 	slog.Debug("gateway switchover complete")

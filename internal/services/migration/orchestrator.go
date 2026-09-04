@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/looplab/fsm"
 )
 
@@ -13,6 +15,12 @@ import (
 // bypassing the gateway. The orchestrator catches this to trigger an
 // EventAbortFence transition back to initialized state.
 var ErrUnroutedProducers = errors.New("unrouted producers detected")
+
+// ErrFenceUnconfirmed marks a fence whose CR reached the cluster but whose
+// effect on the serving pods was never confirmed. The orchestrator catches it to
+// restore the initial CR — see restoreAfterUnconfirmedFence for why that is the
+// right compensation even when the fence appears not to have landed at all.
+var ErrFenceUnconfirmed = errors.New("fence could not be confirmed on every gateway pod")
 
 // WorkflowStep defines a single step in the migration workflow. It is pure FSM
 // topology plus an ops-facing Description; user-facing presentation lives in
@@ -70,9 +78,11 @@ var stepHeaders = map[string]string{
 // execParamsFromEvent, rather than stashed on the orchestrator, so the values
 // flow with the event instead of living as mutable orchestrator state.
 type ExecutionParams struct {
-	LagThreshold     int64
-	ClusterApiKey    string
-	ClusterApiSecret string
+	LagThreshold int64
+	// RestAuth authenticates the destination cluster-link REST surface — the
+	// full resolved Authenticator (basic, bearer, or mtls), not only an
+	// api_key/api_secret pair.
+	RestAuth clusterlink.Authenticator
 }
 
 // execParamsFromEvent returns the ExecutionParams passed to fsm.Event. Forward
@@ -212,8 +222,8 @@ func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
 }
 
 // Initialize triggers the initialization event
-func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, clusterApiSecret string) error {
-	params := ExecutionParams{ClusterApiKey: clusterApiKey, ClusterApiSecret: clusterApiSecret}
+func (o *MigrationOrchestrator) Initialize(ctx context.Context, restAuth clusterlink.Authenticator) error {
+	params := ExecutionParams{RestAuth: restAuth}
 	if err := o.fsm.Event(ctx, EventInitialize, params); err != nil {
 		return err
 	}
@@ -221,7 +231,7 @@ func (o *MigrationOrchestrator) Initialize(ctx context.Context, clusterApiKey, c
 }
 
 // Execute runs the full migration workflow from the current state
-func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, clusterApiKey, clusterApiSecret string) error {
+func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator) error {
 	// An unknown persisted state (corrupted file, or one written by a newer
 	// kcp) makes every canTransition check below return false, so the loop
 	// would skip every step and falsely report the migration complete. Refuse
@@ -231,9 +241,8 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	}
 
 	params := ExecutionParams{
-		LagThreshold:     lagThreshold,
-		ClusterApiKey:    clusterApiKey,
-		ClusterApiSecret: clusterApiSecret,
+		LagThreshold: lagThreshold,
+		RestAuth:     restAuth,
 	}
 
 	// Drive execution from canonical workflow - single source of truth
@@ -297,6 +306,14 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error, params ExecutionParams) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
+	// A fence that reached the cluster but was never confirmed is compensated
+	// outside the FSM: the fence transition was cancelled, so the machine never
+	// left its pre-fence state and there is no edge to travel back along. Only
+	// the cluster needs putting right.
+	if errors.Is(stepErr, ErrFenceUnconfirmed) {
+		return o.restoreAfterUnconfirmedFence(ctx, stepFailure)
+	}
+
 	// A compensating rollback fires only for a pause_offset_sync failure or a
 	// verify_fence unrouted-producers detection; every other step failure just
 	// leaves the FSM at its last good state. Record which branch was taken — the
@@ -320,10 +337,64 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 	// Restore the paused sync config even when the persist failed: cluster
 	// reality outranks state-file tidiness, and the restore's own persist (via
 	// the same path) keeps the marker honest when it can.
-	o.actions.restoreOffsetSyncAfterRollback(o.config, params.ClusterApiKey, params.ClusterApiSecret, o.PersistState)
+	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth, o.PersistState)
 
 	if persistErr != nil {
 		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, persistErr)
+	}
+	return stepFailure
+}
+
+// restoreAfterUnconfirmedFence reapplies the initial gateway CR after a fence
+// that reached the cluster but was never confirmed on the serving pods.
+//
+// The compensation runs for every unconfirmed fence, not only for one seen to be
+// partially applied, because the two readings a timeout can produce are not
+// equally legible and neither is safe to leave alone:
+//
+//   - Some pods at the fenced revision. CFK promotes a hot-reloadable change
+//     only after its canary pod passes, so a partial reading means the change
+//     WAS promoted and propagation then stalled. Client traffic is being blocked
+//     on part of the fleet with nothing driving it to completion.
+//   - No pod at the fenced revision. This is the ambiguous one: a canary
+//     rejection (the shared config was never updated, so nothing is fenced) is
+//     indistinguishable from a promotion still in flight, and stays that way
+//     forever — there is no later signal that resolves it. Doing nothing bets on
+//     the rejection and loses the other way, with the fence landing after kcp
+//     has exited and nobody watching.
+//
+// Reapplying the initial CR settles both without having to tell them apart. It
+// carries a fresh configId, so it supersedes any promotion still in flight
+// rather than racing it, and against a gateway that was never fenced it restores
+// the spec already in force — a no-op in effect, one hot-reload cycle in cost.
+//
+// The FSM is deliberately untouched: the fence transition was cancelled, so the
+// machine still sits at its pre-fence state, which is already the truth.
+func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context, stepFailure error) error {
+	// A definite rejection is not the ambiguous timeout the rest of this path is
+	// written for: CFK explicitly refused the fenced spec, so it never took effect
+	// on any pod. Restoring is still right — the refused spec is live in etcd and
+	// would fence if the operator's objection later clears — but the operator must
+	// hear the definite story and CFK's own reason, not be sent hunting for a
+	// partial application that cannot exist.
+	var rejected *gateway.GatewayRejectedError
+	definiteRejection := errors.As(stepFailure, &rejected)
+
+	if definiteRejection {
+		o.reporter.warn("Confluent operator rejected the fenced gateway spec (reason: %s) — it never took effect; restoring the initial gateway CR", rejected.Reason)
+	} else {
+		o.reporter.warn("Fence could not be confirmed on every gateway pod — restoring the initial gateway CR")
+	}
+
+	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
+		slog.Error("❌ failed to restore the gateway after an unconfirmed fence", "error", err)
+		return fmt.Errorf("%w; additionally, restoring the initial gateway CR failed: %w; the gateway may still be holding the fenced config on some pods, so inspect it before re-running", stepFailure, err)
+	}
+
+	if definiteRejection {
+		o.reporter.success("Initial gateway CR restored — the rejected fenced spec has been superseded")
+	} else {
+		o.reporter.success("Initial gateway CR restored — the fenced config cannot take effect later")
 	}
 	return stepFailure
 }
@@ -369,7 +440,7 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 // onInitialize runs the initialize transition: delegates to workflow Initialize.
 func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.Initialize(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
+	if err := o.actions.Initialize(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -377,7 +448,7 @@ func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) 
 // onWaitForLags runs the wait_for_lags transition: delegates to workflow CheckLags.
 func (o *MigrationOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.CheckLags(ctx, o.config, p.LagThreshold, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
+	if err := o.actions.CheckLags(ctx, o.config, p.LagThreshold, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -395,7 +466,7 @@ func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 // way — promotion's path runs through offset_sync_paused unconditionally.
 func (o *MigrationOrchestrator) onPauseOffsetSync(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.PauseOffsetSync(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret, o.PersistState); err != nil {
+	if err := o.actions.PauseOffsetSync(ctx, o.config, p.RestAuth, o.PersistState); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -414,7 +485,7 @@ func (o *MigrationOrchestrator) onVerifyFence(ctx context.Context, e *fsm.Event)
 // onPromote runs the forward promote transition: delegates to PromoteTopics.
 func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.PromoteTopics(ctx, o.config, p.ClusterApiKey, p.ClusterApiSecret); err != nil {
+	if err := o.actions.PromoteTopics(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -468,4 +539,27 @@ func (o *MigrationOrchestrator) saveState() error {
 // canTransition checks if the given event can be triggered from the current state
 func (o *MigrationOrchestrator) canTransition(event string) bool {
 	return o.fsm.Can(event)
+}
+
+// HasPendingWork reports whether any canonical workflow step remains to run.
+// False means Execute would walk the whole loop without firing a single
+// event — the same per-step canTransition check it already uses, applied
+// once up front so a caller can skip cluster work entirely (gateway
+// capability resolution, the hot-reload check) on an already-completed
+// migration instead of doing it and then discovering the FSM had nothing
+// left to do.
+//
+// An unrecognized state is reported as pending rather than resolved here: the
+// caller is expected to still reach Execute, which refuses that case loudly
+// (see isKnownState) instead of it being silently read as "nothing to do".
+func (o *MigrationOrchestrator) HasPendingWork() bool {
+	if !isKnownState(o.config.CurrentState) {
+		return true
+	}
+	for _, step := range canonicalWorkflow {
+		if o.canTransition(step.Event) {
+			return true
+		}
+	}
+	return false
 }

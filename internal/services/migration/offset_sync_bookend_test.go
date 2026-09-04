@@ -67,7 +67,7 @@ func TestPauseOffsetSync_FlagOff_PassesThrough(t *testing.T) {
 	mock, rec := newRecordingMock(t, "true", nil, nil)
 	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 	require.NoError(t, err)
 	assert.Equal(t, 0, rec.listConfigs, "must not contact the cluster link when flag is off")
 	assert.Len(t, rec.alterConfigs, 0, "must not flip when flag is off")
@@ -86,7 +86,7 @@ func TestPauseOffsetSync_AlreadyFlipped_SkipsIdempotently(t *testing.T) {
 		CurrentState:                   StateFenced,
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 	require.NoError(t, err)
 	assert.Equal(t, 0, rec.listConfigs, "resume must skip drift detection")
 	assert.Len(t, rec.alterConfigs, 0, "resume must skip the re-flip")
@@ -108,7 +108,7 @@ func TestPauseOffsetSync_HappyPath_FlipsAndPersistsInline(t *testing.T) {
 		return nil
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", persist)
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, persist)
 	require.NoError(t, err)
 	assert.Equal(t, 1, rec.listConfigs, "drift detection must query the live state")
 	require.Len(t, rec.alterConfigs, 1)
@@ -132,7 +132,7 @@ func TestPauseOffsetSync_DriftDetected_RefusesNamingBothCauses(t *testing.T) {
 		PauseConsumerOffsetSync: true,
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "link-drifty")
 	assert.Contains(t, err.Error(), "consumer.offset.sync.enable")
@@ -152,7 +152,7 @@ func TestPauseOffsetSync_DriftDetected_RefusesOnAbsentKey(t *testing.T) {
 		PauseConsumerOffsetSync: true,
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no consumer.offset.sync.enable key")
 	assert.Len(t, rec.alterConfigs, 0)
@@ -166,7 +166,7 @@ func TestPauseOffsetSync_AlterFails_NoMutation(t *testing.T) {
 		PauseConsumerOffsetSync: true,
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to disable")
 	assert.False(t, cfg.PauseConsumerOffsetSyncFlipped, "marker must NOT be set on AlterConfigs failure")
@@ -181,7 +181,7 @@ func TestPauseOffsetSync_AlterSucceeds_PersistFails_Surfaces(t *testing.T) {
 		PauseConsumerOffsetSync: true,
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, fmt.Errorf("disk full")))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, fmt.Errorf("disk full")))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to persist marker")
 	assert.Contains(t, err.Error(), "recovery", "error must include recovery hint")
@@ -197,7 +197,7 @@ func TestPauseOffsetSync_ListConfigsFails_Surfaces(t *testing.T) {
 		PauseConsumerOffsetSync: true,
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "drift detection")
 	assert.Contains(t, err.Error(), "link-1")
@@ -725,12 +725,12 @@ func TestBuildClusterLinkConfig_CarriesAllFields(t *testing.T) {
 		Topics:              []string{"orders", "users"},
 	}
 
-	cl := BuildClusterLinkConfig(cfg, "key", "secret")
+	auth := clusterlink.BasicAuth{Username: "key", Password: "secret"}
+	cl := BuildClusterLinkConfig(cfg, auth)
 	assert.Equal(t, "https://pkc.us-east-1.aws.confluent.cloud:443", cl.RestEndpoint)
 	assert.Equal(t, "lkc-abc", cl.ClusterID)
 	assert.Equal(t, "link-xyz", cl.LinkName)
-	assert.Equal(t, "key", cl.APIKey)
-	assert.Equal(t, "secret", cl.APISecret)
+	assert.Equal(t, auth, cl.Auth, "carries the resolved Authenticator, not just a scalar key/secret pair")
 	assert.Equal(t, []string{"orders", "users"}, cl.Topics)
 }
 
@@ -752,7 +752,7 @@ func TestPauseOffsetSync_Drain_WaitsBeforeDisabling(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
@@ -775,7 +775,7 @@ func TestPauseOffsetSync_Drain_ContextCancelledLeavesSyncEnabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before the drain begins
 
-	err := pauseActions(mock).PauseOffsetSync(ctx, cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(ctx, cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Equal(t, 1, rec.listConfigs, "drift check runs before the drain")
@@ -793,7 +793,7 @@ func TestPauseOffsetSync_Drain_ZeroDisablesImmediately(t *testing.T) {
 		CurrentState:                    StateFenced,
 	}
 
-	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, "k", "s", makePersist(rec, nil))
+	err := pauseActions(mock).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
 
 	require.NoError(t, err)
 	require.Len(t, rec.alterConfigs, 1, "sync disabled without any drain")

@@ -96,7 +96,7 @@ func TestFenceRoutes_ErrorsWhenRouteAlreadyFenced(t *testing.T) {
 
 // TestFenceRoutes_ErrorsOnEmptyRouteNames — fencing nothing would apply the
 // bare initial CR and report the gateway "fenced" while every client keeps
-// flowing. Upstream validation already rejects an empty spec.gateway.fence.routes;
+// flowing. Upstream validation already rejects an empty spec.gateway.routes;
 // this is defence in depth at the patcher itself.
 func TestFenceRoutes_ErrorsOnEmptyRouteNames(t *testing.T) {
 	_, err := FenceRoutes([]byte(baseRouteCR), nil)

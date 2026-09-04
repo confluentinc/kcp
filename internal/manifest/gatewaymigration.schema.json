@@ -98,7 +98,7 @@
                   "description": "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092)."
                 },
                 "credentials": {
-                  "description": "Destination Kafka credentials, used as SASL/PLAIN against the destination bootstrap. Only sasl_plain is supported in this release.",
+                  "description": "Destination Kafka credentials, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
                   "oneOf": [
                     {
                       "type": "string"
@@ -109,7 +109,7 @@
                   ]
                 },
                 "restCredentials": {
-                  "description": "Destination REST credentials. OPTIONAL: when omitted these are derived in full from credentials (api_key/api_secret from sasl_plain.username/password, insecure_skip_verify from insecure_skip_tls_verify). Spell it out only for a REST endpoint behind a private CA — a block that is present is used exactly as written, never partially derived.",
+                  "description": "Destination REST (cluster-link) credentials: api_key/api_secret, basic, bearer, or mtls. OPTIONAL only when credentials is sasl_plain — then derived in full (api_key/api_secret from sasl_plain.username/password, ca_cert and insecure_skip_verify inherited). Required for every other credentials method, since there is no principal to derive one from. A present block is used exactly as written, never partially derived.",
                   "oneOf": [
                     {
                       "type": "string"
@@ -169,42 +169,58 @@
                 "initial": {
                   "type": "string",
                   "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path."
-                },
-                "switchover": {
-                  "type": "string",
-                  "description": "Path to the local gateway CR YAML file that routes traffic to the destination."
                 }
               },
               "required": [
-                "initial",
-                "switchover"
+                "initial"
               ],
               "additionalProperties": false
             },
-            "fence": {
-              "type": "object",
-              "properties": {
-                "routes": {
-                  "type": [
-                    "null",
-                    "array"
-                  ],
-                  "items": {
-                    "type": "string"
-                  },
-                  "description": "Route name(s) (spec.routes[].name) to fence at cutover. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. Each name must exist in the initial CR and must not already be fenced."
-                }
-              },
-              "required": [
-                "routes"
+            "routes": {
+              "type": [
+                "null",
+                "array"
               ],
-              "additionalProperties": false
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR."
+                  },
+                  "streamingDomain": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string",
+                        "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains."
+                      },
+                      "bootstrapServerId": {
+                        "type": "string",
+                        "description": "A bootstrap server id declared on that streaming domain."
+                      }
+                    },
+                    "description": "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
+                    "required": [
+                      "name",
+                      "bootstrapServerId"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "name",
+                  "streamingDomain"
+                ],
+                "additionalProperties": false
+              },
+              "description": "Route(s) kcp fences and switches over at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced."
             }
           },
           "required": [
             "namespace",
             "crs",
-            "fence"
+            "routes"
           ],
           "additionalProperties": false
         },
@@ -243,6 +259,15 @@
               "type": "string",
               "description": "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
               "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+            },
+            "hotReloadTimeout": {
+              "type": "string",
+              "description": "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+              "pattern": "^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$"
+            },
+            "gatewayConfigPort": {
+              "type": "integer",
+              "description": "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the persisted value, falling back to the gateway default (9180)."
             }
           },
           "required": [

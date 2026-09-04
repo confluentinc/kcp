@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +64,7 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	require.NotNil(t, recorder)
 	orch.SetRunReportRecorder(recorder)
 
-	err := orch.Execute(context.Background(), 42, "api-key", "api-secret")
+	err := orch.Execute(context.Background(), 42, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 	recorder.Finish(config.CurrentState, nil)
 
@@ -117,7 +118,7 @@ func TestRunReport_ResumeRecordsSkippedStages(t *testing.T) {
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
 	orch.SetRunReportRecorder(recorder)
 
-	require.NoError(t, orch.Execute(context.Background(), 0, "api-key", "api-secret"))
+	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}))
 	recorder.Finish(config.CurrentState, nil)
 
 	report := readRunReport(t, reportPath)
@@ -135,8 +136,8 @@ func TestRunReport_ResumeRecordsSkippedStages(t *testing.T) {
 // A failure is a result, not an absence of one.
 func TestRunReport_FailedRunIsRecorded(t *testing.T) {
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte) error {
-			return fmt.Errorf("apply gateway failed: forbidden")
+		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
+			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
 	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
@@ -145,7 +146,7 @@ func TestRunReport_FailedRunIsRecorded(t *testing.T) {
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
 	orch.SetRunReportRecorder(recorder)
 
-	execErr := orch.Execute(context.Background(), 0, "api-key", "api-secret")
+	execErr := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.Error(t, execErr)
 	recorder.Finish(config.CurrentState, execErr)
 
@@ -254,7 +255,7 @@ func TestRunReport_NoCredentialsOrTopicNames(t *testing.T) {
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
 	orch.SetRunReportRecorder(recorder)
 
-	require.NoError(t, orch.Execute(context.Background(), 0, "api-key", "api-secret"))
+	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}))
 	recorder.Finish(config.CurrentState, nil)
 
 	raw, err := os.ReadFile(reportPath)
