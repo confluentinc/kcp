@@ -42,7 +42,7 @@ func TestClassify(t *testing.T) {
 // locks not just the eight outcomes but the first-match ORDERING of the switch —
 // e.g. an independent same-named target topic is caught before "not on the link",
 // and a bad mirror before either — against future edits. The one cell that
-// reaches the `default` arm (onSource, Stopped, routes-to-target, NOT on target —
+// reaches the `default` case (onSource, Stopped, routes-to-target, NOT on target —
 // promoted and switched yet absent on target) is asserted here so that reachable
 // inconsistency stays classified as fail-fast rather than silently changing shape.
 func TestClassifyExhaustive(t *testing.T) {
@@ -55,7 +55,7 @@ func TestClassifyExhaustive(t *testing.T) {
 		reasonHas          string
 	}
 	// reasonHas is a substring unique to the message that the matching switch
-	// arm produces, so it also verifies WHICH arm fired, not merely that some
+	// case produces, so it also verifies WHICH case fired, not merely that some
 	// fail-fast did.
 	cells := []cell{
 		// onSource = false — nothing to migrate; case order still matters.
@@ -72,7 +72,7 @@ func TestClassifyExhaustive(t *testing.T) {
 		{F, T, MirrorActive, F, FailFast, "not found on the source"},
 		{F, T, MirrorActive, T, FailFast, "not yet promoted"},
 		{F, T, MirrorStopped, F, FailFast, "not switched over"},
-		{F, T, MirrorStopped, T, Unchanged, ""}, // Unchanged arm matches even without source presence
+		{F, T, MirrorStopped, T, Unchanged, ""}, // Unchanged case matches even without source presence
 		{F, T, MirrorBad, F, FailFast, "failed/transitional"},
 		{F, T, MirrorBad, T, FailFast, "failed/transitional"},
 		// onSource = true.
@@ -81,7 +81,7 @@ func TestClassifyExhaustive(t *testing.T) {
 		{T, F, MirrorActive, F, Migratable, ""},
 		{T, F, MirrorActive, T, FailFast, "not yet promoted"},
 		{T, F, MirrorStopped, F, FailFast, "not switched over"},
-		{T, F, MirrorStopped, T, FailFast, "unclassified"}, // the reachable default arm
+		{T, F, MirrorStopped, T, FailFast, "unclassified"}, // the reachable default case
 		{T, F, MirrorBad, F, FailFast, "failed/transitional"},
 		{T, F, MirrorBad, T, FailFast, "failed/transitional"},
 		{T, T, MirrorNone, F, FailFast, "not a mirror of the source"},
