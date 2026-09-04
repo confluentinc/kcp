@@ -5,7 +5,10 @@ import (
 	"sort"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 )
+
+var _ migplan.TopicLister = (*KafkaTopicLister)(nil)
 
 // topicListerAdmin is the narrow slice of internal/client.KafkaAdmin that the
 // topic lister needs. Keeping it local means the unit test needs only a

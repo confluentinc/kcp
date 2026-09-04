@@ -8,6 +8,7 @@ package reconcile
 
 import (
 	"fmt"
+	"io"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
@@ -103,15 +104,17 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 		return err
 	}
 
-	src, err := buildSourceTopicLister(g)
+	src, srcCloser, err := buildSourceTopicLister(g)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = srcCloser.Close() }()
 
-	tgt, err := buildTargetTopicLister(g)
+	tgt, tgtCloser, err := buildTargetTopicLister(g)
 	if err != nil {
 		return err
 	}
+	defer func() { _ = tgtCloser.Close() }()
 
 	engine := migplan.NewReconciliationEngine(gw, src, tgt, link)
 	plan, err := engine.Run(cmd.Context(), in)
@@ -177,11 +180,12 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration, offsetSyncEnabled boo
 
 // buildSourceTopicLister builds the source-cluster topic lister from the
 // manifest source credentials, following the same auth resolution as
-// `kcp migration execute` (applySourceAuth / createSourceOffset).
-func buildSourceTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, error) {
+// `kcp migration execute` (applySourceAuth / createSourceOffset). The returned
+// io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildSourceTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, io.Closer, error) {
 	creds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
-		return nil, manifest.JoinProblems("spec.source.credentials", errs)
+		return nil, nil, manifest.JoinProblems("spec.source.credentials", errs)
 	}
 	conn := types.MigrateConn(g.Spec.Source.BootstrapServers, creds)
 	return buildTopicLister(conn)
@@ -189,14 +193,15 @@ func buildSourceTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, 
 
 // buildTargetTopicLister builds the destination-cluster topic lister from the
 // destination KAFKA leg (not the REST leg — they may differ), following the same
-// auth resolution as `kcp migration execute` (createDestinationOffset).
-func buildTargetTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, error) {
+// auth resolution as `kcp migration execute` (createDestinationOffset). The
+// returned io.Closer is the underlying Kafka admin; the caller owns closing it.
+func buildTargetTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, io.Closer, error) {
 	if g.Spec.Target.Kafka == nil {
-		return nil, fmt.Errorf("spec.target.kafka: required")
+		return nil, nil, fmt.Errorf("spec.target.kafka: required")
 	}
 	creds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return nil, manifest.JoinProblems("spec.target.kafka.credentials", errs)
+		return nil, nil, manifest.JoinProblems("spec.target.kafka.credentials", errs)
 	}
 	conn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, creds)
 
@@ -216,10 +221,11 @@ func buildTargetTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, 
 // the shared client.AdminOptionForAuthMethod mapper (skipTLSVerify threaded from
 // the connection), and the encryption-in-transit arg is inert (the auth option
 // determines TLS) — ClientBrokerTls is passed for parity with the rest of KCP.
-func buildTopicLister(conn types.KafkaSourceConn) (migplan.TopicLister, error) {
+// The returned io.Closer is the admin itself; the caller owns closing it.
+func buildTopicLister(conn types.KafkaSourceConn) (migplan.TopicLister, io.Closer, error) {
 	authType, err := conn.GetSelectedAuthType()
 	if err != nil {
-		return nil, fmt.Errorf("determining auth type: %w", err)
+		return nil, nil, fmt.Errorf("determining auth type: %w", err)
 	}
 	region := ""
 	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
@@ -227,11 +233,11 @@ func buildTopicLister(conn types.KafkaSourceConn) (migplan.TopicLister, error) {
 	}
 	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
 	if err != nil {
-		return nil, fmt.Errorf("resolving auth option: %w", err)
+		return nil, nil, fmt.Errorf("resolving auth option: %w", err)
 	}
 	admin, err := client.NewKafkaAdmin(conn.BootstrapServers, kafkatypes.ClientBrokerTls, region, defaultKafkaVersion, authOpt)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to cluster: %w", err)
+		return nil, nil, fmt.Errorf("connecting to cluster: %w", err)
 	}
-	return providers.NewKafkaTopicLister(admin), nil
+	return providers.NewKafkaTopicLister(admin), admin, nil
 }

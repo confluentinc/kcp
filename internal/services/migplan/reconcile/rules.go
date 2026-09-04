@@ -1,8 +1,6 @@
 package reconcile
 
 import (
-	"fmt"
-
 	"github.com/goccy/go-yaml"
 )
 
@@ -89,8 +87,6 @@ func (rt *RulesTree) CoordinationGroup() string {
 	return stringField(coord, "group")
 }
 
-var _ = fmt.Sprintf // keep fmt import available for later error messages
-
 // Clone deep-copies the tree so fence and switchover mutations are independent.
 func (rt *RulesTree) Clone() *RulesTree {
 	b, _ := yaml.Marshal(rt.root)
@@ -134,9 +130,4 @@ func (rt *RulesTree) PrependCondition(topics []string, domain string) {
 
 func (rt *RulesTree) Serialize() ([]byte, error) {
 	return yaml.Marshal(rt.root)
-}
-
-func (rt *RulesTree) SizeBytes() (int, error) {
-	b, err := rt.Serialize()
-	return len(b), err
 }

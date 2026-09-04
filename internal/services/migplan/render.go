@@ -19,7 +19,7 @@ func RenderReport(w io.Writer, r reconcile.Report) {
 		if p.OK {
 			_, _ = fmt.Fprintf(w, "  %s %s\n", color.GreenString("✓"), p.Name)
 		} else {
-			_, _ = fmt.Fprintf(w, "  %s %s\n", color.RedString("✗ %s — %s", p.Name, p.Detail), "")
+			_, _ = fmt.Fprintln(w, "  "+color.RedString("✗ %s — %s", p.Name, p.Detail))
 		}
 	}
 	for _, tv := range r.Migratable {

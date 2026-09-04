@@ -4,15 +4,37 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/goccy/go-yaml"
 )
+
+// fencingSection isolates the `fencing` subtree of a serialized rules block so
+// assertions about it can't accidentally match a batch topic name that
+// legitimately appears elsewhere in the document (e.g. routing.conditions).
+func fencingSection(t *testing.T, raw []byte) string {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal rules block: %v", err)
+	}
+	b, err := yaml.Marshal(doc["fencing"])
+	if err != nil {
+		t.Fatalf("marshal fencing section: %v", err)
+	}
+	return string(b)
+}
 
 func TestReconcileHappyPath(t *testing.T) {
 	gw := dynGateway()
-	gw.Route.Rules = map[string]any{"routing": map[string]any{
-		"coordination": map[string]any{"group": "msk"},
-		"conditions":   []any{map[string]any{"topicPatterns": []any{"team-a.*"}, "streamingDomain": "msk"}},
-		"default":      "msk",
-	}}
+	gw.Route.Rules = map[string]any{
+		// operator's pre-existing fencing entry; must survive both artifacts.
+		"fencing": []any{map[string]any{"trafficType": "TRANSACTION"}},
+		"routing": map[string]any{
+			"coordination": map[string]any{"group": "msk"},
+			"conditions":   []any{map[string]any{"topicPatterns": []any{"team-a.*"}, "streamingDomain": "msk"}},
+			"default":      "msk",
+		},
+	}
 	in := ReconcileInput{TopicPatterns: []string{"team-a.*"}, Route: "migration-route", TargetDomain: "cc"}
 	source := []string{"team-a.orders", "team-a.payments"}
 	target := []string{"team-a.orders", "team-a.payments"}
@@ -28,12 +50,36 @@ func TestReconcileHappyPath(t *testing.T) {
 	if len(p.Artifacts.Topics) != 2 {
 		t.Fatalf("promote list = %v, want 2 topics", p.Artifacts.Topics)
 	}
-	// invariant 1 pin: the switchover block carries no batch fence entry.
-	if !strings.Contains(string(p.Artifacts.FenceRules), "fencing") {
-		t.Fatal("fence rules must contain the prepended fencing block")
+	// invariant: the topic still classifies Migratable (a pre-existing operator
+	// fencing block must not change routing/verdict).
+	migratableTopics := map[string]bool{}
+	for _, tv := range p.Report.Migratable {
+		migratableTopics[tv.Topic] = true
 	}
-	if strings.Contains(string(p.Artifacts.SwitchoverRules), "fencing") {
-		t.Fatal("switchover rules must NOT carry the batch fence entry")
+	if !migratableTopics["team-a.orders"] || !migratableTopics["team-a.payments"] {
+		t.Fatalf("expected both topics classified Migratable, got %+v", p.Report.Migratable)
+	}
+
+	fenceFencing := fencingSection(t, p.Artifacts.FenceRules)
+	switchFencing := fencingSection(t, p.Artifacts.SwitchoverRules)
+
+	// invariant: the fence artifact's fencing block carries the batch fence entry.
+	if !strings.Contains(fenceFencing, "team-a.orders") {
+		t.Fatalf("fence rules fencing block must contain the batch topic, got %q", fenceFencing)
+	}
+	// invariant: the operator's fencing entry SURVIVES in both artifacts —
+	// prepending the batch fence must never drop the operator's own entries.
+	if !strings.Contains(fenceFencing, "TRANSACTION") {
+		t.Fatalf("fence rules fencing block must preserve the operator's fencing entry, got %q", fenceFencing)
+	}
+	if !strings.Contains(switchFencing, "TRANSACTION") {
+		t.Fatalf("switchover rules must preserve the operator's fencing entry, got %q", switchFencing)
+	}
+	// invariant: the batch topic must NOT appear in the switchover's fencing
+	// region as a fenced entry (it belongs in switchover's routing.conditions,
+	// not the fencing block — the fencing block is untouched by switchover).
+	if strings.Contains(switchFencing, "team-a.orders") {
+		t.Fatalf("switchover rules must NOT carry the batch topic as a fenced entry, got %q", switchFencing)
 	}
 }
 

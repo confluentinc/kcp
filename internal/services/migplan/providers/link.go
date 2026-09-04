@@ -13,6 +13,8 @@ type mirrorLister interface {
 	ListMirrorTopics(ctx context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error)
 }
 
+var _ migplan.LinkStatusProvider = (*ClusterLinkStatus)(nil)
+
 // ClusterLinkStatus reports the link's per-topic mirror state (keyed by SOURCE
 // topic name) and its offset-sync setting. It implements migplan.LinkStatusProvider.
 //

@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/goccy/go-yaml"
 )
+
+var _ migplan.GatewayConfigSource = (*GatewayFile)(nil)
 
 // GatewayFile loads a route from a static gateway CR YAML file — the prototype
 // stand-in for the live k8s pull.
