@@ -1,6 +1,10 @@
 package reconcile
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/goccy/go-yaml"
+)
 
 // RulesTree is the route's `rules` subtree held as a fidelity-preserving tree
 // (map[string]any / []any). Lists keep their order (first-match-wins is
@@ -86,3 +90,53 @@ func (rt *RulesTree) CoordinationGroup() string {
 }
 
 var _ = fmt.Sprintf // keep fmt import available for later error messages
+
+// Clone deep-copies the tree so fence and switchover mutations are independent.
+func (rt *RulesTree) Clone() *RulesTree {
+	b, _ := yaml.Marshal(rt.root)
+	var cp map[string]any
+	_ = yaml.Unmarshal(b, &cp)
+	return &RulesTree{root: cp}
+}
+
+func (rt *RulesTree) ensureRouting() map[string]any {
+	if rt.root["routing"] == nil {
+		rt.root["routing"] = map[string]any{}
+	}
+	r, _ := mapField(rt.root, "routing")
+	return r
+}
+
+func asAnySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
+// PrependFence adds a batch fence entry (all traffic, exact names) at the head
+// of rules.fencing, preserving the operator's existing entries.
+func (rt *RulesTree) PrependFence(topics []string) {
+	entry := map[string]any{"topics": asAnySlice(topics)}
+	existing, _ := sliceField(rt.root, "fencing")
+	rt.root["fencing"] = append([]any{entry}, existing...)
+}
+
+// PrependCondition adds an exact-name routing condition at the head of
+// rules.routing.conditions, preserving the operator's existing conditions.
+func (rt *RulesTree) PrependCondition(topics []string, domain string) {
+	routing := rt.ensureRouting()
+	entry := map[string]any{"topics": asAnySlice(topics), "streamingDomain": domain}
+	existing, _ := sliceField(routing, "conditions")
+	routing["conditions"] = append([]any{entry}, existing...)
+}
+
+func (rt *RulesTree) Serialize() ([]byte, error) {
+	return yaml.Marshal(rt.root)
+}
+
+func (rt *RulesTree) SizeBytes() (int, error) {
+	b, err := rt.Serialize()
+	return len(b), err
+}

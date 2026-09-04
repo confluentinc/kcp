@@ -32,3 +32,10 @@ func OwnerRoute(topic string, conditions []Condition, defaultDomain string) (str
 	}
 	return defaultDomain, true
 }
+
+// OwnerRouteFromView is a small test helper that resolves a topic's owning
+// domain directly from a projected RouteView.
+func OwnerRouteFromView(v RouteView, topic string) string {
+	d, _ := OwnerRoute(topic, v.Conditions, v.DefaultDomain)
+	return d
+}
