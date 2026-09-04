@@ -163,76 +163,73 @@
               "type": "string",
               "description": "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded."
             },
-            "crs": {
-              "type": "object",
-              "properties": {
-                "initial": {
-                  "type": "string",
-                  "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path."
-                }
-              },
-              "required": [
-                "initial"
-              ],
-              "additionalProperties": false
-            },
-            "routes": {
-              "type": [
-                "null",
-                "array"
-              ],
-              "items": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR."
-                  },
-                  "streamingDomain": {
-                    "type": "object",
-                    "properties": {
-                      "name": {
-                        "type": "string",
-                        "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains."
-                      },
-                      "bootstrapServerId": {
-                        "type": "string",
-                        "description": "A bootstrap server id declared on that streaming domain."
-                      }
-                    },
-                    "description": "The streaming domain this route switches to once unfenced. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain — kcp proves that staging holds at init.",
-                    "required": [
-                      "name",
-                      "bootstrapServerId"
-                    ],
-                    "additionalProperties": false
-                  }
-                },
-                "required": [
-                  "name",
-                  "streamingDomain"
-                ],
-                "additionalProperties": false
-              },
-              "description": "Route(s) kcp fences and switches over at cutover, each paired with the streaming domain it switches to. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping each route's streamingDomain to its declared target and applying the patched CR — no switchover CR file either. Each route name must exist in the initial CR and must not already be fenced."
+            "cr-name": {
+              "type": "string",
+              "description": "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path."
             }
           },
           "required": [
             "namespace",
-            "crs",
-            "routes"
+            "cr-name"
           ],
           "additionalProperties": false
         },
-        "topics": {
+        "topicGroup": {
           "type": [
             "null",
             "array"
           ],
           "items": {
-            "type": "string"
+            "type": "object",
+            "properties": {
+              "topics": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. At least one of topics or topicPatterns is required; both may be set (their union is used)."
+              },
+              "topicPatterns": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "Topic selection as a list of anchored full-match regular expressions (RE2). Use ['.*'] to cut over every active mirror topic. At least one of topics or topicPatterns is required; both may be set (their union is used)."
+              },
+              "route": {
+                "type": "string",
+                "description": "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced."
+              },
+              "targetStreamingDomain": {
+                "type": "string",
+                "description": "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init."
+              }
+            },
+            "required": [
+              "route",
+              "targetStreamingDomain"
+            ],
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "topics"
+                ]
+              },
+              {
+                "required": [
+                  "topicPatterns"
+                ]
+              }
+            ]
           },
-          "description": "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected."
+          "description": "Pairs the topic selection with the route it migrates and the streaming domain that route switches to. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here."
         },
         "defaultPolicies": {
           "type": "object",
@@ -280,7 +277,8 @@
         "source",
         "target",
         "clusterLink",
-        "gateway"
+        "gateway",
+        "topicGroup"
       ],
       "additionalProperties": false
     },

@@ -151,38 +151,40 @@ spec:
   gateway:
     namespace: confluent
     # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
-    crs:
-      initial: gateway-initial # a Kubernetes object NAME, read live
-      # switchover is no longer supported — see routes[].streamingDomain
-      # below. Setting it is a validation error, not a silent no-op.
-    # Route(s) to fence at cutover, and where each switches to. kcp reads the
-    # live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE}
-    # onto each named route, and applies the patched CR — there is no separate
-    # fenced-CR file to create or keep in sync. The named routes must exist in
-    # the initial CR and must not already be fenced.
-    #
-    # At cutover kcp derives the switched CR the same way: it flips each
-    # route's spec.routes[].streamingDomain to the domain/bootstrapServerId
-    # declared here and applies the patched CR — no switchover CR file
-    # either. This is safe with NO secret or auth change at cutover only
-    # because the route's security.cluster already carries pre-staged
-    # ("redundant") swap auth for the target domain; kcp proves that staging
-    # holds at init (see checkRedundantAuthStaged), before anything is
-    # fenced. Both the target domain and its bootstrapServerId must already
-    # be declared in the initial CR's spec.streamingDomains.
-    routes:
-      - name: migration-route
-        streamingDomain:
-          name: confluent-cloud
-          bootstrapServerId: SASL_PLAIN
+    cr-name: gateway-initial # a Kubernetes object NAME, read live
 
-  # OPTIONAL. A flat list of LITERAL topic names, exact-matched against the
-  # link's active mirror topics — not globs, and a name that matches nothing is
-  # a hard error. Omit the key entirely to cut over every active mirror topic;
-  # an empty list is rejected rather than silently meaning "all".
+  # topicGroup pairs the topic selection with the route it migrates and the
+  # streaming domain that route switches to. Exactly one entry today — one
+  # route, one migration per file.
   #
-  # Note this has NO effect on `lag-check`, which always watches every mirror.
-  topics: ['t1.order', 't1.inventory', 't2.order']
+  # kcp reads the live initial CR, injects fence: {scope: ALL, errorCode:
+  # BROKER_NOT_AVAILABLE} onto the named route, and applies the patched CR —
+  # there is no separate fenced-CR file to create or keep in sync. The route
+  # must exist in the initial CR and must not already be fenced. At cutover kcp
+  # derives the switched CR the same way, flipping the route's streamingDomain
+  # to the target declared here. This is safe with NO secret or auth change at
+  # cutover only because the route's security.cluster already carries pre-staged
+  # ("redundant") swap auth for the target domain; kcp proves that staging holds
+  # at init (see checkRedundantAuthStaged), before anything is fenced.
+  #
+  # The route's migration MODE (all-at-once vs topic-based) is read from the
+  # live CR's route binding, not declared here.
+  topicGroup:
+    # topics is a flat list of LITERAL topic names, exact-matched against the
+    # link's active mirror topics — not globs. topicPatterns is a list of
+    # anchored full-match regular expressions (RE2). At least one of the two is
+    # REQUIRED; both may be set (their union is used). To cut over EVERY active
+    # mirror topic, use the match-all pattern: topicPatterns: ['.*'].
+    #
+    # Note the selection has NO effect on `lag-check`, which always watches
+    # every mirror.
+    - topics: ['t1.order', 't1.inventory', 't2.order']
+      # topicPatterns: ['orders\..*']
+      route: migration-route # a pre-existing route in the initial CR
+      # The target streaming domain — declared in the initial CR's
+      # spec.streamingDomains. The bootstrap server id kcp binds the route to is
+      # DERIVED from that declaration in the live CR at init, not written here.
+      targetStreamingDomain: confluent-cloud
 
   # OPTIONAL, and read FRESH on every execute — never frozen at init. That is what
   # lets policy be varied between init and execute. Each value is a DEFAULT:

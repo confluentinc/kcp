@@ -210,16 +210,19 @@ func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
 		"minimum 10s", "the opt-in check's minimum was documented on the flag")
 	require.Contains(t, policy["promoteBatchSize"].(map[string]any)["description"], "0")
 
-	crs := props(t, props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any))
-	require.Contains(t, crs["initial"].(map[string]any)["description"], "name")
-
 	gatewayProps := props(t, spec["gateway"].(map[string]any))
-	require.Contains(t, gatewayProps["routes"].(map[string]any)["description"], "fence")
+	require.Contains(t, gatewayProps["cr-name"].(map[string]any)["description"], "name")
 
-	topics := spec["topics"].(map[string]any)
-	require.NotEmpty(t, topics["description"])
-	require.NotContains(t, topics["description"], "lag-check",
-		"spec.topics has no effect on lag-check; the description must not imply otherwise")
+	topicGroup := spec["topicGroup"].(map[string]any)
+	require.Contains(t, topicGroup["description"], "fence")
+
+	item := props(t, topicGroup["items"].(map[string]any))
+	require.NotEmpty(t, item["topics"].(map[string]any)["description"])
+	require.NotContains(t, item["topics"].(map[string]any)["description"], "lag-check",
+		"topic selection has no effect on lag-check; the description must not imply otherwise")
+	require.Contains(t, item["topicPatterns"].(map[string]any)["description"], "regular expression")
+	require.NotEmpty(t, item["route"].(map[string]any)["description"])
+	require.NotEmpty(t, item["targetStreamingDomain"].(map[string]any)["description"])
 }
 
 func TestGenerateGateway_RequiredSets(t *testing.T) {
@@ -232,7 +235,7 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 		return r
 	}
 	require.ElementsMatch(t, []any{"apiVersion", "kind", "metadata", "spec"}, requiredOf(doc))
-	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway"}, requiredOf(p["spec"].(map[string]any)))
+	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway", "topicGroup"}, requiredOf(p["spec"].(map[string]any)))
 	require.ElementsMatch(t, []any{"type", "clusterId", "kafka"}, requiredOf(spec["target"].(map[string]any)))
 	// kafka's reflected required set is only restEndpoint, but Validate() also
 	// requires bootstrapServers and credentials — the schema must match so a lint
@@ -240,17 +243,23 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	// derived and stays optional.
 	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "credentials"},
 		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
-	require.ElementsMatch(t, []any{"namespace", "crs", "routes"}, requiredOf(spec["gateway"].(map[string]any)))
-	// switchover is retired (D2): the property is dropped from the schema
-	// entirely (see the shipped-example test below), so only initial remains.
-	require.ElementsMatch(t, []any{"initial"},
-		requiredOf(props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)))
-	// Each route pairs a name with its streaming domain target (D4): a route
-	// cannot be named here without also declaring where it switches to.
-	routeItem := props(t, spec["gateway"].(map[string]any))["routes"].(map[string]any)["items"].(map[string]any)
-	require.ElementsMatch(t, []any{"name", "streamingDomain"}, routeItem["required"])
-	require.NotContains(t, props(t, spec["gateway"].(map[string]any))["crs"].(map[string]any)["properties"].(map[string]any), "switchover",
-		"crs.switchover must not appear in the schema at all — offering it would mislead an editor into typing something Validate() always rejects")
+	require.ElementsMatch(t, []any{"namespace", "cr-name"}, requiredOf(spec["gateway"].(map[string]any)))
+	// The old crs/routes/topics shape is gone from the schema entirely: a
+	// stale key must be flagged by the editor, not offered as legal.
+	gwProps := props(t, spec["gateway"].(map[string]any))
+	require.NotContains(t, gwProps, "crs", "the crs block is retired — see cr-name")
+	require.NotContains(t, gwProps, "routes", "routes are retired — see topicGroup")
+	require.NotContains(t, spec, "topics", "spec.topics is retired — see topicGroup")
+	// Each topicGroup entry pairs a route with its target streaming domain. The
+	// bootstrap server id is derived from the live CR and mode from the CR
+	// so neither is a required manifest field.
+	item := spec["topicGroup"].(map[string]any)["items"].(map[string]any)
+	require.ElementsMatch(t, []any{"route", "targetStreamingDomain"}, item["required"])
+	// At least one of topics/topicPatterns, hand-patched as an anyOf since
+	// the constraint isn't expressible on the struct.
+	anyOf, ok := item["anyOf"].([]any)
+	require.True(t, ok, "the topicGroup item must carry an anyOf for the at-least-one topics/topicPatterns rule")
+	require.Len(t, anyOf, 2)
 	// lagThreshold's zero value is meaningful (fail-safe/strictest), not a
 	// stand-in for "omitted", so the key must be required even though the
 	// block it lives in (spec.defaultPolicies) stays optional.
