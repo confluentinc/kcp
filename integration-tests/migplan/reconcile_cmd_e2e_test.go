@@ -40,11 +40,8 @@ func TestReconcileCommandArtifactsReflectManifest(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 	cmd.SetArgs([]string{
-		"--migration-yaml", "testdata/manifest.yaml",
+		"--migration-yaml", "testdata/manifest.yaml", // topics/route/target come from spec.topicGroup
 		"--gateway-config", "testdata/gateway.yaml",
-		"--route", "migration-route",
-		"--target-domain", "cc",
-		"--topics", "team-a.orders,team-a.payments,billing-v2",
 		"--out-dir", out,
 	})
 	if err := cmd.Execute(); err != nil {

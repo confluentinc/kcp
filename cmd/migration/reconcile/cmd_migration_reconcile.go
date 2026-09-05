@@ -27,16 +27,12 @@ import (
 // version is inert for topic listing; parity with the rest of KCP is what matters.
 const defaultKafkaVersion = "3.6.0"
 
-// reconcileFlags is the interim flag surface. The selector (route/target-domain/
-// topics/patterns) comes from flags because the working-tree manifest has no
-// spec.topicGroup yet; the connections come from the manifest.
+// reconcileFlags is the flag surface. The selector (route / target domain /
+// topics / patterns) is read from the manifest's spec.topicGroup, not flags;
+// --gateway-config is the prototype stand-in for the live k8s gateway pull.
 type reconcileFlags struct {
 	manifestPath  string
 	gatewayConfig string
-	route         string
-	targetDomain  string
-	topics        []string
-	topicPatterns []string
 	dryRun        bool
 	outDir        string
 }
@@ -51,9 +47,9 @@ func NewMigrationReconcileCmd() *cobra.Command {
 
 It loads the GatewayMigration manifest and a static gateway-config file, reads the
 live source topics, target topics, and cluster-link mirror state, then reconciles
-them against the requested route and target streaming domain. It renders a per-topic
-report and, unless --dry-run is set, writes topics.json, fence-rules.yaml and
-switchover-rules.yaml into --out-dir.
+them against the route + target streaming domain + topic selection declared in the
+manifest's spec.topicGroup. It renders a per-topic report and, unless --dry-run is
+set, writes topics.json, fence-rules.yaml and switchover-rules.yaml into --out-dir.
 
 The command never mutates the gateway; it only reads and writes local files.`,
 		Hidden:        true,
@@ -68,16 +64,12 @@ The command never mutates the gateway; it only reads and writes local files.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
+	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration (route, target domain and topic selection come from its spec.topicGroup).")
 	cmd.Flags().StringVar(&f.gatewayConfig, "gateway-config", "", "Path to the static gateway CR YAML (prototype stand-in for the live k8s pull).")
-	cmd.Flags().StringVar(&f.route, "route", "", "Gateway route to reconcile.")
-	cmd.Flags().StringVar(&f.targetDomain, "target-domain", "", "Target streaming-domain name the route switches to.")
-	cmd.Flags().StringSliceVar(&f.topics, "topics", nil, "Literal topic names to migrate (comma-separated, repeatable).")
-	cmd.Flags().StringSliceVar(&f.topicPatterns, "topic-patterns", nil, "Topic name regex patterns to migrate (comma-separated, repeatable).")
 	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "Render the report but do not write artifacts.")
 	cmd.Flags().StringVar(&f.outDir, "out-dir", ".", "Directory to write the reconciliation artifacts into.")
 
-	for _, name := range []string{"migration-yaml", "gateway-config", "route", "target-domain"} {
+	for _, name := range []string{"migration-yaml", "gateway-config"} {
 		_ = cmd.MarkFlagRequired(name)
 	}
 
@@ -90,12 +82,12 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 		return err
 	}
 
-	in, err := buildReconcileInput(*f)
+	in, err := buildReconcileInput(g)
 	if err != nil {
 		return err
 	}
 
-	gw := providers.NewGatewayFile(f.gatewayConfig, f.route)
+	gw := providers.NewGatewayFile(f.gatewayConfig, in.Route)
 
 	link, err := buildLinkStatusProvider(g)
 	if err != nil {
@@ -140,23 +132,37 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 	return nil
 }
 
-// buildReconcileInput maps the interim selector flags onto the engine-owned
-// ReconcileInput. (When spec.topicGroup lands on main, switch this to read it.)
-func buildReconcileInput(f reconcileFlags) (reconcile.ReconcileInput, error) {
-	if f.route == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("--route is required")
+// buildReconcileInput maps the manifest's spec.topicGroup onto the engine-owned
+// ReconcileInput. The reconcile engine handles one route per run, so exactly one
+// topicGroup entry is required.
+func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
+	tgs := g.Spec.TopicGroups
+	if len(tgs) != 1 {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup: exactly one entry is required, got %d", len(tgs))
 	}
-	if f.targetDomain == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("--target-domain is required")
+	tg := tgs[0]
+
+	var topics, patterns []string
+	if tg.Topics != nil {
+		topics = *tg.Topics
 	}
-	if len(f.topics) == 0 && len(f.topicPatterns) == 0 {
-		return reconcile.ReconcileInput{}, fmt.Errorf("at least one of --topics / --topic-patterns is required")
+	if tg.TopicPatterns != nil {
+		patterns = *tg.TopicPatterns
+	}
+	if len(topics) == 0 && len(patterns) == 0 {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0]: at least one of topics / topicPatterns is required")
+	}
+	if tg.Route == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0].route: required")
+	}
+	if tg.TargetStreamingDomain == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0].targetStreamingDomain: required")
 	}
 	return reconcile.ReconcileInput{
-		Topics:        f.topics,
-		TopicPatterns: f.topicPatterns,
-		Route:         f.route,
-		TargetDomain:  f.targetDomain,
+		Topics:        topics,
+		TopicPatterns: patterns,
+		Route:         tg.Route,
+		TargetDomain:  tg.TargetStreamingDomain,
 	}, nil
 }
 

@@ -134,6 +134,15 @@ func GenerateGateway() ([]byte, error) {
 	// the reflected schema already requires them; nothing to patch beyond that.
 	routeItem := gateway.Properties["routes"].Items
 
+	// topicGroup: route/targetStreamingDomain reflect as required (no omitempty);
+	// patch in "at least one of topics/topicPatterns" — reflection can't express
+	// that from struct tags. Matches the WIP manifest schema.
+	tgItem := spec.Properties["topicGroup"].Items
+	tgItem.AnyOf = []*jsonschema.Schema{
+		{Required: []string{"topics"}},
+		{Required: []string{"topicPatterns"}},
+	}
+
 	// Durations parse as "10m", not as an integer count.
 	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
 		p := policy.Properties[k]
@@ -178,6 +187,12 @@ func GenerateGateway() ([]byte, error) {
 		routeItem.Properties["streamingDomain"].Properties["bootstrapServerId"]: "A bootstrap server id declared on that streaming domain.",
 
 		spec.Properties["topics"]: "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected.",
+
+		spec.Properties["topicGroup"]:              "Topic-based reconcile selector (read by `kcp migration reconcile`). Pairs a topic selection with the route it migrates and the streaming domain that route switches to. Exactly one entry today — one route, one migration per file.",
+		tgItem.Properties["topics"]:                "Literal topic names to migrate, exact-matched against the source cluster — not globs. At least one of topics or topicPatterns is required.",
+		tgItem.Properties["topicPatterns"]:         "Topic selection as anchored full-match regular expressions (RE2), exploded against the source cluster's topics. At least one of topics or topicPatterns is required.",
+		tgItem.Properties["route"]:                 "The spec.routes[].name of the gateway route to reconcile.",
+		tgItem.Properties["targetStreamingDomain"]: "Name of the streaming domain the route switches migrated topics to (must be a domain bound to the route).",
 
 		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",
 		policy.Properties["promoteBatchSize"]:                "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.",

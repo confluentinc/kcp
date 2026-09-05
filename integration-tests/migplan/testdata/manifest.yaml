@@ -1,13 +1,23 @@
 # GatewayMigration manifest for the migplan command-level e2e (the plaintext
-# docker env). It stands in for Omar's declared migration intent: the connection
-# topology plus (via the reconcile command's interim selector flags) which topics
-# move where. Plaintext everywhere; the unauthenticated cp-server REST ignores the
-# bogus `basic` restCredentials block (the schema has no unauthenticated-REST form).
+# docker env). It stands in for the operator's declared migration intent: the
+# connection topology plus spec.topicGroup (which topics move, on which route, to
+# which target domain). Plaintext everywhere; the unauthenticated cp-server REST
+# ignores the bogus `basic` restCredentials block (the schema has no
+# unauthenticated-REST form).
 apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
   name: migplan-e2e
 spec:
+  # The topic-based reconcile selector — read by `kcp migration reconcile`.
+  topicGroup:
+    - topics:
+        - team-a.orders
+        - team-a.payments
+        - billing-v2
+      route: migration-route
+      targetStreamingDomain: cc
+
   source:
     type: apache-kafka
     bootstrapServers:

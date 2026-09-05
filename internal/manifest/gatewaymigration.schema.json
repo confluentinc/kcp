@@ -234,6 +234,63 @@
           },
           "description": "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected."
         },
+        "topicGroup": {
+          "type": [
+            "null",
+            "array"
+          ],
+          "items": {
+            "type": "object",
+            "properties": {
+              "topics": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "Literal topic names to migrate, exact-matched against the source cluster — not globs. At least one of topics or topicPatterns is required."
+              },
+              "topicPatterns": {
+                "type": [
+                  "null",
+                  "array"
+                ],
+                "items": {
+                  "type": "string"
+                },
+                "description": "Topic selection as anchored full-match regular expressions (RE2), exploded against the source cluster's topics. At least one of topics or topicPatterns is required."
+              },
+              "route": {
+                "type": "string",
+                "description": "The spec.routes[].name of the gateway route to reconcile."
+              },
+              "targetStreamingDomain": {
+                "type": "string",
+                "description": "Name of the streaming domain the route switches migrated topics to (must be a domain bound to the route)."
+              }
+            },
+            "required": [
+              "route",
+              "targetStreamingDomain"
+            ],
+            "additionalProperties": false,
+            "anyOf": [
+              {
+                "required": [
+                  "topics"
+                ]
+              },
+              {
+                "required": [
+                  "topicPatterns"
+                ]
+              }
+            ]
+          },
+          "description": "Topic-based reconcile selector (read by `kcp migration reconcile`). Pairs a topic selection with the route it migrates and the streaming domain that route switches to. Exactly one entry today — one route, one migration per file."
+        },
         "defaultPolicies": {
           "type": "object",
           "properties": {

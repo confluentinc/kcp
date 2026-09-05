@@ -56,6 +56,13 @@ type GatewaySpec struct {
 	// active mirror topic") stays distinguishable from an explicitly empty list,
 	// which means the opposite and is rejected.
 	Topics *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
+	// TopicGroups is the topic-based reconcile selector: which topics move, on
+	// which route, to which target streaming domain. Read by the topic-based
+	// `kcp migration reconcile`; the all-at-once cutover uses the flat `Topics`
+	// field above instead. The reconcile engine requires exactly one entry today
+	// (one route, one migration per file). Schema field name is the singular
+	// `topicGroup` to match the WIP manifest schema.
+	TopicGroups []TopicGroup `yaml:"topicGroup,omitempty" json:"topicGroup,omitempty"`
 	// DefaultPolicies is read fresh on every execute and never snapshotted, which
 	// is what lets a caller vary execute-time policy between init and execute.
 	// Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
@@ -77,6 +84,19 @@ type GatewayTarget struct {
 	// the safer default ahead of an irreversible cutover.
 	ClusterID string       `yaml:"clusterId" json:"clusterId"`
 	Kafka     *TargetKafka `yaml:"kafka" json:"kafka"`
+}
+
+// TopicGroup pairs a topic selection with the route it migrates and the
+// streaming domain that route switches to. topics/topicPatterns are pointers so
+// an omitted selection stays distinguishable from an explicit empty list; route
+// and targetStreamingDomain have no omitempty, so the generated schema requires
+// them. At least one of topics/topicPatterns must be set (enforced in Validate
+// and by the reconcile engine).
+type TopicGroup struct {
+	Topics                *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
+	TopicPatterns         *[]string `yaml:"topicPatterns,omitempty" json:"topicPatterns,omitempty"`
+	Route                 string    `yaml:"route" json:"route"`
+	TargetStreamingDomain string    `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
 }
 
 type GatewayClusterLink struct {
