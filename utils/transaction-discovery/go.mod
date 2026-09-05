@@ -1,6 +1,6 @@
 module github.com/confluentinc/kcp/utils/transaction-discovery
 
-go 1.26.7
+go 1.26.8
 
 require (
 	github.com/spf13/cobra v1.10.2
