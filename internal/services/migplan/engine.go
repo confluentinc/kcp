@@ -40,5 +40,17 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	if err != nil {
 		return nil, fmt.Errorf("reading cluster-link status: %w", err)
 	}
-	return reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled), nil
+
+	// Cluster identities, to verify the clusters we read are the real source/dest.
+	srcID, err := e.source.ClusterID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading source cluster id: %w", err)
+	}
+	tgtID, err := e.target.ClusterID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("reading target cluster id: %w", err)
+	}
+	ids := reconcile.ClusterIDs{Source: srcID, Target: tgtID, LinkSource: link.SourceClusterID}
+
+	return reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids), nil
 }

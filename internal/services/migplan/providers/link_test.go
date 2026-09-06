@@ -10,10 +10,12 @@ import (
 )
 
 type fakeLinkReader struct {
-	mirrors []clusterlink.MirrorTopic
-	configs map[string]string
-	err     error
-	cfgErr  error
+	mirrors         []clusterlink.MirrorTopic
+	configs         map[string]string
+	sourceClusterID string
+	err             error
+	cfgErr          error
+	linkErr         error
 }
 
 func (f *fakeLinkReader) ListMirrorTopics(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
@@ -24,18 +26,30 @@ func (f *fakeLinkReader) ListConfigs(_ context.Context, _ clusterlink.Config) (m
 	return f.configs, f.cfgErr
 }
 
+func (f *fakeLinkReader) GetClusterLink(_ context.Context, _ clusterlink.Config) (*clusterlink.ClusterLink, error) {
+	if f.linkErr != nil {
+		return nil, f.linkErr
+	}
+	return &clusterlink.ClusterLink{SourceClusterID: f.sourceClusterID}, nil
+}
+
 func TestClusterLinkStatusMapping(t *testing.T) {
-	f := &fakeLinkReader{mirrors: []clusterlink.MirrorTopic{
-		{SourceTopicName: "a", MirrorStatus: clusterlink.MirrorStatusActive},
-		{SourceTopicName: "b", MirrorStatus: clusterlink.MirrorStatusStopped},
-		{SourceTopicName: "c", MirrorStatus: "PENDING_STOPPED"},
-	}}
+	f := &fakeLinkReader{
+		sourceClusterID: "src-cluster-99",
+		mirrors: []clusterlink.MirrorTopic{
+			{SourceTopicName: "a", MirrorStatus: clusterlink.MirrorStatusActive},
+			{SourceTopicName: "b", MirrorStatus: clusterlink.MirrorStatusStopped},
+			{SourceTopicName: "c", MirrorStatus: "PENDING_STOPPED"},
+		}}
 	ls, err := NewClusterLinkStatus(f, clusterlink.Config{}).LinkStatus(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ls.OffsetSyncEnabled {
 		t.Error("OffsetSyncEnabled should be false when the config is absent")
+	}
+	if ls.SourceClusterID != "src-cluster-99" {
+		t.Errorf("SourceClusterID = %q, want src-cluster-99", ls.SourceClusterID)
 	}
 	want := map[string]reconcile.MirrorState{
 		"a": reconcile.MirrorActive,
@@ -89,5 +103,9 @@ func TestClusterLinkStatusError(t *testing.T) {
 	// a config-read error propagates too
 	if _, err := NewClusterLinkStatus(&fakeLinkReader{cfgErr: errors.New("config boom")}, clusterlink.Config{}).LinkStatus(context.Background()); err == nil {
 		t.Fatal("expected the config-read error to propagate")
+	}
+	// a link-describe error propagates too
+	if _, err := NewClusterLinkStatus(&fakeLinkReader{linkErr: errors.New("describe boom")}, clusterlink.Config{}).LinkStatus(context.Background()); err == nil {
+		t.Fatal("expected the link-describe error to propagate")
 	}
 }

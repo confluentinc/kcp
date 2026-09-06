@@ -16,11 +16,13 @@ type fakeGateway struct {
 func (f *fakeGateway) Load(context.Context) (*reconcile.GatewayConfig, error) { return f.gw, f.err }
 
 type fakeLister struct {
-	topics []string
-	err    error
+	topics    []string
+	clusterID string
+	err       error
 }
 
 func (f *fakeLister) ListTopics(context.Context) ([]string, error) { return f.topics, f.err }
+func (f *fakeLister) ClusterID(context.Context) (string, error)    { return f.clusterID, f.err }
 
 type fakeLink struct {
 	ls  *LinkStatus

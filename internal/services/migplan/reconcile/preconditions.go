@@ -8,6 +8,20 @@ type ReconcileInput struct {
 	TopicPatterns []string
 	Route         string
 	TargetDomain  string
+	// TargetClusterID is the operator's declared destination cluster
+	// (spec.target.clusterId), checked against the cluster we actually read.
+	TargetClusterID string
+}
+
+// ClusterIDs carries the live cluster identities gathered by the I/O layer, used
+// to prove the clusters we read really are the migration's source and target.
+// Any field may be empty when it could not be determined (e.g. a destination
+// that does not report source_cluster_id) — an empty value skips its check
+// rather than failing.
+type ClusterIDs struct {
+	Source     string // the source cluster's own Kafka cluster id (live)
+	Target     string // the target cluster's own Kafka cluster id (live)
+	LinkSource string // the cluster link's source_cluster_id (live)
 }
 
 type GatewayConfig struct {
@@ -28,7 +42,7 @@ func fail(name, detail string) PreconditionResult {
 
 // CheckPreconditions runs the dynamic-route run-level checks. ok is true
 // only if every check passed; on success view carries the resolved domains.
-func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled bool) ([]PreconditionResult, RouteView, bool) {
+func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled bool, ids ClusterIDs) ([]PreconditionResult, RouteView, bool) {
 	var res []PreconditionResult
 	var view RouteView
 
@@ -76,6 +90,29 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 		res = append(res, pass("consumer offset sync disabled on link"))
 	} else {
 		res = append(res, fail("consumer offset sync disabled on link", "consumer offset sync is enabled on the cluster link; disable it for a dynamic-route migration"))
+	}
+
+	// Cluster identity: the clusters we read must be the migration's real source
+	// and destination. An empty id (destination omits source_cluster_id, or the
+	// metadata could not be read) can't prove a mismatch, so it passes.
+	switch {
+	case ids.LinkSource == "" || ids.Source == "":
+		res = append(res, pass("source cluster matches the cluster link"))
+	case ids.LinkSource == ids.Source:
+		res = append(res, pass("source cluster matches the cluster link"))
+	default:
+		res = append(res, fail("source cluster matches the cluster link",
+			fmt.Sprintf("the cluster link mirrors from cluster %q, but spec.source is cluster %q", ids.LinkSource, ids.Source)))
+	}
+
+	switch {
+	case in.TargetClusterID == "" || ids.Target == "":
+		res = append(res, pass("target cluster matches the manifest"))
+	case ids.Target == in.TargetClusterID:
+		res = append(res, pass("target cluster matches the manifest"))
+	default:
+		res = append(res, fail("target cluster matches the manifest",
+			fmt.Sprintf("spec.target.clusterId is %q, but the target cluster reports %q", in.TargetClusterID, ids.Target)))
 	}
 
 	ok := true

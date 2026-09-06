@@ -14,10 +14,12 @@ import (
 const offsetSyncEnableConfig = "consumer.offset.sync.enable"
 
 // linkReader is the narrow slice of clusterlink.Service this provider needs: the
-// link's mirror topics and its live config (to read consumer.offset.sync.enable).
+// link's mirror topics, its live config (consumer.offset.sync.enable), and its
+// describe (for source_cluster_id).
 type linkReader interface {
 	ListMirrorTopics(ctx context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error)
 	ListConfigs(ctx context.Context, config clusterlink.Config) (map[string]string, error)
+	GetClusterLink(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error)
 }
 
 var _ migplan.LinkStatusProvider = (*ClusterLinkStatus)(nil)
@@ -51,7 +53,16 @@ func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*migplan.LinkStatus
 	// Absent ⇒ the link default, which is disabled; only an explicit "true" is on.
 	enabled := configs[offsetSyncEnableConfig] == "true"
 
-	return &migplan.LinkStatus{OffsetSyncEnabled: enabled, Mirrors: m}, nil
+	link, err := c.svc.GetClusterLink(ctx, c.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("describing cluster link: %w", err)
+	}
+
+	return &migplan.LinkStatus{
+		OffsetSyncEnabled: enabled,
+		Mirrors:           m,
+		SourceClusterID:   link.SourceClusterID,
+	}, nil
 }
 
 // mapStatus maps a cluster-link mirror status to the core's MirrorState.

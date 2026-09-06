@@ -8,14 +8,15 @@ import (
 const MaxRulesBytes = 512 * 1024
 
 func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, offsetSyncEnabled bool) *Plan {
+	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs) *Plan {
 
 	report := Report{}
 
 	// Run-level gate: the route must be a dynamic route bound to exactly the
 	// source and target domains, with coordination pinned to source and offset
-	// sync off. A failure here stops the run before any per-topic work.
-	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled)
+	// sync off, and the clusters we read must be the real source/destination.
+	// A failure here stops the run before any per-topic work.
+	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled, ids)
 	report.Preconditions = pcs
 	if !ok {
 		return &Plan{Report: report}

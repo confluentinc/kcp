@@ -22,6 +22,7 @@ const (
 	sourceBroker     = "localhost:19092"
 	destBroker       = "localhost:29092"
 	destRESTEndpoint = "http://localhost:28090"
+	sourceClusterID  = "6ub6fPVJRzKjE4i-REkq-A"
 	destClusterID    = "LKsbYRvfTM-TVXKjdjgdxA"
 	linkName         = "migplan-link"
 	kafkaVersion     = "4.0.0"
@@ -123,5 +124,9 @@ func TestClusterLinkStatusLive(t *testing.T) {
 	}
 	if ls.OffsetSyncEnabled {
 		t.Error("OffsetSyncEnabled should be false for this link")
+	}
+	// the link reports its source cluster id (read live from the describe)
+	if ls.SourceClusterID != sourceClusterID {
+		t.Errorf("SourceClusterID = %q, want %q", ls.SourceClusterID, sourceClusterID)
 	}
 }

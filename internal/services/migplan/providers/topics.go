@@ -5,16 +5,18 @@ import (
 	"sort"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 )
 
 var _ migplan.TopicLister = (*KafkaTopicLister)(nil)
 
 // topicListerAdmin is the narrow slice of internal/client.KafkaAdmin that the
-// topic lister needs. Keeping it local means the unit test needs only a
-// one-method fake, and the real client.KafkaAdmin satisfies it directly.
+// topic lister needs: list topics, and read the cluster's own id. The real
+// client.KafkaAdmin satisfies it directly.
 type topicListerAdmin interface {
 	ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error)
+	GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error)
 }
 
 // KafkaTopicLister lists a cluster's (non-internal) topics via a Kafka admin.
@@ -41,4 +43,13 @@ func (l *KafkaTopicLister) ListTopics(_ context.Context) ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// ClusterID returns the cluster's own Kafka cluster id (from broker metadata).
+func (l *KafkaTopicLister) ClusterID(_ context.Context) (string, error) {
+	md, err := l.admin.GetClusterKafkaMetadata()
+	if err != nil {
+		return "", err
+	}
+	return md.ClusterID, nil
 }

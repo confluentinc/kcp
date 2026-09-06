@@ -17,10 +17,11 @@ type GatewayConfigSource interface {
 	Load(ctx context.Context) (*reconcile.GatewayConfig, error)
 }
 
-// TopicLister lists topics on one cluster (source or target). Implementations
-// list non-internal topics only.
+// TopicLister lists topics on one cluster (source or target) and reports that
+// cluster's own Kafka cluster id. Implementations list non-internal topics only.
 type TopicLister interface {
 	ListTopics(ctx context.Context) ([]string, error)
+	ClusterID(ctx context.Context) (string, error)
 }
 
 // LinkStatusProvider reports the cluster link's per-topic mirror state and the
@@ -30,8 +31,11 @@ type LinkStatusProvider interface {
 }
 
 // LinkStatus is the cluster-link view the engine needs. Mirrors is keyed by the
-// SOURCE topic name (the provider resolves any mirror-name prefix).
+// SOURCE topic name (the provider resolves any mirror-name prefix). SourceClusterID
+// is the link's own source_cluster_id (empty if the destination does not report
+// one — older CP), used to verify the source cluster's identity.
 type LinkStatus struct {
 	OffsetSyncEnabled bool
 	Mirrors           map[string]reconcile.MirrorState
+	SourceClusterID   string
 }

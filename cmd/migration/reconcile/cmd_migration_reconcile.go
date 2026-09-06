@@ -159,10 +159,11 @@ func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0].targetStreamingDomain: required")
 	}
 	return reconcile.ReconcileInput{
-		Topics:        topics,
-		TopicPatterns: patterns,
-		Route:         tg.Route,
-		TargetDomain:  tg.TargetStreamingDomain,
+		Topics:          topics,
+		TopicPatterns:   patterns,
+		Route:           tg.Route,
+		TargetDomain:    tg.TargetStreamingDomain,
+		TargetClusterID: g.Spec.Target.ClusterID,
 	}, nil
 }
 

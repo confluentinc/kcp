@@ -48,9 +48,10 @@ func newLiveEngineFor(t *testing.T, gatewayFile, route string) *migplan.Reconcil
 func TestEngineHappyPathLive(t *testing.T) {
 	eng := newLiveEngine(t)
 	in := reconcile.ReconcileInput{
-		Topics:       []string{"team-a.orders", "team-a.payments", "billing-v2"},
-		Route:        "migration-route",
-		TargetDomain: "cc",
+		Topics:          []string{"team-a.orders", "team-a.payments", "billing-v2"},
+		Route:           "migration-route",
+		TargetDomain:    "cc",
+		TargetClusterID: destClusterID, // exercises the cluster-identity checks live (must pass)
 	}
 
 	plan, err := eng.Run(context.Background(), in)
@@ -137,5 +138,47 @@ func TestEngineFailFastLive(t *testing.T) {
 	// reason reads: "<topic> is not on the cluster link"
 	if !strings.Contains(reason, "cluster link") {
 		t.Errorf("fail-fast reason should mention the cluster link, got %q", reason)
+	}
+}
+
+// TestReconcileClusterIdentityMismatchLive points the "source" lister at the DEST
+// cluster, so the source cluster id (read live) won't match the link's
+// source_cluster_id. The engine must refuse on the cluster-identity precondition
+// — proving the check works against real cluster ids, not just unit fakes.
+func TestReconcileClusterIdentityMismatchLive(t *testing.T) {
+	gw := providers.NewGatewayFile("testdata/gateway.yaml", "migration-route")
+	wrongSource := newPlaintextLister(t, destBroker) // WRONG on purpose: dest, not source
+	target := newPlaintextLister(t, destBroker)
+
+	svc := clusterlink.NewConfluentCloudService(http.DefaultClient)
+	cfg := clusterlink.Config{RestEndpoint: destRESTEndpoint, ClusterID: destClusterID, LinkName: linkName, Topics: []string{}, Auth: nil}
+	link := providers.NewClusterLinkStatus(svc, cfg)
+	eng := migplan.NewReconciliationEngine(gw, wrongSource, target, link)
+
+	in := reconcile.ReconcileInput{
+		Topics:          []string{"team-a.orders"},
+		Route:           "migration-route",
+		TargetDomain:    "cc",
+		TargetClusterID: destClusterID,
+	}
+	plan, err := eng.Run(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !plan.Report.Refused() {
+		t.Fatalf("a source-cluster mismatch must refuse; preconditions=%+v", plan.Report.Preconditions)
+	}
+	if plan.Artifacts != nil {
+		t.Error("a refused run must emit no artifacts")
+	}
+	found := false
+	for _, pc := range plan.Report.Preconditions {
+		if pc.Name == "source cluster matches the cluster link" && !pc.OK {
+			found = true
+			t.Logf("refused as expected: %s — %s", pc.Name, pc.Detail)
+		}
+	}
+	if !found {
+		t.Errorf("expected the source-identity precondition to fail, got %+v", plan.Report.Preconditions)
 	}
 }
