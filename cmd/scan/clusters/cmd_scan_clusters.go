@@ -24,15 +24,16 @@ import (
 )
 
 var (
-	stateFile       string
-	credentialsFile string
-	sourceType      string
-	skipTopics      bool
-	skipACLs        bool
-	metricsSource   string
-	metricsDuration string
-	metricsInterval string
-	metricsRange    string
+	stateFile          string
+	credentialsFile    string
+	sourceType         string
+	skipTopics         bool
+	skipACLs           bool
+	skipConsumerGroups bool
+	metricsSource      string
+	metricsDuration    string
+	metricsInterval    string
+	metricsRange       string
 )
 
 func scanClustersIAMAnnotation() string {
@@ -45,6 +46,7 @@ func scanClustersIAMAnnotation() string {
 					"kafka-cluster:Connect",
 					"kafka-cluster:DescribeCluster",
 					"kafka-cluster:DescribeClusterDynamicConfiguration",
+					"kafka-cluster:DescribeGroup",
 					"kafka-cluster:DescribeTopic",
 				},
 				Resources: []string{
@@ -108,6 +110,7 @@ Both backends produce the same metric shape and feed reports and the UI. See [Ap
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skip topic discovery")
 	optionalFlags.BoolVar(&skipACLs, "skip-acls", false, "Skip ACL discovery")
+	optionalFlags.BoolVar(&skipConsumerGroups, "skip-consumer-groups", false, "Skip consumer group discovery")
 	scanClustersCmd.Flags().AddFlagSet(optionalFlags)
 
 	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
@@ -232,9 +235,10 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 
 	// Perform scan
 	scanOpts := sources.ScanOptions{
-		SkipTopics: skipTopics,
-		SkipACLs:   skipACLs,
-		State:      state,
+		SkipTopics:         skipTopics,
+		SkipACLs:           skipACLs,
+		SkipConsumerGroups: skipConsumerGroups,
+		State:              state,
 	}
 
 	slog.Info("starting cluster scan", "source", sourceType)

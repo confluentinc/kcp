@@ -11,6 +11,7 @@ Only required for `--source-type msk`. Apache Kafka scans use credentials from t
         "kafka-cluster:Connect",
         "kafka-cluster:DescribeCluster",
         "kafka-cluster:DescribeClusterDynamicConfiguration",
+        "kafka-cluster:DescribeGroup",
         "kafka-cluster:DescribeTopic"
       ],
       "Resource": [
