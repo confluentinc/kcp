@@ -9602,7 +9602,7 @@
                 ]
               },
               "acls": null,
-              "self_managed_connectors": null
+              "connect_clusters": []
             },
             "discovered_clients": null
           }
@@ -10684,7 +10684,7 @@
                 ]
               },
               "acls": null,
-              "self_managed_connectors": null
+              "connect_clusters": []
             },
             "discovered_clients": null
           }
@@ -11019,9 +11019,12 @@
               "PermissionType": "Allow"
             }
           ],
-          "self_managed_connectors": {
-            "connectors": []
-          }
+          "connect_clusters": [
+            {
+              "connect_rest_url": "http://connect:8083",
+              "connectors": []
+            }
+          ]
         },
         "metrics": {
           "region": "",
@@ -15613,9 +15616,12 @@
               "PermissionType": "Allow"
             }
           ],
-          "self_managed_connectors": {
-            "connectors": []
-          }
+          "connect_clusters": [
+            {
+              "connect_rest_url": "http://connect:8083",
+              "connectors": []
+            }
+          ]
         },
         "metrics": {
           "region": "",
@@ -20212,9 +20218,12 @@
               "PermissionType": "Allow"
             }
           ],
-          "self_managed_connectors": {
-            "connectors": []
-          }
+          "connect_clusters": [
+            {
+              "connect_rest_url": "http://connect:8083",
+              "connectors": []
+            }
+          ]
         },
         "metrics": {
           "region": "",
@@ -24810,9 +24819,12 @@
               "PermissionType": "Allow"
             }
           ],
-          "self_managed_connectors": {
-            "connectors": []
-          }
+          "connect_clusters": [
+            {
+              "connect_rest_url": "http://connect:8083",
+              "connectors": []
+            }
+          ]
         },
         "metrics": {
           "region": "",

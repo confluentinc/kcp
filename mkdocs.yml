@@ -1,5 +1,5 @@
 site_name: KCP
-site_description: CLI tool for planning and executing Kafka migrations from AWS MSK and Apache Kafka® to Confluent Cloud.
+site_description: CLI tool for planning and executing Kafka migrations from AWS MSK, Apache Kafka®, and Confluent Platform to Confluent Cloud.
 site_url: https://confluentinc.github.io/kcp/
 repo_url: https://github.com/confluentinc/kcp
 repo_name: confluentinc/kcp
@@ -18,6 +18,8 @@ exclude_docs: |
   brainstorms/
   ideation/
   plans/
+  # in-development direct-API migration feature — hidden until the `kcp migrate` command is user-facing
+  migration-assets/
 
 # Fail the strict build on broken internal links and anchors, so problems that
 # would render as dead links when served are caught in CI rather than by readers.

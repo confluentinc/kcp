@@ -45,7 +45,7 @@ make clean              # remove build artifacts
 
 ## Architecture
 
-The CLI follows a hierarchical Cobra command structure: `discover`, `scan`, `report`, `create-asset`, `migration`, `ui`, `update`, `version`. Run `kcp --help` for the full tree.
+The CLI follows a hierarchical Cobra command structure: `discover`, `scan`, `report`, `create-asset`, `migration`, `ui`, `update`, `version`. Run `kcp --help` for the full tree. (`migrate` — the in-development direct-API migration command — is registered but hidden from help and not yet user-facing.)
 
 ### Source abstraction
 

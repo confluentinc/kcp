@@ -11,9 +11,20 @@ import (
 )
 
 // CurrentSchemaVersion is the schema_version this build reads and writes.
-// Bump in lockstep with any breaking change to the kcp-state.json shape, and
-// add the matching upcaster to steps (see internal/state/migrate/steps.go).
-const CurrentSchemaVersion = 1
+// Bump in lockstep with any change to the kcp-state.json shape, and add the
+// matching upcaster to steps (see internal/state/migrate/steps.go).
+//
+// v2 added the additive, omitempty connector_metrics field to each MSK cluster's
+// aws_client_information — no upcaster needed, since an older file is already a
+// structurally-valid v2 file. v3 is NOT additive: it restructures self-managed
+// Connect's kafka_admin_client_information.self_managed_connectors into
+// connect_clusters, so every file below v3 runs the real "nest self_managed_connectors
+// under connect_clusters" upcaster (self-gating: a no-op for files without it). v4
+// added the additive, omitempty consumer_groups field to
+// kafka_admin_client_information (consumer-group discovery) — again no real
+// transform needed, since an existing v3 file is already a structurally-valid v4
+// file; see the "-> v4" no-op step in steps.go.
+const CurrentSchemaVersion = 4
 
 // ErrNewerSchema means the file was written by a newer (released) KCP than this build can model.
 var ErrNewerSchema = errors.New("state file schema is newer than this KCP build supports")
@@ -60,17 +71,6 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 		slog.Debug("state file already at current schema, no migration needed", "schema_version", schemaVersion)
 		return data, fmt.Sprintf("schema_version=%d", schemaVersion), nil
 	}
-	// Era C file without an explicit schema_version is the current shape. A pre-v0.4.0
-	// region-scan file or unrelated JSON also lands here (era defaults to C, spec N5):
-	// it passes through unchanged and fails later at the strict decode, like any foreign file.
-	if schemaVersion == 0 && era == "C" {
-		label := "era=C"
-		if buildVersion != "" {
-			label = "kcp_build_info.version=" + buildVersion
-		}
-		slog.Debug("state file has current-era shape without an explicit schema_version, treating as current", "label", label)
-		return data, label, nil
-	}
 
 	// Legacy file: run the ordered upcaster chain.
 	// Decode with UseNumber so every JSON number survives as its exact literal
@@ -87,7 +87,7 @@ func Upgrade(data []byte) (migrated []byte, fromLabel string, err error) {
 	}
 	applied := false
 	for _, s := range steps {
-		if s.appliesWhen(era, buildVersion) {
+		if s.appliesWhen(schemaVersion, era, buildVersion) {
 			slog.Debug("applying state schema migration step", "step", s.name, "era", era)
 			doc, err = s.transform(doc)
 			if err != nil {

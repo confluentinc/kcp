@@ -9,7 +9,7 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 
 - **MSK Provisioned / Express** — AWS MSK provisioned clusters (including MSK Express brokers).
 - **MSK Serverless** — AWS MSK Serverless clusters.
-- **Apache Kafka** — Any Kafka API compatible source, reached via the Kafka Admin API.
+- **Apache Kafka** — Any Kafka API compatible source, including **Confluent Platform**, reached via the Kafka Admin API.
 
 ## Legend
 
@@ -28,9 +28,10 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 
 | Command                                                 | MSK Provisioned/Express | MSK Serverless                         | Apache Kafka                |
 | :------------------------------------------------------ | :---------------------- | :------------------------------------- | :-------------------------- |
-| `kcp discover`                                          | Yes                     | Limited                                | No                          |
+| `kcp discover`                                          | Yes                     | Limited (some resources not discoverable for Serverless) | No                          |
 | `kcp scan client-inventory`                             | Yes                     | No                                     | No                          |
 | `kcp scan clusters`                                     | Yes                     | No                                     | Yes                         |
+| `kcp scan msk-connectors`                           | Yes (pass `--metrics-granularity` to also pull per-connector CloudWatch metrics) | Limited (only if MSK Connect connectors target the cluster) | No                          |
 | `kcp scan schema-registry`                              | Yes                     | Yes                                    | Yes                         |
 | `kcp create-asset bastion-host`                         | N/A                     | N/A                                    | N/A                         |
 | `kcp create-asset migrate-acls iam`                     | Yes                     | Limited (manual IAM user/role mapping) | No                          |
@@ -53,6 +54,25 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 | `kcp ui`                                                | Yes                     | No                                     | Yes                         |
 
 </div>
+
+## Consumer group discovery
+
+`kcp scan clusters` discovers consumer groups by default (disable with `--skip-consumer-groups`). Support mirrors the `kcp scan clusters` row above: available for **MSK Provisioned/Express** and **Apache Kafka**, and **not** for **MSK Serverless** (no Kafka Admin API).
+
+For every group KCP records its id, state, coordinator, and **type**. The type is the group's KIP-848 protocol, and which types a cluster can report depends on its Kafka version:
+
+| Group type  | Introduced           | Notes                                                                  |
+| :---------- | :------------------- | :--------------------------------------------------------------------- |
+| `classic`   | all versions         | The original consumer-group protocol. Fully described.                 |
+| `consumer`  | Kafka 4.0 (KIP-848)  | New consumer rebalance protocol.                                       |
+| `share`     | Kafka 4.1 (KIP-932)  | Share groups; requires `group.share.enable` on the broker.            |
+| `streams`   | Kafka 4.2 (KIP-1071) | Kafka Streams groups.                                                  |
+
+> [!NOTE]
+> Reading the group **type** requires a broker running **Kafka 3.8 or newer** (the `ListGroups` v5 API). Against older brokers the type is reported as blank and every group is treated as classic-protocol.
+
+> [!IMPORTANT]
+> Only `classic` groups are **fully described** — their members and per-member topic assignments are captured. `consumer`, `share`, and `streams` groups record their type, state, and coordinator but not member-level detail (that requires the newer `ConsumerGroupDescribe` API, which KCP does not yet call). Such groups are flagged with incomplete detail in `kcp-state.json` and marked "partial" in the UI's Consumer Groups tab.
 
 ## Confluent Cloud destination
 

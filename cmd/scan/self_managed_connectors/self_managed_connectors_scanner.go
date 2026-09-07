@@ -2,14 +2,11 @@ package self_managed_connectors
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/client"
@@ -30,7 +27,7 @@ type HTTPConnectClient struct {
 	baseURL    string
 	httpClient *http.Client
 	authMethod types.ConnectAuthMethod
-	saslAuth   types.ConnectSaslScramAuth
+	basicAuth  types.ConnectBasicAuth
 }
 
 type SelfManagedConnectorsScannerOpts struct {
@@ -41,7 +38,7 @@ type SelfManagedConnectorsScannerOpts struct {
 	ClusterArn     string
 	ClusterID      string
 	AuthMethod     types.ConnectAuthMethod
-	SaslScramAuth  types.ConnectSaslScramAuth
+	BasicAuth      types.ConnectBasicAuth
 	TlsAuth        types.ConnectTlsAuth
 
 	MetricsSource       string
@@ -52,12 +49,13 @@ type SelfManagedConnectorsScannerOpts struct {
 }
 
 type SelfManagedConnectorsScanner struct {
-	StateFile  string
-	State      *types.State
-	SourceType types.SourceType
-	ClusterArn string
-	ClusterID  string
-	client     ConnectAPIClient
+	StateFile      string
+	State          *types.State
+	SourceType     types.SourceType
+	ClusterArn     string
+	ClusterID      string
+	connectRestURL string
+	client         ConnectAPIClient
 
 	metricsSource       string
 	metricsClusterCreds *types.OSKClusterAuth
@@ -76,7 +74,7 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 		baseURL:    opts.ConnectRestURL,
 		httpClient: httpClient,
 		authMethod: opts.AuthMethod,
-		saslAuth:   opts.SaslScramAuth,
+		basicAuth:  opts.BasicAuth,
 	}
 
 	return &SelfManagedConnectorsScanner{
@@ -85,6 +83,7 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 		SourceType:          opts.SourceType,
 		ClusterArn:          opts.ClusterArn,
 		ClusterID:           opts.ClusterID,
+		connectRestURL:      opts.ConnectRestURL,
 		client:              connectClient,
 		metricsSource:       opts.MetricsSource,
 		metricsClusterCreds: opts.MetricsClusterCreds,
@@ -95,36 +94,22 @@ func NewSelfManagedConnectorsScanner(opts SelfManagedConnectorsScannerOpts) (*Se
 }
 
 func createHTTPClient(authMethod types.ConnectAuthMethod, tlsAuth types.ConnectTlsAuth) (*http.Client, error) {
-	client := &http.Client{
-		Timeout: 15 * time.Second,
+	// Trust a supplied CA (private/internal CA) on ANY auth method when the Connect
+	// REST endpoint is HTTPS — not only mTLS. Empty CA → system trust roots.
+	pool, err := utils.OptionalCACertPool(tlsAuth.CACert)
+	if err != nil {
+		return nil, err
 	}
-
-	// Only configure TLS if using TLS client certificate authentication
+	tlsCfg := utils.TLSClientConfig(pool, tlsAuth.InsecureSkipVerify)
 	if authMethod == types.ConnectAuthMethodTls {
-		caCert, err := os.ReadFile(tlsAuth.CACert)
-		if err != nil {
-			return nil, fmt.Errorf("failed to read CA certificate: %w", err)
-		}
-
-		caCertPool := x509.NewCertPool()
-		if !caCertPool.AppendCertsFromPEM(caCert) {
-			return nil, fmt.Errorf("failed to parse CA certificate")
-		}
-
-		clientCert, err := tls.LoadX509KeyPair(tlsAuth.ClientCert, tlsAuth.ClientKey)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load client certificate and key: %w", err)
-		}
-
-		client.Transport = &http.Transport{
-			TLSClientConfig: &tls.Config{
-				RootCAs:      caCertPool,
-				Certificates: []tls.Certificate{clientCert},
-			},
+		if err := utils.AppendClientCert(tlsCfg, tlsAuth.ClientCert, tlsAuth.ClientKey); err != nil {
+			return nil, err
 		}
 	}
 
-	return client, nil
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.TLSClientConfig = tlsCfg
+	return &http.Client{Timeout: 15 * time.Second, Transport: transport}, nil
 }
 
 func (s *SelfManagedConnectorsScanner) Run() error {
@@ -150,7 +135,7 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 		return nil
 	}
 
-	connectors := []types.SelfManagedConnector{}
+	connectors := []types.Connector{}
 	totalRedacted := 0
 	for _, name := range connectorNames {
 		connector, redactedCount, err := s.getConnectorDetails(name)
@@ -203,9 +188,9 @@ func (s *SelfManagedConnectorsScanner) Run() error {
 // raw secrets never enter the persisted state. The connector's worker_id (when
 // present) is captured as ConnectHost for per-host grouping in the UI. Returns
 // the connector, the number of redacted fields, and any error.
-func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.SelfManagedConnector, int, error) {
+func (s *SelfManagedConnectorsScanner) getConnectorDetails(name string) (types.Connector, int, error) {
 	slog.Debug("fetching connector details", "connector", name)
-	connector := types.SelfManagedConnector{
+	connector := types.Connector{
 		Name: name,
 	}
 
@@ -320,11 +305,11 @@ func (c *HTTPConnectClient) GetConnectorStatus(name string) (map[string]any, err
 	return status, nil
 }
 
-// addAuthHeaders adds basic authentication for SASL/SCRAM Connect clusters on the
-// list/status/config endpoints.
+// addAuthHeaders adds HTTP Basic authentication for Basic-auth Connect clusters
+// on the list/status/config endpoints.
 func (c *HTTPConnectClient) addAuthHeaders(req *http.Request) {
-	if c.authMethod == types.ConnectAuthMethodSaslScram {
-		req.SetBasicAuth(c.saslAuth.Username, c.saslAuth.Password)
+	if c.authMethod == types.ConnectAuthMethodBasicAuth {
+		req.SetBasicAuth(c.basicAuth.Username, c.basicAuth.Password)
 	}
 }
 
@@ -350,33 +335,48 @@ func (s *SelfManagedConnectorsScanner) resolveKafkaAdminInfo() (*types.KafkaAdmi
 	}
 }
 
-func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.SelfManagedConnector) error {
+func (s *SelfManagedConnectorsScanner) updateStateWithConnectors(connectors []types.Connector) error {
 	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
 	}
 
-	info.SetSelfManagedConnectors(connectors)
+	info.SetConnectCluster(s.connectRestURL, connectors)
 	fmt.Printf("Updated cluster %s with self-managed connector information\n", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
 
 	return nil
 }
 
-// updateStateWithConnectMetrics attaches collected Connect worker metrics to the
-// connectors object for the cluster this scan targets (MSK or OSK, routed by
-// source type). It requires the connectors object to already exist so the
-// metrics have something to hang off; otherwise it returns a clear error.
+// updateStateWithConnectMetrics splits one collected ConnectClusterMetrics
+// (which may contain transient per-connector labels "<metric> (<connector>)"
+// from the JMX/Prometheus collectors, see splitConnectMetrics) into the
+// cluster-level metrics and each connector's own metrics, then attaches the
+// cluster-level block to the ConnectCluster entry (keyed by connectRestURL)
+// for the cluster this scan targets (MSK or OSK, routed by source type), and
+// each per-connector block to the matching Connector in that ConnectCluster.
+// SetConnectClusterMetrics find-or-creates the ConnectCluster entry, so
+// metrics no longer require a prior connectors write.
 func (s *SelfManagedConnectorsScanner) updateStateWithConnectMetrics(metrics *types.ConnectClusterMetrics) error {
 	info, err := s.resolveKafkaAdminInfo()
 	if err != nil {
 		return err
 	}
 
-	if info.SelfManagedConnectors == nil {
-		return fmt.Errorf("no self-managed connectors in state for cluster %s", utils.GetClusterDisplayName(s.SourceType, s.ClusterArn, s.ClusterID))
-	}
+	cluster, perConnector := splitConnectMetrics(metrics)
+	info.SetConnectClusterMetrics(s.connectRestURL, cluster)
 
-	info.SelfManagedConnectors.Metrics = metrics
+	// Attach each connector's own metrics to the matching Connector in this cluster.
+	for i := range info.ConnectClusters {
+		if info.ConnectClusters[i].ConnectRestURL != s.connectRestURL {
+			continue
+		}
+		for j := range info.ConnectClusters[i].Connectors {
+			name := info.ConnectClusters[i].Connectors[j].Name
+			if cm, ok := perConnector[name]; ok {
+				info.ConnectClusters[i].Connectors[j].Metrics = cm
+			}
+		}
+	}
 	return nil
 }
 
@@ -439,7 +439,11 @@ func (s *SelfManagedConnectorsScanner) collectConnectJolokiaMetrics(ctx context.
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(creds.Jolokia.Auth.Username, creds.Jolokia.Auth.Password))
 	}
 	if creds.Jolokia.TLS != nil {
-		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(creds.Jolokia.TLS.CACert, creds.Jolokia.TLS.InsecureSkipVerify))
+		caPool, err := utils.OptionalCACertPool(creds.Jolokia.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
+		}
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, creds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
 	jmxService := jmx.NewJMXService(creds.Jolokia.Endpoints, jmx.ConnectMetricDefinitions(), "worker", jolokiaOpts...)
@@ -464,7 +468,11 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 		promOpts = append(promOpts, client.WithPrometheusBasicAuth(creds.Prometheus.Auth.Username, creds.Prometheus.Auth.Password))
 	}
 	if creds.Prometheus.TLS != nil {
-		promOpts = append(promOpts, client.WithPrometheusTLS(creds.Prometheus.TLS.CACert, creds.Prometheus.TLS.InsecureSkipVerify))
+		caPool, err := utils.OptionalCACertPool(creds.Prometheus.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
+		}
+		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, creds.Prometheus.TLS.InsecureSkipVerify))
 	}
 
 	var labels map[string]string

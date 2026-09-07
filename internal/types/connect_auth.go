@@ -5,22 +5,25 @@ package types
 type ConnectAuthMethod string
 
 const (
-	ConnectAuthMethodSaslScram       ConnectAuthMethod = "SASL/SCRAM"
+	ConnectAuthMethodBasicAuth       ConnectAuthMethod = "BasicAuth"
 	ConnectAuthMethodTls             ConnectAuthMethod = "TLS"
 	ConnectAuthMethodUnauthenticated ConnectAuthMethod = "Unauthenticated"
 )
 
-// ConnectSaslScramAuth holds basic-auth credentials for a SASL/SCRAM-protected
+// ConnectBasicAuth holds HTTP Basic credentials for a Basic-auth-protected
 // Connect REST endpoint.
-type ConnectSaslScramAuth struct {
+type ConnectBasicAuth struct {
 	Username string
 	Password string
 }
 
-// ConnectTlsAuth holds the certificate paths for a mTLS-protected Connect REST
-// endpoint.
+// ConnectTlsAuth holds the TLS transport options for reaching a Connect REST
+// endpoint over HTTPS. CACert (verify the server against a private/internal CA)
+// and InsecureSkipVerify apply to ANY auth method; ClientCert/ClientKey are the
+// client identity for mTLS (--use-tls).
 type ConnectTlsAuth struct {
-	CACert     string
-	ClientCert string
-	ClientKey  string
+	CACert             string
+	ClientCert         string
+	ClientKey          string
+	InsecureSkipVerify bool
 }

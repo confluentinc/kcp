@@ -62,6 +62,8 @@ func (a *ProcessedAggregates) ForService(name string) *ServiceCostAggregates {
 		return &a.ElasticLoadBalancing
 	case types.ServiceVPC:
 		return &a.AmazonVPC
+	case types.ServiceMSKConnect:
+		return &a.MSKConnect
 	}
 	return nil
 }
@@ -73,6 +75,7 @@ type ProcessedAggregates struct {
 	EC2Other                             ServiceCostAggregates `json:"EC2 - Other"`
 	ElasticLoadBalancing                 ServiceCostAggregates `json:"Amazon Elastic Load Balancing"`
 	AmazonVPC                            ServiceCostAggregates `json:"Amazon Virtual Private Cloud"`
+	MSKConnect                           ServiceCostAggregates `json:"Amazon Managed Streaming for Apache Kafka Connect"`
 }
 
 // NewProcessedAggregates creates a new ProcessedAggregates with all maps initialized
@@ -83,6 +86,7 @@ func NewProcessedAggregates() ProcessedAggregates {
 		EC2Other:                             newServiceCostAggregates(),
 		ElasticLoadBalancing:                 newServiceCostAggregates(),
 		AmazonVPC:                            newServiceCostAggregates(),
+		MSKConnect:                           newServiceCostAggregates(),
 	}
 }
 

@@ -118,11 +118,25 @@ func (s *MSKSource) scanCluster(region string, clusterAuth types.ClusterAuth, op
 	}
 	defer func() { _ = (*kafkaAdmin).Close() }()
 
-	ks := kafkaservice.NewKafkaService(*kafkaAdmin, kafkaservice.KafkaServiceOpts{
-		AuthType:   authType,
-		ClusterArn: clusterAuth.Arn,
-		SkipTopics: opts.SkipTopics,
-		SkipACLs:   opts.SkipACLs,
+	// Consumer-group discovery uses an isolated client pinned at Kafka 3.8.0
+	// (see client.NewConsumerGroupClient). If it cannot be built (e.g. auth
+	// error), degrade rather than fail the whole scan: log a warning and pass
+	// a nil scanner, which ScanKafkaResources nil-guards.
+	var groupScanner client.ConsumerGroupScanner
+	groupClient, err := createConsumerGroupClient(authType, brokerAddresses, region, clusterAuth)
+	if err != nil {
+		slog.Warn("failed to create consumer group client; skipping consumer group discovery", "clusterArn", clusterAuth.Arn, "error", err)
+	} else {
+		groupScanner = groupClient
+		defer func() { _ = groupClient.Close() }()
+	}
+
+	ks := kafkaservice.NewKafkaService(*kafkaAdmin, groupScanner, kafkaservice.KafkaServiceOpts{
+		AuthType:           authType,
+		ClusterArn:         clusterAuth.Arn,
+		SkipTopics:         opts.SkipTopics,
+		SkipACLs:           opts.SkipACLs,
+		SkipConsumerGroups: opts.SkipConsumerGroups,
 	})
 
 	clusterType := discoveredCluster.AWSClientInformation.MskClusterConfig.ClusterType
@@ -177,4 +191,21 @@ func createKafkaAdmin(authType types.AuthType, brokerAddresses []string, clientB
 		return nil, fmt.Errorf("failed to create Kafka admin: %v", err)
 	}
 	return &kafkaAdmin, nil
+}
+
+// createConsumerGroupClient builds the isolated consumer-group discovery client
+// (client.NewConsumerGroupClient pins Kafka 3.8.0 internally; no version is
+// passed here). Mirrors createKafkaAdmin's auth resolution.
+func createConsumerGroupClient(authType types.AuthType, brokerAddresses []string, region string, clusterAuth types.ClusterAuth) (*client.ConsumerGroupClient, error) {
+	// MSK uses AWS-managed certificates; never skip TLS verification.
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterAuth.AuthMethod, false)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option: %w", err)
+	}
+
+	groupClient, err := client.NewConsumerGroupClient(brokerAddresses, region, authOpt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer group client: %w", err)
+	}
+	return groupClient, nil
 }

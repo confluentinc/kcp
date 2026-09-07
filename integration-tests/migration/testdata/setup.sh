@@ -6,12 +6,71 @@ MANIFESTS_DIR="${SCRIPT_DIR}/manifests"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
 PROFILE="kcp-e2e"
 NAMESPACE="confluent"
-HELM_REPO="https://packages.confluent.io/helm"
-CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.1514.19}"
+
+# --- Version pins ---
+# CFK 0.1838.0 is the first version whose Gateway CRD restructures security
+# under a per-streaming-domain security.cluster.<name> map (see the comment on
+# gateway-initial.yaml's route.security) — the shape redundant-auth switchover
+# depends on. It postdates the public Helm repo, so both the chart and the
+# operator image come from the kcp-owned ECR OCI mirror in account
+# 635910096382 — the same mirror integration-tests/migration-hot-reload
+# already pulls from.
+AWS_REGION="${AWS_REGION:-us-east-1}"
+CFK_CHART_OCI="${CFK_CHART_OCI:-oci://635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-for-kubernetes}"
+CFK_CHART_VERSION="${CFK_CHART_VERSION:-0.1838.0}"
+OPERATOR_IMAGE="${OPERATOR_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/confluent-operator:v0.1838.0-amd64}"
+OPERATOR_REGISTRY="${OPERATOR_IMAGE%%/*}"
+OPERATOR_REPO_TAG="${OPERATOR_IMAGE#*/}"
+OPERATOR_REPO="${OPERATOR_REPO_TAG%:*}"
+OPERATOR_TAG="${OPERATOR_REPO_TAG##*:}"
+# The gateway app image (kcp/cpc-gateway) is the internal build whose swap
+# implementation actually honours the redundant-auth CR shape; confluentinc's
+# public confluent-gateway-for-cloud does not implement it. Defaults to a
+# native-arch tag so neither local dev (Apple Silicon) nor CI
+# (s1-prod-ubuntu24-04-amd64-2) needs cross-arch emulation for the gateway pod
+# itself — only the operator, which is amd64-only regardless of host arch.
+case "$(uname -m)" in
+  arm64 | aarch64) GATEWAY_TAG_DEFAULT="1.4.0-master-430-arm64" ;;
+  *) GATEWAY_TAG_DEFAULT="1.4.0-master-424-amd64" ;;
+esac
+GATEWAY_TAG="${GATEWAY_TAG:-${GATEWAY_TAG_DEFAULT}}"
+GATEWAY_IMAGE="${GATEWAY_IMAGE:-635910096382.dkr.ecr.us-east-1.amazonaws.com/kcp/cpc-gateway:${GATEWAY_TAG}}"
 CP_SERVER_TAG="${CP_SERVER_TAG:-8.1.2}"
-INIT_CONTAINER_TAG="${INIT_CONTAINER_TAG:-3.2.1}"
-GATEWAY_TAG="${GATEWAY_TAG:-1.2.0-1-ubi9}"
+INIT_CONTAINER_TAG="${INIT_CONTAINER_TAG:-3.3.0}"
 WAIT_TIMEOUT="${WAIT_TIMEOUT:-900s}"
+
+# CI has no ambient AWS credentials for the ECR pulls (operator image, gateway
+# image, CFK chart). When these are set (the Semaphore path, mirroring
+# migration-hot-reload/setup.sh) the narrowly-scoped ECR access key is read
+# from GCP Secret Manager over OIDC workload-identity federation and exported
+# for the docker/helm logins below. Both must be set together; leave unset
+# locally, where an ambient AWS profile (`sso`) is used instead.
+ECR_AWS_KEY_GCP_SECRET="${ECR_AWS_KEY_GCP_SECRET:-}"
+ECR_AWS_SECRET_GCP_SECRET="${ECR_AWS_SECRET_GCP_SECRET:-}"
+
+# ensure_ecr_aws_creds populates AWS credentials for the ECR pulls from GCP
+# Secret Manager when the CI knobs above are set, else leaves the ambient AWS
+# profile untouched. Idempotent (reads once). Copied from
+# integration-tests/migration-hot-reload/setup.sh — see that file's comment
+# for why AWS_SESSION_TOKEN/AWS_PROFILE are cleared.
+ensure_ecr_aws_creds() {
+  [ -n "${_ecr_aws_creds_ready:-}" ] && return 0
+  if [ -n "${ECR_AWS_KEY_GCP_SECRET}" ] && [ -n "${ECR_AWS_SECRET_GCP_SECRET}" ]; then
+    command -v gcloud >/dev/null 2>&1 || {
+      echo "FATAL: ECR_AWS_*_GCP_SECRET is set but the gcloud CLI is not on PATH to read the ECR credentials" >&2
+      exit 1
+    }
+    AWS_ACCESS_KEY_ID="$(gcloud secrets versions access latest --secret="${ECR_AWS_KEY_GCP_SECRET}")"
+    AWS_SECRET_ACCESS_KEY="$(gcloud secrets versions access latest --secret="${ECR_AWS_SECRET_GCP_SECRET}")"
+    if [ -z "${AWS_ACCESS_KEY_ID}" ] || [ -z "${AWS_SECRET_ACCESS_KEY}" ]; then
+      echo "FATAL: the ECR credentials read from GCP Secret Manager are empty" >&2
+      exit 1
+    fi
+    export AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
+    unset AWS_SESSION_TOKEN AWS_PROFILE AWS_DEFAULT_PROFILE
+  fi
+  _ecr_aws_creds_ready=1
+}
 
 # wait_for_pods waits until at least one pod matching the label exists, then
 # waits for all matching pods to be Ready, printing status every 15s.
@@ -42,7 +101,8 @@ wait_for_pods() {
 
 echo "=== KCP E2E Test Setup ==="
 echo "Profile: ${PROFILE}"
-echo "CFK chart version: ${CFK_CHART_VERSION}"
+echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
+echo "Gateway image:  ${GATEWAY_IMAGE}"
 echo ""
 
 # --- Minikube ---
@@ -72,12 +132,29 @@ if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
   echo "${DOCKERHUB_APIKEY}" | docker login --username "${DOCKERHUB_USER}" --password-stdin &>/dev/null
 fi
 
-# --- Pre-pull images in background (speeds up later helm install / kubectl apply) ---
-echo "Pre-pulling container images in background..."
-docker pull "docker.io/confluentinc/confluent-operator:${CFK_CHART_VERSION}" &>/dev/null &
+# --- Images ---
+# The operator and gateway app images are private (see the version-pins
+# comment above), so they need an explicit ECR login before pulling.
+# `docker login` writes to ~/.docker/config.json regardless of which daemon
+# DOCKER_HOST points at, so logging in after the docker-env eval above is
+# enough for kubelet's later IfNotPresent lookup to find them already cached
+# in minikube's own docker — no separate `minikube image load` needed (unlike
+# migration-hot-reload's setup.sh, which pulls to the HOST daemon instead).
+echo "Authenticating to ECR..."
+ensure_ecr_aws_creds
+aws ecr get-login-password --region "${AWS_REGION}" \
+  | docker login --username AWS --password-stdin "${OPERATOR_REGISTRY}" >/dev/null
+
+echo "Pulling operator and gateway images..."
+# The operator is amd64-only; --platform is required even on an amd64 host so
+# this keeps working if a future default host arch changes (matches
+# migration-hot-reload's setup.sh).
+docker pull --platform linux/amd64 "${OPERATOR_IMAGE}" >/dev/null
+docker pull "${GATEWAY_IMAGE}" >/dev/null
+
+echo "Pre-pulling remaining (public) container images in background..."
 docker pull "docker.io/confluentinc/cp-server:${CP_SERVER_TAG}" &>/dev/null &
 docker pull "docker.io/confluentinc/confluent-init-container:${INIT_CONTAINER_TAG}" &>/dev/null &
-docker pull "docker.io/confluentinc/confluent-gateway-for-cloud:${GATEWAY_TAG}" &>/dev/null &
 docker pull "docker.io/alpine:3.20" &>/dev/null &
 echo "  (images pulling in background)"
 
@@ -102,9 +179,17 @@ if [ -n "${DOCKERHUB_USER:-}" ] && [ -n "${DOCKERHUB_APIKEY:-}" ]; then
 fi
 
 # --- CFK Operator ---
+echo "Pulling CFK chart ${CFK_CHART_VERSION} from the ECR mirror..."
+CHART_REGISTRY="${CFK_CHART_OCI#oci://}"
+CHART_REGISTRY="${CHART_REGISTRY%%/*}"
+aws ecr get-login-password --region "${AWS_REGION}" \
+  | helm registry login --username AWS --password-stdin "${CHART_REGISTRY}" >/dev/null
+CHART_UNPACK_DIR="$(mktemp -d)"
+helm pull "${CFK_CHART_OCI}" --version "${CFK_CHART_VERSION}" \
+  --untar --untardir "${CHART_UNPACK_DIR}" >/dev/null
+CFK_CHART_PATH="${CHART_UNPACK_DIR}/$(basename "${CFK_CHART_OCI}")"
+
 echo "Installing CFK operator..."
-helm repo add confluentinc "${HELM_REPO}" --force-update
-helm repo update
 if helm status confluent-operator --namespace "${NAMESPACE}" --kube-context "${PROFILE}" &>/dev/null; then
   echo "CFK operator already installed, skipping..."
 else
@@ -112,11 +197,14 @@ else
   if [ -n "${CI:-}" ]; then
     HELM_DEBUG="--debug"
   fi
-  helm install confluent-operator confluentinc/confluent-for-kubernetes \
+  helm install confluent-operator "${CFK_CHART_PATH}" \
     --namespace "${NAMESPACE}" \
     --kube-context "${PROFILE}" \
-    --version "${CFK_CHART_VERSION}" \
     --set namespaced=false \
+    --set "image.registry=${OPERATOR_REGISTRY}" \
+    --set "image.repository=${OPERATOR_REPO}" \
+    --set "image.tag=${OPERATOR_TAG}" \
+    --set image.pullPolicy=IfNotPresent \
     --wait \
     --timeout "${WAIT_TIMEOUT}" \
     ${HELM_DEBUG}
@@ -170,7 +258,7 @@ wait $pid1 $pid2 || { echo "FATAL: Kafka brokers failed to start, aborting setup
 #   topic    : e2e-test-topic-<scenario>
 #   link     : e2e-link-<scenario>
 #   gateway  : migration-gateway-<scenario>
-SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters" "pause-sync-rogue" "pause-sync-drift" "pause-sync-drain" "batch" "rogue-producer")
+SCENARIOS=("baseline" "pause-sync-happy" "pause-sync-refuses" "pause-sync-restores-filters" "pause-sync-rogue" "pause-sync-drift" "pause-sync-drain" "batch" "rogue-producer" "rogue-producer-false-positive")
 TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
 rm -rf "${RENDERED_DIR}"
@@ -210,6 +298,8 @@ render_scenario() {
   sed -e "s/__GATEWAY_NAME__/${gateway}/g" \
       -e "s/__CLUSTER_LINK_NAME__/${link}/g" \
       -e "s/__TOPIC_NAME__/${topic}/g" \
+      -e "s|__GATEWAY_IMAGE__|${GATEWAY_IMAGE}|g" \
+      -e "s|__INIT_IMAGE__|confluentinc/confluent-init-container:${INIT_CONTAINER_TAG}|g" \
       "${template}" > "${out}"
   printf '%s\n' "${out}"
 }
@@ -259,6 +349,80 @@ EOF
   } > "${out}"
   printf '%s\n' "${out}"
 }
+
+# --- Gateway redundant-auth secrets ---
+# The initial CR pre-stages a swap-auth block for destination-kafka (see
+# gateway-initial.yaml's route.security.cluster.destination-kafka-cluster) so
+# it references four secrets the source leg does not need (that one reaches
+# source-kafka over PLAINTEXT with auth: passthrough). Without them the CFK
+# operator refuses the CR with
+#   cluster-ready=False reason=ApplyFailed "secretRef destination-kafka-tls not found"
+# leaving metadata.generation ahead of status.observedGeneration forever.
+#
+# The Deployment stays healthy on the previous generation while that happens, so
+# before kcp verified operator acceptance a bad switchover target silently
+# no-op'd and the whole suite still went green. Shapes follow
+# docs/assets/gateway-switchover/switchover-none-to-saslplain/README.md.
+echo "Creating gateway redundant-auth secrets..."
+
+# apply_secret makes each secret idempotent — setup.sh is routinely re-run
+# against an existing minikube profile.
+apply_secret() {
+  kubectl --context "${PROFILE}" -n "${NAMESPACE}" create secret generic "$@" \
+    --dry-run=client -o yaml | kubectl --context "${PROFILE}" apply -f - >/dev/null
+}
+
+# The gateway must verify destination-kafka's serving certificate. destination-kafka
+# runs with tls.autoGeneratedCerts, for which CFK generates
+# <component-name>-generated-jks holding keystore.jks, truststore.jks and
+# jksPassword.txt — and that truststore already trusts the ca-pair-sslcerts CA that
+# signed the cert we need to verify. Reuse it rather than building a parallel
+# truststore that could drift from the CA actually in use.
+#
+# truststore.jks + jksPassword.txt is the shape every server-trust-only example
+# under docs/assets/gateway-switchover/ passes to a bootstrapServers[].tls.secretRef
+# (a client keystore is only needed for mTLS, which this route does not use).
+GENERATED_JKS="destination-kafka-generated-jks"
+if ! kubectl --context "${PROFILE}" -n "${NAMESPACE}" get secret "${GENERATED_JKS}" &>/dev/null; then
+  echo "FATAL: expected CFK-generated secret ${GENERATED_JKS} (from destination-kafka's"
+  echo "       tls.autoGeneratedCerts) but it does not exist. The switchover gateway CR"
+  echo "       cannot verify destination-kafka without it. Check the secret's real name:"
+  echo "         kubectl -n ${NAMESPACE} get secrets | grep generated"
+  exit 1
+fi
+# Copy just the two keys the gateway needs into the name the switchover CR expects.
+TRUSTSTORE_DIR="$(mktemp -d)"
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" get secret "${GENERATED_JKS}" \
+  -o 'jsonpath={.data.truststore\.jks}' | base64 -d > "${TRUSTSTORE_DIR}/truststore.jks"
+kubectl --context "${PROFILE}" -n "${NAMESPACE}" get secret "${GENERATED_JKS}" \
+  -o 'jsonpath={.data.jksPassword\.txt}' | base64 -d > "${TRUSTSTORE_DIR}/jksPassword.txt"
+for key in truststore.jks jksPassword.txt; do
+  if [ ! -s "${TRUSTSTORE_DIR}/${key}" ]; then
+    echo "FATAL: secret ${GENERATED_JKS} has no ${key}; cannot build destination-kafka-tls."
+    echo "       Inspect its keys with:"
+    echo "         kubectl -n ${NAMESPACE} get secret ${GENERATED_JKS} -o jsonpath='{.data}'"
+    rm -rf "${TRUSTSTORE_DIR}"
+    exit 1
+  fi
+done
+apply_secret destination-kafka-tls \
+  --from-file=truststore.jks="${TRUSTSTORE_DIR}/truststore.jks" \
+  --from-file=jksPassword.txt="${TRUSTSTORE_DIR}/jksPassword.txt"
+rm -rf "${TRUSTSTORE_DIR}"
+
+# JAAS template for the gateway→destination SASL/PLAIN connection. The %s
+# placeholders are filled from the file store credential mapping below.
+apply_secret plain-jaas \
+  --from-literal=plain-jaas.conf='org.apache.kafka.common.security.plain.PlainLoginModule required username="%s" password="%s";'
+
+# Separator between username and password in the file store's credential values.
+apply_secret file-store-config --from-literal=separator="/"
+
+# The switchover route accepts unauthenticated clients (client auth type: none)
+# and swaps their identity for real destination credentials, so the anonymous
+# identity maps to a user in destination-credentials.yaml's plain-users.json.
+apply_secret file-store-noauth-credentials \
+  --from-literal=ANONYMOUS="admin/admin-secret"
 
 # --- Gateways (one per scenario) ---
 echo "Deploying gateways..."
@@ -330,14 +494,6 @@ for scenario in "${SCENARIOS[@]}"; do
   done
 done
 
-# --- Render fenced/switchover CRs for runner-pod copy ---
-# Not applied to the cluster — kcp migration init/execute apply them as part
-# of the FSM. We just need rendered copies on disk to ship into the pod.
-for scenario in "${SCENARIOS[@]}"; do
-  render_scenario "${TEMPLATES_DIR}/gateway-fenced.yaml" "${scenario}" >/dev/null
-  render_scenario "${TEMPLATES_DIR}/gateway-switchover.yaml" "${scenario}" >/dev/null
-done
-
 # --- Get connection details ---
 DEST_CLUSTER_ID=$(kubectl --context "${PROFILE}" -n "${NAMESPACE}" get kafka destination-kafka -o jsonpath='{.status.clusterID}' 2>/dev/null || echo "")
 if [ -z "${DEST_CLUSTER_ID}" ]; then
@@ -370,14 +526,6 @@ kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.consumer-lin
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/consumer
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp "${SCRIPT_DIR}/.setconfig-linux" "${KCP_POD}:/workspace/setconfig"
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" exec "${KCP_POD}" -- chmod +x /workspace/setconfig
-for scenario in "${SCENARIOS[@]}"; do
-  kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp \
-    "${RENDERED_DIR}/gateway-fenced-${scenario}.yaml" \
-    "${KCP_POD}:/workspace/gateway-fenced-${scenario}.yaml"
-  kubectl --context "${PROFILE}" -n "${NAMESPACE}" cp \
-    "${RENDERED_DIR}/gateway-switchover-${scenario}.yaml" \
-    "${KCP_POD}:/workspace/gateway-switchover-${scenario}.yaml"
-done
 
 # Generate kubeconfig from service account token (kcp requires --kube-path)
 echo "Generating in-cluster kubeconfig..."
@@ -459,8 +607,8 @@ ENV_FILE="${SCRIPT_DIR}/.env"
     echo "KCP_E2E_${upper}_TOPIC_NAME=e2e-test-topic-${scenario}"
     echo "KCP_E2E_${upper}_TOPIC_NAMES=$(topic_names_csv "${scenario}")"
     echo "KCP_E2E_${upper}_GATEWAY_NAME=migration-gateway-${scenario}"
-    echo "KCP_E2E_${upper}_FENCED_CR=/workspace/gateway-fenced-${scenario}.yaml"
-    echo "KCP_E2E_${upper}_SWITCHOVER_CR=/workspace/gateway-switchover-${scenario}.yaml"
+    # The route the initial CR declares; kcp injects the fence onto it at cutover.
+    echo "KCP_E2E_${upper}_FENCE_ROUTES=migration-route"
   done
 } > "${ENV_FILE}"
 
@@ -471,4 +619,4 @@ echo ""
 echo "Dest Cluster ID: ${DEST_CLUSTER_ID}"
 echo "kcp runner pod:  ${KCP_POD}"
 echo ""
-echo "Run tests with: make test-migration-e2e"
+echo "Run tests with: make test-migration"

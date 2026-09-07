@@ -24,15 +24,16 @@ import (
 )
 
 var (
-	stateFile       string
-	credentialsFile string
-	sourceType      string
-	skipTopics      bool
-	skipACLs        bool
-	metricsSource   string
-	metricsDuration string
-	metricsInterval string
-	metricsRange    string
+	stateFile          string
+	credentialsFile    string
+	sourceType         string
+	skipTopics         bool
+	skipACLs           bool
+	skipConsumerGroups bool
+	metricsSource      string
+	metricsDuration    string
+	metricsInterval    string
+	metricsRange       string
 )
 
 func scanClustersIAMAnnotation() string {
@@ -45,10 +46,12 @@ func scanClustersIAMAnnotation() string {
 					"kafka-cluster:Connect",
 					"kafka-cluster:DescribeCluster",
 					"kafka-cluster:DescribeClusterDynamicConfiguration",
+					"kafka-cluster:DescribeGroup",
 					"kafka-cluster:DescribeTopic",
 				},
 				Resources: []string{
 					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
+					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:group/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
 					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>",
 				},
 			},
@@ -60,12 +63,18 @@ func NewScanClustersCmd() *cobra.Command {
 	scanClustersCmd := &cobra.Command{
 		Use:   "clusters",
 		Short: "Scan Kafka clusters using the Kafka Admin API",
-		Long: `Scan MSK or Apache Kafka clusters to discover topics, ACLs, and other metadata via the Kafka Admin API. Results are merged into the kcp-state.json file.
+		Long: `Scan MSK or Apache Kafka clusters — including Confluent Platform and other Kafka-API-compatible distributions — to discover topics, ACLs, and other metadata via the Kafka Admin API. Results are merged into the kcp-state.json file.
 
 Source-specific notes:
 
 - ` + "`--source-type msk`" + ` reads cluster connection details from the ` + "`msk-credentials.yaml`" + ` file produced by ` + "`kcp discover`" + `. SCRAM is forced to SHA-512 (the only mechanism MSK supports).
 - ` + "`--source-type apache-kafka`" + ` reads from a hand-authored ` + "`apache-kafka-credentials.yaml`" + ` file. SASL/SCRAM defaults to SHA-256 — set ` + "`auth_method.sasl_scram.mechanism: SHA512`" + ` if your cluster requires SHA-512. The full schema and worked examples are documented at [Apache Kafka configuration → Credentials](../../apache-kafka-configuration/credentials.md).
+
+Consumer groups:
+
+- Consumer group discovery runs by default; pass ` + "`--skip-consumer-groups`" + ` to turn it off. For every group KCP records its KIP-848 type (` + "`classic`" + `, ` + "`consumer`" + `, ` + "`share`" + `, ` + "`streams`" + `), state, and coordinator, and merges them into the state file.
+- Reading the group *type* requires a broker running Kafka 3.8 or newer; against older brokers the type is reported as blank and every group is treated as classic-protocol.
+- Only ` + "`classic`" + ` groups are fully described (members and their assigned topics). ` + "`consumer`" + `, ` + "`share`" + `, and ` + "`streams`" + ` groups record type, state, and coordinator but not member-level detail (that needs the newer ConsumerGroupDescribe API); they are flagged with incomplete detail in the state file and UI.
 
 Metrics collection (Apache Kafka only):
 
@@ -108,6 +117,7 @@ Both backends produce the same metric shape and feed reports and the UI. See [Ap
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skip topic discovery")
 	optionalFlags.BoolVar(&skipACLs, "skip-acls", false, "Skip ACL discovery")
+	optionalFlags.BoolVar(&skipConsumerGroups, "skip-consumer-groups", false, "Skip consumer group discovery")
 	scanClustersCmd.Flags().AddFlagSet(optionalFlags)
 
 	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
@@ -232,9 +242,10 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 
 	// Perform scan
 	scanOpts := sources.ScanOptions{
-		SkipTopics: skipTopics,
-		SkipACLs:   skipACLs,
-		State:      state,
+		SkipTopics:         skipTopics,
+		SkipACLs:           skipACLs,
+		SkipConsumerGroups: skipConsumerGroups,
+		State:              state,
 	}
 
 	slog.Info("starting cluster scan", "source", sourceType)
@@ -443,10 +454,14 @@ func collectJolokiaMetrics(ctx context.Context, clusterCreds types.OSKClusterAut
 		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaBasicAuth(clusterCreds.Jolokia.Auth.Username, clusterCreds.Jolokia.Auth.Password))
 	}
 	if clusterCreds.Jolokia.TLS != nil {
-		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(clusterCreds.Jolokia.TLS.CACert, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
+		caPool, err := utils.OptionalCACertPool(clusterCreds.Jolokia.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Jolokia CA certificate: %w", err)
+		}
+		jolokiaOpts = append(jolokiaOpts, client.WithJolokiaTLS(caPool, clusterCreds.Jolokia.TLS.InsecureSkipVerify))
 	}
 
-	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(), "broker", jolokiaOpts...)
+	jmxService := jmx.NewJMXService(clusterCreds.Jolokia.Endpoints, jmx.BrokerMetricDefinitions(clusterCreds.Jolokia.MBeanOverrides), "broker", jolokiaOpts...)
 	return jmxService.CollectOverDuration(ctx, duration, interval)
 }
 
@@ -468,10 +483,11 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 		))
 	}
 	if clusterCreds.Prometheus.TLS != nil {
-		promOpts = append(promOpts, client.WithPrometheusTLS(
-			clusterCreds.Prometheus.TLS.CACert,
-			clusterCreds.Prometheus.TLS.InsecureSkipVerify,
-		))
+		caPool, err := utils.OptionalCACertPool(clusterCreds.Prometheus.TLS.CACert)
+		if err != nil {
+			return nil, fmt.Errorf("loading Prometheus CA certificate: %w", err)
+		}
+		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, clusterCreds.Prometheus.TLS.InsecureSkipVerify))
 	}
 
 	var labels map[string]string
@@ -480,6 +496,6 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 	}
 
 	promClient := client.NewPrometheusClient(clusterCreds.Prometheus.URL, promOpts...)
-	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(), labels)
+	promService := prometheussvc.NewPrometheusService(promClient, prometheussvc.BrokerQueryDefinitions(clusterCreds.Prometheus.MetricNames), labels)
 	return promService.CollectMetrics(ctx, queryRange)
 }

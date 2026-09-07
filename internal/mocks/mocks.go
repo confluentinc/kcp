@@ -13,15 +13,20 @@ import (
 
 // MockKafkaAdmin is a mock implementation of the KafkaAdmin interface
 type MockKafkaAdmin struct {
-	ListTopicsWithConfigsFunc   func() (map[string]sarama.TopicDetail, error)
-	GetClusterKafkaMetadataFunc func() (*client.ClusterKafkaMetadata, error)
-	DescribeConfigFunc          func() ([]sarama.ConfigEntry, error)
-	ListAclsFunc                func() ([]sarama.ResourceAcls, error)
-	CloseFunc                   func() error
+	ListTopicsWithConfigsFunc           func() (map[string]sarama.TopicDetail, error)
+	ListTopicsWithNonDefaultConfigsFunc func() (map[string]sarama.TopicDetail, error)
+	GetClusterKafkaMetadataFunc         func() (*client.ClusterKafkaMetadata, error)
+	DescribeConfigFunc                  func() ([]sarama.ConfigEntry, error)
+	ListAclsFunc                        func() ([]sarama.ResourceAcls, error)
+	CloseFunc                           func() error
 }
 
 func (m *MockKafkaAdmin) ListTopicsWithConfigs() (map[string]sarama.TopicDetail, error) {
 	return m.ListTopicsWithConfigsFunc()
+}
+
+func (m *MockKafkaAdmin) ListTopicsWithNonDefaultConfigs() (map[string]sarama.TopicDetail, error) {
+	return m.ListTopicsWithNonDefaultConfigsFunc()
 }
 
 func (m *MockKafkaAdmin) GetClusterKafkaMetadata() (*client.ClusterKafkaMetadata, error) {
@@ -37,6 +42,31 @@ func (m *MockKafkaAdmin) ListAcls() ([]sarama.ResourceAcls, error) {
 }
 
 func (m *MockKafkaAdmin) Close() error {
+	return m.CloseFunc()
+}
+
+// MockConsumerGroupScanner is a mock implementation of the
+// client.ConsumerGroupScanner interface
+type MockConsumerGroupScanner struct {
+	ListGroupsWithTypeFunc func() ([]types.ConsumerGroupListing, error)
+	DescribeGroupsFunc     func(groupIDs []string) ([]*sarama.GroupDescription, error)
+	CoordinatorsFunc       func(groupIDs []string) map[string]string
+	CloseFunc              func() error
+}
+
+func (m *MockConsumerGroupScanner) ListGroupsWithType() ([]types.ConsumerGroupListing, error) {
+	return m.ListGroupsWithTypeFunc()
+}
+
+func (m *MockConsumerGroupScanner) DescribeGroups(groupIDs []string) ([]*sarama.GroupDescription, error) {
+	return m.DescribeGroupsFunc(groupIDs)
+}
+
+func (m *MockConsumerGroupScanner) Coordinators(groupIDs []string) map[string]string {
+	return m.CoordinatorsFunc(groupIDs)
+}
+
+func (m *MockConsumerGroupScanner) Close() error {
 	return m.CloseFunc()
 }
 

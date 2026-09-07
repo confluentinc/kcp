@@ -20,11 +20,14 @@ import (
 // The connect* fields configure FilterConnectMetrics and capture the args it was
 // called with, so handler tests can assert source-type/cluster-id passthrough.
 type mockReportService struct {
-	connectMetrics        *types.ConnectClusterMetrics
-	connectErr            error
-	connectCalled         bool
-	lastConnectClusterID  string
-	lastConnectSourceType string
+	connectMetrics           *types.ConnectClusterMetrics
+	connectErr               error
+	connectCalled            bool
+	lastConnectClusterID     string
+	lastConnectSourceType    string
+	lastConnectKind          string
+	lastConnectRestURL       *string
+	lastConnectConnectorName string
 
 	// clusterMetrics drives FilterClusterMetrics. clusterMetricsUnfiltered is returned
 	// for the handler's no-date-filter re-probe (both startTime and endTime nil) so a
@@ -57,10 +60,13 @@ func (m *mockReportService) FilterClusterMetrics(processedState report.Processed
 	return m.clusterMetrics, nil
 }
 
-func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID string, sourceType string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
+func (m *mockReportService) FilterConnectMetrics(processedState report.ProcessedState, clusterID, sourceType, kind string, connectRestURL *string, connectorName string, startTime, endTime *time.Time) (*types.ConnectClusterMetrics, error) {
 	m.connectCalled = true
 	m.lastConnectClusterID = clusterID
 	m.lastConnectSourceType = sourceType
+	m.lastConnectKind = kind
+	m.lastConnectRestURL = connectRestURL
+	m.lastConnectConnectorName = connectorName
 	return m.connectMetrics, m.connectErr
 }
 
@@ -398,6 +404,84 @@ func TestHandleGetConnectMetrics_MSK_ReturnsMetrics(t *testing.T) {
 	}
 }
 
+// The handler must thread the connectRestURL/connectorName query params straight through
+// to FilterConnectMetrics unmodified, so the frontend's per-cluster/per-connector selectors
+// actually narrow the result rather than being silently dropped.
+func TestHandleGetConnectMetrics_ThreadsConnectRestURLAndConnectorName(t *testing.T) {
+	mock := &mockReportService{
+		connectMetrics: &types.ConnectClusterMetrics{
+			Metrics: []types.ProcessedMetric{{Label: "source-record-write-rate"}},
+		},
+	}
+	ui := connectMetricsTestUI(mock)
+
+	const distinguishableURL = "http://connect-worker-2.example.com:8083"
+	const distinguishableConnector = "my-distinctive-connector"
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka&sessionId=s1&connectRestURL="+distinguishableURL+"&connectorName="+distinguishableConnector)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.lastConnectRestURL == nil || *mock.lastConnectRestURL != distinguishableURL {
+		t.Errorf("expected connectRestURL %q passed to filter, got %v", distinguishableURL, mock.lastConnectRestURL)
+	}
+	if mock.lastConnectConnectorName != distinguishableConnector {
+		t.Errorf("expected connectorName %q passed to filter, got %q", distinguishableConnector, mock.lastConnectConnectorName)
+	}
+}
+
+// When the selectors are omitted, the handler must pass a nil connectRestURL (not a
+// pointer to ""), preserving the back-compat "first cluster" resolution in the service
+// layer. connectorName has no such ambiguity (a connector name is never legitimately
+// empty), so it stays a plain empty string.
+func TestHandleGetConnectMetrics_OmittedSelectorsPassEmptyStrings(t *testing.T) {
+	mock := &mockReportService{
+		connectMetrics: &types.ConnectClusterMetrics{
+			Metrics: []types.ProcessedMetric{{Label: "connector-count"}},
+		},
+	}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka&sessionId=s1")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.lastConnectRestURL != nil {
+		t.Errorf("expected nil connectRestURL when omitted, got %q", *mock.lastConnectRestURL)
+	}
+	if mock.lastConnectConnectorName != "" {
+		t.Errorf("expected empty connectorName when omitted, got %q", mock.lastConnectConnectorName)
+	}
+}
+
+// Regression test for PR #400 review feedback (Adrian): a legacy Connect cluster
+// upgraded from a pre-v3 state file has ConnectRestURL == "" as a real, addressable
+// value (see FilterConnectMetrics' doc comment). The handler must pass a non-nil
+// pointer to "" when the query string explicitly has connectRestURL= (present but
+// empty) — distinct from the omitted case above (nil) — so that legacy entry is
+// actually selectable through the API instead of silently resolving to "unspecified".
+func TestHandleGetConnectMetrics_ExplicitEmptyConnectRestURLIsDistinctFromOmitted(t *testing.T) {
+	mock := &mockReportService{
+		connectMetrics: &types.ConnectClusterMetrics{
+			Metrics: []types.ProcessedMetric{{Label: "connector-count"}},
+		},
+	}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka&sessionId=s1&connectRestURL=")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.lastConnectRestURL == nil {
+		t.Fatal("expected a non-nil connectRestURL pointer when the query param is explicitly present but empty")
+	}
+	if *mock.lastConnectRestURL != "" {
+		t.Errorf("expected connectRestURL to point at \"\", got %q", *mock.lastConnectRestURL)
+	}
+}
+
 // Abuse case: an unknown source type is rejected with 4xx and never reaches the filter.
 func TestHandleGetConnectMetrics_UnknownSourceType_Returns400(t *testing.T) {
 	mock := &mockReportService{}
@@ -480,6 +564,60 @@ func TestHandleGetConnectMetrics_CollectedButOutOfRange_Returns200(t *testing.T)
 	}
 	if strings.Contains(rec.Body.String(), "scan self-managed-connectors") {
 		t.Errorf("must not show scan-guidance when metrics exist but fall outside the date range: %s", rec.Body.String())
+	}
+}
+
+// kind defaults to "self-managed" when the query param is omitted, and the
+// default hint (self-managed-connectors scan) is shown on the never-collected 404.
+func TestHandleGetConnectMetrics_KindDefaultsToSelfManaged(t *testing.T) {
+	mock := &mockReportService{connectErr: report.ErrNoConnectMetricsCollected}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "osk", "?clusterId=osk-kafka&sessionId=s1")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.lastConnectKind != "self-managed" {
+		t.Errorf("expected kind 'self-managed' passed to filter by default, got %q", mock.lastConnectKind)
+	}
+	if !strings.Contains(rec.Body.String(), "scan self-managed-connectors") {
+		t.Errorf("expected self-managed scan-guidance message, got: %s", rec.Body.String())
+	}
+}
+
+// kind=managed on a cluster with no managed metrics returns 404 with the
+// managed-specific hint (kcp scan msk-connectors --metrics-granularity 1d), and
+// the "managed" kind is threaded through to the filter call.
+func TestHandleGetConnectMetrics_KindManaged_NoMetrics_Returns404WithManagedGuidance(t *testing.T) {
+	mock := &mockReportService{connectErr: report.ErrNoConnectMetricsCollected}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "msk", "?clusterId=some-arn&sessionId=s1&kind=managed")
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for managed cluster with no metrics, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "kcp scan msk-connectors --metrics-granularity 1d") {
+		t.Errorf("expected managed scan-guidance message, got: %s", rec.Body.String())
+	}
+	if mock.lastConnectKind != "managed" {
+		t.Errorf("expected kind 'managed' passed to filter, got %q", mock.lastConnectKind)
+	}
+}
+
+// An invalid kind is rejected with 400 and never reaches the filter.
+func TestHandleGetConnectMetrics_InvalidKind_Returns400(t *testing.T) {
+	mock := &mockReportService{}
+	ui := connectMetricsTestUI(mock)
+
+	rec := callConnectHandler(ui, "msk", "?clusterId=some-arn&sessionId=s1&kind=bogus")
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for invalid kind, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if mock.connectCalled {
+		t.Error("filter must not be called for an invalid kind")
 	}
 }
 

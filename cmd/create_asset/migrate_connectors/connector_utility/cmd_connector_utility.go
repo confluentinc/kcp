@@ -73,6 +73,15 @@ func NewConnectorUtilityCmd() *cobra.Command {
 	return connectorUtilityCmd
 }
 
+func hasSelfManagedConnectors(info types.KafkaAdminClientInformation) bool {
+	for _, cc := range info.ConnectClusters {
+		if len(cc.Connectors) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func preRunConnectorUtility(cmd *cobra.Command, args []string) error {
 	if err := utils.BindEnvToFlags(cmd); err != nil {
 		return err
@@ -115,8 +124,7 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 		}
 
 		hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
-			(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
-				len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
+			hasSelfManagedConnectors(cluster.KafkaAdminClientInformation)
 
 		if !hasConnectors {
 			return nil, fmt.Errorf("no connectors found for cluster %s in %s. The cluster exists but has no MSK Connect or self-managed connectors", cluster.Name, stateFile)
@@ -128,8 +136,7 @@ func parseConnectorUtilityOpts() (*ConnectorUtilityOpts, error) {
 				cluster := &region.Clusters[i]
 				// Include cluster if it has any connectors (MSK Connect or self-managed)
 				hasConnectors := len(cluster.AWSClientInformation.Connectors) > 0 ||
-					(cluster.KafkaAdminClientInformation.SelfManagedConnectors != nil &&
-						len(cluster.KafkaAdminClientInformation.SelfManagedConnectors.Connectors) > 0)
+					hasSelfManagedConnectors(cluster.KafkaAdminClientInformation)
 				if hasConnectors {
 					clustersByArn[cluster.Arn] = cluster
 				}

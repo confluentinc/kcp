@@ -22,18 +22,54 @@ type MetricQuery struct {
 	Query string
 	// PrometheusMetric is the raw Prometheus metric name used in the query.
 	PrometheusMetric string
+	// GroupByConnector indicates the query is aggregated with `sum by (connector) (...)`
+	// and results should be broken out per connector using the `connector` series label.
+	GroupByConnector bool
+	// Overridden is true when PrometheusMetric came from a user-configured
+	// metric-name override rather than the default series name. An overridden
+	// query that still returns no data is actionable (the override was set
+	// precisely to fix an empty result), so it is logged louder than a routine
+	// empty default.
+	Overridden bool
 }
 
 // BrokerQueryDefinitions returns the standard Kafka broker Prometheus queries.
-func BrokerQueryDefinitions() []MetricQuery {
+// overrides maps a logical label (e.g. "BytesInPerSec") to the base series name
+// this cluster's exporter actually exposes; an entry with an empty value is
+// ignored. The overridden name is substituted into kcp's existing query wrapping
+// and set as PrometheusMetric, so applyLabelFilter injection keeps working. Pass
+// nil for the defaults.
+func BrokerQueryDefinitions(overrides map[string]string) []MetricQuery {
+	name := func(label, def string) (string, bool) {
+		if v, ok := overrides[label]; ok && v != "" {
+			return v, true
+		}
+		return def, false
+	}
+
+	bytesIn, bytesInOv := name("BytesInPerSec", "kafka_server_brokertopicmetrics_bytesinpersec_total")
+	bytesOut, bytesOutOv := name("BytesOutPerSec", "kafka_server_brokertopicmetrics_bytesoutpersec_total")
+	messagesIn, messagesInOv := name("MessagesInPerSec", "kafka_server_brokertopicmetrics_messagesinpersec_total")
+	partitionCount, partitionCountOv := name("PartitionCount", "kafka_server_replicamanager_partitioncount")
+	globalPartition, globalPartitionOv := name("GlobalPartitionCount", "kafka_controller_kafkacontroller_value")
+	clientConn, clientConnOv := name("ClientConnectionCount", "kafka_server_socketservermetrics_connection_count")
+	logSize, logSizeOv := name("TotalLocalStorageUsage", "kafka_log_log_size")
+
+	// GlobalPartitionCount is distinguished by a {name="..."} discriminator on a
+	// shared controller series; an override replaces the base series name. If the
+	// override itself already carries a label selector (e.g. a job-scoped
+	// series), the discriminator is merged into it rather than appended as a
+	// second brace group, which would otherwise produce invalid PromQL.
+	globalPartitionSel := appendNameDiscriminator(globalPartition, "GlobalPartitionCount")
+
 	return []MetricQuery{
-		{"BytesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesinpersec_total"},
-		{"BytesOutPerSec", "sum(rate(kafka_server_brokertopicmetrics_bytesoutpersec_total[%s]))", "kafka_server_brokertopicmetrics_bytesoutpersec_total"},
-		{"MessagesInPerSec", "sum(rate(kafka_server_brokertopicmetrics_messagesinpersec_total[%s]))", "kafka_server_brokertopicmetrics_messagesinpersec_total"},
-		{"PartitionCount", "sum(kafka_server_replicamanager_partitioncount)", "kafka_server_replicamanager_partitioncount"},
-		{"GlobalPartitionCount", "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}", "kafka_controller_kafkacontroller_value{name=\"GlobalPartitionCount\"}"},
-		{"ClientConnectionCount", "sum(kafka_server_socketservermetrics_connection_count)", "kafka_server_socketservermetrics_connection_count"},
-		{"TotalLocalStorageUsage", "sum(kafka_log_log_size) / (1024*1024*1024)", "kafka_log_log_size"},
+		{Label: "BytesInPerSec", Query: "sum(rate(" + bytesIn + "[%s]))", PrometheusMetric: bytesIn, Overridden: bytesInOv},
+		{Label: "BytesOutPerSec", Query: "sum(rate(" + bytesOut + "[%s]))", PrometheusMetric: bytesOut, Overridden: bytesOutOv},
+		{Label: "MessagesInPerSec", Query: "sum(rate(" + messagesIn + "[%s]))", PrometheusMetric: messagesIn, Overridden: messagesInOv},
+		{Label: "PartitionCount", Query: "sum(" + partitionCount + ")", PrometheusMetric: partitionCount, Overridden: partitionCountOv},
+		{Label: "GlobalPartitionCount", Query: globalPartitionSel, PrometheusMetric: globalPartitionSel, Overridden: globalPartitionOv},
+		{Label: "ClientConnectionCount", Query: "sum(" + clientConn + ")", PrometheusMetric: clientConn, Overridden: clientConnOv},
+		{Label: "TotalLocalStorageUsage", Query: "sum(" + logSize + ") / (1024*1024*1024)", PrometheusMetric: logSize, Overridden: logSizeOv},
 	}
 }
 
@@ -41,16 +77,20 @@ func BrokerQueryDefinitions() []MetricQuery {
 // Metric names match the JMX exporter naming convention (kafka_connect_worker_*).
 // Client-level metrics (incoming/outgoing-byte-rate, connection-count, request-rate)
 // require the JMX exporter to whitelist kafka.connect:client-id=*,type=connect-metrics.
+// Source/sink task metrics are grouped by connector (`sum by (connector) (...)`) so
+// per-connector series can be broken out in CollectMetrics.
 func ConnectQueryDefinitions() []MetricQuery {
 	return []MetricQuery{
-		{"connector-count", "sum(kafka_connect_worker_connector_count)", "kafka_connect_worker_connector_count"},
-		{"task-count", "sum(kafka_connect_worker_task_count)", "kafka_connect_worker_task_count"},
-		{"source-record-write-rate", "sum(kafka_connect_source_task_source_record_write_rate)", "kafka_connect_source_task_source_record_write_rate"},
-		{"source-record-poll-rate", "sum(kafka_connect_source_task_source_record_poll_rate)", "kafka_connect_source_task_source_record_poll_rate"},
-		{"incoming-byte-rate", "sum(kafka_connect_network_io_incoming_byte_rate)", "kafka_connect_network_io_incoming_byte_rate"},
-		{"outgoing-byte-rate", "sum(kafka_connect_network_io_outgoing_byte_rate)", "kafka_connect_network_io_outgoing_byte_rate"},
-		{"connection-count", "sum(kafka_connect_network_io_connection_count)", "kafka_connect_network_io_connection_count"},
-		{"request-rate", "sum(kafka_connect_network_io_request_rate)", "kafka_connect_network_io_request_rate"},
+		{Label: "connector-count", Query: "sum(kafka_connect_worker_connector_count)", PrometheusMetric: "kafka_connect_worker_connector_count"},
+		{Label: "task-count", Query: "sum(kafka_connect_worker_task_count)", PrometheusMetric: "kafka_connect_worker_task_count"},
+		{Label: "incoming-byte-rate", Query: "sum(kafka_connect_metrics_incoming_byte_rate)", PrometheusMetric: "kafka_connect_metrics_incoming_byte_rate"},
+		{Label: "outgoing-byte-rate", Query: "sum(kafka_connect_metrics_outgoing_byte_rate)", PrometheusMetric: "kafka_connect_metrics_outgoing_byte_rate"},
+		{Label: "connection-count", Query: "sum(kafka_connect_metrics_connection_count)", PrometheusMetric: "kafka_connect_metrics_connection_count"},
+		{Label: "request-rate", Query: "sum(kafka_connect_metrics_request_rate)", PrometheusMetric: "kafka_connect_metrics_request_rate"},
+		{Label: "source-record-write-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_write_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_write_rate", GroupByConnector: true},
+		{Label: "source-record-poll-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_poll_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_poll_rate", GroupByConnector: true},
+		{Label: "sink-record-read-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_read_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_read_rate", GroupByConnector: true},
+		{Label: "sink-record-send-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_send_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_send_rate", GroupByConnector: true},
 	}
 }
 
@@ -114,6 +154,17 @@ func applyLabelFilter(query, metricName string, labels map[string]string) string
 	return query[:afterName] + "{" + labelStr + "}" + query[afterName:]
 }
 
+// appendNameDiscriminator appends a {name="value"} label matcher to a
+// Prometheus series name, merging it into an existing selector if the series
+// already carries one (e.g. from a metric-name override that points at a
+// job-scoped series) rather than producing a second, invalid brace group.
+func appendNameDiscriminator(series, name string) string {
+	if idx := strings.Index(series, "{"); idx >= 0 {
+		return series[:idx+1] + fmt.Sprintf(`name="%s",`, name) + series[idx+1:]
+	}
+	return series + fmt.Sprintf(`{name="%s"}`, name)
+}
+
 // SelectStep chooses an appropriate query step based on the time range
 func SelectStep(queryRange time.Duration) time.Duration {
 	switch {
@@ -169,10 +220,24 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 			dataPoints += len(r.Values)
 		}
 		if dataPoints == 0 {
-			slog.Warn("Prometheus query returned no data points", "label", mq.Label, "query", query)
+			if mq.Overridden {
+				slog.Warn("Overridden Prometheus metric returned no data points — check the configured metric_names value", "label", mq.Label, "query", query)
+			} else {
+				slog.Debug("Prometheus query returned no data points", "label", mq.Label, "query", query)
+			}
 		}
 
 		for _, result := range results {
+			label := mq.Label
+			if mq.GroupByConnector {
+				connector := result.Labels["connector"]
+				if connector == "" {
+					slog.Warn("per-connector query result missing 'connector' label, skipping series", "label", mq.Label)
+					continue
+				}
+				label = fmt.Sprintf("%s (%s)", mq.Label, connector)
+			}
+
 			for _, dp := range result.Values {
 				v := dp.Value
 				dpStart := dp.Timestamp.Format(time.RFC3339)
@@ -180,10 +245,10 @@ func (s *PrometheusService) CollectMetrics(ctx context.Context, queryRange time.
 				allMetrics = append(allMetrics, types.ProcessedMetric{
 					Start: dpStart,
 					End:   dpEnd,
-					Label: mq.Label,
+					Label: label,
 					Value: &v,
 				})
-				valuesByLabel[mq.Label] = append(valuesByLabel[mq.Label], v)
+				valuesByLabel[label] = append(valuesByLabel[label], v)
 			}
 		}
 	}

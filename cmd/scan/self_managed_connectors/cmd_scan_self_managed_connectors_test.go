@@ -103,6 +103,47 @@ func TestPreRun_Metrics_RequiresCredentialsFile(t *testing.T) {
 	require.ErrorContains(t, err, "--credentials-file is required")
 }
 
+// --- --connect-rest-url validation: reject embedded credentials (secret leak guard) ---
+
+func TestPreRun_ConnectRestURL_RejectsEmbeddedCredentials(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"user and password", "https://admin:pw@connect:8083"},
+		{"username only, no password", "https://admin@connect:8083"},
+		{"no scheme, normalized before the check runs", "admin:pw@connect:8083"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := runMetricsPreRun(t, []string{"--connect-rest-url", tc.url})
+			require.ErrorContains(t, err, "must not embed credentials")
+		})
+	}
+}
+
+func TestPreRun_ConnectRestURL_PlainURLAccepted(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+	}{
+		{"plain http", "http://connect:8083"},
+		{"plain https with domain", "https://connect.example.com:8083"},
+		{"at-sign in path is not userinfo", "https://connect:8083/foo@bar"},
+		{"empty (flag not set)", ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{}
+			if tc.url != "" {
+				args = []string{"--connect-rest-url", tc.url}
+			}
+			err := runMetricsPreRun(t, args)
+			require.NoError(t, err)
+		})
+	}
+}
+
 // --- opts plumbing: credential resolution into scanner opts ---
 
 const jolokiaCredsSection = `    jolokia:

@@ -1,0 +1,25 @@
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: example-cp
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers: ["broker1:9092"]
+    credentials: ./source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterCredentials: ./target-creds.yaml
+    kafka:
+      restEndpoint: https://broker1:8090
+    schemaRegistry:
+      url: https://sr.internal:8081
+  clusterLink:
+    name: source-to-cp
+    mode: destination
+    source:
+      bootstrapServers: ["broker1:9092"]
+      credentials: ./source-creds.yaml
+  topics:
+    mode: mirror
+    include: ["orders.*"]

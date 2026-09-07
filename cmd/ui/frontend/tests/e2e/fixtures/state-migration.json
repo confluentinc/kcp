@@ -174,8 +174,7 @@
                   "Operation": "READ",
                   "PermissionType": "ALLOW"
                 }
-              ],
-              "self_managed_connectors": null
+              ]
             },
             "metrics": {
               "metadata": {
@@ -288,8 +287,7 @@
               "Operation": "READ",
               "PermissionType": "ALLOW"
             }
-          ],
-          "self_managed_connectors": null
+          ]
         },
         "discovered_clients": [],
         "metadata": {

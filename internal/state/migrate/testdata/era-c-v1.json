@@ -1,0 +1,1 @@
+{"schema_version":1,"msk_sources":{"regions":[{"name":"us-east-1","clusters":[{"arn":"arn:aws:kafka:us-east-1:123456789012:cluster/demo/uuid"}]}]},"kcp_build_info":{"version":"0.9.0","commit":"x","date":"y"},"timestamp":"2026-07-01T00:00:00Z"}

@@ -57,38 +57,38 @@ func (ml *MigrationLister) Run() error {
 	slices.Reverse(sortedMigrations)
 
 	// Display each migration
-	for idx, migration := range sortedMigrations {
-		ml.displayMigration(idx+1, migration)
+	for idx, cfg := range sortedMigrations {
+		ml.displayMigration(idx+1, cfg)
 	}
 
 	return nil
 }
 
-func (ml *MigrationLister) displayMigration(index int, migration migration.MigrationConfig) {
+func (ml *MigrationLister) displayMigration(index int, cfg migration.MigrationConfig) {
 	// Index and Migration ID
 	fmt.Printf("%s %s %s\n",
 		color.HiBlackString("[%d]", index),
 		color.HiBlackString("Migration ID:"),
-		color.New(color.Bold, color.FgWhite).Sprint(migration.MigrationId))
+		color.New(color.Bold, color.FgWhite).Sprint(cfg.MigrationId))
 
 	// Status with color coding
-	statusColor := ml.getStatusColor(migration.CurrentState)
+	statusColor := ml.getStatusColor(cfg.CurrentState)
 	fmt.Printf("    %s %s\n",
 		color.HiBlackString("Status:"),
-		statusColor.Sprint(migration.CurrentState))
+		statusColor.Sprint(cfg.CurrentState))
 
 	// Gateway
 	fmt.Printf("    %s %s\n",
 		color.HiBlackString("Gateway:"),
-		color.WhiteString("%s/%s", migration.K8sNamespace, migration.InitialCrName))
+		color.WhiteString("%s/%s", cfg.K8sNamespace, cfg.InitialCrName))
 
 	// Cluster Link
 	fmt.Printf("    %s %s\n",
 		color.HiBlackString("Cluster Link:"),
-		color.WhiteString(migration.ClusterLinkName))
+		color.WhiteString(cfg.ClusterLinkName))
 
 	// Topics - display all topic names with word wrapping
-	ml.displayTopics(migration.Topics)
+	ml.displayTopics(cfg.Topics)
 
 	fmt.Println() // Blank line between migrations
 }

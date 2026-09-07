@@ -36,7 +36,6 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
   const [costsResponse, setCostsResponse] = useState<CostsApiResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [selectedService, setSelectedService] = useState<string>('')
-  const [selectedTableService, setSelectedTableService] = useState<string>('')
   const [selectedCostType, setSelectedCostType] = useState<CostType>(COST_TYPES.UNBLENDED_COST)
   const [serviceDefaultSet, setServiceDefaultSet] = useState(false)
 
@@ -44,15 +43,15 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
   const { startDate, endDate, activeCostsTab, setStartDate, setEndDate, setActiveCostsTab } =
     useRegionCostFilters(region.name)
 
-  // Reset selected services and flags when region changes
+  // Reset selected service and flag when region changes
   useEffect(() => {
     setSelectedService('')
-    setSelectedTableService('')
     setServiceDefaultSet(false)
   }, [region.name])
 
-  // Process costs data for table, CSV, and chart formats using backend aggregates
-  const processedData = useRegionCostsData(costsResponse, selectedTableService, selectedCostType, selectedService)
+  // Process costs data for table, CSV, and chart formats using backend aggregates.
+  // The same selected service drives both the chart and the table filter.
+  const processedData = useRegionCostsData(costsResponse, selectedCostType, selectedService)
 
   // Initialize zoom functionality
   const {
@@ -110,13 +109,6 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
       setServiceDefaultSet(true)
     }
   }, [processedData.chartOptions, serviceDefaultSet])
-
-  // Set first service as default for table when data loads
-  useEffect(() => {
-    if (processedData.services.length > 0 && !selectedTableService) {
-      setSelectedTableService(processedData.services[0])
-    }
-  }, [processedData.services, selectedTableService])
 
   // Download handlers
   const { handleDownloadCSV, handleDownloadJSON } = useDownloadHandlers({
@@ -258,8 +250,6 @@ export const RegionCosts = ({ region, isActive }: RegionCostsProps) => {
             <RegionCostsTableTab
               processedData={processedData}
               selectedCostType={selectedCostType}
-              selectedTableService={selectedTableService}
-              setSelectedTableService={setSelectedTableService}
             />
           )}
           renderQuery={() => <RegionCostsQueryTab queryInfo={costsResponse?.query_info} />}

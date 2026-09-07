@@ -48,7 +48,7 @@ For public product documentation, see the [Confluent Cloud Gateway Overview](htt
 
 KCP expects three things to already exist and be reachable: the CC Gateway deployed in Kubernetes with Confluent for Kubernetes, a Confluent Cloud destination cluster (Dedicated or Enterprise) with Cluster Linking enabled, and a network path from wherever KCP runs to both the source cluster brokers and the CC REST API.
 
-The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before migration init.
+The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before cutover init.
 
 KCP itself needs credentials to the source cluster's cloud provider in the standard credential chain and a kubeconfig pointing at the Kubernetes cluster hosting the gateway. Full permissions required are in §7.
 
@@ -56,7 +56,7 @@ KCP itself needs credentials to the source cluster's cloud provider in the stand
 
 For MSK clusters, when the source is not publicly accessible, KCP can provision the required migration infrastructure via `kcp create-asset migration-infra`. This covers four connectivity patterns:
 
-For non-MSK clusters and full Cluster Linking configuration guidance, see the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html). For AWS MSK over private networking specifically, see [Cluster Linking with Private Networking](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html).
+For Apache Kafka-compatible clusters (including Confluent Platform) and full Cluster Linking configuration guidance, see the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html). For AWS MSK over private networking specifically, see [Cluster Linking with Private Networking](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/private-networking.html).
 
 > [!NOTE]
 > **Confluent Cloud for Government** does not provide Cluster Linking or Schema Linking. The linking-based `create-asset` paths (`migration-infra` for all types, `migrate-topics --mode mirror`, and `migrate-schemas --url`) are unsupported there and are refused when you declare `--cc-type government`. See [Source compatibility](source-compatibility.md#confluent-cloud-destination) for the full matrix.
@@ -91,7 +91,7 @@ Clients using AWS IAM must complete a pre-migration step to SASL/SCRAM or mTLS b
 
 ### 5.2 IAM Pre-Migration Path
 
-IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS before the gateway onboarding step. This is a client configuration change (not a migration cutover) and happens before any KCP migration commands are run. The broad steps are:
+IAM clients cannot connect to the gateway and must migrate to SCRAM or mTLS before the gateway onboarding step. This is a client configuration change (not a migration cutover) and happens before any KCP cutover commands are run. The broad steps are:
 
 1. Provision a corresponding SCRAM user in the source cluster for each IAM principal.
 2. Update each client's auth config from `sasl.mechanism=AWS_MSK_IAM` to `sasl.mechanism=SCRAM-SHA-512` with the new SCRAM credentials. The bootstrap URL continues to point at the source cluster (or gateway, if they onboard directly).
@@ -127,7 +127,7 @@ One important configuration best practice from the official docs: each client sh
 
 ## 6. Cluster Linking
 
-Cluster Linking must be configured before running any KCP migration commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
+Cluster Linking must be configured before running any KCP cutover commands. This includes the cluster link itself, mirror topics for all topics in the migration group, consumer offset sync enabled, and the link in a healthy replicating state. Configuring Cluster Linking is covered in the [Cluster Linking documentation](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/index.html) and is out of scope here.
 
 KCP's `kcp migration init` validates that Cluster Linking is correctly configured and will surface any issues before the cutover begins.
 
@@ -146,6 +146,33 @@ The following permissions are required specifically for the three migration comm
 
 - `get`, `patch`, `update` on `Gateway` resources in the gateway namespace
 - Validate with: `kubectl auth can-i patch gateways -n confluent`
+
+**Kubernetes (only when the gateway has hot reload enabled):**
+
+- `get` on `customresourcedefinitions.apiextensions.k8s.io` at the cluster scope
+- Validate with: `kubectl auth can-i get customresourcedefinitions`
+
+This one is conditional: it is required only when the **live** Gateway CR has `spec.hotReload.enabled: true`, and KCP does not read the CRD at all otherwise. The reason it becomes necessary is that hot reload changes what there is to observe. CFK applies the new config to the running pods in place, so no pod ever rolls, and KCP cannot confirm a fence or switchover landed by watching a rollout — it confirms instead by reading back a per-pod config revision (`spec.configId`), and it reads the CRD to check the installed CFK operator declares that field before writing it.
+
+Without the permission KCP stops at `kcp migration init` with a message naming it, rather than falling back to rollout verification: with hot reload on, that fallback would report success having observed nothing, potentially promoting topics against a source that was never fenced. If cluster-scoped read cannot be granted, set `spec.hotReload.enabled: false` on the gateway for the duration of the migration. CFK then rolls the pods on each transition, which KCP can verify without reading the CRD.
+
+### Your migration CRs must not change the gateway's hot-reload setting
+
+KCP applies the fenced and switchover CRs you supply, so those files can change how your running gateway behaves. KCP will not make that change on your behalf in either direction, and refuses before touching anything if one of them would:
+
+| Live gateway | Your fenced/switchover CR | Result |
+| --- | --- | --- |
+| `true` | `true` | Migration proceeds, verified by config revision |
+| `true` | omits `spec.hotReload` | Migration proceeds — an omitted field is inherited, not cleared |
+| `false` or unset | omits it, or `false` | Migration proceeds, verified by pod rollout |
+| `false` or unset | `true` | **Refused** — applying it would stop your pods rolling |
+| `true` | `false` | **Refused** — applying it would start rolling pods that were not rolling |
+
+Omitting `spec.hotReload` is the normal case and always safe: server-side apply leaves a field alone when the applier does not own it, so the gateway keeps whatever it was running. None of the worked examples under `docs/assets/gateway-switchover` mention the field.
+
+One extra rule applies when the gateway has hot reload **on**: the fenced and switchover CRs must either both mention `spec.hotReload` or both omit it. KCP applies them in turn, and server-side apply *deletes* a field that an earlier apply from the same field manager declared once a later one leaves it out — so a fenced CR that declares hot reload followed by a switchover CR that does not would switch hot reload off part-way through the migration, with traffic already fenced.
+
+Every refusal names the file to change and lists the ways forward, and all of these checks run again at `kcp migration execute`, because the gateway can be changed between the two commands.
 
 ---
 
@@ -245,13 +272,14 @@ Full flag reference: [`kcp migration lag-check --help`](https://confluentinc.git
 
 ### Step 4: `kcp migration execute`
 
-Performs the cutover in five automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never promotes behind a fence that an interrupted rollback may have already removed.
+Performs the cutover in six automatic phases. The operation is resumable: if interrupted at any point, re-running the same command picks up from the last completed phase. One deliberate exception: a run interrupted while the gateway is blocked resumes from the **Block** phase, re-applying the fenced CR (a no-op if the gateway never changed) so the cutover never verifies or promotes behind a fence that an interrupted rollback may have already removed.
 
 | Phase                 | What KCP does                                                                                                                                    | What clients see                                                        |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------- |
 | **Pre-flight**        | Re-checks lag against `--lag-threshold`; aborts if any topic exceeds it                                                                          | Normal traffic                                                          |
 | **Block**             | Applies the fenced CR to the gateway; the route stops accepting produce/consume requests                                                         | `BROKER_NOT_AVAILABLE`; standard clients buffer and retry automatically |
 | **Pause offset sync** | With `--pause-consumer-offset-sync`, pauses cluster-link consumer offset sync so destination consumer offsets freeze at their freshest values; skipped otherwise. `--consumer-offset-sync-drain-duration` optionally holds here first (sync still enabled) so final offsets propagate before the pause | Still retrying                                                          |
+| **Verify fence**      | With `--detect-unrouted-producers-duration` set, monitors source offsets over that window to catch producers still writing directly to the source cluster (bypassing the gateway); on detection, unblocks and restores offset sync automatically, then aborts. Opt-in — defaults to `0` (skipped) | Still retrying                                                          |
 | **Promote**           | Promotes mirror topics one by one (lowest lag first), waiting for lag=0 per topic, then confirms each reaches the terminal `STOPPED` state before proceeding | Still retrying; records buffered locally                                |
 | **Switch + unblock**  | Applies the switchover CR; gateway route now targets CC, traffic is unblocked                                                                    | First retry succeeds; clients now on CC                                 |
 

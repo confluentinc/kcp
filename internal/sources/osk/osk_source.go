@@ -134,11 +134,25 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	}
 	defer func() { _ = kafkaAdmin.Close() }()
 
-	kafkaService := kafkaservice.NewKafkaService(kafkaAdmin, kafkaservice.KafkaServiceOpts{
-		AuthType:   authType,
-		ClusterArn: clusterCreds.ID,
-		SkipTopics: opts.SkipTopics,
-		SkipACLs:   opts.SkipACLs,
+	// Consumer-group discovery uses an isolated client pinned at Kafka 3.8.0
+	// (see client.NewConsumerGroupClient). If it cannot be built (e.g. auth
+	// error), degrade rather than fail the whole scan: log a warning and pass
+	// a nil scanner, which ScanKafkaResources nil-guards.
+	var groupScanner client.ConsumerGroupScanner
+	groupClient, err := s.createConsumerGroupClient(clusterCreds, authType)
+	if err != nil {
+		slog.Warn("failed to create consumer group client; skipping consumer group discovery", "cluster", clusterCreds.ID, "error", err)
+	} else {
+		groupScanner = groupClient
+		defer func() { _ = groupClient.Close() }()
+	}
+
+	kafkaService := kafkaservice.NewKafkaService(kafkaAdmin, groupScanner, kafkaservice.KafkaServiceOpts{
+		AuthType:           authType,
+		ClusterArn:         clusterCreds.ID,
+		SkipTopics:         opts.SkipTopics,
+		SkipACLs:           opts.SkipACLs,
+		SkipConsumerGroups: opts.SkipConsumerGroups,
 	})
 
 	// OSK clusters are always provisioned (never serverless)
@@ -180,22 +194,40 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	}, nil
 }
 
-// createKafkaAdmin creates a Kafka Admin client for the OSK cluster
+// createKafkaAdmin creates a Kafka Admin client for the OSK/Apache Kafka cluster
+// via the shared client.AdminOptionForAuthMethod mapper, which threads
+// clusterCreds.InsecureSkipTLSVerify into every TLS path (mTLS, SASL_SSL,
+// unauthenticated-TLS, SASL/SCRAM) — so no separate override is needed. region/
+// kafkaVersion are inert for OSK; ClientBrokerTls is passed for parity (TLS is
+// driven by the auth option).
 func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType types.AuthType) (client.KafkaAdmin, error) {
-	// Default Kafka version for OSK clusters; region is not applicable for OSK.
-	kafkaVersion := "3.6.0"
-	region := ""
-
 	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterCreds.AuthMethod, clusterCreds.InsecureSkipTLSVerify)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve auth option for Apache Kafka: %w", err)
 	}
 
-	// clientBrokerEncryptionInTransit is unused inside NewKafkaAdmin; TLS behavior is
-	// driven by the auth option. Pass a uniform value — behavior is unchanged.
-	kafkaAdmin, err := client.NewKafkaAdmin(clusterCreds.BootstrapServers, kafkatypes.ClientBrokerTls, region, kafkaVersion, authOpt)
+	opts := []client.AdminOption{authOpt}
+
+	kafkaAdmin, err := client.NewKafkaAdmin(clusterCreds.BootstrapServers, kafkatypes.ClientBrokerTls, "", "3.6.0", opts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Kafka admin client: %w", err)
 	}
 	return kafkaAdmin, nil
+}
+
+// createConsumerGroupClient builds the isolated consumer-group discovery client
+// for the Apache Kafka cluster (client.NewConsumerGroupClient pins Kafka 3.8.0
+// internally; no version is passed here). Mirrors createKafkaAdmin's auth
+// resolution; region is inert for OSK.
+func (s *OSKSource) createConsumerGroupClient(clusterCreds types.OSKClusterAuth, authType types.AuthType) (*client.ConsumerGroupClient, error) {
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterCreds.AuthMethod, clusterCreds.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option for Apache Kafka: %w", err)
+	}
+
+	groupClient, err := client.NewConsumerGroupClient(clusterCreds.BootstrapServers, "", authOpt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer group client: %w", err)
+	}
+	return groupClient, nil
 }

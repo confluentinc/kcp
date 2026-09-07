@@ -2,6 +2,7 @@ package jmx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -32,35 +33,58 @@ type AggregateMBeanConfig struct {
 
 // MetricDefinitions holds all metric definitions for a JMX collection target.
 type MetricDefinitions struct {
-	Counters        []CounterMBeanConfig
-	Gauges          []GaugeMBeanConfig
-	Controller      []GaugeMBeanConfig
-	Aggregates      []AggregateMBeanConfig
-	UnitConversions map[string]float64
+	Counters               []CounterMBeanConfig
+	Gauges                 []GaugeMBeanConfig
+	Controller             []GaugeMBeanConfig
+	Aggregates             []AggregateMBeanConfig
+	PerConnectorAggregates []AggregateMBeanConfig
+	UnitConversions        map[string]float64
+	// OverriddenNames is the set of metric labels whose MBean came from a
+	// user-configured override rather than the default. A read failure for an
+	// overridden MBean is actionable (the override was set precisely to fix an
+	// empty result), so it is logged louder than a routine missing default.
+	// Nil when no overrides are configured.
+	OverriddenNames map[string]bool
 }
 
 // BrokerMetricDefinitions returns the standard Kafka broker metric definitions.
-func BrokerMetricDefinitions() MetricDefinitions {
-	return MetricDefinitions{
+// overrides maps a logical label (e.g. "BytesInPerSec") to the MBean object name
+// this cluster's Jolokia agent actually exposes; an entry with an empty value is
+// ignored. Pass nil for the defaults.
+func BrokerMetricDefinitions(overrides map[string]string) MetricDefinitions {
+	overridden := map[string]bool{}
+	name := func(label, def string) string {
+		if v, ok := overrides[label]; ok && v != "" {
+			overridden[label] = true
+			return v
+		}
+		return def
+	}
+
+	defs := MetricDefinitions{
 		Counters: []CounterMBeanConfig{
-			{"BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec"},
-			{"BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec"},
-			{"MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec"},
+			{"BytesInPerSec", name("BytesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesInPerSec")},
+			{"BytesOutPerSec", name("BytesOutPerSec", "kafka.server:type=BrokerTopicMetrics,name=BytesOutPerSec")},
+			{"MessagesInPerSec", name("MessagesInPerSec", "kafka.server:type=BrokerTopicMetrics,name=MessagesInPerSec")},
 		},
 		Gauges: []GaugeMBeanConfig{
-			{"PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount", "Value"},
+			{"PartitionCount", name("PartitionCount", "kafka.server:type=ReplicaManager,name=PartitionCount"), "Value"},
 		},
 		Controller: []GaugeMBeanConfig{
-			{"GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount", "Value"},
+			{"GlobalPartitionCount", name("GlobalPartitionCount", "kafka.controller:type=KafkaController,name=GlobalPartitionCount"), "Value"},
 		},
 		Aggregates: []AggregateMBeanConfig{
-			{"ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*", "connection-count"},
-			{"TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*", "Value"},
+			{"ClientConnectionCount", name("ClientConnectionCount", "kafka.server:type=socket-server-metrics,listener=*,networkProcessor=*"), "connection-count"},
+			{"TotalLocalStorageUsage", name("TotalLocalStorageUsage", "kafka.log:type=Log,name=Size,*"), "Value"},
 		},
 		UnitConversions: map[string]float64{
 			"TotalLocalStorageUsage": 1024 * 1024 * 1024,
 		},
 	}
+	if len(overridden) > 0 {
+		defs.OverriddenNames = overridden
+	}
+	return defs
 }
 
 // ConnectMetricDefinitions returns metric definitions for Kafka Connect workers.
@@ -75,8 +99,12 @@ func ConnectMetricDefinitions() MetricDefinitions {
 			{"outgoing-byte-rate", "kafka.connect:client-id=*,type=connect-metrics", "outgoing-byte-rate"},
 			{"connection-count", "kafka.connect:client-id=*,type=connect-metrics", "connection-count"},
 			{"request-rate", "kafka.connect:client-id=*,type=connect-metrics", "request-rate"},
+		},
+		PerConnectorAggregates: []AggregateMBeanConfig{
 			{"source-record-write-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-write-rate"},
 			{"source-record-poll-rate", "kafka.connect:type=source-task-metrics,connector=*,task=*", "source-record-poll-rate"},
+			{"sink-record-read-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-read-rate"},
+			{"sink-record-send-rate", "kafka.connect:type=sink-task-metrics,connector=*,task=*", "sink-record-send-rate"},
 		},
 	}
 }
@@ -108,6 +136,16 @@ type JMXService struct {
 	// so warning per-poll would flood the console (this caveat is Warn+). Safe without
 	// a mutex: collectRawSample is called sequentially from CollectOverDuration.
 	warnedControllerMissing map[string]bool
+
+	// warnedMetricIssue dedupes per-metric read-failure logging (keyed by metric
+	// name) to once per scan, for the same reason as warnedControllerMissing:
+	// collectRawSample polls every interval for the whole scan duration, and a
+	// read failure (missing MBean, timeout, auth error) is typically a persistent
+	// condition, not a transient blip — logging it on every poll would flood the
+	// console/log. Not present at all is expected/normal on some clusters (e.g. no
+	// sink connectors) so is logged at Debug; other errors (timeout, auth,
+	// connection) are logged at Warn.
+	warnedMetricIssue map[string]bool
 }
 
 // NewJMXService creates a new JMX service with Jolokia clients for each endpoint.
@@ -122,6 +160,31 @@ func NewJMXService(endpoints []string, defs MetricDefinitions, entityName string
 		metrics:                 defs,
 		entityName:              entityName,
 		warnedControllerMissing: make(map[string]bool),
+		warnedMetricIssue:       make(map[string]bool),
+	}
+}
+
+// logMetricReadErrorOnce logs a metric-read failure at most once per metric
+// name for the lifetime of the JMXService (mirrors warnedControllerMissing —
+// collectRawSample polls every interval, so per-poll logging would flood the
+// console/log for a persistent condition). An MBean/instance that simply
+// isn't present (e.g. no sink connectors on this cluster) is expected/normal
+// and logged at Debug; any other error (timeout, auth, connection) is logged
+// at Warn.
+func (s *JMXService) logMetricReadErrorOnce(metricName, msg string, err error) {
+	if s.warnedMetricIssue[metricName] {
+		return
+	}
+	s.warnedMetricIssue[metricName] = true
+
+	switch {
+	case errors.Is(err, client.ErrJolokiaMBeanNotFound) && !s.metrics.OverriddenNames[metricName]:
+		slog.Debug(msg, "mbean", metricName, "error", err)
+	default:
+		// A not-found for an overridden MBean is actionable — the override was
+		// configured precisely to point at an MBean this agent exposes — so it
+		// is surfaced at Warn rather than the routine Debug.
+		slog.Warn(msg, "mbean", metricName, "error", err)
 	}
 }
 
@@ -137,7 +200,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
-				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
+				s.logMetricReadErrorOnce(mb.Name, "Failed to read MBean", err)
 				continue
 			}
 			if v, ok := value["Count"]; ok {
@@ -152,7 +215,7 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		for _, brokerClient := range s.clients {
 			value, err := brokerClient.ReadMBean(ctx, mb.MBean)
 			if err != nil {
-				slog.Warn("Failed to read MBean", "mbean", mb.Name, "error", err)
+				s.logMetricReadErrorOnce(mb.Name, "Failed to read MBean", err)
 				continue
 			}
 			if v, ok := value[mb.ValueKey]; ok {
@@ -181,8 +244,15 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 			}
 		}
 		if !found && !s.warnedControllerMissing[mb.MBean] {
-			slog.Warn("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
-				"mbean", mb.MBean, "metric", mb.Name)
+			if s.metrics.OverriddenNames[mb.Name] {
+				// A not-found for an overridden MBean is actionable — the override
+				// was configured precisely to point at an MBean this agent exposes.
+				slog.Warn("Controller MBean not available from any broker — metric will be omitted. The mbean_overrides entry configured for this metric did not return data; verify the MBean name matches what your JMX exporter exposes.",
+					"mbean", mb.MBean, "metric", mb.Name)
+			} else {
+				slog.Warn("Controller MBean not available from any broker — metric will be omitted. Ensure your JMX exporter scrapes kafka.controller MBeans.",
+					"mbean", mb.MBean, "metric", mb.Name)
+			}
 			s.warnedControllerMissing[mb.MBean] = true
 		}
 	}
@@ -192,12 +262,29 @@ func (s *JMXService) collectRawSample(ctx context.Context) (*rawSample, error) {
 		for _, brokerClient := range s.clients {
 			val, err := brokerClient.ReadMBeanAggregate(ctx, amb.MBean, amb.Attribute)
 			if err != nil {
-				slog.Warn("Failed to read aggregate MBean", "mbean", amb.Name, "error", err)
+				s.logMetricReadErrorOnce(amb.Name, "Failed to read aggregate MBean", err)
 				continue
 			}
 			total += val
 		}
 		sample.gauges[amb.Name] = total
+	}
+
+	for _, amb := range s.metrics.PerConnectorAggregates {
+		perConnector := map[string]float64{}
+		for _, brokerClient := range s.clients {
+			byLabel, err := brokerClient.ReadMBeanAggregateByLabel(ctx, amb.MBean, amb.Attribute, "connector")
+			if err != nil {
+				s.logMetricReadErrorOnce(amb.Name, "Failed to read per-connector aggregate MBean", err)
+				continue
+			}
+			for connector, v := range byLabel {
+				perConnector[connector] += v
+			}
+		}
+		for connector, v := range perConnector {
+			sample.gauges[fmt.Sprintf("%s (%s)", amb.Name, connector)] = v
+		}
 	}
 
 	return sample, nil
@@ -428,6 +515,24 @@ func buildJMXQueryInfo(endpointURLs []string, duration, interval time.Duration, 
 		statistic := fmt.Sprintf("Sum of %s across matching instances", mb.Attribute)
 		note := fmt.Sprintf(
 			"Wildcard MBean pattern %s; the %s attribute is summed across all matching MBeans on all %d %s(s). Add -u user:pass to the curl command if authentication is configured.",
+			mb.MBean, mb.Attribute, endpointCount, entityName)
+		infos = append(infos, types.MetricQueryInfo{
+			MetricName:      mb.Name,
+			SourceType:      types.MetricBackendJolokia,
+			Statistic:       statistic,
+			Period:          periodSec,
+			QueryDuration:   durationStr,
+			MBeanPath:       mb.MBean,
+			JolokiaURL:      exampleURL,
+			CurlCommand:     fmt.Sprintf("curl '%s/read/%s/%s'", exampleURL, mb.MBean, mb.Attribute),
+			AggregationNote: note,
+		})
+	}
+
+	for _, mb := range defs.PerConnectorAggregates {
+		statistic := fmt.Sprintf("%s per connector (not summed cluster-wide)", mb.Attribute)
+		note := fmt.Sprintf(
+			"Wildcard MBean pattern %s; the %s attribute is grouped by the connector MBean property and reported per connector across all matching MBeans on all %d %s(s). Add -u user:pass to the curl command if authentication is configured.",
 			mb.MBean, mb.Attribute, endpointCount, entityName)
 		infos = append(infos, types.MetricQueryInfo{
 			MetricName:      mb.Name,

@@ -30,6 +30,11 @@ const (
 	// maxClientAuthTypes bounds the "Client Authentication" dimension cardinality
 	// (TLS, SASL/SCRAM, IAM, Unauthenticated) for the ClientConnectionCount estimate.
 	maxClientAuthTypes = 4
+	// maxQueriesPerRequest is CloudWatch's hard cap on MetricDataQuery structs per
+	// GetMetricData request (500). The broker path stays well under it via SEARCH
+	// expressions, but the connector path emits one direct MetricStat per
+	// (connector, metric) and so must batch its query slice to stay within the cap.
+	maxQueriesPerRequest = 500
 )
 
 type MetricService struct {

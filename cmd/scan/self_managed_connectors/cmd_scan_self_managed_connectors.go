@@ -3,6 +3,7 @@ package self_managed_connectors
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -13,22 +14,29 @@ import (
 	"github.com/spf13/pflag"
 )
 
+// embeddedCredentialsRe matches a URL with RFC 3986 userinfo (user[:pass]@)
+// in its authority component - e.g. https://admin:pw@connect:8083. It anchors
+// on scheme:// and only looks for an @ before the first /, ?, or #, so an @ in
+// a path segment (https://host/foo@bar) is not flagged.
+var embeddedCredentialsRe = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*://[^/?#]*@`)
+
 var (
 	stateFile      string
 	connectRestURL string
 	clusterID      string
 	sourceType     string
 
-	useSaslScram       bool
+	useBasicAuth       bool
 	useTls             bool
 	useUnauthenticated bool
 
-	saslScramUsername string
-	saslScramPassword string
+	username string
+	password string
 
-	tlsCaCert     string
-	tlsClientCert string
-	tlsClientKey  string
+	tlsCaCert             string
+	tlsClientCert         string
+	tlsClientKey          string
+	insecureSkipTLSVerify bool
 
 	metricsSource   string
 	metricsDuration string
@@ -49,21 +57,21 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
     --cluster-id arn:aws:kafka:us-east-1:123456789012:cluster/my-cluster/abc-123 \
     --use-unauthenticated
 
-  # Scan connectors for an OSK cluster (auto-detected from non-ARN format)
+  # Scan connectors for an Apache Kafka cluster (auto-detected from non-ARN format)
   kcp scan self-managed-connectors \
     --state-file kcp-state.json \
     --connect-rest-url https://connect.example.com:8083 \
     --cluster-id production-kafka \
-    --use-sasl-scram \
-    --sasl-scram-username admin \
-    --sasl-scram-password secret
+    --use-basic-auth \
+    --username admin \
+    --password secret
 
   # Explicitly specify source type (overrides auto-detection)
   kcp scan self-managed-connectors \
     --state-file kcp-state.json \
     --connect-rest-url http://connect:8083 \
     --cluster-id my-cluster \
-    --source-type osk \
+    --source-type apache-kafka \
     --use-unauthenticated
 
   # Scan with Jolokia metrics collection
@@ -73,7 +81,7 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
     --cluster-id my-cluster \
     --use-unauthenticated \
     --metrics jolokia --metrics-duration 5m --metrics-interval 10s \
-    --credentials-file osk-credentials.yaml`,
+    --credentials-file apache-kafka-credentials.yaml`,
 		SilenceErrors: true,
 		PreRunE:       preRunScanSelfManagedConnectors,
 		RunE:          runScanSelfManagedConnectors,
@@ -84,32 +92,33 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	requiredFlags.SortFlags = false
 	requiredFlags.StringVar(&stateFile, "state-file", "", "The path to the kcp state file to update with connector information.")
 	requiredFlags.StringVar(&connectRestURL, "connect-rest-url", "", "The Kafka Connect REST API URL (e.g., http://localhost:8083).")
-	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and OSK cluster IDs.")
+	requiredFlags.StringVar(&clusterID, "cluster-id", "", "The cluster identifier in the state file. Accepts both MSK ARNs (arn:aws:kafka:...) and Apache Kafka cluster IDs.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(requiredFlags)
 
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'osk'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = OSK).")
+	optionalFlags.StringVar(&sourceType, "source-type", "", "Source type: 'msk' or 'apache-kafka'. If not specified, auto-detects from cluster-id format (ARN = MSK, non-ARN = Apache Kafka).")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(optionalFlags)
 
 	authMethodFlags := pflag.NewFlagSet("auth-method", pflag.ExitOnError)
 	authMethodFlags.SortFlags = false
-	authMethodFlags.BoolVar(&useSaslScram, "use-sasl-scram", false, "Use SASL/SCRAM authentication (requires --sasl-scram-username and --sasl-scram-password).")
-	authMethodFlags.BoolVar(&useTls, "use-tls", false, "Use TLS certificate authentication (requires --tls-ca-cert, --tls-client-cert, and --tls-client-key).")
+	authMethodFlags.BoolVar(&useBasicAuth, "use-basic-auth", false, "Use HTTP Basic authentication for the Connect REST API (requires --username and --password).")
+	authMethodFlags.BoolVar(&useTls, "use-tls", false, "Use mutual TLS authentication (requires --tls-client-cert and --tls-client-key; add --tls-ca-cert only for a private/internal server CA).")
 	authMethodFlags.BoolVar(&useUnauthenticated, "use-unauthenticated", false, "Use no authentication.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(authMethodFlags)
 
-	saslScramFlags := pflag.NewFlagSet("sasl-scram", pflag.ExitOnError)
-	saslScramFlags.SortFlags = false
-	saslScramFlags.StringVar(&saslScramUsername, "sasl-scram-username", "", "SASL/SCRAM username (required when using --use-sasl-scram).")
-	saslScramFlags.StringVar(&saslScramPassword, "sasl-scram-password", "", "SASL/SCRAM password (required when using --use-sasl-scram).")
-	selfManagedConnectorsCmd.Flags().AddFlagSet(saslScramFlags)
+	basicAuthFlags := pflag.NewFlagSet("basic-auth", pflag.ExitOnError)
+	basicAuthFlags.SortFlags = false
+	basicAuthFlags.StringVar(&username, "username", "", "HTTP Basic username (required when using --use-basic-auth).")
+	basicAuthFlags.StringVar(&password, "password", "", "HTTP Basic password (required when using --use-basic-auth).")
+	selfManagedConnectorsCmd.Flags().AddFlagSet(basicAuthFlags)
 
 	tlsFlags := pflag.NewFlagSet("tls", pflag.ExitOnError)
 	tlsFlags.SortFlags = false
-	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to CA certificate file (required when using --use-tls).")
-	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to client certificate file (required when using --use-tls).")
-	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to client key file (required when using --use-tls).")
+	tlsFlags.StringVar(&tlsCaCert, "tls-ca-cert", "", "Path to a CA certificate that verifies the Connect REST server's TLS certificate. Optional, usable with ANY auth method (including --use-tls) when the endpoint is HTTPS behind a private/internal CA; omit for a public/system-trusted CA.")
+	tlsFlags.StringVar(&tlsClientCert, "tls-client-cert", "", "Path to the client certificate presented for mutual TLS (required when using --use-tls).")
+	tlsFlags.StringVar(&tlsClientKey, "tls-client-key", "", "Path to the client key presented for mutual TLS (required when using --use-tls).")
+	tlsFlags.BoolVar(&insecureSkipTLSVerify, "insecure-skip-tls-verify", false, "Skip TLS certificate verification for the Connect REST endpoint. Usable with any auth method; test environments only.")
 	selfManagedConnectorsCmd.Flags().AddFlagSet(tlsFlags)
 
 	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
@@ -128,8 +137,8 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 			fmt.Printf("Examples:\n%s\n\n", c.Example)
 		}
 
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, saslScramFlags, tlsFlags, metricsFlags}
-		groupNames := []string{"Required Flags", "Optional Flags", "Authentication Method (choose one)", "SASL/SCRAM Credentials", "TLS Credentials", "Metrics Collection"}
+		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags, authMethodFlags, basicAuthFlags, tlsFlags, metricsFlags}
+		groupNames := []string{"Required Flags", "Optional Flags", "Authentication Method (choose one)", "Basic Auth Credentials", "TLS Credentials", "Metrics Collection"}
 
 		for i, fs := range flagOrder {
 			usage := fs.FlagUsages()
@@ -147,8 +156,8 @@ func NewScanSelfManagedConnectorsCmd() *cobra.Command {
 	_ = selfManagedConnectorsCmd.MarkFlagRequired("connect-rest-url")
 	_ = selfManagedConnectorsCmd.MarkFlagRequired("cluster-id")
 
-	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("use-sasl-scram", "use-tls", "use-unauthenticated")
-	selfManagedConnectorsCmd.MarkFlagsOneRequired("use-sasl-scram", "use-tls", "use-unauthenticated")
+	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("use-basic-auth", "use-tls", "use-unauthenticated")
+	selfManagedConnectorsCmd.MarkFlagsOneRequired("use-basic-auth", "use-tls", "use-unauthenticated")
 	selfManagedConnectorsCmd.MarkFlagsMutuallyExclusive("metrics-duration", "metrics-range")
 
 	return selfManagedConnectorsCmd
@@ -159,13 +168,23 @@ func preRunScanSelfManagedConnectors(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if useSaslScram {
-		_ = cmd.MarkFlagRequired("sasl-scram-username")
-		_ = cmd.MarkFlagRequired("sasl-scram-password")
+	// R.. secret leak guard: --connect-rest-url must not carry embedded HTTP
+	// Basic credentials (https://admin:pw@host). That's valid URL syntax, so a
+	// successful scan would persist the password verbatim into connect_rest_url
+	// in the state file. --use-basic-auth --username --password is the correct,
+	// already-supported way to authenticate.
+	if embeddedCredentialsRe.MatchString(normaliseConnectURL(connectRestURL)) {
+		return fmt.Errorf("--connect-rest-url must not embed credentials (user:pass@); use --use-basic-auth --username --password instead")
+	}
+
+	if useBasicAuth {
+		_ = cmd.MarkFlagRequired("username")
+		_ = cmd.MarkFlagRequired("password")
 	}
 
 	if useTls {
-		_ = cmd.MarkFlagRequired("tls-ca-cert")
+		// --tls-ca-cert is NOT required: mTLS against a public/system-trusted CA
+		// works with system roots. It stays optional, for a private/internal CA.
 		_ = cmd.MarkFlagRequired("tls-client-cert")
 		_ = cmd.MarkFlagRequired("tls-client-key")
 	}
@@ -248,8 +267,8 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 
 	var authMethod types.ConnectAuthMethod
 	switch {
-	case useSaslScram:
-		authMethod = types.ConnectAuthMethodSaslScram
+	case useBasicAuth:
+		authMethod = types.ConnectAuthMethodBasicAuth
 	case useTls:
 		authMethod = types.ConnectAuthMethodTls
 	default:
@@ -262,11 +281,12 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 	var oskClusterID string
 
 	if sourceType != "" {
-		// Validate explicit source type
-		if sourceType != "msk" && sourceType != "osk" {
-			return nil, fmt.Errorf("invalid source-type: %s (must be 'msk' or 'osk')", sourceType)
+		// "apache-kafka" is the user-facing value; normalize to the internal "osk" token.
+		normalizedSourceType, err := types.ParseSourceTypeFlag(sourceType)
+		if err != nil {
+			return nil, err
 		}
-		detectedSourceType = types.SourceType(sourceType)
+		detectedSourceType = normalizedSourceType
 	} else {
 		// Auto-detect from cluster ID format
 		if strings.HasPrefix(clusterID, "arn:") {
@@ -331,14 +351,15 @@ func parseScanSelfManagedConnectorsOpts() (*SelfManagedConnectorsScannerOpts, er
 		ClusterArn:     clusterArn,
 		ClusterID:      oskClusterID,
 		AuthMethod:     authMethod,
-		SaslScramAuth: types.ConnectSaslScramAuth{
-			Username: saslScramUsername,
-			Password: saslScramPassword,
+		BasicAuth: types.ConnectBasicAuth{
+			Username: username,
+			Password: password,
 		},
 		TlsAuth: types.ConnectTlsAuth{
-			CACert:     tlsCaCert,
-			ClientCert: tlsClientCert,
-			ClientKey:  tlsClientKey,
+			CACert:             tlsCaCert,
+			ClientCert:         tlsClientCert,
+			ClientKey:          tlsClientKey,
+			InsecureSkipVerify: insecureSkipTLSVerify,
 		},
 		MetricsSource:       metricsSource,
 		MetricsClusterCreds: metricsClusterCreds,

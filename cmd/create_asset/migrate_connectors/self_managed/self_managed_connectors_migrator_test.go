@@ -20,19 +20,19 @@ import (
 func TestCountRedactedConnectors(t *testing.T) {
 	tests := []struct {
 		name       string
-		connectors []types.SelfManagedConnector
+		connectors []types.Connector
 		want       int
 	}{
 		{
 			name: "flat redacted",
-			connectors: []types.SelfManagedConnector{
+			connectors: []types.Connector{
 				{Name: "a", Config: map[string]any{"database.password": redact.Placeholder, "tasks.max": "3"}},
 			},
 			want: 1,
 		},
 		{
 			name: "nested redacted",
-			connectors: []types.SelfManagedConnector{
+			connectors: []types.Connector{
 				{Name: "a", Config: map[string]any{
 					"connection": map[string]any{"password": redact.Placeholder},
 				}},
@@ -41,14 +41,14 @@ func TestCountRedactedConnectors(t *testing.T) {
 		},
 		{
 			name: "none redacted",
-			connectors: []types.SelfManagedConnector{
+			connectors: []types.Connector{
 				{Name: "a", Config: map[string]any{"connector.class": "io.x"}},
 			},
 			want: 0,
 		},
 		{
 			name:       "empty list",
-			connectors: []types.SelfManagedConnector{},
+			connectors: []types.Connector{},
 			want:       0,
 		},
 	}
@@ -103,7 +103,7 @@ func TestSelfManagedConnectorMigrator_Run_GeneratedTerraformIsLeakFree(t *testin
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "pg-sink",
 				Config: map[string]any{
@@ -144,7 +144,7 @@ func TestSelfManagedConnectorMigrator_Run_HostileNameStaysInOutputDir(t *testing
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "../escaped",
 				Config: map[string]any{
@@ -185,7 +185,7 @@ func TestSelfManagedConnectorMigrator_Run_WarnsWhenConfigRedacted(t *testing.T) 
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "pg-sink",
 				Config: map[string]any{
@@ -225,7 +225,7 @@ func TestSelfManagedConnectorMigrator_Run_NoWarningWhenNoRedaction(t *testing.T)
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "clean",
 				Config: map[string]any{
@@ -252,7 +252,7 @@ func TestSelfManagedConnectorMigrator_Run_NoConnectors(t *testing.T) {
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors:    []types.SelfManagedConnector{},
+		Connectors:    []types.Connector{},
 		OutputDir:     tmpDir,
 	}
 
@@ -306,7 +306,7 @@ func TestSelfManagedConnectorMigrator_Run_WithConnectors(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	connectors := []types.SelfManagedConnector{
+	connectors := []types.Connector{
 		{
 			Name: "test-datagen-connector",
 			Config: map[string]any{
@@ -375,7 +375,7 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_Success(t *testin
 		CcApiSecret:   "test-secret",
 	}
 
-	connector := types.SelfManagedConnector{
+	connector := types.Connector{
 		Name: "test-connector",
 		Config: map[string]any{
 			"connector.class":       "io.confluent.kafka.connect.datagen.DatagenConnector",
@@ -409,7 +409,7 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_MissingConnectorC
 		CcApiSecret:   "test-secret",
 	}
 
-	connector := types.SelfManagedConnector{
+	connector := types.Connector{
 		Name: "test-connector",
 		Config: map[string]any{
 			"topics": "test-topic",
@@ -430,7 +430,7 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_UnsupportedConnec
 		CcApiSecret:   "test-secret",
 	}
 
-	connector := types.SelfManagedConnector{
+	connector := types.Connector{
 		Name: "test-connector",
 		Config: map[string]any{
 			"connector.class": "com.unknown.UnsupportedConnector",
@@ -456,7 +456,7 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig_NonStringConnecto
 		CcApiSecret:   "test-secret",
 	}
 
-	connector := types.SelfManagedConnector{
+	connector := types.Connector{
 		Name: "test-connector",
 		Config: map[string]any{
 			"connector.class": 42, // not a string
@@ -484,7 +484,7 @@ func TestSelfManagedConnectorMigrator_Run_NonStringConnectorClassIsSkipped(t *te
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "bad-class",
 				Config: map[string]any{
@@ -513,7 +513,7 @@ func TestSelfManagedConnectorMigrator_Run_WritesProvidersTfAndVariablesTf(t *tes
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "test-connector",
 				Config: map[string]any{
@@ -549,7 +549,7 @@ func TestSelfManagedConnectorMigrator_Run_CreatesOutputDirectory(t *testing.T) {
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "test-connector",
 				Config: map[string]any{
@@ -585,7 +585,7 @@ func TestSelfManagedConnectorMigrator_Run_InvalidOutputDirectory(t *testing.T) {
 		ClusterId:     "lkc-123",
 		CcApiKey:      "test-key",
 		CcApiSecret:   "test-secret",
-		Connectors: []types.SelfManagedConnector{
+		Connectors: []types.Connector{
 			{
 				Name: "test-connector",
 				Config: map[string]any{
@@ -641,7 +641,7 @@ func TestSelfManagedConnectorMigrator_Integration(t *testing.T) {
 
 	tmpDir := t.TempDir()
 
-	connectors := []types.SelfManagedConnector{
+	connectors := []types.Connector{
 		{
 			Name: "integration-test-connector",
 			Config: map[string]any{
@@ -680,7 +680,7 @@ func TestSelfManagedConnectorMigrator_Integration(t *testing.T) {
 func TestSelfManagedConnectorMigrator_MultipleConnectors(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	connectors := []types.SelfManagedConnector{
+	connectors := []types.Connector{
 		{
 			Name: "connector1",
 			Config: map[string]any{
@@ -730,7 +730,7 @@ func TestSelfManagedConnectorMigrator_TranslateConnectorConfig(t *testing.T) {
 		CcApiSecret:   "test-secret",
 	}
 
-	connector := types.SelfManagedConnector{
+	connector := types.Connector{
 		Name: "test-connector",
 		Config: map[string]any{
 			"connector.class": "io.confluent.kafka.connect.datagen.DatagenConnector",

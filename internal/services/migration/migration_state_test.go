@@ -6,6 +6,7 @@ import (
 	"runtime"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -28,8 +29,8 @@ func TestMigrationState_WriteAndRead_RoundTrip(t *testing.T) {
 			InitialCrName:       "my-gateway-cr",
 			K8sNamespace:        "confluent",
 			InitialCrYAML:       []byte("apiVersion: v1"),
-			FencedCrYAML:        []byte("apiVersion: v1\nfenced: true"),
-			SwitchoverCrYAML:    []byte("apiVersion: v1\nswitchover: true"),
+			FenceRoutes:         []string{"migration-route"},
+			SwitchoverTargets:   []gateway.RouteSwitchoverTarget{{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"}},
 		},
 		{
 			MigrationId:      "mig-002",
@@ -363,4 +364,16 @@ func TestMigrationState_WriteToFile_TightensExistingLooseFile(t *testing.T) {
 	info, err := os.Stat(path)
 	require.NoError(t, err)
 	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm(), "existing 0644 file should be tightened to 0600")
+}
+
+// TestIsReversibleState pins the point-of-no-return boundary: the three
+// pre-fence states are reversible, everything from StateFenced on is not, and an
+// unknown value is treated as not reversible (fail safe).
+func TestIsReversibleState(t *testing.T) {
+	for _, s := range []string{StateUninitialized, StateInitialized, StateLagsOk} {
+		assert.True(t, IsReversibleState(s), "%s should be reversible", s)
+	}
+	for _, s := range []string{StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched, "bogus"} {
+		assert.False(t, IsReversibleState(s), "%s should not be reversible", s)
+	}
 }

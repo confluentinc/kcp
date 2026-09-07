@@ -1,21 +1,24 @@
 import { test, expect } from '@playwright/test'
 import stateOSKOnly from '../fixtures/state-osk-only.json' with { type: 'json' }
 
-// Build a state file with a single self-managed connector whose config is the
-// caller-supplied map, injected into the known-valid OSK fixture so the rest of
-// the cluster shape stays realistic.
+// Build a state file with a single self-managed connect cluster (one connector)
+// whose config is the caller-supplied map, injected into the known-valid OSK
+// fixture so the rest of the cluster shape stays realistic.
 function stateWithConnectorConfig(config: Record<string, string>) {
   const state = structuredClone(stateOSKOnly) as Record<string, any>
-  state.osk_sources.clusters[0].kafka_admin_client_information.self_managed_connectors = {
-    connectors: [
-      {
-        name: 'pg-sink',
-        config,
-        state: 'RUNNING',
-        connect_host: 'http://connect.example.com:8083',
-      },
-    ],
-  }
+  state.osk_sources.clusters[0].kafka_admin_client_information.connect_clusters = [
+    {
+      connect_rest_url: 'http://connect.example.com:8083',
+      connectors: [
+        {
+          name: 'pg-sink',
+          config,
+          state: 'RUNNING',
+          connect_host: 'http://connect.example.com:8083',
+        },
+      ],
+    },
+  ]
   return state
 }
 

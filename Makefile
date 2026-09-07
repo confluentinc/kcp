@@ -62,7 +62,7 @@ uninstall: ## Uninstall from /usr/local/bin (requires sudo)
 # Code Quality
 # ==============================================================================
 
-.PHONY: fmt lint lint-emoji pre-commit-install
+.PHONY: fmt lint lint-emoji trivy pre-commit-install
 
 fmt: ## Format Go code
 	gofmt -s -w .
@@ -73,6 +73,9 @@ lint: lint-emoji ## Run Go linters (emoji check + golangci-lint)
 lint-emoji: ## Fail if any Go source contains an emoji (kcp output is plain text)
 	go run ./cmd/lint-emoji
 
+trivy: ## Run Trivy vulnerability scan
+	trivy fs --scanners vuln --show-suppressed --severity HIGH,CRITICAL --exit-code 1 .
+
 pre-commit-install: ## Install git pre-commit hooks
 	git config --local core.hooksPath .githooks
 
@@ -80,7 +83,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-migration test-migration-setup test-migration-teardown test-osk-scan test-kafka-connect test-schema-registry
+.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -103,6 +106,12 @@ test-go-coverage-ui: build-frontend ## Run Go tests with coverage and open HTML 
 	go test -coverprofile=coverage.out ./...
 	go tool cover -html=coverage.out
 
+test-integration: ## Run ALL integration suites in sequence with one aggregated grand total
+	@bash integration-tests/run-all.sh
+
+test-integration-no-migration: ## Run all integration suites except the heavy migration/Minikube one
+	@bash integration-tests/run-all.sh --no-migration
+
 test-migration: test-migration-setup ## Run full migration E2E lifecycle (setup, test, teardown)
 	@trap 'echo ""; echo "Tearing down migration E2E infrastructure..."; bash integration-tests/migration/testdata/teardown.sh' EXIT; \
 	echo "Running migration E2E tests..."; \
@@ -114,20 +123,80 @@ test-migration-setup: ## Set up Minikube + CFK infrastructure for migration E2E
 test-migration-teardown: ## Tear down migration E2E infrastructure
 	@bash integration-tests/migration/testdata/teardown.sh
 
+test-migration-hot-reload: test-migration-hot-reload-setup ## Run gateway hot-reload E2E (own cluster; needs a CP Enterprise licence)
+	@trap 'echo ""; echo "Tearing down hot-reload E2E infrastructure..."; bash integration-tests/migration-hot-reload/teardown.sh' EXIT; \
+	bash integration-tests/migration-hot-reload/run.sh
+
+test-migration-hot-reload-setup: ## Set up the licensed hot-reload gateway cluster (separate Minikube profile)
+	@bash integration-tests/migration-hot-reload/setup.sh
+
+test-migration-hot-reload-run: ## Run the hot-reload E2E against an already-provisioned cluster (no teardown)
+	@bash integration-tests/migration-hot-reload/run.sh
+
+test-migration-hot-reload-teardown: ## Tear down the hot-reload E2E cluster
+	@bash integration-tests/migration-hot-reload/teardown.sh
+
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
-	@bash integration-tests/osk-scan/run.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
-	@bash integration-tests/osk-scan/teardown.sh
+	cd integration-tests/osk-scan && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; bash integration-tests/osk-scan/teardown.sh ; exit $$status
+
+test-consumer-group-scan: ## Run consumer-group discovery integration suite (Docker; AK 3.7/3.8/4.0/4.1/4.2, all group types)
+	@bash integration-tests/consumer-group-scan/setup.sh
+	cd integration-tests/consumer-group-scan && go test -tags integration -timeout 20m -v ./... ; \
+	  status=$$? ; cd ../.. ; bash integration-tests/consumer-group-scan/teardown.sh ; exit $$status
 
 test-kafka-connect: build ## Run Kafka Connect self-managed connector scan tests
-	@bash integration-tests/osk-scan/setup.sh
-	@bash integration-tests/osk-scan/run-connect.sh || (bash integration-tests/osk-scan/teardown.sh; exit 1)
-	@bash integration-tests/osk-scan/teardown.sh
+	@cd integration-tests/connect-scan && \
+	  if bash setup.sh; then \
+	    go test -tags integration -timeout 8m -v ./... ; status=$$? ; \
+	  else \
+	    echo "ERROR: connect-scan setup.sh failed" ; status=1 ; \
+	  fi ; \
+	  if [ $$status -ne 0 ]; then \
+	    echo "=== docker compose logs (connect-scan, on failure) ===" ; \
+	    docker compose logs --no-color --tail=400 || true ; \
+	  fi ; \
+	  bash teardown.sh || true ; \
+	  exit $$status
 
 test-schema-registry: build ## Run Schema Registry scan tests (unauthenticated, basic auth)
 	@bash integration-tests/schema-registry/setup.sh
-	@bash integration-tests/schema-registry/run.sh || (bash integration-tests/schema-registry/teardown.sh; exit 1)
-	@bash integration-tests/schema-registry/teardown.sh
+	cd integration-tests/schema-registry && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; bash integration-tests/schema-registry/teardown.sh ; exit $$status
+
+test-env-up-migrate: ## Start the migrate test env (source + dest cp-server, all auth listeners)
+	bash integration-tests/migrate/generate-certs.sh
+	# MDS (dest-bearer) refuses a world-readable user store; git does not preserve
+	# a 0600 mode across a fresh checkout, so enforce it before the broker mounts it.
+	chmod 600 integration-tests/migrate/rest-auth/mds-users.properties
+	docker compose -f integration-tests/migrate/docker-compose.yml up -d
+	bash integration-tests/migrate/setup-scram.sh
+
+test-env-down-migrate: ## Stop the migrate test env
+	docker compose -f integration-tests/migrate/docker-compose.yml down -v
+
+test-migrate: build ## Run the migrate apply E2E tests (cluster link + topics, all source auth methods)
+	$(MAKE) test-env-up-migrate
+	cd integration-tests/migrate && go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate ; exit $$status
+
+test-migrate-report: build ## Run the migrate apply E2E tests and write a markdown evidence report to integration-tests/migrate/migrate-report.md (gitignored)
+	$(MAKE) test-env-up-migrate
+	cd integration-tests/migrate && KCP_MATRIX_REPORT=migrate-report.md go test -tags integration -v ./... ; \
+	  status=$$? ; cd ../.. ; $(MAKE) test-env-down-migrate ; exit $$status
+
+test-migrate-cloud: build ## Run the live MSK→CC cloud tests (env-gated; needs CC_*/MSK_* creds; no docker)
+	cd integration-tests/migrate && go test -tags integration -run Cloud -v ./...
+
+test-migrate-cloud-report: build ## Run the live cloud tests and write migrate-cloud-report.md (gitignored)
+	cd integration-tests/migrate && KCP_MATRIX_REPORT=migrate-cloud-report.md go test -tags integration -run Cloud -v ./...
+
+test-migrate-acls: build-frontend ## Run the hermetic native-ACL migration tests (unit + reconciler; CI, no creds, no docker)
+	go test $(GOTEST_FLAGS) ./internal/migrate/acls/... ./internal/migrate/serviceaccounts/...
+
+test-migrate-acls-live: build ## Run the live native-ACL + SA-naming integration matrix (env-gated; needs CC_*/MSK_* creds; no docker)
+	cd integration-tests/migrate && go test -tags integration -run ACLsLive -v ./...
 
 # ==============================================================================
 # State-file backward-compat archive (real generated kcp-state.json fixtures)

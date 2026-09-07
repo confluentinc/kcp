@@ -284,9 +284,14 @@ export interface KafkaACL {
  */
 export interface TopicSummary {
   topics: number
-  total_partitions: number
   internal_topics: number
+  total_partitions: number
+  total_internal_partitions: number
   compact_topics: number
+  compact_internal_topics: number
+  compact_partitions: number
+  compact_internal_partitions: number
+  remote_storage_topics: number
 }
 
 /**
@@ -315,48 +320,108 @@ export interface TopicsInfo {
 }
 
 /**
- * Self-Managed Connector
+ * Connect Metrics
  */
-export interface SelfManagedConnector {
-  name: string
-  config: Record<string, string>
-  state: string
-  connect_host: string
+export interface ConnectMetrics {
+  metadata?: {
+    start_date?: string
+    end_date?: string
+    period?: number
+    metrics_source?: string
+  }
+  results?: Array<{
+    start: string
+    end: string
+    label: string
+    value: number | null
+  }>
+  aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
+  query_info?: import('@/types/api/metrics').MetricQueryInfo[]
 }
 
 /**
- * Self-Managed Connectors
+ * Connector
  */
-export interface SelfManagedConnectors {
-  connectors: SelfManagedConnector[]
-  metrics?: {
-    metadata?: {
-      start_date?: string
-      end_date?: string
-      period?: number
-      metrics_source?: string
-    }
-    results?: Array<{
-      start: string
-      end: string
-      label: string
-      value: number | null
-    }>
-    aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
-    query_info?: import('@/types/api/metrics').MetricQueryInfo[]
+export interface Connector {
+  name: string
+  state?: string
+  config: Record<string, string>
+  connect_host?: string
+  metrics?: ConnectMetrics
+}
+
+/**
+ * Connect Cluster
+ */
+export interface ConnectCluster {
+  connect_rest_url: string
+  metrics?: ConnectMetrics
+  connectors: Connector[]
+}
+
+/**
+ * MSK-managed Connect metrics (CloudWatch-sourced). Mirrors the shape of
+ * SelfManagedConnectors.metrics but lives under aws_client_information since
+ * it describes AWS-managed MSK Connect rather than a self-managed cluster.
+ */
+export interface ConnectClusterMetrics {
+  metadata?: {
+    start_date?: string
+    end_date?: string
+    period?: number
+    metrics_source?: string
   }
+  results?: Array<{
+    start: string
+    end: string
+    label: string
+    value: number | null
+  }>
+  aggregates?: Record<string, { avg?: number; min?: number; max?: number }>
+  query_info?: import('@/types/api/metrics').MetricQueryInfo[]
 }
 
 /**
  * Kafka Admin Client Information
  */
+export interface ConsumerGroupMember {
+  member_id: string
+  client_id: string
+  client_host: string
+  group_instance_id?: string
+  assigned_topics: string[]
+}
+
+export interface ConsumerGroupDetail {
+  group_id: string
+  type: string
+  state: string
+  protocol_type: string
+  coordinator?: string
+  members: ConsumerGroupMember[]
+  topics: string[]
+  detail_complete: boolean
+}
+
+export interface ConsumerGroupSummary {
+  total: number
+  by_type: Record<string, number>
+  by_state: Record<string, number>
+}
+
+export interface ConsumerGroupsInfo {
+  summary: ConsumerGroupSummary
+  details: ConsumerGroupDetail[]
+}
+
 export interface KafkaAdminInfo {
   cluster_id?: string
   discovered_brokers?: string[]
   sasl_mechanism?: string
   topics?: TopicsInfo
   acls?: KafkaACL[]
-  self_managed_connectors?: SelfManagedConnectors
+  connect_clusters?: ConnectCluster[]
+  consumer_groups?: ConsumerGroupsInfo
   [key: string]: unknown
 }
 

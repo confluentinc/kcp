@@ -12,13 +12,18 @@ import (
 
 // mockGatewayService implements gateway.Service using function fields for test control.
 type mockGatewayService struct {
-	getGatewayYAMLFn      func(ctx context.Context, namespace, name string) ([]byte, error)
-	validateGatewayCRsFn  func(initial, fenced, switchover []byte) error
-	checkPermissionsFn    func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	applyGatewayYAMLFn    func(ctx context.Context, namespace, name string, yaml []byte) error
-	getGatewayPodUIDsFn   func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
-	waitForGatewayPodsFn  func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	waitForGatewayReadyFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	getGatewayYAMLFn           func(ctx context.Context, namespace, name string) ([]byte, error)
+	detectCapabilityFn         func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
+	waitForConfigIDFn          func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
+	checkRedundantAuthStagedFn func(ctx context.Context, namespace string, initial []byte, targets []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error)
+	checkPermissionsFn         func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	applyGatewayYAMLFn         func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
+	applyGatewayConfigIDFn     func(ctx context.Context, namespace, name, configID string) (string, error)
+	waitForGatewayAcceptedFn   func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	getGatewayPodUIDsFn        func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
+	getDeploymentGenFn         func(ctx context.Context, namespace, name string) (int64, error)
+	waitForGatewayPodsFn       func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	waitForGatewayReadyFn      func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 }
 
 func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -28,11 +33,28 @@ func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name
 	return nil, fmt.Errorf("mockGatewayService.GetGatewayYAML not configured")
 }
 
-func (m *mockGatewayService) ValidateGatewayCRs(initial, fenced, switchover []byte) error {
-	if m.validateGatewayCRsFn != nil {
-		return m.validateGatewayCRsFn(initial, fenced, switchover)
+// DetectCapability defaults to VerifyRollout — the mode every pre-hot-reload
+// cluster gets — so tests that do not care about hot-reload keep exercising the
+// pre-existing rollout path.
+func (m *mockGatewayService) DetectCapability(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error) {
+	if m.detectCapabilityFn != nil {
+		return m.detectCapabilityFn(ctx, namespace, name, port, fenced, switchover)
+	}
+	return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+}
+
+func (m *mockGatewayService) WaitForGatewayConfigID(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error {
+	if m.waitForConfigIDFn != nil {
+		return m.waitForConfigIDFn(ctx, namespace, name, opts)
 	}
 	return nil
+}
+
+func (m *mockGatewayService) CheckRedundantAuthStaged(ctx context.Context, namespace string, initial []byte, targets []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error) {
+	if m.checkRedundantAuthStagedFn != nil {
+		return m.checkRedundantAuthStagedFn(ctx, namespace, initial, targets)
+	}
+	return gateway.CRValidationResult{}, nil
 }
 
 func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {
@@ -42,11 +64,25 @@ func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resourc
 	return true, nil
 }
 
-func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, name string, yaml []byte) error {
+func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
 	if m.applyGatewayYAMLFn != nil {
-		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml)
+		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml, configID)
 	}
-	return fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
+	return "", fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
+}
+
+func (m *mockGatewayService) ApplyGatewayConfigID(ctx context.Context, namespace, name, configID string) (string, error) {
+	if m.applyGatewayConfigIDFn != nil {
+		return m.applyGatewayConfigIDFn(ctx, namespace, name, configID)
+	}
+	return configID, nil
+}
+
+func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
+	if m.waitForGatewayAcceptedFn != nil {
+		return m.waitForGatewayAcceptedFn(ctx, namespace, name, pollInterval, timeout)
+	}
+	return nil
 }
 
 func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error) {
@@ -56,16 +92,26 @@ func (m *mockGatewayService) GetGatewayPodUIDs(ctx context.Context, namespace, n
 	return nil, fmt.Errorf("mockGatewayService.GetGatewayPodUIDs not configured")
 }
 
-func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
+// GetGatewayDeploymentGeneration defaults to 0 — the "could not read it"
+// baseline, which the rollout waits treat as "any generation counts as a bump".
+// Tests that care about the baseline set getDeploymentGenFn.
+func (m *mockGatewayService) GetGatewayDeploymentGeneration(ctx context.Context, namespace, name string) (int64, error) {
+	if m.getDeploymentGenFn != nil {
+		return m.getDeploymentGenFn(ctx, namespace, name)
+	}
+	return 0, nil
+}
+
+func (m *mockGatewayService) WaitForGatewayPods(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error {
 	if m.waitForGatewayPodsFn != nil {
-		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, pollInterval, timeout, onProgress)
+		return m.waitForGatewayPodsFn(ctx, namespace, name, initialPodUIDs, baselineGeneration, pollInterval, timeout, onProgress)
 	}
 	return fmt.Errorf("mockGatewayService.WaitForGatewayPods not configured")
 }
 
-func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+func (m *mockGatewayService) WaitForGatewayReady(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 	if m.waitForGatewayReadyFn != nil {
-		return m.waitForGatewayReadyFn(ctx, namespace, name, pollInterval, timeout, onProgress)
+		return m.waitForGatewayReadyFn(ctx, namespace, name, baselineGeneration, pollInterval, timeout, onProgress)
 	}
 	return nil
 }
@@ -78,6 +124,9 @@ type mockClusterLinkService struct {
 	validateTopicsFn      func(topics []string, clusterLinkTopics []string) error
 	promoteMirrorTopicsFn func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 	alterConfigsFn        func(ctx context.Context, config clusterlink.Config, alterations []clusterlink.ConfigAlteration) error
+	createMirrorTopicFn   func(ctx context.Context, config clusterlink.Config, sourceTopic, mirrorTopic string) error
+	listTopicsFn          func(ctx context.Context, config clusterlink.Config) ([]string, error)
+	createTopicFn         func(ctx context.Context, config clusterlink.Config, req clusterlink.CreateTopicRequest) error
 }
 
 func (m *mockClusterLinkService) GetClusterLink(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error) {
@@ -120,6 +169,27 @@ func (m *mockClusterLinkService) AlterConfigs(ctx context.Context, config cluste
 		return m.alterConfigsFn(ctx, config, alterations)
 	}
 	return fmt.Errorf("mockClusterLinkService.AlterConfigs not configured")
+}
+
+func (m *mockClusterLinkService) CreateMirrorTopic(ctx context.Context, config clusterlink.Config, sourceTopic, mirrorTopic string) error {
+	if m.createMirrorTopicFn != nil {
+		return m.createMirrorTopicFn(ctx, config, sourceTopic, mirrorTopic)
+	}
+	return fmt.Errorf("mockClusterLinkService.CreateMirrorTopic not configured")
+}
+
+func (m *mockClusterLinkService) ListTopics(ctx context.Context, config clusterlink.Config) ([]string, error) {
+	if m.listTopicsFn != nil {
+		return m.listTopicsFn(ctx, config)
+	}
+	return nil, fmt.Errorf("mockClusterLinkService.ListTopics not configured")
+}
+
+func (m *mockClusterLinkService) CreateTopic(ctx context.Context, config clusterlink.Config, req clusterlink.CreateTopicRequest) error {
+	if m.createTopicFn != nil {
+		return m.createTopicFn(ctx, config, req)
+	}
+	return fmt.Errorf("mockClusterLinkService.CreateTopic not configured")
 }
 
 // mockOffsetProvider implements offset.Provider using function fields for

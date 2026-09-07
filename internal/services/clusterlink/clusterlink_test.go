@@ -206,6 +206,52 @@ func TestListMirrorTopics_Success(t *testing.T) {
 	assert.Equal(t, 5, topics[2].MirrorLags[0].Lag)
 }
 
+// TestService_AuthHeader_PerAuthenticator verifies that requests carry the
+// Authorization header produced by Config.authenticator(): an explicit
+// BearerAuth sends "Bearer ...", while a Config with only APIKey/APISecret
+// falls back to HTTP basic (the existing migration-execute / CC behaviour).
+func TestService_AuthHeader_PerAuthenticator(t *testing.T) {
+	clusterID := "lkc-abc123"
+	linkName := "my-cluster-link"
+
+	tests := []struct {
+		name       string
+		cfg        Config
+		wantHeader string
+	}{
+		{
+			name:       "explicit bearer",
+			cfg:        Config{ClusterID: clusterID, LinkName: linkName, Auth: BearerAuth{Token: "jwt-token-123"}},
+			wantHeader: "Bearer jwt-token-123",
+		},
+		{
+			name:       "basic fallback from api key/secret",
+			cfg:        Config{ClusterID: clusterID, LinkName: linkName, APIKey: "key", APISecret: "secret"},
+			wantHeader: "Basic " + base64.StdEncoding.EncodeToString([]byte("key:secret")),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotAuth string
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				gotAuth = r.Header.Get("Authorization")
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"link_name": linkName, "link_state": "ACTIVE"})
+			}))
+			defer server.Close()
+
+			svc := NewConfluentCloudService(server.Client())
+			cfg := tt.cfg
+			cfg.RestEndpoint = server.URL
+
+			_, err := svc.GetClusterLink(context.Background(), cfg)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantHeader, gotAuth)
+		})
+	}
+}
+
 func TestListMirrorTopics_FiltersByTopics(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := map[string]interface{}{
@@ -445,6 +491,7 @@ func TestGetClusterLink_NotFound(t *testing.T) {
 	assert.Contains(t, err.Error(), "missing-link")
 	assert.Contains(t, err.Error(), "lkc-missing")
 	assert.Contains(t, err.Error(), "not found")
+	require.ErrorIs(t, err, ErrLinkNotFound)
 }
 
 func TestGetClusterLink_Unauthorized(t *testing.T) {
@@ -468,7 +515,7 @@ func TestGetClusterLink_Unauthorized(t *testing.T) {
 	assert.Nil(t, link)
 	assert.Contains(t, err.Error(), "401")
 	assert.Contains(t, err.Error(), "authentication failed")
-	assert.Contains(t, err.Error(), "--cluster-api-key")
+	assert.Contains(t, err.Error(), "target REST credentials")
 }
 
 func TestGetClusterLink_Forbidden(t *testing.T) {
@@ -726,4 +773,192 @@ func TestListConfigs_Success(t *testing.T) {
 	assert.Equal(t, "true", configs["consumer.offset.sync.enable"])
 	assert.Equal(t, "false", configs["acl.sync.enable"])
 	assert.Equal(t, "true", configs["topic.config.sync"])
+}
+
+// ---------------------------------------------------------------------------
+// Plain (non-mirror) topic operations
+// ---------------------------------------------------------------------------
+
+func TestListTopics_Success(t *testing.T) {
+	clusterID := "lkc-topics"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/"+clusterID+"/topics", r.URL.Path, "request path")
+		assert.Equal(t, http.MethodGet, r.Method, "HTTP method")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"topic_name":"orders"},{"topic_name":"events"},{"topic_name":"_internal"}]}`))
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: clusterID}
+
+	names, err := svc.ListTopics(context.Background(), cfg)
+	require.NoError(t, err)
+	require.Equal(t, []string{"orders", "events", "_internal"}, names)
+}
+
+func TestListTopics_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	_, err := svc.ListTopics(context.Background(), cfg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to list topics")
+}
+
+func TestCreateTopic_Success_PostsBodyWithSortedConfigs(t *testing.T) {
+	clusterID := "lkc-create"
+
+	var gotBody map[string]interface{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/"+clusterID+"/topics", r.URL.Path, "request path")
+		assert.Equal(t, http.MethodPost, r.Method, "HTTP method")
+		b, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(b, &gotBody))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: clusterID}
+
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{
+		Name:       "orders",
+		Partitions: 6,
+		Configs:    map[string]string{"retention.ms": "604800000", "cleanup.policy": "compact"},
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "orders", gotBody["topic_name"])
+	assert.Equal(t, float64(6), gotBody["partitions_count"])
+	// replication_factor must be omitted entirely so the target applies its
+	// default (CC requires RF=3 and rejects any explicit other value).
+	_, hasRF := gotBody["replication_factor"]
+	assert.False(t, hasRF, "replication_factor must not be sent")
+
+	configs, ok := gotBody["configs"].([]interface{})
+	require.True(t, ok, "configs array present")
+	require.Len(t, configs, 2)
+	// sorted by name: cleanup.policy before retention.ms
+	first := configs[0].(map[string]interface{})
+	second := configs[1].(map[string]interface{})
+	assert.Equal(t, "cleanup.policy", first["name"])
+	assert.Equal(t, "compact", first["value"])
+	assert.Equal(t, "retention.ms", second["name"])
+	assert.Equal(t, "604800000", second["value"])
+}
+
+func TestCreateTopic_NoConfigs_OmitsConfigsField(t *testing.T) {
+	var raw map[string]json.RawMessage
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		require.NoError(t, json.Unmarshal(b, &raw))
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "t", Partitions: 1})
+	require.NoError(t, err)
+	_, hasConfigs := raw["configs"]
+	assert.False(t, hasConfigs, "configs field omitted when empty")
+}
+
+func TestCreateTopic_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	err := svc.CreateTopic(context.Background(), cfg, CreateTopicRequest{Name: "bad", Partitions: 1})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `failed to create topic "bad"`)
+}
+
+func TestGetTopicPartitionCount_Success(t *testing.T) {
+	clusterID := "lkc-pc"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/"+clusterID+"/topics/orders", r.URL.Path, "request path")
+		assert.Equal(t, http.MethodGet, r.Method, "HTTP method")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
+			"topic_name":       "orders",
+			"partitions_count": 6,
+		})
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: clusterID}
+
+	n, err := svc.GetTopicPartitionCount(context.Background(), cfg, "orders")
+	require.NoError(t, err)
+	assert.Equal(t, 6, n)
+}
+
+func TestGetTopicPartitionCount_PathIsEscaped(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/lkc%20x/topics/odd%2Fname", r.URL.EscapedPath(), "escaped request path")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"partitions_count": 3})
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "lkc x"}
+
+	n, err := svc.GetTopicPartitionCount(context.Background(), cfg, "odd/name")
+	require.NoError(t, err)
+	assert.Equal(t, 3, n)
+}
+
+func TestGetTopicPartitionCount_HTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	cfg := Config{RestEndpoint: server.URL, ClusterID: "c"}
+
+	_, err := svc.GetTopicPartitionCount(context.Background(), cfg, "missing")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `failed to get partition count for topic "missing"`)
+}
+
+// Review finding #4: cp-server lists empty-link_name UNMANAGED_SOURCE records after
+// a source-initiated link is deleted. ListClusterLinks must filter them out — an
+// empty name is never an addressable resource and would build a malformed
+// "/links//..." path in any caller.
+func TestListClusterLinks_FiltersEmptyNames(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/kafka/v3/clusters/c/links", r.URL.Path)
+		resp := map[string]interface{}{
+			"data": []map[string]interface{}{
+				{"link_name": "real-link", "link_state": "ACTIVE"},
+				{"link_name": "", "link_state": "UNMANAGED_SOURCE"}, // orphaned remnant
+				{"link_name": "another", "link_state": "ACTIVE"},
+				{"link_name": "", "link_state": "UNMANAGED_SOURCE"},
+			},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	svc := NewConfluentCloudService(server.Client())
+	links, err := svc.ListClusterLinks(context.Background(), Config{RestEndpoint: server.URL, ClusterID: "c"})
+	require.NoError(t, err)
+	assert.Equal(t, []string{"real-link", "another"}, links, "empty-named UNMANAGED_SOURCE entries must be filtered")
 }

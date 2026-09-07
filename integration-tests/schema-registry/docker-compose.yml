@@ -65,3 +65,60 @@ services:
       SCHEMA_REGISTRY_AUTHENTICATION_ROLES: admin,developer
       SCHEMA_REGISTRY_AUTHENTICATION_REALM: SchemaRegistryProps
       SCHEMA_REGISTRY_OPTS: -Djava.security.auth.login.config=/etc/schema-registry/jaas.conf
+
+  # HTTPS + Basic Auth Schema Registry (port 8443): server TLS behind a private CA,
+  # no client cert. Exercises kcp SR TLS transport (--tls-ca-cert / --insecure-skip-tls-verify).
+  schema-registry-basic-tls:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry-basic-tls
+    container_name: kcp-test-sr-basic-tls
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8443:8443"
+    volumes:
+      - ./configs/schema-registry-jaas.conf:/etc/schema-registry/jaas.conf:ro
+      - ./configs/schema-registry-basic-auth.properties:/etc/schema-registry/basic-auth.properties:ro
+      - ./certs:/etc/sr-certs:ro
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry-basic-tls
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: https://0.0.0.0:8443
+      SCHEMA_REGISTRY_INTER_INSTANCE_PROTOCOL: https
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry-basic-tls
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas_basic_tls
+      SCHEMA_REGISTRY_AUTHENTICATION_METHOD: BASIC
+      SCHEMA_REGISTRY_AUTHENTICATION_ROLES: admin,developer
+      SCHEMA_REGISTRY_AUTHENTICATION_REALM: SchemaRegistryProps
+      SCHEMA_REGISTRY_SSL_KEYSTORE_LOCATION: /etc/sr-certs/sr.server.keystore.jks
+      SCHEMA_REGISTRY_SSL_KEYSTORE_PASSWORD: keystorepass
+      SCHEMA_REGISTRY_SSL_KEY_PASSWORD: keystorepass
+      SCHEMA_REGISTRY_OPTS: -Djava.security.auth.login.config=/etc/schema-registry/jaas.conf
+
+  # mTLS Schema Registry (port 8444): HTTPS requiring a client certificate.
+  # Exercises kcp SR --use-mtls.
+  schema-registry-mtls:
+    image: confluentinc/cp-schema-registry:7.6.0
+    hostname: schema-registry-mtls
+    container_name: kcp-test-sr-mtls
+    depends_on:
+      kafka:
+        condition: service_healthy
+    ports:
+      - "8444:8444"
+    volumes:
+      - ./certs:/etc/sr-certs:ro
+    environment:
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry-mtls
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: kafka:9092
+      SCHEMA_REGISTRY_LISTENERS: https://0.0.0.0:8444
+      SCHEMA_REGISTRY_INTER_INSTANCE_PROTOCOL: https
+      SCHEMA_REGISTRY_SCHEMA_REGISTRY_GROUP_ID: schema-registry-mtls
+      SCHEMA_REGISTRY_KAFKASTORE_TOPIC: _schemas_mtls
+      SCHEMA_REGISTRY_SSL_KEYSTORE_LOCATION: /etc/sr-certs/sr.server.keystore.jks
+      SCHEMA_REGISTRY_SSL_KEYSTORE_PASSWORD: keystorepass
+      SCHEMA_REGISTRY_SSL_KEY_PASSWORD: keystorepass
+      SCHEMA_REGISTRY_SSL_TRUSTSTORE_LOCATION: /etc/sr-certs/sr.server.truststore.jks
+      SCHEMA_REGISTRY_SSL_TRUSTSTORE_PASSWORD: truststorepass
+      SCHEMA_REGISTRY_SSL_CLIENT_AUTHENTICATION: REQUIRED

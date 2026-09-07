@@ -6,7 +6,7 @@ import "time"
 // Unlike the broker-oriented MetricMetadata, it carries only fields meaningful in
 // the Connect scope: the collection window, the polling granularity, and which
 // backend produced the data. MetricsSource reuses the shared MetricBackend type
-// (jolokia|prometheus for Connect) so it stays consistent with QueryInfo.SourceType
+// (jolokia or prometheus for self-managed, cloudwatch for MSK-managed) so it stays consistent with QueryInfo.SourceType
 // and the collector dispatch; the JSON wire value is unchanged. metrics_source is
 // intentionally NOT omitempty — it belongs to every Connect metrics block; legacy
 // state files (collected before this field existed) load with it empty.

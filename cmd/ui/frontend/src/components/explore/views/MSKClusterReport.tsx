@@ -3,6 +3,7 @@ import { ClusterMetrics } from '../clusters/ClusterMetrics'
 import { ClusterTopics } from '../clusters/ClusterTopics'
 import { ClusterConnectors } from '../clusters/ClusterConnectors'
 import { ClusterACLs } from '../clusters/ClusterACLs'
+import { ClusterConsumerGroups } from '../clusters/ClusterConsumerGroups'
 import { ClusterClients } from '../clusters/ClusterClients'
 import { Tabs } from '@/components/common/Tabs'
 import { ClusterConfigurationSection } from '../clusters/ClusterConfigurationSection'
@@ -73,6 +74,7 @@ export const MSKClusterReport = () => {
             { id: CLUSTER_REPORT_TABS.TOPICS, label: 'Topics' },
             { id: CLUSTER_REPORT_TABS.CONNECTORS, label: 'Connectors' },
             { id: CLUSTER_REPORT_TABS.ACLS, label: 'ACLs' },
+            { id: CLUSTER_REPORT_TABS.CONSUMER_GROUPS, label: 'Consumer Groups' },
             { id: CLUSTER_REPORT_TABS.CLIENTS, label: 'Clients' },
           ]}
           activeId={activeTab}
@@ -118,12 +120,8 @@ export const MSKClusterReport = () => {
             <div className="min-w-0 max-w-full">
               <ClusterConnectors
                 connectors={cluster.aws_client_information?.connectors || []}
-                selfManagedConnectors={
-                  cluster.kafka_admin_client_information?.self_managed_connectors?.connectors || []
-                }
-                connectMetrics={
-                  cluster.kafka_admin_client_information?.self_managed_connectors?.metrics
-                }
+                connectClusters={cluster.kafka_admin_client_information?.connect_clusters || []}
+                managedConnectMetrics={cluster.aws_client_information?.connector_metrics}
                 clusterId={getClusterArn(cluster) || cluster.arn || undefined}
                 sourceType="msk"
               />
@@ -134,6 +132,13 @@ export const MSKClusterReport = () => {
           {activeTab === CLUSTER_REPORT_TABS.ACLS && (
             <div className="min-w-0 max-w-full">
               <ClusterACLs acls={cluster.kafka_admin_client_information?.acls || []} />
+            </div>
+          )}
+
+          {/* Consumer Groups Tab */}
+          {activeTab === CLUSTER_REPORT_TABS.CONSUMER_GROUPS && (
+            <div className="min-w-0 max-w-full">
+              <ClusterConsumerGroups kafkaAdminInfo={cluster.kafka_admin_client_information} />
             </div>
           )}
 

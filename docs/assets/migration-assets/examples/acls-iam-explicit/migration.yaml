@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
+#
+# Example: ACL migration, AWS MSK IAM plane with explicit named roles — MSK →
+# Confluent Cloud. spec.acls.iam is legal only for spec.source.type: msk. The
+# shell running `kcp migrate` needs AWS credentials with iam:GetRole,
+# iam:GetPolicy, iam:GetPolicyVersion, iam:ListRolePolicies, and
+# iam:ListAttachedRolePolicies (plus iam:SimulatePrincipalPolicy for
+# verifyEffectiveAccess).
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: acls-iam-explicit-example
+spec:
+  source:
+    type: msk
+    bootstrapServers: ["b-1.example.kafka.us-east-1.amazonaws.com:9098", "b-2.example.kafka.us-east-1.amazonaws.com:9098"]
+    credentials: ../../credentials/kafka-iam.yaml           # Kafka creds (reads the MSK cluster id)
+
+  target:
+    type: confluent-cloud
+    clusterId: lkc-xxxxx
+    clusterCredentials: ../../credentials/rest-api-key.yaml  # REST creds (Admin API)
+    cloudCredentials: ../../credentials/rest-api-key.yaml    # Cloud/Global API key; required whenever spec.acls is present
+    kafka:
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+
+  serviceAccounts:
+    autoCreate: true   # find-or-create a service account per unmapped IAM principal
+
+  acls:
+    include: ["*"]
+    iam:
+      clusterArn: arn:aws:kafka:us-east-1:123456789012:cluster/example/abcd1234-ef56-7890-abcd-ef1234567890
+      principalArns:                          # named IAM roles to translate (mutually exclusive with discoverAllRoles)
+        - arn:aws:iam::123456789012:role/orders-service
+        - arn:aws:iam::123456789012:role/payments-service
+      verifyEffectiveAccess: true             # simulate each role's policies + permissions boundary; keep only allowed grants

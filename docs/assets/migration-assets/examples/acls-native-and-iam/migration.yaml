@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/migration.schema.json
+#
+# Example: ACL migration, native + IAM union — MSK → Confluent Cloud, where the
+# cluster serves both SASL/SCRAM principals (native Kafka ACLs) and IAM roles.
+# spec.source.credentials reads the cluster id AND the native ACLs over the
+# SCRAM connection; MSK requires SCRAM-SHA-512. spec.acls.iam is legal only for
+# spec.source.type: msk. The shell running `kcp migrate` needs AWS credentials
+# with iam:GetRole, iam:GetPolicy, iam:GetPolicyVersion, iam:ListRolePolicies,
+# iam:ListAttachedRolePolicies, iam:GetAccountAuthorizationDetails (for
+# discoverAllRoles), plus iam:SimulatePrincipalPolicy for verifyEffectiveAccess.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: acls-native-and-iam-example
+spec:
+  source:
+    type: msk
+    bootstrapServers: ["b-1.example.kafka.us-east-1.amazonaws.com:9096", "b-2.example.kafka.us-east-1.amazonaws.com:9096"]
+    credentials: ../../credentials/kafka-sasl-scram.yaml    # Kafka creds (reads the cluster id AND the native ACLs; MSK requires SHA512)
+
+  target:
+    type: confluent-cloud
+    clusterId: lkc-xxxxx
+    clusterCredentials: ../../credentials/rest-api-key.yaml  # REST creds (Admin API)
+    cloudCredentials: ../../credentials/rest-api-key.yaml    # Cloud/Global API key; required whenever spec.acls is present
+    kafka:
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+
+  serviceAccounts:
+    autoCreate: true               # find-or-create a service account for every unmapped principal
+    mapping:
+      "User:legacy-app": sa-xxxxx  # explicit mapping wins over autoCreate for this principal
+
+  acls:
+    include: ["*"]
+    iam:
+      clusterArn: arn:aws:kafka:us-east-1:123456789012:cluster/example/abcd1234-ef56-7890-abcd-ef1234567890
+      discoverAllRoles: true       # enumerate every workload IAM role in the account (mutually exclusive with principalArns)
+      verifyEffectiveAccess: true  # simulate each role's policies + permissions boundary; keep only allowed grants

@@ -10,7 +10,6 @@ import (
 	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	"github.com/aws/aws-sdk-go-v2/service/kafka"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/aws/aws-sdk-go-v2/service/kafkaconnect"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -129,28 +128,6 @@ func (s *stubEC2Service) DescribeSubnets(ctx context.Context, subnetIds []string
 	return &ec2.DescribeSubnetsOutput{Subnets: []ec2types.Subnet{}}, nil
 }
 
-// ── stubMSKConnectService ──────────────────────────────────────────────────────
-// Implements ClusterDiscovererMSKConnectService (2 methods).
-
-type stubMSKConnectService struct {
-	listConnectorsFn    func(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error)
-	describeConnectorFn func(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error)
-}
-
-func (s *stubMSKConnectService) ListConnectors(ctx context.Context, params *kafkaconnect.ListConnectorsInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.ListConnectorsOutput, error) {
-	if s.listConnectorsFn != nil {
-		return s.listConnectorsFn(ctx, params, optFns...)
-	}
-	return &kafkaconnect.ListConnectorsOutput{}, nil
-}
-
-func (s *stubMSKConnectService) DescribeConnector(ctx context.Context, params *kafkaconnect.DescribeConnectorInput, optFns ...func(*kafkaconnect.Options)) (*kafkaconnect.DescribeConnectorOutput, error) {
-	if s.describeConnectorFn != nil {
-		return s.describeConnectorFn(ctx, params, optFns...)
-	}
-	return &kafkaconnect.DescribeConnectorOutput{}, nil
-}
-
 // ── stubRegionMSKService ───────────────────────────────────────────────────────
 // Implements RegionDiscovererMSKService (2 methods).
 
@@ -229,14 +206,57 @@ func buildFullProvisionedCluster() *kafka.DescribeClusterV2Output {
 	}
 }
 
-// buildFullServerlessCluster returns a serverless cluster with all fields populated.
+// buildFullServerlessCluster returns a serverless cluster with all fields
+// populated — use as the baseline for happy-path tests. Its VpcConfigs
+// subnets match serverlessSubnetsStub, below.
 func buildFullServerlessCluster() *kafka.DescribeClusterV2Output {
 	return &kafka.DescribeClusterV2Output{
 		ClusterInfo: &kafkatypes.Cluster{
 			ClusterName: aws.String(testClusterName),
 			ClusterArn:  aws.String(testClusterArn),
 			ClusterType: kafkatypes.ClusterTypeServerless,
-			Serverless:  &kafkatypes.Serverless{},
+			Serverless: &kafkatypes.Serverless{
+				VpcConfigs: []kafkatypes.VpcConfig{
+					{
+						SubnetIds:        []string{"subnet-sl-1", "subnet-sl-2"},
+						SecurityGroupIds: []string{"sg-sl-1"},
+					},
+				},
+				ClientAuthentication: &kafkatypes.ServerlessClientAuthentication{
+					Sasl: &kafkatypes.ServerlessSasl{
+						Iam: &kafkatypes.Iam{Enabled: aws.Bool(true)},
+					},
+				},
+			},
 		},
 	}
+}
+
+// serverlessSubnetsStub provides AZ/CIDR details for the two subnets in
+// buildFullServerlessCluster's VpcConfigs. Wire it into
+// stubEC2Service.describeSubnetsFn for tests that exercise the serverless
+// networking scan.
+func serverlessSubnetsStub(_ context.Context, subnetIds []string) (*ec2.DescribeSubnetsOutput, error) {
+	details := map[string]ec2types.Subnet{
+		"subnet-sl-1": {
+			SubnetId:         aws.String("subnet-sl-1"),
+			VpcId:            aws.String("vpc-serverless-1"),
+			AvailabilityZone: aws.String("us-east-1a"),
+			CidrBlock:        aws.String("10.0.1.0/24"),
+		},
+		"subnet-sl-2": {
+			SubnetId:         aws.String("subnet-sl-2"),
+			VpcId:            aws.String("vpc-serverless-1"),
+			AvailabilityZone: aws.String("us-east-1b"),
+			CidrBlock:        aws.String("10.0.2.0/24"),
+		},
+	}
+
+	var subnets []ec2types.Subnet
+	for _, id := range subnetIds {
+		if s, ok := details[id]; ok {
+			subnets = append(subnets, s)
+		}
+	}
+	return &ec2.DescribeSubnetsOutput{Subnets: subnets}, nil
 }

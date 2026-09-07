@@ -54,7 +54,7 @@ export const extractMetadataDateRange = (
 
 /**
  * Aggregates region costs from API responses using the aggregates structure.
- * Processes only Amazon Managed Streaming for Apache Kafka service.
+ * Processes the MSK footprint (brokers and MSK Connect).
  *
  * @param {Record<string, CostsApiResponse>} regionCostData - Cost data by region name
  * @returns {Record<string, Record<string, number>>} Aggregated costs by region and cost type
@@ -84,9 +84,10 @@ export const aggregateRegionCosts = (
     const aggregates = costResponse.aggregates
 
     // Process aggregates: service -> cost_type -> usage_type -> {sum, avg, max, min}
-    // Only include Amazon Managed Streaming for Apache Kafka
+    // Include MSK brokers and MSK Connect (reported as a separate service, but both
+    // are part of the MSK footprint this summary tracks)
     Object.entries(aggregates).forEach(([service, serviceAggregates]) => {
-      if (service !== AWS_SERVICES.MSK) return
+      if (service !== AWS_SERVICES.MSK && service !== AWS_SERVICES.MSK_CONNECT) return
 
       // Process each cost type
       costTypes.forEach((costType) => {
@@ -102,7 +103,7 @@ export const aggregateRegionCosts = (
 
 /**
  * Processes daily cost data from raw API results into chart-ready format.
- * Filters for MSK service only and aggregates by date and region.
+ * Filters for the MSK footprint (brokers and MSK Connect) and aggregates by date and region.
  *
  * @param {Record<string, CostsApiResponse>} regionCostData - Cost data by region name
  * @returns {Record<string, Record<string, Record<string, number>>>} Daily costs by date, region, and cost type
@@ -126,8 +127,9 @@ export const processDailyCosts = (
     costResponse.results.forEach((cost) => {
       if (!cost || !cost.start || !cost.service || !cost.values) return
 
-      // Only include Amazon Managed Streaming for Apache Kafka
-      if (cost.service !== AWS_SERVICES.MSK) return
+      // Include MSK brokers and MSK Connect (reported as a separate service, but both
+      // are part of the MSK footprint this summary tracks)
+      if (cost.service !== AWS_SERVICES.MSK && cost.service !== AWS_SERVICES.MSK_CONNECT) return
 
       const date = cost.start
 

@@ -198,9 +198,12 @@ const metrics = {
     clusterId: string,
     sessionId: string,
     params?: MetricsQueryParams,
+    kind: 'self-managed' | 'managed' = 'self-managed',
+    connectRestURL?: string,
+    connectorName?: string,
     config?: RequestConfig
   ): Promise<MetricsApiResponse> {
-    const queryParams: Record<string, string | Date | undefined> = { sessionId, clusterId }
+    const queryParams: Record<string, string | Date | undefined> = { sessionId, clusterId, kind }
     if (params?.startDate) {
       queryParams.startDate =
         params.startDate instanceof Date ? params.startDate : new Date(params.startDate)
@@ -209,6 +212,12 @@ const metrics = {
       queryParams.endDate =
         params.endDate instanceof Date ? params.endDate : new Date(params.endDate)
     }
+    // connectRestURL must distinguish "not specified" (undefined - omit the param
+    // entirely) from "specified as an empty string" (a real, addressable value for
+    // a legacy pre-v3 Connect cluster entry, see api.go's handleGetConnectMetrics).
+    // A truthy check would silently drop that "" case, since it's falsy in JS.
+    if (connectRestURL !== undefined) queryParams.connectRestURL = connectRestURL
+    if (connectorName) queryParams.connectorName = connectorName
     return get<MetricsApiResponse>(
       `${API_ENDPOINTS.METRICS}/connect/${encodeURIComponent(sourceType)}`,
       queryParams,

@@ -1,0 +1,15 @@
+apiVersion: kcp.confluent.io/v1alpha1
+kind: Migration
+metadata:
+  name: example-migration
+spec:
+  source:
+    type: apache-kafka
+    credentials: ./source-creds.yaml
+    notAField: true
+  target:
+    type: confluent-cloud
+    clusterId: lkc-xxxxx
+    clusterCredentials: ./target-creds.yaml
+    kafka:
+      restEndpoint: https://pkc-1n6m13.us-east-1.aws.confluent.cloud:443
