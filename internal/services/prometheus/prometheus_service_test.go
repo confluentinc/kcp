@@ -272,9 +272,13 @@ func TestBrokerQueryDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
 		"BrokerQueryDefinitions labels must match the canonical override label set")
 }
 
-// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName
-// covers the common case: the override is a bare series name with no
-// selector of its own, so the {name="..."} discriminator is simply appended.
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName covers
+// the common case: the override points at a bare series name with no selector
+// of its own. The {name="GlobalPartitionCount"} discriminator must NOT be
+// appended — the override already identifies the series, and the exporters
+// this feature exists for (flattened jmx_exporter output) do not emit a `name`
+// label at all, so appending the discriminator would filter the series to
+// nothing.
 func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName(t *testing.T) {
 	defs := BrokerQueryDefinitions(map[string]string{"GlobalPartitionCount": "acme_controller_value"})
 
@@ -285,19 +289,18 @@ func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName(t *t
 		}
 	}
 
-	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount"}`, global.Query)
+	assert.Equal(t, "acme_controller_value", global.Query)
 	assert.Equal(t, global.Query, global.PrometheusMetric)
 	assert.True(t, global.Overridden)
 }
 
-// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges
-// is a regression test: GlobalPartitionCount's query is built by appending a
-// static {name="GlobalPartitionCount"} discriminator to the override value. If
-// the override itself already carries a label selector (e.g. it points at a
-// job-scoped series), naively appending a second brace group produces invalid
-// PromQL (two adjacent selectors on one series). The discriminator must be
-// merged into the existing selector instead.
-func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges(t *testing.T) {
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorPreserved
+// is a regression test: an override that already carries its own label
+// selector (e.g. a job-scoped series) must be used exactly as given, with no
+// discriminator merged in. The discriminator is a default-path concept only —
+// once the operator has overridden the series, kcp must not still be able to
+// filter it down based on a `name` label it never asked for.
+func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorPreserved(t *testing.T) {
 	defs := BrokerQueryDefinitions(map[string]string{
 		"GlobalPartitionCount": `acme_controller_value{job="acme"}`,
 	})
@@ -309,10 +312,8 @@ func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMer
 		}
 	}
 
-	// A single, valid selector — not two adjacent brace groups.
-	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount",job="acme"}`, global.Query)
+	assert.Equal(t, `acme_controller_value{job="acme"}`, global.Query)
 	assert.Equal(t, global.Query, global.PrometheusMetric)
-	assert.NotContains(t, global.Query, "}{", "must not produce two adjacent brace groups")
 	assert.True(t, global.Overridden)
 }
 

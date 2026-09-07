@@ -55,12 +55,16 @@ func BrokerQueryDefinitions(overrides map[string]string) []MetricQuery {
 	clientConn, clientConnOv := name("ClientConnectionCount", "kafka_server_socketservermetrics_connection_count")
 	logSize, logSizeOv := name("TotalLocalStorageUsage", "kafka_log_log_size")
 
-	// GlobalPartitionCount is distinguished by a {name="..."} discriminator on a
-	// shared controller series; an override replaces the base series name. If the
-	// override itself already carries a label selector (e.g. a job-scoped
-	// series), the discriminator is merged into it rather than appended as a
-	// second brace group, which would otherwise produce invalid PromQL.
-	globalPartitionSel := appendNameDiscriminator(globalPartition, "GlobalPartitionCount")
+	// GlobalPartitionCount is distinguished by a {name="..."} discriminator on
+	// the shared, non-overridden controller series kafka_controller_kafkacontroller_value.
+	// The discriminator only makes sense there — an override already identifies
+	// the series on its own, and the exporters this feature exists for (a
+	// flattened jmx_exporter series) do not emit a `name` label at all, so
+	// appending the discriminator to an override would filter it to nothing.
+	globalPartitionSel := globalPartition
+	if !globalPartitionOv {
+		globalPartitionSel = appendNameDiscriminator(globalPartition, "GlobalPartitionCount")
+	}
 
 	return []MetricQuery{
 		{Label: "BytesInPerSec", Query: "sum(rate(" + bytesIn + "[%s]))", PrometheusMetric: bytesIn, Overridden: bytesInOv},

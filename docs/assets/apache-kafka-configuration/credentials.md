@@ -237,10 +237,14 @@ jolokia:
 - **Prometheus overrides replace the base series name only.** `kcp` keeps its own
   wrapping (`sum(rate(<name>[<window>]))`, `sum(<name>)`, the GiB conversion) and
   `filter.labels` injection, so the override is a rename, not a full-query rewrite.
-  For `GlobalPartitionCount` the `{name="GlobalPartitionCount"}` discriminator is
-  preserved on top of the overridden series name — so your relabelled series must
-  still carry the `name="GlobalPartitionCount"` label, or the preserved
-  discriminator filters it down to nothing.
+  `GlobalPartitionCount` is the one exception worth calling out explicitly: on the
+  **default** series (`kafka_controller_kafkacontroller_value`) `kcp` appends a
+  `{name="GlobalPartitionCount"}` discriminator, because several controller values
+  share that one series name. Once you **override** `GlobalPartitionCount`, the
+  discriminator is dropped — your override already identifies the series on its
+  own, and most relabelled/flattened exporters expose it with no `name` label at
+  all. If your override value already carries its own selector (e.g. a job-scoped
+  series), it is used exactly as given.
 - If an overridden metric **still** returns no data, `kcp` logs it at **WARN**
   (a plain missing default is logged at DEBUG) — the override was configured
   precisely to fix an empty result, so a still-empty result is worth surfacing.
