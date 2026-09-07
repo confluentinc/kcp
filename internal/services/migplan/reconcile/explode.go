@@ -2,8 +2,9 @@ package reconcile
 
 import (
 	"fmt"
-	"regexp"
 	"sort"
+
+	"github.com/confluentinc/kcp/internal/regexanchor"
 )
 
 // Explode resolves a selector into concrete topic names: the de-duplicated,
@@ -16,7 +17,7 @@ func Explode(exactTopics, patterns, sourceTopics []string) ([]string, error) {
 		set[t] = struct{}{}
 	}
 	for _, p := range patterns {
-		re, err := regexp.Compile("^(?:" + p + ")$")
+		re, err := regexanchor.Compile(p)
 		if err != nil {
 			return nil, fmt.Errorf("invalid topicPattern %q: %w", p, err)
 		}

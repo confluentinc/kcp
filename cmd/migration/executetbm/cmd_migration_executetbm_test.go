@@ -18,18 +18,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// withStubbedReconcile replaces the engine call with a no-op success for the
-// duration of a test. These are FSM-scaffold tests: the manifest points at
-// placeholder MSK/CC endpoints that are unreachable, so the real engine (which
-// connects to the live gateway CR + source/target/link) cannot run here. The
-// engine itself is tested in internal/services/migplan.
-func withStubbedReconcile(t *testing.T) {
+// stubReconcile is a no-op success engine for the FSM-scaffold tests: the
+// manifest points at placeholder MSK/CC endpoints that are unreachable, so the
+// real engine (which connects to the live gateway CR + source/target/link)
+// cannot run here. The engine itself is tested in internal/services/migplan.
+func stubReconcile(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
+	return &migplan.Result{}, nil
+}
+
+// runExecuteTBMStubbed runs the command with the engine stubbed, for the
+// end-to-end FSM tests that would otherwise dial unreachable endpoints.
+func runExecuteTBMStubbed(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	original := reconcileFn
-	reconcileFn = func(context.Context, *manifest.GatewayMigration) (*migplan.Result, error) {
-		return &migplan.Result{}, nil
-	}
-	t.Cleanup(func() { reconcileFn = original })
+	cmd := newExecuteTBMCmd(stubReconcile)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), err
 }
 
 // gatewayManifestTemplate is a complete, valid GatewayMigration document with
@@ -166,12 +173,11 @@ func TestResolveTBMConfig_HashDiffers_RefusesUnconditionally(t *testing.T) {
 
 func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 	withFastTBMTransitions(t)
-	withStubbedReconcile(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-2", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
 
-	_, err := runExecuteTBM(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	_, err := runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
 	require.NoError(t, err)
 
 	state, err := tbm.NewTBMStateFromFile(stateFile)
@@ -182,7 +188,7 @@ func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 
 	// Second run against the identical file: hash matches, already done ->
 	// short-circuits via HasPendingWork without re-running the workflow.
-	out, err := runExecuteTBM(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	out, err := runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
 	require.NoError(t, err)
 	assert.Contains(t, out, "already complete")
 }
@@ -209,19 +215,18 @@ func TestExecuteTBM_TbmStateFileUnstatable_FailsInsteadOfTreatingAsFresh(t *test
 
 func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	withFastTBMTransitions(t)
-	withStubbedReconcile(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-3", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
 
-	_, err := runExecuteTBM(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	_, err := runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
 	require.NoError(t, err)
 
 	// Edit the manifest (still schema-valid, still the same metadata.name).
 	mutated := strings.ReplaceAll(fmt.Sprintf(gatewayManifestTemplate, "tbm-batch-3", "lkc-abc123"), "lkc-abc123", "lkc-changed")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(mutated), 0600))
 
-	_, err = runExecuteTBM(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	_, err = runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "changed since it was last run")
 

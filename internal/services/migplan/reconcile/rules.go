@@ -96,10 +96,14 @@ func (rt *RulesTree) Clone() *RulesTree {
 }
 
 func (rt *RulesTree) ensureRouting() map[string]any {
-	if rt.root["routing"] == nil {
-		rt.root["routing"] = map[string]any{}
+	// Replace routing when it is absent OR present but not a map[string]any (a
+	// scalar/list/map[any]any from hand-written YAML): mapField returns ok=false
+	// for both, and returning a nil map here would panic the callers' writes.
+	r, ok := mapField(rt.root, "routing")
+	if !ok {
+		r = map[string]any{}
+		rt.root["routing"] = r
 	}
-	r, _ := mapField(rt.root, "routing")
 	return r
 }
 

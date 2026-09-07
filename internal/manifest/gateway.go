@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/regexanchor"
 	"github.com/confluentinc/kcp/internal/targets"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/yamlsafe"
@@ -351,20 +352,11 @@ func validateTopicGroup(entries []TopicGroupEntry) []error {
 
 // anchoredPattern compiles p as an anchored RE2 full-match: the Gateway matches
 // topicPatterns Java-style (anchored full-match), but Go's regexp default is
-// unanchored/partial, so kcp must anchor with \A…\z.
-//
-// p is validated on its OWN terms first. Splicing p directly into `\A(?:` + p +
-// `)\z` is unsafe: a pattern carrying an unbalanced paren (e.g. "foo)|(evil")
-// would close the wrapper group early and promote a top-level alternation,
-// escaping the anchor into a prefix/suffix match. A pattern that compiles
-// standalone has balanced groups, so the subsequent splice cannot restructure
-// the wrapper. RE2 is linear-time, so there is no ReDoS surface in either
-// compile.
+// unanchored/partial. It is the shared regexanchor.Compile — the same hardened
+// (compile-standalone-then-wrap) anchoring the reconciliation core uses, so the
+// two cannot diverge.
 func anchoredPattern(p string) (*regexp.Regexp, error) {
-	if _, err := regexp.Compile(p); err != nil {
-		return nil, err
-	}
-	return regexp.Compile(`\A(?:` + p + `)\z`)
+	return regexanchor.Compile(p)
 }
 
 // Validate checks the policy block. It is exported because `kcp migration

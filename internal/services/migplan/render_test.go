@@ -2,9 +2,6 @@ package migplan
 
 import (
 	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,40 +96,5 @@ func TestRenderReportSuccessAndVerbose(t *testing.T) {
 	}
 	if !strings.Contains(out, "↳ source present · mirror mirroring · target present · routes ->source") {
 		t.Errorf("--verbose must show the per-topic facts line; got:\n%s", out)
-	}
-}
-
-func TestWriteArtifacts(t *testing.T) {
-	dir := t.TempDir()
-	a := &reconcile.Artifacts{
-		Topics:          []string{"a", "b"},
-		FenceRules:      []byte("fencing: []\n"),
-		SwitchoverRules: []byte("routing: {}\n"),
-	}
-	if err := WriteArtifacts(dir, a); err != nil {
-		t.Fatal(err)
-	}
-	tj, err := os.ReadFile(filepath.Join(dir, "topics.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var topics []string
-	if err := json.Unmarshal(tj, &topics); err != nil {
-		t.Fatalf("topics.json is not a JSON array: %v", err)
-	}
-	if len(topics) != 2 || topics[0] != "a" {
-		t.Errorf("topics.json = %v, want [a b]", topics)
-	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "fence-rules.yaml")); !strings.Contains(string(b), "fencing") {
-		t.Error("fence-rules.yaml missing or wrong content")
-	}
-	if b, _ := os.ReadFile(filepath.Join(dir, "switchover-rules.yaml")); !strings.Contains(string(b), "routing") {
-		t.Error("switchover-rules.yaml missing or wrong content")
-	}
-}
-
-func TestWriteArtifactsNil(t *testing.T) {
-	if err := WriteArtifacts(t.TempDir(), nil); err == nil {
-		t.Fatal("expected an error writing nil artifacts")
 	}
 }

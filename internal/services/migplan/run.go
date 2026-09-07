@@ -33,8 +33,10 @@ type Result struct {
 
 	// GatewayYAML is the whole gateway CR the engine pulled, exactly as read.
 	// Set on both success and refusal (the pull precedes the checks). A caller
-	// can re-pull the CR just before mutating it and diff the two to detect
-	// drift since this plan was computed.
+	// can re-pull the CR just before mutating it and diff against this to detect
+	// drift since the plan was computed — diffing a stable sub-tree (e.g. spec),
+	// not the raw bytes, which also carry volatile status/resourceVersion/
+	// managedFields that change on every unrelated update.
 	GatewayYAML string
 
 	// Report is the full per-topic report, for rendering/diagnostics (the CLI
@@ -42,25 +44,58 @@ type Result struct {
 	Report reconcile.Report
 }
 
+// reconcileOptions holds the two dependencies Reconcile builds by default but
+// lets a caller override: the gateway source and the report's destination.
+type reconcileOptions struct {
+	gateway GatewayConfigSource // nil ⇒ pull the live CR from spec.gateway
+	out     io.Writer           // nil ⇒ os.Stdout
+}
+
+// Option customises Reconcile. Production and the state machine pass none.
+type Option func(*reconcileOptions)
+
+// WithGatewaySource overrides the gateway source. Tests use it to feed a static
+// gateway fixture (NewGatewayFile) so the whole composition can be exercised
+// without reaching Kubernetes; production pulls the live CR.
+func WithGatewaySource(s GatewayConfigSource) Option {
+	return func(o *reconcileOptions) { o.gateway = s }
+}
+
+// WithOutput redirects the plan report (default os.Stdout), so a caller can
+// capture, quiet, or relocate it.
+func WithOutput(w io.Writer) Option {
+	return func(o *reconcileOptions) { o.out = w }
+}
+
 // Reconcile is the single in-code entry point: given the parsed manifest, it
 // derives the selector from spec.topicGroup, pulls the live Gateway CR named in
 // spec.gateway, reads live source/target/link state, runs the engine, renders
-// the plan report to stdout, and returns the Result. It opens the cluster
-// connections and closes them before returning. err is an I/O failure only; a
-// refusal is Result.Refused.
+// the plan report, and returns the Result. It opens the cluster connections and
+// closes them before returning. err is an I/O failure only; a refusal is
+// Result.Refused.
 //
 // The engine owns its own narrative: every caller (the command, the migration
 // state machine) gets the report shown without rendering it themselves, and
-// consumes the returned Result for the machine-facing outputs.
-func Reconcile(ctx context.Context, g *manifest.GatewayMigration) (*Result, error) {
+// consumes the returned Result for the machine-facing outputs. The gateway
+// source and the report destination are injectable (WithGatewaySource /
+// WithOutput) for testing without live Kubernetes; both default to production.
+func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option) (*Result, error) {
+	o := reconcileOptions{}
+	for _, opt := range opts {
+		opt(&o)
+	}
+
 	in, err := buildReconcileInput(g)
 	if err != nil {
 		return nil, err
 	}
 
-	gw, err := buildGatewaySource(g, in.Route)
-	if err != nil {
-		return nil, err
+	gw := o.gateway
+	if gw == nil {
+		gw, err = buildGatewaySource(g, in.Route)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	link, err := buildLinkStatusProvider(g)
@@ -87,8 +122,12 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration) (*Result, erro
 	res := newResult(plan)
 
 	// The engine renders its own report so no caller has to.
+	out := o.out
+	if out == nil {
+		out = os.Stdout
+	}
 	tg := g.Spec.TopicGroup[0]
-	RenderReport(os.Stdout, res.Report, RenderView{
+	RenderReport(out, res.Report, RenderView{
 		Route:        tg.Route,
 		TargetDomain: tg.TargetStreamingDomain,
 		ArtifactNote: "plan ready",

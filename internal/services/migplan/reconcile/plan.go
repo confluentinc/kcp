@@ -52,7 +52,7 @@ func (m MirrorState) String() string {
 type TopicVerdict struct {
 	Topic      string
 	Verdict    Verdict
-	Reason     string // fail-fast only: F-code + human message
+	Reason     string // fail-fast only: the human-readable reason the topic is blocked
 	S, M, T, R string // diagnostics for --verbose
 }
 
@@ -89,7 +89,7 @@ type Artifacts struct {
 
 type Plan struct {
 	Report    Report
-	Artifacts *Artifacts // nil iff Report.Refused()
+	Artifacts *Artifacts // nil when refused OR when nothing is migratable (a no-op)
 
 	// GatewayYAML is the whole gateway CR the plan was computed against, exactly
 	// as pulled. Set even on a refusal (the pull precedes the checks) and empty

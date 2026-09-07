@@ -1,6 +1,6 @@
 package reconcile
 
-import "regexp"
+import "github.com/confluentinc/kcp/internal/regexanchor"
 
 // OwnerRoute resolves the domain that owns topic per the routing conditions:
 // the first condition it matches (exact Topics OR anchored TopicPatterns, in
@@ -8,8 +8,10 @@ import "regexp"
 // (empty defaultDomain) with no matching condition.
 //
 // Mirrors the Gateway's DynamicRouterState.ownerRoute. Patterns are compiled
-// here anchored full-match; compilation is assumed to have been validated
-// upstream (preconditions/explode), so a bad pattern is treated as non-matching.
+// here anchored full-match. A pattern that does not compile is treated as
+// non-matching (fail closed) — the "gateway routing patterns compile"
+// precondition refuses the run before this point if any operator pattern is
+// uncompilable, so silent mis-routing cannot ship.
 func OwnerRoute(topic string, conditions []Condition, defaultDomain string) (string, bool) {
 	for _, c := range conditions {
 		for _, t := range c.Topics {
@@ -18,7 +20,7 @@ func OwnerRoute(topic string, conditions []Condition, defaultDomain string) (str
 			}
 		}
 		for _, p := range c.TopicPatterns {
-			re, err := regexp.Compile("^(?:" + p + ")$")
+			re, err := regexanchor.Compile(p)
 			if err != nil {
 				continue
 			}

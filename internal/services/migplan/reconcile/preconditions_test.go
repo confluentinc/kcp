@@ -50,6 +50,29 @@ func TestPreconditionsFailures(t *testing.T) {
 	if _, _, ok := CheckPreconditions(base, gw3, false, ClusterIDs{}); ok {
 		t.Error("more than two bound domains must fail")
 	}
+
+	// an operator routing pattern RE2 cannot compile must refuse (rather than
+	// letting OwnerRoute silently mis-route the topic).
+	gw4 := dynGateway()
+	gw4.Route.Rules["routing"].(map[string]any)["conditions"] = []any{
+		map[string]any{"streamingDomain": "cc", "topicPatterns": []any{"team-(a"}},
+	}
+	res, _, ok := CheckPreconditions(base, gw4, false, ClusterIDs{})
+	if ok {
+		t.Error("an uncompilable operator routing pattern must fail")
+	}
+	if !hasFailedCheck(res, "gateway routing patterns compile") {
+		t.Errorf("expected the routing-patterns-compile check to fail, got %+v", res)
+	}
+}
+
+func hasFailedCheck(res []PreconditionResult, name string) bool {
+	for _, r := range res {
+		if r.Name == name && !r.OK {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPreconditionsClusterIdentity(t *testing.T) {

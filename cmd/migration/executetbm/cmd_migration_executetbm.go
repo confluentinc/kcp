@@ -17,11 +17,11 @@ var (
 	tbmStateFile string
 )
 
-// reconcileFn is the engine entry point the command calls to produce the
-// reconcile plan. A package var so the command's own tests, which exercise the
-// FSM scaffold with unreachable placeholder endpoints, can stub it; production
-// always uses the real engine.
-var reconcileFn = migplan.Reconcile
+// reconcileFunc is the engine entry point the command calls to produce the
+// reconcile plan. Injected via newExecuteTBMCmd so the command's own tests,
+// which exercise the FSM scaffold with unreachable placeholder endpoints, can
+// pass a stub; production binds the real engine.
+type reconcileFunc func(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error)
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
@@ -37,8 +37,15 @@ SAME manifest content resumes from the last completed step. A later run with a C
 manifest for the SAME name is refused outright, with no override — a genuinely new
 migration needs a new metadata.name.`
 
-// NewMigrationExecuteTBMCmd builds the `execute-tbm` command.
+// NewMigrationExecuteTBMCmd builds the `execute-tbm` command bound to the real
+// reconciliation engine.
 func NewMigrationExecuteTBMCmd() *cobra.Command {
+	return newExecuteTBMCmd(migplan.Reconcile)
+}
+
+// newExecuteTBMCmd builds the command with the reconcile entry point injected,
+// so tests can pass a stub instead of the live engine.
+func newExecuteTBMCmd(reconcile reconcileFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "execute-tbm",
 		Short:         "Execute a Topic-Batch Migration run (scaffold: noop transitions)",
@@ -49,7 +56,7 @@ func NewMigrationExecuteTBMCmd() *cobra.Command {
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		PreRunE:       func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
-		RunE:          runMigrationExecuteTBM,
+		RunE:          func(c *cobra.Command, _ []string) error { return runMigrationExecuteTBM(c, reconcile) },
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
@@ -61,7 +68,7 @@ func NewMigrationExecuteTBMCmd() *cobra.Command {
 	return cmd
 }
 
-func runMigrationExecuteTBM(cmd *cobra.Command, args []string) error {
+func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
@@ -109,7 +116,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, args []string) error {
 	// The state machine does not consume res yet: wiring res.Topics /
 	// res.FenceYAML / res.SwitchoverYAML (and honouring res.Refused) into the TBM
 	// transitions is the next step.
-	res, err := reconcileFn(cmd.Context(), g)
+	res, err := reconcile(cmd.Context(), g)
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}

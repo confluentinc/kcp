@@ -1,11 +1,8 @@
 package migplan
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
@@ -165,30 +162,4 @@ func unattachedWarnings(r reconcile.Report) []string {
 		}
 	}
 	return out
-}
-
-// WriteArtifacts writes topics.json (a JSON array), fence-rules.yaml, and
-// switchover-rules.yaml into dir.
-func WriteArtifacts(dir string, a *reconcile.Artifacts) error {
-	if a == nil {
-		return fmt.Errorf("no artifacts to write")
-	}
-	topicsJSON, err := json.MarshalIndent(a.Topics, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshaling topics.json: %w", err)
-	}
-	writes := []struct {
-		name string
-		data []byte
-	}{
-		{"topics.json", topicsJSON},
-		{"fence-rules.yaml", a.FenceRules},
-		{"switchover-rules.yaml", a.SwitchoverRules},
-	}
-	for _, wr := range writes {
-		if err := os.WriteFile(filepath.Join(dir, wr.name), wr.data, 0o644); err != nil {
-			return fmt.Errorf("writing %s: %w", wr.name, err)
-		}
-	}
-	return nil
 }

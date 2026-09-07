@@ -92,7 +92,7 @@ func TestReconcileHappyPath(t *testing.T) {
 func TestReconcileRefusesOnFailFast(t *testing.T) {
 	gw := dynGateway()
 	in := ReconcileInput{Topics: []string{"lonely"}, Route: "migration-route", TargetDomain: "cc"}
-	// present on source, but not a mirror -> F3
+	// present on source, but not a mirror -> blocked (not on the cluster link)
 	p := Reconcile(in, gw, []string{"lonely"}, nil, map[string]MirrorState{}, false, ClusterIDs{})
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatal("a fail-fast topic must refuse and emit no artifacts")

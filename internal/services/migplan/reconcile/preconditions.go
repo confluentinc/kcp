@@ -1,6 +1,10 @@
 package reconcile
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/confluentinc/kcp/internal/regexanchor"
+)
 
 // ReconcileInput is the engine-owned request, decoupled from the manifest.
 type ReconcileInput struct {
@@ -120,6 +124,19 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 			fmt.Sprintf("spec.target.clusterId is %q, but the target cluster reports %q", in.TargetClusterID, ids.Target)))
 	}
 
+	// The operator's routing-condition patterns are used by OwnerRoute to resolve
+	// which domain owns a topic. A pattern RE2 cannot compile (e.g. a Java-only
+	// construct) would be silently treated as non-matching and mis-route the
+	// topic, flipping its verdict. Validate them up front and refuse rather than
+	// mis-classify.
+	projected := rt.Project()
+	if bad, patErr := firstUncompilablePattern(projected.Conditions); patErr != nil {
+		res = append(res, fail("gateway routing patterns compile",
+			fmt.Sprintf("routing condition pattern %q does not compile as an anchored full-match: %v", bad, patErr)))
+	} else {
+		res = append(res, pass("gateway routing patterns compile"))
+	}
+
 	ok := true
 	for _, r := range res {
 		if !r.OK {
@@ -127,11 +144,26 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 		}
 	}
 	if ok {
-		view = rt.Project()
+		view = projected
 		view.SourceDomain = source
 		view.TargetDomain = in.TargetDomain
 	}
 	return res, view, ok
+}
+
+// firstUncompilablePattern returns the first routing-condition pattern that does
+// not compile as an anchored full-match, and the compile error. It compiles via
+// the same hardened anchoring OwnerRoute uses, so a pattern that passes here
+// cannot escape its anchor there.
+func firstUncompilablePattern(conditions []Condition) (string, error) {
+	for _, c := range conditions {
+		for _, p := range c.TopicPatterns {
+			if _, err := regexanchor.Compile(p); err != nil {
+				return p, err
+			}
+		}
+	}
+	return "", nil
 }
 
 // routingParent adapts a RouteConfig.Rules map (which has the rules subtree
