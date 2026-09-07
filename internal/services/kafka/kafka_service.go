@@ -210,16 +210,24 @@ func (ks *KafkaService) scanConsumerGroups() (*types.ConsumerGroups, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to describe consumer groups: %v", err)
 	}
+	// Track groups whose describe was denied/errored so their detail is flagged
+	// incomplete — a per-group DescribeGroups error (e.g. missing DescribeGroup
+	// authz) returns an empty members list that must NOT be presented as complete.
+	describeErr := make(map[string]bool)
 	for _, gd := range descriptions {
 		if gd != nil && gd.Err != sarama.ErrNoError {
 			slog.Warn("⚠️ failed to describe a consumer group; recording it without full detail", "group", gd.GroupId, "error", gd.Err)
+			describeErr[gd.GroupId] = true
 		}
 	}
 	coordinators := ks.groupScanner.Coordinators(allIDs)
 
 	groups := BuildConsumerGroups(listings, descriptions, coordinators)
 	for i := range groups.Details {
-		groups.Details[i].DetailComplete = isClassicDescribable(groups.Details[i].Type)
+		d := &groups.Details[i]
+		// DetailComplete only when the group is classic-describable AND its own
+		// describe actually succeeded.
+		d.DetailComplete = isClassicDescribable(d.Type) && !describeErr[d.GroupID]
 	}
 	slog.Info("✅ found consumer groups", "count", len(groups.Details))
 	return groups, nil
