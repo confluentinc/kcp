@@ -12,6 +12,7 @@ type KafkaAdminClientInformation struct {
 	Topics            *Topics          `json:"topics"`
 	Acls              []Acls           `json:"acls"`
 	ConnectClusters   []ConnectCluster `json:"connect_clusters,omitempty"`
+	ConsumerGroups    *ConsumerGroups  `json:"consumer_groups,omitempty"`
 }
 
 // MergeFrom merges values from another KafkaAdminClientInformation
@@ -36,6 +37,9 @@ func (c *KafkaAdminClientInformation) MergeFrom(other KafkaAdminClientInformatio
 	// Merge ConnectClusters: match by ConnectRestURL, then connectors by name (new wins);
 	// endpoints not seen this run are preserved.
 	c.ConnectClusters = mergeConnectClusters(c.ConnectClusters, other.ConnectClusters)
+
+	// Merge ConsumerGroups: new groups take precedence, old groups preserved if not re-discovered
+	c.ConsumerGroups = mergeConsumerGroups(c.ConsumerGroups, other.ConsumerGroups)
 }
 
 func (c *KafkaAdminClientInformation) CalculateTopicSummary() TopicSummary {
@@ -49,6 +53,20 @@ func (c *KafkaAdminClientInformation) SetTopics(topicDetails []TopicDetails) {
 	c.Topics = &Topics{
 		Details: topicDetails,
 		Summary: CalculateTopicSummaryFromDetails(topicDetails),
+	}
+}
+
+// SetConsumerGroups sets ConsumerGroups from groups, recomputing Summary from
+// Details so it always reflects the stored details (mirrors SetTopics). A nil
+// groups clears ConsumerGroups back to "not scanned".
+func (c *KafkaAdminClientInformation) SetConsumerGroups(groups *ConsumerGroups) {
+	if groups == nil {
+		c.ConsumerGroups = nil
+		return
+	}
+	c.ConsumerGroups = &ConsumerGroups{
+		Details: groups.Details,
+		Summary: CalculateConsumerGroupSummary(groups.Details),
 	}
 }
 
@@ -107,6 +125,39 @@ func mergeTopics(newTopics, oldTopics *Topics) *Topics {
 	return &Topics{
 		Details: mergedDetails,
 		Summary: CalculateTopicSummaryFromDetails(mergedDetails),
+	}
+}
+
+// mergeConsumerGroups merges two ConsumerGroups, with newGroups taking precedence for duplicates (by GroupID)
+func mergeConsumerGroups(newGroups, oldGroups *ConsumerGroups) *ConsumerGroups {
+	// If no old groups, just return new (even if empty)
+	if oldGroups == nil || len(oldGroups.Details) == 0 {
+		return newGroups
+	}
+
+	// If no new groups, preserve old
+	if newGroups == nil || len(newGroups.Details) == 0 {
+		return oldGroups
+	}
+
+	// Merge: start with old, update/add with new
+	groupsByID := make(map[string]ConsumerGroupDetails)
+	for _, group := range oldGroups.Details {
+		groupsByID[group.GroupID] = group
+	}
+	for _, group := range newGroups.Details {
+		groupsByID[group.GroupID] = group // new takes precedence
+	}
+
+	// Convert back to slice
+	mergedDetails := make([]ConsumerGroupDetails, 0, len(groupsByID))
+	for _, group := range groupsByID {
+		mergedDetails = append(mergedDetails, group)
+	}
+
+	return &ConsumerGroups{
+		Details: mergedDetails,
+		Summary: CalculateConsumerGroupSummary(mergedDetails),
 	}
 }
 
