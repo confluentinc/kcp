@@ -19,8 +19,12 @@ import (
 // structurally-valid v2 file. v3 is NOT additive: it restructures self-managed
 // Connect's kafka_admin_client_information.self_managed_connectors into
 // connect_clusters, so every file below v3 runs the real "nest self_managed_connectors
-// under connect_clusters" upcaster (self-gating: a no-op for files without it).
-const CurrentSchemaVersion = 3
+// under connect_clusters" upcaster (self-gating: a no-op for files without it). v4
+// added the additive, omitempty consumer_groups field to
+// kafka_admin_client_information (consumer-group discovery) — again no real
+// transform needed, since an existing v3 file is already a structurally-valid v4
+// file; see the "-> v4" no-op step in steps.go.
+const CurrentSchemaVersion = 4
 
 // ErrNewerSchema means the file was written by a newer (released) KCP than this build can model.
 var ErrNewerSchema = errors.New("state file schema is newer than this KCP build supports")
