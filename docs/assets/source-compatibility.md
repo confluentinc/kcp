@@ -55,6 +55,25 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 
 </div>
 
+## Consumer group discovery
+
+`kcp scan clusters` discovers consumer groups by default (disable with `--skip-consumer-groups`). Support mirrors the `kcp scan clusters` row above: available for **MSK Provisioned/Express** and **Apache Kafka**, and **not** for **MSK Serverless** (no Kafka Admin API).
+
+For every group KCP records its id, state, coordinator, and **type**. The type is the group's KIP-848 protocol, and which types a cluster can report depends on its Kafka version:
+
+| Group type  | Introduced           | Notes                                                                  |
+| :---------- | :------------------- | :--------------------------------------------------------------------- |
+| `classic`   | all versions         | The original consumer-group protocol. Fully described.                 |
+| `consumer`  | Kafka 4.0 (KIP-848)  | New consumer rebalance protocol.                                       |
+| `share`     | Kafka 4.1 (KIP-932)  | Share groups; requires `group.share.enable` on the broker.            |
+| `streams`   | Kafka 4.2 (KIP-1071) | Kafka Streams groups.                                                  |
+
+> [!NOTE]
+> Reading the group **type** requires a broker running **Kafka 3.8 or newer** (the `ListGroups` v5 API). Against older brokers the type is reported as blank and every group is treated as classic-protocol.
+
+> [!IMPORTANT]
+> Only `classic` groups are **fully described** — their members and per-member topic assignments are captured. `consumer`, `share`, and `streams` groups record their type, state, and coordinator but not member-level detail (that requires the newer `ConsumerGroupDescribe` API, which KCP does not yet call). Such groups are flagged with incomplete detail in `kcp-state.json` and marked "partial" in the UI's Consumer Groups tab.
+
 ## Confluent Cloud destination
 
 The matrix above describes _source_ support. Independently, three `create-asset` commands require a `--cc-type` declaration naming the Confluent Cloud _destination_ — `commercial` (Standard) or `government` (**Confluent Cloud for Government**):
