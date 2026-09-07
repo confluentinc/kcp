@@ -474,6 +474,9 @@ func (s *SelfManagedConnectorsScanner) collectConnectPrometheusMetrics(ctx conte
 		}
 		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, creds.Prometheus.TLS.InsecureSkipVerify))
 	}
+	if creds.Prometheus.Timeout > 0 {
+		promOpts = append(promOpts, client.WithPrometheusTimeout(creds.Prometheus.Timeout))
+	}
 
 	var labels map[string]string
 	if creds.Prometheus.Filter != nil {

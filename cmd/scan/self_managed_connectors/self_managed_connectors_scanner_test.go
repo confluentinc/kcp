@@ -1146,3 +1146,37 @@ func TestParseOpts_MetricsClusterMissingFromCredsFile(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "credentials file")
 }
+
+// TestRun_PrometheusTimeoutHonored proves creds.Prometheus.Timeout is actually
+// threaded into the HTTP client rather than silently ignored. The server
+// sleeps longer than the configured timeout; if Timeout were dropped, the
+// request would succeed under the 30s client default and connector-count
+// would be populated. Because it IS enforced, the query times out, is skipped
+// (non-fatal, matching R10's unreachable-endpoint behavior), and the
+// aggregate is absent.
+func TestRun_PrometheusTimeoutHonored(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		connectPromHandler(w, r)
+	}))
+	defer srv.Close()
+
+	st := stateWithCluster()
+	scanner, _ := newScannerWithClient(t, st, testArn, connectMockClient())
+	scanner.metricsSource = "prometheus"
+	scanner.metricsRange = "1d"
+	scanner.metricsClusterCreds = &types.OSKClusterAuth{
+		ID:         testArn,
+		Prometheus: &types.PrometheusConfig{URL: srv.URL, Timeout: 20 * time.Millisecond},
+	}
+
+	require.NoError(t, scanner.Run(), "a timed-out metrics query must not fail the scan")
+
+	cluster, err := st.GetClusterByArn(testArn)
+	require.NoError(t, err)
+	conns := cluster.KafkaAdminClientInformation.ConnectClusters[0]
+	if conns.Metrics != nil {
+		assert.NotContains(t, conns.Metrics.Aggregates, "connector-count",
+			"the 20ms timeout must have aborted the query before the 100ms-delayed response arrived — if this contains connector-count, Timeout is being ignored")
+	}
+}

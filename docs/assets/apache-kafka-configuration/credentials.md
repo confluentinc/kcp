@@ -166,6 +166,7 @@ prometheus:
   filter:                       # optional — scope queries to a specific target
     labels:
       job: confluent/kafka-jmx-exporter
+  timeout: 60s                  # optional — HTTP client timeout per query (default: 30s)
   metric_names:                 # optional — see "Metric-name overrides" below
     BytesInPerSec: acme_broker_bytesin_total
     MessagesInPerSec: acme_broker_messagesin_total
@@ -180,6 +181,7 @@ prometheus:
 | `tls.ca_cert`               | no       | CA certificate for HTTPS Prometheus endpoints.                       |
 | `tls.insecure_skip_verify`  | no       | Skip TLS verification (test environments only).                      |
 | `filter.labels`             | no       | Map of Prometheus label selectors to scope queries. When set, all PromQL queries include these as `{key="value"}` filters. Useful when a single Prometheus scrapes multiple clusters. |
+| `timeout`                   | no       | HTTP client timeout per Prometheus query, as a Go duration (e.g. `60s`, `2m`). Defaults to `30s`. Raise this for large `--metrics-range` queries against high-cardinality clusters that respond slowly. |
 | `metric_names`              | no       | Map of logical metric label → base Prometheus series name for exporters that relabel the standard series. See [Metric-name overrides](#metric-name-overrides). |
 | `connect_metric_names`       | no       | Map of logical Connect-metric label → base Prometheus series name, for `kcp scan self-managed-connectors` scans of Kafka Connect workers. See [Connect metric-name overrides](connect-metrics-collection.md#metric-name-overrides). |
 
