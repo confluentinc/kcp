@@ -2,6 +2,7 @@ package executetbm
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,11 +10,27 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// withStubbedReconcile replaces the engine call with a no-op success for the
+// duration of a test. These are FSM-scaffold tests: the manifest points at
+// placeholder MSK/CC endpoints that are unreachable, so the real engine (which
+// connects to the live gateway CR + source/target/link) cannot run here. The
+// engine itself is tested in internal/services/migplan.
+func withStubbedReconcile(t *testing.T) {
+	t.Helper()
+	original := reconcileFn
+	reconcileFn = func(context.Context, *manifest.GatewayMigration) (*migplan.Result, error) {
+		return &migplan.Result{}, nil
+	}
+	t.Cleanup(func() { reconcileFn = original })
+}
 
 // gatewayManifestTemplate is a complete, valid GatewayMigration document with
 // a templated metadata.name — the only field these tests vary.
@@ -149,6 +166,7 @@ func TestResolveTBMConfig_HashDiffers_RefusesUnconditionally(t *testing.T) {
 
 func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 	withFastTBMTransitions(t)
+	withStubbedReconcile(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-2", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
@@ -191,6 +209,7 @@ func TestExecuteTBM_TbmStateFileUnstatable_FailsInsteadOfTreatingAsFresh(t *test
 
 func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	withFastTBMTransitions(t)
+	withStubbedReconcile(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-3", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")

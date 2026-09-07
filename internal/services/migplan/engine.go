@@ -52,5 +52,9 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	}
 	ids := reconcile.ClusterIDs{Source: srcID, Target: tgtID, LinkSource: link.SourceClusterID}
 
-	return reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids), nil
+	plan := reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids)
+	// Carry the gateway CR the plan was computed against, so a caller can re-pull
+	// it before mutating and diff for drift.
+	plan.GatewayYAML = gw.RawYAML
+	return plan, nil
 }

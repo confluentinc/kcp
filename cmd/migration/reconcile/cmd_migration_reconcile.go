@@ -17,8 +17,7 @@ import (
 )
 
 type reconcileFlags struct {
-	manifestPath  string
-	gatewayConfig string
+	manifestPath string
 }
 
 func NewMigrationReconcileCmd() *cobra.Command {
@@ -29,11 +28,12 @@ func NewMigrationReconcileCmd() *cobra.Command {
 		Short: "Reconcile the migration plan against live source, target, and cluster-link state",
 		Long: `Prototype command that drives the migration reconciliation engine.
 
-It loads the GatewayMigration manifest and a static gateway-config file, reads the
-live source topics, target topics, and cluster-link state, then reconciles them
-against the route + target streaming domain + topic selection declared in the
-manifest's spec.topicGroup. It renders a per-topic report and echoes the three
-artifacts (topics.json, fence-rules.yaml, switchover-rules.yaml) to stdout.
+It loads the GatewayMigration manifest, pulls the live Gateway CR named in
+spec.gateway, reads the live source topics, target topics, and cluster-link
+state, then reconciles them against the route + target streaming domain + topic
+selection declared in the manifest's spec.topicGroup. It renders a per-topic
+report and echoes the three artifacts (topics.json, fence-rules.yaml,
+switchover-rules.yaml) to stdout.
 
 The command writes no files and never mutates the gateway.`,
 		Hidden:        true,
@@ -48,12 +48,9 @@ The command writes no files and never mutates the gateway.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the GatewayMigration manifest (route, target domain and topic selection come from its spec.topicGroup).")
-	cmd.Flags().StringVar(&f.gatewayConfig, "gateway-config", "", "Path to the static gateway CR YAML (prototype stand-in for the live k8s pull).")
+	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the GatewayMigration manifest (route, target domain and topic selection come from its spec.topicGroup; the gateway CR is pulled live from spec.gateway).")
 
-	for _, name := range []string{"migration-yaml", "gateway-config"} {
-		_ = cmd.MarkFlagRequired(name)
-	}
+	_ = cmd.MarkFlagRequired("migration-yaml")
 
 	return cmd
 }
@@ -64,22 +61,15 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 		return err
 	}
 
-	res, err := migplan.Reconcile(cmd.Context(), g, f.gatewayConfig)
+	// Reconcile renders its own report; this prototype command additionally
+	// echoes the raw artifacts so they can be eyeballed.
+	res, err := migplan.Reconcile(cmd.Context(), g)
 	if err != nil {
 		return err
 	}
 
-	w := cmd.OutOrStdout()
-	tg := g.Spec.TopicGroup[0] // Reconcile returned a Result ⇒ exactly one entry
-	verbose, _ := cmd.Flags().GetBool("verbose")
-	migplan.RenderReport(w, res.Report, migplan.RenderView{
-		Route:        tg.Route,
-		TargetDomain: tg.TargetStreamingDomain,
-		Verbose:      verbose,
-		ArtifactNote: "artifacts echoed below",
-	})
-
 	if !res.Refused && len(res.Topics) > 0 {
+		w := cmd.OutOrStdout()
 		topicsJSON, _ := json.MarshalIndent(res.Topics, "", "  ")
 		_, _ = fmt.Fprintf(w, "\n=== topics.json ===\n%s\n", topicsJSON)
 		_, _ = fmt.Fprintf(w, "\n=== fence-rules.yaml ===\n%s", res.FenceYAML)

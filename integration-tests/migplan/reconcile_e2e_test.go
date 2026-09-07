@@ -72,6 +72,12 @@ func TestEngineHappyPathLive(t *testing.T) {
 	if plan.Artifacts == nil {
 		t.Fatal("expected non-nil Artifacts")
 	}
+
+	// The plan must carry the gateway CR it was computed against, for the caller's
+	// later drift diff. Here the source is the file fixture, so it equals it.
+	if !strings.Contains(plan.GatewayYAML, "migration-route") {
+		t.Errorf("plan.GatewayYAML should carry the pulled gateway CR, got:\n%s", plan.GatewayYAML)
+	}
 	wantTopics := []string{"billing-v2", "team-a.orders", "team-a.payments"} // sorted
 	if !reflect.DeepEqual(plan.Artifacts.Topics, wantTopics) {
 		t.Errorf("Artifacts.Topics = %v, want %v", plan.Artifacts.Topics, wantTopics)
@@ -102,6 +108,21 @@ func TestEngineHappyPathLive(t *testing.T) {
 	// The switchover must route the migrated topics to the target domain (cc).
 	if !strings.Contains(switchover, "cc") {
 		t.Errorf("SwitchoverRules does not route to target domain cc:\n%s", switchover)
+	}
+
+	// PRESERVATION: the operator's pre-existing gateway edits (a TRANSACTION
+	// fence, an ops-audit fence, a team-a.* routing condition) must survive
+	// untouched in both artifacts — the engine only adds the migrated batch.
+	for _, must := range []string{"TRANSACTION", "ops-audit"} {
+		if !strings.Contains(fence, must) {
+			t.Errorf("FenceRules dropped the operator's entry %q:\n%s", must, fence)
+		}
+		if !strings.Contains(switchover, must) {
+			t.Errorf("SwitchoverRules dropped the operator's entry %q:\n%s", must, switchover)
+		}
+	}
+	if !strings.Contains(switchover, "team-a.*") {
+		t.Errorf("SwitchoverRules dropped the operator's routing condition (team-a.*):\n%s", switchover)
 	}
 }
 

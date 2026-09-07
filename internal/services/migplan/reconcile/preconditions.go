@@ -26,6 +26,11 @@ type ClusterIDs struct {
 
 type GatewayConfig struct {
 	Route *RouteConfig // the single route named by the input, resolved by the provider
+
+	// RawYAML is the whole gateway CR exactly as it was pulled, carried through
+	// untouched. The reconcile core does not read it — it is provenance the
+	// caller can diff against a later re-pull to detect drift before mutating.
+	RawYAML string
 }
 
 type RouteConfig struct {

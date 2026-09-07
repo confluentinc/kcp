@@ -90,4 +90,10 @@ type Artifacts struct {
 type Plan struct {
 	Report    Report
 	Artifacts *Artifacts // nil iff Report.Refused()
+
+	// GatewayYAML is the whole gateway CR the plan was computed against, exactly
+	// as pulled. Set even on a refusal (the pull precedes the checks) and empty
+	// only if the source did not carry it. It exists for a later drift diff, not
+	// for the plan itself.
+	GatewayYAML string
 }

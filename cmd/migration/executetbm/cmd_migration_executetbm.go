@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -15,6 +16,12 @@ var (
 	manifestFile string
 	tbmStateFile string
 )
+
+// reconcileFn is the engine entry point the command calls to produce the
+// reconcile plan. A package var so the command's own tests, which exercise the
+// FSM scaffold with unreachable placeholder endpoints, can stub it; production
+// always uses the real engine.
+var reconcileFn = migplan.Reconcile
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
@@ -91,6 +98,23 @@ func runMigrationExecuteTBM(cmd *cobra.Command, args []string) error {
 	}
 
 	actions := tbm.NewTBMActions()
+
+	// Produce the reconcile plan for this migration: the engine reads the live
+	// Gateway CR + source/target/cluster-link state, renders its own report, and
+	// returns the promote topic list plus the fence and switchover rules
+	// artifacts. err here is an I/O failure (the plan could not be produced); an
+	// infeasible-but-reachable plan is not an error — it surfaces as res.Refused
+	// with res.Reasons.
+	//
+	// The state machine does not consume res yet: wiring res.Topics /
+	// res.FenceYAML / res.SwitchoverYAML (and honouring res.Refused) into the TBM
+	// transitions is the next step.
+	res, err := reconcileFn(cmd.Context(), g)
+	if err != nil {
+		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
+	}
+	_ = res
+
 	orchestrator := tbm.NewTBMOrchestrator(config, actions, tbmState, tbmStateFile)
 
 	if !orchestrator.HasPendingWork() {

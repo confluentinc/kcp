@@ -37,7 +37,7 @@ func (g *GatewayFile) Load(_ context.Context) (*reconcile.GatewayConfig, error) 
 	if err != nil {
 		return nil, err
 	}
-	return &reconcile.GatewayConfig{Route: route}, nil
+	return &reconcile.GatewayConfig{Route: route, RawYAML: string(raw)}, nil
 }
 
 // findRoute extracts the named route from spec.routes[] into a RouteConfig:

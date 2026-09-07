@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
 )
@@ -29,24 +31,37 @@ type Result struct {
 	Refused        bool     // true ⇔ infeasible; the three above are empty
 	Reasons        []string // why, when Refused (failed checks + blocked topics)
 
+	// GatewayYAML is the whole gateway CR the engine pulled, exactly as read.
+	// Set on both success and refusal (the pull precedes the checks). A caller
+	// can re-pull the CR just before mutating it and diff the two to detect
+	// drift since this plan was computed.
+	GatewayYAML string
+
 	// Report is the full per-topic report, for rendering/diagnostics (the CLI
 	// uses it). In-code callers can ignore it and use the fields above.
 	Report reconcile.Report
 }
 
-// Reconcile is the single in-code entry point: given the parsed manifest and the
-// gateway-config file (the prototype stand-in for the live k8s CR pull), it
-// derives the selector from spec.topicGroup, reads live source/target/link state,
-// runs the engine, and returns the Result. It opens the cluster connections and
-// closes them before returning. err is an I/O failure only; a refusal is
-// Result.Refused.
-func Reconcile(ctx context.Context, g *manifest.GatewayMigration, gatewayConfigPath string) (*Result, error) {
+// Reconcile is the single in-code entry point: given the parsed manifest, it
+// derives the selector from spec.topicGroup, pulls the live Gateway CR named in
+// spec.gateway, reads live source/target/link state, runs the engine, renders
+// the plan report to stdout, and returns the Result. It opens the cluster
+// connections and closes them before returning. err is an I/O failure only; a
+// refusal is Result.Refused.
+//
+// The engine owns its own narrative: every caller (the command, the migration
+// state machine) gets the report shown without rendering it themselves, and
+// consumes the returned Result for the machine-facing outputs.
+func Reconcile(ctx context.Context, g *manifest.GatewayMigration) (*Result, error) {
 	in, err := buildReconcileInput(g)
 	if err != nil {
 		return nil, err
 	}
 
-	gw := NewGatewayFile(gatewayConfigPath, in.Route)
+	gw, err := buildGatewaySource(g, in.Route)
+	if err != nil {
+		return nil, err
+	}
 
 	link, err := buildLinkStatusProvider(g)
 	if err != nil {
@@ -69,11 +84,20 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, gatewayConfigP
 	if err != nil {
 		return nil, err
 	}
-	return newResult(plan), nil
+	res := newResult(plan)
+
+	// The engine renders its own report so no caller has to.
+	tg := g.Spec.TopicGroup[0]
+	RenderReport(os.Stdout, res.Report, RenderView{
+		Route:        tg.Route,
+		TargetDomain: tg.TargetStreamingDomain,
+		ArtifactNote: "plan ready",
+	})
+	return res, nil
 }
 
 func newResult(plan *reconcile.Plan) *Result {
-	r := &Result{Refused: plan.Report.Refused(), Report: plan.Report}
+	r := &Result{Refused: plan.Report.Refused(), GatewayYAML: plan.GatewayYAML, Report: plan.Report}
 	if plan.Artifacts != nil {
 		r.Topics = plan.Artifacts.Topics
 		r.FenceYAML = string(plan.Artifacts.FenceRules)
@@ -90,6 +114,18 @@ func newResult(plan *reconcile.Plan) *Result {
 		}
 	}
 	return r
+}
+
+// buildGatewaySource wires the live Gateway CR pull from spec.gateway: the CR is
+// read from Kubernetes by namespace + cr-name via the existing gateway service,
+// using the manifest's kubeconfig (a leading ~/ is expanded).
+func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConfigSource, error) {
+	kubeconfig, err := g.KubeconfigPath()
+	if err != nil {
+		return nil, err
+	}
+	svc := gateway.NewK8sService(kubeconfig)
+	return NewGatewayLive(svc, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName, route), nil
 }
 
 // buildReconcileInput maps the manifest's spec.topicGroup onto the engine-owned
