@@ -8,25 +8,27 @@ interface ClusterConsumerGroupsProps {
 const badgeBase =
   'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium'
 
-// Palette restricted to tones of blue, green, and grey (incl. slate = blue-grey).
+// Soft, light palette: light blue / green / grey / yellow. One hue per group
+// type; states reuse the same soft tones (green=healthy, yellow=transitional,
+// grey=idle/gone).
 const typeColors: Record<string, string> = {
-  classic: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-  consumer: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  share: 'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200',
-  streams: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
+  classic: 'bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-200',
+  consumer: 'bg-green-50 text-green-700 dark:bg-green-900/40 dark:text-green-200',
+  share: 'bg-gray-100 text-gray-600 dark:bg-gray-700/40 dark:text-gray-300',
+  streams: 'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200',
 }
 
 const stateColors: Record<string, string> = {
-  Stable: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200',
-  Empty: 'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200',
-  Dead: 'bg-gray-200 text-gray-600 dark:bg-gray-800 dark:text-gray-400',
+  Stable: 'bg-green-50 text-green-700 dark:bg-green-900/40 dark:text-green-200',
+  Empty: 'bg-gray-100 text-gray-600 dark:bg-gray-700/40 dark:text-gray-300',
+  Dead: 'bg-gray-100 text-gray-500 dark:bg-gray-800/40 dark:text-gray-400',
   PreparingRebalance:
-    'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+    'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200',
   CompletingRebalance:
-    'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
+    'bg-yellow-50 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-200',
 }
 
-const fallbackColor = 'bg-gray-100 text-gray-800 dark:bg-card dark:text-gray-200'
+const fallbackColor = 'bg-gray-100 text-gray-600 dark:bg-gray-700/40 dark:text-gray-300'
 
 const labelFor = (value: string) => (value === '' ? 'unknown' : value)
 
@@ -44,6 +46,7 @@ const StateBadge = ({ state }: { state: string }) => (
 
 export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsProps) => {
   const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [showTypes, setShowTypes] = useState(false)
 
   const consumerGroups = kafkaAdminInfo?.consumer_groups
 
@@ -62,6 +65,18 @@ export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsP
   const summary = consumerGroups.summary
   const details = consumerGroups.details
 
+  const byType = summary?.by_type ?? {}
+  const byState = summary?.by_state ?? {}
+  const totalGroups = summary?.total ?? details.length
+  const stableGroups = byState['Stable'] ?? 0
+  const deadGroups = byState['Dead'] ?? 0
+  const typeStats = [
+    { label: 'Classic', value: byType['classic'] ?? 0 },
+    { label: 'Consumer', value: byType['consumer'] ?? 0 },
+    { label: 'Share', value: byType['share'] ?? 0 },
+    { label: 'Streams', value: byType['streams'] ?? 0 },
+  ]
+
   const toggle = (groupId: string) => {
     setExpanded((prev) => {
       const next = new Set(prev)
@@ -76,32 +91,53 @@ export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsP
 
   return (
     <div className="space-y-6">
-      {/* Header + summary chips */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-lg font-semibold text-foreground">
-          Consumer Groups ({summary?.total ?? details.length})
+      {/* Overview box — matches the Topics Overview styling (header + stat tiles) */}
+      <div className="bg-card rounded-lg border border-border transition-colors overflow-hidden">
+        <h3 className="text-xl font-semibold text-foreground px-6 pt-6">
+          Consumer Groups Overview
         </h3>
-        <div className="flex flex-wrap gap-2">
-          {summary?.by_type &&
-            Object.entries(summary.by_type).map(([type, count]) => (
-              <span
-                key={`t-${type}`}
-                className={`${badgeBase} ${typeColors[type] || fallbackColor}`}
-              >
-                {labelFor(type)}: {count}
-              </span>
-            ))}
-          {summary?.by_state &&
-            Object.entries(summary.by_state).map(([state, count]) => (
-              <span
-                key={`s-${state}`}
-                className={`${badgeBase} ${stateColors[state] || fallbackColor}`}
-              >
-                {labelFor(state)}: {count}
-              </span>
-            ))}
+
+        {/* Total + the two state tiles (Stable / Dead) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 px-6 pt-6">
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">{totalGroups}</div>
+            <div className="text-sm text-muted-foreground">Total Groups</div>
+          </div>
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">{stableGroups}</div>
+            <div className="text-sm text-muted-foreground">Stable Groups</div>
+          </div>
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">{deadGroups}</div>
+            <div className="text-sm text-muted-foreground">Dead Groups</div>
+          </div>
+        </div>
+
+        {/* Expandable per-type breakdown (same stat-tile styling, no badges) */}
+        <div className="px-6 pb-6 pt-4">
+          <button
+            type="button"
+            onClick={() => setShowTypes((v) => !v)}
+            className="inline-flex items-center gap-1 text-sm font-medium text-foreground hover:text-muted-foreground transition-colors"
+            aria-expanded={showTypes}
+          >
+            <span>{showTypes ? '▾' : '▸'}</span>
+            {showTypes ? 'Hide group types' : 'Show group types'}
+          </button>
+          {showTypes && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">
+              {typeStats.map((s) => (
+                <div key={s.label} className="bg-secondary rounded-lg p-4 transition-colors">
+                  <div className="text-2xl font-bold text-foreground">{s.value}</div>
+                  <div className="text-sm text-muted-foreground">{s.label}</div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
+
+      <h3 className="text-lg font-semibold text-foreground">Groups</h3>
 
       <div className="overflow-x-auto">
         <table className="w-full border border-border rounded-lg">
@@ -147,7 +183,7 @@ export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsP
                       {group.group_id}
                       {!group.detail_complete && (
                         <span
-                          className="ml-2 text-xs text-gray-500 dark:text-gray-400"
+                          className="ml-2 text-xs text-yellow-600 dark:text-yellow-400"
                           title="This group type cannot be fully described by the current Kafka client; member assignments may be incomplete."
                         >
                           ⚠ partial
@@ -186,7 +222,7 @@ export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsP
                           </div>
                         )}
                         {!group.detail_complete && (
-                          <p className="mb-3 text-xs text-gray-500 dark:text-gray-400">
+                          <p className="mb-3 text-xs text-yellow-600 dark:text-yellow-400">
                             ⚠ Partial detail: this group's type ({labelFor(group.type)})
                             cannot be fully described by the current Kafka client, so member
                             assignments may be empty.
