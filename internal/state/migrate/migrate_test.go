@@ -87,13 +87,13 @@ func TestUpgradeForwardIncompatibleDevStamped(t *testing.T) {
 }
 
 func TestUpgradeCurrentIsIdentity(t *testing.T) {
-	data := `{"schema_version":3,"msk_sources":{},"kcp_build_info":{"version":"0.9.0"}}`
+	data := `{"schema_version":4,"msk_sources":{},"kcp_build_info":{"version":"0.9.1"}}`
 	got, from, err := Upgrade([]byte(data))
 	if err != nil {
 		t.Fatalf("Upgrade error: %v", err)
 	}
-	if from != "schema_version=3" {
-		t.Errorf("from label = %q, want schema_version=3", from)
+	if from != "schema_version=4" {
+		t.Errorf("from label = %q, want schema_version=4", from)
 	}
 	if string(got) != data {
 		t.Errorf("current-version data must pass through unchanged.\n got: %s\nwant: %s", got, data)
@@ -129,6 +129,40 @@ func TestUpgradeEraCv1WithoutSelfManagedConnectorsIsVersionBumpOnly(t *testing.T
 	wantJSON, _ := json.Marshal(wantDoc)
 	if string(gotJSON) != string(wantJSON) {
 		t.Errorf("only schema_version should change.\n got: %s\nwant: %s", gotJSON, wantJSON)
+	}
+}
+
+func TestUpgradeEraCv3ConsumerGroupsIsVersionBumpOnly(t *testing.T) {
+	// A released schema_version=3 era-C file (a real v0.9.0 file) predates the additive
+	// consumer_groups field (schema_version 4). Because the field is additive + omitempty,
+	// the v3 file is already a structurally-valid v4 file: Upgrade must only bump the
+	// schema_version stamp, no other change.
+	data, err := os.ReadFile(filepath.Join("testdata", "era-c-v3.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, from, err := Upgrade(data)
+	if err != nil {
+		t.Fatalf("Upgrade error: %v", err)
+	}
+	if from != "kcp_build_info.version=0.9.0" {
+		t.Errorf("from label = %q, want kcp_build_info.version=0.9.0", from)
+	}
+	var gotDoc, wantDoc map[string]any
+	if err := json.Unmarshal(got, &gotDoc); err != nil {
+		t.Fatalf("Upgrade output must be valid JSON: %v", err)
+	}
+	if err := json.Unmarshal(data, &wantDoc); err != nil {
+		t.Fatal(err)
+	}
+	wantDoc["schema_version"] = float64(CurrentSchemaVersion)
+	gotJSON, _ := json.Marshal(gotDoc)
+	wantJSON, _ := json.Marshal(wantDoc)
+	if string(gotJSON) != string(wantJSON) {
+		t.Errorf("only schema_version should change.\n got: %s\nwant: %s", gotJSON, wantJSON)
+	}
+	if gotDoc["schema_version"].(float64) != 4 {
+		t.Errorf("schema_version not bumped to 4: %v", gotDoc["schema_version"])
 	}
 }
 
@@ -257,8 +291,8 @@ func TestUpgrade_V1SelfManagedConnectorsToConnectClusters(t *testing.T) {
 	if len(cc["connectors"].([]any)) != 1 {
 		t.Fatalf("connector not carried over: %v", cc["connectors"])
 	}
-	if doc["schema_version"].(float64) != 3 {
-		t.Fatalf("schema_version not bumped to 3: %v", doc["schema_version"])
+	if doc["schema_version"].(float64) != 4 {
+		t.Fatalf("schema_version not bumped to 4: %v", doc["schema_version"])
 	}
 }
 
@@ -302,8 +336,8 @@ func TestUpgrade_EraCUnversionedSelfManagedConnectorsToConnectClusters(t *testin
 	if len(cc["connectors"].([]any)) != 1 {
 		t.Fatalf("connector not carried over: %v", cc["connectors"])
 	}
-	if doc["schema_version"].(float64) != 3 {
-		t.Fatalf("schema_version not bumped to 3: %v", doc["schema_version"])
+	if doc["schema_version"].(float64) != 4 {
+		t.Fatalf("schema_version not bumped to 4: %v", doc["schema_version"])
 	}
 }
 
@@ -355,7 +389,7 @@ func TestUpgrade_EraBSelfManagedConnectorsToConnectClusters(t *testing.T) {
 	if len(cc["connectors"].([]any)) != 1 {
 		t.Fatalf("connector not carried over: %v", cc["connectors"])
 	}
-	if doc["schema_version"].(float64) != 3 {
-		t.Fatalf("schema_version not bumped to 3: %v", doc["schema_version"])
+	if doc["schema_version"].(float64) != 4 {
+		t.Fatalf("schema_version not bumped to 4: %v", doc["schema_version"])
 	}
 }
