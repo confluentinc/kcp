@@ -65,15 +65,23 @@ plan_input_defaults:
   projected_pni_gateway_count: 1   # ≥2 → flip to PrivateLink
 
   # Cutover defaults. `let_confluent_choose` resolves to
-  # Stop-Restart-Repeat — Confluent's canonical recommendation. The
-  # gateway prereq statuses default to `not_started`; a customer who
-  # hasn't engaged with the gateway question stays in the "ambiguous
-  # intent" branch (degraded_awaiting_oq) until they answer.
+  # Stop-Restart-Repeat. `prefer_gateway: false` makes plain Cluster
+  # Linking the canonical recommendation; most fleets land there. The
+  # CC Gateway is opt-in for genuinely complex environments (latency-
+  # sensitive cutovers, large client surfaces, etc.) — set
+  # `prefer_gateway: true` in plan-inputs.yaml to switch. The three
+  # gateway prereq statuses default to `not_started`; they're only
+  # consulted when the customer opts into the gateway path.
   downtime_tolerance: let_confluent_choose
   sub_pattern: app-by-app
-  prefer_gateway: true
+  prefer_gateway: false
   confluent_for_kubernetes_status: not_started
   cc_gateway_license_status: not_started
+  # `iam_pre_migration_status` is informational only — IAM client
+  # re-credentialing is not a gateway prereq (CC doesn't support IAM at
+  # all, so the workstream applies to every cutover path). Render code
+  # uses `complete` as a hint that §4 Auth rows reflect post-migration
+  # state and the customer should re-scan.
   iam_pre_migration_status: not_started
 
   # Auth default target. Intentionally empty — the per-source
@@ -108,7 +116,7 @@ auth_mapping:
     target: confluent_cloud_api_keys
     gateway_compatible: false   # IAM clients cannot connect to the gateway
     transparent_swap: false
-    note: "Source-side IAM clients can't traverse the CC Gateway — the gateway barrier is on the MSK side, independent of which target auth you pick. Pre-migrate source clients to SCRAM or mTLS first."
+    note: "Confluent Cloud doesn't support AWS IAM auth — IAM clients have to re-credential to SCRAM, mTLS, or OAuth as part of any CC migration (auth modernization, not a gateway-specific prereq). Additionally, source-side IAM clients can't traverse the CC Gateway if you pick that cutover path."
     source: https://github.com/confluentinc/kcp/blob/main/docs/assets/getting-started-with-zero-cut-migrations.md
     last_verified: "2026-05-20"
   mtls:

@@ -179,6 +179,10 @@ var oqRegistry = map[string]oqMeta{
 		Priority: 960,
 		Severity: "🟡",
 	},
+	"cluster_override_ambiguous": {
+		Priority: 961,
+		Severity: "🟡",
+	},
 	"osk_source_unsupported": {
 		Priority: 970,
 		Severity: "🟡",
