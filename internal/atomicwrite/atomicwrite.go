@@ -1,4 +1,6 @@
-package migration
+// Package atomicwrite provides a single atomic file write, shared by every
+// state/report file kcp rewrites repeatedly as a workflow progresses.
+package atomicwrite
 
 import (
 	"fmt"
@@ -6,7 +8,7 @@ import (
 	"path/filepath"
 )
 
-// writeFileAtomic writes data to filePath via a uniquely-named temp file in the
+// WriteFile writes data to filePath via a uniquely-named temp file in the
 // same directory, then renames it onto the target.
 //
 // The mode is pinned explicitly rather than left to os.CreateTemp's 0600, so
@@ -14,8 +16,9 @@ import (
 // want 0600 are not relying on an implementation detail. The real file is only
 // ever replaced by the rename and is never truncated or deleted directly, so a
 // crash before the rename leaves the previous contents intact — which is what
-// makes it safe for a file the migration rewrites repeatedly as it progresses.
-func writeFileAtomic(filePath string, data []byte, perm os.FileMode) error {
+// makes it safe for a file that gets rewritten repeatedly as a workflow
+// progresses.
+func WriteFile(filePath string, data []byte, perm os.FileMode) error {
 	tmpFile, err := os.CreateTemp(filepath.Dir(filePath), "."+filepath.Base(filePath)+".tmp-*")
 	if err != nil {
 		return fmt.Errorf("failed to create temp file: %w", err)

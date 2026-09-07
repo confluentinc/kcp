@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/atomicwrite"
 	"github.com/confluentinc/kcp/internal/build_info"
 )
 
@@ -204,7 +205,7 @@ func (r *RunReportRecorder) flush() {
 		slog.Warn("⚠️ failed to marshal migration run report", "error", err)
 		return
 	}
-	if err := writeFileAtomic(r.path, append(data, '\n'), 0600); err != nil {
+	if err := atomicwrite.WriteFile(r.path, append(data, '\n'), 0600); err != nil {
 		slog.Warn("⚠️ failed to write migration run report", "path", r.path, "error", err)
 		return
 	}
