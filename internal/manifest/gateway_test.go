@@ -15,6 +15,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// topicGroupBlock is the topicGroup stanza in the canonical doc; tests replace
+// it to vary spec.topicGroup.
+const topicGroupBlock = `  topicGroup:
+    - topics:
+        - t1.order
+        - t1.inventory
+      route: migration-route
+      targetStreamingDomain: confluent-cloud
+`
+
 // validGatewayDoc is the canonical manifest from the design §4, minus the
 // optional blocks. Tests mutate a copy of it to exercise one rule at a time.
 const validGatewayDoc = `apiVersion: kcp.confluent.io/v1alpha1
@@ -47,13 +57,8 @@ spec:
     name: msk-to-cc
   gateway:
     namespace: confluent
-    crs:
-      initial: gateway-initial
-      switchover: /etc/kcp/gateway-switchover.yaml
-    fence:
-      routes:
-        - migration-route
-`
+    cr-name: gateway-initial
+` + topicGroupBlock
 
 func parseGateway(t *testing.T, doc string) *GatewayMigration {
 	t.Helper()
@@ -92,9 +97,12 @@ func TestGateway_ParsesEveryField(t *testing.T) {
 	assert.Equal(t, "lkc-abc123", g.Spec.Target.ClusterID)
 	assert.Equal(t, "msk-to-cc", g.Spec.ClusterLink.Name)
 	assert.Equal(t, "confluent", g.Spec.Gateway.Namespace)
-	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CRs.Initial)
-	assert.Equal(t, "/etc/kcp/gateway-switchover.yaml", g.Spec.Gateway.CRs.Switchover)
-	assert.Equal(t, []string{"migration-route"}, g.Spec.Gateway.Fence.Routes)
+	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CrName)
+	require.Len(t, g.Spec.TopicGroup, 1)
+	assert.Equal(t, "migration-route", g.Spec.TopicGroup[0].Route)
+	assert.Equal(t, "confluent-cloud", g.Spec.TopicGroup[0].TargetStreamingDomain)
+	require.NotNil(t, g.Spec.TopicGroup[0].Topics)
+	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.TopicGroup[0].Topics)
 }
 
 func TestGateway_RejectsUnknownFields(t *testing.T) {
@@ -212,48 +220,66 @@ func TestGateway_RequiresTargetKafkaBootstrapServers(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.target.kafka.bootstrapServers")
 }
 
-// TestGateway_RejectsNonSASLPlainDestination is the rule decision 29 forces:
-// migration_executor.go dials the destination as SASL/PLAIN unconditionally, so
-// any other block would be silently ignored — worse than the flag surface it
-// replaces.
-func TestGateway_RejectsNonSASLPlainDestination(t *testing.T) {
-	for _, block := range []string{
-		"        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
-		"        mtls:\n          client_cert: /c.pem\n          client_key: /k.pem",
-		"        unauthenticated_plaintext: {}",
-		"        unauthenticated_tls: {}",
-		"        iam:\n          region: us-east-1",
+// TestGateway_AcceptsEveryDestinationMethodExceptIAM. All the auth/TLS
+// machinery on the destination Kafka leg already exists and is now routed
+// through AdminOptionForAuthMethod, the same mapper the source leg uses — so
+// sasl_scram, mtls, and both unauthenticated forms validate like any other
+// leg. Non-sasl_plain destinations can no longer derive restCredentials (there
+// is no principal to derive from), so each case supplies an explicit block.
+func TestGateway_AcceptsEveryDestinationMethodExceptIAM(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte("cert"), 0600))
+	require.NoError(t, os.WriteFile(key, []byte("key"), 0600))
+
+	for name, block := range map[string]string{
+		"sasl_scram":                "        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
+		"mtls":                      "        mtls:\n          client_cert: " + cert + "\n          client_key: " + key,
+		"unauthenticated_plaintext": "        unauthenticated_plaintext: {}",
+		"unauthenticated_tls":       "        unauthenticated_tls: {}",
 	} {
-		t.Run(strings.TrimSpace(strings.SplitN(block, ":", 2)[0]), func(t *testing.T) {
-			doc := strings.Replace(validGatewayDoc,
+		t.Run(name, func(t *testing.T) {
+			doc := withRestCredentials(t, "      restCredentials:\n        api_key: K\n        api_secret: S\n")
+			doc = strings.Replace(doc,
 				"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
 				block, 1)
 			g := parseGateway(t, doc)
-			requireErrContains(t, g.Validate(), "sasl_plain")
+			assert.Empty(t, g.Validate())
 		})
 	}
 }
 
-// TestGateway_RejectsDestinationSASLPlainCACert. The destination Kafka client
-// dials the public trust store unconditionally (createDestinationOffset passes an
-// empty ca_cert) and a derived REST leg drops ca_cert, so a ca_cert on the
-// destination sasl_plain block would be accepted and then silently ignored — a
-// private-CA destination would read as configured while connecting on the system
-// roots. Refuse it, mirroring the sasl_plain-only and api_key-only rules.
-func TestGateway_RejectsDestinationSASLPlainCACert(t *testing.T) {
+// TestGateway_RejectsIAMDestination. iam is MSK-only (SigV4 signing against
+// AWS), and the destination is Confluent Cloud or Confluent Platform — never
+// MSK — so it would otherwise fail opaquely at connection time.
+func TestGateway_RejectsIAMDestination(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
 		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: /dest-ca.pem",
+		"        iam:\n          region: us-east-1",
 		1)
 	g := parseGateway(t, doc)
-	requireErrContains(t, g.Validate(), "ca_cert")
+	requireErrContains(t, g.Validate(), "iam")
+}
 
-	// Resolution must refuse it too, not only Validate — including via the
-	// derived REST leg, which routes through DestinationKafkaCredentials.
-	_, errs := g.DestinationKafkaCredentials()
-	require.NotEmpty(t, errs)
-	_, err := g.RestCredentials()
-	require.Error(t, err)
+// TestGateway_AllowsDestinationSASLPlainCACert — the validator relaxation in
+// A.1 unlocks a private-CA sasl_plain destination now that
+// createDestinationOffset routes through AdminOptionForAuthMethod instead of
+// a hardcoded empty-CA client.
+func TestGateway_AllowsDestinationSASLPlainCACert(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
+
+	doc := strings.Replace(validGatewayDoc,
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca,
+		1)
+	g := parseGateway(t, doc)
+	require.Empty(t, g.Validate())
+
+	mc, errs := g.DestinationKafkaCredentials()
+	require.Empty(t, errs)
+	assert.Equal(t, ca, mc.SASLPlain.CACert)
 }
 
 // TestGateway_AllowsDestinationSASLPlainTLS keeps the counterpart honest: tls
@@ -292,6 +318,44 @@ func TestGateway_DerivedRestCredentialsInheritInsecureSkip(t *testing.T) {
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
 	assert.True(t, rest.InsecureSkipVerify)
+}
+
+// TestGateway_DerivedRestCredentialsInheritCACert closes the gap A.5 fixes:
+// derivation copied insecure_skip_tls_verify but not ca_cert, so a private-CA
+// sasl_plain destination would derive a Kafka leg that trusts the CA and a
+// REST leg that does not — a TLS failure against the very same cluster.
+func TestGateway_DerivedRestCredentialsInheritCACert(t *testing.T) {
+	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
+	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
+
+	doc := strings.Replace(validGatewayDoc,
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca,
+		1)
+	g := parseGateway(t, doc)
+	require.Empty(t, g.Validate())
+
+	rest, err := g.RestCredentials()
+	require.NoError(t, err)
+	assert.Equal(t, ca, rest.CACert)
+}
+
+// TestGateway_RestCredentialsRequiredWhenNotSASLPlain — there is no principal
+// to derive a REST credential from when the Kafka leg isn't sasl_plain, so
+// omitting restCredentials must fail with a clear, field-naming error rather
+// than silently deriving nothing.
+func TestGateway_RestCredentialsRequiredWhenNotSASLPlain(t *testing.T) {
+	doc := strings.Replace(validGatewayDoc,
+		"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
+		"        sasl_scram:\n          username: u\n          password: p\n          mechanism: SHA512",
+		1)
+	g := parseGateway(t, doc)
+
+	requireErrContains(t, g.Validate(), "spec.target.kafka.restCredentials")
+
+	_, err := g.RestCredentials()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "restCredentials")
 }
 
 // TestGateway_DerivedEqualsHandWritten is the §7.1 parity test: a derived block
@@ -380,50 +444,180 @@ func TestGateway_RequiresGatewayNamespace(t *testing.T) {
 	requireErrContains(t, g.Validate(), "spec.gateway.namespace")
 }
 
-func TestGateway_RequiresBothCRs(t *testing.T) {
-	for field, line := range map[string]string{
-		"spec.gateway.crs.initial":    "      initial: gateway-initial\n",
-		"spec.gateway.crs.switchover": "      switchover: /etc/kcp/gateway-switchover.yaml\n",
+func TestGateway_RequiresCrName(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc, "    cr-name: gateway-initial\n", "", 1))
+	requireErrContains(t, g.Validate(), "spec.gateway.cr-name")
+}
+
+// TestGateway_RejectsRetiredKeys — the old crs/routes/topics shape is removed
+// from the struct, so a stale manifest that still uses any of them fails at the
+// strict decode with an unknown-field error. This is where the retired
+// crs.switchover rejection now lives: a manifest setting it trips the crs
+// unknown-field error rather than a bespoke migration hint (an accepted UX
+// downgrade — see the plan's Risks).
+func TestGateway_RejectsRetiredKeys(t *testing.T) {
+	withGatewayKey := func(block string) string {
+		return strings.Replace(validGatewayDoc, "    cr-name: gateway-initial\n",
+			"    cr-name: gateway-initial\n"+block, 1)
+	}
+	for name, doc := range map[string]string{
+		"crs":            withGatewayKey("    crs:\n      initial: gateway-initial\n"),
+		"crs.switchover": withGatewayKey("    crs:\n      switchover: /etc/kcp/switchover.yaml\n"),
+		"gateway.routes": withGatewayKey("    routes:\n      - name: migration-route\n"),
+		"spec.topics":    validGatewayDoc + "  topics: ['t1.order']\n",
 	} {
-		t.Run(field, func(t *testing.T) {
-			g := parseGateway(t, strings.Replace(validGatewayDoc, line, "", 1))
-			requireErrContains(t, g.Validate(), field)
+		t.Run(name, func(t *testing.T) {
+			_, err := ParseGatewayMigration([]byte(doc))
+			require.Error(t, err, "a retired key must fail the strict decode")
 		})
 	}
 }
 
-// fenceBlock is the fence stanza in the canonical doc; tests replace it to vary
-// spec.gateway.fence.routes.
-const fenceBlock = "    fence:\n      routes:\n        - migration-route\n"
+// --- topicGroup ---
 
-// TestGateway_RequiresFenceRoutes — with no route named to fence, the fence step
-// would apply the bare initial CR and report success while every client keeps
-// flowing. Both an omitted block and an explicitly empty list are rejected.
-func TestGateway_RequiresFenceRoutes(t *testing.T) {
+// TestGateway_RequiresExactlyOneTopicGroupEntry — the doc pins one route, one
+// mode per migration, so both an absent block and more than one entry are
+// rejected. (>1 entry is future multi-route work, not this piece.)
+func TestGateway_RequiresExactlyOneTopicGroupEntry(t *testing.T) {
 	t.Run("omitted", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock, "", 1))
-		requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, "", 1))
+		requireErrContains(t, g.Validate(), "spec.topicGroup")
 	})
 	t.Run("empty list", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock, "    fence:\n      routes: []\n", 1))
-		requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, "  topicGroup: []\n", 1))
+		requireErrContains(t, g.Validate(), "spec.topicGroup")
+	})
+	t.Run("more than one", func(t *testing.T) {
+		second := "    - topics:\n        - t2.orders\n      route: second-route\n      targetStreamingDomain: confluent-cloud\n"
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, topicGroupBlock+second, 1))
+		requireErrContains(t, g.Validate(), "spec.topicGroup")
 	})
 }
 
-// TestGateway_RejectsBlankFenceRoute — a blank route name matches nothing and
-// would fail at fence time; catch it at parse.
-func TestGateway_RejectsBlankFenceRoute(t *testing.T) {
-	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
-		"    fence:\n      routes:\n        - \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+// TestGateway_RejectsBlankRoute — a blank route name matches nothing and would
+// fail at fence time; catch it at parse.
+func TestGateway_RejectsBlankRoute(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc,
+		"      route: migration-route\n", "      route: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
 }
 
-// TestGateway_RejectsDuplicateFenceRoutes — a repeated name is an operator slip;
-// the second would try to fence an already-fenced route at cutover.
-func TestGateway_RejectsDuplicateFenceRoutes(t *testing.T) {
-	g := parseGateway(t, strings.Replace(validGatewayDoc, fenceBlock,
-		"    fence:\n      routes:\n        - migration-route\n        - migration-route\n", 1))
-	requireErrContains(t, g.Validate(), "spec.gateway.fence.routes")
+// TestGateway_RejectsBlankTargetStreamingDomain — an empty target domain name
+// matches nothing in the initial CR and would fail at switch time; catch it at
+// parse.
+func TestGateway_RejectsBlankTargetStreamingDomain(t *testing.T) {
+	g := parseGateway(t, strings.Replace(validGatewayDoc,
+		"      targetStreamingDomain: confluent-cloud\n", "      targetStreamingDomain: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+// TestGateway_RejectsEntryWithNeitherTopicsNorPatterns requires at least one of
+// topics/topicPatterns is required on every entry (both modes). Both absent is
+// a structural error, no mode knowledge needed.
+func TestGateway_RejectsEntryWithNeitherTopicsNorPatterns(t *testing.T) {
+	block := "  topicGroup:\n    - route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+// TestGateway_TopicsPresentButEmptyIsRejected — an explicitly empty topics list
+// means the opposite of "all topics" and is rejected, matching the old
+// spec.topics semantics.
+func TestGateway_TopicsPresentButEmptyIsRejected(t *testing.T) {
+	block := "  topicGroup:\n    - topics: []\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+func TestGateway_RejectsBlankTopicName(t *testing.T) {
+	block := "  topicGroup:\n    - topics:\n        - t1.order\n        - '  '\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+// TestGateway_TopicsOnlyValidates — topics set, topicPatterns omitted, is the
+// canonical shape and must validate clean.
+func TestGateway_TopicsOnlyValidates(t *testing.T) {
+	g := parseGateway(t, validGatewayDoc)
+	require.Empty(t, g.Validate())
+	require.NotNil(t, g.Spec.TopicGroup[0].Topics)
+	assert.Nil(t, g.Spec.TopicGroup[0].TopicPatterns)
+}
+
+// TestGateway_TopicPatternsOnlyValidates — topicPatterns set, topics omitted,
+// satisfies the at-least-one rule on its own.
+func TestGateway_TopicPatternsOnlyValidates(t *testing.T) {
+	block := "  topicGroup:\n    - topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	require.Empty(t, g.Validate())
+	require.NotNil(t, g.Spec.TopicGroup[0].TopicPatterns)
+	assert.Nil(t, g.Spec.TopicGroup[0].Topics)
+}
+
+// TestGateway_TopicPatternsPresentButEmptyIsRejected mirrors the topics case.
+func TestGateway_TopicPatternsPresentButEmptyIsRejected(t *testing.T) {
+	block := "  topicGroup:\n    - topicPatterns: []\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+func TestGateway_RejectsBlankTopicPattern(t *testing.T) {
+	block := "  topicGroup:\n    - topicPatterns:\n        - 'orders\\..*'\n        - '  '\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+// TestGateway_RejectsInvalidTopicPatternRegex — each pattern must compile
+// as an anchored RE2 full-match, a cheap guard mirroring the Gateway's
+// parse-time rejection. A bare `*` has nothing to repeat and fails to compile.
+func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
+	block := "  topicGroup:\n    - topicPatterns:\n        - '*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+// TestGateway_RejectsAnchorEscapingPattern rejects a
+// pattern carrying an unbalanced paren (e.g. "foo)|(evil") must be rejected —
+// not silently spliced into \A(?:…)\z where its ")" closes the wrapper group and
+// promotes a top-level alternation, escaping the intended full-match anchor. The
+// pattern is validated on its own terms first, so a malformed one is rejected.
+func TestGateway_RejectsAnchorEscapingPattern(t *testing.T) {
+	block := "  topicGroup:\n    - topicPatterns:\n        - 'foo)|(evil'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.topicGroup")
+}
+
+// TestAnchoredPattern_IsAFullMatch pins the anchoring: a compiled topicPattern
+// must match the whole topic name, never a prefix or suffix, and a pattern that
+// tries to break out of the wrapper group must be refused rather than compiled
+// into a partial match.
+func TestAnchoredPattern_IsAFullMatch(t *testing.T) {
+	re, err := anchoredPattern("orders")
+	require.NoError(t, err)
+	assert.True(t, re.MatchString("orders"))
+	assert.False(t, re.MatchString("orders.v2"), "must not match a superstring")
+	assert.False(t, re.MatchString("my-orders"), "must not match a prefix-extended string")
+
+	_, err = anchoredPattern("foo)|(evil")
+	require.Error(t, err, "an anchor-escaping pattern must be refused")
+}
+
+// TestGateway_MatchAllTopicPatternCompiles — the "all topics" token is `.*`
+// which must compile cleanly (a bare `*` would not).
+func TestGateway_MatchAllTopicPatternCompiles(t *testing.T) {
+	block := "  topicGroup:\n    - topicPatterns:\n        - '.*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	require.Empty(t, g.Validate())
+}
+
+// TestGateway_BothTopicsAndPatternsIsAllowed — both set is a combined set,
+// not a structural error, on either mode.
+func TestGateway_BothTopicsAndPatternsIsAllowed(t *testing.T) {
+	block := "  topicGroup:\n    - topics:\n        - t1.order\n      topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	require.Empty(t, g.Validate())
+	assert.NotNil(t, g.Spec.TopicGroup[0].Topics)
+	assert.NotNil(t, g.Spec.TopicGroup[0].TopicPatterns)
 }
 
 // TestGateway_KubeconfigTildeIsExpanded — the one place in the repo where a
@@ -446,30 +640,6 @@ func TestGateway_KubeconfigEmptyStaysEmpty(t *testing.T) {
 	got, err := parseGateway(t, validGatewayDoc).KubeconfigPath()
 	require.NoError(t, err)
 	assert.Empty(t, got)
-}
-
-// TestGateway_TopicsOmittedIsDistinctFromEmpty — omitted means "every active
-// mirror topic"; an explicitly empty list means the opposite, so they must not
-// collapse onto each other.
-func TestGateway_TopicsOmittedIsDistinctFromEmpty(t *testing.T) {
-	omitted := parseGateway(t, validGatewayDoc)
-	assert.Nil(t, omitted.Spec.Topics)
-	require.Empty(t, omitted.Validate())
-
-	empty := parseGateway(t, validGatewayDoc+"  topics: []\n")
-	require.NotNil(t, empty.Spec.Topics)
-	requireErrContains(t, empty.Validate(), "spec.topics")
-}
-
-func TestGateway_TopicsAreLiteralNames(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  topics: ['t1.order', 't1.inventory']\n")
-	require.Empty(t, g.Validate())
-	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.Topics)
-}
-
-func TestGateway_RejectsBlankTopicName(t *testing.T) {
-	g := parseGateway(t, validGatewayDoc+"  topics: ['t1.order', '  ']\n")
-	requireErrContains(t, g.Validate(), "spec.topics")
 }
 
 func TestGateway_PolicyDurationsParseAsDurationStrings(t *testing.T) {
@@ -744,24 +914,27 @@ func TestGateway_ManifestParseErrorDoesNotEchoInlineSecrets(t *testing.T) {
 
 // --- security review F3: a restCredentials form kcp cannot honour must be refused ---
 
-// TestGateway_RejectsNonAPIKeyRestCredentials. targets.ValidateCredentials
-// accepts basic/bearer/mtls and the generated schema advertises them, but every
-// command reads only the flat api_key form — so a bearer token is dropped and
-// the request goes out as anonymous Basic auth, with the declared ca_cert
-// ignored. Refuse rather than silently degrade, mirroring the sasl_plain-only
-// rule on the destination Kafka leg.
-func TestGateway_RejectsNonAPIKeyRestCredentials(t *testing.T) {
+// TestGateway_AcceptsEveryRestCredentialsForm. targets.Credentials already
+// implements Authenticator/HTTPClient for basic, bearer and mtls — B.4 stops
+// refusing them so a CP destination behind RBAC or mTLS can be reached.
+func TestGateway_AcceptsEveryRestCredentialsForm(t *testing.T) {
+	certDir := t.TempDir()
+	cert := filepath.Join(certDir, "client.pem")
+	key := filepath.Join(certDir, "client-key.pem")
+	require.NoError(t, os.WriteFile(cert, []byte("cert"), 0600))
+	require.NoError(t, os.WriteFile(key, []byte("key"), 0600))
+
 	for name, block := range map[string]string{
 		"bearer": "      restCredentials:\n        bearer:\n          token: TOK\n",
 		"basic":  "      restCredentials:\n        basic:\n          username: u\n          password: p\n",
-		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: /c.pem\n          client_key: /k.pem\n",
+		"mtls":   "      restCredentials:\n        mtls:\n          client_cert: " + cert + "\n          client_key: " + key + "\n",
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := parseGateway(t, withRestCredentials(t, block))
-			requireErrContains(t, g.Validate(), "restCredentials")
+			assert.Empty(t, g.Validate())
 
 			_, err := g.RestCredentials()
-			require.Error(t, err, "resolution must refuse it too, not only Validate")
+			require.NoError(t, err)
 		})
 	}
 }

@@ -26,8 +26,7 @@ func baselineOpts() manifestOpts {
 		APISecret:       "testpassword",
 		Namespace:       "confluent",
 		GatewayName:     "migration-gateway-baseline",
-		FenceRoutes:     []string{"migration-route"},
-		SwitchoverCR:    "/workspace/gateway-switchover-baseline.yaml",
+		FenceRoutes:     []fenceRouteOpts{{Name: "migration-route", SwitchoverDomainName: "destination-kafka-cluster"}},
 		KubePath:        "/workspace/kubeconfig",
 	}
 }
@@ -83,9 +82,17 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.Equal(t, opts.ClusterLinkName, g.Spec.ClusterLink.Name)
 	assert.Equal(t, opts.Namespace, g.Spec.Gateway.Namespace)
 	assert.Equal(t, opts.KubePath, g.Spec.Gateway.Kubeconfig)
-	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CRs.Initial)
-	assert.Equal(t, opts.FenceRoutes, g.Spec.Gateway.Fence.Routes)
-	assert.Equal(t, opts.SwitchoverCR, g.Spec.Gateway.CRs.Switchover)
+	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CrName)
+	require.Len(t, g.Spec.TopicGroup, len(opts.FenceRoutes))
+	for i, want := range opts.FenceRoutes {
+		got := g.Spec.TopicGroup[i]
+		assert.Equal(t, want.Name, got.Route)
+		assert.Equal(t, want.SwitchoverDomainName, got.TargetStreamingDomain)
+		// The id is derived from the live CR at init, not carried in the
+		// manifest, and a match-all pattern selects every active mirror topic.
+		require.NotNil(t, got.TopicPatterns)
+		assert.Equal(t, []string{".*"}, *got.TopicPatterns)
+	}
 
 	// The destination Kafka leg carries the API key/secret and the only
 	// load-bearing insecure-skip in the suite (CFK's cert is signed by the
@@ -339,7 +346,7 @@ func TestManifestForLog_RedactsCredentialsButKeepsTopology(t *testing.T) {
 	assert.Contains(t, logged, opts.SourceBootstrap)
 	assert.Contains(t, logged, opts.ClusterLinkName)
 	assert.Contains(t, logged, opts.DestClusterID)
-	assert.Contains(t, logged, opts.FenceRoutes[0])
+	assert.Contains(t, logged, opts.FenceRoutes[0].Name)
 }
 
 // TestManifestForLog_RedactsByKeyPathNotValue is what forces key-path redaction.

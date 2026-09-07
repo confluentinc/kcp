@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,11 +52,11 @@ type GatewaySpec struct {
 	Target      GatewayTarget      `yaml:"target" json:"target"`
 	ClusterLink GatewayClusterLink `yaml:"clusterLink" json:"clusterLink"`
 	Gateway     Gateway            `yaml:"gateway" json:"gateway"`
-	// Topics is a flat list of LITERAL topic names, exact-matched against the
-	// link's active mirror topics — not globs. A pointer so that omitted ("every
-	// active mirror topic") stays distinguishable from an explicitly empty list,
-	// which means the opposite and is rejected.
-	Topics *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
+	// TopicGroup pairs a topic selection (literal names and/or anchored regex
+	// patterns) with the route it migrates and the target streaming domain that
+	// route switches to. Exactly one entry today. The bootstrap server id and the
+	// migration mode are not carried here: both are read from the live CR at init.
+	TopicGroup []TopicGroupEntry `yaml:"topicGroup" json:"topicGroup"`
 	// DefaultPolicies is read fresh on every execute and never snapshotted, which
 	// is what lets a caller vary execute-time policy between init and execute.
 	// Each field is a DEFAULT: `kcp migration execute` exposes a per-policy flag
@@ -85,37 +86,31 @@ type GatewayClusterLink struct {
 	PauseConsumerOffsetSync bool   `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
 }
 
+// TopicGroupEntry pairs a topic selection with the route it migrates and the
+// target streaming domain that route switches to. The field set is identical
+// for the static (all-at-once) and dynamic (topic-based) modes.
+//
+// Topics and TopicPatterns are pointers so nil (omitted) stays distinct from []
+// (present but empty, rejected). At least one of the two must be set. There is
+// no bootstrapServerId or mode field: both are read from the live CR at init.
+type TopicGroupEntry struct {
+	Topics                *[]string `yaml:"topics,omitempty" json:"topics,omitempty"`
+	TopicPatterns         *[]string `yaml:"topicPatterns,omitempty" json:"topicPatterns,omitempty"`
+	Route                 string    `yaml:"route" json:"route"`
+	TargetStreamingDomain string    `yaml:"targetStreamingDomain" json:"targetStreamingDomain"`
+}
+
 type Gateway struct {
 	Namespace string `yaml:"namespace" json:"namespace"`
 	// Kubeconfig is the one field in the manifest where a leading ~/ is
 	// expanded — nothing else in the repo expands ~, and client-go's loader
 	// does not either.
-	Kubeconfig string     `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
-	CRs        GatewayCRs `yaml:"crs" json:"crs"`
-	// Fence names the route(s) kcp fences at cutover. There is no fenced-CR
-	// file: kcp reads the live initial CR, injects the fence block onto each
-	// named route, and applies the patched CR.
-	Fence GatewayFence `yaml:"fence" json:"fence"`
-}
-
-// GatewayCRs holds the two gateway CRs the migration reads by different means,
-// inherited from --initial-cr-name vs the switchover file path.
-type GatewayCRs struct {
-	// Initial is a Kubernetes object NAME, read live from the cluster at init.
-	Initial string `yaml:"initial" json:"initial"`
-	// Switchover is a local FILE path, snapshotted into the state file at init.
-	Switchover string `yaml:"switchover" json:"switchover"`
-}
-
-// GatewayFence declares which route(s) the fence step blocks. kcp derives the
-// fenced CR from the live initial CR by injecting
-// fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route,
-// so fence and its rollback (which re-applies the same initial CR) are exact
-// inverses. The switchover CR, which lifts the fence, stays file-based.
-type GatewayFence struct {
-	// Routes are the spec.routes[].name values to fence. Non-empty; each entry
-	// must be a non-blank, unique route name that exists in the initial CR.
-	Routes []string `yaml:"routes" json:"routes"`
+	Kubeconfig string `yaml:"kubeconfig,omitempty" json:"kubeconfig,omitempty"`
+	// CrName is the Kubernetes object NAME of the initial gateway CR, read live
+	// from the cluster at init. The route to fence and the domain it switches to
+	// live in spec.topicGroup; there is no fenced-CR or switchover-CR file — both
+	// are derived from this live CR at cutover.
+	CrName string `yaml:"cr-name" json:"cr-name"`
 }
 
 // DefaultPolicies is the execute-time knobs. Every value is optional and zero
@@ -134,6 +129,15 @@ type DefaultPolicies struct {
 	// ConsumerOffsetSyncDrainDuration waits after disabling consumer offset
 	// sync. 0 means no wait; it has no effect unless pauseConsumerOffsetSync.
 	ConsumerOffsetSyncDrainDuration time.Duration `yaml:"consumerOffsetSyncDrainDuration,omitempty" json:"consumerOffsetSyncDrainDuration,omitempty"`
+	// HotReloadTimeout bounds the per-pod configId verification used when the
+	// gateway supports hot-reload. 0 uses gateway.DefaultHotReloadTimeout; unlike
+	// RolloutTimeout this is never unbounded, since a hot-reload moves no
+	// Kubernetes signal to wait on.
+	HotReloadTimeout time.Duration `yaml:"hotReloadTimeout,omitempty" json:"hotReloadTimeout,omitempty"`
+	// GatewayConfigPort is the port serving the gateway's /config endpoint,
+	// polled per pod to confirm a config revision was applied. 0 uses the
+	// persisted value, falling back to the gateway default (9180).
+	GatewayConfigPort int `yaml:"gatewayConfigPort,omitempty" json:"gatewayConfigPort,omitempty"`
 }
 
 // envelope is the minimum needed to discriminate one kind from another. It is
@@ -210,7 +214,7 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 //
 // It does no I/O, so a credentials slot spelled as a path is checked for
 // presence only; the rules that need the block's contents (source auth gating,
-// the sasl_plain-only destination rule) run here for an inline block and again
+// the destination iam rejection) run here for an inline block and again
 // in SourceCredentials / DestinationKafkaCredentials for both spellings.
 func (g *GatewayMigration) Validate() []error {
 	var errs []error
@@ -265,16 +269,15 @@ func (g *GatewayMigration) Validate() []error {
 			add("spec.target.kafka.credentials: must not be empty")
 		} else if k.Credentials.IsInline() {
 			if mc, ok := peekMigrateCreds(k.Credentials); ok {
-				errs = append(errs, checkDestinationIsSASLPlain(mc)...)
+				errs = append(errs, checkDestinationKafkaAuth(mc)...)
+				if k.RestCredentials == nil && mc.SASLPlain == nil {
+					add("spec.target.kafka.restCredentials: required — it can only be derived from spec.target.kafka.credentials when that block is sasl_plain")
+				}
 			}
 		}
 		if k.RestCredentials != nil {
 			if blankRef(*k.RestCredentials) {
-				add("spec.target.kafka.restCredentials: present but empty — omit it to derive from credentials, or fill it in")
-			} else if k.RestCredentials.IsInline() {
-				if tc, ok := peekTargetCreds(*k.RestCredentials); ok {
-					errs = append(errs, checkRestIsAPIKeyForm(tc)...)
-				}
+				add("spec.target.kafka.restCredentials: present but empty — fill it in, or omit it entirely to derive from credentials (only possible when that block is sasl_plain)")
 			}
 		}
 	}
@@ -288,44 +291,80 @@ func (g *GatewayMigration) Validate() []error {
 	if blank(g.Spec.Gateway.Namespace) {
 		add("spec.gateway.namespace: must not be empty")
 	}
-	if blank(g.Spec.Gateway.CRs.Initial) {
-		add("spec.gateway.crs.initial: must not be empty (a Kubernetes object name, read live)")
-	}
-	if blank(g.Spec.Gateway.CRs.Switchover) {
-		add("spec.gateway.crs.switchover: must not be empty (a local file path)")
-	}
-	if routes := g.Spec.Gateway.Fence.Routes; len(routes) == 0 {
-		add("spec.gateway.fence.routes: must name at least one route to fence")
-	} else {
-		seen := make(map[string]struct{}, len(routes))
-		for i, name := range routes {
-			if blank(name) {
-				add("spec.gateway.fence.routes[%d]: must not be blank", i)
-				continue
-			}
-			if _, dup := seen[name]; dup {
-				add("spec.gateway.fence.routes: %q is listed more than once", name)
-			}
-			seen[name] = struct{}{}
-		}
+	if blank(g.Spec.Gateway.CrName) {
+		add("spec.gateway.cr-name: must not be empty (a Kubernetes object name, read live)")
 	}
 
-	// --- topics ---
-	if g.Spec.Topics != nil {
-		if len(*g.Spec.Topics) == 0 {
-			add("spec.topics: must not be an empty list — omit the key entirely to migrate every active mirror topic")
-		}
-		for i, name := range *g.Spec.Topics {
-			if blank(name) {
-				add("spec.topics[%d]: must not be blank", i)
-			}
-		}
-	}
+	// --- topicGroup ---
+	errs = append(errs, validateTopicGroup(g.Spec.TopicGroup)...)
 
 	// --- defaultPolicies ---
 	errs = append(errs, g.Spec.DefaultPolicies.Validate()...)
 
 	return errs
+}
+
+// validateTopicGroup applies the structural rules for spec.topicGroup: exactly
+// one entry, a non-blank route and target streaming domain, and at least one of
+// topics/topicPatterns, each pattern compiling as an anchored RE2 full-match. It
+// does no I/O — the mode and the bootstrap server id are resolved from the live
+// CR at init, not the manifest.
+func validateTopicGroup(entries []TopicGroupEntry) []error {
+	var errs []error
+	add := func(format string, args ...any) {
+		errs = append(errs, fmt.Errorf(format, args...))
+	}
+
+	if len(entries) != 1 {
+		add("spec.topicGroup: must have exactly one entry (got %d)", len(entries))
+		if len(entries) == 0 {
+			return errs
+		}
+	}
+
+	e := entries[0]
+	if blank(e.Route) {
+		add("spec.topicGroup[0].route: must not be blank")
+	}
+	if blank(e.TargetStreamingDomain) {
+		add("spec.topicGroup[0].targetStreamingDomain: must not be blank")
+	}
+	if e.Topics == nil && e.TopicPatterns == nil {
+		add("spec.topicGroup[0]: at least one of topics or topicPatterns is required")
+	}
+	if e.Topics != nil {
+		errs = append(errs, validateSelection("spec.topicGroup[0].topics", *e.Topics)...)
+	}
+	if e.TopicPatterns != nil {
+		errs = append(errs, validateSelection("spec.topicGroup[0].topicPatterns", *e.TopicPatterns)...)
+		for i, pat := range *e.TopicPatterns {
+			if blank(pat) {
+				continue
+			}
+			if _, err := anchoredPattern(pat); err != nil {
+				add("spec.topicGroup[0].topicPatterns[%d]: not a valid regular expression: %v", i, err)
+			}
+		}
+	}
+	return errs
+}
+
+// anchoredPattern compiles p as an anchored RE2 full-match: the Gateway matches
+// topicPatterns Java-style (anchored full-match), but Go's regexp default is
+// unanchored/partial, so kcp must anchor with \A…\z.
+//
+// p is validated on its OWN terms first. Splicing p directly into `\A(?:` + p +
+// `)\z` is unsafe: a pattern carrying an unbalanced paren (e.g. "foo)|(evil")
+// would close the wrapper group early and promote a top-level alternation,
+// escaping the anchor into a prefix/suffix match. A pattern that compiles
+// standalone has balanced groups, so the subsequent splice cannot restructure
+// the wrapper. RE2 is linear-time, so there is no ReDoS surface in either
+// compile.
+func anchoredPattern(p string) (*regexp.Regexp, error) {
+	if _, err := regexp.Compile(p); err != nil {
+		return nil, err
+	}
+	return regexp.Compile(`\A(?:` + p + `)\z`)
 }
 
 // Validate checks the policy block. It is exported because `kcp migration
@@ -352,6 +391,12 @@ func (p DefaultPolicies) Validate() []error {
 			"spec.defaultPolicies.detectUnroutedProducersDuration: must be at least %s when set (0 skips the check) — a shorter window cannot span a producer's metadata refresh",
 			minDetectUnroutedProducersDuration))
 	}
+	if p.HotReloadTimeout < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.hotReloadTimeout: must not be negative (0 uses the built-in default)"))
+	}
+	if p.GatewayConfigPort < 0 {
+		errs = append(errs, fmt.Errorf("spec.defaultPolicies.gatewayConfigPort: must not be negative (0 uses the default port)"))
+	}
 	return errs
 }
 
@@ -377,62 +422,19 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 	return nil
 }
 
-// checkDestinationIsSASLPlain rejects every destination block other than
-// sasl_plain. The destination Kafka client is hardcoded to SASL/PLAIN over TLS,
-// so any other block would be accepted and then silently ignored — worse than
-// the flag surface this replaces.
-func checkDestinationIsSASLPlain(mc types.MigrateClusterCredentials) []error {
-	if mc.SASLPlain != nil {
-		// The destination Kafka client dials SASL/PLAIN over the public trust
-		// store — createDestinationOffset hardcodes an empty ca_cert — and a
-		// derived REST leg drops ca_cert too. A ca_cert here would therefore be
-		// accepted and then silently ignored, so a private-CA destination would
-		// read as configured while actually connecting on the system roots.
-		// Refuse it, the same call as the sasl_plain-only and api_key-only rules.
-		// (tls stays permitted: it names the exact transport the destination
-		// already uses, so it is honoured rather than dropped.)
-		if strings.TrimSpace(mc.SASLPlain.CACert) != "" {
-			return []error{fmt.Errorf(
-				"spec.target.kafka.credentials.sasl_plain.ca_cert: a custom CA is not supported for the destination in this release (it dials the public trust store); remove ca_cert")}
-		}
-		return nil
-	}
-	if mc.IAM == nil && mc.SASLScram == nil && mc.MTLS == nil &&
-		mc.UnauthenticatedTLS == nil && mc.UnauthenticatedPlaintext == nil {
-		return nil // no block at all — the shared validator reports that
-	}
-	return []error{fmt.Errorf(
-		"spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")}
-}
-
-// peekTargetCreds decodes an inline REST credentials block for validation
-// without I/O.
-func peekTargetCreds(ref CredentialsRef) (targets.Credentials, bool) {
-	var tc targets.Credentials
-	if err := yaml.Unmarshal(ref.Inline, &tc); err != nil {
-		return tc, false
-	}
-	return tc, true
-}
-
-// checkRestIsAPIKeyForm rejects every REST credentials form other than the flat
-// api_key pair.
-//
-// targets.Credentials can express basic, bearer and mtls, and its own
-// HTTPClient/Authenticator handle all of them — but every kcp migration command
-// reads only APIKey/APISecret/CACert/InsecureSkipVerify. A bearer block would
-// therefore be accepted, then dropped, and the request would go out as
-// anonymous Basic auth with the declared ca_cert ignored. Refusing is the same
-// call as the sasl_plain-only rule on the destination Kafka leg: a credential
-// that is silently not used is worse than one that is rejected.
-func checkRestIsAPIKeyForm(tc targets.Credentials) []error {
-	switch {
-	case tc.Bearer != nil:
-		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got bearer)")}
-	case tc.MTLS != nil:
-		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got mtls)")}
-	case tc.Basic != nil:
-		return []error{fmt.Errorf("spec.target.kafka.restCredentials: only the api_key/api_secret form is supported in this release (got basic)")}
+// checkDestinationKafkaAuth rejects iam on the destination Kafka leg. iam is
+// MSK-only (SigV4 token signing against AWS), and the destination is Confluent
+// Cloud or Confluent Platform — never MSK — so it would be accepted here and
+// then fail opaquely at connection time. Every other method (sasl_plain,
+// sasl_scram, mtls, unauthenticated_tls, unauthenticated_plaintext) is honoured
+// end-to-end via AdminOptionForAuthMethod, the same mapper the source leg
+// already uses — including a custom ca_cert on sasl_plain, now that
+// createDestinationOffset routes through the mapper instead of a hardcoded
+// empty-CA client.
+func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
+	if mc.IAM != nil {
+		return []error{fmt.Errorf(
+			"spec.target.kafka.credentials.iam: not supported for the destination (the destination is Confluent Cloud/Platform, never MSK)")}
 	}
 	return nil
 }
@@ -449,9 +451,9 @@ func (g *GatewayMigration) SourceCredentials() (types.MigrateClusterCredentials,
 	return mc, nil
 }
 
-// DestinationKafkaCredentials resolves the destination Kafka leg — the API
-// key/secret used as SASL/PLAIN against the destination bootstrap, not only as
-// HTTP basic over REST.
+// DestinationKafkaCredentials resolves the destination Kafka leg. Any auth
+// method is accepted except iam — the destination is Confluent Cloud/Platform,
+// never MSK.
 func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCredentials, []error) {
 	if g.Spec.Target.Kafka == nil {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("spec.target.kafka: required")}
@@ -460,7 +462,7 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 	if len(errs) > 0 {
 		return mc, errs
 	}
-	if errs := checkDestinationIsSASLPlain(mc); len(errs) > 0 {
+	if errs := checkDestinationKafkaAuth(mc); len(errs) > 0 {
 		return mc, errs
 	}
 	return mc, nil
@@ -468,25 +470,21 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 
 // RestCredentials resolves the destination REST leg.
 //
-// When spec.target.kafka.restCredentials is omitted it is DERIVED, in full,
-// from the Kafka leg: one flag pair feeds both legs today, so requiring both
-// blocks would make the operator type the same secret twice for the
-// overwhelmingly common case. Derivation is full-or-nothing — a block that is
-// present is used exactly as written, because a block that reads as complete
-// while silently acquiring fields from elsewhere is worse than either.
+// When spec.target.kafka.restCredentials is omitted AND the Kafka leg is
+// sasl_plain, it is DERIVED, in full, from that leg: one flag pair feeds both
+// destination legs today, so requiring both blocks would make the operator
+// type the same secret twice for the overwhelmingly common case. Derivation
+// is full-or-nothing — a block that is present is used exactly as written,
+// because a block that reads as complete while silently acquiring fields from
+// elsewhere is worse than either. For every other Kafka auth method there is
+// no principal to derive a REST credential from, so restCredentials becomes
+// required.
 func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 	if g.Spec.Target.Kafka == nil {
 		return nil, fmt.Errorf("spec.target.kafka: required")
 	}
 	if ref := g.Spec.Target.Kafka.RestCredentials; ref != nil {
-		tc, err := ref.ResolveTarget(g.Interpolate)
-		if err != nil {
-			return nil, err
-		}
-		if errs := checkRestIsAPIKeyForm(*tc); len(errs) > 0 {
-			return nil, errs[0]
-		}
-		return tc, nil
+		return ref.ResolveTarget(g.Interpolate)
 	}
 
 	mc, errs := g.DestinationKafkaCredentials()
@@ -494,14 +492,16 @@ func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
 		return nil, fmt.Errorf("deriving spec.target.kafka.restCredentials from credentials: %w", errs[0])
 	}
 	if mc.SASLPlain == nil {
-		return nil, fmt.Errorf("spec.target.kafka.credentials: only sasl_plain is supported for the destination in this release")
+		return nil, fmt.Errorf("spec.target.kafka.restCredentials: required — it can only be derived from spec.target.kafka.credentials when that block is sasl_plain")
 	}
 	derived := &targets.Credentials{
 		APIKey:    mc.SASLPlain.Username,
 		APISecret: mc.SASLPlain.Password,
-		// Inherited so the single fan-out --insecure-skip-tls-verify had today
-		// is preserved: a derived REST leg must not silently verify while the
-		// Kafka leg does not.
+		// Inherited so the single fan-out --insecure-skip-tls-verify (and, now,
+		// a private destination CA) has today is preserved: a derived REST leg
+		// must not silently verify — or trust a different CA — while the Kafka
+		// leg does not.
+		CACert:             mc.SASLPlain.CACert,
 		InsecureSkipVerify: mc.InsecureSkipTLSVerify,
 	}
 	if err := targets.ValidateCredentials(derived); err != nil {

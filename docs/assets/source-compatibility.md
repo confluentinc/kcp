@@ -9,7 +9,7 @@ KCP supports two source types - **AWS MSK** and **Apache Kafka®** - and not eve
 
 - **MSK Provisioned / Express** — AWS MSK provisioned clusters (including MSK Express brokers).
 - **MSK Serverless** — AWS MSK Serverless clusters.
-- **Apache Kafka** — Any Kafka API compatible source, reached via the Kafka Admin API.
+- **Apache Kafka** — Any Kafka API compatible source, including **Confluent Platform**, reached via the Kafka Admin API.
 
 ## Legend
 

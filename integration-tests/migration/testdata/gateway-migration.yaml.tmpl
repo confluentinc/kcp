@@ -51,13 +51,16 @@ spec:
   gateway:
     namespace: {{ .Namespace | yamlQuote }}
     kubeconfig: {{ .KubePath | yamlQuote }}
-    crs:
-      initial: {{ .GatewayName | yamlQuote }}
-      switchover: {{ .SwitchoverCR | yamlQuote }}
-    fence:
-      routes:
+    cr-name: {{ .GatewayName | yamlQuote }}
+  topicGroup:
 {{- range .FenceRoutes }}
-        - {{ . | yamlQuote }}
+      # A match-all pattern migrates every active mirror topic — the behaviour
+      # the old omitted spec.topics gave. The bootstrap server id is derived from
+      # the target domain's declaration in the live CR, not written here.
+    - topicPatterns:
+        - {{ ".*" | yamlQuote }}
+      route: {{ .Name | yamlQuote }}
+      targetStreamingDomain: {{ .SwitchoverDomainName | yamlQuote }}
 {{- end }}
 {{- if .Policy.Any }}
 

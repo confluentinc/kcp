@@ -8,7 +8,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
@@ -36,7 +35,10 @@ Press q to quit, p to toggle partition details, r to refresh, +/- to adjust inte
 
 Everything it needs — the destination REST endpoint, cluster id, link name and credentials —
 comes from the GatewayMigration manifest, so this command reads no state file and works
-before 'kcp migration init' has ever run.
+before 'kcp migration init' has ever run. The credentials are the destination REST leg
+(spec.target.kafka.restCredentials), honoured in whatever form the manifest resolves —
+api_key, basic, bearer, or mtls (derived from spec.target.kafka.credentials when that block
+is sasl_plain). lag-check never dials the source or destination Kafka legs directly.
 
 It always shows every mirror topic on the link; spec.topics does not narrow the view.`,
 		Example:       `  kcp migration lag-check --migration-yaml gateway-migration.yaml`,
@@ -90,10 +92,11 @@ func runMigrationLag(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-// buildLagCheckConfig maps the manifest onto the five values clusterlink.Config
-// needs, plus an HTTP client carrying the REST leg's TLS trust — so a private-CA
-// or self-signed destination is reachable rather than the manifest's ca_cert
-// being a silent no-op.
+// buildLagCheckConfig maps the manifest onto clusterlink.Config plus an HTTP
+// client, mirroring migration.BuildClusterLinkConfig: Auth carries whichever
+// REST auth form the manifest resolved — basic, bearer, mtls, or api_key — and
+// the HTTP client carries that same block's TLS trust (private-CA/self-signed
+// support) plus a client certificate when the form is mtls.
 //
 // Topics is deliberately empty: this command always reports every mirror topic
 // on the link, and spec.topics does not narrow it.
@@ -103,7 +106,7 @@ func buildLagCheckConfig(g *manifest.GatewayMigration) (clusterlink.Config, clus
 		return clusterlink.Config{}, nil, fmt.Errorf("resolving destination REST credentials: %w", err)
 	}
 
-	httpClient, err := migration.NewRESTHTTPClient(restCreds.CACert, restCreds.InsecureSkipVerify)
+	httpClient, err := restCreds.HTTPClient()
 	if err != nil {
 		return clusterlink.Config{}, nil, fmt.Errorf("building destination REST client: %w", err)
 	}
@@ -112,8 +115,7 @@ func buildLagCheckConfig(g *manifest.GatewayMigration) (clusterlink.Config, clus
 		RestEndpoint: g.Spec.Target.Kafka.RestEndpoint,
 		ClusterID:    g.Spec.Target.ClusterID,
 		LinkName:     g.Spec.ClusterLink.Name,
-		APIKey:       restCreds.APIKey,
-		APISecret:    restCreds.APISecret,
+		Auth:         restCreds.Authenticator(),
 		Topics:       []string{},
 	}, httpClient, nil
 }

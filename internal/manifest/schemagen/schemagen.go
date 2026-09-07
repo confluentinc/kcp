@@ -121,8 +121,24 @@ func GenerateGateway() ([]byte, error) {
 	// silently inherit that default by leaving it out.
 	policy.Required = []string{"lagThreshold"}
 
+	// gateway carries only namespace + cr-name; the retired crs/routes shape is
+	// gone from the struct, so reflection no longer emits it.
+	gateway.Required = []string{"namespace", "cr-name"}
+
+	// spec.topicGroup: each entry pairs a topic selection with its route and
+	// target streaming domain. The item's required set (route,
+	// targetStreamingDomain) reflects from the non-omitempty struct tags; the "at
+	// least one of topics/topicPatterns" rule is not expressible on the struct, so
+	// hand-patch it as an anyOf on the item.
+	topicGroup := spec.Properties["topicGroup"]
+	tgItem := topicGroup.Items
+	tgItem.AnyOf = []*jsonschema.Schema{
+		{Required: []string{"topics"}},
+		{Required: []string{"topicPatterns"}},
+	}
+
 	// Durations parse as "10m", not as an integer count.
-	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration"} {
+	for _, k := range []string{"rolloutTimeout", "detectUnroutedProducersDuration", "consumerOffsetSyncDrainDuration", "hotReloadTimeout"} {
 		p := policy.Properties[k]
 		// time.Duration reflects as {"type":"integer"}; Type and Types are
 		// mutually exclusive, so the reflected one must be replaced, not added to.
@@ -147,8 +163,8 @@ func GenerateGateway() ([]byte, error) {
 
 		kafka.Properties["bootstrapServers"]: "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).",
 		kafka.Properties["restEndpoint"]:     "REST endpoint of the destination cluster.",
-		kafka.Properties["credentials"]:      "Destination Kafka credentials, used as SASL/PLAIN against the destination bootstrap. Only sasl_plain is supported in this release.",
-		kafka.Properties["restCredentials"]:  "Destination REST credentials. OPTIONAL: when omitted these are derived in full from credentials (api_key/api_secret from sasl_plain.username/password, insecure_skip_verify from insecure_skip_tls_verify). Spell it out only for a REST endpoint behind a private CA — a block that is present is used exactly as written, never partially derived.",
+		kafka.Properties["credentials"]:      "Destination Kafka credentials, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
+		kafka.Properties["restCredentials"]:  "Destination REST (cluster-link) credentials: api_key/api_secret, basic, bearer, or mtls. OPTIONAL only when credentials is sasl_plain — then derived in full (api_key/api_secret from sasl_plain.username/password, ca_cert and insecure_skip_verify inherited). Required for every other credentials method, since there is no principal to derive one from. A present block is used exactly as written, never partially derived.",
 
 		clusterLink.Properties["name"]:                    "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
 		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
@@ -156,18 +172,21 @@ func GenerateGateway() ([]byte, error) {
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
 		gateway.Properties["kubeconfig"]: "Path to the Kubernetes config file to use for the migration. A leading ~/ is expanded.",
 
-		gateway.Properties["crs"].Properties["initial"]:    "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
-		gateway.Properties["crs"].Properties["switchover"]: "Path to the local gateway CR YAML file that routes traffic to the destination.",
+		gateway.Properties["cr-name"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
 
-		gateway.Properties["fence"].Properties["routes"]: "Route name(s) (spec.routes[].name) to fence at cutover. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto each named route, and applies the patched CR — there is no separate fenced-CR file. Each name must exist in the initial CR and must not already be fenced.",
-
-		spec.Properties["topics"]: "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. Omit the key entirely to cut over every active mirror topic; an empty list is rejected.",
+		topicGroup:                                 "Pairs the topic selection with the route it migrates and the streaming domain that route switches to. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here.",
+		tgItem.Properties["topics"]:                "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. At least one of topics or topicPatterns is required. If topics is set, it is authoritative and topicPatterns is ignored.",
+		tgItem.Properties["topicPatterns"]:         "Topic selection as a list of anchored full-match regular expressions (RE2). Use ['.*'] to cut over every active mirror topic. At least one of topics or topicPatterns is required. Only consulted when topics is absent; only the match-all pattern is currently supported (union with topics is not yet implemented).",
+		tgItem.Properties["route"]:                 "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced.",
+		tgItem.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init.",
 
 		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",
 		policy.Properties["promoteBatchSize"]:                "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.",
 		policy.Properties["rolloutTimeout"]:                  "Maximum time to wait for the Confluent operator to report the gateway as Ready during fence and switchover, as a duration (e.g. 10m). 0 (the default) means no deadline — the wait runs until the operator converges or the user cancels.",
 		policy.Properties["detectUnroutedProducersDuration"]: "Time to monitor source offsets after fencing to detect producers still writing directly to the source cluster (bypassing the gateway); a detected increase aborts the migration before switchover. 0 (the default) skips the check; minimum 10s if set.",
 		policy.Properties["consumerOffsetSyncDrainDuration"]: "How long to wait after fencing before disabling the cluster link's consumer.offset.sync.enable. The fence freezes source consumer offsets, so this drain lets the link propagate the final offsets to the destination, reducing (best-effort, not guaranteed) messages reprocessed after switchover. Has no effect unless pauseConsumerOffsetSync is set. 0 (the default) disables the wait.",
+		policy.Properties["hotReloadTimeout"]:                "Maximum time to wait for every gateway pod to report the new config revision when the gateway supports hot-reload, as a duration (e.g. 90s). Unlike rolloutTimeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 (the default) uses the built-in 90s budget rather than waiting forever.",
+		policy.Properties["gatewayConfigPort"]:               "Port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 (the default) uses the persisted value, falling back to the gateway default (9180).",
 	})
 
 	return marshal(s)

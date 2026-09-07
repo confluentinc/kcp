@@ -64,18 +64,21 @@ type gatewayCR struct {
 	obj  map[string]any
 }
 
-// ValidateGatewayCRs checks the initial, fenced and switchover gateway CRs
-// before a migration starts. It is a pre-flight gate: everything it catches
-// would otherwise surface mid-migration, after client traffic has been fenced,
-// when the only way out is a rollback.
+// CheckRedundantAuthStaged proves, for each fence route's switchover target,
+// that flipping routes[].streamingDomain at cutover is safe. It is a
+// pre-flight gate: everything it catches would otherwise surface mid-migration,
+// after client traffic has been fenced, when the only way out is a rollback.
 //
 // Most checks are static, but the one that matters most is not — confirming the
-// secrets the CRs reference actually exist needs a live namespace lookup. That
-// is why this takes a ctx and a namespace: on 2026-07-27 a switchover CR named
-// a Secret that did not exist, the operator refused the spec, and the gateway
-// stayed fenced with every client blocked. Nothing ahead of the apply looked at
-// that secret at all; this does, before any client traffic has been touched.
-func (s *K8sService) ValidateGatewayCRs(ctx context.Context, namespace, gatewayName string, initialYAML, switchoverYAML []byte, fenceRoutes []string) (CRValidationResult, error) {
+// secrets the target's staged auth references actually exist needs a live
+// namespace lookup. That is why this takes a ctx and a namespace: on
+// 2026-07-27 a hand-authored switchover CR named a Secret that did not exist,
+// the operator refused the spec, and the gateway stayed fenced with every
+// client blocked. The redundant-auth design removes the hand-authored file,
+// but the same failure mode is possible here too — the target domain's block
+// is pre-staged and never yet exercised, so a typo'd secret name would
+// otherwise surface only at cutover.
+func (s *K8sService) CheckRedundantAuthStaged(ctx context.Context, namespace string, initialYAML []byte, targets []RouteSwitchoverTarget) (CRValidationResult, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return CRValidationResult{}, fmt.Errorf("failed to build config: %w", err)
@@ -86,19 +89,23 @@ func (s *K8sService) ValidateGatewayCRs(ctx context.Context, namespace, gatewayN
 		return CRValidationResult{}, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
-	return validateGatewayCRs(ctx, clientset, namespace, gatewayName, initialYAML, switchoverYAML, fenceRoutes)
+	return checkRedundantAuthStaged(ctx, clientset, namespace, initialYAML, targets)
 }
 
-// validateGatewayCRs is the inner orchestration used by ValidateGatewayCRs.
-// Split from the method so unit tests can inject a fake clientset, matching
-// waitForGatewayPods and waitForGatewayReady.
+// checkRedundantAuthStaged is the inner orchestration used by
+// CheckRedundantAuthStaged. Split from the method so unit tests can inject a
+// fake clientset, matching waitForGatewayPods and waitForGatewayReady.
 //
-// There is no fenced CR to check: the fence is derived at cutover from the live
-// initial CR by injecting a fence block onto the routes named in fenceRoutes
-// (see gateway.FenceRoutes). So instead of cross-checking a fenced file, this
-// confirms those routes exist in the initial CR and are not already fenced, then
-// that the switchover CR lifts the fence rather than leaving them blocked.
-func validateGatewayCRs(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string, initialYAML, switchoverYAML []byte, fenceRoutes []string) (CRValidationResult, error) {
+// For each target this confirms: the target streaming domain is declared with
+// the target bootstrap server id; the route already carries a pre-staged
+// security.cluster block for that domain; the route is not already bound
+// there (the flip must be a real change); and — across every target together
+// — every secret any part of the initial CR references exists. The whole CR
+// is in scope for the secret check, not just the target blocks: unlike a
+// route's CURRENTLY bound domain (already running, so its refs resolve by
+// construction), the redundant target-domain block has never been exercised,
+// so a typo'd secret name there would otherwise go unnoticed until cutover.
+func checkRedundantAuthStaged(ctx context.Context, clientset kubernetes.Interface, namespace string, initialYAML []byte, targets []RouteSwitchoverTarget) (CRValidationResult, error) {
 	var result CRValidationResult
 
 	// Parsing is terminal rather than one problem among many: every later check
@@ -107,27 +114,48 @@ func validateGatewayCRs(ctx context.Context, clientset kubernetes.Interface, nam
 	if err != nil {
 		return result, err
 	}
-	switchover, err := parseGatewayCR(roleSwitchover, switchoverYAML)
-	if err != nil {
-		return result, err
-	}
 
 	var f findings
+	routes := routesByName(initial)
+	domains := domainBootstrapIDs(initial)
 
-	for _, cr := range []gatewayCR{initial, switchover} {
-		checkGatewayShape(cr, &f)
+	for _, target := range targets {
+		route, ok := routes[target.RouteName]
+		if !ok {
+			f.problem("route %q not found in the initial gateway CR's spec.routes", target.RouteName)
+			continue
+		}
+
+		if ids, declared := domains[target.StreamingDomainName]; !declared {
+			f.problem("route %q switches to streaming domain %q, which the initial gateway CR does not declare (declared: %s)",
+				target.RouteName, target.StreamingDomainName, describeSet(domains))
+		} else if _, defined := ids[target.BootstrapServerId]; !defined {
+			f.problem("route %q switches to bootstrapServerId %q, which streaming domain %q does not define (defined: %s)",
+				target.RouteName, target.BootstrapServerId, target.StreamingDomainName, describeSet(ids))
+		}
+
+		staged, hasStaged := stagedAuthFor(route, target.StreamingDomainName)
+		if !hasStaged {
+			f.problem("route %q has no pre-staged security.cluster.%s block for its switchover target — the redundant auth this switch depends on is not configured",
+				target.RouteName, target.StreamingDomainName)
+		} else {
+			if secretStore, _ := stringField(staged, "secretStore"); secretStore == "" {
+				f.problem("route %q's security.cluster.%s has no secretStore", target.RouteName, target.StreamingDomainName)
+			}
+			if auth, ok := mapField(staged, "authentication"); !ok || len(auth) == 0 {
+				f.problem("route %q's security.cluster.%s has no authentication block", target.RouteName, target.StreamingDomainName)
+			}
+		}
+
+		if current, _ := mapField(route, "streamingDomain"); current != nil {
+			if currentName, _ := stringField(current, "name"); currentName == target.StreamingDomainName {
+				f.problem("route %q is already bound to streaming domain %q — the switch would be a no-op",
+					target.RouteName, target.StreamingDomainName)
+			}
+		}
 	}
 
-	// The initial CR is fetched from the cluster by name, so its identity and
-	// wiring are correct by construction and the operator has already accepted
-	// its spec — checking it again would only add noise. Only the
-	// operator-authored switchover CR needs those checks.
-	checkGatewayIdentity(switchover, namespace, gatewayName, &f)
-	checkStreamingDomainWiring(switchover, &f)
-
-	checkFenceTargets(initial, switchover, fenceRoutes, &f)
-	checkSpecsDiffer(initial, switchover, &f)
-	checkSecretRefsExist(ctx, clientset, namespace, []gatewayCR{switchover}, &result, &f)
+	checkSecretRefsExist(ctx, clientset, namespace, []gatewayCR{initial}, &result, &f)
 
 	// Findings reach the terminal through the caller's reporter (which mirrors
 	// them into kcp.log), and the returned error is logged by main. Logging them
@@ -135,208 +163,41 @@ func validateGatewayCRs(ctx context.Context, clientset kubernetes.Interface, nam
 	result.Warnings = f.warnings
 
 	if len(f.problems) > 0 {
-		slog.Debug("gateway CR validation found problems",
-			"namespace", namespace, "gateway", gatewayName,
-			"problems", f.problems, "warnings", f.warnings)
+		slog.Debug("redundant-auth staging check found problems",
+			"namespace", namespace, "problems", f.problems, "warnings", f.warnings)
 		return result, fmt.Errorf("%d problem(s) found:\n  - %s", len(f.problems), strings.Join(f.problems, "\n  - "))
 	}
 
-	slog.Debug("gateway CRs validated",
-		"namespace", namespace, "gateway", gatewayName,
+	slog.Debug("redundant auth staged",
+		"namespace", namespace,
 		"secretRefsChecked", result.SecretRefsChecked,
 		"secretCheckSkipped", result.SecretCheckSkipped,
 		"warnings", f.warnings)
 	return result, nil
 }
 
-// parseGatewayCR unmarshals one CR, keeping the role for error messages.
-func parseGatewayCR(role string, data []byte) (gatewayCR, error) {
-	if len(bytes.TrimSpace(data)) == 0 {
-		return gatewayCR{}, fmt.Errorf("the %s gateway CR is empty", role)
-	}
-
-	var obj map[string]any
-	if err := yaml.Unmarshal(data, &obj); err != nil {
-		return gatewayCR{}, fmt.Errorf("failed to parse the %s gateway CR: %w", role, err)
-	}
-	if len(obj) == 0 {
-		return gatewayCR{}, fmt.Errorf("the %s gateway CR contains no fields", role)
-	}
-
-	return gatewayCR{role: role, obj: obj}, nil
-}
-
-// checkGatewayShape confirms the file is a Confluent Gateway CR with a spec.
-// ApplyGatewayYAML pushes whatever it is handed through the pinned Gateway GVR
-// and overwrites name and namespace, so a Deployment or a Kafka CR passed to
-// --fenced-cr-yaml would be applied *as* this gateway.
-func checkGatewayShape(cr gatewayCR, f *findings) {
-	if kind, _ := stringField(cr.obj, "kind"); kind != GatewayKind {
-		f.problem("the %s gateway CR has kind %q, expected %q", cr.role, kind, GatewayKind)
-	}
-
-	// The declared apiVersion is not cosmetic. ApplyGatewayYAML sends the object
-	// body verbatim through the pinned v1beta1 GVR, and server-side apply rejects
-	// a patch whose apiVersion disagrees with the endpoint's ("Incorrect version
-	// specified in apply patch" — apimachinery structuredmerge). A mismatch here
-	// fails the apply mid-migration, which is exactly what this gate exists to
-	// prevent, so both halves are refusals.
-	apiVersion, _ := stringField(cr.obj, "apiVersion")
-	group, version := splitAPIVersion(apiVersion)
-	switch {
-	case group != GatewayGroup:
-		f.problem("the %s gateway CR has apiVersion %q, expected group %q", cr.role, apiVersion, GatewayGroup)
-	case version != GatewayVersion:
-		f.problem("the %s gateway CR declares apiVersion %q, but kcp applies gateways as %s/%s and the API server refuses an apply whose version disagrees", cr.role, apiVersion, GatewayGroup, GatewayVersion)
-	}
-
-	if spec, ok := mapField(cr.obj, "spec"); !ok || len(spec) == 0 {
-		f.problem("the %s gateway CR has no spec", cr.role)
-	}
-}
-
-// checkGatewayIdentity confirms a CR names the gateway the migration targets.
-// ApplyGatewayYAML calls SetName/SetNamespace with the migration's target, so a
-// file for a different gateway is not rejected — it is silently applied over
-// this one.
-//
-// Only a value that is present and *wrong* is a refusal: an absent name or
-// namespace is the one ApplyGatewayYAML fills in, so a CR file that omits it
-// works today and must keep working.
-func checkGatewayIdentity(cr gatewayCR, namespace, gatewayName string, f *findings) {
-	metadata, _ := mapField(cr.obj, "metadata")
-
-	if name, ok := stringField(metadata, "name"); ok && name != "" && name != gatewayName {
-		f.problem("the %s gateway CR is named %q but the migration targets gateway %q (kcp would apply this file under the target name)", cr.role, name, gatewayName)
-	}
-
-	if ns, ok := stringField(metadata, "namespace"); ok && ns != "" && ns != namespace {
-		f.problem("the %s gateway CR declares namespace %q but the migration targets namespace %q", cr.role, ns, namespace)
-	}
-
-	// managedFields is the fingerprint of a file produced by `kubectl get -o
-	// yaml`. Deriving the switchover CR that way is a natural workflow, but
-	// client-go refuses to apply such an object outright ("cannot apply an object
-	// with managed fields already set"), before any request leaves the process —
-	// so the apply would fail after the fence, with clients already blocked.
-	// unfenceGateway strips this same metadata for the same reason.
-	if _, present := metadata["managedFields"]; present {
-		f.problem("the %s gateway CR carries metadata.managedFields, which server-side apply refuses; it looks like `kubectl get -o yaml` output — strip managedFields, resourceVersion, uid, creationTimestamp and status", cr.role)
-	}
-}
-
-// checkFenceTargets confirms the migration can fence the routes it names and
-// that the switchover CR lifts that fence.
-//
-// The fence is derived from the live initial CR (FenceRoutes injects a fence
-// block onto each named route), so a named route must exist in the initial CR
-// and must not already be fenced — the fence is purely additive. The switchover
-// CR must then not still fence those routes, or every client stays blocked after
-// kcp declares the migration complete — the mirror of the 2026-07-27 outcome.
-//
-// Fences are tracked per route because a gateway legitimately fences one route
-// while leaving another serving — the SCRAM pre-registration route in
-// docs/assets/gateway-switchover stays available throughout.
-func checkFenceTargets(initial, switchover gatewayCR, fenceRoutes []string, f *findings) {
-	// Which routes does the live initial CR declare, and which already carry a
-	// fence? The fence is derived from the initial CR, so a named route must exist
-	// there and must not already be fenced.
-	present := routeNames(initial)
-	alreadyFenced := map[string]struct{}{}
-	if initialFenced, _ := fencedRoutes(initial); len(initialFenced) > 0 {
-		for _, r := range initialFenced {
-			if r.matchable {
-				alreadyFenced[r.identity] = struct{}{}
-			}
-		}
-	}
-
-	// The set of route identities the migration will fence, keyed the same way
-	// fencedRoutes keys them (name=…) so the switchover comparison below lines up.
-	fencedSet := make(map[string]struct{}, len(fenceRoutes))
-	for _, name := range fenceRoutes {
-		fencedSet["name="+name] = struct{}{}
-		if _, ok := present[name]; !ok {
-			f.problem("the initial gateway CR has no route named %q for the migration to fence", name)
+// routesByName indexes a CR's spec.routes by name for direct target lookup.
+func routesByName(cr gatewayCR) map[string]map[string]any {
+	byName := map[string]map[string]any{}
+	spec, _ := mapField(cr.obj, "spec")
+	routes, _ := sliceField(spec, "routes")
+	for _, raw := range routes {
+		route, ok := raw.(map[string]any)
+		if !ok {
 			continue
 		}
-		if _, fenced := alreadyFenced["name="+name]; fenced {
-			f.problem("the initial gateway CR already fences route %q; the fence is additive and cannot fence it again", name)
+		if name, ok := stringField(route, "name"); ok && name != "" {
+			byName[name] = route
 		}
 	}
-
-	// The switchover CR must lift the fence on every route the migration fenced.
-	switchoverList, _ := fencedRoutes(switchover)
-	var stillFenced, otherFenced, unmatchable []string
-	for _, route := range switchoverList {
-		switch {
-		case !route.matchable:
-			// Neither a name nor an endpoint: there is nothing to match this
-			// against, so claiming either outcome would be a guess.
-			unmatchable = append(unmatchable, route.label)
-		case containsKey(fencedSet, route.identity):
-			stillFenced = append(stillFenced, route.label)
-		default:
-			otherFenced = append(otherFenced, route.label)
-		}
-	}
-
-	if len(stillFenced) > 0 {
-		f.problem("the switchover gateway CR still fences the route(s) the migration fences (%s), so clients would stay blocked after switchover", strings.Join(stillFenced, ", "))
-	}
-	// kcp cannot know the intent behind fencing a route the migration never
-	// fenced — it may be deliberate — so this warns rather than refuses.
-	if len(otherFenced) > 0 {
-		f.warn("the switchover gateway CR fences route(s) the migration does not fence (%s); clients on those routes will be blocked after switchover", strings.Join(otherFenced, ", "))
-	}
-	if len(unmatchable) > 0 {
-		f.warn("the switchover gateway CR fences route(s) with neither a name nor an endpoint (%s), so kcp cannot tell whether they are the route(s) the migration fenced; confirm by hand that switchover lifts the fence", strings.Join(unmatchable, ", "))
-	}
+	return byName
 }
 
-// containsKey is a readability shim for set membership in a switch arm.
-func containsKey[V any](set map[string]V, key string) bool {
-	_, found := set[key]
-	return found
-}
-
-// checkSpecsDiffer catches the wrong-file mistake that yields a "successful"
-// migration with nothing switched over: the live gateway's own spec handed back
-// as the switchover. The apply is then a no-op, which does not bump
-// metadata.generation, so even WaitForGatewayAccepted returns immediately and
-// the step reports success.
-//
-// Only exact equality is reported. The live initial CR carries operator defaults
-// the user's file omits, so a *difference* from it proves nothing — this is a
-// cheap identity test, not a diff.
-func checkSpecsDiffer(initial, switchover gatewayCR, f *findings) {
-	initialSpec, _ := mapField(initial.obj, "spec")
-	switchoverSpec, _ := mapField(switchover.obj, "spec")
-
-	// A missing spec is already reported by checkGatewayShape; comparing absent
-	// specs here would only produce a second, misleading finding.
-	if len(switchoverSpec) == 0 {
-		return
-	}
-
-	if len(initialSpec) > 0 && reflect.DeepEqual(initialSpec, switchoverSpec) {
-		f.problem("the switchover gateway CR spec is identical to the live gateway's, so the switchover would not route traffic to Confluent Cloud")
-	}
-}
-
-// checkStreamingDomainWiring confirms each route points at a streaming domain
-// the same CR declares, and at a bootstrap server id that domain defines. The
-// operator rejects a dangling reference — but not until the CR is applied, i.e.
-// mid-migration.
-//
-// Only what the file states is checked: a route with no streamingDomain, or a
-// domain reference with no bootstrapServerId, is left alone rather than assumed
-// mandatory.
-func checkStreamingDomainWiring(cr gatewayCR, f *findings) {
-	spec, _ := mapField(cr.obj, "spec")
-
-	// domain name -> the bootstrap server ids it defines
+// domainBootstrapIDs maps each streaming domain a CR declares to the
+// bootstrap server ids it defines.
+func domainBootstrapIDs(cr gatewayCR) map[string]map[string]struct{} {
 	domains := map[string]map[string]struct{}{}
+	spec, _ := mapField(cr.obj, "spec")
 	rawDomains, _ := sliceField(spec, "streamingDomains")
 	for _, raw := range rawDomains {
 		domain, ok := raw.(map[string]any)
@@ -361,38 +222,32 @@ func checkStreamingDomainWiring(cr gatewayCR, f *findings) {
 		}
 		domains[name] = ids
 	}
+	return domains
+}
 
-	routes, _ := sliceField(spec, "routes")
-	for i, raw := range routes {
-		route, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		ref, ok := mapField(route, "streamingDomain")
-		if !ok {
-			continue
-		}
-		domainName, ok := stringField(ref, "name")
-		if !ok || domainName == "" {
-			continue
-		}
+// stagedAuthFor returns route's security.cluster.<domainName> block — the
+// pre-staged ("redundant") auth for that domain — or false if it is absent.
+func stagedAuthFor(route map[string]any, domainName string) (map[string]any, bool) {
+	security, _ := mapField(route, "security")
+	cluster, _ := mapField(security, "cluster")
+	return mapField(cluster, domainName)
+}
 
-		ids, declared := domains[domainName]
-		if !declared {
-			f.problem("in the %s gateway CR, route %s points at streaming domain %q, which the CR does not declare (declared: %s)",
-				cr.role, routeLabel(route, i), domainName, describeSet(domains))
-			continue
-		}
-
-		id, ok := stringField(ref, "bootstrapServerId")
-		if !ok || id == "" {
-			continue
-		}
-		if _, defined := ids[id]; !defined {
-			f.problem("in the %s gateway CR, route %s points at bootstrapServerId %q, which streaming domain %q does not define (defined: %s)",
-				cr.role, routeLabel(route, i), id, domainName, describeSet(ids))
-		}
+// parseGatewayCR unmarshals one CR, keeping the role for error messages.
+func parseGatewayCR(role string, data []byte) (gatewayCR, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return gatewayCR{}, fmt.Errorf("the %s gateway CR is empty", role)
 	}
+
+	var obj map[string]any
+	if err := yaml.Unmarshal(data, &obj); err != nil {
+		return gatewayCR{}, fmt.Errorf("failed to parse the %s gateway CR: %w", role, err)
+	}
+	if len(obj) == 0 {
+		return gatewayCR{}, fmt.Errorf("the %s gateway CR contains no fields", role)
+	}
+
+	return gatewayCR{role: role, obj: obj}, nil
 }
 
 // secretRefKeys are the CRD fields that name a Kubernetes Secret.
@@ -418,12 +273,16 @@ var secretRefKeys = map[string]struct{}{
 // shipped switchover examples and was silently unchecked.
 const unrecognisedRefKeySuffix = "Ref"
 
-// checkSecretRefsExist confirms every Secret the fenced and switchover CRs
-// reference already exists in the namespace. This is the check that would have
-// caught the 2026-07-27 failure.
+// checkSecretRefsExist confirms every Secret the given CRs reference already
+// exists in the namespace. This is the check that would have caught the
+// 2026-07-27 failure.
 //
-// The live initial CR is excluded: it is already running, so its references
-// resolve by construction.
+// checkRedundantAuthStaged passes the live initial CR here deliberately
+// INCLUDING it, rather than excluding it: a route's currently-bound domain is
+// already running, so its refs resolve by construction, but the pre-staged
+// ("redundant") auth block for the switchover target has never been
+// exercised by the cluster — a typo'd secret name there would otherwise go
+// unnoticed until cutover.
 //
 // Reading Secrets is a privilege plenty of migration operators are not granted,
 // and this validation is new — a denial must not block a migration that would
@@ -557,77 +416,6 @@ func (g walkGuard) seen(node any) bool {
 	return false
 }
 
-// routeFence is one fenced route: an identity that can be matched across two
-// separate CR files, and a label to call it in a finding.
-//
-// Position cannot serve as the identity — the fenced and switchover CRs routinely
-// hold different numbers of routes (the switchover examples drop the source
-// domain's route entirely), so routes[0] in one file is not routes[0] in the
-// other. A route name is the identity when present; failing that the endpoint it
-// serves, which is what actually distinguishes routes in the shipped examples
-// (port 9595 for clients, 9599 for SCRAM pre-registration). With neither, the
-// route cannot be matched across files at all and matchable is false.
-type routeFence struct {
-	identity  string
-	label     string
-	matchable bool
-}
-
-// routeNames returns the set of spec.routes[].name values a CR declares. Used
-// to confirm the routes the migration will fence exist in the live initial CR.
-func routeNames(cr gatewayCR) map[string]struct{} {
-	names := map[string]struct{}{}
-	spec, _ := mapField(cr.obj, "spec")
-	routes, _ := sliceField(spec, "routes")
-	for _, raw := range routes {
-		route, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		if name, ok := stringField(route, "name"); ok && name != "" {
-			names[name] = struct{}{}
-		}
-	}
-	return names
-}
-
-// fencedRoutes returns the spec.routes entries carrying a fence block, and
-// whether spec.routes was present at all — "no routes" and "routes but none
-// fenced" are different failures.
-func fencedRoutes(cr gatewayCR) (fenced []routeFence, routesPresent bool) {
-	spec, _ := mapField(cr.obj, "spec")
-	routes, ok := sliceField(spec, "routes")
-	if !ok {
-		return nil, false
-	}
-
-	for i, raw := range routes {
-		route, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		// `fence: null` is how a scripted edit (yq, kustomize) removes a fence —
-		// server-side apply deletes a nulled field — so an explicit null is not a
-		// fence. Counting it as one would refuse a switchover CR that works.
-		// An empty `fence: {}` still counts: the CRD's own defaults may apply.
-		if fence, hasFence := route["fence"]; !hasFence || fence == nil {
-			continue
-		}
-
-		entry := routeFence{label: routeLabel(route, i)}
-		if name, ok := stringField(route, "name"); ok && name != "" {
-			entry.identity, entry.matchable = "name="+name, true
-		} else if endpoint, ok := stringField(route, "endpoint"); ok && endpoint != "" {
-			entry.identity, entry.matchable = "endpoint="+endpoint, true
-			entry.label = fmt.Sprintf("%s (endpoint %s)", entry.label, endpoint)
-		}
-		fenced = append(fenced, entry)
-	}
-
-	slices.SortFunc(fenced, func(a, b routeFence) int { return strings.Compare(a.label, b.label) })
-	return fenced, true
-}
-
 // treeContainsNonNilKey reports whether key appears anywhere in the subtree with
 // a value that is not null. Null is excluded for the same reason fencedRoutes
 // ignores `fence: null` — an explicitly nulled field is a field being removed,
@@ -659,15 +447,6 @@ func treeContainsNonNilKeyGuarded(v any, key string, guard walkGuard) bool {
 		}
 	}
 	return false
-}
-
-// routeLabel names a route for a finding, falling back to its index when the
-// route has no name.
-func routeLabel(route map[string]any, index int) string {
-	if name, ok := stringField(route, "name"); ok && name != "" {
-		return name
-	}
-	return fmt.Sprintf("routes[%d]", index)
 }
 
 // describeSet renders a set's keys for a finding, so an operator can see what

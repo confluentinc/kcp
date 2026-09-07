@@ -2,11 +2,14 @@ package init
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -46,24 +49,87 @@ spec:
     name: msk-to-cc
   gateway:
     namespace: confluent
-    crs:
-      initial: gateway-initial
-      switchover: SWITCHOVER_PATH
-    fence:
-      routes:
-        - migration-route
+    cr-name: gateway-initial
+  topicGroup:
+    - topics:
+        - t1.order
+        - t2.inventory
+      route: migration-route
+      targetStreamingDomain: confluent-cloud
 `
 
-// writeManifest writes the manifest with the switchover CR file created
-// alongside it, and returns the manifest path. There is no fenced CR file — the
-// fence is derived from the live initial CR at cutover.
+// defaultFixtureCR is the live initial CR the early derivation reads. It
+// declares the domain the manifest targets — confluent-cloud, single-homed with
+// id SASL_PLAIN — and the static route migration-route (singular streamingDomain
+// binding). TestMain installs it for every test; a test needing a different CR
+// calls stubCR first.
+const defaultFixtureCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gateway-initial
+spec:
+  streamingDomains:
+    - name: confluent-cloud
+      kafkaCluster:
+        bootstrapServers:
+          - id: SASL_PLAIN
+  routes:
+    - name: migration-route
+      streamingDomain:
+        name: source-domain
+        bootstrapServerId: SOURCE_ID
+`
+
+func TestMain(m *testing.M) {
+	// Every init success path now reads the initial CR early. Default all
+	// tests to the working single-homed fixture; tests needing a different CR
+	// (or a fetch error) override it via stubCR.
+	fetchInitialCR = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return []byte(defaultFixtureCR), nil
+	}
+	os.Exit(m.Run())
+}
+
+// stubCR installs crYAML as the CR the early derivation reads, restoring the
+// previous fetch on cleanup.
+func stubCR(t *testing.T, crYAML string) {
+	t.Helper()
+	prev := fetchInitialCR
+	fetchInitialCR = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return []byte(crYAML), nil
+	}
+	t.Cleanup(func() { fetchInitialCR = prev })
+}
+
+// stubCRError makes the early CR read fail, restoring the previous fetch on
+// cleanup — for proving --skip-validate still performs the read.
+func stubCRError(t *testing.T, err error) {
+	t.Helper()
+	prev := fetchInitialCR
+	fetchInitialCR = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return nil, err
+	}
+	t.Cleanup(func() { fetchInitialCR = prev })
+}
+
+// defaultTopicsBlock is the topics selection in the canonical manifest's
+// topicGroup entry; tests replace it to vary the selection.
+const defaultTopicsBlock = "    - topics:\n        - t1.order\n        - t2.inventory\n"
+
+// matchAllTopicPatterns swaps the literal topics for a match-all topicPatterns
+// entry.
+func matchAllTopicPatterns(doc string) string {
+	return strings.Replace(doc, defaultTopicsBlock, "    - topicPatterns:\n        - '.*'\n", 1)
+}
+
+// writeManifest writes the manifest and returns its path. There is no fenced
+// or switchover CR file — both are derived from the live initial CR at
+// cutover.
 func writeManifest(t *testing.T, mutate func(string) string) string {
 	t.Helper()
 	dir := t.TempDir()
-	switchover := filepath.Join(dir, "switchover.yaml")
-	require.NoError(t, os.WriteFile(switchover, []byte("kind: Gateway\n"), 0600))
 
-	doc := strings.ReplaceAll(gatewayManifest, "SWITCHOVER_PATH", switchover)
+	doc := gatewayManifest
 	if mutate != nil {
 		doc = mutate(doc)
 	}
@@ -178,7 +244,7 @@ func TestInit_JoinsMultipleBootstrapServers(t *testing.T) {
 	assert.Equal(t, "b-1.msk.us-east-1.amazonaws.com:9096,b-2.msk.us-east-1.amazonaws.com:9096", cfg.SourceBootstrap)
 }
 
-func TestInit_SnapshotsSwitchoverAndPersistsFenceRoutes(t *testing.T) {
+func TestInit_PersistsFenceRoutesAndSwitchoverTargets(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
@@ -187,16 +253,86 @@ func TestInit_SnapshotsSwitchoverAndPersistsFenceRoutes(t *testing.T) {
 	require.NoError(t, err)
 	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
 	require.NoError(t, err)
-	// The switchover CR is snapshotted as bytes; the fence is recorded as route
-	// names, derived from the live initial CR at cutover rather than a file.
-	assert.Equal(t, "kind: Gateway\n", string(cfg.SwitchoverCrYAML))
+	// Both are derived from the live initial CR at cutover rather than a file:
+	// the fence is recorded as route names, and each route's switchover
+	// target is projected from the manifest's routes[].streamingDomain.
 	assert.Equal(t, []string{"migration-route"}, cfg.FenceRoutes)
+	assert.Equal(t, []gateway.RouteSwitchoverTarget{
+		{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"},
+	}, cfg.SwitchoverTargets)
+}
+
+// TestInit_PersistsGatewayConfigPort — the init-time capability probe dials the
+// gateway /config endpoint on this port; if the manifest's value is not copied
+// into the persisted config, the probe falls back to the hardcoded default and
+// init fails on any non-default port that execute would resolve correctly.
+func TestInit_PersistsGatewayConfigPort(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		return doc + `  defaultPolicies:
+    gatewayConfigPort: 9099
+`
+	})
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err)
+
+	state, err := migration.NewMigrationStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Equal(t, 9099, cfg.GatewayConfigPort)
 }
 
 func TestInit_TopicsCarryThrough(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err)
+
+	state, err := migration.NewMigrationStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"t1.order", "t2.inventory"}, cfg.Topics)
+}
+
+// TestInit_MatchAllPatternMeansEveryMirror — a static match-all topicPatterns
+// (.*) leaves Topics empty, which the Initialize step back-fills with every
+// active mirror topic — the same back-fill the removed omit-topics sentinel used.
+func TestInit_MatchAllPatternMeansEveryMirror(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, matchAllTopicPatterns)
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err)
+
+	state, err := migration.NewMigrationStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Empty(t, cfg.Topics, "a match-all pattern leaves Topics empty for the FSM to back-fill")
+}
+
+// TestInit_NonMatchAllStaticPatternIsNotYetSupported — only the match-all
+// pattern is expanded on a static route this piece; any other pattern errors.
+func TestInit_NonMatchAllStaticPatternIsNotYetSupported(t *testing.T) {
 	manifest := writeManifest(t, func(doc string) string {
-		return doc + "  topics: ['t1.order', 't2.inventory']\n"
+		return strings.Replace(doc, defaultTopicsBlock,
+			"    - topicPatterns:\n        - 'orders\\..*'\n", 1)
+	})
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not yet supported")
+}
+
+// TestInit_ExplicitTopicsWinsOverMatchAllPattern — when both topics and a
+// match-all topicPatterns are set, the literal topics list carries through
+// unchanged rather than being back-filled to every mirror topic. Back-filling
+// past it would make execute's drift check, which diffs the manifest's still-
+// literal topics field against the snapshot, a permanent false positive.
+func TestInit_ExplicitTopicsWinsOverMatchAllPattern(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		return strings.Replace(doc, defaultTopicsBlock,
+			defaultTopicsBlock+"      topicPatterns:\n        - '.*'\n", 1)
 	})
 	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
@@ -208,9 +344,30 @@ func TestInit_TopicsCarryThrough(t *testing.T) {
 	assert.Equal(t, []string{"t1.order", "t2.inventory"}, cfg.Topics)
 }
 
-// TestInit_OmittedTopicsMeansEveryMirror — omitted stays an empty list in the
-// config, which the Initialize step back-fills with every active mirror.
-func TestInit_OmittedTopicsMeansEveryMirror(t *testing.T) {
+// TestInit_ExplicitTopicsWinsOverNonMatchAllPattern — an explicit topics list
+// is authoritative regardless of topicPatterns, so a non-match-all pattern
+// alongside it does not hit the "not yet supported" rejection.
+func TestInit_ExplicitTopicsWinsOverNonMatchAllPattern(t *testing.T) {
+	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
+	manifest := writeManifest(t, func(doc string) string {
+		return strings.Replace(doc, defaultTopicsBlock,
+			defaultTopicsBlock+"      topicPatterns:\n        - 'orders\\..*'\n", 1)
+	})
+	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
+	require.NoError(t, err)
+
+	state, err := migration.NewMigrationStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"t1.order", "t2.inventory"}, cfg.Topics)
+}
+
+// --- CR-derived bootstrap id and route mode ---
+
+// TestInit_DerivesBootstrapServerIdFromCR — the id in the snapshot is DERIVED
+// from the live CR's single-homed declaration, not authored in the manifest.
+func TestInit_DerivesBootstrapServerIdFromCR(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
 	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err)
@@ -219,7 +376,60 @@ func TestInit_OmittedTopicsMeansEveryMirror(t *testing.T) {
 	require.NoError(t, err)
 	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
 	require.NoError(t, err)
-	assert.Empty(t, cfg.Topics)
+	require.Len(t, cfg.SwitchoverTargets, 1)
+	assert.Equal(t, "SASL_PLAIN", cfg.SwitchoverTargets[0].BootstrapServerId,
+		"the id is derived from the CR's spec.streamingDomains, not the manifest")
+}
+
+// TestInit_MultiHomedDomainIsError is D1a: a target domain declaring more than
+// one bootstrap server id is a hard error naming the domain and its ids.
+func TestInit_MultiHomedDomainIsError(t *testing.T) {
+	stubCR(t, strings.Replace(defaultFixtureCR,
+		"        bootstrapServers:\n          - id: SASL_PLAIN\n",
+		"        bootstrapServers:\n          - id: SASL_PLAIN\n          - id: SASL_SCRAM\n", 1))
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "confluent-cloud")
+}
+
+// TestInit_TargetDomainAbsentFromCRIsError is the zero case: a
+// targetStreamingDomain the CR does not declare (a typo) is a hard error.
+func TestInit_TargetDomainAbsentFromCRIsError(t *testing.T) {
+	stubCR(t, strings.Replace(defaultFixtureCR, "    - name: confluent-cloud\n", "    - name: other-domain\n", 1))
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "confluent-cloud")
+}
+
+// TestInit_DynamicRouteIsNotYetImplemented refuses a route resolving to the
+// plural (topic-based) binding cannot be run through the static path — init
+// refuses rather than silently treating it as static.
+func TestInit_DynamicRouteIsNotYetImplemented(t *testing.T) {
+	stubCR(t, strings.Replace(defaultFixtureCR,
+		"      streamingDomain:\n        name: source-domain\n        bootstrapServerId: SOURCE_ID\n",
+		"      streamingDomains:\n        - name: source-domain\n          bootstrapServerId: SOURCE_ID\n", 1))
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not yet implement")
+}
+
+// TestInit_RouteAbsentFromCRIsError — a manifest route missing from the CR is an
+// error, never a silent fall-through.
+func TestInit_RouteAbsentFromCRIsError(t *testing.T) {
+	stubCR(t, strings.Replace(defaultFixtureCR, "    - name: migration-route\n", "    - name: other-route\n", 1))
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "migration-route")
+}
+
+// TestInit_SkipValidateStillReadsCR — D1c: --skip-validate defers credential and
+// K8s-resource validation, but NOT the initial-CR read the snapshot's derived id
+// depends on. A fetch failure must surface even under --skip-validate.
+func TestInit_SkipValidateStillReadsCR(t *testing.T) {
+	stubCRError(t, fmt.Errorf("boom: cluster unreachable"))
+	_, err := runInit(t, "--migration-yaml", writeManifest(t, nil), "--migration-state-file", filepath.Join(t.TempDir(), "migration-state.json"), "--skip-validate")
+	require.Error(t, err, "--skip-validate must still read the initial CR")
+	assert.Contains(t, err.Error(), "boom")
 }
 
 func TestInit_KubeconfigDefaultsToHomeDir(t *testing.T) {

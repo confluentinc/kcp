@@ -6,7 +6,7 @@ KCP is a CLI tool for planning and executing Apache Kafka® migrations to Conflu
 > KCP supports migrations from two source types:
 >
 > - **AWS MSK (Managed Streaming for Apache Kafka)** — full discovery via AWS APIs + Kafka Admin API.
-> - **Apache Kafka** — direct scanning via Kafka Admin API.
+> - **Apache Kafka (including Confluent Platform and other Kafka-API-compatible distributions)** — direct scanning via Kafka Admin API.
 >
 > The workflow differs slightly based on your source type. See the [Command Reference](command-reference/index.md) for per-command specifics, or the [Source Compatibility](source-compatibility.md) matrix for which commands support which source flavor (MSK Provisioned/Express, MSK Serverless, Apache Kafka).
 
