@@ -72,8 +72,10 @@ func runMigrationExecuteTBM(cmd *cobra.Command, args []string) error {
 		if err != nil {
 			return fmt.Errorf("failed to load tbm state: %w", err)
 		}
-	} else {
+	} else if os.IsNotExist(statErr) {
 		tbmState = tbm.NewTBMState()
+	} else {
+		return fmt.Errorf("failed to check tbm state file: %w", statErr)
 	}
 
 	config, err := resolveTBMConfig(tbmState, g.Metadata.Name, hash)

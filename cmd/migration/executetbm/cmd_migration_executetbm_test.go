@@ -170,6 +170,26 @@ func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 	assert.Contains(t, out, "already complete")
 }
 
+func TestExecuteTBM_TbmStateFileUnstatable_FailsInsteadOfTreatingAsFresh(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permission bits")
+	}
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-unstatable", "lkc-abc123")
+
+	// Strip execute (search) permission on the parent dir so os.Stat on the
+	// state file path fails with permission-denied, not "does not exist".
+	restrictedDir := filepath.Join(dir, "restricted")
+	require.NoError(t, os.Mkdir(restrictedDir, 0700))
+	stateFile := filepath.Join(restrictedDir, "tbm-state.json")
+	require.NoError(t, os.Chmod(restrictedDir, 0000))
+	t.Cleanup(func() { _ = os.Chmod(restrictedDir, 0700) })
+
+	_, err := runExecuteTBM(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to check tbm state file")
+}
+
 func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	withFastTBMTransitions(t)
 	dir := t.TempDir()
