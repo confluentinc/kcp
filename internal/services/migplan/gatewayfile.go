@@ -1,18 +1,17 @@
 // Package providers holds the live implementations of the migplan provider
 // interfaces, wrapping existing KCP clients and, for the prototype, static files.
-package providers
+package migplan
 
 import (
 	"context"
 	"fmt"
 	"os"
 
-	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/goccy/go-yaml"
 )
 
-var _ migplan.GatewayConfigSource = (*GatewayFile)(nil)
+var _ GatewayConfigSource = (*GatewayFile)(nil)
 
 // GatewayFile loads a route from a static gateway CR YAML file — the prototype
 // stand-in for the live k8s pull.

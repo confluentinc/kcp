@@ -3,138 +3,93 @@
 package migplan_e2e
 
 import (
-	"bytes"
-	"encoding/json"
-	"os"
-	"path/filepath"
+	"context"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
 
-	cmdreconcile "github.com/confluentinc/kcp/cmd/migration/reconcile"
+	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/goccy/go-yaml"
 )
 
-// TestReconcileCommandArtifactsReflectManifest drives the WHOLE user-facing path
-// — the real `kcp migration reconcile` cobra command: manifest load → live
-// providers → engine → WriteArtifacts to disk — against the docker env, then
-// asserts the three written artifacts faithfully encode the operator's declared
-// intent from the manifest:
+// TestReconcileResultReflectsManifest drives the in-code entry point
+// migplan.Reconcile (the one the FSM calls) against the docker env and asserts the
+// Result faithfully encodes the operator's declared intent from the manifest:
 //
-//   - topics.json is the resolved selector (the promote list the caller feeds to
-//     cluster-link promotion);
-//   - both rules artifacts are wrapped under a top-level rules: key;
+//   - Result.Topics is the resolved selector (the promote list);
+//   - both YAML artifacts are wrapped under a top-level rules: key;
 //   - the fence artifact fences exactly the selected batch;
-//   - the switchover artifact routes exactly that batch to the manifest's
-//     target streaming-domain (cc), and nothing else.
-//
-// This validates that the artifacts REFLECT the manifest change. Whether they
-// APPLY correctly against a running gateway (routing actually flips) is not
-// covered here — a static gateway fixture cannot observe applied routing; that
-// needs a live topic-based-routing gateway.
-func TestReconcileCommandArtifactsReflectManifest(t *testing.T) {
-	out := t.TempDir()
+//   - the switchover routes exactly that batch to the manifest's target (cc);
+//   - the operator's pre-existing gateway edits survive (preservation).
+func TestReconcileResultReflectsManifest(t *testing.T) {
+	g, err := manifest.LoadGatewayMigrationFile("testdata/manifest.yaml")
+	if err != nil {
+		t.Fatalf("load manifest: %v", err)
+	}
 
-	cmd := cmdreconcile.NewMigrationReconcileCmd()
-	cmd.SetOut(&bytes.Buffer{})
-	cmd.SetErr(&bytes.Buffer{})
-	cmd.SetArgs([]string{
-		"--migration-yaml", "testdata/manifest.yaml", // topics/route/target come from spec.topicGroup
-		"--gateway-config", "testdata/gateway.yaml",
-		"--out-dir", out,
-	})
-	if err := cmd.Execute(); err != nil {
-		t.Fatalf("reconcile command failed: %v", err)
+	res, err := migplan.Reconcile(context.Background(), g, "testdata/gateway.yaml")
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.Refused {
+		t.Fatalf("expected success, refused: %v", res.Reasons)
 	}
 
 	want := []string{"billing-v2", "team-a.orders", "team-a.payments"} // sorted
-
-	// topics.json — the promote list the caller feeds to cluster-link promotion.
-	var topics []string
-	readJSON(t, filepath.Join(out, "topics.json"), &topics)
-	if !reflect.DeepEqual(topics, want) {
-		t.Errorf("topics.json = %v, want %v", topics, want)
+	if !reflect.DeepEqual(res.Topics, want) {
+		t.Errorf("Result.Topics = %v, want %v", res.Topics, want)
 	}
 
-	// fence-rules.yaml — whole rules subtree; fences exactly the batch.
-	fence := readRulesSubtree(t, filepath.Join(out, "fence-rules.yaml"))
+	// both artifacts wrapped under a top-level rules: key
+	for _, y := range []struct{ name, body string }{{"FenceYAML", res.FenceYAML}, {"SwitchoverYAML", res.SwitchoverYAML}} {
+		if !strings.HasPrefix(strings.TrimSpace(y.body), "rules:") {
+			t.Errorf("%s must be wrapped under a top-level rules: key:\n%s", y.name, y.body)
+		}
+	}
+
+	// fence: fences exactly the batch
+	fence := parseRules(t, res.FenceYAML)
 	if got := firstFencingTopics(t, fence); !reflect.DeepEqual(got, want) {
 		t.Errorf("fence topics = %v, want %v", got, want)
 	}
 
-	// switchover-rules.yaml — routes exactly the batch to the manifest's target (cc).
-	sw := readRulesSubtree(t, filepath.Join(out, "switchover-rules.yaml"))
+	// switchover: routes exactly the batch to the manifest's target (cc)
+	sw := parseRules(t, res.SwitchoverYAML)
 	domain, condTopics := firstSwitchCondition(t, sw)
 	if domain != "cc" {
-		t.Errorf("switchover routes to %q, want the manifest target domain cc", domain)
+		t.Errorf("switchover routes to %q, want cc", domain)
 	}
 	if !reflect.DeepEqual(condTopics, want) {
 		t.Errorf("switchover condition topics = %v, want %v", condTopics, want)
 	}
 
-	// PRESERVATION — the whole point of the engine: the operator's ("Omar's")
-	// pre-existing gateway edits in the rich fixture must survive untouched, our
-	// batch merely prepended. Assert against the real written artifacts.
-	fenceRaw := readFile(t, filepath.Join(out, "fence-rules.yaml"))
-	swRaw := readFile(t, filepath.Join(out, "switchover-rules.yaml"))
-
-	// The fence artifact keeps our batch fence AND both operator fences.
+	// PRESERVATION: the operator's pre-existing edits survive in both artifacts.
 	for _, must := range []string{"TRANSACTION", "ops-audit"} {
-		if !strings.Contains(fenceRaw, must) {
-			t.Errorf("fence-rules.yaml dropped the operator's fencing entry %q:\n%s", must, fenceRaw)
+		if !strings.Contains(res.FenceYAML, must) {
+			t.Errorf("FenceYAML dropped the operator's fencing entry %q:\n%s", must, res.FenceYAML)
+		}
+		if !strings.Contains(res.SwitchoverYAML, must) {
+			t.Errorf("SwitchoverYAML dropped the operator's fencing entry %q:\n%s", must, res.SwitchoverYAML)
 		}
 	}
-
-	// The switchover reverts fencing to baseline: it keeps the operator's fences
-	// but must NOT carry our batch fence (that unfencing is what the switchover is).
-	for _, must := range []string{"TRANSACTION", "ops-audit"} {
-		if !strings.Contains(swRaw, must) {
-			t.Errorf("switchover-rules.yaml dropped the operator's fencing entry %q:\n%s", must, swRaw)
-		}
-	}
-	// The operator's own routing condition (team-a.* pattern) must be preserved,
-	// sitting below our prepended exact-name condition.
-	if !strings.Contains(swRaw, "team-a.*") {
-		t.Errorf("switchover-rules.yaml dropped the operator's routing condition (team-a.* pattern):\n%s", swRaw)
+	if !strings.Contains(res.SwitchoverYAML, "team-a.*") {
+		t.Errorf("SwitchoverYAML dropped the operator's routing condition (team-a.*):\n%s", res.SwitchoverYAML)
 	}
 }
 
-func readFile(t *testing.T, path string) string {
+// parseRules unmarshals a rules artifact and returns the subtree under its
+// required top-level rules: key.
+func parseRules(t *testing.T, y string) map[string]any {
 	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	return string(b)
-}
-
-func readJSON(t *testing.T, path string, v any) {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
-	if err := json.Unmarshal(b, v); err != nil {
-		t.Fatalf("unmarshal %s: %v", path, err)
-	}
-}
-
-// readRulesSubtree reads an artifact and returns the subtree under its required
-// top-level rules: key (also asserting that wrapper exists).
-func readRulesSubtree(t *testing.T, path string) map[string]any {
-	t.Helper()
-	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
 	var doc map[string]any
-	if err := yaml.Unmarshal(b, &doc); err != nil {
-		t.Fatalf("unmarshal %s: %v", path, err)
+	if err := yaml.Unmarshal([]byte(y), &doc); err != nil {
+		t.Fatalf("unmarshal rules: %v", err)
 	}
 	rules, ok := doc["rules"].(map[string]any)
 	if !ok {
-		t.Fatalf("%s must be wrapped under a top-level rules: key:\n%s", path, b)
+		t.Fatalf("artifact must be wrapped under a top-level rules: key:\n%s", y)
 	}
 	return rules
 }

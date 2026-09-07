@@ -1,4 +1,4 @@
-package providers
+package migplan
 
 import (
 	"context"
@@ -6,10 +6,9 @@ import (
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/client"
-	"github.com/confluentinc/kcp/internal/services/migplan"
 )
 
-var _ migplan.TopicLister = (*KafkaTopicLister)(nil)
+var _ TopicLister = (*KafkaTopicLister)(nil)
 
 // topicListerAdmin is the narrow slice of internal/client.KafkaAdmin that the
 // topic lister needs: list topics, and read the cluster's own id. The real
@@ -20,7 +19,7 @@ type topicListerAdmin interface {
 }
 
 // KafkaTopicLister lists a cluster's (non-internal) topics via a Kafka admin.
-// It implements migplan.TopicLister.
+// It implements TopicLister.
 type KafkaTopicLister struct {
 	admin topicListerAdmin
 }

@@ -1,11 +1,10 @@
-package providers
+package migplan
 
 import (
 	"context"
 	"fmt"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 )
 
@@ -22,11 +21,11 @@ type linkReader interface {
 	GetClusterLink(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error)
 }
 
-var _ migplan.LinkStatusProvider = (*ClusterLinkStatus)(nil)
+var _ LinkStatusProvider = (*ClusterLinkStatus)(nil)
 
 // ClusterLinkStatus reports the link's per-topic mirror state (keyed by SOURCE
 // topic name) and whether consumer offset sync is enabled — both read live from
-// the destination cluster link. It implements migplan.LinkStatusProvider.
+// the destination cluster link. It implements LinkStatusProvider.
 type ClusterLinkStatus struct {
 	svc linkReader
 	cfg clusterlink.Config
@@ -36,7 +35,7 @@ func NewClusterLinkStatus(svc linkReader, cfg clusterlink.Config) *ClusterLinkSt
 	return &ClusterLinkStatus{svc: svc, cfg: cfg}
 }
 
-func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*migplan.LinkStatus, error) {
+func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*LinkStatus, error) {
 	mirrors, err := c.svc.ListMirrorTopics(ctx, c.cfg)
 	if err != nil {
 		return nil, err
@@ -58,7 +57,7 @@ func (c *ClusterLinkStatus) LinkStatus(ctx context.Context) (*migplan.LinkStatus
 		return nil, fmt.Errorf("describing cluster link: %w", err)
 	}
 
-	return &migplan.LinkStatus{
+	return &LinkStatus{
 		OffsetSyncEnabled: enabled,
 		Mirrors:           m,
 		SourceClusterID:   link.SourceClusterID,

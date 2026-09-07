@@ -1,4 +1,4 @@
-package providers
+package migplan
 
 import (
 	"context"

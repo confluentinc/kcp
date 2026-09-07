@@ -1,40 +1,24 @@
-// Package reconcile wires the migration reconciliation engine (internal/services/migplan)
-// to live inputs: it loads the GatewayMigration manifest plus a static gateway-config
-// file, builds the engine-owned ReconcileInput from interim selector flags, constructs
-// the four live providers, runs the engine, renders the report and — unless --dry-run —
-// writes the three artifacts. It is a hidden prototype command; it never mutates the
-// gateway.
+// Package reconcile is a thin CLI over the in-code entry point
+// migplan.Reconcile: it loads the GatewayMigration manifest, runs the
+// reconciliation engine against live source/target/cluster-link state, renders
+// the per-topic report, and echoes the three artifacts to stdout. It writes no
+// files and never mutates the gateway. Hidden prototype command; the real caller
+// is the migration state machine, which calls migplan.Reconcile directly.
 package reconcile
 
 import (
+	"encoding/json"
 	"fmt"
-	"io"
 
-	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
-	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
-	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migplan/providers"
-	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
 )
 
-// defaultKafkaVersion mirrors the version the other migrate/scan admin builders
-// pin (internal/migrate/source.go, internal/sources/osk). The exact protocol
-// version is inert for topic listing; parity with the rest of KCP is what matters.
-const defaultKafkaVersion = "3.6.0"
-
-// reconcileFlags is the flag surface. The selector (route / target domain /
-// topics / patterns) is read from the manifest's spec.topicGroup, not flags;
-// --gateway-config is the prototype stand-in for the live k8s gateway pull.
 type reconcileFlags struct {
 	manifestPath  string
 	gatewayConfig string
-	dryRun        bool
-	outDir        string
 }
 
 func NewMigrationReconcileCmd() *cobra.Command {
@@ -46,12 +30,12 @@ func NewMigrationReconcileCmd() *cobra.Command {
 		Long: `Prototype command that drives the migration reconciliation engine.
 
 It loads the GatewayMigration manifest and a static gateway-config file, reads the
-live source topics, target topics, and cluster-link mirror state, then reconciles
-them against the route + target streaming domain + topic selection declared in the
-manifest's spec.topicGroup. It renders a per-topic report and, unless --dry-run is
-set, writes topics.json, fence-rules.yaml and switchover-rules.yaml into --out-dir.
+live source topics, target topics, and cluster-link state, then reconciles them
+against the route + target streaming domain + topic selection declared in the
+manifest's spec.topicGroup. It renders a per-topic report and echoes the three
+artifacts (topics.json, fence-rules.yaml, switchover-rules.yaml) to stdout.
 
-The command never mutates the gateway; it only reads and writes local files.`,
+The command writes no files and never mutates the gateway.`,
 		Hidden:        true,
 		SilenceErrors: true,
 		SilenceUsage:  true,
@@ -64,10 +48,8 @@ The command never mutates the gateway; it only reads and writes local files.`,
 		},
 	}
 
-	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration (route, target domain and topic selection come from its spec.topicGroup).")
+	cmd.Flags().StringVar(&f.manifestPath, "migration-yaml", "", "Path to the GatewayMigration manifest (route, target domain and topic selection come from its spec.topicGroup).")
 	cmd.Flags().StringVar(&f.gatewayConfig, "gateway-config", "", "Path to the static gateway CR YAML (prototype stand-in for the live k8s pull).")
-	cmd.Flags().BoolVar(&f.dryRun, "dry-run", false, "Render the report but do not write artifacts.")
-	cmd.Flags().StringVar(&f.outDir, "out-dir", ".", "Directory to write the reconciliation artifacts into.")
 
 	for _, name := range []string{"migration-yaml", "gateway-config"} {
 		_ = cmd.MarkFlagRequired(name)
@@ -82,177 +64,26 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 		return err
 	}
 
-	in, err := buildReconcileInput(g)
+	res, err := migplan.Reconcile(cmd.Context(), g, f.gatewayConfig)
 	if err != nil {
 		return err
 	}
 
-	gw := providers.NewGatewayFile(f.gatewayConfig, in.Route)
-
-	link, err := buildLinkStatusProvider(g)
-	if err != nil {
-		return err
-	}
-
-	src, srcCloser, err := buildSourceTopicLister(g)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = srcCloser.Close() }()
-
-	tgt, tgtCloser, err := buildTargetTopicLister(g)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = tgtCloser.Close() }()
-
-	engine := migplan.NewReconciliationEngine(gw, src, tgt, link)
-	plan, err := engine.Run(cmd.Context(), in)
-	if err != nil {
-		return err
-	}
-
+	w := cmd.OutOrStdout()
+	tg := g.Spec.TopicGroups[0] // Reconcile returned a Result ⇒ exactly one entry
 	verbose, _ := cmd.Flags().GetBool("verbose")
-	note := "artifacts → " + f.outDir
-	if f.dryRun {
-		note = "dry-run — not written"
-	}
-	migplan.RenderReport(cmd.OutOrStdout(), plan.Report, migplan.RenderView{
-		Route:        in.Route,
-		TargetDomain: in.TargetDomain,
+	migplan.RenderReport(w, res.Report, migplan.RenderView{
+		Route:        tg.Route,
+		TargetDomain: tg.TargetStreamingDomain,
 		Verbose:      verbose,
-		ArtifactNote: note,
+		ArtifactNote: "artifacts echoed below",
 	})
 
-	if !f.dryRun && plan.Artifacts != nil {
-		if err := migplan.WriteArtifacts(f.outDir, plan.Artifacts); err != nil {
-			return err
-		}
+	if !res.Refused && len(res.Topics) > 0 {
+		topicsJSON, _ := json.MarshalIndent(res.Topics, "", "  ")
+		_, _ = fmt.Fprintf(w, "\n=== topics.json ===\n%s\n", topicsJSON)
+		_, _ = fmt.Fprintf(w, "\n=== fence-rules.yaml ===\n%s", res.FenceYAML)
+		_, _ = fmt.Fprintf(w, "\n=== switchover-rules.yaml ===\n%s", res.SwitchoverYAML)
 	}
 	return nil
-}
-
-// buildReconcileInput maps the manifest's spec.topicGroup onto the engine-owned
-// ReconcileInput. The reconcile engine handles one route per run, so exactly one
-// topicGroup entry is required.
-func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
-	tgs := g.Spec.TopicGroups
-	if len(tgs) != 1 {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup: exactly one entry is required, got %d", len(tgs))
-	}
-	tg := tgs[0]
-
-	var topics, patterns []string
-	if tg.Topics != nil {
-		topics = *tg.Topics
-	}
-	if tg.TopicPatterns != nil {
-		patterns = *tg.TopicPatterns
-	}
-	if len(topics) == 0 && len(patterns) == 0 {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0]: at least one of topics / topicPatterns is required")
-	}
-	if tg.Route == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0].route: required")
-	}
-	if tg.TargetStreamingDomain == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0].targetStreamingDomain: required")
-	}
-	return reconcile.ReconcileInput{
-		Topics:          topics,
-		TopicPatterns:   patterns,
-		Route:           tg.Route,
-		TargetDomain:    tg.TargetStreamingDomain,
-		TargetClusterID: g.Spec.Target.ClusterID,
-	}, nil
-}
-
-// buildLinkStatusProvider mirrors lagcheck.buildLagCheckConfig: the destination
-// REST leg (whichever auth form the manifest resolves) drives the cluster-link
-// service. Topics is empty ⇒ the provider reports every mirror on the link.
-func buildLinkStatusProvider(g *manifest.GatewayMigration) (migplan.LinkStatusProvider, error) {
-	if g.Spec.Target.Kafka == nil {
-		return nil, fmt.Errorf("spec.target.kafka: required")
-	}
-	restCreds, err := g.RestCredentials()
-	if err != nil {
-		return nil, fmt.Errorf("resolving destination REST credentials: %w", err)
-	}
-	httpClient, err := restCreds.HTTPClient()
-	if err != nil {
-		return nil, fmt.Errorf("building destination REST client: %w", err)
-	}
-	svc := clusterlink.NewConfluentCloudService(httpClient)
-	cfg := clusterlink.Config{
-		RestEndpoint: g.Spec.Target.Kafka.RestEndpoint,
-		ClusterID:    g.Spec.Target.ClusterID,
-		LinkName:     g.Spec.ClusterLink.Name,
-		Auth:         restCreds.Authenticator(),
-		Topics:       []string{}, // empty ⇒ all mirrors
-	}
-	return providers.NewClusterLinkStatus(svc, cfg), nil
-}
-
-// buildSourceTopicLister builds the source-cluster topic lister from the
-// manifest source credentials, following the same auth resolution as
-// `kcp migration execute` (applySourceAuth / createSourceOffset). The returned
-// io.Closer is the underlying Kafka admin; the caller owns closing it.
-func buildSourceTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, io.Closer, error) {
-	creds, errs := g.SourceCredentials()
-	if len(errs) > 0 {
-		return nil, nil, manifest.JoinProblems("spec.source.credentials", errs)
-	}
-	conn := types.MigrateConn(g.Spec.Source.BootstrapServers, creds)
-	return buildTopicLister(conn)
-}
-
-// buildTargetTopicLister builds the destination-cluster topic lister from the
-// destination KAFKA leg (not the REST leg — they may differ), following the same
-// auth resolution as `kcp migration execute` (createDestinationOffset). The
-// returned io.Closer is the underlying Kafka admin; the caller owns closing it.
-func buildTargetTopicLister(g *manifest.GatewayMigration) (migplan.TopicLister, io.Closer, error) {
-	if g.Spec.Target.Kafka == nil {
-		return nil, nil, fmt.Errorf("spec.target.kafka: required")
-	}
-	creds, errs := g.DestinationKafkaCredentials()
-	if len(errs) > 0 {
-		return nil, nil, manifest.JoinProblems("spec.target.kafka.credentials", errs)
-	}
-	conn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, creds)
-
-	// Backward-compat parity with migration execute: a Confluent Cloud
-	// destination that supplies neither ca_cert nor an explicit tls signal must
-	// still dial SASL_SSL, not cleartext SASL_PLAINTEXT — the destination is a
-	// managed cluster, always TLS. (A source may legitimately be plaintext, so
-	// this default is destination-only.)
-	if sp := conn.AuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
-		sp.UseTLS = true
-	}
-	return buildTopicLister(conn)
-}
-
-// buildTopicLister opens a Kafka admin for conn and wraps it as a TopicLister.
-// It mirrors internal/migrate.buildKafkaSourceAdmin: auth is dispatched through
-// the shared client.AdminOptionForAuthMethod mapper (skipTLSVerify threaded from
-// the connection), and the encryption-in-transit arg is inert (the auth option
-// determines TLS) — ClientBrokerTls is passed for parity with the rest of KCP.
-// The returned io.Closer is the admin itself; the caller owns closing it.
-func buildTopicLister(conn types.KafkaSourceConn) (migplan.TopicLister, io.Closer, error) {
-	authType, err := conn.GetSelectedAuthType()
-	if err != nil {
-		return nil, nil, fmt.Errorf("determining auth type: %w", err)
-	}
-	region := ""
-	if authType == types.AuthTypeIAM && conn.AuthMethod.IAM != nil {
-		region = conn.AuthMethod.IAM.Region
-	}
-	authOpt, err := client.AdminOptionForAuthMethod(authType, conn.AuthMethod, conn.InsecureSkipTLSVerify)
-	if err != nil {
-		return nil, nil, fmt.Errorf("resolving auth option: %w", err)
-	}
-	admin, err := client.NewKafkaAdmin(conn.BootstrapServers, kafkatypes.ClientBrokerTls, region, defaultKafkaVersion, authOpt)
-	if err != nil {
-		return nil, nil, fmt.Errorf("connecting to cluster: %w", err)
-	}
-	return providers.NewKafkaTopicLister(admin), admin, nil
 }

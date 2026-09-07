@@ -14,7 +14,7 @@ import (
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
-	"github.com/confluentinc/kcp/internal/services/migplan/providers"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 )
 
@@ -29,7 +29,7 @@ const (
 )
 
 // newPlaintextLister builds a live topic lister against a plaintext broker.
-func newPlaintextLister(t *testing.T, broker string) *providers.KafkaTopicLister {
+func newPlaintextLister(t *testing.T, broker string) *migplan.KafkaTopicLister {
 	t.Helper()
 	admin, err := client.NewKafkaAdmin(
 		[]string{broker},
@@ -41,7 +41,7 @@ func newPlaintextLister(t *testing.T, broker string) *providers.KafkaTopicLister
 	if err != nil {
 		t.Fatalf("NewKafkaAdmin(%s): %v", broker, err)
 	}
-	return providers.NewKafkaTopicLister(admin)
+	return migplan.NewKafkaTopicLister(admin)
 }
 
 func contains(ss []string, want string) bool {
@@ -108,7 +108,7 @@ func TestClusterLinkStatusLive(t *testing.T) {
 		Auth: nil,
 	}
 
-	ls, err := providers.NewClusterLinkStatus(svc, cfg).LinkStatus(context.Background())
+	ls, err := migplan.NewClusterLinkStatus(svc, cfg).LinkStatus(context.Background())
 	if err != nil {
 		t.Fatalf("LinkStatus: %v", err)
 	}

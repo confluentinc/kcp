@@ -11,7 +11,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/confluentinc/kcp/internal/services/migplan/providers"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 )
 
@@ -25,7 +24,7 @@ func newLiveEngine(t *testing.T) *migplan.ReconciliationEngine {
 // tests can drive the same live providers against different gateway shapes.
 func newLiveEngineFor(t *testing.T, gatewayFile, route string) *migplan.ReconciliationEngine {
 	t.Helper()
-	gw := providers.NewGatewayFile(gatewayFile, route)
+	gw := migplan.NewGatewayFile(gatewayFile, route)
 	source := newPlaintextLister(t, sourceBroker)
 	target := newPlaintextLister(t, destBroker)
 
@@ -37,7 +36,7 @@ func newLiveEngineFor(t *testing.T, gatewayFile, route string) *migplan.Reconcil
 		Topics:       []string{},
 		Auth:         nil,
 	}
-	link := providers.NewClusterLinkStatus(svc, cfg)
+	link := migplan.NewClusterLinkStatus(svc, cfg)
 
 	return migplan.NewReconciliationEngine(gw, source, target, link)
 }
@@ -146,13 +145,13 @@ func TestEngineFailFastLive(t *testing.T) {
 // source_cluster_id. The engine must refuse on the cluster-identity precondition
 // — proving the check works against real cluster ids, not just unit fakes.
 func TestReconcileClusterIdentityMismatchLive(t *testing.T) {
-	gw := providers.NewGatewayFile("testdata/gateway.yaml", "migration-route")
+	gw := migplan.NewGatewayFile("testdata/gateway.yaml", "migration-route")
 	wrongSource := newPlaintextLister(t, destBroker) // WRONG on purpose: dest, not source
 	target := newPlaintextLister(t, destBroker)
 
 	svc := clusterlink.NewConfluentCloudService(http.DefaultClient)
 	cfg := clusterlink.Config{RestEndpoint: destRESTEndpoint, ClusterID: destClusterID, LinkName: linkName, Topics: []string{}, Auth: nil}
-	link := providers.NewClusterLinkStatus(svc, cfg)
+	link := migplan.NewClusterLinkStatus(svc, cfg)
 	eng := migplan.NewReconciliationEngine(gw, wrongSource, target, link)
 
 	in := reconcile.ReconcileInput{
