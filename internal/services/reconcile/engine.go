@@ -102,7 +102,7 @@ func (e *Engine) renderPlan(name string, p Plan) {
 		case ActionPresent:
 			e.renderItem("=", "no change", cUnchanged, c, false)
 		case ActionDrift:
-			e.renderItem("⚠", "drift", cDrift, c, true)
+			e.renderItem("!", "drift", cDrift, c, true)
 		}
 	}
 }
@@ -128,10 +128,10 @@ func (e *Engine) renderOutcome(name string, o Outcome) {
 		items = append(items, item{c, "=", "unchanged", cUnchanged, false})
 	}
 	for _, c := range o.Drift {
-		items = append(items, item{c, "⚠", "drift", cDrift, true})
+		items = append(items, item{c, "!", "drift", cDrift, true})
 	}
 	for _, c := range o.Failed {
-		items = append(items, item{c, "✖", "failed", cFailed, true})
+		items = append(items, item{c, "x", "failed", cFailed, true})
 	}
 	sort.SliceStable(items, func(i, j int) bool { return items[i].c.Summary < items[j].c.Summary })
 

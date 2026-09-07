@@ -218,7 +218,7 @@ func warnMissingContextValues(principalArn, action, resource string, missing []s
 	if len(missing) == 0 {
 		return
 	}
-	slog.Warn("⚠️ effective-access decision depends on unprovided context values; treat as unverified and confirm manually",
+	slog.Warn("effective-access decision depends on unprovided context values; treat as unverified and confirm manually",
 		"principal", principalArn,
 		"action", action,
 		"resource", resource,
@@ -337,7 +337,7 @@ func runApply(cmd *cobra.Command, file string, dryRun bool) error {
 	}
 	if errs := m.Validate(); len(errs) > 0 {
 		for _, e := range errs {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[FAIL] %v\n", e)
 		}
 		return fmt.Errorf("manifest is invalid: %d problem(s) found", len(errs))
 	}
@@ -646,7 +646,7 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 		// equivalents, cluster-scoped.
 		iamAcls := macls.TranslatePrincipalPolicies(iam.ClusterArn, pps)
 		if len(iamAcls) == 0 {
-			slog.Warn("⚠️ spec.acls.iam matched zero ACLs — no kafka-cluster grants found for the source principals scoped to clusterArn; check principalArns/discoverAllRoles scope and clusterArn")
+			slog.Warn("spec.acls.iam matched zero ACLs — no kafka-cluster grants found for the source principals scoped to clusterArn; check principalArns/discoverAllRoles scope and clusterArn")
 		}
 		raw = append(raw, iamAcls...)
 		// Both branches warn, honestly: verification off means effective
@@ -655,9 +655,9 @@ func buildACLReconcilers(cmd *cobra.Command, m *manifest.Migration, srcCluster t
 		// neither state is "fully verified" and neither WARN should imply
 		// it.
 		if iam.VerifyEffectiveAccess {
-			slog.Warn("⚠️ effective access verified via SimulatePrincipalPolicy against identity policies and permission boundaries; service control policies (SCPs) are NOT evaluated and may further restrict access on the source")
+			slog.Warn("effective access verified via SimulatePrincipalPolicy against identity policies and permission boundaries; service control policies (SCPs) are NOT evaluated and may further restrict access on the source")
 		} else {
-			slog.Warn("⚠️ IAM-derived ACLs are granted by identity policy; effective access (SCP/permission-boundary/deny) not verified — set spec.acls.iam.verifyEffectiveAccess to confirm")
+			slog.Warn("IAM-derived ACLs are granted by identity policy; effective access (SCP/permission-boundary/deny) not verified — set spec.acls.iam.verifyEffectiveAccess to confirm")
 		}
 	}
 
@@ -841,15 +841,14 @@ func distinctPrincipals(acls []types.Acls) []string {
 // two-leg model, PR #382 / CLAUDE.md) rather than bespoke fmt output, so they
 // render identically to the rest of the command: warn/error surface on the
 // console (coloured level) and in kcp.log; info (benign drops — drop-list,
-// dedup) go to kcp.log and only reach the console under --verbose. Per the
-// project emoji standard, warnings lead with ⚠️ and skip/drop notes with ⏭️.
+// dedup) go to kcp.log and only reach the console under --verbose.
 func logACLDiagnostics(diags []macls.Diagnostic) {
 	for _, d := range diags {
 		switch d.Level {
 		case "warn", "error":
-			slog.Warn("⚠️ " + d.Message)
+			slog.Warn(d.Message)
 		default:
-			slog.Info("⏭️ " + d.Message)
+			slog.Info(d.Message)
 		}
 	}
 }
@@ -877,7 +876,7 @@ func checkUnprotectedTopics(m *manifest.Migration) error {
 		policy = manifest.UnprotectedTopicPolicyWarn
 	}
 
-	slog.Warn("⚠️ world-open-topic detection (allow.everyone.if.no.acl.found) is not yet enforced for MSK sources — verify this setting manually on the source before relying on this migration for authorization completeness")
+	slog.Warn("world-open-topic detection (allow.everyone.if.no.acl.found) is not yet enforced for MSK sources — verify this setting manually on the source before relying on this migration for authorization completeness")
 
 	if policy == manifest.UnprotectedTopicPolicyFail {
 		return fmt.Errorf("spec.acls.unprotectedTopicPolicy: %q requested, but world-open-topic detection (allow.everyone.if.no.acl.found) is not yet implemented — the requested hard stop cannot be honored; verify the source setting manually, then adjust the policy to proceed", manifest.UnprotectedTopicPolicyFail)
@@ -932,7 +931,7 @@ func loadMigrateCluster(cmd *cobra.Command, field string, bootstrapServers []str
 	creds, errs := ref.ResolveMigrateCluster(false)
 	if len(errs) > 0 {
 		for _, e := range errs {
-			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
+			_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[FAIL] %v\n", e)
 		}
 		return types.KafkaSourceConn{}, fmt.Errorf("invalid %s.credentials: %d problem(s) found", field, len(errs))
 	}

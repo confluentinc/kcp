@@ -58,8 +58,8 @@ func NewClientInventoryScanner(s3Service S3Service, state types.State, opts Clie
 }
 
 func (cis *ClientInventoryScanner) Run() error {
-	fmt.Printf("🚀 Starting client inventory scan for %s\n", cis.opts.S3Uri)
-	slog.Info("🔍 scanning client inventory", "s3_uri", cis.opts.S3Uri, "region", cis.opts.Region, "cluster", cis.opts.ClusterName)
+	fmt.Printf("Starting client inventory scan for %s\n", cis.opts.S3Uri)
+	slog.Info("scanning client inventory", "s3_uri", cis.opts.S3Uri, "region", cis.opts.Region, "cluster", cis.opts.ClusterName)
 
 	ctx := context.Background()
 
@@ -72,11 +72,11 @@ func (cis *ClientInventoryScanner) Run() error {
 	if err != nil {
 		return fmt.Errorf("failed to list log files: %w", err)
 	}
-	slog.Info("🔍 found log files", "count", len(logFiles))
+	slog.Info("found log files", "count", len(logFiles))
 
 	if len(logFiles) == 0 {
-		fmt.Printf("  ⏭️  No log files found to process\n")
-		slog.Info("⏭️ no log files found; skipping")
+		fmt.Printf("  No log files found to process\n")
+		slog.Info("no log files found; skipping")
 		return nil
 	}
 
@@ -90,7 +90,7 @@ func (cis *ClientInventoryScanner) Run() error {
 		return fmt.Errorf("failed to persist state file: %w", err)
 	}
 
-	slog.Info("✅ client inventory scan complete", "region", cis.opts.Region, "cluster", cis.opts.ClusterName, "discovered_clients", len(discoveredClients))
+	slog.Info("client inventory scan complete", "region", cis.opts.Region, "cluster", cis.opts.ClusterName, "discovered_clients", len(discoveredClients))
 	return nil
 }
 
@@ -104,8 +104,8 @@ func (cis *ClientInventoryScanner) handleLogFiles(ctx context.Context, bucket st
 			continue
 		}
 
-		fmt.Printf("  🔍 Parsed log file %s: found %d matching log lines\n", file, len(requestsMetadata))
-		slog.Debug("🔍 parsed log file", "file", file, "matching_lines", len(requestsMetadata))
+		fmt.Printf("  Parsed log file %s: found %d matching log lines\n", file, len(requestsMetadata))
+		slog.Debug("parsed log file", "file", file, "matching_lines", len(requestsMetadata))
 
 		for _, metadata := range requestsMetadata {
 			// we cannot guarantee that the client id is unique as it may not be set on clients

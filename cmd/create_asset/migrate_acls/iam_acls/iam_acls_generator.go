@@ -38,7 +38,7 @@ func NewIamAclsGenerator(opts MigrateIamAclsOpts) *IamAclsGenerator {
 }
 
 func (ig *IamAclsGenerator) Run() error {
-	fmt.Printf("🚀 Generating Terraform files for IAM ACLs\n")
+	fmt.Printf("Generating Terraform files for IAM ACLs\n")
 	ctx := context.Background()
 
 	iamClient, err := client.NewIAMClient()
@@ -72,7 +72,7 @@ func (ig *IamAclsGenerator) Run() error {
 	}
 
 	if len(allAclsByPrincipal) == 0 {
-		fmt.Printf("⚠️ No kafka-cluster permissions found in the specified principal's policies, nothing to convert.\n")
+		fmt.Printf("No kafka-cluster permissions found in the specified principal's policies, nothing to convert.\n")
 		return nil
 	}
 
@@ -129,7 +129,7 @@ func (ig *IamAclsGenerator) Run() error {
 		totalAcls += len(acls)
 	}
 
-	fmt.Printf("✅ IAM ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(allAclsByPrincipal), totalAcls)
+	fmt.Printf("IAM ACLs Terraform files generated: %s (%d principals, %d ACLs)\n", outputDir, len(allAclsByPrincipal), totalAcls)
 
 	return nil
 }

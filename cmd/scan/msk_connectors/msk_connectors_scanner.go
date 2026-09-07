@@ -81,7 +81,7 @@ func NewMSKConnectorsScanner(opts MSKConnectorsScannerOpts) *MSKConnectorsScanne
 // file or logs. All failures are non-fatal: a warning is logged and connector
 // discovery is skipped rather than aborting the run (R3).
 func (s *MSKConnectorsScanner) matchConnectorsForCluster(ctx context.Context, svc MSKConnectService, awsClientInfo *types.AWSClientInformation) []types.ConnectorSummary {
-	fmt.Printf("  🔍 Scanning for matching connectors\n")
+	fmt.Printf("  Scanning for matching connectors\n")
 	var matchingConnectors []types.ConnectorSummary
 
 	totalRedacted := 0
@@ -129,7 +129,7 @@ func (s *MSKConnectorsScanner) matchConnectorsForCluster(ctx context.Context, sv
 			redactedConfig, redactedCount := redact.RedactStringMap(describeConnector.ConnectorConfiguration)
 			totalRedacted += redactedCount
 
-			fmt.Printf("    ✅ Found connector %s\n", aws.ToString(connector.ConnectorName))
+			fmt.Printf("    Found connector %s\n", aws.ToString(connector.ConnectorName))
 			matchingConnectors = append(matchingConnectors, types.ConnectorSummary{
 				ConnectorArn:                     aws.ToString(connector.ConnectorArn),
 				ConnectorName:                    aws.ToString(connector.ConnectorName),
@@ -210,7 +210,7 @@ func (s *MSKConnectorsScanner) Run() error {
 		regionSet[r] = true
 	}
 
-	fmt.Printf("🚀 Starting managed connector scan\n")
+	fmt.Printf("Starting managed connector scan\n")
 
 	updated := 0
 	for ri := range s.state.MSKSources.Regions {
@@ -235,7 +235,7 @@ func (s *MSKConnectorsScanner) Run() error {
 				}
 			}
 
-			fmt.Printf("  🔍 Scanning connectors for cluster %s\n", cluster.Arn)
+			fmt.Printf("  Scanning connectors for cluster %s\n", cluster.Arn)
 			matched := s.matchConnectorsForCluster(context.Background(), svc, &cluster.AWSClientInformation)
 			cluster.AWSClientInformation.Connectors = types.MergeConnectors(matched, cluster.AWSClientInformation.Connectors)
 			updated++
@@ -253,7 +253,7 @@ func (s *MSKConnectorsScanner) Run() error {
 		return fmt.Errorf("failed to save state file: %v", err)
 	}
 
-	fmt.Printf("✅ Managed connector scan complete (%d clusters)\n", updated)
+	fmt.Printf("Managed connector scan complete (%d clusters)\n", updated)
 	return nil
 }
 
@@ -297,6 +297,6 @@ func (s *MSKConnectorsScanner) collectAndStoreConnectorMetrics(region string, cl
 		Aggregates: pcm.Aggregates,
 		QueryInfo:  pcm.QueryInfo,
 	}
-	fmt.Printf("  ✅ Collected connector metrics for cluster %s\n", cluster.Arn)
+	fmt.Printf("  Collected connector metrics for cluster %s\n", cluster.Arn)
 	return nil
 }

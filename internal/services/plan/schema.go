@@ -74,9 +74,9 @@ func decideSchema(state report.ProcessedState, cfg *PlanConfig, inputs PlanInput
 	// Customer declared no_schemas. Two outcomes:
 	//   (a) source==None → schemaless (section will be omitted by Build).
 	//   (b) source has an SR → contradiction. Don't populate eligibility
-	//       flags (the table would render as "❔ unknown" across the
+	//       flags (the table would render as "unknown" across the
 	//       board, which is misleading when the customer's intent is to
-	//       skip schemas entirely). The 🟡 schema_state_strategy_mismatch
+	//       skip schemas entirely). The [MED] schema_state_strategy_mismatch
 	//       OQ carries the message.
 	if strategy == SchemaStrategyNoSchemas {
 		if source == SchemaSourceNone {

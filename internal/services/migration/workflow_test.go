@@ -129,7 +129,7 @@ func TestWorkflow_Initialize_ReusesPreFetchedCR(t *testing.T) {
 // ===========================================================================
 // Gateway CR validation reporting
 //
-// Initialize used to print "✔ Gateway CRs validated" unconditionally, over a
+// Initialize used to print "[OK] Gateway CRs validated" unconditionally, over a
 // validator that did nothing but log "not yet implemented". These tests pin the
 // reporter line to what was actually verified: a tick may only claim a check
 // that ran.
@@ -183,7 +183,7 @@ func TestWorkflow_Initialize_ReportsSecretsChecked(t *testing.T) {
 
 func TestWorkflow_Initialize_ReportsSkippedSecretCheck(t *testing.T) {
 	// The honesty case: the static checks ran, the live one could not. A check
-	// that did not run gets ⚠️ and a Warn in kcp.log — NOT a green tick that an
+	// that did not run gets a Warn in kcp.log — NOT a green tick that an
 	// operator scanning output minutes before cutover will read as "verified".
 	output, err := initializeWithValidation(t, gateway.CRValidationResult{
 		SecretCheckSkipped: "no permission to read secrets in namespace ns",
@@ -191,7 +191,7 @@ func TestWorkflow_Initialize_ReportsSkippedSecretCheck(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Contains(t, output, "secret references were NOT checked: no permission to read secrets in namespace ns")
-	assert.NotContains(t, output, "✔ Gateway CRs validated", "a skipped check must not be reported under a success tick")
+	assert.NotContains(t, output, "[OK] Gateway CRs validated", "a skipped check must not be reported under a success tick")
 }
 
 func TestWorkflow_Initialize_ReportsNoSecretReferences(t *testing.T) {
@@ -1376,7 +1376,7 @@ func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
 
 // TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage is the
 // regression test for the reported bug: kcp printed "No pod restart required"
-// then "✅ Migration complete!" while the gateway was still fenced, because the
+// then "Migration complete!" while the gateway was still fenced, because the
 // Deployment-based readiness wait cannot see that the operator refused the
 // switchover CR. SwitchGateway must now fail, and fail with the operator's own
 // diagnosis.

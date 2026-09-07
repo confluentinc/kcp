@@ -193,7 +193,7 @@ func buildRolePrincipalPolicies(roleDetail iamtypes.RoleDetail, managedPolicies 
 			// getInlinePolicies below): this runs across an entire account sweep, so
 			// one unparsable policy on one role must not abort enumeration of every
 			// other role.
-			slog.Warn("⚠️ skipping unparsable inline role policy", "role_arn", roleArn, "policy_name", policyName, "error", err)
+			slog.Warn("skipping unparsable inline role policy", "role_arn", roleArn, "policy_name", policyName, "error", err)
 			continue
 		}
 		inlinePolicies = append(inlinePolicies, InlinePolicy{
@@ -207,7 +207,7 @@ func buildRolePrincipalPolicies(roleDetail iamtypes.RoleDetail, managedPolicies 
 		policyArn := aws.ToString(summary.PolicyArn)
 		policyDocument, err := resolveManagedPolicyDoc(managedPolicies, policyArn)
 		if err != nil {
-			slog.Warn("⚠️ skipping unresolvable attached managed policy", "role_arn", roleArn, "policy_arn", policyArn, "error", err)
+			slog.Warn("skipping unresolvable attached managed policy", "role_arn", roleArn, "policy_arn", policyArn, "error", err)
 			continue
 		}
 		attachedPolicies = append(attachedPolicies, AttachedPolicy{

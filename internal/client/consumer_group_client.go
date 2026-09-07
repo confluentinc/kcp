@@ -77,17 +77,17 @@ func (c *ConsumerGroupClient) ListGroupsWithType() ([]types.ConsumerGroupListing
 			// coordinates), so a single broker failing silently drops that broker's
 			// groups from the result even when others answer. Warn so a partial
 			// result is observable, not just the all-brokers-failed case below.
-			slog.Warn("⚠️ failed to connect to broker for consumer-group listing; groups it coordinates may be omitted", "broker", b.Addr(), "error", err)
+			slog.Warn("failed to connect to broker for consumer-group listing; groups it coordinates may be omitted", "broker", b.Addr(), "error", err)
 			lastErr = err
 			continue
 		}
 		resp, err := b.ListGroups(&sarama.ListGroupsRequest{Version: 5})
 		if IsUnsupportedListGroupsVersion(err) {
-			slog.Debug("⏭️ broker does not support ListGroups v5 (KIP-848 group types); falling back to v4", "broker", b.Addr())
+			slog.Debug("broker does not support ListGroups v5 (KIP-848 group types); falling back to v4", "broker", b.Addr())
 			resp, err = b.ListGroups(&sarama.ListGroupsRequest{Version: 4})
 		}
 		if err != nil {
-			slog.Warn("⚠️ failed to list consumer groups on broker; groups it coordinates may be omitted", "broker", b.Addr(), "error", err)
+			slog.Warn("failed to list consumer groups on broker; groups it coordinates may be omitted", "broker", b.Addr(), "error", err)
 			lastErr = err
 			continue
 		}
@@ -99,7 +99,7 @@ func (c *ConsumerGroupClient) ListGroupsWithType() ([]types.ConsumerGroupListing
 			// ErrClusterAuthorizationFailed). Treat as a broker failure so an all-denied
 			// cluster surfaces an error to the collector (which degrades + warns per
 			// design §8) instead of silently returning zero groups.
-			slog.Warn("⚠️ broker refused consumer-group listing; groups it coordinates may be omitted", "broker", b.Addr(), "error", resp.Err)
+			slog.Warn("broker refused consumer-group listing; groups it coordinates may be omitted", "broker", b.Addr(), "error", resp.Err)
 			lastErr = resp.Err
 			continue
 		}

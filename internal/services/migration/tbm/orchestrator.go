@@ -34,12 +34,12 @@ var canonicalWorkflow = []WorkflowStep{
 // stepHeaders maps a workflow event to the banner the Execute loop prints as
 // it walks canonicalWorkflow. Mirrors migration.stepHeaders.
 var stepHeaders = map[string]string{
-	EventInitialize:  "🔍 Initializing TBM migration...",
-	EventWaitForLags: "🔍 Checking replication lags...",
-	EventFence:       "🔍 Fencing batch...",
-	EventVerifyFence: "🔍 Verifying fence...",
-	EventPromote:     "🔍 Promoting batch...",
-	EventSwitch:      "🔍 Switching batch...",
+	EventInitialize:  "Initializing TBM migration...",
+	EventWaitForLags: "Checking replication lags...",
+	EventFence:       "Fencing batch...",
+	EventVerifyFence: "Verifying fence...",
+	EventPromote:     "Promoting batch...",
+	EventSwitch:      "Switching batch...",
 }
 
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
@@ -131,7 +131,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context) error {
 		o.reporter.stepDone()
 	}
 
-	o.reporter.complete("✅ TBM migration complete!")
+	o.reporter.complete("TBM migration complete!")
 	return nil
 }
 

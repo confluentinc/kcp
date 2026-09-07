@@ -104,7 +104,7 @@ func runHealthcheck(cmd *cobra.Command, args []string) error {
 		fmt.Printf("     Report: %s\n", path)
 	}
 
-	fmt.Printf("\n✅ Healthcheck completed successfully\n")
+	fmt.Printf("\nHealthcheck completed successfully\n")
 	fmt.Printf("   Scanned %d cluster(s) (source: %s)\n", len(scanResult.Clusters), sourceType)
 	if len(reportPaths) == 1 {
 		fmt.Printf("   Report: %s\n\n", reportPaths[0])

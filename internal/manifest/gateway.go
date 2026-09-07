@@ -558,7 +558,7 @@ func warnIfGroupOrWorldReadable(path string) {
 		return
 	}
 	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		slog.Warn("⚠️ migration manifest is group- or world-readable and may contain credentials",
+		slog.Warn("migration manifest is group- or world-readable and may contain credentials",
 			"path", path, "mode", fmt.Sprintf("%#o", perm))
 	}
 }

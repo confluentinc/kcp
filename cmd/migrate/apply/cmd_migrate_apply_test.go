@@ -1546,12 +1546,12 @@ func TestSimulateEffectiveAccess_MissingContextValues_WarnsButDoesNotChangeDecis
 
 	logs := logBuf.String()
 	require.Contains(t, logs, "WARN")
-	require.Contains(t, logs, "⚠️")
+	require.Contains(t, logs, "unprovided context values")
 	require.Contains(t, logs, principalArn)
 	require.Contains(t, logs, "kafka-cluster:Connect")
 	require.Contains(t, logs, "aws:PrincipalTag/team")
 	require.Contains(t, logs, "aws:SourceIp")
-	require.Equal(t, 1, strings.Count(logs, "⚠️"), "only the result with MissingContextValues warns — the normal result must not")
+	require.Equal(t, 1, strings.Count(logs, "unprovided context values"), "only the result with MissingContextValues warns — the normal result must not")
 }
 
 // TestSimulateEffectiveAccess_MissingContextValues_ResourceSpecific covers the

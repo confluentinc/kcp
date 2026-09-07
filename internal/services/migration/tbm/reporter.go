@@ -40,16 +40,16 @@ func (r *reporter) section(msg string) {
 	r.mirror(msg)
 }
 
-// success prints an indented green-✔ line.
+// success prints an indented green [OK] line.
 func (r *reporter) success(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
-	r.printf("   %s %s\n", color.GreenString("✔"), msg)
+	r.printf("   %s %s\n", color.GreenString("[OK]"), msg)
 	r.mirror(msg)
 }
 
 // stepDone prints the per-step completion marker.
 func (r *reporter) stepDone() {
-	r.printf("%s\n", color.GreenString("✅ Done"))
+	r.printf("%s\n", color.GreenString("Done"))
 }
 
 // complete prints the final green completion banner (blank line first).

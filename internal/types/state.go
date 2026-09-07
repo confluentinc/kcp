@@ -96,7 +96,7 @@ func NewStateFromFile(stateFile string) (*State, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to read state file %s: %v", stateFile, err)
 	}
-	slog.Debug("🔍 loading state file", "path", stateFile, "bytes", len(data))
+	slog.Debug("loading state file", "path", stateFile, "bytes", len(data))
 	return NewStateFromBytes(data)
 }
 
@@ -136,7 +136,7 @@ func NewStateFromBytes(data []byte) (*State, error) {
 		state.UpgradedFrom = fromLabel
 	}
 	if state.KcpBuildInfo.Version == "" {
-		slog.Warn("⚠️ state file has no kcp_build_info.version, this may not be a valid KCP state file")
+		slog.Warn("state file has no kcp_build_info.version, this may not be a valid KCP state file")
 	}
 	slog.Debug("loaded state file",
 		"schema_version", state.SchemaVersion,
@@ -343,7 +343,7 @@ func (s *State) UpsertTargetedClusters(newRegion DiscoveredRegion) {
 }
 
 func (s *State) UpsertDiscoveredClients(regionName string, clusterName string, discoveredClients []DiscoveredClient) error {
-	slog.Info("🔍 looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
+	slog.Info("looking for region and cluster in state file", "region", regionName, "cluster_name", clusterName)
 	if s.MSKSources == nil {
 		return fmt.Errorf("no MSK sources found in state file")
 	}

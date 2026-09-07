@@ -308,7 +308,7 @@ func checkSecretRefsExist(ctx context.Context, clientset kubernetes.Interface, n
 	}
 
 	names := slices.Sorted(maps.Keys(refs))
-	slog.Debug("🔍 checking gateway CR secret references", "namespace", namespace, "count", len(names), "secrets", names)
+	slog.Debug("checking gateway CR secret references", "namespace", namespace, "count", len(names), "secrets", names)
 
 	var missing []string
 	for _, name := range names {
@@ -331,7 +331,7 @@ func checkSecretRefsExist(ctx context.Context, clientset kubernetes.Interface, n
 			result.SecretCheckSkipped = fmt.Sprintf("no permission to read secrets in namespace %s", namespace)
 			// The skip itself is reported by the caller; this carries the raw API
 			// error the reported line cannot.
-			slog.Debug("⏭️ cannot verify gateway CR secret references", "namespace", namespace, "secret", name, "error", err)
+			slog.Debug("cannot verify gateway CR secret references", "namespace", namespace, "secret", name, "error", err)
 			break
 		}
 		// Neither absent nor denied — the API is not answering, so stop instead

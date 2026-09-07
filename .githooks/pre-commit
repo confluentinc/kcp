@@ -1,5 +1,8 @@
 #!/bin/sh
 
+# Fail the commit if any Go source contains an emoji (kcp output is plain text).
+go run ./cmd/lint-emoji || exit 1
+
 if command -v golangci-lint >/dev/null 2>&1; then
   golangci-lint run --config .golangci.yml ./... || exit 1
 else

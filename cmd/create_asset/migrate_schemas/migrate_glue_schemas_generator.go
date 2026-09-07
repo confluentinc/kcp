@@ -7,8 +7,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fatih/color"
-
 	hclservice "github.com/confluentinc/kcp/internal/services/hcl"
 	"github.com/confluentinc/kcp/internal/services/hcl/hclrequests"
 	"github.com/confluentinc/kcp/internal/types"
@@ -101,6 +99,6 @@ func (g *MigrateGlueSchemasAssetGenerator) Run() error {
 	}
 
 	slog.Info("glue schema migration assets generated", "directory", g.outputDir)
-	fmt.Printf("%s Glue schema migration assets generated: %s\n", color.GreenString("✅"), g.outputDir)
+	fmt.Printf("Glue schema migration assets generated: %s\n", g.outputDir)
 	return nil
 }

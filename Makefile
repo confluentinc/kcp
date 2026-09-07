@@ -62,13 +62,16 @@ uninstall: ## Uninstall from /usr/local/bin (requires sudo)
 # Code Quality
 # ==============================================================================
 
-.PHONY: fmt lint trivy pre-commit-install
+.PHONY: fmt lint lint-emoji trivy pre-commit-install
 
 fmt: ## Format Go code
 	gofmt -s -w .
 
-lint: ## Run Go linters (golangci-lint)
+lint: lint-emoji ## Run Go linters (emoji check + golangci-lint)
 	golangci-lint run --config .golangci.yml ./...
+
+lint-emoji: ## Fail if any Go source contains an emoji (kcp output is plain text)
+	go run ./cmd/lint-emoji
 
 trivy: ## Run Trivy vulnerability scan
 	trivy fs --scanners vuln --show-suppressed --severity HIGH,CRITICAL --exit-code 1 .

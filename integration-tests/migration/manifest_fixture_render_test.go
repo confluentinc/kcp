@@ -200,7 +200,7 @@ func TestRenderGatewayMigration_CredentialValuesCannotInjectYAML(t *testing.T) {
 		"leading comment":          "#comment",
 		"trailing tab":             "pass\t", // goccy silently drops tabs in PLAIN scalars
 		"embedded quote and slash": `pa"ss\word`,
-		"non-ascii":                "pässwörd✓",
+		"non-ascii":                "pässwörd€",
 		"dollars must survive":     "p@$$w0rd",
 		"only a quote":             `"`,
 		"only a backslash":         `\`,

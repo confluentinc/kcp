@@ -202,11 +202,11 @@ func (r *RunReportRecorder) closeStage(err error) {
 func (r *RunReportRecorder) flush() {
 	data, err := json.MarshalIndent(r.report, "", "  ")
 	if err != nil {
-		slog.Warn("⚠️ failed to marshal migration run report", "error", err)
+		slog.Warn("failed to marshal migration run report", "error", err)
 		return
 	}
 	if err := atomicwrite.WriteFile(r.path, append(data, '\n'), 0600); err != nil {
-		slog.Warn("⚠️ failed to write migration run report", "path", r.path, "error", err)
+		slog.Warn("failed to write migration run report", "path", r.path, "error", err)
 		return
 	}
 	slog.Debug("wrote migration run report", "path", r.path, "stages", len(r.report.Stages))

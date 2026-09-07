@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Renderer must surface a ⚠ cost callout when a customer-declared flag
+// Renderer must surface a cost callout when a customer-declared flag
 // is the reason a cluster was escalated to Dedicated — a wrong `true`
 // raises the monthly cost and the customer needs to see it inline with
 // the verdict, not buried in an appendix.
@@ -42,7 +42,7 @@ func TestRenderMarkdown_CostCalloutOnCustomerDeclaredDedicated(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 
-	assert.Contains(t, body, "⚠", "cost callout must be surfaced for customer-declared Dedicated escalations")
+	assert.Contains(t, body, "**Cost callout", "cost callout must be surfaced for customer-declared Dedicated escalations")
 	assert.Contains(t, body, "higher monthly cost", "must communicate the cost-direction signal without naming a multiplier")
 	assert.Contains(t, body, "sla_99_95_single_zone", "must name the rule that fired so the customer can find the flag")
 }
@@ -166,13 +166,13 @@ func TestRenderMarkdown_NoCostCalloutOnStateDerivedDedicated(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 
-	assert.NotContains(t, body, "⚠ **Cost callout:**", "state-derived Dedicated must not surface the customer-declared wrong-click callout")
-	// State-derived Dedicated DOES get a separate ℹ cost-direction note
+	assert.NotContains(t, body, "**Cost callout:**", "state-derived Dedicated must not surface the customer-declared wrong-click callout")
+	// State-derived Dedicated DOES get a separate cost-direction note
 	// (round-3 feedback: bigger cost decisions than SLA-SZ shouldn't be
-	// silent). It uses ℹ not ⚠ and frames recovery as "not recoverable
-	// by editing plan-inputs.yaml" — semantically distinct from the
-	// wrong-click flow.
-	assert.Contains(t, body, "ℹ **Cost direction:**", "state-derived Dedicated must surface the cost-direction note")
+	// silent). It's labelled "Cost direction" not "Cost callout" and
+	// frames recovery as "not recoverable by editing plan-inputs.yaml"
+	// — semantically distinct from the wrong-click flow.
+	assert.Contains(t, body, "**Cost direction:**", "state-derived Dedicated must surface the cost-direction note")
 }
 
 // Clusters whose source scan didn't populate the load-bearing signals
@@ -333,11 +333,11 @@ func TestRenderMarkdown_GlobalTriggerCollapsesToBanner(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 	bannerCount := strings.Count(body, "applies to every cluster below")
-	// Per-cluster callouts use the prefix `  - > ⚠ **Cost callout:**`
-	// (note the leading `  - `); the banner uses `> ⚠ **Cost callout
+	// Per-cluster callouts use the prefix `  - **Cost callout:**`
+	// (note the leading `  - `); the banner uses `> **Cost callout
 	// (applies to every cluster below):**`. Count only the per-cluster
 	// shape to verify it didn't ALSO fire when the global banner did.
-	perClusterCount := strings.Count(body, "  - ⚠ **Cost callout:**")
+	perClusterCount := strings.Count(body, "  - **Cost callout:**")
 	szTradeoffCount := strings.Count(body, "Single-Zone resilience tradeoff")
 	assert.Equal(t, 1, bannerCount, "global trigger must collapse to exactly one banner up top")
 	assert.Equal(t, 0, perClusterCount, "the per-cluster cost callout must NOT fire when the banner already did")
@@ -389,7 +389,7 @@ func TestDetectGlobalCustomerTriggers_PartialFireKeepsInline(t *testing.T) {
 	require.NoError(t, err)
 	body := string(out)
 	bannerCount := strings.Count(body, "applies to every cluster below")
-	perClusterCount := strings.Count(body, "  - ⚠ **Cost callout:**")
+	perClusterCount := strings.Count(body, "  - **Cost callout:**")
 	szTradeoffCount := strings.Count(body, "Single-Zone resilience tradeoff")
 	assert.Equal(t, 0, bannerCount, "partial fire (2 of 3) must NOT collapse to a global banner")
 	// Both firing clusters share identical rationale + identical extras,
@@ -473,7 +473,7 @@ func TestSchemaLabels_ScanGapWhenDeclaredButNotScanned(t *testing.T) {
 	assert.Contains(t, pathLabel, "re-run", "scan-gap label must nudge the customer to re-run the scan")
 
 	strategyLabel := schemaStrategyDeclaredLabel(SchemaStrategyMigrateExistingSchemaRegistry, dec)
-	assert.Contains(t, strategyLabel, "⚠", "declared strategy must carry the ⚠ marker when it contradicts the scan")
+	assert.Contains(t, strategyLabel, "(scan found", "declared strategy must carry a scan-contradiction caveat when it contradicts the scan")
 	assert.Contains(t, strategyLabel, "no Schema Registry", "the strategy label must name the contradiction")
 }
 

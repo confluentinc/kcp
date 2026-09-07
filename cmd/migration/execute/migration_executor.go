@@ -141,7 +141,7 @@ func (m *MigrationExecutor) Run() error {
 	)
 
 	if !orchestrator.HasPendingWork() {
-		fmt.Printf("✅ Migration already complete: %s\n", config.MigrationId)
+		fmt.Printf("Migration already complete: %s\n", config.MigrationId)
 		return nil
 	}
 
@@ -196,7 +196,7 @@ func (m *MigrationExecutor) Run() error {
 	// so a restore error does not roll back a successful switchover.
 	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, orchestrator.PersistState)
 
-	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
+	fmt.Printf("Migration completed: %s\n", config.MigrationId)
 	return nil
 }
 

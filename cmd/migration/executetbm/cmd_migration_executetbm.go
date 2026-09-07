@@ -94,7 +94,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, args []string) error {
 	orchestrator := tbm.NewTBMOrchestrator(config, actions, tbmState, tbmStateFile)
 
 	if !orchestrator.HasPendingWork() {
-		cmd.Printf("✅ TBM migration already complete: %s\n", config.MigrationId)
+		cmd.Printf("TBM migration already complete: %s\n", config.MigrationId)
 		return nil
 	}
 
@@ -102,7 +102,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to execute tbm migration: %w", err)
 	}
 
-	cmd.Printf("✅ TBM migration completed: %s\n", config.MigrationId)
+	cmd.Printf("TBM migration completed: %s\n", config.MigrationId)
 	return nil
 }
 

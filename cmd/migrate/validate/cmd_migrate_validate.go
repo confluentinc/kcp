@@ -33,11 +33,11 @@ func NewMigrateValidateCmd() *cobra.Command {
 			}
 			if errs := m.Validate(); len(errs) > 0 {
 				for _, e := range errs {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "✖ %v\n", e)
+					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "[FAIL] %v\n", e)
 				}
 				return fmt.Errorf("manifest is invalid: %d problem(s) found", len(errs))
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "✓ %s is valid\n", file)
+			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "[OK] %s is valid\n", file)
 			return nil
 		},
 	}

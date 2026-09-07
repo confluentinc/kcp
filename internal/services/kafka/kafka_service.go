@@ -68,7 +68,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 	// Serverless clusters do not support Kafka Admin API and instead returns an EOF error - this should be handled gracefully
 	if clusterType == kafkatypes.ClusterTypeServerless {
-		slog.Warn("⚠️ MSK Serverless cluster; skipping ACLs scan (Kafka Admin API unsupported on serverless)")
+		slog.Warn("MSK Serverless cluster; skipping ACLs scan (Kafka Admin API unsupported on serverless)")
 		return kafkaAdminClientInformation, nil
 	}
 
@@ -85,7 +85,7 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 		if err != nil {
 			// Degrade, don't abort: a group-discovery failure (e.g. missing
 			// DescribeGroup authz) must not sink an otherwise-good scan (design §8).
-			slog.Warn("⚠️ failed to scan consumer groups; recording none", "error", err)
+			slog.Warn("failed to scan consumer groups; recording none", "error", err)
 			kafkaAdminClientInformation.SetConsumerGroups(&types.ConsumerGroups{Details: []types.ConsumerGroupDetails{}})
 		} else {
 			kafkaAdminClientInformation.SetConsumerGroups(groups)
@@ -97,15 +97,15 @@ func (ks *KafkaService) ScanKafkaResources(clusterType kafkatypes.ClusterType) (
 
 // scanClusterTopics scans for topics in the Kafka cluster
 func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
-	slog.Info("🔍 scanning for cluster topics")
-	slog.Debug("🔍 scanning for cluster topics", "clusterArn", ks.clusterArn)
+	slog.Info("scanning for cluster topics")
+	slog.Debug("scanning for cluster topics", "clusterArn", ks.clusterArn)
 
 	topics, err := ks.client.ListTopicsWithConfigs()
 	if err != nil {
 		return nil, fmt.Errorf("failed to list topics with configs: %v", err)
 	}
 
-	slog.Info("🔍 found topics", "count", len(topics))
+	slog.Info("found topics", "count", len(topics))
 
 	var topicDetails []types.TopicDetails
 	for topicName, topic := range topics {
@@ -129,8 +129,8 @@ func (ks *KafkaService) scanClusterTopics() ([]types.TopicDetails, error) {
 
 // describeKafkaCluster gets cluster metadata and returns the cluster ID along with logging information
 func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, error) {
-	slog.Info("🔍 describing kafka cluster")
-	slog.Debug("🔍 describing kafka cluster", "clusterArn", ks.clusterArn)
+	slog.Info("describing kafka cluster")
+	slog.Debug("describing kafka cluster", "clusterArn", ks.clusterArn)
 
 	clusterMetadata, err := ks.client.GetClusterKafkaMetadata()
 	if err != nil {
@@ -141,8 +141,8 @@ func (ks *KafkaService) describeKafkaCluster() (*client.ClusterKafkaMetadata, er
 
 // scanKafkaAcls scans for Kafka ACLs in the cluster
 func (ks *KafkaService) scanKafkaAcls() ([]types.Acls, error) {
-	slog.Info("🔍 scanning for kafka acls")
-	slog.Debug("🔍 scanning for kafka acls", "clusterArn", ks.clusterArn)
+	slog.Info("scanning for kafka acls")
+	slog.Debug("scanning for kafka acls", "clusterArn", ks.clusterArn)
 
 	acls, err := ks.client.ListAcls()
 	if err != nil {
@@ -189,8 +189,8 @@ func isClassicDescribable(groupType string) bool {
 // against MSK 4.0). Those groups keep their ListGroups v5 state, get no member
 // detail, and are flagged DetailComplete=false (their real detail needs API 69).
 func (ks *KafkaService) scanConsumerGroups() (*types.ConsumerGroups, error) {
-	slog.Info("🔍 scanning for consumer groups")
-	slog.Debug("🔍 scanning for consumer groups", "clusterArn", ks.clusterArn)
+	slog.Info("scanning for consumer groups")
+	slog.Debug("scanning for consumer groups", "clusterArn", ks.clusterArn)
 
 	listings, err := ks.groupScanner.ListGroupsWithType()
 	if err != nil {
@@ -216,7 +216,7 @@ func (ks *KafkaService) scanConsumerGroups() (*types.ConsumerGroups, error) {
 	describeErr := make(map[string]bool)
 	for _, gd := range descriptions {
 		if gd != nil && gd.Err != sarama.ErrNoError {
-			slog.Warn("⚠️ failed to describe a consumer group; recording it without full detail", "group", gd.GroupId, "error", gd.Err)
+			slog.Warn("failed to describe a consumer group; recording it without full detail", "group", gd.GroupId, "error", gd.Err)
 			describeErr[gd.GroupId] = true
 		}
 	}
@@ -229,6 +229,6 @@ func (ks *KafkaService) scanConsumerGroups() (*types.ConsumerGroups, error) {
 		// describe actually succeeded.
 		d.DetailComplete = isClassicDescribable(d.Type) && !describeErr[d.GroupID]
 	}
-	slog.Info("✅ found consumer groups", "count", len(groups.Details))
+	slog.Info("found consumer groups", "count", len(groups.Details))
 	return groups, nil
 }

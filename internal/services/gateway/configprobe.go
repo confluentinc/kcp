@@ -224,7 +224,7 @@ func listGatewayPodEndpoints(ctx context.Context, clientset kubernetes.Interface
 	endpoints := make([]GatewayPodEndpoint, 0, len(pods.Items))
 	for _, pod := range pods.Items {
 		if pod.Status.PodIP == "" {
-			slog.Debug("⏭️ skipping gateway pod with no IP assigned yet", "pod", pod.Name)
+			slog.Debug("skipping gateway pod with no IP assigned yet", "pod", pod.Name)
 			continue
 		}
 		endpoints = append(endpoints, GatewayPodEndpoint{

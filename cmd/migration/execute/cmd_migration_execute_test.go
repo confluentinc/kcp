@@ -759,7 +759,7 @@ func TestExecute_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
 	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
 }
 
-// TestExecute_DestSASLPlainDefaultsToTLS is the ⚠️ backward-compat fix (A.3):
+// TestExecute_DestSASLPlainDefaultsToTLS is the backward-compat fix (A.3):
 // the old destination client always dialled SASL_SSL over the public trust
 // store. AdminOptionForAuthMethod maps sasl_plain with no ca_cert/tls to
 // cleartext SASL_PLAINTEXT, so buildExecutorOpts must default UseTLS=true when

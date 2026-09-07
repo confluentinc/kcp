@@ -186,7 +186,7 @@ func TestDecideSchema_NoneWithAdoptStrategy(t *testing.T) {
 
 // Customer declared `no_schemas` but the scan found a Confluent SR.
 // Verdict short-circuits to `unknown` WITHOUT populating eligibility
-// flags — the renderer would otherwise show a misleading "❔ unknown"
+// flags — the renderer would otherwise show a misleading "unknown"
 // 3-row table to someone who said they're not migrating schemas.
 // The mismatch OQ carries the contradiction.
 func TestDecideSchema_NoSchemasButConfluentDetected(t *testing.T) {
@@ -220,7 +220,7 @@ func TestDetectSchemaOpenQuestions_IneligibleSurfacesReason(t *testing.T) {
 }
 
 // schema_state_strategy_mismatch fires when no_schemas is declared
-// but the scan found a registry — 🟡, not 🔴 (could be deliberate).
+// but the scan found a registry — [MED], not [HIGH] (could be deliberate).
 func TestDetectSchemaOpenQuestions_NoSchemasMismatch(t *testing.T) {
 	dec := &SchemaDecision{Source: SchemaSourceConfluent, Paths: []SchemaPath{SchemaPathUnknown}}
 	oqs := detectSchemaOpenQuestions(dec, defaultCfg(t), schemaInputs(SchemaStrategyNoSchemas))

@@ -115,7 +115,7 @@ func NewStateVersionCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("%s: %w", stateFile, err)
 			}
-			slog.Debug("🔍 inspected state file metadata",
+			slog.Debug("inspected state file metadata",
 				"path", stateFile,
 				"has_kcp_markers", meta.hasKCPMarkers(),
 				"schema_version", meta.SchemaVersion,

@@ -193,9 +193,9 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 			// Initialize FSM step on the first execute, two steps before offset
 			// sync can be paused, so skipping init-time validation does not
 			// leave the restore bookend with nothing to diff against.
-			slog.Warn("⚠️ validation skipped for a migration with spec.clusterLink.pauseConsumerOffsetSync: the cluster link's consumer.offset.sync.enable is not checked until execute")
+			slog.Warn("validation skipped for a migration with spec.clusterLink.pauseConsumerOffsetSync: the cluster link's consumer.offset.sync.enable is not checked until execute")
 		}
-		fmt.Printf("✅ Migration created (validation skipped): %s\n", config.MigrationId)
+		fmt.Printf("Migration created (validation skipped): %s\n", config.MigrationId)
 		return nil
 	}
 
@@ -222,7 +222,7 @@ func runMigrationInit(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Printf("✅ Migration initialized: %s\n", config.MigrationId)
+	fmt.Printf("Migration initialized: %s\n", config.MigrationId)
 	return nil
 }
 

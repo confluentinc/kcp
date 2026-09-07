@@ -206,7 +206,7 @@ func applyGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, name
 		return "", err
 	}
 
-	slog.Debug("🔍 applying gateway CR (server-side apply)", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlData), "configId", configID)
+	slog.Debug("applying gateway CR (server-side apply)", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlData), "configId", configID)
 	start := time.Now()
 	applied, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Apply(ctx, gatewayName, obj, metav1.ApplyOptions{
@@ -262,7 +262,7 @@ func applyGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, 
 		return "", err
 	}
 
-	slog.Debug("🔍 applying gateway configId (server-side apply, hot-reload check field manager)",
+	slog.Debug("applying gateway configId (server-side apply, hot-reload check field manager)",
 		"namespace", namespace, "gateway", gatewayName, "configId", configID)
 	start := time.Now()
 	applied, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
@@ -458,13 +458,13 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		case rejection != nil && firstFailureAt.IsZero():
 			firstFailureAt = time.Now()
 			pending = rejection
-			slog.Warn("⚠️ gateway condition reports a failure; waiting to see whether the operator recovers",
+			slog.Warn("gateway condition reports a failure; waiting to see whether the operator recovers",
 				"gateway", gatewayName, "reason", rejection.Reason, "message", rejection.Message,
 				"settleWindow", gatewayRejectionSettleWindow)
 		case rejection != nil:
 			pending = rejection
 			if time.Since(firstFailureAt) >= gatewayRejectionSettleWindow {
-				slog.Error("❌ gateway spec rejected by the operator", "gateway", gatewayName,
+				slog.Error("gateway spec rejected by the operator", "gateway", gatewayName,
 					"reason", rejection.Reason, "message", rejection.Message,
 					"generation", generation, "observedGeneration", observed)
 				return rejection

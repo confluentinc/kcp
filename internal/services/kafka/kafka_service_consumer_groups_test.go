@@ -260,7 +260,7 @@ func TestKafkaService_ScanKafkaResources_PerGroupDescribeDenialTolerated(t *test
 	denied := result.ConsumerGroups.Details[0]
 	assert.Equal(t, "denied-group", denied.GroupID)
 	// Even though it's a classic group, its describe was denied — so it must be
-	// flagged incomplete (drives the UI's "⚠ partial" marker), NOT presented as
+	// flagged incomplete (drives the UI's "partial" marker), NOT presented as
 	// a fully-described empty group.
 	assert.False(t, denied.DetailComplete, "a describe-denied classic group must not be marked DetailComplete")
 	assert.Empty(t, denied.Members, "a describe-denied group has no member detail")

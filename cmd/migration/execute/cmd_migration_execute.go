@@ -255,7 +255,7 @@ func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationCon
 	// Past the point of no return, re-running init would discard the FSM position
 	// and pre-disable snapshot and strand the live cutover — so proceeding with
 	// the edited spec is the only safe path. Warn loudly rather than block.
-	slog.Warn("⚠️ proceeding with an edited spec: this migration is past the point where re-running init is safe",
+	slog.Warn("proceeding with an edited spec: this migration is past the point where re-running init is safe",
 		"state", config.CurrentState, "sections", strings.Join(drift, "; "))
 	return nil
 }

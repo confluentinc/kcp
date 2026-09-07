@@ -70,7 +70,7 @@ func restoreOffsetSync(
 	}
 
 	r := newReporter()
-	r.section("▶️  Restoring consumer.offset.sync on cluster link...")
+	r.section("Restoring consumer.offset.sync on cluster link...")
 
 	var alterations []clusterlink.ConfigAlteration
 
