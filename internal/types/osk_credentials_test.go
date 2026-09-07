@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1499,4 +1500,76 @@ func TestOSKCredentials_Validate_ConnectLabelUnderBrokerKeyRejected(t *testing.T
 	}
 	assert.Contains(t, joined, "metric_names")
 	assert.Contains(t, joined, "task-count")
+}
+
+func TestNewOSKCredentialsFromFile_PrometheusTimeout(t *testing.T) {
+	content := `
+clusters:
+- id: prod-kafka-01
+  bootstrap_servers:
+  - broker1:9092
+  auth_method:
+    unauthenticated_plaintext:
+      use: true
+  prometheus:
+    url: http://prom:9090
+    timeout: 90s
+`
+	tmpFile := filepath.Join(t.TempDir(), "apache-kafka-credentials.yaml")
+	require.NoError(t, os.WriteFile(tmpFile, []byte(content), 0644))
+
+	creds, errs := NewOSKCredentialsFromFile(tmpFile)
+	require.Empty(t, errs)
+	require.NotNil(t, creds)
+	require.Len(t, creds.Clusters, 1)
+	require.NotNil(t, creds.Clusters[0].Prometheus)
+	assert.Equal(t, 90*time.Second, creds.Clusters[0].Prometheus.Timeout)
+}
+
+func TestOSKCredentials_Validate_PrometheusZeroTimeoutIsValid(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL: "http://prometheus:9090",
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "an unset timeout must be valid (falls back to the client default), got errors: %v", errs)
+}
+
+func TestOSKCredentials_Validate_PrometheusNegativeTimeout(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL:     "http://prometheus:9090",
+					Timeout: -5 * time.Second,
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.False(t, valid)
+	require.NotEmpty(t, errs)
+
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	assert.Contains(t, joined, "timeout must not be negative")
 }

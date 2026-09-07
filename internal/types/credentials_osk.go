@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // validBrokerMetricLabels is the canonical set of logical broker-metric labels
@@ -137,6 +138,12 @@ type PrometheusConfig struct {
 	Auth   *PrometheusAuthConfig   `yaml:"auth,omitempty"`
 	TLS    *PrometheusTLSConfig    `yaml:"tls,omitempty"`
 	Filter *PrometheusFilterConfig `yaml:"filter,omitempty"`
+	// Timeout overrides the HTTP client timeout for Prometheus queries. Zero
+	// (unset) keeps the client's built-in default (30s). A longer value is
+	// needed for large --metrics-range queries against high-cardinality
+	// clusters, where the default can trip "context deadline exceeded" before
+	// the server responds.
+	Timeout time.Duration `yaml:"timeout,omitempty"`
 	// MetricNames maps a logical broker-metric label (e.g. "BytesInPerSec") to
 	// the base Prometheus series name this cluster's exporter actually exposes,
 	// for exporters that relabel the standard series. The name is substituted
@@ -379,6 +386,9 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 func validatePrometheusConfig(prom *PrometheusConfig) error {
 	if prom.URL == "" {
 		return fmt.Errorf("url is required")
+	}
+	if prom.Timeout < 0 {
+		return fmt.Errorf("timeout must not be negative")
 	}
 	if prom.Auth != nil {
 		if prom.Auth.Username == "" {
