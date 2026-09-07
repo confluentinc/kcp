@@ -47,13 +47,12 @@ spec:
     name: msk-to-cc
   gateway:
     namespace: confluent
-    crs:
-      initial: gateway-initial
-    routes:
-      - name: migration-route
-        streamingDomain:
-          name: confluent-cloud
-          bootstrapServerId: SASL_PLAIN
+    cr-name: gateway-initial
+  topicGroup:
+    - topicPatterns:
+        - '.*'
+      route: migration-route
+      targetStreamingDomain: confluent-cloud
 `
 
 // testClientCertPEM / testClientKeyPEM are a matching self-signed EC
@@ -151,15 +150,17 @@ func TestLagCheck_BuildsConfigFromManifest(t *testing.T) {
 	assert.Equal(t, clusterlink.BasicAuth{Username: "CC_KEY", Password: "CC_SECRET"}, cfg.Auth)
 }
 
-// TestLagCheck_AlwaysWatchesEveryMirrorTopic — spec.topics has NO effect here;
-// clusterlink.Config.Topics is empty so the TUI shows every mirror.
+// TestLagCheck_AlwaysWatchesEveryMirrorTopic — the topicGroup topic selection
+// has NO effect here; clusterlink.Config.Topics is empty so the TUI shows every
+// mirror.
 func TestLagCheck_AlwaysWatchesEveryMirrorTopic(t *testing.T) {
 	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
-		return doc + "  topics: ['t1.order']\n"
+		return strings.Replace(doc,
+			"    - topicPatterns:\n        - '.*'\n", "    - topics:\n        - t1.order\n", 1)
 	}))
 	cfg, _, err := buildLagCheckConfig(g)
 	require.NoError(t, err)
-	assert.Empty(t, cfg.Topics, "spec.topics must not narrow the lag view")
+	assert.Empty(t, cfg.Topics, "the topicGroup selection must not narrow the lag view")
 }
 
 // TestLagCheck_UsesDerivedRestCredentials — omitting restCredentials derives

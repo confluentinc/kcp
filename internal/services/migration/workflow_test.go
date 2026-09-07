@@ -75,12 +75,55 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, testInitialCR, string(config.InitialCrYAML))
 	assert.Len(t, config.ClusterLinkTopics, 3)
 	assert.Equal(t, "broker:9092", config.ClusterLinkConfigs["bootstrap.servers"])
+}
+
+// TestWorkflow_Initialize_ReusesPreFetchedCR proves Initialize does not
+// re-fetch the CR live when the caller already has a copy on hand (init's
+// config-build phase fetches it once for mode/id derivation, moments before
+// this runs) — a second fetch bought no fresher data and risked observing a
+// different CR generation than the one derivation just used.
+func TestWorkflow_Initialize_ReusesPreFetchedCR(t *testing.T) {
+	var fetchCalls int
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: func(_ context.Context, _, _ string) ([]byte, error) {
+			fetchCalls++
+			return []byte(testInitialCR), nil
+		},
+	}
+
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-a", MirrorStatus: "ACTIVE"}}, nil
+		},
+		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
+			return map[string]string{}, nil
+		},
+	}
+
+	wf := NewMigrationActions(gw, cl)
+	config := &MigrationConfig{
+		MigrationId:         "test-1",
+		K8sNamespace:        "ns",
+		InitialCrName:       "my-gw",
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+		FenceRoutes:         []string{"migration-route"},
+		SwitchoverTargets:   testSwitchoverTargets,
+	}
+
+	preFetchedCR := []byte(testInitialCR)
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, preFetchedCR)
+	require.NoError(t, err)
+
+	assert.Equal(t, 0, fetchCalls, "Initialize must reuse the pre-fetched CR instead of fetching live")
+	assert.Equal(t, testInitialCR, string(config.InitialCrYAML))
 }
 
 // ===========================================================================
@@ -126,7 +169,7 @@ func initializeWithValidation(t *testing.T, result gateway.CRValidationResult, v
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
 		SwitchoverTargets:   testSwitchoverTargets,
-	}, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	}, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 
 	return out.String() + errOut.String(), err
 }
@@ -227,7 +270,7 @@ func TestWorkflow_Initialize_PassesNamespaceAndTargetsToValidator(t *testing.T) 
 		ClusterLinkName:     "link-1",
 		FenceRoutes:         []string{"migration-route"},
 		SwitchoverTargets:   testSwitchoverTargets,
-	}, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	}, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 
 	require.NoError(t, err)
 	assert.Equal(t, "kcp", gotNamespace)
@@ -249,7 +292,7 @@ func TestWorkflow_Initialize_GatewayFetchError(t *testing.T) {
 		InitialCrName: "my-gw",
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.Error(t, err)
 	assert.Equal(t, "failed to get initial CR YAML: k8s unreachable", err.Error())
 }
@@ -281,7 +324,7 @@ func TestWorkflow_Initialize_InactiveMirrorTopics(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.Error(t, err)
 	assert.Equal(t, "1 mirror topics are not active: topic-b (status: PAUSED)", err.Error())
 }
@@ -316,7 +359,7 @@ func TestWorkflow_Initialize_TopicValidationError(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.Error(t, err)
 	assert.Equal(t, "failed to validate topics in cluster link: topic topic-x not found in cluster link", err.Error())
 }
@@ -353,7 +396,7 @@ func TestWorkflow_Initialize_NoTopicsDiscoverAll(t *testing.T) {
 		SwitchoverTargets:   testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.NoError(t, err)
 
 	require.Len(t, config.Topics, 3)
@@ -397,7 +440,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_Pass(t *testing.T) {
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.NoError(t, err)
 	assert.True(t, config.PauseConsumerOffsetSync, "intent should be retained on config")
 	assert.False(t, config.PauseConsumerOffsetSyncFlipped, "flipped marker must remain false at init time")
@@ -414,7 +457,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnFalse(t *testing.T) {
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "link-falsey")
 	assert.Contains(t, err.Error(), "consumer.offset.sync.enable")
@@ -432,7 +475,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnAbsentKey(t *testing.T) {
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "link-absent")
 	assert.Contains(t, err.Error(), "no consumer.offset.sync.enable config key", "error must distinguish absent key from false value")
@@ -451,7 +494,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testi
 		SwitchoverTargets:       testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.NoError(t, err, "flag off must not assert offset-sync state")
 }
 
@@ -476,7 +519,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t 
 		SwitchoverTargets:              testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.NoError(t, err, "Initialize must not refuse when kcp already flipped the config (Flipped=true)")
 }
 
@@ -508,7 +551,7 @@ func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t 
 		SwitchoverTargets:              testSwitchoverTargets,
 	}
 
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, "true", config.ClusterLinkConfigs["consumer.offset.sync.enable"],

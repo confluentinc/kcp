@@ -19,6 +19,10 @@ type MigrationInitializerOpts struct {
 	// than a scalar api_key/api_secret pair) is what lets a basic, bearer or
 	// mTLS destination REST leg reach a Confluent Platform cluster.
 	RestCreds *targets.Credentials
+	// InitialCrYAML is the initial gateway CR the caller already read live
+	// for mode/id derivation (cmd_migration_init.go), passed through so
+	// Initialize reuses it instead of fetching it again.
+	InitialCrYAML []byte
 }
 
 type MigrationInitializer struct {
@@ -53,7 +57,7 @@ func (m *MigrationInitializer) Run() error {
 	)
 
 	ctx := context.Background()
-	if err := orchestrator.Initialize(ctx, m.opts.RestCreds.Authenticator()); err != nil {
+	if err := orchestrator.Initialize(ctx, m.opts.RestCreds.Authenticator(), m.opts.InitialCrYAML); err != nil {
 		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 
