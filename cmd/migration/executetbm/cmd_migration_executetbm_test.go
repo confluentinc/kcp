@@ -47,13 +47,12 @@ spec:
     name: msk-to-cc
   gateway:
     namespace: confluent
-    crs:
-      initial: gateway-initial
-    routes:
-      - name: migration-route
-        streamingDomain:
-          name: confluent-cloud
-          bootstrapServerId: SASL_PLAIN
+    cr-name: gateway-initial
+  topicGroup:
+    - topics:
+        - t1.order
+      route: migration-route
+      targetStreamingDomain: confluent-cloud
 `
 
 func writeManifest(t *testing.T, dir, name, clusterId string) string {
