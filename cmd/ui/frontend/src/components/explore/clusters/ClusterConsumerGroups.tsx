@@ -69,6 +69,7 @@ export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsP
   const byState = summary?.by_state ?? {}
   const totalGroups = summary?.total ?? details.length
   const stableGroups = byState['Stable'] ?? 0
+  const emptyGroups = byState['Empty'] ?? 0
   const deadGroups = byState['Dead'] ?? 0
   const typeStats = [
     { label: 'Classic', value: byType['classic'] ?? 0 },
@@ -97,8 +98,8 @@ export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsP
           Consumer Groups Overview
         </h3>
 
-        {/* Total + the two state tiles (Stable / Dead) */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 px-6 pt-6">
+        {/* Total + the state tiles (Stable / Empty / Dead) */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 px-6 pt-6">
           <div className="bg-secondary rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-foreground">{totalGroups}</div>
             <div className="text-sm text-muted-foreground">Total Groups</div>
@@ -106,6 +107,10 @@ export const ClusterConsumerGroups = ({ kafkaAdminInfo }: ClusterConsumerGroupsP
           <div className="bg-secondary rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-foreground">{stableGroups}</div>
             <div className="text-sm text-muted-foreground">Stable Groups</div>
+          </div>
+          <div className="bg-secondary rounded-lg p-4 transition-colors">
+            <div className="text-2xl font-bold text-foreground">{emptyGroups}</div>
+            <div className="text-sm text-muted-foreground">Empty Groups</div>
           </div>
           <div className="bg-secondary rounded-lg p-4 transition-colors">
             <div className="text-2xl font-bold text-foreground">{deadGroups}</div>
