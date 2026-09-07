@@ -4,6 +4,8 @@
 
 Scan existing Kafka deployments, generate migration plans and cost reports, create infrastructure-as-code assets, and execute end-to-end migrations with real-time monitoring.
 
+Supports Amazon MSK and Apache Kafka (including Confluent Platform and other Kafka-API-compatible distributions) as migration sources.
+
 > **[Full documentation](https://confluentinc.github.io/kcp/)** · **[Latest release](https://github.com/confluentinc/kcp/releases/latest)**
 
 ## Installation

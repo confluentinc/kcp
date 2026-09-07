@@ -83,6 +83,11 @@ type ExecutionParams struct {
 	// full resolved Authenticator (basic, bearer, or mtls), not only an
 	// api_key/api_secret pair.
 	RestAuth clusterlink.Authenticator
+	// PreFetchedInitialCR carries a CR the init command already read live
+	// moments before triggering this transition, so onInitialize can reuse it
+	// instead of fetching again. Empty when no such read happened in this
+	// process (e.g. execute resuming a --skip-validate migration).
+	PreFetchedInitialCR []byte
 }
 
 // execParamsFromEvent returns the ExecutionParams passed to fsm.Event. Forward
@@ -221,9 +226,11 @@ func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
 	o.runReport = r
 }
 
-// Initialize triggers the initialization event
-func (o *MigrationOrchestrator) Initialize(ctx context.Context, restAuth clusterlink.Authenticator) error {
-	params := ExecutionParams{RestAuth: restAuth}
+// Initialize triggers the initialization event. preFetchedCR, when non-empty,
+// is threaded to onInitialize so it can skip a redundant live CR fetch — see
+// ExecutionParams.PreFetchedInitialCR.
+func (o *MigrationOrchestrator) Initialize(ctx context.Context, restAuth clusterlink.Authenticator, preFetchedCR []byte) error {
+	params := ExecutionParams{RestAuth: restAuth, PreFetchedInitialCR: preFetchedCR}
 	if err := o.fsm.Event(ctx, EventInitialize, params); err != nil {
 		return err
 	}
@@ -440,7 +447,7 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 // onInitialize runs the initialize transition: delegates to workflow Initialize.
 func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.Initialize(ctx, o.config, p.RestAuth); err != nil {
+	if err := o.actions.Initialize(ctx, o.config, p.RestAuth, p.PreFetchedInitialCR); err != nil {
 		e.Cancel(err)
 	}
 }

@@ -404,17 +404,30 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 	s.promoteBatchSize = n
 }
 
+// Initialize prepares a migration for execution: fetching the initial CR,
+// validating redundant auth, and validating the cluster link and its topics.
+//
+// preFetchedCR, when non-empty, is a CR the caller already read live moments
+// earlier for mode/id derivation (see cmd/migration/init) — reusing it avoids
+// a second live fetch that bought no fresher data and risked observing a
+// different CR generation than the one derivation used. Empty means no such
+// read happened in this process (e.g. execute resuming a --skip-validate
+// migration), so Initialize fetches live as before.
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
+	preFetchedCR []byte,
 ) error {
 	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
-	// Fetch the initial CR YAML from k8s
-	initialCrYAML, err := s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName)
-	if err != nil {
-		return fmt.Errorf("failed to get initial CR YAML: %w", err)
+	initialCrYAML := preFetchedCR
+	if len(initialCrYAML) == 0 {
+		var err error
+		initialCrYAML, err = s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName)
+		if err != nil {
+			return fmt.Errorf("failed to get initial CR YAML: %w", err)
+		}
 	}
 	config.InitialCrYAML = initialCrYAML
 
