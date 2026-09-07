@@ -111,6 +111,28 @@ var steps = []step{
 			return in, nil
 		},
 	},
+	{
+		// -> v4: additive, omitempty consumer_groups field added to each cluster's
+		// kafka_admin_client_information (consumer-group discovery). Any file below
+		// v4 is already a structurally-valid v4 file — consumer_groups simply decodes
+		// as nil/absent — so this is a pure version-stamp bump, no reshape (mirrors
+		// the v1->v2 connector_metrics precedent: additive fields need no transform,
+		// only the version number needs to move).
+		//
+		// appliesWhen matches on the ORIGINAL detected schemaVersion (not the
+		// in-flight doc), so this step runs independently of, and in addition to,
+		// the "-> v3" step above: a real v3 file (schema_version 3) only hits this
+		// step (pure bump to 4); an older era-B/era-C file hits "-> v3" first (which
+		// nests self_managed_connectors and stamps schema_version 3) and then this
+		// step immediately after (bumping that already-migrated doc's stamp to 4),
+		// so every legacy file still lands on the true current version.
+		name:        "-> v4: additive consumer_groups field (no-op passthrough)",
+		appliesWhen: func(schemaVersion int, _ string, _ string) bool { return schemaVersion < 4 },
+		transform: func(in map[string]any) (map[string]any, error) {
+			in["schema_version"] = 4
+			return in, nil
+		},
+	},
 }
 
 // eachAdminInfo applies fn to every kafka_admin_client_information object in the
