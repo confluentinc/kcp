@@ -7,16 +7,16 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 )
 
-func gm(tgs []manifest.TopicGroup) *manifest.GatewayMigration {
+func gm(tgs []manifest.TopicGroupEntry) *manifest.GatewayMigration {
 	g := &manifest.GatewayMigration{}
-	g.Spec.TopicGroups = tgs
+	g.Spec.TopicGroup = tgs
 	return g
 }
 
 func strs(s ...string) *[]string { return &s }
 
 func TestBuildReconcileInput(t *testing.T) {
-	in, err := buildReconcileInput(gm([]manifest.TopicGroup{{
+	in, err := buildReconcileInput(gm([]manifest.TopicGroupEntry{{
 		Topics:                strs("a", "b"),
 		TopicPatterns:         strs("team-.*"),
 		Route:                 "migration-route",
@@ -36,16 +36,16 @@ func TestBuildReconcileInput(t *testing.T) {
 func TestBuildReconcileInputValidation(t *testing.T) {
 	cases := []struct {
 		name string
-		tgs  []manifest.TopicGroup
+		tgs  []manifest.TopicGroupEntry
 	}{
 		{"zero topicGroups", nil},
-		{"more than one topicGroup", []manifest.TopicGroup{
+		{"more than one topicGroup", []manifest.TopicGroupEntry{
 			{Topics: strs("a"), Route: "r", TargetStreamingDomain: "cc"},
 			{Topics: strs("b"), Route: "r", TargetStreamingDomain: "cc"},
 		}},
-		{"missing route", []manifest.TopicGroup{{Topics: strs("a"), TargetStreamingDomain: "cc"}}},
-		{"missing targetStreamingDomain", []manifest.TopicGroup{{Topics: strs("a"), Route: "r"}}},
-		{"no topics or patterns", []manifest.TopicGroup{{Route: "r", TargetStreamingDomain: "cc"}}},
+		{"missing route", []manifest.TopicGroupEntry{{Topics: strs("a"), TargetStreamingDomain: "cc"}}},
+		{"missing targetStreamingDomain", []manifest.TopicGroupEntry{{Topics: strs("a"), Route: "r"}}},
+		{"no topics or patterns", []manifest.TopicGroupEntry{{Route: "r", TargetStreamingDomain: "cc"}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

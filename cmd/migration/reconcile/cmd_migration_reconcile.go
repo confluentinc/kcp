@@ -70,7 +70,7 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 	}
 
 	w := cmd.OutOrStdout()
-	tg := g.Spec.TopicGroups[0] // Reconcile returned a Result ⇒ exactly one entry
+	tg := g.Spec.TopicGroup[0] // Reconcile returned a Result ⇒ exactly one entry
 	verbose, _ := cmd.Flags().GetBool("verbose")
 	migplan.RenderReport(w, res.Report, migplan.RenderView{
 		Route:        tg.Route,

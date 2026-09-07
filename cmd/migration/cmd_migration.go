@@ -2,6 +2,7 @@ package migration
 
 import (
 	"github.com/confluentinc/kcp/cmd/migration/execute"
+	"github.com/confluentinc/kcp/cmd/migration/executetbm"
 	i "github.com/confluentinc/kcp/cmd/migration/init"
 	"github.com/confluentinc/kcp/cmd/migration/lagcheck"
 	"github.com/confluentinc/kcp/cmd/migration/list"
@@ -39,6 +40,7 @@ Supporting documentation:
 	migrationCmd.AddCommand(
 		i.NewMigrationInitCmd(),
 		execute.NewMigrationExecuteCmd(),
+		executetbm.NewMigrationExecuteTBMCmd(),
 		lagcheck.NewMigrationLagCheckCmd(),
 		list.NewMigrationListCmd(),
 		reconcile.NewMigrationReconcileCmd(),

@@ -15,8 +15,11 @@ This manifest drives an imperative, resumable state machine:
 
 - **`init`** validates the manifest and the live infrastructure it describes
   (gateway, Kubernetes objects, credentials), then snapshots the topology into
-  `migration-state.json`. `--skip-validate` creates the migration record without
-  touching infrastructure or resolving credentials — useful for testing.
+  `migration-state.json`. It reads the live initial gateway CR to resolve the
+  route's mode and derive its bootstrap server id. `--skip-validate` skips the
+  credential resolution and the gateway/Kubernetes resource validation, but still
+  reads the initial CR (the derived id is part of the snapshot) — useful for
+  testing.
 - **`execute`** drives the fence → promote → switchover FSM forward, resuming
   from wherever the state file says it left off. It re-reads the manifest on
   every invocation.
@@ -48,8 +51,8 @@ spec:
   source: { ... } # required — cluster being migrated from
   target: { ... } # required — cluster being migrated to
   clusterLink: { ... } # required — an ALREADY-EXISTING cluster link
-  gateway: { ... } # required — namespace, kubeconfig, gateway CRs
-  topics: [...] # optional — literal topic names; omit = every active mirror
+  gateway: { ... } # required — namespace, kubeconfig, initial gateway CR name
+  topicGroup: [...] # required — one entry: the topics, route, and target domain
   defaultPolicies: { ... } # optional — execute-time policy defaults
 ```
 
@@ -57,8 +60,8 @@ spec:
 `GatewayMigration`, exactly. `metadata.name` is required and non-blank: it is
 written into the state file as the migration's identity (pre-manifest,
 uuid-keyed migrations keep working, addressed instead with `--migration-id`).
-`spec.source`, `spec.target`, `spec.clusterLink`, and `spec.gateway` are always
-required; `spec.topics` and `spec.defaultPolicies` are optional.
+`spec.source`, `spec.target`, `spec.clusterLink`, `spec.gateway`, and
+`spec.topicGroup` are always required; `spec.defaultPolicies` is optional.
 
 ## `interpolate`
 
@@ -161,28 +164,51 @@ kcp can safely derive from.
 
 There is no `crs.fenced` or `crs.switchover` file: kcp derives both the fenced
 CR and the switched CR from the live initial CR at cutover — a fence block
-injected onto each named route, and each route's `streamingDomain` flipped to
-its declared switchover target. Setting `crs.switchover` is a validation
-error, not a silent no-op — it stays detectable on the manifest struct
-specifically so a stale manifest fails loudly instead of being read as valid.
+injected onto the route named in `spec.topicGroup`, and that route's
+`streamingDomain` flipped to its declared target. The old `crs.initial` nesting
+is flattened to a single `cr-name`, and the retired `crs`/`routes` keys are
+removed from the schema entirely: a stale manifest that still uses them fails
+the strict decode with an unknown-field error.
 
-| Field                                        | Type   | Required | Notes                                                                                                                            |
-| -------------------------------------------- | ------ | -------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `namespace`                                  | string | yes      | Kubernetes namespace where the gateway is deployed.                                                                              |
-| `kubeconfig`                                 | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded.                              |
-| `crs.initial`                                | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster at `init`, not a file path.                     |
-| `routes[].name`                              | string | yes      | A `spec.routes[].name` in the initial CR to fence at cutover. Must be non-blank and unique within the list.                      |
-| `routes[].streamingDomain.name`              | string | yes      | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`. |
-| `routes[].streamingDomain.bootstrapServerId` | string | yes      | A bootstrap server id declared on that streaming domain.                                                                         |
+| Field        | Type   | Required | Notes                                                                                               |
+| ------------ | ------ | -------- | --------------------------------------------------------------------------------------------------- |
+| `namespace`  | string | yes      | Kubernetes namespace where the gateway is deployed.                                                 |
+| `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
+| `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster at `init`, not a file path. |
 
-## `spec.topics`
+## `spec.topicGroup`
 
-Optional. A flat list of **literal** topic names, exact-matched against the
-cluster link's active mirror topics — **not** globs. Omit the key entirely to
-cut over every active mirror topic; an explicitly empty list means the opposite
-and is rejected. A name that matches no active mirror topic is a hard error.
+Required — a list validated to **exactly one** entry today (one route, one
+migration per file). Each entry pairs a topic selection with the route it
+migrates and the target streaming domain that route switches to.
 
-`lag-check` ignores this field entirely and always watches every mirror topic.
+| Field                   | Type       | Required | Notes                                                                                                                                                    |
+| ----------------------- | ---------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `topics`                | `[]string` | see note | A flat list of **literal** topic names, exact-matched against the link's active mirror topics — **not** globs.                                            |
+| `topicPatterns`         | `[]string` | see note | A list of **anchored full-match** regular expressions (RE2). `['.*']` selects every active mirror topic.                                                  |
+| `route`                 | string     | yes      | A `spec.routes[].name` in the initial CR to fence and switch over. Must be non-blank and exist in the CR.                                                 |
+| `targetStreamingDomain` | string     | yes      | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`.                          |
+
+**At least one of `topics` / `topicPatterns` is required.** If `topics` is set
+it is authoritative — `topicPatterns` is ignored. There is no
+omit-`topics`-means-all default anymore: to migrate every active mirror topic,
+write an explicit match-all pattern, `topicPatterns: ['.*']`, with `topics`
+absent.
+
+The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
+— is **not** declared here; kcp reads it from the live CR's route binding at
+`init` (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
+dynamic). The **bootstrap server id** the route binds to is likewise **derived**
+from the target domain's declaration in the live CR at `init`, not written in
+the manifest. (Topic-based/dynamic routes are not yet implemented; a route that
+resolves to dynamic is refused at `init`. On a static route, `topicPatterns` is
+only consulted when `topics` is absent, and only the match-all pattern is
+expanded — any other pattern is refused, and a union with `topics` isn't
+implemented, until general pattern expansion lands alongside the topic-based
+migration engine.)
+
+`lag-check` ignores the topic selection entirely and always watches every mirror
+topic.
 
 ## `spec.defaultPolicies`
 
@@ -274,7 +300,7 @@ tables above:
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `kcp migration init`      | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
 |                           | `--migration-state-file`                                                                                                                                                                         | no (default `migration-state.json`) | Created if absent; the new migration is appended if it exists.                                                                           |
-|                           | `--skip-validate`                                                                                                                                                                                | no                                  | Skip infrastructure validation and credential resolution — creates migration metadata only.                                              |
+|                           | `--skip-validate`                                                                                                                                                                                | no                                  | Skip credential resolution and gateway/Kubernetes resource validation. Still reads the initial CR to derive the snapshot's bootstrap id.  |
 | `kcp migration execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
 |                           | `--migration-state-file`                                                                                                                                                                         | yes                                 | Produced by `init`.                                                                                                                      |
 |                           | `--migration-id`                                                                                                                                                                                 | no                                  | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
@@ -311,12 +337,14 @@ Key rules, beyond required/optional per field above:
 - Every `bootstrapServers` entry must be `host:port`.
 - `spec.clusterLink.name` must not be blank (existence itself isn't checked
   until `init` touches the destination).
-- `spec.gateway.namespace` and `crs.initial` must not be blank; `crs.switchover`
-  must not be set at all.
-- Every `routes[]` entry needs a non-blank, unique `name` and a non-blank
-  `streamingDomain.{name,bootstrapServerId}` — a route cannot be named here
-  without also declaring where it switches to.
-- `spec.topics`, if present, must be non-empty with no blank entries.
+- `spec.gateway.namespace` and `cr-name` must not be blank; the retired
+  `crs`/`routes` keys must not be set at all (they fail the strict decode).
+- `spec.topicGroup` must have exactly one entry, with a non-blank `route` and
+  `targetStreamingDomain`.
+- Each entry must set at least one of `topics` / `topicPatterns` (both is
+  allowed). Neither present is rejected. `topics`/`topicPatterns`, if present,
+  must be non-empty with no blank entries; each `topicPatterns` entry must
+  compile as an anchored RE2 regular expression.
 - No `spec.defaultPolicies` field may be negative;
   `detectUnroutedProducersDuration`, if greater than zero, must be at least
   `10s`.
@@ -345,11 +373,12 @@ Key rules, beyond required/optional per field above:
 | `spec.clusterLink.pauseConsumerOffsetSync`                | bool           | no                                                     | `false`                                      | —                                                            |
 | `spec.gateway.namespace`                                  | string         | yes                                                    | —                                            | —                                                            |
 | `spec.gateway.kubeconfig`                                 | string         | no                                                     | —                                            | `~/` expanded                                                |
-| `spec.gateway.crs.initial`                                | string         | yes                                                    | —                                            | K8s object name                                              |
-| `spec.gateway.routes[].name`                              | string         | yes                                                    | —                                            | must exist in the initial CR, unique                         |
-| `spec.gateway.routes[].streamingDomain.name`              | string         | yes                                                    | —                                            | must be declared in the initial CR's `spec.streamingDomains` |
-| `spec.gateway.routes[].streamingDomain.bootstrapServerId` | string         | yes                                                    | —                                            | must be declared on that streaming domain                    |
-| `spec.topics`                                             | `[]string`     | no                                                     | omitted = every active mirror topic          | non-empty if present, literal names                          |
+| `spec.gateway.cr-name`                                    | string         | yes                                                    | —                                            | K8s object name                                              |
+| `spec.topicGroup`                                         | list           | yes                                                    | —                                            | exactly one entry                                           |
+| `spec.topicGroup[].topics`                                | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, literal names                         |
+| `spec.topicGroup[].topicPatterns`                         | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, anchored RE2 patterns (`['.*']` = all) |
+| `spec.topicGroup[].route`                                 | string         | yes                                                    | —                                            | must exist in the initial CR                                 |
+| `spec.topicGroup[].targetStreamingDomain`                 | string         | yes                                                    | —                                            | must be declared in the initial CR's `spec.streamingDomains` |
 | `spec.defaultPolicies.lagThreshold`                       | int            | no                                                     | `0`                                          | `>= 0`                                                       |
 | `spec.defaultPolicies.promoteBatchSize`                   | int            | no                                                     | `0`                                          | `>= 0`                                                       |
 | `spec.defaultPolicies.rolloutTimeout`                     | duration       | no                                                     | `0`                                          | `>= 0`                                                       |

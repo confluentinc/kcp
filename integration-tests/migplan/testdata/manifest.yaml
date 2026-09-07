@@ -43,13 +43,9 @@ spec:
     name: migplan-link
 
   # Not read by `migration reconcile` (it uses --gateway-config), but the manifest
-  # still validates the gateway section. Minimal satisfying values.
+  # still validates the gateway section. Minimal satisfying values: the reshaped
+  # schema carries only namespace + cr-name (the CR object name, read live); the
+  # route and target domain live in spec.topicGroup above.
   gateway:
     namespace: confluent
-    crs:
-      initial: migplan-e2e
-    routes:
-      - name: migration-route
-        streamingDomain:
-          name: cc
-          bootstrapServerId: PLAINTEXT
+    cr-name: migplan-e2e

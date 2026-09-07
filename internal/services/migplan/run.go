@@ -96,7 +96,7 @@ func newResult(plan *reconcile.Plan) *Result {
 // ReconcileInput. The reconcile engine handles one route per run, so exactly one
 // topicGroup entry is required.
 func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
-	tgs := g.Spec.TopicGroups
+	tgs := g.Spec.TopicGroup
 	if len(tgs) != 1 {
 		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup: exactly one entry is required, got %d", len(tgs))
 	}

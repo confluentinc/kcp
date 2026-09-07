@@ -6,6 +6,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/atomicwrite"
 	"github.com/confluentinc/kcp/internal/build_info"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
@@ -263,7 +264,7 @@ func (ms *MigrationState) WriteToFile(filePath string) error {
 	// The migration state holds sensitive metadata, so it must never be
 	// group/world readable, even briefly or under an unusual umask — hence 0600
 	// through the atomic writer.
-	return writeFileAtomic(filePath, data, 0600)
+	return atomicwrite.WriteFile(filePath, data, 0600)
 }
 
 // UpsertMigration adds a new migration or updates an existing one by ID

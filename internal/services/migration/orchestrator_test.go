@@ -199,13 +199,36 @@ func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *Mi
 func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, StateInitialized, config.CurrentState)
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateInitialized, persisted.CurrentState)
+}
+
+// TestOrchestrator_Initialize_ReusesPreFetchedCR proves a pre-fetched CR
+// passed to Initialize flows through the FSM to onInitialize/actions.Initialize
+// without a redundant live fetch — see ExecutionParams.PreFetchedInitialCR.
+func TestOrchestrator_Initialize_ReusesPreFetchedCR(t *testing.T) {
+	var getYAMLCalls int32
+	overrides := orchestratorOverrides{
+		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+			atomic.AddInt32(&getYAMLCalls, 1)
+			return []byte(testInitialCR), nil
+		},
+	}
+
+	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
+
+	preFetchedCR := []byte(testInitialCR)
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, preFetchedCR)
+	require.NoError(t, err)
+
+	assert.Equal(t, StateInitialized, config.CurrentState)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&getYAMLCalls), "Initialize must reuse the pre-fetched CR instead of fetching live")
+	assert.Equal(t, testInitialCR, string(config.InitialCrYAML))
 }
 
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
@@ -301,7 +324,7 @@ func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 
 	// Config state should NOT have advanced
