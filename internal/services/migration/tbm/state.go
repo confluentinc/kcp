@@ -53,9 +53,7 @@ const (
 
 // ----- TBM configuration -----
 
-// TBMConfig is the persisted per-migration record. It carries no domain data
-// yet (no batch plan, no topic list) — only enough to drive the FSM and detect
-// manifest drift. Real fields will be added once the TBM batch design lands.
+// TBMConfig is the persisted per-migration record.
 type TBMConfig struct {
 	MigrationId  string `json:"migration_id"`
 	CurrentState string `json:"current_state"`
@@ -64,6 +62,14 @@ type TBMConfig struct {
 	// recomputes it and refuses, unconditionally, on any mismatch — there is
 	// no override.
 	ManifestHash string `json:"manifest_hash"`
+
+	// The fields below are captured once, at the initialize transition, from
+	// the migplan.Result the command already computed live — and never
+	// re-derived by any later transition.
+	Topics         []string `json:"topics,omitempty"`
+	FenceYAML      string   `json:"fence_yaml,omitempty"`
+	SwitchoverYAML string   `json:"switchover_yaml,omitempty"`
+	GatewayYAML    string   `json:"gateway_yaml,omitempty"`
 }
 
 // HashManifest returns the sha256 (hex-encoded) digest of raw manifest file

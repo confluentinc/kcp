@@ -57,3 +57,16 @@ func (r *reporter) complete(msg string) {
 	r.printf("\n%s\n", color.GreenString(msg))
 	r.mirror(msg)
 }
+
+// blank writes a single blank line.
+func (r *reporter) blank() {
+	r.printf("\n")
+}
+
+// line writes a pre-composed line (plus newline) through the reporter's
+// stdout. Used by the few rich multi-colour rows (lag) that don't fit a
+// semantic helper but should still route through the single output owner.
+func (r *reporter) line(s string) {
+	r.printf("%s\n", s)
+	r.mirror(s)
+}
