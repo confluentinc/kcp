@@ -9,6 +9,7 @@ import (
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/services/offset"
@@ -148,7 +149,13 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	}
 	defer func() { _ = closeOffsets() }()
 
-	actions := tbm.NewTBMActions(sourceOffset, destinationOffset)
+	// TODO(task 4): replace this placeholder with the real gatewayServiceFunc
+	// injection machinery (kubeconfig-backed gateway.NewK8sService wiring,
+	// consistent with reconcileFunc/offsetProvidersFunc above). NewTBMActions
+	// now requires a gateway.Service; this satisfies the 3-argument
+	// constructor without a live Kubernetes connection, which is out of scope
+	// for this change.
+	actions := tbm.NewTBMActions(sourceOffset, destinationOffset, gateway.NewK8sService(""))
 
 	// Produce the reconcile plan for this migration: the engine reads the live
 	// Gateway CR + source/target/cluster-link state, renders its own report, and
