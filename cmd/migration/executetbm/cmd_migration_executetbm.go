@@ -25,9 +25,12 @@ type reconcileFunc func(context.Context, *manifest.GatewayMigration, ...migplan.
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
-This is a scaffold: every FSM transition is currently a noop (it sleeps to simulate
-real execution timing, then logs). It exists to validate the state-machine shape and
-command wiring ahead of the real per-batch migration logic described in the TBM design
+This is a scaffold: every FSM transition except initialize is currently a noop
+(it sleeps to simulate real execution timing, then logs). initialize validates
+the already-computed reconcile plan (see the migplan package) and captures its
+promote topic list plus fence/switchover artifacts for later transitions to
+consume. This command exists to validate the state-machine shape and command
+wiring ahead of the real per-batch migration logic described in the TBM design
 proposal.
 
 The migration is identified by metadata.name in the GatewayMigration manifest at
@@ -51,7 +54,7 @@ func newExecuteTBMCmd(reconcile reconcileFunc) *cobra.Command {
 		Short:         "Execute a Topic-Batch Migration run (scaffold: noop transitions)",
 		Long:          executeTBMLong,
 		Example:       `  kcp migration execute-tbm --migration-yaml gateway-migration.yaml --tbm-state-file tbm-state.json`,
-		Hidden:        true, // noop scaffold pending real transition logic; kept in the binary but not user-facing (cascades to --help and gen-docs)
+		Hidden:        true, // scaffold: initialize is real, other transitions still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
@@ -111,8 +114,12 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc) error {
 	// returns the promote topic list plus the fence and switchover rules
 	// artifacts. err here is an I/O failure (the plan could not be produced); an
 	// infeasible-but-reachable plan is not an error — it surfaces as res.Refused
-	// with res.Reasons.
+	// with res.Reasons, which the initialize transition turns into a failed run.
 	//
+	// This runs on every invocation, even a pure resume past initialize — its
+	// result is only consumed by onInitialize (skipped via canTransition once
+	// initialize has already completed), so a resume pays for a live reconcile
+	// whose output then goes unused. Revisit if that cost matters in practice.
 	res, err := reconcile(cmd.Context(), g)
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)

@@ -26,17 +26,43 @@ func stubReconcile(context.Context, *manifest.GatewayMigration, ...migplan.Optio
 	return &migplan.Result{}, nil
 }
 
-// runExecuteTBMStubbed runs the command with the engine stubbed, for the
-// end-to-end FSM tests that would otherwise dial unreachable endpoints.
-func runExecuteTBMStubbed(t *testing.T, args ...string) (string, error) {
+// stubReconcileWithArtifacts returns a populated Result so tests can verify
+// its fields land on the persisted TBMConfig via the initialize transition.
+func stubReconcileWithArtifacts(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
+	return &migplan.Result{
+		Topics:         []string{"t1.order"},
+		FenceYAML:      "rules:\n  fenced: true\n",
+		SwitchoverYAML: "rules:\n  switched: true\n",
+		GatewayYAML:    "apiVersion: v1\nkind: Gateway\n",
+	}, nil
+}
+
+// stubReconcileRefused simulates an infeasible plan: not an I/O error, but a
+// refusal the initialize transition must turn into a failed run.
+func stubReconcileRefused(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
+	return &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}, nil
+}
+
+// runExecuteTBMWithReconcile runs the command with the given reconcile func
+// injected, for tests that need to control what the "live" plan looks like
+// without reaching Kubernetes or a real cluster.
+func runExecuteTBMWithReconcile(t *testing.T, reconcile reconcileFunc, args ...string) (string, error) {
 	t.Helper()
-	cmd := newExecuteTBMCmd(stubReconcile)
+	cmd := newExecuteTBMCmd(reconcile)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
 	cmd.SetArgs(args)
 	err := cmd.Execute()
 	return out.String(), err
+}
+
+// runExecuteTBMStubbed runs the command with the engine stubbed to a no-op
+// success, for the end-to-end FSM tests that would otherwise dial unreachable
+// endpoints.
+func runExecuteTBMStubbed(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	return runExecuteTBMWithReconcile(t, stubReconcile, args...)
 }
 
 // gatewayManifestTemplate is a complete, valid GatewayMigration document with
@@ -235,4 +261,41 @@ func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	cfg, err := state.GetMigrationById("tbm-batch-3")
 	require.NoError(t, err)
 	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState, "the stale entry must be untouched by the refused run")
+}
+
+func TestExecuteTBM_ReconcilePlanArtifacts_PersistToStateFile(t *testing.T) {
+	withFastTBMTransitions(t)
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-artifacts", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	_, err := runExecuteTBMWithReconcile(t, stubReconcileWithArtifacts, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.NoError(t, err)
+
+	state, err := tbm.NewTBMStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("tbm-batch-artifacts")
+	require.NoError(t, err)
+	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState)
+	assert.Equal(t, []string{"t1.order"}, cfg.Topics)
+	assert.Equal(t, "rules:\n  fenced: true\n", cfg.FenceYAML)
+	assert.Equal(t, "rules:\n  switched: true\n", cfg.SwitchoverYAML)
+	assert.Equal(t, "apiVersion: v1\nkind: Gateway\n", cfg.GatewayYAML)
+}
+
+func TestExecuteTBM_RefusedReconcilePlan_FailsRunAndLeavesStateUninitialized(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-refused", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	_, err := runExecuteTBMWithReconcile(t, stubReconcileRefused, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "topic t1.order has replication lag")
+
+	state, err := tbm.NewTBMStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("tbm-batch-refused")
+	require.NoError(t, err)
+	assert.Equal(t, tbm.StateUninitialized, cfg.CurrentState)
+	assert.Empty(t, cfg.Topics)
 }
