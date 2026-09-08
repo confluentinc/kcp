@@ -83,6 +83,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *TBMConfig, res *mig
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.GatewayYAML = res.GatewayYAML
+	config.Route = res.Route
 
 	a.reporter.success("TBM migration initialized (%d topic(s) in plan)", len(res.Topics))
 	return nil

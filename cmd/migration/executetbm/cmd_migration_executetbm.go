@@ -124,7 +124,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 		return fmt.Errorf("failed to check tbm state file: %w", statErr)
 	}
 
-	config, err := resolveTBMConfig(tbmState, g.Metadata.Name, hash)
+	config, err := resolveTBMConfig(tbmState, g.Metadata.Name, hash, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName)
 	if err != nil {
 		return err
 	}
@@ -182,16 +182,20 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 }
 
 // resolveTBMConfig implements the identity & drift rule: no entry for this
-// name -> create fresh at uninitialized; hash matches -> resume from the
-// persisted state; hash differs -> refuse unconditionally, regardless of
-// CurrentState. There is no override.
-func resolveTBMConfig(state *tbm.TBMState, migrationId, hash string) (*tbm.TBMConfig, error) {
+// name -> create fresh at uninitialized (recording namespace/gatewayName,
+// which never change for this migration again — protected by the same
+// unconditional hash-drift refusal as every other manifest field); hash
+// matches -> resume from the persisted state; hash differs -> refuse
+// unconditionally, regardless of CurrentState. There is no override.
+func resolveTBMConfig(state *tbm.TBMState, migrationId, hash, namespace, gatewayName string) (*tbm.TBMConfig, error) {
 	existing, err := state.GetMigrationById(migrationId)
 	if err != nil {
 		return &tbm.TBMConfig{
-			MigrationId:  migrationId,
-			CurrentState: tbm.StateUninitialized,
-			ManifestHash: hash,
+			MigrationId:   migrationId,
+			CurrentState:  tbm.StateUninitialized,
+			ManifestHash:  hash,
+			K8sNamespace:  namespace,
+			InitialCrName: gatewayName,
 		}, nil
 	}
 

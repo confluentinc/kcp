@@ -70,6 +70,18 @@ type TBMConfig struct {
 	FenceYAML      string   `json:"fence_yaml,omitempty"`
 	SwitchoverYAML string   `json:"switchover_yaml,omitempty"`
 	GatewayYAML    string   `json:"gateway_yaml,omitempty"`
+	// Route is the manifest's spec.topicGroup[0].route, echoed back via
+	// migplan.Result.Route — captured at initialize like the fields above.
+	// fence (and later switch) need it to know which route's rules to graft
+	// FenceYAML/SwitchoverYAML into.
+	Route string `json:"route,omitempty"`
+
+	// K8sNamespace and InitialCrName are captured ONCE, at config creation
+	// (resolveTBMConfig), from spec.gateway.namespace/spec.gateway.cr-name —
+	// mirroring exactly how migration.MigrationConfig's fields of the same
+	// name are set once by kcp migration init, never re-derived on resume.
+	K8sNamespace  string `json:"k8s_namespace"`
+	InitialCrName string `json:"initial_cr_name"`
 }
 
 // HashManifest returns the sha256 (hex-encoded) digest of raw manifest file

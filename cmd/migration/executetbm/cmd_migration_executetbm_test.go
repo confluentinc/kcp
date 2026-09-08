@@ -184,19 +184,21 @@ func TestExecuteTBM_RequiresTbmStateFile(t *testing.T) {
 func TestResolveTBMConfig_NoExistingEntry_CreatesFreshUninitialized(t *testing.T) {
 	state := tbm.NewTBMState()
 
-	cfg, err := resolveTBMConfig(state, "new-migration", "hash-1")
+	cfg, err := resolveTBMConfig(state, "new-migration", "hash-1", "confluent", "gateway-initial")
 
 	require.NoError(t, err)
 	assert.Equal(t, "new-migration", cfg.MigrationId)
 	assert.Equal(t, tbm.StateUninitialized, cfg.CurrentState)
 	assert.Equal(t, "hash-1", cfg.ManifestHash)
+	assert.Equal(t, "confluent", cfg.K8sNamespace)
+	assert.Equal(t, "gateway-initial", cfg.InitialCrName)
 }
 
 func TestResolveTBMConfig_HashMatches_ResumesExisting(t *testing.T) {
 	state := tbm.NewTBMState()
 	state.UpsertMigration(tbm.TBMConfig{MigrationId: "mig-1", CurrentState: tbm.StateFenced, ManifestHash: "hash-1"})
 
-	cfg, err := resolveTBMConfig(state, "mig-1", "hash-1")
+	cfg, err := resolveTBMConfig(state, "mig-1", "hash-1", "confluent", "gateway-initial")
 
 	require.NoError(t, err)
 	assert.Equal(t, tbm.StateFenced, cfg.CurrentState)
@@ -208,7 +210,7 @@ func TestResolveTBMConfig_HashDiffers_RefusesUnconditionally(t *testing.T) {
 			state := tbm.NewTBMState()
 			state.UpsertMigration(tbm.TBMConfig{MigrationId: "mig-1", CurrentState: currentState, ManifestHash: "hash-1"})
 
-			_, err := resolveTBMConfig(state, "mig-1", "hash-2")
+			_, err := resolveTBMConfig(state, "mig-1", "hash-2", "confluent", "gateway-initial")
 
 			require.Error(t, err, "drift must refuse regardless of CurrentState")
 			assert.Contains(t, err.Error(), "changed since it was last run")
