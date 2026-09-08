@@ -1,0 +1,39 @@
+# TBM halt — topic missing on the source.
+#
+# Selects tbm-topic-999, which setup.sh never creates (source holds 001-055).
+# The engine fails fast per-topic: res.Reasons contains "not found on the source"
+# (reconcile/verdict.go). Runs against the LIVE gateway.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-missing-source
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials:
+      unauthenticated_plaintext: {}
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      credentials:
+        sasl_plain:
+          username: "__DEST_SASL_USER__"
+          password: "__DEST_SASL_PASSWORD__"
+          tls: true
+        insecure_skip_tls_verify: true
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-999"
+      route: "__ROUTE_NAME__"
+      targetStreamingDomain: "__DEST_DOMAIN__"

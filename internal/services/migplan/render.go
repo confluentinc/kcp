@@ -24,8 +24,11 @@ type RenderView struct {
 // (always every one), then the requested topics — blocked first, then ready,
 // then unchanged — and a Terraform-style counts footer. Colours match the
 // direct-API migration renderer (green ready, red blocked, faint unchanged,
-// yellow warnings) and auto-disable when w is not a TTY, so piped/test output is
-// plain text.
+// yellow warnings). Colour is gated by fatih/color's process-global
+// color.NoColor, which the library initialises from os.Stdout's TTY status and
+// the NO_COLOR env var — it is NOT keyed off w. So a non-terminal stdout (piped
+// output, `go test`) yields plain text, but redirecting w to a file while stdout
+// stays a TTY would still emit ANSI; set color.NoColor if that matters.
 func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	green := color.New(color.FgGreen)
 	red := color.New(color.FgRed)

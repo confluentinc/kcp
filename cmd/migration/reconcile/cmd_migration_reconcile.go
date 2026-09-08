@@ -61,19 +61,20 @@ func runReconcile(cmd *cobra.Command, f *reconcileFlags) error {
 		return err
 	}
 
-	// Reconcile renders its own report; this prototype command additionally
-	// echoes the raw artifacts so they can be eyeballed.
-	res, err := migplan.Reconcile(cmd.Context(), g)
+	w := cmd.OutOrStdout()
+
+	// Reconcile renders its own report to the command's writer; this prototype
+	// command additionally echoes the raw artifacts so they can be eyeballed.
+	res, err := migplan.Reconcile(cmd.Context(), g, migplan.WithOutput(w))
 	if err != nil {
 		return err
 	}
 
 	if !res.Refused && len(res.Topics) > 0 {
-		w := cmd.OutOrStdout()
 		topicsJSON, _ := json.MarshalIndent(res.Topics, "", "  ")
 		_, _ = fmt.Fprintf(w, "\n=== topics.json ===\n%s\n", topicsJSON)
-		_, _ = fmt.Fprintf(w, "\n=== fence-rules.yaml ===\n%s", res.FenceYAML)
-		_, _ = fmt.Fprintf(w, "\n=== switchover-rules.yaml ===\n%s", res.SwitchoverYAML)
+		_, _ = fmt.Fprintf(w, "\n=== fence-rules.yaml ===\n%s\n", res.FenceYAML)
+		_, _ = fmt.Fprintf(w, "\n=== switchover-rules.yaml ===\n%s\n", res.SwitchoverYAML)
 	}
 	return nil
 }
