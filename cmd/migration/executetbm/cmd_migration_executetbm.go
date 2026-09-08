@@ -59,15 +59,19 @@ func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) 
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
-This is a scaffold: every FSM transition except initialize and wait_for_lags is
-currently a noop (it sleeps to simulate real execution timing, then logs).
-initialize validates the already-computed reconcile plan (see the migplan
-package) and captures its promote topic list plus fence/switchover artifacts
-for later transitions to consume. wait_for_lags polls source and destination
-Kafka offsets for those topics until every one is under spec.defaultPolicies.
-lagThreshold (overridable per run with --lag-threshold). This command exists
-to validate the state-machine shape and command wiring ahead of the real
-per-batch migration logic described in the TBM design proposal.
+This is a scaffold: every FSM transition except initialize, wait_for_lags and
+fence is currently a noop (it sleeps to simulate real execution timing, then
+logs). initialize validates the already-computed reconcile plan (see the
+migplan package) and captures its promote topic list plus fence/switchover
+artifacts for later transitions to consume. wait_for_lags polls source and
+destination Kafka offsets for those topics until every one is under
+spec.defaultPolicies.lagThreshold (overridable per run with --lag-threshold).
+fence reconfigures the gateway's named route by applying the plan's fence
+rules to the live Gateway CR, then waits for the operator to report the
+gateway ready (and, if it supports hot-reload, for every pod to confirm the
+new config revision). verify_fence, promote and switch remain noop. This
+command exists to validate the state-machine shape and command wiring ahead of
+the real per-batch migration logic described in the TBM design proposal.
 
 The migration is identified by metadata.name in the GatewayMigration manifest at
 --migration-yaml — there is no separate init step and no --migration-id flag. The first
