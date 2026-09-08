@@ -52,6 +52,9 @@ type ExecutionParams struct {
 	// before Execute was invoked. onInitialize validates and copies it onto
 	// config; every other callback ignores it today.
 	ReconcileResult *migplan.Result
+	// LagThreshold is the total replication lag (sum of all partition lags)
+	// tolerated before wait_for_lags proceeds. Read by onWaitForLags only.
+	LagThreshold int64
 }
 
 // execParamsFromEvent returns the ExecutionParams passed to fsm.Event.
@@ -122,12 +125,14 @@ func NewTBMOrchestrator(
 // Execute runs the full TBM workflow from the current state, skipping any
 // already-completed steps so a re-run resumes. res is the reconcile plan the
 // caller already computed live for this manifest; onInitialize consumes it.
-func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result) error {
+// lagThreshold is the total replication lag tolerated before wait_for_lags
+// proceeds; onWaitForLags consumes it.
+func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagThreshold int64) error {
 	if !isKnownState(o.config.CurrentState) {
 		return fmt.Errorf("unrecognized tbm migration state %q in state file — refusing to execute (corrupted file, or written by a newer kcp version?)", o.config.CurrentState)
 	}
 
-	params := ExecutionParams{ReconcileResult: res}
+	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold}
 
 	for _, step := range canonicalWorkflow {
 		if !o.canTransition(step.Event) {
@@ -179,7 +184,8 @@ func (o *TBMOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
 }
 
 func (o *TBMOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.WaitForLags(ctx, o.config); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.WaitForLags(ctx, o.config, p.LagThreshold); err != nil {
 		e.Cancel(err)
 	}
 }

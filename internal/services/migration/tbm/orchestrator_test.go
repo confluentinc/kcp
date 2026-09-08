@@ -22,7 +22,7 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 	}
 	state := NewTBMState()
 	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
-	actions := NewTBMActions()
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider())
 	orchestrator := NewTBMOrchestrator(config, actions, state, stateFile)
 	return orchestrator, config, stateFile
 }
@@ -30,7 +30,7 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 	orchestrator, config, stateFile := newTestOrchestrator(t, StateUninitialized)
 
-	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}))
+	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}, 10))
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
 	assert.False(t, orchestrator.HasPendingWork())
@@ -45,7 +45,7 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 func TestTBMOrchestrator_Execute_ResumesFromPartialState(t *testing.T) {
 	orchestrator, config, _ := newTestOrchestrator(t, StateFenced)
 
-	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}))
+	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}, 10))
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
 }
@@ -71,7 +71,7 @@ func TestTBMOrchestrator_HasPendingWork(t *testing.T) {
 func TestTBMOrchestrator_Execute_RefusesUnknownState(t *testing.T) {
 	orchestrator, _, _ := newTestOrchestrator(t, "some-future-state")
 
-	err := orchestrator.Execute(context.Background(), &migplan.Result{})
+	err := orchestrator.Execute(context.Background(), &migplan.Result{}, 10)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unrecognized")
@@ -86,7 +86,7 @@ func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	err := orchestrator.Execute(ctx, &migplan.Result{})
+	err := orchestrator.Execute(ctx, &migplan.Result{}, 10)
 
 	require.Error(t, err)
 	assert.NotEqual(t, StateSwitched, config.CurrentState)
@@ -102,7 +102,7 @@ func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing
 		GatewayYAML:    "apiVersion: v1\nkind: Gateway\n",
 	}
 
-	require.NoError(t, orchestrator.Execute(context.Background(), res))
+	require.NoError(t, orchestrator.Execute(context.Background(), res, 10))
 
 	assert.Equal(t, res.Topics, config.Topics)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
@@ -124,7 +124,7 @@ func TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced(t
 
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag", "gateway rejected the fence spec"}}
 
-	err := orchestrator.Execute(context.Background(), res)
+	err := orchestrator.Execute(context.Background(), res, 10)
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "topic t1.order has replication lag")
