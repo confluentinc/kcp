@@ -1,0 +1,83 @@
+# Hermetic gateway CR fixture for the two route-SHAPE halt sub-tests (U6).
+#
+# NOT a template and NOT applied to the cluster: setup.sh copies it verbatim into
+# .rendered/, and the engine reads it via migplan.NewGatewayFile(path, routeName)
+# through WithGatewaySource. This keeps the LIVE tbm-route a valid two-domain
+# dynamic route while these halts exercise route-shape preconditions in isolation.
+#
+# findRoute (internal/services/migplan/gatewayfile.go) reads only, per route:
+#   - route.mode                     -> RouteConfig.Mode  ("route is dynamic")
+#   - route.streamingDomains[].name  -> BoundDomains      ("route binds exactly two domains")
+# so each probe route is shaped to fail exactly the check its halt targets. Because
+# the file is only YAML-parsed (never applied to the CRD), it need not satisfy the
+# Gateway CRD schema — only findRoute's expectations. apiVersion matches the live CR.
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: tbm-gateway-static-probe
+  namespace: confluent
+spec:
+  replicas: 1
+  streamingDomains:
+    - name: source-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: SOURCE
+            endpoint: PLAINTEXT://source-kafka.confluent.svc.cluster.local:9071
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 5
+    - name: destination-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: DESTINATION
+            endpoint: PLAINTEXT://destination-kafka.confluent.svc.cluster.local:9071
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 5
+  routes:
+    # STATIC route -> fails "route is dynamic". Modelled on the static shape in
+    # ~/gateway-testing/gateway-static-redundant-auth.yaml (mode omitted there, set
+    # explicitly here so findRoute reads it unambiguously; singular streamingDomain;
+    # port broker identification). Targeted by halt-route-not-dynamic.
+    - name: static-route
+      endpoint: bootstrap.gw.local:9595
+      mode: static
+      brokerIdentificationStrategy:
+        type: port
+      streamingDomain:
+        name: source-domain
+        bootstrapServerId: SOURCE
+      rules:
+        routing:
+          coordination:
+            group: source-domain
+          conditions: []
+          unmatchedTopics:
+            onOneCluster: allow
+            onBothClusters: source-domain
+        fencing: []
+    # DYNAMIC route bound to ONE domain -> passes "route is dynamic" but fails
+    # "route binds exactly two domains". Targeted by halt-route-binds-two-domains.
+    - name: single-domain-route
+      endpoint: bootstrap.gw.local:9596
+      mode: dynamic
+      brokerIdentificationStrategy:
+        type: host
+        pattern: "broker$(nodeId).gw.local"
+      streamingDomains:
+        - name: source-domain
+          bootstrapServerId: SOURCE
+      rules:
+        routing:
+          coordination:
+            group: source-domain
+          conditions: []
+          unmatchedTopics:
+            onOneCluster: allow
+            onBothClusters: source-domain
+        fencing: []

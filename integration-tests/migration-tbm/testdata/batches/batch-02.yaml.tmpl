@@ -1,0 +1,50 @@
+# TBM success batch 02 — mirrored source topics tbm-topic-012..022.
+#
+# Credential-free template: setup.sh renders it into .rendered/batch-02.yaml,
+# substituting the __PLACEHOLDER__ tokens (the destination SASL is injected at
+# render time and never committed here). Disjoint from batches 01/03/04; leaves
+# tbm-topic-045 (reserved) and 046-048 (headroom) unselected.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-batch-02
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials:
+      unauthenticated_plaintext: {}
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      credentials:
+        sasl_plain:
+          username: "__DEST_SASL_USER__"
+          password: "__DEST_SASL_PASSWORD__"
+          tls: true
+        insecure_skip_tls_verify: true
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-012"
+        - "tbm-topic-013"
+        - "tbm-topic-014"
+        - "tbm-topic-015"
+        - "tbm-topic-016"
+        - "tbm-topic-017"
+        - "tbm-topic-018"
+        - "tbm-topic-019"
+        - "tbm-topic-020"
+        - "tbm-topic-021"
+        - "tbm-topic-022"
+      route: "__ROUTE_NAME__"
+      targetStreamingDomain: "__DEST_DOMAIN__"

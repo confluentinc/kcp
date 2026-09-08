@@ -39,6 +39,35 @@ func TestGatewayFileLoad(t *testing.T) {
 	}
 }
 
+func TestFindRouteModeDefaultsToStaticWhenAbsent(t *testing.T) {
+	// A route with streamingDomains but no explicit `mode` must resolve to
+	// "static" — never inferred as dynamic — so a static route cannot slip
+	// through the "route is dynamic" precondition.
+	doc := map[string]any{
+		"spec": map[string]any{
+			"routes": []any{
+				map[string]any{
+					"name": "r",
+					"streamingDomains": []any{
+						map[string]any{"name": "msk"},
+						map[string]any{"name": "cc"},
+					},
+				},
+			},
+		},
+	}
+	rc, err := findRoute(doc, "r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc.Mode != "static" {
+		t.Errorf("mode = %q, want static (a missing mode must not be inferred as dynamic)", rc.Mode)
+	}
+	if !reflect.DeepEqual(rc.BoundDomains, []string{"msk", "cc"}) {
+		t.Errorf("boundDomains = %v, want [msk cc]", rc.BoundDomains)
+	}
+}
+
 func TestGatewayFileRouteNotFound(t *testing.T) {
 	src := NewGatewayFile("testdata/gateway-dynamic.yaml", "no-such-route")
 	if _, err := src.Load(context.Background()); err == nil {
