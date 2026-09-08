@@ -23,6 +23,21 @@ var (
 // pass a stub; production binds the real engine.
 type reconcileFunc func(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error)
 
+// tmpZeroLagOffsetProvider is a temporary placeholder wired in ahead of Task
+// 2's real Kafka connections, so the module compiles under this repo's
+// whole-module lint pre-commit hook while wait_for_lags's signature change
+// lands. Task 2 replaces every use of this with real, manifest-driven Kafka
+// connections — this type does not survive that task.
+type tmpZeroLagOffsetProvider struct{}
+
+func (tmpZeroLagOffsetProvider) GetMany(_ context.Context, topics []string) (map[string]map[int32]int64, error) {
+	out := make(map[string]map[int32]int64, len(topics))
+	for _, topic := range topics {
+		out[topic] = map[int32]int64{0: 1000}
+	}
+	return out, nil
+}
+
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
 This is a scaffold: every FSM transition except initialize is currently a noop
@@ -107,7 +122,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc) error {
 		return fmt.Errorf("failed to write tbm state file: %w", err)
 	}
 
-	actions := tbm.NewTBMActions()
+	actions := tbm.NewTBMActions(tmpZeroLagOffsetProvider{}, tmpZeroLagOffsetProvider{})
 
 	// Produce the reconcile plan for this migration: the engine reads the live
 	// Gateway CR + source/target/cluster-link state, renders its own report, and
@@ -132,7 +147,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc) error {
 		return nil
 	}
 
-	if err := orchestrator.Execute(context.Background(), res); err != nil {
+	if err := orchestrator.Execute(context.Background(), res, int64(g.Spec.DefaultPolicies.LagThreshold)); err != nil {
 		return fmt.Errorf("failed to execute tbm migration: %w", err)
 	}
 
