@@ -11,37 +11,144 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	k8stypes "k8s.io/apimachinery/pkg/types"
 )
+
+// dynamicRouteGatewayYAML is a minimal dynamic-route Gateway CR fixture,
+// mirroring internal/services/migration/tbm's own test fixture of the same
+// shape — kept as a separate copy since this package cannot import an
+// internal package's test-only file.
+const dynamicRouteGatewayYAML = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gateway-initial
+  namespace: confluent
+spec:
+  streamingDomains:
+    - name: source
+      kafkaCluster:
+        name: source-cluster
+    - name: target
+      kafkaCluster:
+        name: target-cluster
+  routes:
+    - name: migration-route
+      endpoint: kafka-gw.example.com:9092
+      streamingDomains:
+        - name: source
+          bootstrapServerId: sasl-scram
+        - name: target
+          bootstrapServerId: sasl-plain
+      rules:
+        routing:
+          coordination:
+            group: source
+          default: source
+`
+
+// realisticReconcileResult returns a migplan.Result whose Route/GatewayYAML/
+// FenceYAML/SwitchoverYAML are mutually consistent, so a full execute-tbm run
+// (now that fence is real) can succeed all the way to switched against
+// stubGatewayService below.
+func realisticReconcileResult() *migplan.Result {
+	return &migplan.Result{
+		Route:          "migration-route",
+		GatewayYAML:    dynamicRouteGatewayYAML,
+		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n",
+		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
+	}
+}
 
 // stubReconcile is a no-op success engine for the FSM-scaffold tests: the
 // manifest points at placeholder MSK/CC endpoints that are unreachable, so the
 // real engine (which connects to the live gateway CR + source/target/link)
 // cannot run here. The engine itself is tested in internal/services/migplan.
+// Returns realistic dynamic-route data (not an empty Result) so the now-real
+// fence transition can also succeed for tests that expect a full run.
 func stubReconcile(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
-	return &migplan.Result{}, nil
+	return realisticReconcileResult(), nil
 }
 
 // stubReconcileWithArtifacts returns a populated Result so tests can verify
-// its fields land on the persisted TBMConfig via the initialize transition.
+// its fields land on the persisted TBMConfig via the initialize transition —
+// same realistic base as stubReconcile, with a distinguishing Topics list.
 func stubReconcileWithArtifacts(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
-	return &migplan.Result{
-		Topics:         []string{"t1.order"},
-		FenceYAML:      "rules:\n  fenced: true\n",
-		SwitchoverYAML: "rules:\n  switched: true\n",
-		GatewayYAML:    "apiVersion: v1\nkind: Gateway\n",
-	}, nil
+	res := realisticReconcileResult()
+	res.Topics = []string{"t1.order"}
+	return res, nil
 }
 
 // stubReconcileRefused simulates an infeasible plan: not an I/O error, but a
 // refusal the initialize transition must turn into a failed run.
 func stubReconcileRefused(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
 	return &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}, nil
+}
+
+// stubGatewayServiceImpl implements gateway.Service with always-succeeding
+// no-op behavior, so command-level tests can walk the full FSM (including
+// fence) without reaching a real Kubernetes cluster. The engine's own
+// gateway-service behavior (capability detection, rejected specs, per-pod
+// configId polling) is exercised in internal/services/gateway and
+// internal/services/migration/tbm, not duplicated here.
+type stubGatewayServiceImpl struct{}
+
+func (stubGatewayServiceImpl) GetGatewayYAML(context.Context, string, string) ([]byte, error) {
+	return nil, fmt.Errorf("stubGatewayServiceImpl.GetGatewayYAML not implemented")
+}
+
+func (stubGatewayServiceImpl) DetectCapability(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+	return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+}
+
+func (stubGatewayServiceImpl) WaitForGatewayConfigID(context.Context, string, string, gateway.ConfigWaitOptions) error {
+	return nil
+}
+
+func (stubGatewayServiceImpl) CheckRedundantAuthStaged(context.Context, string, []byte, []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error) {
+	return gateway.CRValidationResult{}, nil
+}
+
+func (stubGatewayServiceImpl) CheckPermissions(context.Context, string, string, string, string) (bool, error) {
+	return true, nil
+}
+
+func (stubGatewayServiceImpl) ApplyGatewayYAML(context.Context, string, string, []byte, string) (string, error) {
+	return "", nil
+}
+
+func (stubGatewayServiceImpl) ApplyGatewayConfigID(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
+func (stubGatewayServiceImpl) WaitForGatewayAccepted(context.Context, string, string, time.Duration, time.Duration) error {
+	return nil
+}
+
+func (stubGatewayServiceImpl) GetGatewayPodUIDs(context.Context, string, string) (map[k8stypes.UID]struct{}, error) {
+	return nil, fmt.Errorf("stubGatewayServiceImpl.GetGatewayPodUIDs not implemented")
+}
+
+func (stubGatewayServiceImpl) GetGatewayDeploymentGeneration(context.Context, string, string) (int64, error) {
+	return 0, nil
+}
+
+func (stubGatewayServiceImpl) WaitForGatewayPods(context.Context, string, string, map[k8stypes.UID]struct{}, int64, time.Duration, time.Duration, func(gateway.PodRolloutProgress)) error {
+	return fmt.Errorf("stubGatewayServiceImpl.WaitForGatewayPods not implemented")
+}
+
+func (stubGatewayServiceImpl) WaitForGatewayReady(context.Context, string, string, int64, time.Duration, time.Duration, func(gateway.GatewayReadinessProgress)) error {
+	return nil
+}
+
+func stubGatewayService(*manifest.GatewayMigration) (gateway.Service, error) {
+	return stubGatewayServiceImpl{}, nil
 }
 
 // zeroLagOffsetProvider implements offset.Provider, reporting the same fixed
@@ -69,7 +176,7 @@ func stubOffsetProviders(*manifest.GatewayMigration) (offset.Provider, offset.Pr
 // Kafka, or a real cluster.
 func runExecuteTBMWithReconcile(t *testing.T, reconcile reconcileFunc, args ...string) (string, error) {
 	t.Helper()
-	cmd := newExecuteTBMCmd(reconcile, stubOffsetProviders)
+	cmd := newExecuteTBMCmd(reconcile, stubOffsetProviders, stubGatewayService)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -157,11 +264,11 @@ func withFastTBMTransitions(t *testing.T) {
 
 // --- flag surface ---
 
-func TestExecuteTBM_FlagSurfaceIncludesLagThresholdOverride(t *testing.T) {
+func TestExecuteTBM_FlagSurfaceIncludesRolloutAndHotReloadTimeouts(t *testing.T) {
 	cmd := NewMigrationExecuteTBMCmd()
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
-	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file", "lag-threshold"}, names)
+	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file", "lag-threshold", "rollout-timeout", "hot-reload-timeout"}, names)
 }
 
 func TestExecuteTBM_RequiresMigrationYaml(t *testing.T) {
@@ -301,9 +408,10 @@ func TestExecuteTBM_ReconcilePlanArtifacts_PersistToStateFile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState)
 	assert.Equal(t, []string{"t1.order"}, cfg.Topics)
-	assert.Equal(t, "rules:\n  fenced: true\n", cfg.FenceYAML)
-	assert.Equal(t, "rules:\n  switched: true\n", cfg.SwitchoverYAML)
-	assert.Equal(t, "apiVersion: v1\nkind: Gateway\n", cfg.GatewayYAML)
+	assert.Equal(t, "migration-route", cfg.Route)
+	assert.Equal(t, realisticReconcileResult().FenceYAML, cfg.FenceYAML)
+	assert.Equal(t, realisticReconcileResult().SwitchoverYAML, cfg.SwitchoverYAML)
+	assert.Equal(t, dynamicRouteGatewayYAML, cfg.GatewayYAML)
 }
 
 func TestExecuteTBM_RefusedReconcilePlan_FailsRunAndLeavesStateUninitialized(t *testing.T) {
@@ -334,10 +442,10 @@ func TestExecuteTBM_LagThresholdOverride_AppliesToEffectivePolicy(t *testing.T) 
 	var sawLagThreshold int
 	captureReconcile := func(_ context.Context, g *manifest.GatewayMigration, _ ...migplan.Option) (*migplan.Result, error) {
 		sawLagThreshold = g.Spec.DefaultPolicies.LagThreshold
-		return &migplan.Result{}, nil
+		return realisticReconcileResult(), nil
 	}
 
-	cmd := newExecuteTBMCmd(captureReconcile, stubOffsetProviders)
+	cmd := newExecuteTBMCmd(captureReconcile, stubOffsetProviders, stubGatewayService)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)

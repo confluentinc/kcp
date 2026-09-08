@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/client"
@@ -19,9 +20,11 @@ import (
 )
 
 var (
-	manifestFile         string
-	tbmStateFile         string
-	lagThresholdOverride int
+	manifestFile             string
+	tbmStateFile             string
+	lagThresholdOverride     int
+	rolloutTimeoutOverride   time.Duration
+	hotReloadTimeoutOverride time.Duration
 )
 
 // reconcileFunc is the engine entry point the command calls to produce the
@@ -36,6 +39,23 @@ type reconcileFunc func(context.Context, *manifest.GatewayMigration, ...migplan.
 // unreachable placeholder endpoints) can pass a stub; production dials real
 // Kafka connections.
 type offsetProvidersFunc func(g *manifest.GatewayMigration) (source, destination offset.Provider, closeFn func() error, err error)
+
+// gatewayServiceFunc builds the gateway.Service used by fence (and later
+// switch) to apply and verify Gateway CR changes. Injected via
+// newExecuteTBMCmd so the command's own tests can pass a stub instead of
+// dialing a real Kubernetes cluster; production builds a real K8sService from
+// the manifest's kubeconfig.
+type gatewayServiceFunc func(g *manifest.GatewayMigration) (gateway.Service, error)
+
+// buildGatewayService opens a real gateway.Service using the manifest's
+// spec.gateway.kubeconfig (a leading ~/ is expanded by KubeconfigPath).
+func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) {
+	kubeconfig, err := g.KubeconfigPath()
+	if err != nil {
+		return nil, err
+	}
+	return gateway.NewK8sService(kubeconfig), nil
+}
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
@@ -57,31 +77,36 @@ manifest for the SAME name is refused outright, with no override — a genuinely
 migration needs a new metadata.name.`
 
 // NewMigrationExecuteTBMCmd builds the `execute-tbm` command bound to the real
-// reconciliation engine and real Kafka connections.
+// reconciliation engine, real Kafka connections, and a real gateway service.
 func NewMigrationExecuteTBMCmd() *cobra.Command {
-	return newExecuteTBMCmd(migplan.Reconcile, buildOffsetProviders)
+	return newExecuteTBMCmd(migplan.Reconcile, buildOffsetProviders, buildGatewayService)
 }
 
-// newExecuteTBMCmd builds the command with the reconcile entry point and
-// offset-provider builder injected, so tests can pass stubs instead of the
-// live engine and live Kafka connections.
-func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc) *cobra.Command {
+// newExecuteTBMCmd builds the command with the reconcile entry point,
+// offset-provider builder, and gateway-service builder all injected, so tests
+// can pass stubs instead of the live engine, live Kafka connections, and a
+// live Kubernetes cluster.
+func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "execute-tbm",
 		Short:         "Execute a Topic-Batch Migration run (scaffold: noop transitions)",
 		Long:          executeTBMLong,
 		Example:       `  kcp migration execute-tbm --migration-yaml gateway-migration.yaml --tbm-state-file tbm-state.json`,
-		Hidden:        true, // scaffold: initialize/wait_for_lags are real, other transitions still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
+		Hidden:        true, // scaffold: initialize/wait_for_lags/fence are real, other transitions still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		PreRunE:       func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
-		RunE:          func(c *cobra.Command, _ []string) error { return runMigrationExecuteTBM(c, reconcile, buildOffsets) },
+		RunE: func(c *cobra.Command, _ []string) error {
+			return runMigrationExecuteTBM(c, reconcile, buildOffsets, buildGateway)
+		},
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
 	cmd.Flags().StringVar(&tbmStateFile, "tbm-state-file", "", "Path to the TBM state file. Created if it doesn't exist.")
 	cmd.Flags().IntVar(&lagThresholdOverride, "lag-threshold", 0, "Override spec.defaultPolicies.lagThreshold: total replication lag (sum of all partition lags) tolerated before proceeding.")
+	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Max wait for the operator to report the gateway Ready during fence (and, later, switchover). 0 means no deadline.")
+	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. 0 uses the built-in 90s budget; never unbounded.")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 	_ = cmd.MarkFlagRequired("tbm-state-file")
@@ -89,7 +114,7 @@ func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc)
 	return cmd
 }
 
-func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOffsets offsetProvidersFunc) error {
+func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
@@ -149,13 +174,14 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	}
 	defer func() { _ = closeOffsets() }()
 
-	// TODO(task 4): replace this placeholder with the real gatewayServiceFunc
-	// injection machinery (kubeconfig-backed gateway.NewK8sService wiring,
-	// consistent with reconcileFunc/offsetProvidersFunc above). NewTBMActions
-	// now requires a gateway.Service; this satisfies the 3-argument
-	// constructor without a live Kubernetes connection, which is out of scope
-	// for this change.
-	actions := tbm.NewTBMActions(sourceOffset, destinationOffset, gateway.NewK8sService(""))
+	gatewayService, err := buildGateway(g)
+	if err != nil {
+		return fmt.Errorf("failed to build gateway service: %w", err)
+	}
+
+	actions := tbm.NewTBMActions(sourceOffset, destinationOffset, gatewayService)
+	actions.SetRolloutTimeout(rolloutTimeoutOverride)
+	actions.SetHotReloadTimeout(hotReloadTimeoutOverride)
 
 	// Produce the reconcile plan for this migration: the engine reads the live
 	// Gateway CR + source/target/cluster-link state, renders its own report, and
