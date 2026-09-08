@@ -13,6 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -43,12 +44,32 @@ func stubReconcileRefused(context.Context, *manifest.GatewayMigration, ...migpla
 	return &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}, nil
 }
 
+// zeroLagOffsetProvider implements offset.Provider, reporting the same fixed
+// offset for every topic requested — used for both source and destination in
+// stubOffsetProviders, so every topic sees zero lag without dialing anything.
+type zeroLagOffsetProvider struct{}
+
+func (zeroLagOffsetProvider) GetMany(_ context.Context, topics []string) (map[string]map[int32]int64, error) {
+	out := make(map[string]map[int32]int64, len(topics))
+	for _, topic := range topics {
+		out[topic] = map[int32]int64{0: 1000}
+	}
+	return out, nil
+}
+
+// stubOffsetProviders returns zero-lag providers without dialing anything,
+// for tests whose manifests point at unreachable placeholder endpoints.
+func stubOffsetProviders(*manifest.GatewayMigration) (offset.Provider, offset.Provider, func() error, error) {
+	return zeroLagOffsetProvider{}, zeroLagOffsetProvider{}, func() error { return nil }, nil
+}
+
 // runExecuteTBMWithReconcile runs the command with the given reconcile func
-// injected, for tests that need to control what the "live" plan looks like
-// without reaching Kubernetes or a real cluster.
+// injected (and offset providers stubbed to zero lag), for tests that need to
+// control what the "live" plan looks like without reaching Kubernetes,
+// Kafka, or a real cluster.
 func runExecuteTBMWithReconcile(t *testing.T, reconcile reconcileFunc, args ...string) (string, error) {
 	t.Helper()
-	cmd := newExecuteTBMCmd(reconcile)
+	cmd := newExecuteTBMCmd(reconcile, stubOffsetProviders)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -126,7 +147,7 @@ func runExecuteTBM(t *testing.T, args ...string) (string, error) {
 
 // withFastTBMTransitions shrinks the tbm package's simulated transition delay
 // for the duration of a test, restoring it on cleanup — otherwise a full
-// six-step run takes 42 real seconds.
+// six-step run takes many real seconds.
 func withFastTBMTransitions(t *testing.T) {
 	t.Helper()
 	original := tbm.TransitionSimulatedDelay
@@ -136,11 +157,11 @@ func withFastTBMTransitions(t *testing.T) {
 
 // --- flag surface ---
 
-func TestExecuteTBM_FlagSurfaceIsMigrationYamlAndTbmStateFile(t *testing.T) {
+func TestExecuteTBM_FlagSurfaceIncludesLagThresholdOverride(t *testing.T) {
 	cmd := NewMigrationExecuteTBMCmd()
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
-	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file"}, names)
+	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file", "lag-threshold"}, names)
 }
 
 func TestExecuteTBM_RequiresMigrationYaml(t *testing.T) {
@@ -298,4 +319,38 @@ func TestExecuteTBM_RefusedReconcilePlan_FailsRunAndLeavesStateUninitialized(t *
 	require.NoError(t, err)
 	assert.Equal(t, tbm.StateUninitialized, cfg.CurrentState)
 	assert.Empty(t, cfg.Topics)
+}
+
+// --- --lag-threshold override ---
+
+func TestExecuteTBM_LagThresholdOverride_AppliesToEffectivePolicy(t *testing.T) {
+	withFastTBMTransitions(t)
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-lag-override", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	var sawLagThreshold int
+	captureReconcile := func(_ context.Context, g *manifest.GatewayMigration, _ ...migplan.Option) (*migplan.Result, error) {
+		sawLagThreshold = g.Spec.DefaultPolicies.LagThreshold
+		return &migplan.Result{}, nil
+	}
+
+	cmd := newExecuteTBMCmd(captureReconcile, stubOffsetProviders)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--migration-yaml", manifestPath, "--tbm-state-file", stateFile, "--lag-threshold", "500"})
+	require.NoError(t, cmd.Execute())
+
+	assert.Equal(t, 500, sawLagThreshold)
+}
+
+func TestExecuteTBM_LagThresholdOverride_NegativeValueRejected(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-lag-negative", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	_, err := runExecuteTBMWithReconcile(t, stubReconcile, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile, "--lag-threshold", "-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be negative")
 }
