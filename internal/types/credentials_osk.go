@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // validBrokerMetricLabels is the canonical set of logical broker-metric labels
@@ -35,14 +36,39 @@ func ValidBrokerMetricLabels() []string {
 	return labels
 }
 
-// validateMetricNameOverrides ensures every override key is a known broker-metric
+// validConnectMetricLabels is the canonical set of logical Connect-metric labels
+// that connect metric-name overrides (prometheus.connect_metric_names,
+// jolokia.connect_mbean_overrides) may key on. Single source of truth shared by
+// the credentials validator and the Prometheus/JMX Connect definition builders;
+// drift tests in those packages assert their definitions cover exactly this set.
+var validConnectMetricLabels = map[string]struct{}{
+	"connector-count": {}, "task-count": {},
+	"incoming-byte-rate": {}, "outgoing-byte-rate": {},
+	"connection-count": {}, "request-rate": {},
+	"source-record-write-rate": {}, "source-record-poll-rate": {},
+	"sink-record-read-rate": {}, "sink-record-send-rate": {},
+}
+
+// ValidConnectMetricLabels returns the canonical Connect-metric labels, sorted for
+// a stable error message and stable test assertions.
+func ValidConnectMetricLabels() []string {
+	labels := make([]string, 0, len(validConnectMetricLabels))
+	for l := range validConnectMetricLabels {
+		labels = append(labels, l)
+	}
+	sort.Strings(labels)
+	return labels
+}
+
+// validateMetricNameOverrides ensures every override key is a known metric
 // label, so a typo'd or wrong-case key is a loud error rather than a silent
-// no-op. fieldName names the offending config field. Only the (non-secret)
-// override keys are echoed — the override values are not.
-func validateMetricNameOverrides(overrides map[string]string, fieldName string) error {
+// no-op. fieldName names the offending config field. valid/validList are the
+// canonical label set to validate against (broker or Connect). Only the
+// (non-secret) override keys are echoed — the override values are not.
+func validateMetricNameOverrides(overrides map[string]string, fieldName string, valid map[string]struct{}, validList []string) error {
 	var unknown []string
 	for key := range overrides {
-		if _, ok := validBrokerMetricLabels[key]; !ok {
+		if _, ok := valid[key]; !ok {
 			unknown = append(unknown, key)
 		}
 	}
@@ -51,7 +77,7 @@ func validateMetricNameOverrides(overrides map[string]string, fieldName string) 
 	}
 	sort.Strings(unknown)
 	return fmt.Errorf("%s: unknown metric label(s) %s; valid labels are: %s",
-		fieldName, strings.Join(unknown, ", "), strings.Join(ValidBrokerMetricLabels(), ", "))
+		fieldName, strings.Join(unknown, ", "), strings.Join(validList, ", "))
 }
 
 // OSKCredentials represents the apache-kafka-credentials.yaml file
@@ -87,6 +113,11 @@ type JolokiaConfig struct {
 	// for agents that use non-standard MBean names. Keys must be one of the
 	// labels in ValidBrokerMetricLabels(); unknown keys are rejected at load time.
 	MBeanOverrides map[string]string `yaml:"mbean_overrides,omitempty"`
+	// ConnectMBeanOverrides maps a logical Connect-metric label (e.g. "task-count")
+	// to the MBean object name this cluster's JMX/Jolokia agent actually exposes.
+	// Per-connector overrides must keep their connector=*,task=* wildcards. Keys
+	// must be one of ValidConnectMetricLabels(); unknown keys are rejected at load time.
+	ConnectMBeanOverrides map[string]string `yaml:"connect_mbean_overrides,omitempty"`
 }
 
 // JolokiaAuthConfig contains authentication credentials for Jolokia
@@ -107,6 +138,12 @@ type PrometheusConfig struct {
 	Auth   *PrometheusAuthConfig   `yaml:"auth,omitempty"`
 	TLS    *PrometheusTLSConfig    `yaml:"tls,omitempty"`
 	Filter *PrometheusFilterConfig `yaml:"filter,omitempty"`
+	// Timeout overrides the HTTP client timeout for Prometheus queries. Zero
+	// (unset) keeps the client's built-in default (30s). A longer value is
+	// needed for large --metrics-range queries against high-cardinality
+	// clusters, where the default can trip "context deadline exceeded" before
+	// the server responds.
+	Timeout time.Duration `yaml:"timeout,omitempty"`
 	// MetricNames maps a logical broker-metric label (e.g. "BytesInPerSec") to
 	// the base Prometheus series name this cluster's exporter actually exposes,
 	// for exporters that relabel the standard series. The name is substituted
@@ -114,6 +151,13 @@ type PrometheusConfig struct {
 	// injection continues to work. Keys must be one of the labels in
 	// ValidBrokerMetricLabels(); unknown keys are rejected at load time.
 	MetricNames map[string]string `yaml:"metric_names,omitempty"`
+	// ConnectMetricNames maps a logical Connect-metric label (e.g. "task-count")
+	// to the base Prometheus series name this cluster's exporter actually exposes,
+	// for exporters that relabel the standard Connect series. Substituted into
+	// kcp's existing query wrapping (sum / sum by (connector)), so filter.labels
+	// injection continues to work. Keys must be one of ValidConnectMetricLabels();
+	// unknown keys are rejected at load time.
+	ConnectMetricNames map[string]string `yaml:"connect_metric_names,omitempty"`
 }
 
 // PrometheusFilterConfig holds label selectors to scope Prometheus queries to a specific target.
@@ -343,6 +387,9 @@ func validatePrometheusConfig(prom *PrometheusConfig) error {
 	if prom.URL == "" {
 		return fmt.Errorf("url is required")
 	}
+	if prom.Timeout < 0 {
+		return fmt.Errorf("timeout must not be negative")
+	}
 	if prom.Auth != nil {
 		if prom.Auth.Username == "" {
 			return fmt.Errorf("auth username is required when auth is configured")
@@ -356,7 +403,10 @@ func validatePrometheusConfig(prom *PrometheusConfig) error {
 			return fmt.Errorf("tls ca_cert file not found: %s", prom.TLS.CACert)
 		}
 	}
-	if err := validateMetricNameOverrides(prom.MetricNames, "metric_names"); err != nil {
+	if err := validateMetricNameOverrides(prom.MetricNames, "metric_names", validBrokerMetricLabels, ValidBrokerMetricLabels()); err != nil {
+		return err
+	}
+	if err := validateMetricNameOverrides(prom.ConnectMetricNames, "connect_metric_names", validConnectMetricLabels, ValidConnectMetricLabels()); err != nil {
 		return err
 	}
 	return nil
@@ -380,7 +430,10 @@ func validateJolokiaConfig(jolokia *JolokiaConfig) error {
 			return fmt.Errorf("tls ca_cert file not found: %s", jolokia.TLS.CACert)
 		}
 	}
-	if err := validateMetricNameOverrides(jolokia.MBeanOverrides, "mbean_overrides"); err != nil {
+	if err := validateMetricNameOverrides(jolokia.MBeanOverrides, "mbean_overrides", validBrokerMetricLabels, ValidBrokerMetricLabels()); err != nil {
+		return err
+	}
+	if err := validateMetricNameOverrides(jolokia.ConnectMBeanOverrides, "connect_mbean_overrides", validConnectMetricLabels, ValidConnectMetricLabels()); err != nil {
 		return err
 	}
 	return nil

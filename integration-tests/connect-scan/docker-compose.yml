@@ -226,3 +226,51 @@ services:
         cub kafka-ready -b connect-kafka:29092 1 120
         echo "Starting HTTPS Basic-auth Kafka Connect..."
         /etc/confluent/docker/run
+
+  # Prometheus + seeder for the prometheus.connect_metric_names override test
+  # (TestConnectScanPrometheusMetricNameOverride). Mirrors
+  # integration-tests/osk-scan's prometheus/prometheus-seeder pair: no scrape
+  # targets, data is seeded directly into the TSDB via promtool. Host port
+  # 9390 is deliberately off this compose's own range (9092/18083/18085-18087)
+  # and off osk-scan's Prometheus range (9290-9292) so both suites can run
+  # concurrently without colliding.
+  prometheus:
+    image: prom/prometheus:v2.51.0
+    hostname: connect-prometheus
+    container_name: kcp-test-connect-prometheus
+    ports:
+      - "9390:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-remote-write-receiver'
+      - '--web.enable-lifecycle'
+      - '--storage.tsdb.retention.time=60d'
+    volumes:
+      - connect-prometheus-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+
+  prometheus-seeder:
+    image: prom/prometheus:v2.51.0
+    container_name: kcp-test-connect-prometheus-seeder
+    depends_on:
+      - prometheus
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Waiting for Prometheus to be ready..."
+        for i in $$(seq 1 30); do
+          if wget -q -O /dev/null http://connect-prometheus:9090/-/ready 2>/dev/null; then
+            echo "Prometheus is ready"
+            break
+          fi
+          sleep 1
+        done
+        PROM_URL="http://connect-prometheus:9090" /bin/sh /scripts/seed-connect-prometheus-data.sh
+        echo "Seeding complete"
+    volumes:
+      - connect-prometheus-data:/prometheus
+      - ./seed-connect-prometheus-data.sh:/scripts/seed-connect-prometheus-data.sh:ro
+
+volumes:
+  connect-prometheus-data:

@@ -34,29 +34,33 @@ worker** Jolokia instances, not Kafka broker instances.
 Connect metrics span three levels: worker (cluster-wide), client (network),
 and per-task (connector throughput).
 
-| Metric                    | Description                                         | Type                | Level    |
-| ------------------------- | --------------------------------------------------- | ------------------- | -------- |
-| `connector-count`         | Number of connectors running on the worker          | Gauge               | Worker   |
-| `task-count`              | Number of tasks running on the worker               | Gauge               | Worker   |
-| `incoming-byte-rate`      | Bytes/sec received from Kafka brokers               | Gauge (aggregated)  | Client   |
-| `outgoing-byte-rate`      | Bytes/sec sent to Kafka brokers                     | Gauge (aggregated)  | Client   |
-| `connection-count`        | Active connections to Kafka brokers                 | Gauge (aggregated)  | Client   |
-| `request-rate`            | Requests/sec to Kafka brokers                       | Gauge (aggregated)  | Client   |
-| `source-record-write-rate`| Records/sec written to Kafka (after transforms)     | Gauge (aggregated)  | Per-task |
-| `source-record-poll-rate` | Records/sec polled from source system               | Gauge (aggregated)  | Per-task |
+| Metric                     | Description                                        | Type               | Level    |
+| -------------------------- | -------------------------------------------------- | ------------------ | -------- |
+| `connector-count`          | Number of connectors running on the worker         | Gauge              | Worker   |
+| `task-count`               | Number of tasks running on the worker              | Gauge              | Worker   |
+| `incoming-byte-rate`       | Bytes/sec received from Kafka brokers              | Gauge (aggregated) | Client   |
+| `outgoing-byte-rate`       | Bytes/sec sent to Kafka brokers                    | Gauge (aggregated) | Client   |
+| `connection-count`         | Active connections to Kafka brokers                | Gauge (aggregated) | Client   |
+| `request-rate`             | Requests/sec to Kafka brokers                      | Gauge (aggregated) | Client   |
+| `source-record-write-rate` | Records/sec written to Kafka (after transforms)    | Gauge (aggregated) | Per-task |
+| `source-record-poll-rate`  | Records/sec polled from source system              | Gauge (aggregated) | Per-task |
+| `sink-record-read-rate`    | Records/sec read from Kafka                        | Gauge (aggregated) | Per-task |
+| `sink-record-send-rate`    | Records/sec sent to sink system (after transforms) | Gauge (aggregated) | Per-task |
 
 ## Jolokia MBean paths
 
-| Metric                    | MBean path                                                                    | Attribute                |
-| ------------------------- | ----------------------------------------------------------------------------- | ------------------------ |
-| `connector-count`         | `kafka.connect:type=connect-worker-metrics`                                   | `connector-count`        |
-| `task-count`              | `kafka.connect:type=connect-worker-metrics`                                   | `task-count`             |
-| `incoming-byte-rate`      | `kafka.connect:client-id=*,type=connect-metrics`                              | `incoming-byte-rate`     |
-| `outgoing-byte-rate`      | `kafka.connect:client-id=*,type=connect-metrics`                              | `outgoing-byte-rate`     |
-| `connection-count`        | `kafka.connect:client-id=*,type=connect-metrics`                              | `connection-count`       |
-| `request-rate`            | `kafka.connect:client-id=*,type=connect-metrics`                              | `request-rate`           |
-| `source-record-write-rate`| `kafka.connect:type=source-task-metrics,connector=*,task=*`                   | `source-record-write-rate`|
-| `source-record-poll-rate` | `kafka.connect:type=source-task-metrics,connector=*,task=*`                   | `source-record-poll-rate` |
+| Metric                     | MBean path                                                  | Attribute                  |
+| -------------------------- | ----------------------------------------------------------- | -------------------------- |
+| `connector-count`          | `kafka.connect:type=connect-worker-metrics`                 | `connector-count`          |
+| `task-count`               | `kafka.connect:type=connect-worker-metrics`                 | `task-count`               |
+| `incoming-byte-rate`       | `kafka.connect:client-id=*,type=connect-metrics`            | `incoming-byte-rate`       |
+| `outgoing-byte-rate`       | `kafka.connect:client-id=*,type=connect-metrics`            | `outgoing-byte-rate`       |
+| `connection-count`         | `kafka.connect:client-id=*,type=connect-metrics`            | `connection-count`         |
+| `request-rate`             | `kafka.connect:client-id=*,type=connect-metrics`            | `request-rate`             |
+| `source-record-write-rate` | `kafka.connect:type=source-task-metrics,connector=*,task=*` | `source-record-write-rate` |
+| `source-record-poll-rate`  | `kafka.connect:type=source-task-metrics,connector=*,task=*` | `source-record-poll-rate`  |
+| `sink-record-read-rate`    | `kafka.connect:type=sink-task-metrics,connector=*,task=*`   | `sink-record-read-rate`    |
+| `sink-record-send-rate`    | `kafka.connect:type=sink-task-metrics,connector=*,task=*`   | `sink-record-send-rate`    |
 
 Client-level metrics (`incoming-byte-rate`, `outgoing-byte-rate`,
 `connection-count`, `request-rate`) use wildcard MBean patterns and are summed
@@ -65,16 +69,18 @@ JVM — no additional configuration is required beyond the Jolokia agent.
 
 ## Prometheus PromQL queries
 
-| Metric                    | PromQL query                                                  |
-| ------------------------- | ------------------------------------------------------------- |
-| `connector-count`         | `sum(kafka_connect_worker_connector_count)`                   |
-| `task-count`              | `sum(kafka_connect_worker_task_count)`                        |
-| `source-record-write-rate`| `sum(kafka_connect_source_task_source_record_write_rate)`     |
-| `source-record-poll-rate` | `sum(kafka_connect_source_task_source_record_poll_rate)`      |
-| `incoming-byte-rate`      | `sum(kafka_connect_metrics_incoming_byte_rate)`              |
-| `outgoing-byte-rate`      | `sum(kafka_connect_metrics_outgoing_byte_rate)`             |
-| `connection-count`        | `sum(kafka_connect_metrics_connection_count)`               |
-| `request-rate`            | `sum(kafka_connect_metrics_request_rate)`                   |
+| Metric                     | PromQL query                                                              |
+| -------------------------- | ------------------------------------------------------------------------- |
+| `connector-count`          | `sum(kafka_connect_worker_connector_count)`                               |
+| `task-count`               | `sum(kafka_connect_worker_task_count)`                                    |
+| `source-record-write-rate` | `sum by (connector) (kafka_connect_source_task_source_record_write_rate)` |
+| `source-record-poll-rate`  | `sum by (connector) (kafka_connect_source_task_source_record_poll_rate)`  |
+| `sink-record-read-rate`    | `sum by (connector) (kafka_connect_sink_task_sink_record_read_rate)`      |
+| `sink-record-send-rate`    | `sum by (connector) (kafka_connect_sink_task_sink_record_send_rate)`      |
+| `incoming-byte-rate`       | `sum(kafka_connect_metrics_incoming_byte_rate)`                           |
+| `outgoing-byte-rate`       | `sum(kafka_connect_metrics_outgoing_byte_rate)`                           |
+| `connection-count`         | `sum(kafka_connect_metrics_connection_count)`                             |
+| `request-rate`             | `sum(kafka_connect_metrics_request_rate)`                                 |
 
 These metric names are produced by the Prometheus JMX Exporter with standard
 Kafka Connect JMX rules. The worker-level and task-level metrics
@@ -123,6 +129,111 @@ clusters:
 > the same credentials file is used but the endpoints should point to
 > **Connect worker** Jolokia agents, which typically run on a different
 > host and/or port.
+
+## Metric-name overrides
+
+If your Prometheus exporter relabels the standard Connect series, or your Jolokia
+agent exposes Connect MBeans under non-standard object names, the queries above
+return empty results. As with [broker metric-name
+overrides](credentials.md#metric-name-overrides), repoint them per cluster instead
+of patching names in source: `prometheus.connect_metric_names` maps a logical
+Connect label to the base **series name** your exporter exposes, and
+`jolokia.connect_mbean_overrides` maps a logical Connect label to the **MBean
+object name** your agent exposes. These are separate keys from the broker
+`metric_names` / `mbean_overrides` — one block can carry both a broker set and a
+Connect set at once.
+
+Both key on the same ten logical Connect labels:
+
+`connector-count`, `task-count`, `incoming-byte-rate`, `outgoing-byte-rate`,
+`connection-count`, `request-rate`, `source-record-write-rate`,
+`source-record-poll-rate`, `sink-record-read-rate`, `sink-record-send-rate`.
+
+For example, if your exporter publishes the worker-level gauges under an `acme_`
+prefix, map just the labels that changed — everything you omit keeps its default:
+
+```yaml
+prometheus:
+  url: http://prometheus.example.com:9090
+  filter:
+    labels:
+      job: confluent/connect-jmx-exporter
+  connect_metric_names:
+    connector-count: acme_connect_connector_count   # default: kafka_connect_worker_connector_count
+    task-count: acme_connect_task_count             # default: kafka_connect_worker_task_count
+```
+
+`kcp` slots the name into its own wrapping, so `task-count` now runs
+`sum(acme_connect_task_count)` in place of the default, with `filter.labels`
+injection still applied on top. Per-connector labels keep their `sum by
+(connector) (...)` grouping the same way. The Jolokia equivalent maps the same
+logical label to a full MBean object name (domain included) rather than a series
+name:
+
+```yaml
+jolokia:
+  endpoints:
+    - http://connect-worker1.example.com:8781/jolokia
+  connect_mbean_overrides:
+    task-count: "acme.connect:type=connect-worker-metrics"   # default domain: kafka.connect
+```
+
+- **Only labels you need to change** must appear; unlisted labels keep their
+  defaults. A key with an empty value (`task-count: ""`) is treated as *no
+  override* and silently ignored — set a real name or omit the key entirely.
+- **Keys are validated at load time** — an unknown or misspelled label (wrong case
+  included) is a hard error listing the valid labels, not a silent no-op. This
+  applies whenever the credentials file loads, regardless of which backend
+  `--metrics` selects for this particular scan.
+
+> [!WARNING]
+> **Per-connector metrics must keep their `connector` grouping.** Four of the ten
+> labels are per-connector rather than cluster-wide: `source-record-write-rate`,
+> `source-record-poll-rate`, `sink-record-read-rate`, `sink-record-send-rate`.
+> `kcp` attributes these to individual connectors by grouping on a `connector`
+> label — `sum by (connector) (<series>)` on Prometheus, the `connector=*,task=*`
+> MBean wildcard on Jolokia (see [Jolokia MBean paths](#jolokia-mbean-paths)
+> above). If your override points at a relabelled series or MBean that drops
+> that grouping:
+>
+> - On **Prometheus**, a query result missing the `connector` label is skipped
+>   entirely (logged at WARN) rather than being attributed to the wrong
+>   connector or the whole cluster.
+> - On **Jolokia**, the override value must still end in `connector=*,task=*`
+>   (or the equivalent wildcard your agent uses) for the per-task read to
+>   resolve to individual connectors at all — an override that drops the
+>   wildcard breaks per-connector attribution for that metric, not just its name.
+>
+> Renaming one of these four labels means renaming the type/attribute portion of
+> the pattern while preserving the wildcard, not swapping in an unrelated fixed
+> MBean or series.
+
+- If an overridden Connect metric **still** returns no data, `kcp` logs it at
+  **WARN** (a plain missing default is logged at DEBUG) — the override was
+  configured precisely to fix an empty result, so a still-empty result is worth
+  surfacing.
+- **On Jolokia, this WARN's clean-not-found detection is fully reliable only
+  for the two single-object-name gauges, `connector-count` and `task-count`.**
+  The other eight labels — the four client-level aggregates
+  (`incoming-byte-rate`, `outgoing-byte-rate`, `connection-count`,
+  `request-rate`) and the four per-connector metrics — are read via a wildcard
+  MBean pattern rather than a single object name, so even a "not found" is only
+  detected when that pattern matches zero MBeans; if it matches MBeans that
+  simply lack the expected attribute (or, for per-connector metrics, the
+  `connector` property), the read succeeds with no error — the aggregate
+  silently totals to `0` and a per-connector series is silently omitted — so a
+  matching-but-misconfigured override on these eight labels may not produce a
+  WARN at all.
+- **An override is a rename, not a re-interpretation.** The series or bean you
+  point at must have the same *shape* as the default — every Connect metric here
+  is a gauge (a point-in-time count or an already-computed rate), not a raw
+  counter `kcp` derives a rate from. On Jolokia the attribute `kcp` reads is
+  fixed to the metric's own label — e.g. `task-count` always reads the
+  `task-count` attribute off whatever MBean you point it at — so the override
+  changes the object name, not the attribute; your custom MBean must expose a
+  same-named attribute. Repointing at a differently-shaped, differently-scoped,
+  or differently-attributed source yields a *wrong value with no error*, not an
+  empty result.
 
 ## Filtering by Connect cluster (Prometheus)
 

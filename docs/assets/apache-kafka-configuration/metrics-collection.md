@@ -166,14 +166,11 @@ no error and — unlike a missing metric — no empty-result warning:
 > A unit mismatch (bits instead of bytes; GiB instead of bytes for storage)
 > fails the same silent way: the number is simply wrong.
 
-Two more things an override does **not** touch:
+One more thing an override does **not** touch:
 
 - **The Jolokia attribute is fixed** (`Count` for counters, `Value` for gauges).
   The override changes the object name, not the attribute, so the bean you name
   must expose its value under that same attribute.
-- **`GlobalPartitionCount` keeps its `{name="GlobalPartitionCount"}` discriminator**
-  on Prometheus, so an overridden series must still carry that `name` label (see
-  the [note above](#prometheus-promql-queries)).
 
 If your setup differs on unit, shape, read attribute, or per-broker aggregation —
 common when the same relabelling that renamed a metric also changed its `type:` or

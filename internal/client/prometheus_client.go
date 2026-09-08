@@ -46,6 +46,16 @@ func WithPrometheusTLS(caPool *x509.CertPool, insecureSkipVerify bool) Prometheu
 	}
 }
 
+// WithPrometheusTimeout overrides the HTTP client timeout used for Prometheus
+// queries (default 30s, set in NewPrometheusClient). A longer value is needed
+// for large --metrics-range queries against high-cardinality clusters, where
+// the default can trip "context deadline exceeded" before the server responds.
+func WithPrometheusTimeout(timeout time.Duration) PrometheusOption {
+	return func(c *PrometheusClient) {
+		c.httpClient.Timeout = timeout
+	}
+}
+
 // NewPrometheusClient creates a new Prometheus HTTP client
 func NewPrometheusClient(baseURL string, opts ...PrometheusOption) *PrometheusClient {
 	client := &PrometheusClient{
