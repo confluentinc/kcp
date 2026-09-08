@@ -1,0 +1,42 @@
+# TBM halt — the named route is static, not dynamic (HERMETIC).
+#
+# route names "static-route", which exists only in gateway-static-probe.yaml. The
+# halt sub-test drives this against that fixture via
+# migplan.WithGatewaySource(NewGatewayFile(gateway-static-probe.yaml, "static-route")),
+# so the live tbm-route stays valid. The engine refuses on the failed precondition
+# "route is dynamic" (reconcile/preconditions.go). The topic selection is incidental
+# (the shape check refuses first).
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-route-not-dynamic
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials:
+      unauthenticated_plaintext: {}
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      credentials:
+        sasl_plain:
+          username: "__DEST_SASL_USER__"
+          password: "__DEST_SASL_PASSWORD__"
+          tls: true
+        insecure_skip_tls_verify: true
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-046"
+      route: "static-route"
+      targetStreamingDomain: "__DEST_DOMAIN__"

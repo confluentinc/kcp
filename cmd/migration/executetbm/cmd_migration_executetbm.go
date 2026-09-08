@@ -186,28 +186,32 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	actions := tbm.NewTBMActions(sourceOffset, destinationOffset, gatewayService)
 	actions.SetRolloutTimeout(rolloutTimeoutOverride)
 	actions.SetHotReloadTimeout(hotReloadTimeoutOverride)
+	orchestrator := tbm.NewTBMOrchestrator(config, actions, tbmState, tbmStateFile)
+
+	// An already-complete migration short-circuits before any live I/O: a resumed
+	// run with the same manifest must succeed offline, since the source, target,
+	// or gateway may already be torn down once the migration is done. The
+	// reconcile plan below therefore runs only when there is pending work.
+	if !orchestrator.HasPendingWork() {
+		cmd.Printf("✅ TBM migration already complete: %s\n", config.MigrationId)
+		return nil
+	}
 
 	// Produce the reconcile plan for this migration: the engine reads the live
-	// Gateway CR + source/target/cluster-link state, renders its own report, and
-	// returns the promote topic list plus the fence and switchover rules
-	// artifacts. err here is an I/O failure (the plan could not be produced); an
-	// infeasible-but-reachable plan is not an error — it surfaces as res.Refused
-	// with res.Reasons, which the initialize transition turns into a failed run.
+	// Gateway CR + source/target/cluster-link state, renders its own report to
+	// the command's writer, and returns the promote topic list plus the fence
+	// and switchover rules artifacts. err here is an I/O failure (the plan
+	// could not be produced); an infeasible-but-reachable plan is not an
+	// error — it surfaces as res.Refused with res.Reasons, which the
+	// initialize transition turns into a failed run.
 	//
 	// This runs on every invocation, even a pure resume past initialize — its
 	// result is only consumed by onInitialize (skipped via canTransition once
 	// initialize has already completed), so a resume pays for a live reconcile
 	// whose output then goes unused. Revisit if that cost matters in practice.
-	res, err := reconcile(cmd.Context(), g)
+	res, err := reconcile(cmd.Context(), g, migplan.WithOutput(cmd.OutOrStdout()))
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
-	}
-
-	orchestrator := tbm.NewTBMOrchestrator(config, actions, tbmState, tbmStateFile)
-
-	if !orchestrator.HasPendingWork() {
-		cmd.Printf("✅ TBM migration already complete: %s\n", config.MigrationId)
-		return nil
 	}
 
 	if err := orchestrator.Execute(context.Background(), res, int64(g.Spec.DefaultPolicies.LagThreshold)); err != nil {

@@ -349,6 +349,36 @@ func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 	assert.Contains(t, out, "already complete")
 }
 
+func TestExecuteTBM_AlreadyComplete_SkipsReconcile(t *testing.T) {
+	withFastTBMTransitions(t)
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-skip", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	// First run drives the FSM to completion with a no-op reconcile.
+	_, err := runExecuteTBMWithReconcile(t, stubReconcile, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.NoError(t, err)
+
+	// Second run is already complete: reconcile must be skipped entirely, so a
+	// resumed run succeeds offline even when the source/target/gateway are gone.
+	called := false
+	failing := func(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
+		called = true
+		return nil, fmt.Errorf("source cluster unreachable")
+	}
+	out, err := runExecuteTBMWithReconcile(t, failing, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.NoError(t, err)
+	assert.False(t, called, "reconcile must not run once the migration is already complete")
+	assert.Contains(t, out, "already complete")
+}
+
+// Note: the old TestExecuteTBM_RefusedPlan_ToleratedByThinPosture (from the
+// noop-scaffold era) pinned a "refused plans are ignored" contract that the
+// now-real initialize transition deliberately replaces — see
+// TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig
+// and TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced
+// in internal/services/migration/tbm for the current, real contract.
+
 func TestExecuteTBM_TbmStateFileUnstatable_FailsInsteadOfTreatingAsFresh(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores directory permission bits")
