@@ -166,8 +166,9 @@ func testTBMConfig() *TBMConfig {
 		K8sNamespace:   "confluent",
 		InitialCrName:  "gateway-initial",
 		Route:          "migration-route",
+		Topics:         []string{"t1.order"},
 		GatewayYAML:    testGatewayYAML,
-		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n",
+		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
 		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
 	}
 }
@@ -182,7 +183,7 @@ func realisticReconcileResult() *migplan.Result {
 		Route:          "migration-route",
 		Topics:         []string{"t1.order"},
 		GatewayYAML:    testGatewayYAML,
-		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n",
+		FenceYAML:      "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: true\n",
 		SwitchoverYAML: "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n",
 	}
 }
@@ -287,6 +288,70 @@ func TestTBMActions_Fence_ApplyErrorPropagates(t *testing.T) {
 	err := actions.Fence(context.Background(), config)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "connection refused")
+}
+
+// TestTBMActions_Fence_NoTopicsSkipsFencing proves Fence short-circuits before
+// any live gateway I/O when config.Topics is empty — the legitimate "nothing
+// to migrate, not refused" outcome migplan.Reconcile returns on a steady-state
+// re-run (reconcile.go: Refused() is checked first, then len(migratable)==0 is
+// a separate, distinct success path). Mirrors WaitForLags's existing
+// len(config.Topics)==0 guard ("No topics to check").
+func TestTBMActions_Fence_NoTopicsSkipsFencing(t *testing.T) {
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			t.Fatal("DetectCapability must not be called when there are no topics to fence")
+			return gateway.Capability{}, nil
+		},
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
+			t.Fatal("ApplyGatewayYAML must not be called when there are no topics to fence")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	config := testTBMConfig()
+	config.Topics = nil
+	config.FenceYAML = ""
+	config.SwitchoverYAML = ""
+
+	err := actions.Fence(context.Background(), config)
+	require.NoError(t, err, "an empty topic list is a legitimate no-op, not an error")
+}
+
+// TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim proves Fence never
+// patches config.FenceYAML's fencing entries before applying — the
+// CRD-required blocked field belongs on the artifact migplan.Reconcile
+// itself produces (see migplan/reconcile.PrependFence), not something a
+// consumer normalizes afterward. Runs both blocked: true and blocked: false
+// to prove this is a verbatim pass-through, not a preservation of one
+// specific value.
+func TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim(t *testing.T) {
+	for _, blocked := range []bool{true, false} {
+		t.Run(fmt.Sprintf("blocked=%v", blocked), func(t *testing.T) {
+			var appliedYAML []byte
+			gw := &mockGatewayService{
+				applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, _ string) (string, error) {
+					appliedYAML = yamlData
+					return "", nil
+				},
+			}
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+			config := testTBMConfig()
+			config.FenceYAML = fmt.Sprintf("rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: %v\n", blocked)
+
+			require.NoError(t, actions.Fence(context.Background(), config))
+
+			var obj map[string]any
+			require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &obj))
+			spec := obj["spec"].(map[string]any)
+			routes := spec["routes"].([]any)
+			route := routes[0].(map[string]any)
+			rules := route["rules"].(map[string]any)
+			fencing := rules["fencing"].([]any)
+			require.Len(t, fencing, 1)
+			entry := fencing[0].(map[string]any)
+			assert.Equal(t, blocked, entry["blocked"], "Fence must apply the fencing entry's blocked value verbatim, never patch it")
+		})
+	}
 }
 
 func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {

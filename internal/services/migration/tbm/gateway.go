@@ -47,10 +47,13 @@ func cleanGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 }
 
 // deriveFencedCRYAML builds the fenced CR bytes from the captured gateway CR
-// snapshot by replacing config.Route's rules subtree with config.FenceYAML.
-// There is no separately-snapshotted fenced CR: this and
-// resolveGatewayCapability's detection both derive from the same source, so
-// they can never drift from each other.
+// snapshot by replacing config.Route's rules subtree with config.FenceYAML,
+// applied unmodified — migplan.Reconcile's artifact already satisfies the
+// Gateway CRD (PrependFence sets rules.fencing[].blocked itself; see
+// migplan/reconcile/rules.go), so there is nothing to patch here. There is no
+// separately-snapshotted fenced CR: this and resolveGatewayCapability's
+// detection both derive from the same source, so they can never drift from
+// each other.
 func deriveFencedCRYAML(config *TBMConfig) ([]byte, error) {
 	base, err := cleanGatewayYAML(config.GatewayYAML)
 	if err != nil {
@@ -60,11 +63,11 @@ func deriveFencedCRYAML(config *TBMConfig) ([]byte, error) {
 }
 
 // deriveSwitchedCRYAML builds the switched CR bytes the same way, from
-// config.SwitchoverYAML. Switch itself is not yet real; this exists because
-// resolveGatewayCapability's detection needs to see both the fenced and
-// switched CR to correctly infer verification mode — a detector shown only
-// the live gateway could pick rollout verification for a migration that will
-// hot-reload, and then observe nothing (see
+// config.SwitchoverYAML, also applied unmodified. Switch itself is not yet
+// real; this exists because resolveGatewayCapability's detection needs to
+// see both the fenced and switched CR to correctly infer verification mode —
+// a detector shown only the live gateway could pick rollout verification for
+// a migration that will hot-reload, and then observe nothing (see
 // migration.ResolveGatewayCapability's comment).
 func deriveSwitchedCRYAML(config *TBMConfig) ([]byte, error) {
 	base, err := cleanGatewayYAML(config.GatewayYAML)

@@ -15,25 +15,35 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// execTBMTimeout must exceed the noop FSM's simulated delay: it sleeps
-// TransitionSimulatedDelay (7s) per transition across ~6 transitions, plus the
-// live reconcile reads.
+// execTBMTimeout covers initialize/wait_for_lags/fence (real, but fast when
+// there is nothing to migrate — see TestExecuteTBMThinPosture) plus
+// verify_fence/promote/switch, which remain noop and sleep
+// TransitionSimulatedDelay (7s) each.
 const execTBMTimeout = 5 * time.Minute
 
 // kcpBinary is the in-pod kcp binary run.sh builds and cp's into the runner.
 func kcpBinary() string { return envOrDefault("KCP_TBM_KCP_BIN", "/workspace/kcp") }
 
 // TestExecuteTBMThinPosture covers the only unit that drives the execute-tbm
-// command (U9). Its FSM is a noop, so the assertions are deliberately thin: the
-// command runs the engine, writes a parseable TBM state file, and — because every
-// transition is a noop — leaves the mirror/route world untouched. The destination
-// SASL credential is never on the exec argv: it reaches the command only through
-// the rendered manifest file it reads.
+// command (U9). initialize, wait_for_lags and fence are real;
+// verify_fence, promote and switch remain noop. TestSuccessBatchesMigrate
+// (which runs first, alphabetically, in this same suite) has already fully
+// migrated batch-01's topics by the time this runs, so this exercises the
+// real FSM on a legitimate steady-state resume: migplan.Reconcile returns
+// Refused: false with zero topics (an already-migrated batch is not a
+// refusal — see reconcile.go's Refused()-then-len(migratable)==0 split),
+// which the real fence transition must treat as "nothing to fence" rather
+// than crash on (the exact bug this sub-test now guards against — see
+// internal/services/migration/tbm's Fence). Because there is nothing to
+// migrate, no real transition has anything to do, so the world stays
+// untouched — that is the correct reason nothing moves, not because the FSM
+// is a noop. The destination SASL credential is never on the exec argv: it
+// reaches the command only through the rendered manifest file it reads.
 func TestExecuteTBMThinPosture(t *testing.T) {
 	h := newHarness(t)
 	manifestPath := h.e.manifestPath("batch-01.yaml")
 
-	t.Run("happy-path-writes-state-leaves-world-unchanged", func(t *testing.T) {
+	t.Run("steady-state-batch-completes-cleanly-leaves-world-unchanged", func(t *testing.T) {
 		stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 
 		routesBefore := gatewayRoutes(t, h)
@@ -51,11 +61,13 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 		var parsed map[string]any
 		require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
 
-		// Noop FSM: neither the gateway route nor any mirror may have moved.
+		// Zero topics to migrate: fence (real, but a no-op here) and the
+		// still-noop steps after it find nothing to do, so neither the gateway
+		// route nor any mirror may have moved.
 		require.Equal(t, string(routesBefore), string(gatewayRoutes(t, h)),
-			"the noop FSM must not edit the gateway route")
+			"a steady-state run (zero topics to migrate) must not edit the gateway route")
 		require.Equal(t, mirrorsBefore, mirrorStatuses(t, h),
-			"the noop FSM must not promote any mirror")
+			"a steady-state run (zero topics to migrate) must not promote any mirror")
 	})
 
 	// Abuse: an unwritable --tbm-state-file (missing parent directory) must fail

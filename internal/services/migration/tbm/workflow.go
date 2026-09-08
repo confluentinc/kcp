@@ -272,6 +272,17 @@ func formatLag64(n int64) string {
 // and no compensating rollback on failure — a failure here just returns an
 // error and leaves the FSM at lags_ok; re-running execute-tbm retries fencing.
 func (a *TBMActions) Fence(ctx context.Context, config *TBMConfig) error {
+	// config.Topics is empty whenever migplan.Reconcile's Result was a
+	// legitimate "nothing to migrate" outcome (Refused: false, Artifacts nil —
+	// see reconcile.go: Refused() is checked first, then len(migratable)==0 is
+	// a separate, distinct success path for an already-migrated/steady-state
+	// batch). config.FenceYAML is then "", which deriveFencedCRYAML cannot
+	// parse. Mirrors WaitForLags's identical guard.
+	if len(config.Topics) == 0 {
+		a.reporter.success("No topics to fence")
+		return nil
+	}
+
 	if err := a.resolveGatewayCapability(ctx, config); err != nil {
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
 	}
