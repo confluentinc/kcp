@@ -105,29 +105,33 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc) error {
 	}
 
 	actions := tbm.NewTBMActions()
-
-	// Produce the reconcile plan for this migration: the engine reads the live
-	// Gateway CR + source/target/cluster-link state, renders its own report, and
-	// returns the promote topic list plus the fence and switchover rules
-	// artifacts. err here is an I/O failure (the plan could not be produced); an
-	// infeasible-but-reachable plan is not an error — it surfaces as res.Refused
-	// with res.Reasons.
-	//
-	// The state machine does not consume res yet: wiring res.Topics /
-	// res.FenceYAML / res.SwitchoverYAML (and honouring res.Refused) into the TBM
-	// transitions is the next step.
-	res, err := reconcile(cmd.Context(), g)
-	if err != nil {
-		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
-	}
-	_ = res
-
 	orchestrator := tbm.NewTBMOrchestrator(config, actions, tbmState, tbmStateFile)
 
+	// An already-complete migration short-circuits before any live I/O: a resumed
+	// run with the same manifest must succeed offline, since the source, target,
+	// or gateway may already be torn down once the migration is done. The
+	// reconcile plan below therefore runs only when there is pending work.
 	if !orchestrator.HasPendingWork() {
 		cmd.Printf("✅ TBM migration already complete: %s\n", config.MigrationId)
 		return nil
 	}
+
+	// Produce the reconcile plan for this migration: the engine reads the live
+	// Gateway CR + source/target/cluster-link state, renders its own report to the
+	// command's writer, and returns the promote topic list plus the fence and
+	// switchover rules artifacts. err here is an I/O failure (the plan could not be
+	// produced); an infeasible-but-reachable plan is not an error — it surfaces as
+	// res.Refused with res.Reasons.
+	//
+	// The state machine does not consume res yet: wiring res.Topics /
+	// res.FenceYAML / res.SwitchoverYAML — and honouring res.Refused — into the TBM
+	// transitions is the next step, owned by the FSM work in progress. Until then
+	// the command's posture is deliberately thin: only an I/O failure stops it.
+	res, err := reconcile(cmd.Context(), g, migplan.WithOutput(cmd.OutOrStdout()))
+	if err != nil {
+		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
+	}
+	_ = res
 
 	if err := orchestrator.Execute(context.Background()); err != nil {
 		return fmt.Errorf("failed to execute tbm migration: %w", err)

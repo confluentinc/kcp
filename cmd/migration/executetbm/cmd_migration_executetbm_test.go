@@ -30,7 +30,14 @@ func stubReconcile(context.Context, *manifest.GatewayMigration, ...migplan.Optio
 // end-to-end FSM tests that would otherwise dial unreachable endpoints.
 func runExecuteTBMStubbed(t *testing.T, args ...string) (string, error) {
 	t.Helper()
-	cmd := newExecuteTBMCmd(stubReconcile)
+	return runExecuteTBMWith(t, stubReconcile, args...)
+}
+
+// runExecuteTBMWith runs the command with a caller-supplied reconcile engine, so
+// a test can observe whether reconcile is invoked or feed a refused/failing plan.
+func runExecuteTBMWith(t *testing.T, reconcile reconcileFunc, args ...string) (string, error) {
+	t.Helper()
+	cmd := newExecuteTBMCmd(reconcile)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -191,6 +198,54 @@ func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 	out, err := runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
 	require.NoError(t, err)
 	assert.Contains(t, out, "already complete")
+}
+
+func TestExecuteTBM_AlreadyComplete_SkipsReconcile(t *testing.T) {
+	withFastTBMTransitions(t)
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-skip", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	// First run drives the FSM to completion with a no-op reconcile.
+	_, err := runExecuteTBMWith(t, stubReconcile, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.NoError(t, err)
+
+	// Second run is already complete: reconcile must be skipped entirely, so a
+	// resumed run succeeds offline even when the source/target/gateway are gone.
+	called := false
+	failing := func(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
+		called = true
+		return nil, fmt.Errorf("source cluster unreachable")
+	}
+	out, err := runExecuteTBMWith(t, failing, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.NoError(t, err)
+	assert.False(t, called, "reconcile must not run once the migration is already complete")
+	assert.Contains(t, out, "already complete")
+}
+
+func TestExecuteTBM_RefusedPlan_ToleratedByThinPosture(t *testing.T) {
+	withFastTBMTransitions(t)
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-refused", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	// A refused (infeasible) plan is NOT consumed by the noop FSM yet — honouring
+	// res.Refused is the FSM work in progress, not this command's job. Until then
+	// the posture is deliberately thin (only an I/O failure stops it), so the
+	// command must still run the noop transitions to completion and exit 0. This
+	// pins that decision so the res.Refused gate is not re-added prematurely.
+	refusing := func(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
+		return &migplan.Result{Refused: true}, nil
+	}
+	out, err := runExecuteTBMWith(t, refusing, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.NoError(t, err)
+	assert.Contains(t, out, "completed")
+
+	state, err := tbm.NewTBMStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("tbm-batch-refused")
+	require.NoError(t, err)
+	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState)
 }
 
 func TestExecuteTBM_TbmStateFileUnstatable_FailsInsteadOfTreatingAsFresh(t *testing.T) {

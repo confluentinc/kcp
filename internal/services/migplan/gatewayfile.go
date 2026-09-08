@@ -41,9 +41,11 @@ func (g *GatewayFile) Load(_ context.Context) (*reconcile.GatewayConfig, error) 
 }
 
 // findRoute extracts the named route from spec.routes[] into a RouteConfig:
-// Mode from the route's `mode` (else inferred: a list-valued `streamingDomains`
-// ⇒ dynamic), BoundDomains from streamingDomains[].name, Rules = the route's
-// `rules` subtree (passed through untouched for the core to parse).
+// Mode from the route's `mode` verbatim (a missing `mode` defaults to "static",
+// never inferred from other fields — the "route is dynamic" precondition then
+// refuses safely rather than a static route slipping through as dynamic),
+// BoundDomains from streamingDomains[].name, Rules = the route's `rules` subtree
+// (passed through untouched for the core to parse).
 func findRoute(doc map[string]any, name string) (*reconcile.RouteConfig, error) {
 	spec, _ := doc["spec"].(map[string]any)
 	if spec == nil {
@@ -71,8 +73,6 @@ func findRoute(doc map[string]any, name string) (*reconcile.RouteConfig, error) 
 
 		if mode, ok := route["mode"].(string); ok && mode != "" {
 			rc.Mode = mode
-		} else if len(sds) > 0 {
-			rc.Mode = "dynamic"
 		} else {
 			rc.Mode = "static"
 		}
