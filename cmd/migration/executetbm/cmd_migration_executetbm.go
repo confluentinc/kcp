@@ -113,14 +113,10 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc) error {
 	// infeasible-but-reachable plan is not an error — it surfaces as res.Refused
 	// with res.Reasons.
 	//
-	// The state machine does not consume res yet: wiring res.Topics /
-	// res.FenceYAML / res.SwitchoverYAML (and honouring res.Refused) into the TBM
-	// transitions is the next step.
 	res, err := reconcile(cmd.Context(), g)
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}
-	_ = res
 
 	orchestrator := tbm.NewTBMOrchestrator(config, actions, tbmState, tbmStateFile)
 
@@ -129,7 +125,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc) error {
 		return nil
 	}
 
-	if err := orchestrator.Execute(context.Background()); err != nil {
+	if err := orchestrator.Execute(context.Background(), res); err != nil {
 		return fmt.Errorf("failed to execute tbm migration: %w", err)
 	}
 
