@@ -1,0 +1,40 @@
+# TBM halt — route absent from the live gateway CR.
+#
+# route names "no-such-route", which the live gateway does not declare. The engine
+# refuses on the failed precondition "route exists", detail
+# 'route "no-such-route" not found in the gateway CR' (reconcile/preconditions.go).
+# Runs against the LIVE gateway.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-route-not-found
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials:
+      unauthenticated_plaintext: {}
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      credentials:
+        sasl_plain:
+          username: "__DEST_SASL_USER__"
+          password: "__DEST_SASL_PASSWORD__"
+          tls: true
+        insecure_skip_tls_verify: true
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-047"
+      route: "no-such-route"
+      targetStreamingDomain: "__DEST_DOMAIN__"

@@ -1,0 +1,119 @@
+# Dynamic-mode gateway for the TBM hot-reload suite. setup.sh renders this into
+# .rendered/ (placeholder substitution) and applies the initial CR; the engine
+# (migplan.Reconcile) pulls it live and renders fence/switchover route edits that
+# the harness re-applies with a bumped spec.configId (hot reload, no pod roll).
+#
+# Why passthrough on BOTH legs even though destination-kafka is SASL_SSL:
+# no assertion in this suite sends client data-plane traffic THROUGH the gateway.
+# The engine reads this CR's SHAPE over the k8s API, reads topics/cluster-IDs by
+# connecting DIRECTLY to the brokers, and promotes mirrors over the destination
+# REST proxy. The gateway->broker upstream leg is never exercised. Declaring it
+# passthrough/PLAINTEXT keeps the CR structurally simple and sidesteps the known
+# dynamic-route swap-filter bug (cpc-gateway <=1.4.0-master-424 drops the per-leg
+# AuthSwap filter on dynamic routes; see ~/gateway-testing/CHANGES.md). The SASL_SSL
+# destination still matters for the cluster-link / REST / mirror-promotion path,
+# which does not go through the gateway.
+#
+# mode: dynamic REQUIRES the host (SNI) brokerIdentificationStrategy; the port
+# strategy crashloops a dynamic route ("Port identification strategy requires a
+# single streaming domain"). host/SNI in turn requires client->gateway TLS, so a
+# self-signed client-tls secret is referenced (never actually used by a client).
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: __GATEWAY_NAME__
+  namespace: confluent
+  labels:
+    app.kubernetes.io/name: confluent-for-kubernetes
+    app.kubernetes.io/managed-by: kcp-e2e-tbm
+spec:
+  replicas: __REPLICAS__
+  image:
+    application: __GATEWAY_IMAGE__
+    init: __INIT_IMAGE__
+    pullPolicy: IfNotPresent
+  # The harness overwrites spec.configId on every apply. This starting revision is
+  # deliberately NOT a value kcp would generate (kcp-<hex>) so a test asserting the
+  # id changed cannot pass by coincidence.
+  configId: tbm-initial
+  hotReload:
+    enabled: true
+  podTemplate:
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1536Mi
+    envVars:
+      - name: GATEWAY_ROOT_LOG_LEVEL
+        value: INFO
+      # Enterprise licence -> lifts the gateway out of trial mode so the hot-reload
+      # config-file watcher starts. Without it CFK still reports success but every
+      # configId bump is silently dropped. setup.sh fails fast on the trial-mode log.
+      - name: GATEWAY_LICENSES
+        valueFrom:
+          secretKeyRef:
+            name: gateway-license
+            key: license.txt
+  streamingDomains:
+    - name: source-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: SOURCE
+            endpoint: PLAINTEXT://__SOURCE_BOOTSTRAP__
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 5
+    - name: destination-domain
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: DESTINATION
+            endpoint: PLAINTEXT://__DEST_BOOTSTRAP__
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 5
+  routes:
+    - name: __ROUTE_NAME__
+      endpoint: bootstrap.gw.local:9595
+      brokerIdentificationStrategy:
+        type: host
+        pattern: "broker$(nodeId).gw.local"
+      mode: dynamic
+      streamingDomains:
+        - name: source-domain
+          bootstrapServerId: SOURCE
+        - name: destination-domain
+          bootstrapServerId: DESTINATION
+      rules:
+        routing:
+          coordination:
+            group: source-domain
+          # A catch-all condition routes every topic to the source domain, so the
+          # engine's OwnerRoute resolves "on source" via a condition and never needs
+          # routing.default. This threads the needle between two incompatible schemas:
+          # the CFK 0.1838.0 CRD forbids routing.default (it models the fallback as
+          # unmatchedTopics), while this gateway app build (cpc-gateway 1.4.0-master-430)
+          # forbids unmatchedTopics (it wants default). Using conditions only avoids
+          # both. The engine's switchover prepends per-batch conditions ahead of this
+          # one (first-match-wins), so migrated topics resolve to the target.
+          conditions:
+            - topicPatterns: [".*"]
+              streamingDomain: source-domain
+        fencing: []
+      security:
+        client:
+          authentication:
+            type: none
+          tls:
+            secretRef: client-tls
+        cluster:
+          source-domain:
+            auth: passthrough
+          destination-domain:
+            auth: passthrough

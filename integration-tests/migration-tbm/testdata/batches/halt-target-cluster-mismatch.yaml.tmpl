@@ -1,0 +1,41 @@
+# TBM halt — declared target clusterId does not match the live target cluster.
+#
+# spec.target.clusterId is the wrong literal "lkc-wrongwrong" (deliberately NOT the
+# __DEST_CLUSTER_ID__ placeholder). The engine refuses on the failed precondition
+# "target cluster matches the manifest", detail 'spec.target.clusterId is
+# "lkc-wrongwrong", but the target cluster reports "<id>"' (reconcile/preconditions.go).
+# Runs against the LIVE gateway.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-target-cluster-mismatch
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials:
+      unauthenticated_plaintext: {}
+  target:
+    type: confluent-platform
+    clusterId: "lkc-wrongwrong"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      credentials:
+        sasl_plain:
+          username: "__DEST_SASL_USER__"
+          password: "__DEST_SASL_PASSWORD__"
+          tls: true
+        insecure_skip_tls_verify: true
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-046"
+      route: "__ROUTE_NAME__"
+      targetStreamingDomain: "__DEST_DOMAIN__"
