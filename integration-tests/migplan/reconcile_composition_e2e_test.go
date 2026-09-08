@@ -46,6 +46,11 @@ func TestReconcileResultReflectsManifest(t *testing.T) {
 		t.Fatalf("expected success, refused: %v", res.Reasons)
 	}
 
+	// the route the artifacts apply to, echoed from the manifest
+	if res.Route != route {
+		t.Errorf("Result.Route = %q, want %q", res.Route, route)
+	}
+
 	want := []string{"billing-v2", "team-a.orders", "team-a.payments"} // sorted
 	if !reflect.DeepEqual(res.Topics, want) {
 		t.Errorf("Result.Topics = %v, want %v", res.Topics, want)
