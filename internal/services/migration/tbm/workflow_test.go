@@ -74,11 +74,19 @@ func zeroLagBatch(topics []string, off int64) map[string]map[int32]int64 {
 
 func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	setFastTransitions(t)
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider())
-	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized, Topics: []string{"topic-1"}}
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	config := testTBMConfig()
+	config.CurrentState = StateUninitialized
 	ctx := context.Background()
 
-	require.NoError(t, actions.Initialize(ctx, config, &migplan.Result{}))
+	// Initialize captures the reconcile plan's artifacts (FenceYAML,
+	// GatewayYAML, Route, ...) onto config, overwriting whatever testTBMConfig
+	// set — so a self-consistent plan must be fed here for the real Fence
+	// below to have a valid CR/route/rules to work with.
+	require.NoError(t, actions.Initialize(ctx, config, realisticReconcileResult()))
 	require.NoError(t, actions.WaitForLags(ctx, config, 10))
 	require.NoError(t, actions.Fence(ctx, config))
 	require.NoError(t, actions.VerifyFence(ctx, config))
@@ -89,17 +97,19 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 func TestTBMActions_CtxCancellationExitsPromptly(t *testing.T) {
 	// Deliberately NOT setFastTransitions: this proves cancellation wins the
 	// race against the real 7s default, not against an already-short delay.
-	// Fence (not WaitForLags) exercises this now: WaitForLags is real and has
-	// its own dedicated cancellation test below (pre-cancelled ctx, no ticker
-	// wait needed), while Fence is still a noop with something to cancel.
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider())
+	// VerifyFence exercises this now: WaitForLags and Fence are both real and
+	// have their own dedicated cancellation tests (WaitForLags: pre-cancelled
+	// ctx, no ticker wait needed; Fence: TestTBMActions_Fence_* in
+	// gateway_test.go), while VerifyFence is still a noop with something to
+	// cancel.
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{})
 	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
 
 	start := time.Now()
-	err := actions.Fence(ctx, config)
+	err := actions.VerifyFence(ctx, config)
 	elapsed := time.Since(start)
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -107,7 +117,7 @@ func TestTBMActions_CtxCancellationExitsPromptly(t *testing.T) {
 }
 
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider())
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{})
 	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 	res := &migplan.Result{
 		Route:          "migration-route",
@@ -127,7 +137,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 }
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider())
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{})
 	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
@@ -151,7 +161,7 @@ func TestTBMActions_WaitForLags_ImmediatelyBelowThreshold(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 999}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset)
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
 	config := &TBMConfig{Topics: []string{"topic-1", "topic-2"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
@@ -166,7 +176,7 @@ func TestTBMActions_WaitForLags_NoTopics(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset)
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
 	config := &TBMConfig{Topics: []string{}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
@@ -182,7 +192,7 @@ func TestTBMActions_WaitForLags_ContextCancelled(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 0}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset)
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -201,7 +211,7 @@ func TestTBMActions_WaitForLags_DestinationAhead(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 200}, nil }, // ahead of source
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset)
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
@@ -226,7 +236,7 @@ func TestTBMActions_WaitForLags_ToleratesTransientSweepFailures(t *testing.T) {
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset)
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
 	actions.lagPollInterval = time.Millisecond
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
@@ -249,7 +259,7 @@ func TestTBMActions_WaitForLags_AbortsAfterMaxConsecutiveSweepFailures(t *testin
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset)
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
 	actions.lagPollInterval = time.Millisecond
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
@@ -284,7 +294,7 @@ func TestTBMActions_WaitForLags_SweepFailureCounterResetsOnSuccess(t *testing.T)
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset)
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
 	actions.lagPollInterval = time.Millisecond
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 

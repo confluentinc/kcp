@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
@@ -40,19 +41,46 @@ type TBMActions struct {
 	// field (not a const), so tests can shrink it — mirrors
 	// migration.MigrationActions.lagPollInterval.
 	lagPollInterval time.Duration
+
+	gatewayService gateway.Service
+	// gatewayCapability is how gateway transitions are verified for this run.
+	// Zero value (VerifyRollout, no configId) is the safe default — see
+	// migration.MigrationActions.gatewayCapability.
+	gatewayCapability gateway.Capability
+	// rolloutTimeout bounds the gateway-readiness wait in Fence. 0 means no
+	// deadline.
+	rolloutTimeout time.Duration
+	// hotReloadTimeout bounds per-pod configId verification. Unlike
+	// rolloutTimeout this has a real default (gatewayHotReloadTimeout) since a
+	// hot-reload moves no Kubernetes signal to wait on.
+	hotReloadTimeout time.Duration
 }
 
-// NewTBMActions creates a new TBMActions. sourceOffset and destinationOffset
-// are required — TBM has a single command (execute-tbm) that always
-// eventually reaches wait_for_lags, unlike migration's separate init-only
-// path, so there is no legitimate construction path without them.
-func NewTBMActions(sourceOffset, destinationOffset offset.Provider) *TBMActions {
+// NewTBMActions creates a new TBMActions. sourceOffset, destinationOffset and
+// gatewayService are all required — TBM has a single command (execute-tbm)
+// that always eventually reaches wait_for_lags and fence, unlike migration's
+// separate init-only path, so there is no legitimate construction path
+// without them.
+func NewTBMActions(sourceOffset, destinationOffset offset.Provider, gatewayService gateway.Service) *TBMActions {
 	return &TBMActions{
 		reporter:          newReporter(),
 		sourceOffset:      sourceOffset,
 		destinationOffset: destinationOffset,
 		lagPollInterval:   2 * time.Second,
+		gatewayService:    gatewayService,
 	}
+}
+
+// SetRolloutTimeout sets the deadline applied to gateway-readiness waits.
+// A value of 0 means no deadline.
+func (a *TBMActions) SetRolloutTimeout(d time.Duration) {
+	a.rolloutTimeout = d
+}
+
+// SetHotReloadTimeout sets the deadline for per-pod configId verification.
+// A value of 0 falls back to gateway.DefaultHotReloadTimeout.
+func (a *TBMActions) SetHotReloadTimeout(d time.Duration) {
+	a.hotReloadTimeout = d
 }
 
 // simulateTransition is the shared noop body every still-noop action method calls.
@@ -235,9 +263,42 @@ func formatLag64(n int64) string {
 	return string(result)
 }
 
-// Fence runs the fence transition.
+// Fence runs the fence transition: resolves how gateway transitions will be
+// verified on the live cluster, proves hot-reload actually works if the
+// gateway claims to support it, derives the fenced CR by replacing
+// config.Route's rules with config.FenceYAML, applies it, and confirms it
+// landed. Unlike migration.FenceGateway there is no pod-UID capture for
+// rogue-producer detection (that is verify_fence's concern, not yet built)
+// and no compensating rollback on failure — a failure here just returns an
+// error and leaves the FSM at lags_ok; re-running execute-tbm retries fencing.
 func (a *TBMActions) Fence(ctx context.Context, config *TBMConfig) error {
-	return a.simulateTransition(ctx, "Batch fenced")
+	if err := a.resolveGatewayCapability(ctx, config); err != nil {
+		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+	}
+	if err := a.verifyHotReloadCapability(ctx, config); err != nil {
+		return fmt.Errorf("failed to verify hot-reload capability: %w", err)
+	}
+
+	fencedCrYAML, err := deriveFencedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to build fenced gateway CR: %w", err)
+	}
+
+	applied, err := a.applyGatewayCR(ctx, config, fencedCrYAML, "fence")
+	if err != nil {
+		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
+	}
+	a.reporter.success("Fenced gateway CR applied")
+
+	if err := a.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
+		return err
+	}
+	if err := a.verifyGatewayTransition(ctx, config, applied, "fence"); err != nil {
+		return err
+	}
+
+	a.reporter.success("Gateway fenced and ready")
+	return nil
 }
 
 // VerifyFence runs the verify_fence transition.
