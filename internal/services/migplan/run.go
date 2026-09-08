@@ -25,6 +25,7 @@ const defaultKafkaVersion = "3.6.0"
 // plan Refused is true, the three outputs are empty, and Reasons explains why.
 // A returned error is an I/O failure, NOT a refusal — a refusal is data.
 type Result struct {
+	Route          string   // the gateway route the fence/switchover rules apply to (spec.topicGroup.route)
 	Topics         []string // the promote list to feed to cluster-link promotion
 	FenceYAML      string   // the whole rules: block, fenced
 	SwitchoverYAML string   // the whole rules: block, switched over
@@ -120,6 +121,8 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return nil, err
 	}
 	res := newResult(plan)
+	// The route the artifacts apply to — where the caller grafts the rules.
+	res.Route = in.Route
 
 	// The engine renders its own report so no caller has to.
 	out := o.out
