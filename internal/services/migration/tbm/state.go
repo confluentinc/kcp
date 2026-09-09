@@ -1,6 +1,7 @@
 // Package tbm scaffolds a new FSM-driven orchestrator for the not-yet-designed
-// Topic-Batch Migration (TBM) workflow. Every transition is currently a noop —
-// see workflow.go. It mirrors the shape of internal/services/migration
+// Topic-Batch Migration (TBM) workflow. initialize, wait_for_lags, fence,
+// promote and switch are real; only verify_fence is still a noop — see
+// workflow.go. It mirrors the shape of internal/services/migration
 // (state.go / orchestrator.go / workflow.go / reporter.go) but is a fully
 // separate package: no domain logic or types are shared between the two.
 package tbm
@@ -53,9 +54,7 @@ const (
 
 // ----- TBM configuration -----
 
-// TBMConfig is the persisted per-migration record. It carries no domain data
-// yet (no batch plan, no topic list) — only enough to drive the FSM and detect
-// manifest drift. Real fields will be added once the TBM batch design lands.
+// TBMConfig is the persisted per-migration record.
 type TBMConfig struct {
 	MigrationId  string `json:"migration_id"`
 	CurrentState string `json:"current_state"`
@@ -64,6 +63,36 @@ type TBMConfig struct {
 	// recomputes it and refuses, unconditionally, on any mismatch — there is
 	// no override.
 	ManifestHash string `json:"manifest_hash"`
+
+	// The fields below are captured once, at the initialize transition, from
+	// the migplan.Result the command already computed live — and never
+	// re-derived by any later transition.
+	Topics         []string `json:"topics,omitempty"`
+	FenceYAML      string   `json:"fence_yaml,omitempty"`
+	SwitchoverYAML string   `json:"switchover_yaml,omitempty"`
+	GatewayYAML    string   `json:"gateway_yaml,omitempty"`
+	// Route is the manifest's spec.topicGroup[0].route, echoed back via
+	// migplan.Result.Route — captured at initialize like the fields above.
+	// fence (and later switch) need it to know which route's rules to graft
+	// FenceYAML/SwitchoverYAML into.
+	Route string `json:"route,omitempty"`
+
+	// K8sNamespace and InitialCrName are captured ONCE, at config creation
+	// (resolveTBMConfig), from spec.gateway.namespace/spec.gateway.cr-name —
+	// mirroring exactly how migration.MigrationConfig's fields of the same
+	// name are set once by kcp migration init, never re-derived on resume.
+	K8sNamespace  string `json:"k8s_namespace"`
+	InitialCrName string `json:"initial_cr_name"`
+
+	// ClusterId, ClusterRestEndpoint and ClusterLinkName are captured ONCE, at
+	// config creation, from spec.target.clusterId/spec.target.kafka.restEndpoint/
+	// spec.clusterLink.name — the same three manifest fields
+	// migration.MigrationConfig's fields of the same name are set from by
+	// kcp migration init. Promote needs them to build the clusterlink.Config
+	// it polls/promotes against.
+	ClusterId           string `json:"cluster_id"`
+	ClusterRestEndpoint string `json:"cluster_rest_endpoint"`
+	ClusterLinkName     string `json:"cluster_link_name"`
 }
 
 // HashManifest returns the sha256 (hex-encoded) digest of raw manifest file
