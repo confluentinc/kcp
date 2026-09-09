@@ -24,11 +24,10 @@ import (
 // genuinely mutates the live gateway CR — something nothing else in this
 // suite proves, since TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
 // only exercise migplan.Reconcile and the harness's own apply path directly.
-// verify_fence, promote and switch remain noop, so each batch's mirror stays
-// ACTIVE and the route's routing.conditions are never flipped — this test
-// asserts that explicitly rather than assuming otherwise. Once promote and
-// switch go real, that assertion (and the two removed sub-tests below) should
-// be revisited.
+// verify_fence and switch remain noop; promote is now real, so each batch's
+// mirror reaches STOPPED — the route's routing.conditions are still never
+// flipped, since only switch would do that. Once switch goes real, the two
+// removed sub-tests below can be restored.
 //
 // The per-batch assertion is size + disjointness + total (equal disjoint
 // batches summing to the success range) rather than a hard-coded topic list,
@@ -80,8 +79,8 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 
 			mirrors := mirrorStatuses(t, h)
 			for _, tp := range batchTopics {
-				require.Equalf(t, clusterlink.MirrorStatusActive, mirrors[tp],
-					"promote is still noop — %s's mirror must remain ACTIVE, got %s", tp, mirrors[tp])
+				require.Equalf(t, clusterlink.MirrorStatusStopped, mirrors[tp],
+					"promote is now real — %s's mirror must reach STOPPED, got %s", tp, mirrors[tp])
 				fenced[tp] = true
 			}
 		})
