@@ -122,7 +122,7 @@ func NewMigrationExecuteTBMCmd() *cobra.Command {
 func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "execute-tbm",
-		Short:         "Execute a Topic-Batch Migration run (scaffold: noop transitions)",
+		Short:         "Execute a Topic-Batch Migration run (scaffold: verify_fence/switch still noop)",
 		Long:          executeTBMLong,
 		Example:       `  kcp migration execute-tbm --migration-yaml gateway-migration.yaml --tbm-state-file tbm-state.json`,
 		Hidden:        true, // scaffold: only verify_fence/switch are still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)

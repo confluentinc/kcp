@@ -343,6 +343,8 @@ func (a *TBMActions) VerifyFence(ctx context.Context, config *TBMConfig) error {
 // stored on TBMActions, mirroring how AAO's own PromoteTopics takes it as a
 // parameter rather than construction-time state.
 func (a *TBMActions) Promote(ctx context.Context, config *TBMConfig, restAuth clusterlink.Authenticator) error {
+	slog.Debug("topic promotion process started")
+
 	const maxPromoteRetries = 3
 
 	clusterLinkConfig := clusterlink.Config{
