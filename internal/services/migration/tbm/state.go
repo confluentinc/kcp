@@ -83,6 +83,16 @@ type TBMConfig struct {
 	// name are set once by kcp migration init, never re-derived on resume.
 	K8sNamespace  string `json:"k8s_namespace"`
 	InitialCrName string `json:"initial_cr_name"`
+
+	// ClusterId, ClusterRestEndpoint and ClusterLinkName are captured ONCE, at
+	// config creation, from spec.target.clusterId/spec.target.kafka.restEndpoint/
+	// spec.clusterLink.name — the same three manifest fields
+	// migration.MigrationConfig's fields of the same name are set from by
+	// kcp migration init. Promote needs them to build the clusterlink.Config
+	// it polls/promotes against.
+	ClusterId           string `json:"cluster_id"`
+	ClusterRestEndpoint string `json:"cluster_rest_endpoint"`
+	ClusterLinkName     string `json:"cluster_link_name"`
 }
 
 // HashManifest returns the sha256 (hex-encoded) digest of raw manifest file

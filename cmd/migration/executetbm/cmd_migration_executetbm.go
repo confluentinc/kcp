@@ -154,7 +154,12 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 		return fmt.Errorf("failed to check tbm state file: %w", statErr)
 	}
 
-	config, err := resolveTBMConfig(tbmState, g.Metadata.Name, hash, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName)
+	var clusterRestEndpoint string
+	if g.Spec.Target.Kafka != nil {
+		clusterRestEndpoint = g.Spec.Target.Kafka.RestEndpoint
+	}
+	config, err := resolveTBMConfig(tbmState, g.Metadata.Name, hash, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName,
+		g.Spec.Target.ClusterID, clusterRestEndpoint, g.Spec.ClusterLink.Name)
 	if err != nil {
 		return err
 	}
@@ -223,20 +228,23 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 }
 
 // resolveTBMConfig implements the identity & drift rule: no entry for this
-// name -> create fresh at uninitialized (recording namespace/gatewayName,
+// name -> create fresh at uninitialized (recording namespace/gatewayName/clusterId/clusterRestEndpoint/clusterLinkName,
 // which never change for this migration again — protected by the same
 // unconditional hash-drift refusal as every other manifest field); hash
 // matches -> resume from the persisted state; hash differs -> refuse
 // unconditionally, regardless of CurrentState. There is no override.
-func resolveTBMConfig(state *tbm.TBMState, migrationId, hash, namespace, gatewayName string) (*tbm.TBMConfig, error) {
+func resolveTBMConfig(state *tbm.TBMState, migrationId, hash, namespace, gatewayName, clusterId, clusterRestEndpoint, clusterLinkName string) (*tbm.TBMConfig, error) {
 	existing, err := state.GetMigrationById(migrationId)
 	if err != nil {
 		return &tbm.TBMConfig{
-			MigrationId:   migrationId,
-			CurrentState:  tbm.StateUninitialized,
-			ManifestHash:  hash,
-			K8sNamespace:  namespace,
-			InitialCrName: gatewayName,
+			MigrationId:         migrationId,
+			CurrentState:        tbm.StateUninitialized,
+			ManifestHash:        hash,
+			K8sNamespace:        namespace,
+			InitialCrName:       gatewayName,
+			ClusterId:           clusterId,
+			ClusterRestEndpoint: clusterRestEndpoint,
+			ClusterLinkName:     clusterLinkName,
 		}, nil
 	}
 
