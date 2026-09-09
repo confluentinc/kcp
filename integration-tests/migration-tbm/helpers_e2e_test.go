@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -498,6 +499,26 @@ func (h *tbmHarness) manifestForTopics(t *testing.T, baseName string, topics []s
 	g.Spec.TopicGroup[0].Topics = &list
 	g.Spec.TopicGroup[0].TopicPatterns = nil
 	return g
+}
+
+// topicRange returns the sorted source topic names for the inclusive index range
+// [lo, hi]. Zero-padding makes lexical order match numeric order.
+func (e *env) topicRange(lo, hi int) []string {
+	out := make([]string, 0, hi-lo+1)
+	for i := lo; i <= hi; i++ {
+		out = append(out, e.topicName(i))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// unchangedTopics returns the topic names the report classified Unchanged.
+func unchangedTopics(r reconcile.Report) map[string]bool {
+	out := map[string]bool{}
+	for _, tv := range r.Unchanged {
+		out[tv.Topic] = true
+	}
+	return out
 }
 
 // reasonsContain reports whether any refusal reason contains sub.

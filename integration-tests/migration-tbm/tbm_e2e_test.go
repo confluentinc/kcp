@@ -24,10 +24,13 @@ import (
 // genuinely mutates the live gateway CR — something nothing else in this
 // suite proves, since TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
 // only exercise migplan.Reconcile and the harness's own apply path directly.
-// verify_fence and switch remain noop; promote is now real, so each batch's
-// mirror reaches STOPPED — the route's routing.conditions are still never
-// flipped, since only switch would do that. Once switch goes real, the two
-// removed sub-tests below can be restored.
+// verify_fence is the only remaining noop; fence, promote and switch are all
+// real, so this proves the whole real migration path: fence genuinely mutates
+// the live gateway CR's fencing block, promote genuinely stops the mirror,
+// and switch genuinely flips routing.conditions to the target domain — a
+// fresh Decide after all three now classifies the batch's topics Unchanged,
+// restoring the steady-state-noop and mixed-already-migrated-and-unmigrated
+// sub-tests below (both need real promote+switch to hold, and now both do).
 //
 // The per-batch assertion is size + disjointness + total (equal disjoint
 // batches summing to the success range) rather than a hard-coded topic list,
@@ -80,7 +83,12 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 			mirrors := mirrorStatuses(t, h)
 			for _, tp := range batchTopics {
 				require.Equalf(t, clusterlink.MirrorStatusStopped, mirrors[tp],
-					"promote is now real — %s's mirror must reach STOPPED, got %s", tp, mirrors[tp])
+					"promote is real — %s's mirror must reach STOPPED, got %s", tp, mirrors[tp])
+			}
+
+			require.Truef(t, routeSwitchedToTargetForAll(t, h, batchTopics),
+				"switch is real — the live gateway route's routing.conditions must include %s's topics, routed to the target domain", name)
+			for _, tp := range batchTopics {
 				fenced[tp] = true
 			}
 		})
@@ -89,10 +97,31 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 	require.Lenf(t, fenced, h.e.successHi,
 		"all %d batch-selected topics must end fenced across the %d batches", h.e.successHi, numBatches)
 
-	// steady-state-noop and mixed-already-migrated-and-unmigrated (removed here)
-	// both asserted topics classify Unchanged after a full migration, which
-	// requires real promote and switch — neither is real yet. Restore both
-	// once those two transitions land.
+	t.Run("steady-state-noop", func(t *testing.T) {
+		g := h.manifestForTopics(t, "batch-01.yaml", h.e.topicRange(1, h.e.successHi))
+		res := h.Decide(t, g)
+		require.Falsef(t, res.Refused, "a steady-state re-run refuses nothing: %v", res.Reasons)
+		require.Empty(t, res.Topics, "a steady-state re-run migrates nothing")
+		require.Lenf(t, res.Report.Unchanged, h.e.successHi,
+			"every batch-selected topic must classify Unchanged at steady state")
+	})
+
+	// Edge: a batch mixing one already-migrated topic (001, from batch-01) with an
+	// un-migrated headroom topic (047) still succeeds for the un-migrated member;
+	// the already-migrated member is Unchanged, not a halt (KTD5). Decide-only, so
+	// 047 stays an active mirror for the halt suite.
+	t.Run("mixed-already-migrated-and-unmigrated", func(t *testing.T) {
+		already := h.e.topicName(1)
+		fresh := h.e.topicName(47)
+		g := h.manifestForTopics(t, "batch-01.yaml", []string{already, fresh})
+
+		res := h.Decide(t, g)
+		require.Falsef(t, res.Refused, "an already-migrated member must not halt the batch: %v", res.Reasons)
+		require.Equal(t, []string{fresh}, res.Topics, "only the not-yet-migrated member is promoted")
+		require.NotEmpty(t, res.FenceYAML)
+		require.NotEmpty(t, res.SwitchoverYAML)
+		require.Truef(t, unchangedTopics(res.Report)[already], "%s must classify Unchanged", already)
+	})
 }
 
 // routeFencingContainsAll reports whether the live gateway route's
@@ -134,6 +163,52 @@ func routeFencingContainsAll(t *testing.T, h *tbmHarness, topics []string) bool 
 
 	for _, tp := range topics {
 		if !fencedTopics[tp] {
+			return false
+		}
+	}
+	return true
+}
+
+// routeSwitchedToTargetForAll reports whether the live gateway route's
+// rules.routing.conditions block includes every topic in topics, routed to
+// the destination domain — proof that a real switch transition (not the
+// harness's own ApplySwitchover bypass) mutated the live cluster.
+func routeSwitchedToTargetForAll(t *testing.T, h *tbmHarness, topics []string) bool {
+	t.Helper()
+
+	var cr map[string]any
+	require.NoError(t, yaml.Unmarshal(h.e.readCR(t, h.ctx), &cr))
+	spec, _ := cr["spec"].(map[string]any)
+	routes, _ := spec["routes"].([]any)
+
+	switchedTopics := map[string]bool{}
+	for _, r := range routes {
+		route, ok := r.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name, _ := route["name"].(string); name != h.e.route {
+			continue
+		}
+		rules, _ := route["rules"].(map[string]any)
+		routing, _ := rules["routing"].(map[string]any)
+		conditions, _ := routing["conditions"].([]any)
+		for _, c := range conditions {
+			cond, ok := c.(map[string]any)
+			if !ok {
+				continue
+			}
+			condTopics, _ := cond["topics"].([]any)
+			for _, tp := range condTopics {
+				if s, ok := tp.(string); ok {
+					switchedTopics[s] = true
+				}
+			}
+		}
+	}
+
+	for _, tp := range topics {
+		if !switchedTopics[tp] {
 			return false
 		}
 	}
