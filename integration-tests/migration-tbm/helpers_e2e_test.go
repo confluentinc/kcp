@@ -4,10 +4,9 @@
 // dynamic-mode Confluent Gateway with hot reload (Minikube profile kcp-e2e-tbm).
 // TestSuccessBatchesMigrate and TestExecuteTBMThinPosture drive the real
 // execute-tbm command (internal/services/migration/tbm's FSM): initialize,
-// wait_for_lags and fence are real; verify_fence, promote and switch remain
-// noop, so a batch's mirror is never actually promoted nor its route actually
-// switched yet — see each test's own doc comment for what it can and cannot
-// prove today. TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
+// wait_for_lags, fence, promote and switch are all real; verify_fence is the
+// only remaining noop — see each test's own doc comment for what it can and
+// cannot prove today. TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
 // instead exercise migplan.Reconcile and the gateway hot-reload apply path
 // directly, independent of the FSM.
 //
