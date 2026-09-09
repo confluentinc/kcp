@@ -30,10 +30,10 @@ const maxConsecutiveSweepFailures = 3
 var TransitionSimulatedDelay = 7 * time.Second
 
 // TBMActions holds the business logic behind each FSM transition. Initialize,
-// WaitForLags, Fence and Promote are real (see below); every other method is
-// still a noop that sleeps TransitionSimulatedDelay — cancellable via ctx,
-// mirroring the wait pattern in migration.MigrationActions.CheckLags — then
-// reports completion.
+// WaitForLags, Fence, Promote and Switch are real; only VerifyFence remains a
+// noop that sleeps TransitionSimulatedDelay — cancellable via ctx, mirroring
+// the wait pattern in migration.MigrationActions.CheckLags — then reports
+// completion.
 type TBMActions struct {
 	reporter          *reporter
 	sourceOffset      offset.Provider
@@ -525,7 +525,49 @@ func (a *TBMActions) Promote(ctx context.Context, config *TBMConfig, restAuth cl
 	}
 }
 
-// Switch runs the switch transition.
+// Switch runs the switch transition: applies config.SwitchoverYAML — the
+// migplan engine's own pre-computed artifact, captured at initialize exactly
+// like FenceYAML — to config.Route's rules subtree, replacing it wholesale,
+// then confirms the transition landed. Unlike migration.SwitchGateway, there
+// is no field-flip to derive here: migplan already renders a full switchover
+// rules block ahead of time (see deriveSwitchedCRYAML's own doc comment),
+// because TBM's dynamic routes need a whole-subtree rules replacement, not a
+// single streamingDomain flip on a static route. There is no pod-UID
+// capture or compensating rollback on failure — a failure here just returns
+// an error and leaves the FSM at promoted; re-running execute-tbm retries
+// switching.
 func (a *TBMActions) Switch(ctx context.Context, config *TBMConfig) error {
-	return a.simulateTransition(ctx, "Batch switched")
+	// config.Topics is empty whenever migplan.Reconcile's Result was a
+	// legitimate "nothing to migrate" outcome — see Fence's identical guard
+	// for the full explanation. config.SwitchoverYAML is then "", which
+	// deriveSwitchedCRYAML cannot parse.
+	if len(config.Topics) == 0 {
+		a.reporter.success("No topics to switch")
+		return nil
+	}
+
+	if err := a.ensureGatewayCapability(ctx, config); err != nil {
+		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+	}
+
+	switchedCrYAML, err := deriveSwitchedCRYAML(config)
+	if err != nil {
+		return fmt.Errorf("failed to build switched gateway CR: %w", err)
+	}
+
+	applied, err := a.applyGatewayCR(ctx, config, switchedCrYAML, "switchover")
+	if err != nil {
+		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
+	}
+	a.reporter.success("Switchover gateway CR applied")
+
+	if err := a.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
+		return err
+	}
+	if err := a.verifyGatewayTransition(ctx, config, applied, "switchover"); err != nil {
+		return err
+	}
+
+	a.reporter.success("Gateway switchover complete")
+	return nil
 }

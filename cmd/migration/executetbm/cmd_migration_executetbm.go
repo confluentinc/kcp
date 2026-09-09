@@ -85,21 +85,23 @@ func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) 
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
-This is a scaffold: only verify_fence and switch remain noop (each sleeps to
-simulate real execution timing, then logs). initialize validates the
-already-computed reconcile plan (see the migplan package) and captures its
-promote topic list plus fence/switchover artifacts for later transitions to
-consume. wait_for_lags polls source and destination Kafka offsets for those
-topics until every one is under spec.defaultPolicies.lagThreshold (overridable
-per run with --lag-threshold). fence reconfigures the gateway's named route by
+This is a scaffold: only verify_fence remains noop (it sleeps to simulate real
+execution timing, then logs). initialize validates the already-computed
+reconcile plan (see the migplan package) and captures its promote topic list
+plus fence/switchover artifacts for later transitions to consume.
+wait_for_lags polls source and destination Kafka offsets for those topics
+until every one is under spec.defaultPolicies.lagThreshold (overridable per
+run with --lag-threshold). fence reconfigures the gateway's named route by
 applying the plan's fence rules to the live Gateway CR, then waits for the
 operator to report the gateway ready (and, if it supports hot-reload, for
 every pod to confirm the new config revision). promote polls source and
 destination Kafka offsets for those same topics until each reaches exact zero
 lag, then promotes that topic's cluster-link mirror, confirming it reaches the
-terminal STOPPED status. This command exists to validate the state-machine
-shape and command wiring ahead of the real per-batch migration logic described
-in the TBM design proposal.
+terminal STOPPED status. switch applies the plan's switchover rules to the
+live Gateway CR the same way fence applies its fence rules, then waits for the
+operator to report it ready. This command exists to validate the
+state-machine shape and command wiring ahead of the real per-batch migration
+logic described in the TBM design proposal.
 
 The migration is identified by metadata.name in the GatewayMigration manifest at
 --migration-yaml — there is no separate init step and no --migration-id flag. The first
@@ -122,10 +124,10 @@ func NewMigrationExecuteTBMCmd() *cobra.Command {
 func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "execute-tbm",
-		Short:         "Execute a Topic-Batch Migration run (scaffold: verify_fence/switch still noop)",
+		Short:         "Execute a Topic-Batch Migration run (scaffold: verify_fence still noop)",
 		Long:          executeTBMLong,
 		Example:       `  kcp migration execute-tbm --migration-yaml gateway-migration.yaml --tbm-state-file tbm-state.json`,
-		Hidden:        true, // scaffold: only verify_fence/switch are still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
+		Hidden:        true, // scaffold: only verify_fence is still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,

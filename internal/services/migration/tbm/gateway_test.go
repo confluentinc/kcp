@@ -373,6 +373,180 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 	assert.ErrorAs(t, err, &rejected, "a GatewayRejectedError must be unwrappable by the caller")
 }
 
+func TestTBMActions_Switch_RolloutPath_AppliesAndConfirms(t *testing.T) {
+	var appliedYAML []byte
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
+			appliedYAML = yamlData
+			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	err := actions.Switch(context.Background(), config)
+	require.NoError(t, err)
+	require.NotEmpty(t, appliedYAML, "ApplyGatewayYAML must have been called")
+
+	var patched map[string]any
+	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &patched))
+}
+
+func TestTBMActions_Switch_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
+	var appliedYAML []byte
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, _ string) (string, error) {
+			appliedYAML = yamlData
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	require.NoError(t, actions.Switch(context.Background(), config))
+
+	var obj map[string]any
+	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &obj))
+	spec := obj["spec"].(map[string]any)
+	routes := spec["routes"].([]any)
+	route := routes[0].(map[string]any)
+	rules := route["rules"].(map[string]any)
+	routing := rules["routing"].(map[string]any)
+	conditions, ok := routing["conditions"].([]any)
+	require.True(t, ok, "the applied CR's route must carry the routing.conditions block from config.SwitchoverYAML")
+	require.Len(t, conditions, 1)
+}
+
+func TestTBMActions_Switch_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *testing.T) {
+	var sawConfigID string
+	var waitedForID string
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
+		},
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
+			sawConfigID = configID
+			return configID, nil
+		},
+		waitForConfigIDFn: func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
+			waitedForID = opts.ConfigID
+			return nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	require.NoError(t, actions.Switch(context.Background(), config))
+	require.NotEmpty(t, sawConfigID, "per-pod-configId capability must stamp a fresh configId on apply")
+	assert.Equal(t, sawConfigID, waitedForID, "the wait must poll for the exact configId that was applied")
+}
+
+func TestTBMActions_Switch_HotReloadCheckFailure_ReturnsRemediationError(t *testing.T) {
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
+		},
+		applyGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+			return configID, nil
+		},
+		waitForConfigIDFn: func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
+			return fmt.Errorf("timed out waiting for pods to report the new configId")
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	err := actions.Switch(context.Background(), config)
+	require.Error(t, err, "a hot-reload check that never reaches the pods must fail Switch before anything is applied")
+	assert.Contains(t, err.Error(), "hot-reload check")
+}
+
+func TestTBMActions_Switch_ApplyErrorPropagates(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
+			return "", fmt.Errorf("connection refused")
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	err := actions.Switch(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
+func TestTBMActions_Switch_NoTopicsSkipsSwitch(t *testing.T) {
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			t.Fatal("DetectCapability must not be called when there are no topics to switch")
+			return gateway.Capability{}, nil
+		},
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
+			t.Fatal("ApplyGatewayYAML must not be called when there are no topics to switch")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.Topics = nil
+	config.FenceYAML = ""
+	config.SwitchoverYAML = ""
+
+	err := actions.Switch(context.Background(), config)
+	require.NoError(t, err, "an empty topic list is a legitimate no-op, not an error")
+}
+
+func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	err := actions.Switch(context.Background(), config)
+	require.Error(t, err)
+	var rejected *gateway.GatewayRejectedError
+	assert.ErrorAs(t, err, &rejected, "a GatewayRejectedError must be unwrappable by the caller")
+}
+
+// TestTBMActions_Switch_AppliesSwitchoverYAMLVerbatim proves Switch never
+// mutates config.SwitchoverYAML before applying — there is no per-consumer
+// normalization step here, unlike the historical fencing[].blocked issue
+// (already fixed at the source, in migplan's PrependFence — see
+// TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim for the
+// equivalent proof on the fence side).
+func TestTBMActions_Switch_AppliesSwitchoverYAMLVerbatim(t *testing.T) {
+	var appliedYAML []byte
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, _ string) (string, error) {
+			appliedYAML = yamlData
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.SwitchoverYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\", \"t1.shipment\"]\n        streamingDomain: target\n"
+
+	require.NoError(t, actions.Switch(context.Background(), config))
+
+	var obj map[string]any
+	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &obj))
+	spec := obj["spec"].(map[string]any)
+	routes := spec["routes"].([]any)
+	route := routes[0].(map[string]any)
+	rules := route["rules"].(map[string]any)
+	routing := rules["routing"].(map[string]any)
+	conditions := routing["conditions"].([]any)
+	require.Len(t, conditions, 1)
+	entry := conditions[0].(map[string]any)
+	topics := entry["topics"].([]any)
+	assert.Equal(t, []any{"t1.order", "t1.shipment"}, topics, "Switch must apply the conditions entry's topics verbatim")
+}
+
 // TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch proves
 // capability resolution happens at most once per process: when Fence runs
 // before Switch in the same TBMActions instance (the normal, same-invocation
