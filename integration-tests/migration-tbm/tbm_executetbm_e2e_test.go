@@ -4,12 +4,14 @@ package migration_tbm_e2e
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 )
 
@@ -22,17 +24,17 @@ const execTBMTimeout = 5 * time.Minute
 func kcpBinary() string { return envOrDefault("KCP_TBM_KCP_BIN", "/workspace/kcp") }
 
 // TestExecuteTBMThinPosture covers the execute-tbm command's behavior that is
-// genuinely independent of batch/topic state. Its per-batch happy path (does
-// a real batch actually fence/promote/switch) moved to
+// genuinely independent of batch/topic state, plus the live regression test
+// for the bug that once crashed Fence on a zero-topic result. Its per-batch
+// happy path (does a real batch actually fence/promote/switch) moved to
 // TestSuccessBatchesMigrate, which now drives the real command directly and
 // — since fence, promote and switch are all real — also proves the genuine
-// zero-topic steady state itself, via its own restored steady-state-noop and
-// mixed-already-migrated-and-unmigrated sub-tests (Decide-only, not a second
-// execute-tbm run). Re-running execute-tbm here against the same
-// already-fully-migrated batch-01 would just be redundant with that
-// coverage, so this test is left to what it alone is for: the
-// unwritable-state-file failure mode, which doesn't depend on batch/topic
-// state at all.
+// zero-topic steady state at the engine level, via its own restored
+// steady-state-noop and mixed-already-migrated-and-unmigrated sub-tests
+// (Decide-only, never a second execute-tbm run). That is a strictly weaker
+// claim than this test's own zero-topic-batch sub-test below, which proves
+// the COMMAND — not just the engine — completes cleanly when there is
+// nothing to migrate.
 func TestExecuteTBMThinPosture(t *testing.T) {
 	h := newHarness(t)
 	manifestPath := h.e.manifestPath("batch-01.yaml")
@@ -50,6 +52,56 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 		_, statErr := os.Stat(badState)
 		require.True(t, os.IsNotExist(statErr), "no state file should be created under the bad path")
 	})
+
+	// zero-topic-batch-completes-cleanly-leaves-world-unchanged is the live
+	// regression test for the bug that once crashed Fence — and would have
+	// crashed Promote/Switch too, had they been real at the time — on a
+	// fresh migplan.Result with Refused: false and zero topics: the
+	// "already fully migrated, nothing to do" steady state, structurally
+	// distinct from a refusal (see reconcile.go's
+	// Refused()-then-len(migratable)==0 split). By the time this runs,
+	// TestSuccessBatchesMigrate (which runs first, alphabetically, in this
+	// same suite) has already fully migrated batch-01's topics for real, so
+	// a fresh execute-tbm run against the same manifest — a brand-new
+	// throwaway state file, so resolveTBMConfig sees this as a first-ever
+	// run and Reconcile really runs fresh — hits exactly this case. Every
+	// real transition (fence, promote, switch) must recognize it and no-op;
+	// this proves execute-tbm itself does, not just Decide.
+	t.Run("zero-topic-batch-completes-cleanly-leaves-world-unchanged", func(t *testing.T) {
+		stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
+
+		routesBefore := gatewayRoutes(t, h)
+		mirrorsBefore := mirrorStatuses(t, h)
+
+		out, err := runKCP(t, manifestPath, stateFile)
+		require.NoErrorf(t, err, "execute-tbm must exit 0 against an already-migrated batch:\n%s", out)
+		require.NotContains(t, out, "panic", "execute-tbm must not panic")
+
+		data, readErr := os.ReadFile(stateFile)
+		require.NoError(t, readErr, "execute-tbm must write --tbm-state-file")
+		require.NotEmpty(t, data)
+		var parsed map[string]any
+		require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
+
+		// Zero topics to migrate: every real transition finds nothing to do,
+		// so neither the gateway route nor any mirror may have moved.
+		require.Equal(t, string(routesBefore), string(gatewayRoutes(t, h)),
+			"a zero-topic run must not edit the gateway route")
+		require.Equal(t, mirrorsBefore, mirrorStatuses(t, h),
+			"a zero-topic run must not promote or change any mirror")
+	})
+}
+
+// gatewayRoutes returns the live gateway CR's spec.routes as marshaled YAML,
+// for a before/after equality check.
+func gatewayRoutes(t *testing.T, h *tbmHarness) []byte {
+	t.Helper()
+	var cr map[string]any
+	require.NoError(t, yaml.Unmarshal(h.e.readCR(t, h.ctx), &cr))
+	spec, _ := cr["spec"].(map[string]any)
+	out, err := yaml.Marshal(spec["routes"])
+	require.NoError(t, err)
+	return out
 }
 
 // runKCP invokes the in-pod kcp binary's execute-tbm with only file-path args (no
