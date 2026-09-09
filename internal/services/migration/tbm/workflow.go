@@ -30,10 +30,10 @@ const maxConsecutiveSweepFailures = 3
 var TransitionSimulatedDelay = 7 * time.Second
 
 // TBMActions holds the business logic behind each FSM transition. Initialize,
-// WaitForLags and Fence are real (see below); every other method is still a
-// noop that sleeps TransitionSimulatedDelay — cancellable via ctx, mirroring
-// the wait pattern in migration.MigrationActions.CheckLags — then reports
-// completion.
+// WaitForLags, Fence and Promote are real (see below); every other method is
+// still a noop that sleeps TransitionSimulatedDelay — cancellable via ctx,
+// mirroring the wait pattern in migration.MigrationActions.CheckLags — then
+// reports completion.
 type TBMActions struct {
 	reporter          *reporter
 	sourceOffset      offset.Provider
