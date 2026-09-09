@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/looplab/fsm"
 )
 
@@ -40,6 +42,33 @@ var stepHeaders = map[string]string{
 	EventVerifyFence: "🔍 Verifying fence...",
 	EventPromote:     "🔍 Promoting batch...",
 	EventSwitch:      "🔍 Switching batch...",
+}
+
+// ExecutionParams holds the per-run runtime parameters a transition may need.
+// It is passed to fsm.Event as the sole argument and read back by callbacks
+// via execParamsFromEvent, mirroring migration.ExecutionParams /
+// execParamsFromEvent in internal/services/migration/orchestrator.go.
+type ExecutionParams struct {
+	// ReconcileResult is the plan migplan.Reconcile already computed live,
+	// before Execute was invoked. onInitialize validates and copies it onto
+	// config; every other callback ignores it today.
+	ReconcileResult *migplan.Result
+	// LagThreshold is the total replication lag (sum of all partition lags)
+	// tolerated before wait_for_lags proceeds. Read by onWaitForLags only.
+	LagThreshold int64
+	// RestAuth authenticates the destination cluster-link REST surface.
+	// Read by onPromote only.
+	RestAuth clusterlink.Authenticator
+}
+
+// execParamsFromEvent returns the ExecutionParams passed to fsm.Event.
+func execParamsFromEvent(e *fsm.Event) ExecutionParams {
+	if len(e.Args) > 0 {
+		if p, ok := e.Args[0].(ExecutionParams); ok {
+			return p
+		}
+	}
+	return ExecutionParams{}
 }
 
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
@@ -97,20 +126,18 @@ func NewTBMOrchestrator(
 	return orchestrator
 }
 
-// Initialize triggers the initialize event and persists the result.
-func (o *TBMOrchestrator) Initialize(ctx context.Context) error {
-	if err := o.fsm.Event(ctx, EventInitialize); err != nil {
-		return err
-	}
-	return o.PersistState()
-}
-
 // Execute runs the full TBM workflow from the current state, skipping any
-// already-completed steps so a re-run resumes.
-func (o *TBMOrchestrator) Execute(ctx context.Context) error {
+// already-completed steps so a re-run resumes. res is the reconcile plan the
+// caller already computed live for this manifest; onInitialize consumes it.
+// lagThreshold is the total replication lag tolerated before wait_for_lags
+// proceeds; onWaitForLags consumes it. restAuth authenticates the destination
+// cluster-link REST surface; onPromote consumes it.
+func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagThreshold int64, restAuth clusterlink.Authenticator) error {
 	if !isKnownState(o.config.CurrentState) {
 		return fmt.Errorf("unrecognized tbm migration state %q in state file — refusing to execute (corrupted file, or written by a newer kcp version?)", o.config.CurrentState)
 	}
+
+	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, RestAuth: restAuth}
 
 	for _, step := range canonicalWorkflow {
 		if !o.canTransition(step.Event) {
@@ -122,7 +149,7 @@ func (o *TBMOrchestrator) Execute(ctx context.Context) error {
 			o.reporter.section(header)
 		}
 		slog.Debug("executing tbm step", "step", step.Description)
-		if err := o.fsm.Event(ctx, step.Event); err != nil {
+		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
 		if err := o.PersistState(); err != nil {
@@ -155,13 +182,15 @@ func (o *TBMOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.Event) 
 }
 
 func (o *TBMOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.Initialize(ctx, o.config); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.Initialize(ctx, o.config, p.ReconcileResult); err != nil {
 		e.Cancel(err)
 	}
 }
 
 func (o *TBMOrchestrator) onWaitForLags(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.WaitForLags(ctx, o.config); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.WaitForLags(ctx, o.config, p.LagThreshold); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -179,7 +208,8 @@ func (o *TBMOrchestrator) onVerifyFence(ctx context.Context, e *fsm.Event) {
 }
 
 func (o *TBMOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.Promote(ctx, o.config); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.Promote(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
