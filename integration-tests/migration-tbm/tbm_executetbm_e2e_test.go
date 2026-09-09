@@ -13,9 +13,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// execTBMTimeout covers initialize/wait_for_lags/fence (real) plus
-// verify_fence/promote/switch, which remain noop and sleep
-// TransitionSimulatedDelay (7s) each.
+// execTBMTimeout covers initialize/wait_for_lags/fence/promote/switch (all
+// real) plus verify_fence, the one remaining noop step, which sleeps
+// TransitionSimulatedDelay (7s).
 const execTBMTimeout = 5 * time.Minute
 
 // kcpBinary is the in-pod kcp binary run.sh builds and cp's into the runner.
@@ -23,14 +23,16 @@ func kcpBinary() string { return envOrDefault("KCP_TBM_KCP_BIN", "/workspace/kcp
 
 // TestExecuteTBMThinPosture covers the execute-tbm command's behavior that is
 // genuinely independent of batch/topic state. Its per-batch happy path (does
-// a real batch actually fence, does the FSM reach switched) moved to
-// TestSuccessBatchesMigrate, which now drives the real command directly —
-// there is no longer a way to reach a genuine zero-topic steady state in this
-// suite (that needs promote and switch to be real, which they are not yet),
-// so a second thin "happy path" run against an already-fenced batch would
-// just perform a second real fence, not exercise a no-op. See
-// TestSuccessBatchesMigrate's own doc comment for what actually proves fence
-// works today.
+// a real batch actually fence/promote/switch) moved to
+// TestSuccessBatchesMigrate, which now drives the real command directly and
+// — since fence, promote and switch are all real — also proves the genuine
+// zero-topic steady state itself, via its own restored steady-state-noop and
+// mixed-already-migrated-and-unmigrated sub-tests (Decide-only, not a second
+// execute-tbm run). Re-running execute-tbm here against the same
+// already-fully-migrated batch-01 would just be redundant with that
+// coverage, so this test is left to what it alone is for: the
+// unwritable-state-file failure mode, which doesn't depend on batch/topic
+// state at all.
 func TestExecuteTBMThinPosture(t *testing.T) {
 	h := newHarness(t)
 	manifestPath := h.e.manifestPath("batch-01.yaml")
