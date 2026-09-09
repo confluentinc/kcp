@@ -3,10 +3,12 @@ package tbm
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -77,7 +79,24 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "t1.order", MirrorStatus: clusterlink.MirrorStatusStopped}}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions.promotePollInterval = time.Millisecond
 	config := testTBMConfig()
 	config.CurrentState = StateUninitialized
 	ctx := context.Background()
@@ -90,7 +109,7 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	require.NoError(t, actions.WaitForLags(ctx, config, 10))
 	require.NoError(t, actions.Fence(ctx, config))
 	require.NoError(t, actions.VerifyFence(ctx, config))
-	require.NoError(t, actions.Promote(ctx, config))
+	require.NoError(t, actions.Promote(ctx, config, clusterlink.BasicAuth{}))
 	require.NoError(t, actions.Switch(ctx, config))
 }
 
@@ -102,7 +121,7 @@ func TestTBMActions_CtxCancellationExitsPromptly(t *testing.T) {
 	// ctx, no ticker wait needed; Fence: TestTBMActions_Fence_* in
 	// gateway_test.go), while VerifyFence is still a noop with something to
 	// cancel.
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
 	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
@@ -117,7 +136,7 @@ func TestTBMActions_CtxCancellationExitsPromptly(t *testing.T) {
 }
 
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
 	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 	res := &migplan.Result{
 		Route:          "migration-route",
@@ -137,7 +156,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 }
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{})
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
 	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
@@ -161,7 +180,7 @@ func TestTBMActions_WaitForLags_ImmediatelyBelowThreshold(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 999}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	config := &TBMConfig{Topics: []string{"topic-1", "topic-2"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
@@ -176,7 +195,7 @@ func TestTBMActions_WaitForLags_NoTopics(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	config := &TBMConfig{Topics: []string{}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
@@ -192,7 +211,7 @@ func TestTBMActions_WaitForLags_ContextCancelled(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 0}, nil },
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -211,7 +230,7 @@ func TestTBMActions_WaitForLags_DestinationAhead(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 200}, nil }, // ahead of source
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
@@ -236,7 +255,7 @@ func TestTBMActions_WaitForLags_ToleratesTransientSweepFailures(t *testing.T) {
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
@@ -259,7 +278,7 @@ func TestTBMActions_WaitForLags_AbortsAfterMaxConsecutiveSweepFailures(t *testin
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
@@ -294,11 +313,242 @@ func TestTBMActions_WaitForLags_SweepFailureCounterResetsOnSuccess(t *testing.T)
 		},
 	}
 
-	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{})
+	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
 	config := &TBMConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err, "four non-consecutive failures must not abort")
 	assert.Equal(t, int32(6), calls.Load())
+}
+
+func promoteTestConfig(topics []string) *TBMConfig {
+	return &TBMConfig{
+		MigrationId:         "tbm-promote-1",
+		CurrentState:        StateFenceVerified,
+		Topics:              topics,
+		ClusterId:           "lkc-123",
+		ClusterRestEndpoint: "https://cluster.example.com",
+		ClusterLinkName:     "link-1",
+	}
+}
+
+func TestTBMActions_Promote_NoTopics_ReturnsImmediately(t *testing.T) {
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			t.Fatal("ListMirrorTopics must not be called when there are no topics to promote")
+			return nil, nil
+		},
+		promoteMirrorTopicsFn: func(context.Context, clusterlink.Config, []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			t.Fatal("PromoteMirrorTopics must not be called when there are no topics to promote")
+			return nil, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	config := promoteTestConfig(nil)
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.NoError(t, err, "an empty topic list is a legitimate no-op, not an error")
+}
+
+func TestTBMActions_Promote_AllAtZeroLag_PromotesAndConfirmsStopped(t *testing.T) {
+	promoted := make(map[string]bool)
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				promoted[name] = true
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "topic-1", MirrorStatus: clusterlink.MirrorStatusStopped},
+				{MirrorTopicName: "topic-2", MirrorStatus: clusterlink.MirrorStatusStopped},
+			}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"topic-1", "topic-2"})
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	require.NoError(t, err)
+	assert.True(t, promoted["topic-1"])
+	assert.True(t, promoted["topic-2"])
+}
+
+func TestTBMActions_Promote_WaitsForPendingStoppedUntilStopped(t *testing.T) {
+	var listCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			n := atomic.AddInt64(&listCalls, 1)
+			status := "PENDING_STOPPED"
+			if n >= 3 {
+				status = clusterlink.MirrorStatusStopped
+			}
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-1", MirrorStatus: status}}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"topic-1"})
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.NoError(t, err)
+	assert.GreaterOrEqual(t, atomic.LoadInt64(&listCalls), int64(3),
+		"expected Promote to poll mirror status until STOPPED was observed")
+}
+
+func TestTBMActions_Promote_BatchSize_ProcessesSequentially(t *testing.T) {
+	const batchSize = 5
+	topics := make([]string, 12)
+	for i := range topics {
+		topics[i] = fmt.Sprintf("topic-%02d", i)
+	}
+
+	var mu sync.Mutex
+	inFlight := make(map[string]bool)
+	pollsSince := make(map[string]int)
+	var promoteCallSizes []int
+
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			if len(inFlight) != 0 {
+				t.Errorf("promoted a new batch of %d while %d topics still in flight", len(topicNames), len(inFlight))
+			}
+			promoteCallSizes = append(promoteCallSizes, len(topicNames))
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				inFlight[name] = true
+				pollsSince[name] = 0
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			mu.Lock()
+			defer mu.Unlock()
+			out := make([]clusterlink.MirrorTopic, 0, len(topics))
+			for _, name := range topics {
+				status := clusterlink.MirrorStatusActive
+				if _, promoted := pollsSince[name]; promoted {
+					pollsSince[name]++
+					if pollsSince[name] >= 2 {
+						status = clusterlink.MirrorStatusStopped
+						delete(inFlight, name)
+					} else {
+						status = "PENDING_STOPPED"
+					}
+				}
+				out = append(out, clusterlink.MirrorTopic{MirrorTopicName: name, MirrorStatus: status})
+			}
+			return out, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	actions.SetPromoteBatchSize(batchSize)
+	config := promoteTestConfig(topics)
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.NoError(t, err)
+	for _, size := range promoteCallSizes {
+		assert.LessOrEqualf(t, size, batchSize, "no promote call may exceed the configured batch size")
+	}
+}
+
+func TestTBMActions_Promote_MaxRetriesExceeded_FailsAfterThreeAttempts(t *testing.T) {
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name, ErrorCode: 1, ErrorMessage: "persistent error"})
+			}
+			return resp, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"topic-1"})
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.Error(t, err)
+	assert.Equal(t, "topic topic-1 failed promotion after 3 attempts: persistent error", err.Error())
+}
+
+func TestTBMActions_Promote_ToleratesTransientSweepFailures(t *testing.T) {
+	var sweepAttempts int64
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt64(&sweepAttempts, 1)
+			if n <= 2 {
+				return nil, fmt.Errorf("transient network error")
+			}
+			return map[int32]int64{0: 1000}, nil
+		},
+	}
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-1", MirrorStatus: clusterlink.MirrorStatusStopped}}, nil
+		},
+	}
+	actions := NewTBMActions(offsetProvider, offsetProvider, &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"topic-1"})
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.NoError(t, err, "must tolerate up to maxConsecutiveSweepFailures-1 transient sweep failures")
+}
+
+func TestTBMActions_Promote_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T) {
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			return nil, fmt.Errorf("persistent network error")
+		},
+	}
+	actions := NewTBMActions(offsetProvider, offsetProvider, &mockGatewayService{}, &mockClusterLinkService{})
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"topic-1"})
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "offset sweep failed")
 }

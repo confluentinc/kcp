@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -27,7 +28,28 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	// Configured (not the bare zero-value mock) because realisticReconcileResult
+	// (used by several tests below) sets Topics: []string{"t1.order"}, which a
+	// full uninitialized->switched walk carries all the way into Promote —
+	// an unconfigured mock would fail there with "not configured".
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "t1.order", MirrorStatus: clusterlink.MirrorStatusStopped}}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions.promotePollInterval = time.Millisecond
 	orchestrator := NewTBMOrchestrator(config, actions, state, stateFile)
 	return orchestrator, config, stateFile
 }
@@ -35,7 +57,7 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 	orchestrator, config, stateFile := newTestOrchestrator(t, StateUninitialized)
 
-	require.NoError(t, orchestrator.Execute(context.Background(), realisticReconcileResult(), 10))
+	require.NoError(t, orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, clusterlink.BasicAuth{}))
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
 	assert.False(t, orchestrator.HasPendingWork())
@@ -50,7 +72,7 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 func TestTBMOrchestrator_Execute_ResumesFromPartialState(t *testing.T) {
 	orchestrator, config, _ := newTestOrchestrator(t, StateFenced)
 
-	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}, 10))
+	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}, 10, clusterlink.BasicAuth{}))
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
 }
@@ -76,7 +98,7 @@ func TestTBMOrchestrator_HasPendingWork(t *testing.T) {
 func TestTBMOrchestrator_Execute_RefusesUnknownState(t *testing.T) {
 	orchestrator, _, _ := newTestOrchestrator(t, "some-future-state")
 
-	err := orchestrator.Execute(context.Background(), &migplan.Result{}, 10)
+	err := orchestrator.Execute(context.Background(), &migplan.Result{}, 10, clusterlink.BasicAuth{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unrecognized")
@@ -94,7 +116,7 @@ func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *test
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
 
-	err := orchestrator.Execute(ctx, realisticReconcileResult(), 10)
+	err := orchestrator.Execute(ctx, realisticReconcileResult(), 10, clusterlink.BasicAuth{})
 
 	require.Error(t, err)
 	assert.NotEqual(t, StateSwitched, config.CurrentState)
@@ -105,7 +127,7 @@ func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing
 
 	res := realisticReconcileResult()
 
-	require.NoError(t, orchestrator.Execute(context.Background(), res, 10))
+	require.NoError(t, orchestrator.Execute(context.Background(), res, 10, clusterlink.BasicAuth{}))
 
 	assert.Equal(t, res.Topics, config.Topics)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
@@ -129,7 +151,7 @@ func TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced(t
 
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag", "gateway rejected the fence spec"}}
 
-	err := orchestrator.Execute(context.Background(), res, 10)
+	err := orchestrator.Execute(context.Background(), res, 10, clusterlink.BasicAuth{})
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "topic t1.order has replication lag")

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/looplab/fsm"
 )
@@ -55,6 +56,9 @@ type ExecutionParams struct {
 	// LagThreshold is the total replication lag (sum of all partition lags)
 	// tolerated before wait_for_lags proceeds. Read by onWaitForLags only.
 	LagThreshold int64
+	// RestAuth authenticates the destination cluster-link REST surface.
+	// Read by onPromote only.
+	RestAuth clusterlink.Authenticator
 }
 
 // execParamsFromEvent returns the ExecutionParams passed to fsm.Event.
@@ -126,13 +130,14 @@ func NewTBMOrchestrator(
 // already-completed steps so a re-run resumes. res is the reconcile plan the
 // caller already computed live for this manifest; onInitialize consumes it.
 // lagThreshold is the total replication lag tolerated before wait_for_lags
-// proceeds; onWaitForLags consumes it.
-func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagThreshold int64) error {
+// proceeds; onWaitForLags consumes it. restAuth authenticates the destination
+// cluster-link REST surface; onPromote consumes it.
+func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagThreshold int64, restAuth clusterlink.Authenticator) error {
 	if !isKnownState(o.config.CurrentState) {
 		return fmt.Errorf("unrecognized tbm migration state %q in state file — refusing to execute (corrupted file, or written by a newer kcp version?)", o.config.CurrentState)
 	}
 
-	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold}
+	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, RestAuth: restAuth}
 
 	for _, step := range canonicalWorkflow {
 		if !o.canTransition(step.Event) {
@@ -203,7 +208,8 @@ func (o *TBMOrchestrator) onVerifyFence(ctx context.Context, e *fsm.Event) {
 }
 
 func (o *TBMOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
-	if err := o.actions.Promote(ctx, o.config); err != nil {
+	p := execParamsFromEvent(e)
+	if err := o.actions.Promote(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }

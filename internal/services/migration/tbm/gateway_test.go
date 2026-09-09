@@ -197,7 +197,7 @@ func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -216,7 +216,7 @@ func TestTBMActions_Fence_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -248,7 +248,7 @@ func TestTBMActions_Fence_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *test
 			return nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	require.NoError(t, actions.Fence(context.Background(), config))
@@ -268,7 +268,7 @@ func TestTBMActions_Fence_HotReloadCheckFailure_ReturnsRemediationError(t *testi
 			return fmt.Errorf("timed out waiting for pods to report the new configId")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -282,7 +282,7 @@ func TestTBMActions_Fence_ApplyErrorPropagates(t *testing.T) {
 			return "", fmt.Errorf("connection refused")
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
@@ -307,7 +307,7 @@ func TestTBMActions_Fence_NoTopicsSkipsFencing(t *testing.T) {
 			return "", nil
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
 	config.Topics = nil
 	config.FenceYAML = ""
@@ -334,7 +334,7 @@ func TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim(t *testing.T) {
 					return "", nil
 				},
 			}
-			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+			actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 			config := testTBMConfig()
 			config.FenceYAML = fmt.Sprintf("rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n      blocked: %v\n", blocked)
 
@@ -364,7 +364,7 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 		},
 	}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw)
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
 
 	err := actions.Fence(context.Background(), config)
