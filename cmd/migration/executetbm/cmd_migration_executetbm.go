@@ -48,62 +48,29 @@ type offsetProvidersFunc func(g *manifest.GatewayMigration) (source, destination
 // the manifest's kubeconfig.
 type gatewayServiceFunc func(g *manifest.GatewayMigration) (gateway.Service, error)
 
-// tempClusterLinkServiceShim is a TEMPORARY placeholder for the real
-// clusterlink.Service wiring — landing in the very next task, which builds it
-// from g.RestCredentials() via clusterlink.NewConfluentCloudService. It
-// reports every requested topic as already STOPPED so Promote converges
-// immediately without touching a real cluster link, keeping
-// TestExecuteTBM_ReconcilePlanArtifacts_PersistToStateFile (which already
-// walks the full FSM including promote) passing unmodified in the meantime.
-// Remove this type and its one call site once that next task lands.
-type tempClusterLinkServiceShim struct{}
+// clusterLinkServiceFunc builds the clusterlink.Service used by promote to
+// poll and promote mirror topics. Injected via newExecuteTBMCmd so the
+// command's own tests can pass a stub instead of dialing a real cluster-link
+// REST endpoint; production builds a real ConfluentCloudService (the name is
+// historical — it serves Confluent Platform destinations over the same REST
+// surface, confirmed by the TBM e2e suite's own test harness) from the
+// manifest's destination REST credentials.
+type clusterLinkServiceFunc func(g *manifest.GatewayMigration) (clusterlink.Service, error)
 
-func (tempClusterLinkServiceShim) GetClusterLink(context.Context, clusterlink.Config) (*clusterlink.ClusterLink, error) {
-	return nil, fmt.Errorf("tempClusterLinkServiceShim.GetClusterLink not implemented")
-}
-
-func (tempClusterLinkServiceShim) ListMirrorTopics(_ context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
-	out := make([]clusterlink.MirrorTopic, len(config.Topics))
-	for i, t := range config.Topics {
-		out[i] = clusterlink.MirrorTopic{MirrorTopicName: t, MirrorStatus: clusterlink.MirrorStatusStopped}
+// buildClusterLinkService opens a real clusterlink.Service using the
+// manifest's destination REST credentials (spec.target.kafka.restCredentials,
+// or derived from spec.target.kafka.credentials when that leg is sasl_plain —
+// see (*GatewayMigration).RestCredentials's own doc comment).
+func buildClusterLinkService(g *manifest.GatewayMigration) (clusterlink.Service, error) {
+	restCreds, err := g.RestCredentials()
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
-}
-
-func (tempClusterLinkServiceShim) ListConfigs(context.Context, clusterlink.Config) (map[string]string, error) {
-	return nil, fmt.Errorf("tempClusterLinkServiceShim.ListConfigs not implemented")
-}
-
-func (tempClusterLinkServiceShim) ValidateTopics([]string, []string) error {
-	return fmt.Errorf("tempClusterLinkServiceShim.ValidateTopics not implemented")
-}
-
-func (tempClusterLinkServiceShim) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
-	resp := &clusterlink.PromoteMirrorTopicsResponse{}
-	for _, name := range topicNames {
-		resp.Data = append(resp.Data, struct {
-			MirrorTopicName string `json:"mirror_topic_name"`
-			ErrorMessage    string `json:"error_message,omitempty"`
-			ErrorCode       int    `json:"error_code,omitempty"`
-		}{MirrorTopicName: name})
+	httpClient, err := restCreds.HTTPClient()
+	if err != nil {
+		return nil, err
 	}
-	return resp, nil
-}
-
-func (tempClusterLinkServiceShim) CreateMirrorTopic(context.Context, clusterlink.Config, string, string) error {
-	return fmt.Errorf("tempClusterLinkServiceShim.CreateMirrorTopic not implemented")
-}
-
-func (tempClusterLinkServiceShim) ListTopics(context.Context, clusterlink.Config) ([]string, error) {
-	return nil, fmt.Errorf("tempClusterLinkServiceShim.ListTopics not implemented")
-}
-
-func (tempClusterLinkServiceShim) CreateTopic(context.Context, clusterlink.Config, clusterlink.CreateTopicRequest) error {
-	return fmt.Errorf("tempClusterLinkServiceShim.CreateTopic not implemented")
-}
-
-func (tempClusterLinkServiceShim) AlterConfigs(context.Context, clusterlink.Config, []clusterlink.ConfigAlteration) error {
-	return fmt.Errorf("tempClusterLinkServiceShim.AlterConfigs not implemented")
+	return clusterlink.NewConfluentCloudService(httpClient), nil
 }
 
 // buildGatewayService opens a real gateway.Service using the manifest's
@@ -118,19 +85,21 @@ func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) 
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
-This is a scaffold: every FSM transition except initialize, wait_for_lags and
-fence is currently a noop (it sleeps to simulate real execution timing, then
-logs). initialize validates the already-computed reconcile plan (see the
-migplan package) and captures its promote topic list plus fence/switchover
-artifacts for later transitions to consume. wait_for_lags polls source and
-destination Kafka offsets for those topics until every one is under
-spec.defaultPolicies.lagThreshold (overridable per run with --lag-threshold).
-fence reconfigures the gateway's named route by applying the plan's fence
-rules to the live Gateway CR, then waits for the operator to report the
-gateway ready (and, if it supports hot-reload, for every pod to confirm the
-new config revision). verify_fence, promote and switch remain noop. This
-command exists to validate the state-machine shape and command wiring ahead of
-the real per-batch migration logic described in the TBM design proposal.
+This is a scaffold: only verify_fence and switch remain noop (each sleeps to
+simulate real execution timing, then logs). initialize validates the
+already-computed reconcile plan (see the migplan package) and captures its
+promote topic list plus fence/switchover artifacts for later transitions to
+consume. wait_for_lags polls source and destination Kafka offsets for those
+topics until every one is under spec.defaultPolicies.lagThreshold (overridable
+per run with --lag-threshold). fence reconfigures the gateway's named route by
+applying the plan's fence rules to the live Gateway CR, then waits for the
+operator to report the gateway ready (and, if it supports hot-reload, for
+every pod to confirm the new config revision). promote polls source and
+destination Kafka offsets for those same topics until each reaches exact zero
+lag, then promotes that topic's cluster-link mirror, confirming it reaches the
+terminal STOPPED status. This command exists to validate the state-machine
+shape and command wiring ahead of the real per-batch migration logic described
+in the TBM design proposal.
 
 The migration is identified by metadata.name in the GatewayMigration manifest at
 --migration-yaml — there is no separate init step and no --migration-id flag. The first
@@ -142,26 +111,27 @@ migration needs a new metadata.name.`
 // NewMigrationExecuteTBMCmd builds the `execute-tbm` command bound to the real
 // reconciliation engine, real Kafka connections, and a real gateway service.
 func NewMigrationExecuteTBMCmd() *cobra.Command {
-	return newExecuteTBMCmd(migplan.Reconcile, buildOffsetProviders, buildGatewayService)
+	return newExecuteTBMCmd(migplan.Reconcile, buildOffsetProviders, buildGatewayService, buildClusterLinkService)
 }
 
 // newExecuteTBMCmd builds the command with the reconcile entry point,
-// offset-provider builder, and gateway-service builder all injected, so tests
-// can pass stubs instead of the live engine, live Kafka connections, and a
-// live Kubernetes cluster.
-func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc) *cobra.Command {
+// offset-provider builder, gateway-service builder, and cluster-link-service
+// builder all injected, so tests can pass stubs instead of the live engine,
+// live Kafka connections, a live Kubernetes cluster, and a live cluster-link
+// REST endpoint.
+func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "execute-tbm",
 		Short:         "Execute a Topic-Batch Migration run (scaffold: noop transitions)",
 		Long:          executeTBMLong,
 		Example:       `  kcp migration execute-tbm --migration-yaml gateway-migration.yaml --tbm-state-file tbm-state.json`,
-		Hidden:        true, // scaffold: initialize/wait_for_lags/fence are real, other transitions still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
+		Hidden:        true, // scaffold: only verify_fence/switch are still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,
 		PreRunE:       func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
 		RunE: func(c *cobra.Command, _ []string) error {
-			return runMigrationExecuteTBM(c, reconcile, buildOffsets, buildGateway)
+			return runMigrationExecuteTBM(c, reconcile, buildOffsets, buildGateway, buildClusterLink)
 		},
 	}
 
@@ -177,7 +147,7 @@ func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc,
 	return cmd
 }
 
-func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc) error {
+func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
@@ -247,7 +217,16 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 		return fmt.Errorf("failed to build gateway service: %w", err)
 	}
 
-	actions := tbm.NewTBMActions(sourceOffset, destinationOffset, gatewayService, tempClusterLinkServiceShim{})
+	clusterLinkService, err := buildClusterLink(g)
+	if err != nil {
+		return fmt.Errorf("failed to build cluster-link service: %w", err)
+	}
+	restCreds, err := g.RestCredentials()
+	if err != nil {
+		return fmt.Errorf("failed to resolve cluster-link REST credentials: %w", err)
+	}
+
+	actions := tbm.NewTBMActions(sourceOffset, destinationOffset, gatewayService, clusterLinkService)
 	actions.SetRolloutTimeout(rolloutTimeoutOverride)
 	actions.SetHotReloadTimeout(hotReloadTimeoutOverride)
 	orchestrator := tbm.NewTBMOrchestrator(config, actions, tbmState, tbmStateFile)
@@ -278,7 +257,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}
 
-	if err := orchestrator.Execute(context.Background(), res, int64(g.Spec.DefaultPolicies.LagThreshold), clusterlink.BasicAuth{}); err != nil {
+	if err := orchestrator.Execute(context.Background(), res, int64(g.Spec.DefaultPolicies.LagThreshold), restCreds.Authenticator()); err != nil {
 		return fmt.Errorf("failed to execute tbm migration: %w", err)
 	}
 

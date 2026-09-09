@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
@@ -151,6 +152,64 @@ func stubGatewayService(*manifest.GatewayMigration) (gateway.Service, error) {
 	return stubGatewayServiceImpl{}, nil
 }
 
+// stubClusterLinkServiceImpl implements clusterlink.Service, reporting every
+// requested topic as already STOPPED, so command-level tests can walk the
+// full FSM (including promote) without reaching a real cluster-link REST
+// endpoint. Mirrors stubGatewayServiceImpl's role for the gateway side.
+type stubClusterLinkServiceImpl struct{}
+
+func (stubClusterLinkServiceImpl) GetClusterLink(context.Context, clusterlink.Config) (*clusterlink.ClusterLink, error) {
+	return nil, fmt.Errorf("stubClusterLinkServiceImpl.GetClusterLink not implemented")
+}
+
+func (stubClusterLinkServiceImpl) ListMirrorTopics(_ context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+	out := make([]clusterlink.MirrorTopic, len(config.Topics))
+	for i, t := range config.Topics {
+		out[i] = clusterlink.MirrorTopic{MirrorTopicName: t, MirrorStatus: clusterlink.MirrorStatusStopped}
+	}
+	return out, nil
+}
+
+func (stubClusterLinkServiceImpl) ListConfigs(context.Context, clusterlink.Config) (map[string]string, error) {
+	return nil, fmt.Errorf("stubClusterLinkServiceImpl.ListConfigs not implemented")
+}
+
+func (stubClusterLinkServiceImpl) ValidateTopics([]string, []string) error {
+	return fmt.Errorf("stubClusterLinkServiceImpl.ValidateTopics not implemented")
+}
+
+func (stubClusterLinkServiceImpl) PromoteMirrorTopics(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+	resp := &clusterlink.PromoteMirrorTopicsResponse{}
+	for _, name := range topicNames {
+		resp.Data = append(resp.Data, struct {
+			MirrorTopicName string `json:"mirror_topic_name"`
+			ErrorMessage    string `json:"error_message,omitempty"`
+			ErrorCode       int    `json:"error_code,omitempty"`
+		}{MirrorTopicName: name})
+	}
+	return resp, nil
+}
+
+func (stubClusterLinkServiceImpl) CreateMirrorTopic(context.Context, clusterlink.Config, string, string) error {
+	return fmt.Errorf("stubClusterLinkServiceImpl.CreateMirrorTopic not implemented")
+}
+
+func (stubClusterLinkServiceImpl) ListTopics(context.Context, clusterlink.Config) ([]string, error) {
+	return nil, fmt.Errorf("stubClusterLinkServiceImpl.ListTopics not implemented")
+}
+
+func (stubClusterLinkServiceImpl) CreateTopic(context.Context, clusterlink.Config, clusterlink.CreateTopicRequest) error {
+	return fmt.Errorf("stubClusterLinkServiceImpl.CreateTopic not implemented")
+}
+
+func (stubClusterLinkServiceImpl) AlterConfigs(context.Context, clusterlink.Config, []clusterlink.ConfigAlteration) error {
+	return fmt.Errorf("stubClusterLinkServiceImpl.AlterConfigs not implemented")
+}
+
+func stubClusterLinkService(*manifest.GatewayMigration) (clusterlink.Service, error) {
+	return stubClusterLinkServiceImpl{}, nil
+}
+
 // zeroLagOffsetProvider implements offset.Provider, reporting the same fixed
 // offset for every topic requested — used for both source and destination in
 // stubOffsetProviders, so every topic sees zero lag without dialing anything.
@@ -176,7 +235,7 @@ func stubOffsetProviders(*manifest.GatewayMigration) (offset.Provider, offset.Pr
 // Kafka, or a real cluster.
 func runExecuteTBMWithReconcile(t *testing.T, reconcile reconcileFunc, args ...string) (string, error) {
 	t.Helper()
-	cmd := newExecuteTBMCmd(reconcile, stubOffsetProviders, stubGatewayService)
+	cmd := newExecuteTBMCmd(reconcile, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -478,7 +537,7 @@ func TestExecuteTBM_LagThresholdOverride_AppliesToEffectivePolicy(t *testing.T) 
 		return realisticReconcileResult(), nil
 	}
 
-	cmd := newExecuteTBMCmd(captureReconcile, stubOffsetProviders, stubGatewayService)
+	cmd := newExecuteTBMCmd(captureReconcile, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&out)
@@ -496,4 +555,26 @@ func TestExecuteTBM_LagThresholdOverride_NegativeValueRejected(t *testing.T) {
 	_, err := runExecuteTBMWithReconcile(t, stubReconcile, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile, "--lag-threshold", "-1")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "must not be negative")
+}
+
+// --- cluster-link service injection ---
+
+func TestExecuteTBM_ClusterLinkServiceBuildError_FailsRun(t *testing.T) {
+	withFastTBMTransitions(t)
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-cl-error", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	failingClusterLink := func(*manifest.GatewayMigration) (clusterlink.Service, error) {
+		return nil, fmt.Errorf("cluster-link REST endpoint unreachable")
+	}
+	cmd := newExecuteTBMCmd(stubReconcile, stubOffsetProviders, stubGatewayService, failingClusterLink)
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--migration-yaml", manifestPath, "--tbm-state-file", stateFile})
+
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cluster-link REST endpoint unreachable")
 }
