@@ -110,7 +110,8 @@ func (a *TBMActions) SetPromoteBatchSize(n int) {
 	a.promoteBatchSize = n
 }
 
-// simulateTransition is the shared noop body every still-noop action method calls.
+// simulateTransition is the shared noop body the sole remaining noop action
+// (verify_fence) calls.
 func (a *TBMActions) simulateTransition(ctx context.Context, doneMsg string) error {
 	select {
 	case <-ctx.Done():

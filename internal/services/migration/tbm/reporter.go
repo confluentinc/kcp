@@ -68,7 +68,7 @@ func (r *reporter) detail(format string, a ...any) {
 }
 
 // warn prints an indented yellow-⚠️ line to stdout (in-flow caution).
-func (r *reporter) warn(format string, a ...any) { //nolint:unused // used by a later transition (verify_fence, promote, switch), not yet implemented
+func (r *reporter) warn(format string, a ...any) { //nolint:unused // reserved for a future in-flow caution (verify_fence); not yet called
 	msg := fmt.Sprintf(format, a...)
 	r.printf("   %s %s\n", color.YellowString("⚠️"), msg)
 	r.mirrorWarn(msg)

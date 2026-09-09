@@ -63,12 +63,12 @@ func deriveFencedCRYAML(config *TBMConfig) ([]byte, error) {
 }
 
 // deriveSwitchedCRYAML builds the switched CR bytes the same way, from
-// config.SwitchoverYAML, also applied unmodified. Switch itself is not yet
-// real; this exists because resolveGatewayCapability's detection needs to
-// see both the fenced and switched CR to correctly infer verification mode —
-// a detector shown only the live gateway could pick rollout verification for
-// a migration that will hot-reload, and then observe nothing (see
-// migration.ResolveGatewayCapability's comment).
+// config.SwitchoverYAML, also applied unmodified — this is what Switch
+// itself applies. It also independently serves resolveGatewayCapability's
+// detection, which needs to see both the fenced and switched CR to correctly
+// infer verification mode — a detector shown only the live gateway could
+// pick rollout verification for a migration that will hot-reload, and then
+// observe nothing (see migration.ResolveGatewayCapability's comment).
 func deriveSwitchedCRYAML(config *TBMConfig) ([]byte, error) {
 	base, err := cleanGatewayYAML(config.GatewayYAML)
 	if err != nil {
