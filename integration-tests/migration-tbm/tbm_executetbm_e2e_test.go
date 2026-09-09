@@ -4,59 +4,36 @@ package migration_tbm_e2e
 
 import (
 	"context"
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/require"
 )
 
-// execTBMTimeout must exceed the noop FSM's simulated delay: it sleeps
-// TransitionSimulatedDelay (7s) per transition across ~6 transitions, plus the
-// live reconcile reads.
+// execTBMTimeout covers initialize/wait_for_lags/fence (real) plus
+// verify_fence/promote/switch, which remain noop and sleep
+// TransitionSimulatedDelay (7s) each.
 const execTBMTimeout = 5 * time.Minute
 
 // kcpBinary is the in-pod kcp binary run.sh builds and cp's into the runner.
 func kcpBinary() string { return envOrDefault("KCP_TBM_KCP_BIN", "/workspace/kcp") }
 
-// TestExecuteTBMThinPosture covers the only unit that drives the execute-tbm
-// command (U9). Its FSM is a noop, so the assertions are deliberately thin: the
-// command runs the engine, writes a parseable TBM state file, and — because every
-// transition is a noop — leaves the mirror/route world untouched. The destination
-// SASL credential is never on the exec argv: it reaches the command only through
-// the rendered manifest file it reads.
+// TestExecuteTBMThinPosture covers the execute-tbm command's behavior that is
+// genuinely independent of batch/topic state. Its per-batch happy path (does
+// a real batch actually fence, does the FSM reach switched) moved to
+// TestSuccessBatchesMigrate, which now drives the real command directly —
+// there is no longer a way to reach a genuine zero-topic steady state in this
+// suite (that needs promote and switch to be real, which they are not yet),
+// so a second thin "happy path" run against an already-fenced batch would
+// just perform a second real fence, not exercise a no-op. See
+// TestSuccessBatchesMigrate's own doc comment for what actually proves fence
+// works today.
 func TestExecuteTBMThinPosture(t *testing.T) {
 	h := newHarness(t)
 	manifestPath := h.e.manifestPath("batch-01.yaml")
-
-	t.Run("happy-path-writes-state-leaves-world-unchanged", func(t *testing.T) {
-		stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
-
-		routesBefore := gatewayRoutes(t, h)
-		mirrorsBefore := mirrorStatuses(t, h)
-
-		out, err := runKCP(t, manifestPath, stateFile)
-		require.NoErrorf(t, err, "execute-tbm must exit 0 against the live topology:\n%s", out)
-		require.NotContains(t, out, "panic", "execute-tbm must not panic")
-
-		// Engine was invoked (a reconcile I/O failure would have made it exit
-		// non-zero) and the command wrote a parseable state file.
-		data, readErr := os.ReadFile(stateFile)
-		require.NoError(t, readErr, "execute-tbm must write --tbm-state-file")
-		require.NotEmpty(t, data)
-		var parsed map[string]any
-		require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
-
-		// Noop FSM: neither the gateway route nor any mirror may have moved.
-		require.Equal(t, string(routesBefore), string(gatewayRoutes(t, h)),
-			"the noop FSM must not edit the gateway route")
-		require.Equal(t, mirrorsBefore, mirrorStatuses(t, h),
-			"the noop FSM must not promote any mirror")
-	})
 
 	// Abuse: an unwritable --tbm-state-file (missing parent directory) must fail
 	// cleanly — non-zero exit, no panic — because the command writes the state file
@@ -87,18 +64,6 @@ func runKCP(t *testing.T, manifestPath, stateFile string) (string, error) {
 	)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
-}
-
-// gatewayRoutes returns the live gateway CR's spec.routes as marshaled YAML, for a
-// before/after equality check.
-func gatewayRoutes(t *testing.T, h *tbmHarness) []byte {
-	t.Helper()
-	var cr map[string]any
-	require.NoError(t, yaml.Unmarshal(h.e.readCR(t, h.ctx), &cr))
-	spec, _ := cr["spec"].(map[string]any)
-	out, err := yaml.Marshal(spec["routes"])
-	require.NoError(t, err)
-	return out
 }
 
 // mirrorStatuses maps each mirror topic on the link to its current status.

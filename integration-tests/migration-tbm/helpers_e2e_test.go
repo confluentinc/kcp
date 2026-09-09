@@ -2,10 +2,14 @@
 
 // Package migration_tbm_e2e runs a Topic-Based Migration against a live
 // dynamic-mode Confluent Gateway with hot reload (Minikube profile kcp-e2e-tbm).
-// The system under test is the real reconciliation engine migplan.Reconcile: the
-// tests assert it refuses known-bad batches and migrates good ones, applying the
-// engine's rendered fence/switchover rules to the live gateway CR by hot reload
-// (no pod roll) and promoting cluster-link mirrors between batches.
+// TestSuccessBatchesMigrate and TestExecuteTBMThinPosture drive the real
+// execute-tbm command (internal/services/migration/tbm's FSM): initialize,
+// wait_for_lags and fence are real; verify_fence, promote and switch remain
+// noop, so a batch's mirror is never actually promoted nor its route actually
+// switched yet — see each test's own doc comment for what it can and cannot
+// prove today. TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
+// instead exercise migplan.Reconcile and the gateway hot-reload apply path
+// directly, independent of the FSM.
 //
 // Like the hot-reload suite, this binary runs INSIDE the cluster (see
 // manifests/kcp-runner.yaml): the gateway service dials each pod's /config port
@@ -22,7 +26,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -495,26 +498,6 @@ func (h *tbmHarness) manifestForTopics(t *testing.T, baseName string, topics []s
 	g.Spec.TopicGroup[0].Topics = &list
 	g.Spec.TopicGroup[0].TopicPatterns = nil
 	return g
-}
-
-// topicRange returns the sorted source topic names for the inclusive index range
-// [lo, hi]. Zero-padding makes lexical order match numeric order.
-func (e *env) topicRange(lo, hi int) []string {
-	out := make([]string, 0, hi-lo+1)
-	for i := lo; i <= hi; i++ {
-		out = append(out, e.topicName(i))
-	}
-	sort.Strings(out)
-	return out
-}
-
-// unchangedTopics returns the topic names the report classified Unchanged.
-func unchangedTopics(r reconcile.Report) map[string]bool {
-	out := map[string]bool{}
-	for _, tv := range r.Unchanged {
-		out[tv.Topic] = true
-	}
-	return out
 }
 
 // reasonsContain reports whether any refusal reason contains sub.
