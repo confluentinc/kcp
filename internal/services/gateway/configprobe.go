@@ -4,15 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
-	"net"
-	"net/http"
 	"strconv"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
 const (
@@ -26,14 +25,8 @@ const (
 	//
 	// CFK declares neither a containerPort nor a Service for it — its
 	// ContainerPorts() covers only the admin and route ports — so nothing fronts
-	// this port and kcp has to dial pod IPs directly. The port is configurable
-	// because the contract requires it to be.
+	// this port. The port is configurable because the contract requires it to be.
 	DefaultGatewayConfigPort = 9180
-
-	// maxConfigResponseBytes caps the response body read. The documented payload
-	// is two short fields; anything larger means we are not talking to the
-	// endpoint we think we are, and should not be buffered unbounded.
-	maxConfigResponseBytes = 64 << 10
 )
 
 // ProbeOutcome classifies one pod's answer to GET /config.
@@ -56,18 +49,21 @@ const (
 	// 1.3.0, which is the first release to serve /config. A capability signal.
 	ProbeEndpointAbsent ProbeOutcome = "endpoint-absent"
 
-	// ProbeUnreachable means the pod could not be dialled at all — the pod CIDR
-	// is not routable from where kcp is running. An environment signal.
+	// ProbeUnreachable means the API server's pods/proxy request itself
+	// failed: the pod is genuinely unreachable, the kcp identity lacks
+	// pods/proxy RBAC, or the proxy backend errored. These are not reliably
+	// distinguishable once the request goes through the API server, and
+	// nothing downstream needs them to be. An environment signal.
 	ProbeUnreachable ProbeOutcome = "unreachable"
 
-	// ProbeUnexpected means the endpoint answered with something we cannot
-	// interpret: a non-200/404 status, a redirect, or an unparseable body.
+	// ProbeUnexpected means the proxied request succeeded but the response
+	// body could not be interpreted.
 	ProbeUnexpected ProbeOutcome = "unexpected"
 )
 
 // ProbeResult is one pod's config-endpoint state.
 type ProbeResult struct {
-	// Addr is the host:port probed, for diagnostics.
+	// Addr is the pod:port probed, for diagnostics.
 	Addr string
 
 	// Outcome classifies the answer.
@@ -92,79 +88,46 @@ type configEndpointResponse struct {
 	AppliedAt *string `json:"appliedAt"`
 }
 
-// newConfigProbeClient builds the HTTP client used to poll /config.
-//
-// Redirects are deliberately not followed. A 30x from /config is not a valid
-// response, and following one would let a misconfigured proxy or ingress return
-// some other gateway's configId — which, since a matching configId is exactly
-// what kcp treats as proof a transition landed, would manufacture a false
-// success. Returning ErrUseLastResponse surfaces the 30x as ProbeUnexpected.
-func newConfigProbeClient(timeout time.Duration) *http.Client {
-	return &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
-}
-
-// gatewayConfigAddr builds the host:port for a pod's config endpoint.
-// net.JoinHostPort is required rather than string concatenation: an IPv6 pod IP
-// has to be bracketed or the resulting URL will not parse.
-func gatewayConfigAddr(ip string, port int) string {
-	return net.JoinHostPort(ip, strconv.Itoa(port))
-}
-
-// probeGatewayConfig reads GET /config from one gateway pod.
+// probeGatewayConfig reads GET /config from one gateway pod through the
+// Kubernetes API server's pods/proxy subresource, rather than dialing the
+// pod's IP directly. This is what lets kcp verify hot-reload convergence
+// without needing a network route into the pod CIDR: the kube client already
+// authenticates to the API server, so nothing further needs to be reachable.
 //
 // The returned error is reserved for context cancellation — meaning abandon the
-// whole wait. Every per-pod condition, including an unreachable pod, comes back
-// as a ProbeResult so a caller polling several pods can keep going and report
+// whole wait. Every per-pod condition, including a proxy failure, comes back as
+// a ProbeResult so a caller polling several pods can keep going and report
 // precisely which pod is in which state.
-func probeGatewayConfig(ctx context.Context, client *http.Client, addr string) (ProbeResult, error) {
+func probeGatewayConfig(ctx context.Context, pods typedcorev1.PodInterface, podName string, port int) (ProbeResult, error) {
 	if err := ctx.Err(); err != nil {
 		return ProbeResult{}, err
 	}
 
+	addr := fmt.Sprintf("%s:%d", podName, port)
 	result := ProbeResult{Addr: addr}
-	url := "http://" + addr + GatewayConfigEndpointPath
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	body, err := pods.ProxyGet("http", podName, strconv.Itoa(port), GatewayConfigEndpointPath, nil).DoRaw(ctx)
 	if err != nil {
-		return ProbeResult{}, fmt.Errorf("failed to build config endpoint request for %s: %w", addr, err)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		// Distinguish "stop everything" from "this pod is not answering".
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return ProbeResult{}, ctxErr
 		}
+
+		// A 404 is a capability signal, not an environment one: /config
+		// arrived in gateway 1.3.0, so it means the image is too old rather
+		// than unreachable. The API server relays the pod's own 404 through
+		// DoRaw as a NotFound StatusError.
+		if apierrors.IsNotFound(err) {
+			result.Outcome = ProbeEndpointAbsent
+			return result, nil
+		}
+
+		// Every other proxy failure — pod genuinely unreachable, RBAC denied,
+		// the API server's own proxy backend erroring — folds into one
+		// outcome: once the request goes through the API server, these are
+		// not reliably distinguishable, and nothing downstream treats them
+		// differently.
 		result.Outcome = ProbeUnreachable
-		result.Err = fmt.Errorf("failed to reach the gateway config endpoint at %s: %w", addr, err)
-		return result, nil
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	switch resp.StatusCode {
-	case http.StatusOK:
-		// fall through to body parsing below
-	case http.StatusNotFound:
-		result.Outcome = ProbeEndpointAbsent
-		return result, nil
-	default:
-		result.Outcome = ProbeUnexpected
-		result.Err = fmt.Errorf("gateway config endpoint at %s returned HTTP %d", addr, resp.StatusCode)
-		return result, nil
-	}
-
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxConfigResponseBytes))
-	if err != nil {
-		if ctxErr := ctx.Err(); ctxErr != nil {
-			return ProbeResult{}, ctxErr
-		}
-		result.Outcome = ProbeUnexpected
-		result.Err = fmt.Errorf("failed to read the gateway config endpoint response from %s: %w", addr, err)
+		result.Err = fmt.Errorf("failed to reach the gateway config endpoint at %s via the API server proxy: %w", addr, err)
 		return result, nil
 	}
 
@@ -197,10 +160,10 @@ func probeGatewayConfig(ctx context.Context, client *http.Client, addr string) (
 	return result, nil
 }
 
-// GatewayPodEndpoint is one gateway pod's dialable config endpoint.
+// GatewayPodEndpoint is one gateway pod the config endpoint can be probed on,
+// addressed by name through the API server's proxy subresource.
 type GatewayPodEndpoint struct {
 	Name  string
-	IP    string
 	Ready bool
 }
 
@@ -209,7 +172,8 @@ type GatewayPodEndpoint struct {
 // Not-ready pods are included rather than filtered: the caller needs the whole
 // picture. During a roll a not-ready pod is expected and simply means "keep
 // waiting", but a pod set with no ready members must never be mistaken for
-// success. Pods with no IP assigned yet are skipped — there is nothing to dial.
+// success. Pods with no IP assigned yet are skipped: that means not yet
+// scheduled, regardless of how the endpoint is addressed once it is.
 func listGatewayPodEndpoints(ctx context.Context, clientset kubernetes.Interface, namespace, gatewayName string) ([]GatewayPodEndpoint, error) {
 	// CFK labels gateway pods app=<gateway-cr-name>, matching the other waits.
 	labelSelector := fmt.Sprintf("app=%s", gatewayName)
@@ -229,7 +193,6 @@ func listGatewayPodEndpoints(ctx context.Context, clientset kubernetes.Interface
 		}
 		endpoints = append(endpoints, GatewayPodEndpoint{
 			Name:  pod.Name,
-			IP:    pod.Status.PodIP,
 			Ready: isPodReady(&pod),
 		})
 	}
