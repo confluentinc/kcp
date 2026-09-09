@@ -372,3 +372,46 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 	var rejected *gateway.GatewayRejectedError
 	assert.ErrorAs(t, err, &rejected, "a GatewayRejectedError must be unwrappable by the caller")
 }
+
+// TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch proves
+// capability resolution happens at most once per process: when Fence runs
+// before Switch in the same TBMActions instance (the normal, same-invocation
+// case), Switch's own call to ensureGatewayCapability must be a no-op.
+func TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch(t *testing.T) {
+	var detectCalls int
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			detectCalls++
+			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+		},
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	require.NoError(t, actions.Fence(context.Background(), config))
+	require.NoError(t, actions.Switch(context.Background(), config))
+
+	assert.Equal(t, 1, detectCalls, "capability must be resolved once per process, not once per gateway-touching transition")
+}
+
+// TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess
+// proves the resume-directly-at-switch case: a fresh TBMActions instance
+// (as a resumed process would construct) still resolves capability itself,
+// rather than silently using the unresolved zero value.
+func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t *testing.T) {
+	var detectCalls int
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			detectCalls++
+			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+		},
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	require.NoError(t, actions.Switch(context.Background(), config))
+
+	assert.Equal(t, 1, detectCalls, "Switch alone (Fence never ran this process) must still resolve capability")
+}

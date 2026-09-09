@@ -77,6 +77,33 @@ func deriveSwitchedCRYAML(config *TBMConfig) ([]byte, error) {
 	return gateway.ReplaceRouteRulesObj(base, config.Route, []byte(config.SwitchoverYAML))
 }
 
+// ensureGatewayCapability resolves gatewayCapability at most once per
+// process: the first of Fence or Switch to run this call actually resolves
+// it (and smoke-tests hot-reload); whichever runs second, if any, in the
+// same process is then a no-op. This fixes a real bug: gateway capability
+// used to be resolved only inside Fence, so a run resuming directly at
+// switch (fence/verify_fence/promote already done in an earlier, separate
+// execute-tbm process) would use the unresolved zero-value capability
+// (VerifyRollout) instead of the live cluster's real one. Mirrors, at
+// smaller scope, migration's own "Execute re-derives [capability]
+// authoritatively" comment on ResolveGatewayCapability — but only when a
+// gateway-touching step is about to run, not unconditionally on every
+// invocation (TBM's single command can legitimately resume at wait_for_lags
+// or promote alone, neither of which touches the gateway).
+func (a *TBMActions) ensureGatewayCapability(ctx context.Context, config *TBMConfig) error {
+	if a.capabilityResolved {
+		return nil
+	}
+	if err := a.resolveGatewayCapability(ctx, config); err != nil {
+		return err
+	}
+	if err := a.verifyHotReloadCapability(ctx, config); err != nil {
+		return err
+	}
+	a.capabilityResolved = true
+	return nil
+}
+
 // resolveGatewayCapability determines how gateway state transitions will be
 // verified on the live cluster, and adopts it for this run. Called once,
 // authoritatively, from Fence itself — unlike migration.ResolveGatewayCapability

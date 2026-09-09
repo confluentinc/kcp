@@ -48,6 +48,15 @@ type TBMActions struct {
 	// Zero value (VerifyRollout, no configId) is the safe default — see
 	// migration.MigrationActions.gatewayCapability.
 	gatewayCapability gateway.Capability
+	// capabilityResolved is true once gatewayCapability has actually been
+	// resolved against the live cluster this process — see
+	// ensureGatewayCapability in gateway.go. Deliberately NOT persisted to
+	// TBMConfig/the state file: a new process always starts false and
+	// re-resolves fresh the first time Fence or Switch needs it, which is
+	// exactly the correctness property this field exists to provide (a run
+	// resuming directly at switch, with fence already done in an earlier
+	// process, must not silently use an unresolved zero-value capability).
+	capabilityResolved bool
 	// rolloutTimeout bounds the gateway-readiness wait in Fence. 0 means no
 	// deadline.
 	rolloutTimeout time.Duration
@@ -301,11 +310,8 @@ func (a *TBMActions) Fence(ctx context.Context, config *TBMConfig) error {
 		return nil
 	}
 
-	if err := a.resolveGatewayCapability(ctx, config); err != nil {
+	if err := a.ensureGatewayCapability(ctx, config); err != nil {
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
-	}
-	if err := a.verifyHotReloadCapability(ctx, config); err != nil {
-		return fmt.Errorf("failed to verify hot-reload capability: %w", err)
 	}
 
 	fencedCrYAML, err := deriveFencedCRYAML(config)
