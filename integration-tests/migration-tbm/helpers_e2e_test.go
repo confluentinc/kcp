@@ -2,10 +2,13 @@
 
 // Package migration_tbm_e2e runs a Topic-Based Migration against a live
 // dynamic-mode Confluent Gateway with hot reload (Minikube profile kcp-e2e-tbm).
-// The system under test is the real reconciliation engine migplan.Reconcile: the
-// tests assert it refuses known-bad batches and migrates good ones, applying the
-// engine's rendered fence/switchover rules to the live gateway CR by hot reload
-// (no pod roll) and promoting cluster-link mirrors between batches.
+// TestSuccessBatchesMigrate and TestExecuteTBMThinPosture drive the real
+// execute-tbm command (internal/services/migration/tbm's FSM): initialize,
+// wait_for_lags, fence, promote and switch are all real; verify_fence is the
+// only remaining noop — see each test's own doc comment for what it can and
+// cannot prove today. TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
+// instead exercise migplan.Reconcile and the gateway hot-reload apply path
+// directly, independent of the FSM.
 //
 // Like the hot-reload suite, this binary runs INSIDE the cluster (see
 // manifests/kcp-runner.yaml): the gateway service dials each pod's /config port
