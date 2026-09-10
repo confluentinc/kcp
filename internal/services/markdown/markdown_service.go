@@ -124,6 +124,45 @@ func (m *Markdown) AddList(items []string) *Markdown {
 	return m
 }
 
+// AddOrderedList adds a numbered list of items (`1. item`), for steps whose order
+// matters.
+func (m *Markdown) AddOrderedList(items []string) *Markdown {
+	for i, item := range items {
+		fmt.Fprintf(&m.content, "%d. %s\n", i+1, item)
+	}
+	m.content.WriteString("\n")
+	return m
+}
+
+// AlertKind is a GitHub-flavored-markdown alert type. Renderers that support alerts
+// (GitHub and most others) color and badge them; the rest fall back to a plain
+// blockquote, so the callout stays readable everywhere and needs no emoji.
+type AlertKind string
+
+const (
+	AlertNote      AlertKind = "NOTE"      // informational
+	AlertTip       AlertKind = "TIP"       // helpful suggestion
+	AlertImportant AlertKind = "IMPORTANT" // action the reader must take
+	AlertWarning   AlertKind = "WARNING"   // needs attention / caution
+	AlertCaution   AlertKind = "CAUTION"   // risk of a negative outcome
+)
+
+// AddAlert adds a GitHub-style alert blockquote (`> [!KIND]`) with the given body.
+// A multi-line body keeps every line inside the blockquote, so lists (`- item`) and
+// paragraphs render within the callout.
+func (m *Markdown) AddAlert(kind AlertKind, body string) *Markdown {
+	fmt.Fprintf(&m.content, "> [!%s]\n", kind)
+	for _, line := range strings.Split(body, "\n") {
+		if line == "" {
+			m.content.WriteString(">\n")
+		} else {
+			fmt.Fprintf(&m.content, "> %s\n", line)
+		}
+	}
+	m.content.WriteString("\n")
+	return m
+}
+
 // AddHorizontalRule adds a horizontal rule
 func (m *Markdown) AddHorizontalRule() *Markdown {
 	m.content.WriteString("---\n\n")
