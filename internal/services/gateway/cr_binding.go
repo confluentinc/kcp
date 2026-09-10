@@ -30,7 +30,15 @@ func ResolveRouteMode(crYAML []byte, routeName string) (RouteMode, error) {
 	if !ok {
 		return 0, fmt.Errorf("route %q is not present in the initial gateway CR's spec.routes", routeName)
 	}
-	_, hasSingular := mapField(route, "streamingDomain")
+	// CFK's Gateway CRD schema defaults a zero-valued streamingDomain object
+	// (name: "", bootstrapServerId: "") onto EVERY route, including
+	// dynamic-mode ones that only ever set streamingDomains (plural) --
+	// confirmed live via `kubectl get gateway ... -o yaml`. A present-but-
+	// unnamed singular binding is that default, not a user-declared static
+	// binding, so it doesn't count toward hasSingular.
+	singularDomain, hasSingularField := mapField(route, "streamingDomain")
+	singularName, _ := stringField(singularDomain, "name")
+	hasSingular := hasSingularField && singularName != ""
 	_, hasPlural := sliceField(route, "streamingDomains")
 	switch {
 	case hasSingular && hasPlural:
