@@ -8,12 +8,12 @@ plan as structured data), and `plan-inputs.yaml` (the answers file you edit in p
 and re-run to refine the plan). The examples below show all three across the main
 ways the command is run.
 
-- **[`filled/`](filled/)** — scan **plus** a fully answered `plan-inputs.yaml`. The
+- **[`filled/`](filled/plan.md)** — scan **plus** a fully answered `plan-inputs.yaml`. The
   plan is ready: 2 clusters ready to migrate, 1 routed to a specialist.
-- **[`first-run/`](first-run/)** — a scan with **no answers yet** (the seed
+- **[`first-run/`](first-run/plan.md)** — a scan with **no answers yet** (the seed
   `plan-inputs.yaml` from a first run). All 3 clusters need answers; the plan lists
   what to fill in.
-- **[`no-scan/`](no-scan/)** — **no `--state-file`**, run as a pure questionnaire.
+- **[`no-scan/`](no-scan/plan.md)** — **no `--state-file`**, run as a pure questionnaire.
   The planner starts a single placeholder cluster, so every fact becomes a question.
 
 ## How these stay current
