@@ -1,0 +1,194 @@
+# plan-inputs.yaml: your answers for `kcp report plan`.
+# Re-running reads this file and writes it back; your answers are preserved (it only adds any new follow-up questions).
+# Fill the lines marked `# not set`, then re-run (adjust the paths to where your files are):
+#   kcp report plan --state-file demo-scan.json --plan-inputs plan-inputs.yaml
+# All required questions answered. The plan is ready.
+#
+# all_clusters:  every question. Your answers here apply to every cluster.
+# clusters:      each cluster's scanned values; uncomment a line to override just that cluster.
+# Tags:  `# not set` = required, fill it   ·   `# default` = built-in default   ·   `# from scan` = detected (auto-updates).
+
+all_clusters:
+  # ── Required: set these ──
+  # How widely is this cluster used?
+  #   one-app → One team, one application
+  #   few-teams → A few teams or applications
+  #   shared-fabric → Shared fabric across many apps and teams
+  # use_case_breadth:   # answered per cluster below · [one-app | few-teams | shared-fabric]
+  # Do you need to move your existing data?
+  #   true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.
+  #   false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire
+  move_existing_data: true
+  # Is private networking a hard requirement?
+  #   (Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted.)
+  #   true → Yes, private networking is required
+  #   false → No, public endpoints are fine
+  # private_networking_required:   # answered per cluster below · [true | false]
+  # How do you connect to your cluster today?
+  #   same-vpc → Same VPC
+  #   peered → Peered
+  #   privatelink → PrivateLink
+  #   other → Other or more than one
+  # connects_today:   # answered per cluster below · [same-vpc | peered | privatelink | other]
+  # Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?
+  #   (For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network.)
+  #   true → Yes
+  #   false → No
+  # cc_egress_required:   # answered per cluster below · [true | false]
+  # What Schema Registry does your source environment use?
+  #   none → None: Schemaless, or schemas kept in app code
+  #   glue → AWS Glue Schema Registry
+  #   cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later
+  #   cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1
+  #   other → Other, not sure
+  # schema_registry:   # answered per cluster below · [none | glue | cp-enterprise-7.1 | cp-community | other]
+  # What do you want to do with your schemas on Confluent Cloud?
+  #   migrate → Migrate my existing schemas
+  #   fresh → Start fresh on Confluent Cloud
+  #   schemaless → Stay schemaless
+  schema_strategy: migrate
+  # Can your Schema Registry reach Confluent Cloud to sync schemas (outbound, port 443)?
+  #   yes → Yes
+  #   no → No
+  #   unsure → Not sure
+  # schema_reachable_to_cc:   # answered per cluster below · [yes | no | unsure]
+  # What is your target downtime window at cutover?
+  #   window-all → A scheduled window, all at once
+  #   window-sequential → A scheduled window, one service at a time
+  #   minutes → Minutes per service
+  #   seconds → Seconds per service
+  #   zero → Zero downtime
+  # downtime_tolerance:   # answered per cluster below · [window-all | window-sequential | minutes | seconds | zero]
+  # ── Optional: a default applies; uncomment a line to change it ──
+  # Does your workload exceed any of the following: 250 megabytes/sec ingress, 750 megabytes/sec egress, or 15,000 requests/sec?
+  #   (If you exceed any of these, we'll plan for an Enterprise cluster instead of Standard. Enterprise runs on private networking.)
+  #   true → Yes
+  #   false → No  (default)
+  # exceeds_standard_limits: false   # default
+  # Which cloud should your new Confluent Cloud cluster run on?
+  #   (This is independent of your source cloud. Confluent supports cross-cloud migrations.)
+  #   aws → AWS  (default)
+  #   azure → Azure
+  #   gcp → GCP
+  # target_cloud: aws   # default
+  # How much coordination will it take to cut over all your clients and apps at the same time?
+  #   easy → Low (few clients, one team)
+  #   moderate → Moderate  (default)
+  #   hard → High (many clients and teams)
+  # client_coordination: moderate   # default
+  # Do any applications use exactly-once transactions and/or Kafka Streams?
+  #   eos → Exactly-once or transactions
+  #   kstreams → Kafka Streams
+  # eos_streams: []   # default
+  # Does your workload exceed any of the following: 1,920 megabytes/sec ingress, 5,760 megabytes/sec egress, or 240,000 requests/sec?
+  #   true → Yes
+  #   false → No  (default)
+  # exceeds_enterprise_limits: false   # default
+  # Do your consumers need historical data available after migration?
+  #   (Only relevant when there's history to carry (tiered storage or long retention) and you're moving existing data.)
+  #   true → Yes  (default)
+  #   false → No
+  # consumer_history_requirement: true   # default
+  # ── Derived from your source auth per cluster; set one here to force it on ALL clusters ──
+  # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
+  #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+  #   api-keys → API keys (SASL/PLAIN)
+  #   oauth → OAuth
+  #   mtls → mTLS
+  # target_auth:   # derived from source auth · [api-keys | oauth | mtls]
+  # ── Scan facts: detected per cluster below; set one here to force it on ALL clusters ──
+  # How your Kafka clients authenticate today
+  #   iam → AWS IAM
+  #   scram → SASL/SCRAM
+  #   mtls → TLS client certificates (mTLS)
+  #   unauth → None / plaintext
+  # source_auth:   # from scan · [iam | scram | mtls | unauth]
+  # Do you run self-managed Kafka Connect?
+  #   true → Yes
+  #   false → No
+  # self_managed_connectors:   # from scan · [true | false]
+
+clusters:
+  clickstream:   # region: us-east-1 · partitions (scanned): 1,500
+    # ── From the scan: auto-updates on re-scan; uncomment a line to override just this cluster ──
+    # source_auth: [iam, scram]   # from scan
+    topics_have_custom_settings: false   # you set this
+    msk_connect_present: false   # you set this
+    self_managed_connectors: false   # you set this
+    # target_auth: [api-keys]   # derived from source auth
+    # ── Detected from your scan (read-only; the scan is authoritative) ──
+    # source_cluster_type = provisioned
+    # kafka_version = 3.0-plus
+    # tiered_storage = false
+    # Scan wrong, or planning a change (e.g. a Kafka upgrade)? Add the key with a
+    # value to override (e.g. `kafka_version: older`); options are in the Questions list.
+    # ── Override an all_clusters answer here (uncomment) ──
+    use_case_breadth: few-teams   # override for this cluster
+    # move_existing_data:   # override for this cluster · [true | false]
+    private_networking_required: true   # override for this cluster
+    connects_today: same-vpc   # override for this cluster
+    cc_egress_required: false   # override for this cluster
+    schema_registry: cp-enterprise-7.1   # override for this cluster
+    # schema_strategy:   # override for this cluster · [migrate | fresh | schemaless]
+    schema_reachable_to_cc: yes   # override for this cluster
+    downtime_tolerance: window-all   # override for this cluster
+    # exceeds_standard_limits:   # override for this cluster · [true | false]
+    # target_cloud:   # override for this cluster · [aws | azure | gcp]
+    # client_coordination:   # override for this cluster · [easy | moderate | hard]
+    # eos_streams:   # override for this cluster · [eos | kstreams]
+  orders-prod:   # region: us-east-1 · partitions (scanned): 6,000
+    # ── From the scan: auto-updates on re-scan; uncomment a line to override just this cluster ──
+    # source_auth: [scram]   # from scan
+    topics_have_custom_settings: false   # you set this
+    msk_connect_present: false   # you set this
+    self_managed_connectors: false   # you set this
+    # target_auth: [api-keys]   # derived from source auth
+    # ── Detected from your scan (read-only; the scan is authoritative) ──
+    # source_cluster_type = provisioned
+    # kafka_version = 3.0-plus
+    # tiered_storage = true
+    # Scan wrong, or planning a change (e.g. a Kafka upgrade)? Add the key with a
+    # value to override (e.g. `kafka_version: older`); options are in the Questions list.
+    # ── Override an all_clusters answer here (uncomment) ──
+    use_case_breadth: shared-fabric   # override for this cluster
+    # move_existing_data:   # override for this cluster · [true | false]
+    private_networking_required: true   # override for this cluster
+    connects_today: same-vpc   # override for this cluster
+    cc_egress_required: false   # override for this cluster
+    schema_registry: cp-enterprise-7.1   # override for this cluster
+    # schema_strategy:   # override for this cluster · [migrate | fresh | schemaless]
+    schema_reachable_to_cc: yes   # override for this cluster
+    downtime_tolerance: window-all   # override for this cluster
+    # exceeds_enterprise_limits:   # override for this cluster · [true | false]
+    # target_cloud:   # override for this cluster · [aws | azure | gcp]
+    # client_coordination:   # override for this cluster · [easy | moderate | hard]
+    # eos_streams:   # override for this cluster · [eos | kstreams]
+    # consumer_history_requirement:   # override for this cluster · [true | false]
+  logs-ingest:   # region: us-west-2 · partitions (scanned): 400
+    # ── From the scan: auto-updates on re-scan; uncomment a line to override just this cluster ──
+    # source_auth: [scram]   # from scan
+    topics_have_custom_settings: false   # you set this
+    msk_connect_present: false   # you set this
+    self_managed_connectors: false   # you set this
+    # target_auth: [api-keys]   # derived from source auth
+    # ── Detected from your scan (read-only; the scan is authoritative) ──
+    # source_cluster_type = provisioned
+    # kafka_version = 2.4-2.9
+    # tiered_storage = false
+    # Scan wrong, or planning a change (e.g. a Kafka upgrade)? Add the key with a
+    # value to override (e.g. `kafka_version: older`); options are in the Questions list.
+    # ── Override an all_clusters answer here (uncomment) ──
+    use_case_breadth: few-teams   # override for this cluster
+    # move_existing_data:   # override for this cluster · [true | false]
+    private_networking_required: false   # override for this cluster
+    schema_registry: glue   # override for this cluster
+    # schema_strategy:   # override for this cluster · [migrate | fresh | schemaless]
+    # exceeds_standard_limits:   # override for this cluster · [true | false]
+    # target_cloud:   # override for this cluster · [aws | azure | gcp]
+    # client_coordination:   # override for this cluster · [easy | moderate | hard]
+    # eos_streams:   # override for this cluster · [eos | kstreams]
+    applications:   # per-app overrides; unset app answers inherit the cluster
+      analytics-worker:
+        # (inherits the cluster's answers)
+      ingest-api:
+        # (inherits the cluster's answers)
