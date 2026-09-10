@@ -317,7 +317,7 @@ func TestExecuteTBM_FlagSurfaceIncludesRolloutHotReloadAndDetectUnroutedProducer
 	cmd := NewMigrationExecuteTBMCmd()
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
-	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file", "lag-threshold", "rollout-timeout", "hot-reload-timeout", "detect-unrouted-producers-duration"}, names)
+	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file", "lag-threshold", "rollout-timeout", "hot-reload-timeout", "detect-unrouted-producers-duration", "dry-run"}, names)
 }
 
 func TestExecuteTBM_RequiresMigrationYaml(t *testing.T) {
@@ -575,4 +575,97 @@ func TestExecuteTBM_ClusterLinkServiceBuildError_FailsRun(t *testing.T) {
 	err := cmd.Execute()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "cluster-link REST endpoint unreachable")
+}
+
+// --- --dry-run ---
+
+// unreachableOffsetProviders, unreachableGatewayService, and
+// unreachableClusterLinkService fail the test if invoked: --dry-run must
+// never build any of the orchestrator-only services, since reconcile builds
+// its own connections directly from the manifest.
+func unreachableOffsetProviders(t *testing.T) offsetProvidersFunc {
+	return func(*manifest.GatewayMigration) (offset.Provider, offset.Provider, func() error, error) {
+		t.Fatal("buildOffsets must not be called under --dry-run")
+		return nil, nil, nil, nil
+	}
+}
+
+func unreachableGatewayService(t *testing.T) gatewayServiceFunc {
+	return func(*manifest.GatewayMigration) (gateway.Service, error) {
+		t.Fatal("buildGateway must not be called under --dry-run")
+		return nil, nil
+	}
+}
+
+func unreachableClusterLinkService(t *testing.T) clusterLinkServiceFunc {
+	return func(*manifest.GatewayMigration) (clusterlink.Service, error) {
+		t.Fatal("buildClusterLink must not be called under --dry-run")
+		return nil, nil
+	}
+}
+
+func runExecuteTBMDryRun(t *testing.T, reconcile reconcileFunc, args ...string) (string, error) {
+	t.Helper()
+	cmd := newExecuteTBMCmd(reconcile, unreachableOffsetProviders(t), unreachableGatewayService(t), unreachableClusterLinkService(t))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(append([]string{"--dry-run"}, args...))
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestExecuteTBM_DryRun_PrintsReportAndTouchesNoStateOrFSM(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-dry-run", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	out, err := runExecuteTBMDryRun(t, stubReconcileWithArtifacts, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "dry-run complete")
+	assert.Contains(t, out, "tbm-batch-dry-run")
+	assert.NotContains(t, out, "TBM migration completed")
+	_, statErr := os.Stat(stateFile)
+	assert.True(t, os.IsNotExist(statErr), "dry-run must not create the TBM state file")
+}
+
+func TestExecuteTBM_DryRun_RefusedPlan_FailsRunAndTouchesNoState(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-dry-run-refused", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	_, err := runExecuteTBMDryRun(t, stubReconcileRefused, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "reconcile plan refused")
+	_, statErr := os.Stat(stateFile)
+	assert.True(t, os.IsNotExist(statErr), "a refused dry-run must not create the TBM state file")
+}
+
+func TestExecuteTBM_DryRun_ReconcileIOErrorFailsRun(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-dry-run-ioerror", "lkc-abc123")
+
+	failing := func(context.Context, *manifest.GatewayMigration, ...migplan.Option) (*migplan.Result, error) {
+		return nil, fmt.Errorf("source cluster unreachable")
+	}
+	_, err := runExecuteTBMDryRun(t, failing, "--migration-yaml", manifestPath)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "source cluster unreachable")
+}
+
+func TestExecuteTBM_DryRun_IgnoresOrchestratorOnlyFlags(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-dry-run-flags", "lkc-abc123")
+
+	// --lag-threshold -1 would fail policy validation on a real run
+	// (TestExecuteTBM_LagThresholdOverride_NegativeValueRejected); under
+	// --dry-run the override is never applied or validated, since it only
+	// affects the orchestrator's actions.
+	out, err := runExecuteTBMDryRun(t, stubReconcile, "--migration-yaml", manifestPath, "--lag-threshold", "-1")
+
+	require.NoError(t, err)
+	assert.Contains(t, out, "dry-run complete")
 }

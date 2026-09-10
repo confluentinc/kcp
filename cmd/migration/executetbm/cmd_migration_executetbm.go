@@ -27,6 +27,7 @@ var (
 	rolloutTimeoutOverride                  time.Duration
 	hotReloadTimeoutOverride                time.Duration
 	detectUnroutedProducersDurationOverride time.Duration
+	dryRun                                  bool
 )
 
 // reconcileFunc is the engine entry point the command calls to produce the
@@ -111,7 +112,14 @@ manifest for the SAME name is refused outright, with no override — a genuinely
 migration needs a new metadata.name.
 
 --tbm-state-file is optional; when omitted it defaults to "<metadata.name>-state.json"
-in the current directory.`
+in the current directory.
+
+--dry-run runs only the reconcile step (the live Gateway CR + source/target/
+cluster-link read that produces the plan and its console report) and then
+exits — it never touches the TBM state file and never runs any FSM
+transition. --lag-threshold, --rollout-timeout, --hot-reload-timeout, and
+--detect-unrouted-producers-duration only affect FSM transitions, so they
+have no effect under --dry-run.`
 
 // NewMigrationExecuteTBMCmd builds the `execute-tbm` command bound to the real
 // reconciliation engine, real Kafka connections, and a real gateway service.
@@ -146,6 +154,7 @@ func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc,
 	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Max wait for the operator to report the gateway Ready during fence (and, later, switchover). 0 means no deadline.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. 0 uses the built-in 90s budget; never unbounded.")
 	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: monitoring window verify_fence uses to detect a producer bypassing the gateway. 0 disables the check.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; touch no TBM state file and run no FSM transition.")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 
@@ -156,6 +165,24 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
+	}
+
+	// --dry-run stops here: the reconcile step is self-contained (it opens its
+	// own live Gateway CR + source/target/cluster-link reads directly from the
+	// manifest, independent of buildOffsets/buildGateway/buildClusterLink,
+	// which only the orchestrator's actions need) and renders its own report
+	// to the command's writer. Nothing past this point — the TBM state file,
+	// the orchestrator, any FSM transition — runs under --dry-run.
+	if dryRun {
+		res, err := reconcile(cmd.Context(), g, migplan.WithOutput(cmd.OutOrStdout()))
+		if err != nil {
+			return fmt.Errorf("failed to produce the reconcile plan: %w", err)
+		}
+		if res.Refused {
+			return fmt.Errorf("dry-run: reconcile plan refused (see reasons above)")
+		}
+		cmd.Printf("✅ dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
+		return nil
 	}
 
 	if tbmStateFile == "" {
