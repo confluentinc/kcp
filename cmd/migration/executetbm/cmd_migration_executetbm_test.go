@@ -328,7 +328,6 @@ func TestExecuteTBM_RequiresMigrationYaml(t *testing.T) {
 }
 
 func TestExecuteTBM_TbmStateFileOptional_DefaultsToMetadataNameAndResumes(t *testing.T) {
-	withFastTBMTransitions(t)
 	dir := t.TempDir()
 	t.Chdir(dir)
 	manifestPath := writeManifest(t, dir, "tbm-batch-default", "lkc-abc123")
