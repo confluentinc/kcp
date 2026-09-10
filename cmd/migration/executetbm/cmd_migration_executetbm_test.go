@@ -323,11 +323,11 @@ func withFastTBMTransitions(t *testing.T) {
 
 // --- flag surface ---
 
-func TestExecuteTBM_FlagSurfaceIncludesRolloutAndHotReloadTimeouts(t *testing.T) {
+func TestExecuteTBM_FlagSurfaceIncludesRolloutHotReloadAndDetectUnroutedProducersTimeouts(t *testing.T) {
 	cmd := NewMigrationExecuteTBMCmd()
 	var names []string
 	cmd.Flags().VisitAll(func(f *pflag.Flag) { names = append(names, f.Name) })
-	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file", "lag-threshold", "rollout-timeout", "hot-reload-timeout"}, names)
+	assert.ElementsMatch(t, []string{"migration-yaml", "tbm-state-file", "lag-threshold", "rollout-timeout", "hot-reload-timeout", "detect-unrouted-producers-duration"}, names)
 }
 
 func TestExecuteTBM_RequiresMigrationYaml(t *testing.T) {

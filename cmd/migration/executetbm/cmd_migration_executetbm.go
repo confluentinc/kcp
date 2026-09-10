@@ -21,11 +21,12 @@ import (
 )
 
 var (
-	manifestFile             string
-	tbmStateFile             string
-	lagThresholdOverride     int
-	rolloutTimeoutOverride   time.Duration
-	hotReloadTimeoutOverride time.Duration
+	manifestFile                            string
+	tbmStateFile                            string
+	lagThresholdOverride                    int
+	rolloutTimeoutOverride                  time.Duration
+	hotReloadTimeoutOverride                time.Duration
+	detectUnroutedProducersDurationOverride time.Duration
 )
 
 // reconcileFunc is the engine entry point the command calls to produce the
@@ -142,6 +143,7 @@ func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc,
 	cmd.Flags().IntVar(&lagThresholdOverride, "lag-threshold", 0, "Override spec.defaultPolicies.lagThreshold: total replication lag (sum of all partition lags) tolerated before proceeding.")
 	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Max wait for the operator to report the gateway Ready during fence (and, later, switchover). 0 means no deadline.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. 0 uses the built-in 90s budget; never unbounded.")
+	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: monitoring window verify_fence uses to detect a producer bypassing the gateway. 0 disables the check.")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
 	_ = cmd.MarkFlagRequired("tbm-state-file")
@@ -162,6 +164,9 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	// legitimate manifest value — is not confused with "unset".
 	if cmd.Flags().Changed("lag-threshold") {
 		g.Spec.DefaultPolicies.LagThreshold = lagThresholdOverride
+	}
+	if cmd.Flags().Changed("detect-unrouted-producers-duration") {
+		g.Spec.DefaultPolicies.DetectUnroutedProducersDuration = detectUnroutedProducersDurationOverride
 	}
 	if errs := g.Spec.DefaultPolicies.Validate(); len(errs) > 0 {
 		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
