@@ -52,10 +52,13 @@ const (
 	EventPromote     = "promote"
 	EventSwitch      = "switch"
 
-	// EventAbortFence rolls back to lags_ok when verify_fence detects unrouted
-	// producers; the transition itself unfences the gateway (see onAbortFence
-	// in orchestrator.go). TBM's equivalent of AAO's EventAbortFence, minus the
-	// offset_sync_paused source state TBM has no equivalent stage for.
+	// EventAbortFence rolls back to initialized when verify_fence detects
+	// unrouted producers; the transition itself unfences the gateway (see
+	// onAbortFence in orchestrator.go). Rolling back to initialized — not
+	// lags_ok — means a resumed run re-checks lag for real via wait_for_lags
+	// before re-fencing, true parity with AAO's own EventAbortFence, whose
+	// only difference here is the single source state (TBM has no
+	// offset_sync_paused stage).
 	EventAbortFence = "abort_fence"
 	// EventExpireVerification demotes fence_verified to fenced at FSM
 	// bootstrap: the verification is a point-in-time attestation and never

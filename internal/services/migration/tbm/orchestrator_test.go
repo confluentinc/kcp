@@ -165,7 +165,7 @@ func TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced(t
 	assert.Empty(t, config.Topics)
 }
 
-func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackToLagsOk(t *testing.T) {
+func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackToInitialized(t *testing.T) {
 	var applyCount int
 	var lastAppliedYAML []byte
 	var call int32
@@ -207,7 +207,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
-	assert.Equal(t, StateLagsOk, config.CurrentState, "a detected rollback must leave the batch at lags_ok, not fenced")
+	assert.Equal(t, StateInitialized, config.CurrentState, "a detected rollback must leave the batch at initialized, so a resume re-checks lag for real before re-fencing")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence rollback's unfence applies once more")
 
 	// testGatewayYAML's migration-route already carries a rules.routing block
@@ -234,7 +234,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	require.NoError(t, err)
 	persisted, err := loaded.GetMigrationById("test-tbm-rollback")
 	require.NoError(t, err)
-	assert.Equal(t, StateLagsOk, persisted.CurrentState, "the rolled-back state must be persisted")
+	assert.Equal(t, StateInitialized, persisted.CurrentState, "the rolled-back state must be persisted")
 }
 
 func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {

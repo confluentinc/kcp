@@ -215,8 +215,8 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
 	require.Lenf(t, parsed.Migrations, 1, "state file must record exactly one migration")
-	require.Equal(t, "lags_ok", parsed.Migrations[0].CurrentState,
-		"abort_fence must roll the FSM back to lags_ok, not leave it at fenced/fence_verified")
+	require.Equal(t, "initialized", parsed.Migrations[0].CurrentState,
+		"abort_fence must roll the FSM back to initialized (not lags_ok), so a resume re-checks lag for real before re-fencing")
 
 	require.Falsef(t, routeSwitchedToTargetForAll(t, h, []string{topic}),
 		"a rolled-back batch must never reach switch — %s must not be routed to the target domain", topic)

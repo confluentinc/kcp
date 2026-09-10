@@ -14,7 +14,7 @@ import (
 
 // ErrUnroutedProducers is returned when verify_fence detects a producer
 // bypassing the gateway. The orchestrator catches this to trigger an
-// EventAbortFence transition back to lags_ok. Mirrors migration.ErrUnroutedProducers.
+// EventAbortFence transition back to initialized. Mirrors migration.ErrUnroutedProducers.
 var ErrUnroutedProducers = errors.New("unrouted producers detected")
 
 // WorkflowStep defines a single step in the TBM workflow: pure FSM topology
@@ -28,8 +28,8 @@ type WorkflowStep struct {
 
 // canonicalWorkflow is the single ordered source of truth for the TBM
 // workflow — the forward transitions the FSM walks on Execute. abort_fence
-// (fenced → lags_ok) is a compensating rollback, not a forward step, so it is
-// not listed here — see EventAbortFence and handleStepFailure.
+// (fenced → initialized) is a compensating rollback, not a forward step, so
+// it is not listed here — see EventAbortFence and handleStepFailure.
 var canonicalWorkflow = []WorkflowStep{
 	{EventInitialize, "initializing TBM migration", StateUninitialized, StateInitialized},
 	{EventWaitForLags, "checking replication lags", StateInitialized, StateLagsOk},
@@ -118,7 +118,7 @@ func NewTBMOrchestrator(
 	events = append(events, fsm.EventDesc{
 		Name: EventAbortFence,
 		Src:  []string{StateFenced},
-		Dst:  StateLagsOk,
+		Dst:  StateInitialized,
 	})
 	events = append(events, fsm.EventDesc{
 		Name: EventExpireVerification,
@@ -229,7 +229,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 
 	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
-		slog.Error("❌ failed to roll back to lags_ok", "error", err)
+		slog.Error("❌ failed to roll back to initialized", "error", err)
 		return stepFailure
 	}
 
