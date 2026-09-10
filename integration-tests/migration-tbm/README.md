@@ -1,12 +1,23 @@
 # TBM hot-reload E2E
 
 Runs a real Topic-Based Migration over a **live dynamic-mode Confluent Gateway
-with hot reload** and a real cluster link. The system under test is the
-reconciliation engine `migplan.Reconcile`: the suite asserts it **refuses**
-batches on known-bad conditions and **succeeds** several batches, applying the
-engine's rendered fence/switchover route edits to the live gateway via hot reload
-(no pod roll) and promoting cluster-link mirrors between batches. `execute-tbm` is
-asserted only thinly (its FSM is currently a noop).
+with hot reload** and a real cluster link. `TestSuccessBatchesMigrate` and
+`TestExecuteTBMThinPosture` drive the real `execute-tbm` command
+(`internal/services/migration/tbm`'s FSM): `initialize`, `wait_for_lags`,
+`fence`, `verify_fence`, `promote` and `switch` are all real — these two
+tests' manifests leave `detectUnroutedProducersDuration` at its default (0,
+disabled), so they only exercise `verify_fence`'s detection-disabled skip
+path. `TestUnroutedProducerDetection` is this suite's live coverage of
+`verify_fence`'s unrouted-producer detection and its `abort_fence` rollback:
+it produces directly to a source topic while the batch is fenced and asserts
+execute-tbm's own narrative shows detection firing and the gateway being
+unfenced. `TestHaltScenarios` and `TestHarnessAppliesSwitchoverWithoutRoll`
+instead exercise the reconciliation engine `migplan.Reconcile` and the gateway
+hot-reload apply path directly, independent of the FSM: the suite asserts the
+engine **refuses** batches on known-bad conditions and **succeeds** several
+batches, applying its rendered fence/switchover route edits to the live
+gateway via hot reload (no pod roll) and promoting cluster-link mirrors
+between batches.
 
 The suite runs on its own Minikube profile (`kcp-e2e-tbm`), separate from
 `make test-migration` and `make test-migration-hot-reload`.

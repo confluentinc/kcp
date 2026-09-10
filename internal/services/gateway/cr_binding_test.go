@@ -110,3 +110,18 @@ func TestResolveRouteMode_Both(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "migration-route")
 }
+
+// TestResolveRouteMode_PluralWithDefaultedEmptySingular — CFK's Gateway CRD
+// schema defaults a zero-valued streamingDomain (name: "", bootstrapServerId:
+// "") onto every route, including dynamic-mode ones that only ever set
+// streamingDomains -- confirmed live via `kubectl get gateway ... -o yaml`.
+// That default must not be mistaken for a genuine singular binding, or every
+// real dynamic-mode route would wrongly hit the "both" error above.
+func TestResolveRouteMode_PluralWithDefaultedEmptySingular(t *testing.T) {
+	cr := strings.Replace(crWithDomains,
+		"      streamingDomain:\n        name: source-domain\n        bootstrapServerId: SOURCE_ID\n",
+		"      streamingDomain:\n        name: \"\"\n        bootstrapServerId: \"\"\n      streamingDomains:\n        - name: other\n          bootstrapServerId: X\n", 1)
+	mode, err := ResolveRouteMode([]byte(cr), "migration-route")
+	require.NoError(t, err)
+	assert.Equal(t, RouteModeDynamic, mode)
+}
