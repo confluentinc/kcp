@@ -86,7 +86,7 @@ func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) 
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
-This command is a scaffold for the FSM-driven TBM workflow: initialize validates the already-computed
+initialize validates the already-computed
 reconcile plan (see the migplan package) and captures its promote topic list
 plus fence/switchover artifacts for later transitions to consume.
 wait_for_lags polls source and destination Kafka offsets for those topics
