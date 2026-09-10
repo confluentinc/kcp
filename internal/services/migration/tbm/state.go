@@ -1,10 +1,10 @@
 // Package tbm implements the FSM-driven orchestrator for the Topic-Batch
-// Migration (TBM) workflow. initialize, wait_for_lags, fence, verify_fence,
-// promote and switch are all real — see workflow.go — plus a compensating
-// abort_fence rollback when verify_fence detects a producer bypassing the
-// fence. It mirrors the shape of internal/services/migration (state.go /
-// orchestrator.go / workflow.go / reporter.go) but is a fully separate
-// package: no domain logic or types are shared between the two.
+// Migration (TBM) workflow. Every transition — initialize, wait_for_lags,
+// fence, verify_fence, promote, and switch — is real, including the
+// abort_fence rollback verify_fence triggers on detecting an unrouted
+// producer. It mirrors the shape of internal/services/migration
+// (state.go / orchestrator.go / workflow.go / reporter.go) but is a fully
+// separate package: no domain logic or types are shared between the two.
 package tbm
 
 import (

@@ -14,17 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// setFastTransitions shrinks TransitionSimulatedDelay to 1ms for the duration
-// of a test, restoring the original value on cleanup. Used by every test in
-// this package that calls an action or drives the orchestrator through a real
-// transition, so the suite runs in milliseconds rather than minutes.
-func setFastTransitions(t *testing.T) {
-	t.Helper()
-	original := TransitionSimulatedDelay
-	TransitionSimulatedDelay = time.Millisecond
-	t.Cleanup(func() { TransitionSimulatedDelay = original })
-}
-
 // mockOffsetProvider implements offset.Provider using function fields for
 // test control, mirroring migration's own (unexported, package-private)
 // mockOffsetProvider — this is TBM's own copy, not shared, since the two
@@ -75,7 +64,6 @@ func zeroLagBatch(topics []string, off int64) map[string]map[int32]int64 {
 }
 
 func TestTBMActions_EachMethodSucceeds(t *testing.T) {
-	setFastTransitions(t)
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
 	}

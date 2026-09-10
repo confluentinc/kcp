@@ -311,16 +311,6 @@ func runExecuteTBM(t *testing.T, args ...string) (string, error) {
 	return out.String(), err
 }
 
-// withFastTBMTransitions shrinks the tbm package's simulated transition delay
-// for the duration of a test, restoring it on cleanup — otherwise a full
-// six-step run takes many real seconds.
-func withFastTBMTransitions(t *testing.T) {
-	t.Helper()
-	original := tbm.TransitionSimulatedDelay
-	tbm.TransitionSimulatedDelay = time.Millisecond
-	t.Cleanup(func() { tbm.TransitionSimulatedDelay = original })
-}
-
 // --- flag surface ---
 
 func TestExecuteTBM_FlagSurfaceIncludesRolloutHotReloadAndDetectUnroutedProducersTimeouts(t *testing.T) {
@@ -390,7 +380,6 @@ func TestResolveTBMConfig_HashDiffers_RefusesUnconditionally(t *testing.T) {
 // --- end-to-end through the command ---
 
 func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
-	withFastTBMTransitions(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-2", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
@@ -412,7 +401,6 @@ func TestExecuteTBM_SameManifest_ResumesAndThenShortCircuits(t *testing.T) {
 }
 
 func TestExecuteTBM_AlreadyComplete_SkipsReconcile(t *testing.T) {
-	withFastTBMTransitions(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-skip", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
@@ -462,7 +450,6 @@ func TestExecuteTBM_TbmStateFileUnstatable_FailsInsteadOfTreatingAsFresh(t *test
 }
 
 func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
-	withFastTBMTransitions(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-3", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
@@ -486,7 +473,6 @@ func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 }
 
 func TestExecuteTBM_ReconcilePlanArtifacts_PersistToStateFile(t *testing.T) {
-	withFastTBMTransitions(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-artifacts", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
@@ -526,7 +512,6 @@ func TestExecuteTBM_RefusedReconcilePlan_FailsRunAndLeavesStateUninitialized(t *
 // --- --lag-threshold override ---
 
 func TestExecuteTBM_LagThresholdOverride_AppliesToEffectivePolicy(t *testing.T) {
-	withFastTBMTransitions(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-lag-override", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")
@@ -560,7 +545,6 @@ func TestExecuteTBM_LagThresholdOverride_NegativeValueRejected(t *testing.T) {
 // --- cluster-link service injection ---
 
 func TestExecuteTBM_ClusterLinkServiceBuildError_FailsRun(t *testing.T) {
-	withFastTBMTransitions(t)
 	dir := t.TempDir()
 	manifestPath := writeManifest(t, dir, "tbm-batch-cl-error", "lkc-abc123")
 	stateFile := filepath.Join(dir, "tbm-state.json")

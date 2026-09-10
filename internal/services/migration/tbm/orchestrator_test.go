@@ -15,7 +15,6 @@ import (
 
 func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *TBMConfig, string) {
 	t.Helper()
-	setFastTransitions(t)
 
 	config := &TBMConfig{
 		MigrationId:   "test-tbm-1",

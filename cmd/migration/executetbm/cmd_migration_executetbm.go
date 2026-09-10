@@ -86,8 +86,7 @@ func buildGatewayService(g *manifest.GatewayMigration) (gateway.Service, error) 
 
 const executeTBMLong = `Execute a Topic-Batch Migration (TBM) run.
 
-This is a scaffold: only verify_fence remains noop (it sleeps to simulate real
-execution timing, then logs). initialize validates the already-computed
+This command is a scaffold for the FSM-driven TBM workflow: initialize validates the already-computed
 reconcile plan (see the migplan package) and captures its promote topic list
 plus fence/switchover artifacts for later transitions to consume.
 wait_for_lags polls source and destination Kafka offsets for those topics
@@ -125,10 +124,10 @@ func NewMigrationExecuteTBMCmd() *cobra.Command {
 func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "execute-tbm",
-		Short:         "Execute a Topic-Batch Migration run (scaffold: verify_fence still noop)",
+		Short:         "Execute a Topic-Batch Migration run",
 		Long:          executeTBMLong,
 		Example:       `  kcp migration execute-tbm --migration-yaml gateway-migration.yaml --tbm-state-file tbm-state.json`,
-		Hidden:        true, // scaffold: only verify_fence is still noop; kept in the binary but not user-facing (cascades to --help and gen-docs)
+		Hidden:        true, // not yet user-facing (cascades to --help and gen-docs) — see the TBM design proposal for the broader command's graduation criteria
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Args:          cobra.NoArgs,

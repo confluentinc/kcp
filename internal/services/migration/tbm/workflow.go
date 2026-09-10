@@ -24,18 +24,9 @@ import (
 // cross-imports (see the tbm package doc comment in state.go).
 const maxConsecutiveSweepFailures = 3
 
-// TransitionSimulatedDelay was how long each still-noop action slept to
-// simulate real execution timing. No transition calls simulateTransition any
-// more — every FSM transition (Initialize, WaitForLags, Fence, VerifyFence,
-// Promote, Switch) is now real — but the variable and simulateTransition
-// itself are left in place until Task 5's cleanup removes them, since
-// setFastTransitions (workflow_test.go) and newTestOrchestrator
-// (orchestrator_test.go) still reference them.
-var TransitionSimulatedDelay = 7 * time.Second
-
-// TBMActions holds the business logic behind each FSM transition. Initialize,
-// WaitForLags, Fence, VerifyFence, Promote and Switch are all real now — none
-// of the FSM's forward transitions remain a noop.
+// TBMActions holds the business logic behind each FSM transition. Every
+// transition — Initialize, WaitForLags, Fence, VerifyFence, Promote, and
+// Switch — is real.
 type TBMActions struct {
 	reporter          *reporter
 	sourceOffset      offset.Provider
@@ -110,21 +101,6 @@ func (a *TBMActions) SetHotReloadTimeout(d time.Duration) {
 // A value of 0 (the default) means unlimited.
 func (a *TBMActions) SetPromoteBatchSize(n int) {
 	a.promoteBatchSize = n
-}
-
-// simulateTransition was the shared noop body verify_fence called before it
-// became real. Unused now — kept until Task 5's cleanup removes it alongside
-// TransitionSimulatedDelay and setFastTransitions.
-//
-//nolint:unused // scheduled for removal alongside TransitionSimulatedDelay
-func (a *TBMActions) simulateTransition(ctx context.Context, doneMsg string) error {
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(TransitionSimulatedDelay):
-	}
-	a.reporter.success("%s", doneMsg)
-	return nil
 }
 
 // Initialize runs the initialize transition: validates the reconcile plan
