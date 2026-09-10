@@ -17,25 +17,27 @@ import (
 )
 
 var (
-	stateFile  string
-	planInputs string
-	outputDir  string
-	output     string
-	configPath string
+	stateFile     string
+	planInputs    string
+	outputDir     string
+	output        string
+	filterCluster string
+	filterRegion  string
 )
 
 func NewReportPlanCmd() *cobra.Command {
 	reportPlanCmd := &cobra.Command{
 		Use:   "plan",
-		Short: "Generate a Migration Plan to migrate to Confluent Cloud (Experimental / WIP)",
-		Long: "Generate a Migration Plan to migrate to Confluent Cloud from a kcp state file produced by `kcp scan` (Experimental / WIP). " +
-			"The plan provides technical recommendations on target cluster sizing, networking, authentication, and migration approach for each source cluster, and surfaces open questions to capture your intent so the generated plan fits your use case.\n\n" +
-			"**Output:** writes `plan.md` and/or `plan.json` to `--output-dir` (default `./plan-output`).",
-		Example: `  # Minimal: state file in, plan.md/plan.json out
+		Short: "Generate a Migration Plan to migrate to Confluent Cloud",
+		Long: "Generate a Migration Plan to migrate to Confluent Cloud from a kcp state file produced by `kcp scan`.\n\n" +
+			"For each scanned cluster the plan recommends a target cluster type, sizing, networking, authentication, and data-migration approach, and lists the questions a scan can't answer.\n\n" +
+			"**How it works:** kcp auto-answers everything it can from the scan. What it can't derive is written to `plan-inputs.yaml` (in the current directory) — fleet-wide questions once under `defaults:`, per-cluster facts under each cluster, each answer a short, stable token with the full wording in the comment above it. Edit that file in place and re-run; kcp reads your answers back, folds them into the plan, and rewrites the file with any follow-ups revealed — so it converges over a couple of passes.\n\n" +
+			"**Output:** `plan.md` and `plan.json` go to `--output-dir` (default `./plan-output`); `plan-inputs.yaml` is read from and written back to `--plan-inputs` (default `./plan-inputs.yaml`) — edit it in place between runs.",
+		Example: `  # First pass: state file in; writes ./plan-inputs.yaml + plan.md/plan.json
   kcp report plan --state-file kcp-state.json
 
-  # With your overrides
-  kcp report plan --state-file kcp-state.json --plan-inputs plan-inputs.yaml
+  # Edit ./plan-inputs.yaml, then re-run — same command refines the plan
+  kcp report plan --state-file kcp-state.json
 
   # JSON only
   kcp report plan --state-file kcp-state.json --output json`,
@@ -47,37 +49,26 @@ func NewReportPlanCmd() *cobra.Command {
 
 	groups := map[*pflag.FlagSet]string{}
 
-	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
-	requiredFlags.SortFlags = false
-	requiredFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan).")
-	reportPlanCmd.Flags().AddFlagSet(requiredFlags)
-	groups[requiredFlags] = "Required Flags"
-
 	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
 	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&planInputs, "plan-inputs", "", "Path to plan-inputs.yaml with your overrides. All fields optional.")
+	optionalFlags.StringVar(&stateFile, "state-file", "", "Path to your kcp-state.json file (produced by kcp scan). Optional: omit it to run as a pure questionnaire — the planner starts one cluster with nothing derived, so every fact becomes a question in plan-inputs.yaml.")
+	optionalFlags.StringVar(&planInputs, "plan-inputs", "./plan-inputs.yaml", "Path to plan-inputs.yaml — read from and written back to in place. kcp seeds it on the first run; edit it and re-run to refine the plan. All answers optional.")
 	optionalFlags.StringVar(&outputDir, "output-dir", "./plan-output", "Directory to write plan.md / plan.json into.")
 	optionalFlags.StringVar(&output, "output", "md,json", "Comma-separated output formats: md, json, or both.")
-	optionalFlags.StringVar(&configPath, "config", "", "Path to a plan-config.yaml override. Embedded config is the default.")
+	optionalFlags.StringVar(&filterCluster, "cluster-id", "", "[Optional] Plan only this cluster (name or ARN). Default: every cluster in the scan.")
+	optionalFlags.StringVar(&filterRegion, "region", "", "[Optional] Plan only clusters in this region. Default: every region in the scan.")
 	reportPlanCmd.Flags().AddFlagSet(optionalFlags)
-	_ = reportPlanCmd.Flags().MarkHidden("config")
 	groups[optionalFlags] = "Optional Flags"
 
 	reportPlanCmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
-		flagOrder := []*pflag.FlagSet{requiredFlags, optionalFlags}
-		groupNames := []string{"Required Flags", "Optional Flags"}
-		for i, fs := range flagOrder {
-			usage := fs.FlagUsages()
-			if usage != "" {
-				fmt.Printf("%s:\n%s\n", groupNames[i], usage)
-			}
+		if usage := optionalFlags.FlagUsages(); usage != "" {
+			fmt.Printf("Flags:\n%s\n", usage)
 		}
 		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 		return nil
 	})
 
-	_ = reportPlanCmd.MarkFlagRequired("state-file")
 	return reportPlanCmd
 }
 
@@ -86,35 +77,64 @@ func preRunReportPlan(cmd *cobra.Command, _ []string) error {
 }
 
 func runReportPlan(_ *cobra.Command, _ []string) error {
-	if _, err := os.Stat(stateFile); os.IsNotExist(err) {
-		return fmt.Errorf("state file does not exist: %s", stateFile)
-	}
-	state, err := loadState(stateFile)
-	if err != nil {
-		return fmt.Errorf("load --state-file %s: %w", stateFile, err)
-	}
-
-	cfg, err := plan.LoadPlanConfig(configPath)
-	if err != nil {
-		if configPath != "" {
-			return fmt.Errorf("load --config %s: %w", configPath, err)
+	// No --state-file: run as a pure questionnaire against one synthetic cluster,
+	// so every fact that a scan would derive surfaces as a question instead.
+	scanless := stateFile == ""
+	var processed report.ProcessedState
+	if scanless {
+		processed = plan.ScanlessState()
+	} else {
+		if _, err := os.Stat(stateFile); os.IsNotExist(err) {
+			return fmt.Errorf("state file does not exist: %s", stateFile)
 		}
-		return fmt.Errorf("load embedded plan-config: %w", err)
+		state, err := loadState(stateFile)
+		if err != nil {
+			return fmt.Errorf("load --state-file %s: %w", stateFile, err)
+		}
+		rs := report.NewReportService()
+		processed = rs.ProcessState(*state)
 	}
 
-	rawInputs, err := plan.LoadPlanInputs(planInputs)
+	// Read the customer's existing answers if the file is present. A missing file
+	// is the normal first-run case — proceed with no declared inputs and seed one.
+	loadPath := planInputs
+	if _, statErr := os.Stat(planInputs); os.IsNotExist(statErr) {
+		loadPath = ""
+	}
+	declared, inputErrs, err := plan.LoadDeclaredInputs(loadPath)
 	if err != nil {
 		return fmt.Errorf("load --plan-inputs %s: %w", planInputs, err)
 	}
-	inputs := plan.ResolvePlanInputs(rawInputs, cfg)
+	// Misspelled keys, invalid values, or misspelled cluster names would otherwise be
+	// silently ignored, leaving the user with a plan that looks answered but isn't. So
+	// collect every such mistake and fail before writing anything, rather than emit a
+	// plan built on dropped answers. Cluster-name checks need a real scan to compare
+	// against (skip them in questionnaire mode).
+	if !scanless {
+		inputErrs = append(inputErrs, plan.ValidateDeclaredClusters(declared, processed)...)
+	}
+	if len(inputErrs) > 0 {
+		return fmt.Errorf("plan-inputs %s has %d problem(s) to fix (no plan was written):\n  - %s",
+			planInputs, len(inputErrs), strings.Join(inputErrs, "\n  - "))
+	}
 
-	rs := report.NewReportService()
-	processed := rs.ProcessState(*state)
+	// Optional fleet filter — never prompts; unset means the whole scan.
+	if filterCluster != "" || filterRegion != "" {
+		filtered, matched := plan.FilterState(processed, filterCluster, filterRegion)
+		if matched == 0 {
+			return fmt.Errorf("no clusters match --cluster-id %q / --region %q; check the names against your scan", filterCluster, filterRegion)
+		}
+		processed = filtered
+	}
 
-	svc := plan.NewPlanService(cfg, nil)
-	p, err := svc.Build(processed, inputs, stateFile)
-	if err != nil {
-		return fmt.Errorf("build plan: %w", err)
+	ep := plan.BuildEnginePlan(processed, declared, stateFile, nil)
+	if scanless {
+		ep.Header.Source = "Questionnaire (no scan file)"
+	}
+	// Remaining warnings are advisories, not user mistakes (for example Apache Kafka
+	// clusters this command can't plan yet), so they inform but don't block.
+	for _, w := range ep.Warnings {
+		fmt.Println("warning: plan-inputs:", w)
 	}
 
 	writeMD, writeJSON, err := parseOutputFormats(output)
@@ -126,28 +146,84 @@ func runReportPlan(_ *cobra.Command, _ []string) error {
 	}
 
 	if writeMD {
-		data, err := plan.RenderMarkdown(p, cfg)
-		if err != nil {
-			return err
-		}
+		md := plan.RenderEnginePlanMarkdown(ep)
 		path := filepath.Join(outputDir, "plan.md")
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(md), 0o644); err != nil {
 			return fmt.Errorf("write plan.md: %w", err)
 		}
 		fmt.Println("wrote", path)
 	}
 	if writeJSON {
-		data, err := plan.RenderJSON(p)
+		js, err := plan.RenderEnginePlanJSON(ep)
 		if err != nil {
 			return err
 		}
 		path := filepath.Join(outputDir, "plan.json")
-		if err := os.WriteFile(path, data, 0o644); err != nil {
+		if err := os.WriteFile(path, []byte(js), 0o644); err != nil {
 			return fmt.Errorf("write plan.json: %w", err)
 		}
 		fmt.Println("wrote", path)
 	}
+
+	// Rewrite plan-inputs.yaml in place: the customer's current answers, the open
+	// questions (optionals pre-filled), and the scan-detected facts, plus any
+	// follow-ups this run revealed. Written to the same path it was read from
+	// (--plan-inputs) so editing and re-running never loses answers — the write is
+	// atomic (temp + rename) so an interrupted run can't leave a truncated file.
+	if err := atomicWrite(planInputs, []byte(plan.RenderPlanInputsYAML(ep))); err != nil {
+		return fmt.Errorf("write plan-inputs.yaml: %w", err)
+	}
+	fmt.Println("wrote", planInputs)
+
+	printNextSteps(ep, planInputs)
 	return nil
+}
+
+// printNextSteps prints the fleet summary and the exact command to re-run after
+// editing plan-inputs.yaml, so the converge loop is obvious from the terminal.
+func printNextSteps(ep *plan.EnginePlan, planInputsPath string) {
+	s := ep.Summary
+	fmt.Printf("\n%d migration plan(s): %d ready, %d need answers, %d need a specialist. %d required / %d optional question(s) open.\n",
+		s.Clusters, s.Ready, s.NeedsAnswers, s.NeedsSpecialist, s.OpenRequired, s.OpenOptional)
+	if s.OpenRequired > 0 || s.OpenOptional > 0 {
+		fmt.Printf("Next: edit %s, then re-run:\n  kcp report plan", planInputsPath)
+		// Echo --state-file only when one was given (omitted in questionnaire mode).
+		if stateFile != "" {
+			fmt.Printf(" --state-file %s", stateFile)
+		}
+		// Only echo --plan-inputs when it isn't the default (the plain command
+		// already reads ./plan-inputs.yaml).
+		if planInputsPath != "./plan-inputs.yaml" {
+			fmt.Printf(" --plan-inputs %s", planInputsPath)
+		}
+		fmt.Println()
+	} else {
+		fmt.Println("All required questions are answered. Review plan-output/plan.md.")
+	}
+}
+
+// atomicWrite writes data to a temp file in the destination's directory and
+// renames it over the target, so a reader never sees a partial file and an
+// interrupted write leaves the previous version intact.
+func atomicWrite(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".plan-inputs-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName) // no-op after a successful rename
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }
 
 // loadState reads the state file and tolerates two pre-0.7 layouts the
