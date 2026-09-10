@@ -108,7 +108,10 @@ The migration is identified by metadata.name in the GatewayMigration manifest at
 run for a given name creates a fresh entry in the TBM state file; a later run with the
 SAME manifest content resumes from the last completed step. A later run with a CHANGED
 manifest for the SAME name is refused outright, with no override — a genuinely new
-migration needs a new metadata.name.`
+migration needs a new metadata.name.
+
+--tbm-state-file is optional; when omitted it defaults to "<metadata.name>-state.json"
+in the current directory.`
 
 // NewMigrationExecuteTBMCmd builds the `execute-tbm` command bound to the real
 // reconciliation engine, real Kafka connections, and a real gateway service.
@@ -138,13 +141,12 @@ func newExecuteTBMCmd(reconcile reconcileFunc, buildOffsets offsetProvidersFunc,
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().StringVar(&tbmStateFile, "tbm-state-file", "", "Path to the TBM state file. Created if it doesn't exist.")
+	cmd.Flags().StringVar(&tbmStateFile, "tbm-state-file", "", "Path to the TBM state file. Created if it doesn't exist. Defaults to \"<metadata.name>-state.json\" in the current directory when omitted.")
 	cmd.Flags().IntVar(&lagThresholdOverride, "lag-threshold", 0, "Override spec.defaultPolicies.lagThreshold: total replication lag (sum of all partition lags) tolerated before proceeding.")
 	cmd.Flags().DurationVar(&rolloutTimeoutOverride, "rollout-timeout", 0, "Max wait for the operator to report the gateway Ready during fence (and, later, switchover). 0 means no deadline.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. 0 uses the built-in 90s budget; never unbounded.")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
-	_ = cmd.MarkFlagRequired("tbm-state-file")
 
 	return cmd
 }
@@ -153,6 +155,10 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
+	}
+
+	if tbmStateFile == "" {
+		tbmStateFile = g.Metadata.Name + "-state.json"
 	}
 
 	// Command-line override replaces the manifest's lagThreshold default for

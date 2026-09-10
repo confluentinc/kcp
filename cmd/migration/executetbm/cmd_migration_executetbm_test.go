@@ -337,12 +337,27 @@ func TestExecuteTBM_RequiresMigrationYaml(t *testing.T) {
 	assert.Contains(t, err.Error(), "migration-yaml")
 }
 
-func TestExecuteTBM_RequiresTbmStateFile(t *testing.T) {
+func TestExecuteTBM_TbmStateFileOptional_DefaultsToMetadataNameAndResumes(t *testing.T) {
+	withFastTBMTransitions(t)
 	dir := t.TempDir()
-	manifestPath := writeManifest(t, dir, "tbm-batch-0", "lkc-abc123")
-	_, err := runExecuteTBM(t, "--migration-yaml", manifestPath)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "tbm-state-file")
+	t.Chdir(dir)
+	manifestPath := writeManifest(t, dir, "tbm-batch-default", "lkc-abc123")
+
+	_, err := runExecuteTBMStubbed(t, "--migration-yaml", manifestPath)
+	require.NoError(t, err)
+
+	expectedStateFile := filepath.Join(dir, "tbm-batch-default-state.json")
+	state, err := tbm.NewTBMStateFromFile(expectedStateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("tbm-batch-default")
+	require.NoError(t, err)
+	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState)
+
+	// Second run without --tbm-state-file resolves the same default path and
+	// short-circuits, since it's already complete.
+	out, err := runExecuteTBMStubbed(t, "--migration-yaml", manifestPath)
+	require.NoError(t, err)
+	assert.Contains(t, out, "already complete")
 }
 
 // --- resolveTBMConfig: identity & drift, unit-level (no Execute involved) ---
