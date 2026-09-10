@@ -15,9 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// execTBMTimeout covers initialize/wait_for_lags/fence/promote/switch (all
-// real) plus verify_fence, the one remaining noop step, which sleeps
-// TransitionSimulatedDelay (7s).
+// execTBMTimeout covers every real transition: initialize, wait_for_lags,
+// fence, verify_fence, promote, and switch.
 const execTBMTimeout = 5 * time.Minute
 
 // kcpBinary is the in-pod kcp binary run.sh builds and cp's into the runner.

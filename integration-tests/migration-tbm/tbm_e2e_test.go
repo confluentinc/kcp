@@ -22,8 +22,12 @@ import (
 // suite proves, since TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
 // only exercise migplan.Reconcile and the harness's own apply path directly.
 //
-// verify_fence is the only remaining noop; fence, promote and switch are all
-// real, so this proves the whole real migration path: fence genuinely mutates
+// Every transition is real, including verify_fence — though no manifest in
+// this suite sets a nonzero detectUnroutedProducersDuration, so verify_fence
+// only exercises its detection-disabled skip path here, not the unrouted-
+// producer detection or abort_fence rollback (unit-tested at the package
+// level in internal/services/migration/tbm, not covered live by this suite).
+// This still proves the whole real migration path: fence genuinely mutates
 // the live gateway CR (proven via the command's own stdout narrative, not by
 // re-reading the CR — switch legitimately clears the fence in the same
 // synchronous run, before any external observer could see it; see the

@@ -3,10 +3,12 @@
 // Package migration_tbm_e2e runs a Topic-Based Migration against a live
 // dynamic-mode Confluent Gateway with hot reload (Minikube profile kcp-e2e-tbm).
 // TestSuccessBatchesMigrate and TestExecuteTBMThinPosture drive the real
-// execute-tbm command (internal/services/migration/tbm's FSM): initialize,
-// wait_for_lags, fence, promote and switch are all real; verify_fence is the
-// only remaining noop — see each test's own doc comment for what it can and
-// cannot prove today. TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
+// execute-tbm command (internal/services/migration/tbm's FSM): every
+// transition — initialize, wait_for_lags, fence, verify_fence, promote and
+// switch — is real; see each test's own doc comment for what it can and
+// cannot prove today (verify_fence's live-cluster coverage here is limited to
+// its detection-disabled skip path — see TestSuccessBatchesMigrate).
+// TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
 // instead exercise migplan.Reconcile and the gateway hot-reload apply path
 // directly, independent of the FSM.
 //
