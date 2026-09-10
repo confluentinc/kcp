@@ -237,9 +237,11 @@ func (s *K8sService) DetectCapability(ctx context.Context, namespace, gatewayNam
 		return Capability{}, fmt.Errorf("failed to create clientset: %w", err)
 	}
 
+	pods := clientset.CoreV1().Pods(namespace)
 	probe := func(ctx context.Context, endpoint GatewayPodEndpoint) (ProbeResult, error) {
-		return probeGatewayConfig(ctx, newConfigProbeClient(configProbeRequestTimeout),
-			gatewayConfigAddr(endpoint.IP, port))
+		ctx, cancel := context.WithTimeout(ctx, configProbeRequestTimeout)
+		defer cancel()
+		return probeGatewayConfig(ctx, pods, endpoint.Name, port)
 	}
 
 	return detectCapability(ctx, dynamicClient, clientset, probe, namespace, gatewayName, fencedYAML, switchoverYAML)
@@ -453,9 +455,10 @@ func configEndpointServed(ctx context.Context, clientset kubernetes.Interface, p
 	}
 
 	// Reached only when no pod was reachable and at least one failed outright.
-	// Counts only — pod names and IPs belong in the log, not the error.
+	// Counts only — pod names belong in the log, not the error.
 	return false, fmt.Errorf("could not reach the config endpoint on any of the %d ready gateway pods "+
-		"(this environment may not route pod IPs from where kcp is running): %w", ready, firstFailure)
+		"through the API server's pods/proxy subresource (check the kcp identity has \"get\" on pods/proxy): %w",
+		ready, firstFailure)
 }
 
 // crdSupportsConfigID reports whether any served version of the Gateway CRD
