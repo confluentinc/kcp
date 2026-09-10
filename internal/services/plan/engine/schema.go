@@ -58,7 +58,7 @@ type SchemaResult struct {
 func isGovCloud(p Profile) bool { return p.TargetIsGovCloud == "Yes" }
 
 func schemaDecision(p Profile) SchemaResult {
-	sr, strat := p.SourceSRType, p.SchemaStrategy
+	sr, strategy := p.SourceSRType, p.SchemaStrategy
 	gov := isGovCloud(p)
 
 	recreateFresh := func() SchemaResult {
@@ -94,7 +94,7 @@ func schemaDecision(p Profile) SchemaResult {
 
 	// 1. No source registry.
 	if sr == sourceSRNone || sr == "" {
-		switch strat {
+		switch strategy {
 		case schemaStrategySchemaless:
 			return SchemaResult{
 				Value:        "Schemaless",
@@ -117,10 +117,10 @@ func schemaDecision(p Profile) SchemaResult {
 
 	// 2. AWS Glue Schema Registry.
 	if sr == sourceSRGlue {
-		if strat == schemaStrategyFresh {
+		if strategy == schemaStrategyFresh {
 			return recreateFresh()
 		}
-		if strat == schemaStrategySchemaless {
+		if strategy == schemaStrategySchemaless {
 			return SchemaResult{
 				Value:        "Schemaless (mismatch)",
 				Kind:         SchemaKindSchemaless,
@@ -128,7 +128,7 @@ func schemaDecision(p Profile) SchemaResult {
 				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
 			}
 		}
-		if strat == schemaStrategyMigrate {
+		if strategy == schemaStrategyMigrate {
 			return SchemaResult{
 				Value:  "Glue bulk re-registration",
 				Kind:   SchemaKindGlueBulk,
@@ -145,10 +145,10 @@ func schemaDecision(p Profile) SchemaResult {
 
 	// 3. Confluent SR — CP Enterprise 7.1+.
 	if sr == sourceSRCPEnterprise7 {
-		if strat == schemaStrategyFresh {
+		if strategy == schemaStrategyFresh {
 			return recreateFresh()
 		}
-		if strat == schemaStrategySchemaless {
+		if strategy == schemaStrategySchemaless {
 			return SchemaResult{
 				Value:        "Schemaless (mismatch)",
 				Kind:         SchemaKindSchemaless,
@@ -156,7 +156,7 @@ func schemaDecision(p Profile) SchemaResult {
 				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
 			}
 		}
-		if strat == schemaStrategyMigrate {
+		if strategy == schemaStrategyMigrate {
 			if p.SourceSROutboundReachableToCC == "Yes" && !gov {
 				return SchemaResult{
 					Value:  "Schema Linking",
@@ -176,10 +176,10 @@ func schemaDecision(p Profile) SchemaResult {
 
 	// 4. Confluent SR — Community or below 7.1.
 	if sr == sourceSRCPCommunity {
-		if strat == schemaStrategyFresh {
+		if strategy == schemaStrategyFresh {
 			return recreateFresh()
 		}
-		if strat == schemaStrategySchemaless {
+		if strategy == schemaStrategySchemaless {
 			return SchemaResult{
 				Value:        "Schemaless (mismatch)",
 				Kind:         SchemaKindSchemaless,
@@ -187,7 +187,7 @@ func schemaDecision(p Profile) SchemaResult {
 				OpenQuestion: "Confirm you really want to drop your existing schemas and run schemaless.",
 			}
 		}
-		if strat == schemaStrategyMigrate {
+		if strategy == schemaStrategyMigrate {
 			return replicator(basis(srcOr(p.SchemaAnswered, "Confluent Community Schema Registry"), ans("migrate your schemas")) + "the schema exporter is Confluent Platform Enterprise 7.1+ only, so Replicator is the method for carrying your existing schemas across. It replicates your `_schemas` topic into Confluent Cloud Schema Registry in IMPORT mode and preserves your schema IDs. Replicator is also a Confluent Platform Enterprise component, so it needs a license that Community edition does not include. Contact us and we'll help. Alternatively, starting fresh on Confluent Cloud Schema Registry needs no license at all.")
 		}
 		return notSet("Tell us what you want to do with your schemas on Confluent Cloud to get a recommendation.")

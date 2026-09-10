@@ -272,13 +272,13 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 	}
 
 	var style, reason, how string
-	switch {
-	case mapped == styleZeroDowntime:
+	switch mapped {
+	case styleZeroDowntime:
 		gatewayMediated = true
 		style = gatewayLicenseNeeded("Gateway cutover (no downtime)")
 		reason = "Zero-downtime cutover needs the Confluent Gateway. The Gateway needs a Confluent Cloud Gateway license and Confluent for Kubernetes, the operator that runs it in your cluster. Talk to us and we will work out what that takes for you."
 		how = gwHow
-	case mapped == styleGatewayRequired:
+	case styleGatewayRequired:
 		gatewayMediated = true
 		style = gatewayLicenseNeeded(mapped)
 		reason = "A seconds-per-service Stop-Restart-Repeat cutover runs through the Confluent Gateway. The Gateway needs a Confluent Cloud Gateway license and Confluent for Kubernetes, the operator that runs it in your cluster. Talk to us and we will work out what that takes for you."

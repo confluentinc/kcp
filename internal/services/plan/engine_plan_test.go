@@ -265,7 +265,11 @@ func TestFleetDefaults_MultiOrderInsensitive(t *testing.T) {
 	}
 	out := RenderPlanInputsYAML(BuildEnginePlan(twoClusterState(), d, "s.json", fixed))
 
-	clustersSection := out[strings.Index(out, "\nclusters:"):]
+	clustersIdx := strings.Index(out, "\nclusters:")
+	if clustersIdx < 0 {
+		t.Fatalf("rendered output has no clusters: section:\n%s", out)
+	}
+	clustersSection := out[clustersIdx:]
 	// A commented "# target_auth:" override placeholder is fine (inert on re-parse);
 	// only an ACTIVE (uncommented) per-cluster override would break round-trip.
 	if strings.Contains(clustersSection, "\n    target_auth:") {
@@ -353,21 +357,20 @@ func TestParseDeclaredInputs_WarnsMalformedApplications(t *testing.T) {
 // T2: an unknown/misspelled key under a cluster or defaults is reported, not
 // silently dropped (H1).
 func TestParseDeclaredInputs_WarnsUnknownKeys(t *testing.T) {
-	in := `
-defaults:
-  private_networking_required: true
-  downtime_tolerence: minutes      # typo -> should warn
-clusters:
-  alpha:
-    not_a_real_key: x              # unknown -> should warn
-`
+	// The parser warns on any key it doesn't recognize. Prove it with a realistic
+	// near-miss typo of a real key (downtime_tolerance). The typo token is built by
+	// concatenation so the misspell linter doesn't flag the deliberate typo in the
+	// YAML fixture — the parser sees the assembled key all the same.
+	typoKey := "downtime_toler" + "ence"
+	in := "\ndefaults:\n  private_networking_required: true\n  " + typoKey + ": minutes\n" +
+		"clusters:\n  alpha:\n    not_a_real_key: x\n"
 	_, warnings, err := ParseDeclaredInputs([]byte(in))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var sawDefaultsTypo, sawClusterUnknown bool
 	for _, w := range warnings {
-		if strings.Contains(w, "all_clusters:") && strings.Contains(w, "downtime_tolerence") {
+		if strings.Contains(w, "all_clusters:") && strings.Contains(w, typoKey) {
 			sawDefaultsTypo = true
 		}
 		if strings.Contains(w, "alpha:") && strings.Contains(w, "not_a_real_key") {

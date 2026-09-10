@@ -1,0 +1,2111 @@
+{
+  "header": {
+    "source": "Amazon MSK",
+    "state_file_path": "demo-scan.json",
+    "kcp_version": "0.0.0-localdev",
+    "generated_at": "<example>",
+    "state_generated_at": "2026-09-04T12:00:00Z",
+    "plan_schema_version": "2"
+  },
+  "summary": {
+    "clusters": 3,
+    "regions": 2,
+    "ready": 2,
+    "needs_answers": 0,
+    "needs_specialist": 1,
+    "open_required": 0,
+    "open_optional": 10
+  },
+  "clusters": [
+    {
+      "cluster_id": "clickstream",
+      "arn": "arn:aws:kafka:us-east-1:123456789012:cluster/clickstream/b2",
+      "key": "clickstream",
+      "region": "us-east-1",
+      "migration_infra": {
+        "kind": "cluster_link",
+        "type": 2,
+        "label": "Private source with external outbound cluster link (SASL/SCRAM)",
+        "rationale": "Your source is private and its brokers use SASL/SCRAM, so the cluster link reaches it privately, over an external outbound endpoint, using your source's SASL/SCRAM credentials.",
+        "cc_type": "commercial",
+        "alternative": "a jump cluster in your VPC (SASL/SCRAM), if Confluent Cloud can't reach your brokers over an egress endpoint",
+        "alternative_type": 4
+      },
+      "is_serverless": false,
+      "topic_count": 180,
+      "broker_count": 6,
+      "source_auths": [
+        "iam",
+        "scram"
+      ],
+      "scan_facts": [
+        {
+          "name": "msk_cluster_type",
+          "value": "Provisioned"
+        },
+        {
+          "name": "kafka_version",
+          "value": "3.0 or newer"
+        },
+        {
+          "name": "source_auth_types",
+          "value": "AWS IAM, SASL/SCRAM"
+        },
+        {
+          "name": "partitions",
+          "value": "1500"
+        },
+        {
+          "name": "tiered_storage",
+          "value": "no"
+        },
+        {
+          "name": "msk_connect",
+          "value": "No"
+        },
+        {
+          "name": "self_managed_connectors",
+          "value": "No"
+        }
+      ],
+      "questions": [
+        {
+          "key": "use_case_breadth",
+          "prompt": "How widely is this cluster used?",
+          "legend": [
+            "one-app → One team, one application",
+            "few-teams → A few teams or applications",
+            "shared-fabric → Shared fabric across many apps and teams"
+          ],
+          "tokens": [
+            "one-app",
+            "few-teams",
+            "shared-fabric"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "few-teams",
+          "source": "cluster"
+        },
+        {
+          "key": "move_existing_data",
+          "prompt": "Do you need to move your existing data?",
+          "legend": [
+            "true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.",
+            "false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "true",
+          "source": "all_clusters"
+        },
+        {
+          "key": "private_networking_required",
+          "prompt": "Is private networking a hard requirement?",
+          "hint": "Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted.",
+          "legend": [
+            "true → Yes, private networking is required",
+            "false → No, public endpoints are fine"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "true",
+          "source": "cluster"
+        },
+        {
+          "key": "connects_today",
+          "prompt": "How do you connect to your cluster today?",
+          "legend": [
+            "same-vpc → Same VPC",
+            "peered → Peered",
+            "privatelink → PrivateLink",
+            "other → Other or more than one"
+          ],
+          "tokens": [
+            "same-vpc",
+            "peered",
+            "privatelink",
+            "other"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "same-vpc",
+          "source": "cluster"
+        },
+        {
+          "key": "cc_egress_required",
+          "prompt": "Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?",
+          "hint": "For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "false",
+          "source": "cluster"
+        },
+        {
+          "key": "schema_registry",
+          "prompt": "What Schema Registry does your source environment use?",
+          "legend": [
+            "none → None: Schemaless, or schemas kept in app code",
+            "glue → AWS Glue Schema Registry",
+            "cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later",
+            "cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1",
+            "other → Other, not sure"
+          ],
+          "tokens": [
+            "none",
+            "glue",
+            "cp-enterprise-7.1",
+            "cp-community",
+            "other"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "cp-enterprise-7.1",
+          "source": "cluster"
+        },
+        {
+          "key": "schema_strategy",
+          "prompt": "What do you want to do with your schemas on Confluent Cloud?",
+          "legend": [
+            "migrate → Migrate my existing schemas",
+            "fresh → Start fresh on Confluent Cloud",
+            "schemaless → Stay schemaless"
+          ],
+          "tokens": [
+            "migrate",
+            "fresh",
+            "schemaless"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "migrate",
+          "source": "all_clusters"
+        },
+        {
+          "key": "schema_reachable_to_cc",
+          "prompt": "Can your Schema Registry reach Confluent Cloud to sync schemas (outbound, port 443)?",
+          "legend": [
+            "yes → Yes",
+            "no → No",
+            "unsure → Not sure"
+          ],
+          "tokens": [
+            "yes",
+            "no",
+            "unsure"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "yes",
+          "source": "cluster"
+        },
+        {
+          "key": "downtime_tolerance",
+          "prompt": "What is your target downtime window at cutover?",
+          "legend": [
+            "window-all → A scheduled window, all at once",
+            "window-sequential → A scheduled window, one service at a time",
+            "minutes → Minutes per service",
+            "seconds → Seconds per service",
+            "zero → Zero downtime"
+          ],
+          "tokens": [
+            "window-all",
+            "window-sequential",
+            "minutes",
+            "seconds",
+            "zero"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "window-all",
+          "source": "cluster"
+        },
+        {
+          "key": "exceeds_standard_limits",
+          "prompt": "Does your workload exceed any of the following: 250 megabytes/sec ingress, 750 megabytes/sec egress, or 15,000 requests/sec?",
+          "hint": "If you exceed any of these, we'll plan for an Enterprise cluster instead of Standard. Enterprise runs on private networking.",
+          "legend": [
+            "true → Yes",
+            "false → No  (default)"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "false",
+          "source": "built_in_default"
+        },
+        {
+          "key": "target_cloud",
+          "prompt": "Which cloud should your new Confluent Cloud cluster run on?",
+          "hint": "This is independent of your source cloud. Confluent supports cross-cloud migrations.",
+          "legend": [
+            "aws → AWS  (default)",
+            "azure → Azure",
+            "gcp → GCP"
+          ],
+          "tokens": [
+            "aws",
+            "azure",
+            "gcp"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "aws",
+          "source": "built_in_default"
+        },
+        {
+          "key": "target_auth",
+          "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
+          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "legend": [
+            "api-keys → API keys (SASL/PLAIN)",
+            "oauth → OAuth",
+            "mtls → mTLS"
+          ],
+          "tokens": [
+            "api-keys",
+            "oauth",
+            "mtls"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "",
+          "multi": true
+        },
+        {
+          "key": "client_coordination",
+          "prompt": "How much coordination will it take to cut over all your clients and apps at the same time?",
+          "legend": [
+            "easy → Low (few clients, one team)",
+            "moderate → Moderate  (default)",
+            "hard → High (many clients and teams)"
+          ],
+          "tokens": [
+            "easy",
+            "moderate",
+            "hard"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "moderate",
+          "source": "built_in_default"
+        },
+        {
+          "key": "eos_streams",
+          "prompt": "Do any applications use exactly-once transactions and/or Kafka Streams?",
+          "legend": [
+            "eos → Exactly-once or transactions",
+            "kstreams → Kafka Streams"
+          ],
+          "tokens": [
+            "eos",
+            "kstreams"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "",
+          "multi": true
+        },
+        {
+          "key": "source_cluster_type",
+          "prompt": "Source cluster type",
+          "legend": [
+            "provisioned → Provisioned",
+            "serverless → Serverless"
+          ],
+          "tokens": [
+            "provisioned",
+            "serverless"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "provisioned",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "kafka_version",
+          "prompt": "What Kafka version does your source cluster run?",
+          "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
+          "legend": [
+            "3.0-plus → 3.0 or newer",
+            "2.4-2.9 → 2.4-2.9",
+            "older → Older than 2.4"
+          ],
+          "tokens": [
+            "3.0-plus",
+            "2.4-2.9",
+            "older"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "3.0-plus",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "source_auth",
+          "prompt": "How your Kafka clients authenticate today",
+          "legend": [
+            "iam → AWS IAM",
+            "scram → SASL/SCRAM",
+            "mtls → TLS client certificates (mTLS)",
+            "unauth → None / plaintext"
+          ],
+          "tokens": [
+            "iam",
+            "scram",
+            "mtls",
+            "unauth"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "iam, scram",
+          "value_list": [
+            "iam",
+            "scram"
+          ],
+          "multi": true,
+          "scan": true,
+          "source": "scan"
+        },
+        {
+          "key": "tiered_storage",
+          "prompt": "Do your topics use tiered storage?",
+          "hint": "Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "topics_have_custom_settings",
+          "prompt": "Do any of your topics use non-default settings?",
+          "hint": "This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "read_only": true,
+          "source": "override"
+        },
+        {
+          "key": "msk_connect_present",
+          "prompt": "Do you use MSK Connect?",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "read_only": true,
+          "source": "override"
+        },
+        {
+          "key": "self_managed_connectors",
+          "prompt": "Do you run self-managed Kafka Connect?",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "source": "override"
+        }
+      ],
+      "observations": [
+        {
+          "severity": "warn",
+          "title": "No throughput metrics scanned",
+          "detail": "Sizing is based on the partition count alone and is a lower bound. Run `kcp scan metrics` to size from real ingress/egress before you commit: a higher measured throughput can raise the recommended cluster type, and a move to Dedicated changes the private-networking design (PNI is not available on Dedicated)."
+        }
+      ],
+      "plan": {
+        "cluster_type": {
+          "value": "Enterprise",
+          "tier": "Enterprise",
+          "dedicated": false,
+          "crossed_to_private": false,
+          "self_serve": true,
+          "zone_config": "Multi-zone",
+          "zone_reason": "Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.",
+          "reason": "Based on your answer (private networking required), an Enterprise cluster fits: private networking starts at Enterprise, and nothing else you told us pushes it up to Dedicated.",
+          "why": "Private networking is a hard requirement you set, and that starts at Enterprise.",
+          "assessment_reason": "Your answers point to Enterprise: private networking is a hard requirement for you, and that starts at Enterprise. Nothing else you told us pushes it up to Dedicated.",
+          "action": "Create an Enterprise cluster",
+          "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html"
+        },
+        "sizing": {
+          "value": "Autoscales, nothing to provision",
+          "band": 1,
+          "partitions_dim": {
+            "display": "1,500",
+            "band": 1
+          },
+          "missing_partitions": false,
+          "reason": "Based on your scan (1,500 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.",
+          "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html",
+          "signals": [
+            {
+              "name": "partition count",
+              "value": "1,500 partitions",
+              "measured": true,
+              "driver": true
+            },
+            {
+              "name": "ingress throughput",
+              "value": "",
+              "measured": false
+            },
+            {
+              "name": "egress throughput",
+              "value": "",
+              "measured": false
+            },
+            {
+              "name": "request rate",
+              "value": "",
+              "measured": false
+            }
+          ]
+        },
+        "networking": {
+          "value": "PNI + Egress PrivateLink Endpoint",
+          "reason": "Based on your answer (private networking required), on AWS, we recommend PNI (Private Network Interface) for your private connection. It scales to the full 32 eCKU (elastic Confluent Unit for Kafka), so it grows with you. Confluent Cloud pulls your data over the cluster link, reaching out to your source cluster. PNI doesn't carry Cluster Linking traffic, so the link needs an Egress PrivateLink Endpoint alongside PNI.",
+          "why": "PNI (Private Network Interface) scales to the full 32 eCKU (elastic Confluent Unit for Kafka), so it grows with you. The Egress PrivateLink Endpoint is added so the migration cluster link can reach your source cluster, which PNI doesn't carry.",
+          "how": "PNI is Confluent Cloud's recommended private connection on AWS: Confluent Cloud attaches interfaces directly into your VPC, so traffic never crosses the public internet, and it scales to the full 32 eCKU, the top of the Enterprise tier.",
+          "action": "Set up PNI",
+          "forces_dedicated": false,
+          "pros": [
+            "Scales to the full 32 eCKU, the top of this tier",
+            "Traffic stays inside the Availability Zone when your clients are zone-aligned",
+            "Private, one-way access"
+          ],
+          "cons": [
+            "Available on AWS only",
+            "Not available on Dedicated clusters",
+            "More complex to set up"
+          ],
+          "fit": "AWS deployments that want the most room to grow",
+          "source": "https://docs.confluent.io/cloud/current/networking/aws-egress-privatelink-esku.html"
+        },
+        "auth": {
+          "value": "API keys (SASL/PLAIN)",
+          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+          "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
+          "action": "Set up API keys (SASL/PLAIN)",
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
+        },
+        "switchover": {
+          "value": "Cluster Linking, all at once",
+          "mm2": false,
+          "reason": "Based on your answer (a scheduled window, all at once), we recommend a Cluster Linking cutover. At cutover you stop your producers, let the link finish, then restart them all against Confluent Cloud together, in your scheduled window.",
+          "how": "Cluster Linking is Confluent Cloud's built-in mirror: it copies your topics and offsets across continuously.",
+          "action": "Create cluster link",
+          "kcp_resource": {
+            "url": "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/"
+          },
+          "source_credential_handling": [
+            {
+              "method": "AWS IAM",
+              "note": "Nothing to do for IAM here. The cluster link uses your existing SASL/SCRAM path (above), so your MSK cluster is unchanged for the migration; your IAM clients get new Confluent Cloud credentials when you point them over. Your AWS IAM policies don't carry over automatically. Confluent Cloud uses role-based access control (RBAC) role bindings, which you set up separately (we can help scope this)."
+            },
+            {
+              "method": "SASL/SCRAM",
+              "note": "No change. Cluster Linking uses your SCRAM credentials as-is."
+            }
+          ],
+          "source": "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html"
+        },
+        "schema": {
+          "value": "Schema Linking",
+          "reason": "Based on your answer (Confluent Platform Enterprise 7.1+, migrate your schemas), your registry can reach Confluent Cloud, so we recommend Schema Linking. It preserves your schema IDs, and no client change is needed for the schema move.",
+          "how": "Schema Linking mirrors your schemas live from your source Schema Registry into Confluent Cloud Schema Registry.",
+          "action": "Set up Schema Linking",
+          "tool": "kcp create-asset migrate-schemas --url",
+          "pros": [
+            "A live mirror that keeps Confluent Cloud in sync with your source",
+            "Preserves your existing schema IDs",
+            "No client change needed for the schema move"
+          ],
+          "cons": [
+            "Your Schema Registry needs outbound reach to Confluent Cloud on port 443",
+            "The target Schema Registry is set to IMPORT mode",
+            "A dedicated context is needed if the target already holds schemas"
+          ],
+          "source": "https://docs.confluent.io/cloud/current/sr/schema-linking.html"
+        },
+        "connectors": {
+          "value": "None to move",
+          "reason": "Based on your answer (no MSK Connect or self-managed Connect), there is no connector work in this plan.",
+          "action": null
+        },
+        "topics": {
+          "value": "Topics carry over as they are",
+          "tiered": false,
+          "reason": "Based on your answer (topic settings match the defaults), your topics carry over as they are.",
+          "source": "https://docs.confluent.io/cloud/current/client-apps/topics/manage.html"
+        },
+        "historical_data": {
+          "value": "No separate backfill to plan",
+          "reason": "Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.",
+          "action": null,
+          "source": "https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html"
+        },
+        "human_assist": {
+          "value": "Not needed",
+          "required": false,
+          "reason": "Your answers land inside what we can plan. This plan is yours to run. Talk to us if you want a second opinion.",
+          "action": "Talk to a person"
+        },
+        "withheld": false
+      },
+      "state": "ready",
+      "infra_state": "ready",
+      "app_state": "ready",
+      "partition_count": 1500
+    },
+    {
+      "cluster_id": "orders-prod",
+      "arn": "arn:aws:kafka:us-east-1:123456789012:cluster/orders-prod/a1",
+      "key": "orders-prod",
+      "region": "us-east-1",
+      "migration_infra": {
+        "kind": "specialist",
+        "type": 0,
+        "label": "Determined with a specialist",
+        "rationale": "This cluster is going through an assessment, so the migration infrastructure is chosen together with a specialist rather than auto-mapped.",
+        "cc_type": "commercial"
+      },
+      "is_serverless": false,
+      "topic_count": 520,
+      "broker_count": 6,
+      "source_auths": [
+        "scram"
+      ],
+      "scan_facts": [
+        {
+          "name": "msk_cluster_type",
+          "value": "Provisioned"
+        },
+        {
+          "name": "kafka_version",
+          "value": "3.0 or newer"
+        },
+        {
+          "name": "source_auth_types",
+          "value": "SASL/SCRAM"
+        },
+        {
+          "name": "partitions",
+          "value": "6000"
+        },
+        {
+          "name": "tiered_storage",
+          "value": "yes"
+        },
+        {
+          "name": "msk_connect",
+          "value": "No"
+        },
+        {
+          "name": "self_managed_connectors",
+          "value": "No"
+        }
+      ],
+      "questions": [
+        {
+          "key": "use_case_breadth",
+          "prompt": "How widely is this cluster used?",
+          "legend": [
+            "one-app → One team, one application",
+            "few-teams → A few teams or applications",
+            "shared-fabric → Shared fabric across many apps and teams"
+          ],
+          "tokens": [
+            "one-app",
+            "few-teams",
+            "shared-fabric"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "shared-fabric",
+          "source": "cluster"
+        },
+        {
+          "key": "move_existing_data",
+          "prompt": "Do you need to move your existing data?",
+          "legend": [
+            "true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.",
+            "false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "true",
+          "source": "all_clusters"
+        },
+        {
+          "key": "private_networking_required",
+          "prompt": "Is private networking a hard requirement?",
+          "hint": "Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted.",
+          "legend": [
+            "true → Yes, private networking is required",
+            "false → No, public endpoints are fine"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "true",
+          "source": "cluster"
+        },
+        {
+          "key": "connects_today",
+          "prompt": "How do you connect to your cluster today?",
+          "legend": [
+            "same-vpc → Same VPC",
+            "peered → Peered",
+            "privatelink → PrivateLink",
+            "other → Other or more than one"
+          ],
+          "tokens": [
+            "same-vpc",
+            "peered",
+            "privatelink",
+            "other"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "same-vpc",
+          "source": "cluster"
+        },
+        {
+          "key": "cc_egress_required",
+          "prompt": "Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?",
+          "hint": "For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "false",
+          "source": "cluster"
+        },
+        {
+          "key": "schema_registry",
+          "prompt": "What Schema Registry does your source environment use?",
+          "legend": [
+            "none → None: Schemaless, or schemas kept in app code",
+            "glue → AWS Glue Schema Registry",
+            "cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later",
+            "cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1",
+            "other → Other, not sure"
+          ],
+          "tokens": [
+            "none",
+            "glue",
+            "cp-enterprise-7.1",
+            "cp-community",
+            "other"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "cp-enterprise-7.1",
+          "source": "cluster"
+        },
+        {
+          "key": "schema_strategy",
+          "prompt": "What do you want to do with your schemas on Confluent Cloud?",
+          "legend": [
+            "migrate → Migrate my existing schemas",
+            "fresh → Start fresh on Confluent Cloud",
+            "schemaless → Stay schemaless"
+          ],
+          "tokens": [
+            "migrate",
+            "fresh",
+            "schemaless"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "migrate",
+          "source": "all_clusters"
+        },
+        {
+          "key": "schema_reachable_to_cc",
+          "prompt": "Can your Schema Registry reach Confluent Cloud to sync schemas (outbound, port 443)?",
+          "legend": [
+            "yes → Yes",
+            "no → No",
+            "unsure → Not sure"
+          ],
+          "tokens": [
+            "yes",
+            "no",
+            "unsure"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "yes",
+          "source": "cluster"
+        },
+        {
+          "key": "downtime_tolerance",
+          "prompt": "What is your target downtime window at cutover?",
+          "legend": [
+            "window-all → A scheduled window, all at once",
+            "window-sequential → A scheduled window, one service at a time",
+            "minutes → Minutes per service",
+            "seconds → Seconds per service",
+            "zero → Zero downtime"
+          ],
+          "tokens": [
+            "window-all",
+            "window-sequential",
+            "minutes",
+            "seconds",
+            "zero"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "window-all",
+          "source": "cluster"
+        },
+        {
+          "key": "exceeds_enterprise_limits",
+          "prompt": "Does your workload exceed any of the following: 1,920 megabytes/sec ingress, 5,760 megabytes/sec egress, or 240,000 requests/sec?",
+          "legend": [
+            "true → Yes",
+            "false → No  (default)"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "false",
+          "source": "built_in_default"
+        },
+        {
+          "key": "target_cloud",
+          "prompt": "Which cloud should your new Confluent Cloud cluster run on?",
+          "hint": "This is independent of your source cloud. Confluent supports cross-cloud migrations.",
+          "legend": [
+            "aws → AWS  (default)",
+            "azure → Azure",
+            "gcp → GCP"
+          ],
+          "tokens": [
+            "aws",
+            "azure",
+            "gcp"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "aws",
+          "source": "built_in_default"
+        },
+        {
+          "key": "target_auth",
+          "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
+          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "legend": [
+            "api-keys → API keys (SASL/PLAIN)",
+            "oauth → OAuth",
+            "mtls → mTLS"
+          ],
+          "tokens": [
+            "api-keys",
+            "oauth",
+            "mtls"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "",
+          "multi": true
+        },
+        {
+          "key": "client_coordination",
+          "prompt": "How much coordination will it take to cut over all your clients and apps at the same time?",
+          "legend": [
+            "easy → Low (few clients, one team)",
+            "moderate → Moderate  (default)",
+            "hard → High (many clients and teams)"
+          ],
+          "tokens": [
+            "easy",
+            "moderate",
+            "hard"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "moderate",
+          "source": "built_in_default"
+        },
+        {
+          "key": "eos_streams",
+          "prompt": "Do any applications use exactly-once transactions and/or Kafka Streams?",
+          "legend": [
+            "eos → Exactly-once or transactions",
+            "kstreams → Kafka Streams"
+          ],
+          "tokens": [
+            "eos",
+            "kstreams"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "",
+          "multi": true
+        },
+        {
+          "key": "consumer_history_requirement",
+          "prompt": "Do your consumers need historical data available after migration?",
+          "hint": "Only relevant when there's history to carry (tiered storage or long retention) and you're moving existing data.",
+          "legend": [
+            "true → Yes  (default)",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "true",
+          "source": "built_in_default"
+        },
+        {
+          "key": "source_cluster_type",
+          "prompt": "Source cluster type",
+          "legend": [
+            "provisioned → Provisioned",
+            "serverless → Serverless"
+          ],
+          "tokens": [
+            "provisioned",
+            "serverless"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "provisioned",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "kafka_version",
+          "prompt": "What Kafka version does your source cluster run?",
+          "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
+          "legend": [
+            "3.0-plus → 3.0 or newer",
+            "2.4-2.9 → 2.4-2.9",
+            "older → Older than 2.4"
+          ],
+          "tokens": [
+            "3.0-plus",
+            "2.4-2.9",
+            "older"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "3.0-plus",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "source_auth",
+          "prompt": "How your Kafka clients authenticate today",
+          "legend": [
+            "iam → AWS IAM",
+            "scram → SASL/SCRAM",
+            "mtls → TLS client certificates (mTLS)",
+            "unauth → None / plaintext"
+          ],
+          "tokens": [
+            "iam",
+            "scram",
+            "mtls",
+            "unauth"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "scram",
+          "value_list": [
+            "scram"
+          ],
+          "multi": true,
+          "scan": true,
+          "source": "scan"
+        },
+        {
+          "key": "tiered_storage",
+          "prompt": "Do your topics use tiered storage?",
+          "hint": "Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "true",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "topics_have_custom_settings",
+          "prompt": "Do any of your topics use non-default settings?",
+          "hint": "This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "read_only": true,
+          "source": "override"
+        },
+        {
+          "key": "msk_connect_present",
+          "prompt": "Do you use MSK Connect?",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "read_only": true,
+          "source": "override"
+        },
+        {
+          "key": "self_managed_connectors",
+          "prompt": "Do you run self-managed Kafka Connect?",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "source": "override"
+        }
+      ],
+      "observations": [
+        {
+          "severity": "info",
+          "title": "Tiered storage in use",
+          "detail": "Historical data sits in S3. Backfilling it during cutover takes time proportional to the tiered volume."
+        },
+        {
+          "severity": "warn",
+          "title": "No throughput metrics scanned",
+          "detail": "Sizing is based on the partition count alone and is a lower bound. Run `kcp scan metrics` to size from real ingress/egress before you commit: a higher measured throughput can raise the recommended cluster type, and a move to Dedicated changes the private-networking design (PNI is not available on Dedicated)."
+        }
+      ],
+      "plan": {
+        "human_assist": {
+          "value": "Recommended",
+          "required": true,
+          "triggers": [
+            {
+              "id": "use_case_breadth",
+              "why": "Based on your answer that this cluster is a shared fabric across many apps and teams: shared clusters like yours usually involve more moving parts than an automated plan can account for, so we'd like to talk through the right approach for your footprint. Talk to a specialist and they'll work through it with you."
+            }
+          ],
+          "reason": "Based on your answer that this cluster is a shared fabric across many apps and teams: shared clusters like yours usually involve more moving parts than an automated plan can account for, so we'd like to talk through the right approach for your footprint. Talk to a specialist and they'll work through it with you.",
+          "action": "Talk to a person"
+        },
+        "withheld": true
+      },
+      "state": "needs_specialist",
+      "infra_state": "needs_specialist",
+      "app_state": "needs_specialist",
+      "partition_count": 6000
+    },
+    {
+      "cluster_id": "logs-ingest",
+      "arn": "arn:aws:kafka:us-west-2:123456789012:cluster/logs-ingest/c3",
+      "key": "logs-ingest",
+      "region": "us-west-2",
+      "migration_infra": {
+        "kind": "replicator",
+        "type": 0,
+        "label": "Confluent Replicator",
+        "rationale": "Your data migration runs on Confluent Replicator. See the Data migration step above for how to set it up.",
+        "cc_type": "commercial"
+      },
+      "is_serverless": false,
+      "topic_count": 45,
+      "broker_count": 6,
+      "source_auths": [
+        "scram"
+      ],
+      "scan_facts": [
+        {
+          "name": "msk_cluster_type",
+          "value": "Provisioned"
+        },
+        {
+          "name": "kafka_version",
+          "value": "2.4-2.9"
+        },
+        {
+          "name": "source_auth_types",
+          "value": "SASL/SCRAM"
+        },
+        {
+          "name": "partitions",
+          "value": "400"
+        },
+        {
+          "name": "tiered_storage",
+          "value": "no"
+        },
+        {
+          "name": "msk_connect",
+          "value": "No"
+        },
+        {
+          "name": "self_managed_connectors",
+          "value": "No"
+        }
+      ],
+      "questions": [
+        {
+          "key": "use_case_breadth",
+          "prompt": "How widely is this cluster used?",
+          "legend": [
+            "one-app → One team, one application",
+            "few-teams → A few teams or applications",
+            "shared-fabric → Shared fabric across many apps and teams"
+          ],
+          "tokens": [
+            "one-app",
+            "few-teams",
+            "shared-fabric"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "few-teams",
+          "source": "cluster"
+        },
+        {
+          "key": "move_existing_data",
+          "prompt": "Do you need to move your existing data?",
+          "legend": [
+            "true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.",
+            "false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "true",
+          "source": "all_clusters"
+        },
+        {
+          "key": "private_networking_required",
+          "prompt": "Is private networking a hard requirement?",
+          "hint": "Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted.",
+          "legend": [
+            "true → Yes, private networking is required",
+            "false → No, public endpoints are fine"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "false",
+          "source": "cluster"
+        },
+        {
+          "key": "schema_registry",
+          "prompt": "What Schema Registry does your source environment use?",
+          "legend": [
+            "none → None: Schemaless, or schemas kept in app code",
+            "glue → AWS Glue Schema Registry",
+            "cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later",
+            "cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1",
+            "other → Other, not sure"
+          ],
+          "tokens": [
+            "none",
+            "glue",
+            "cp-enterprise-7.1",
+            "cp-community",
+            "other"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "glue",
+          "source": "cluster"
+        },
+        {
+          "key": "schema_strategy",
+          "prompt": "What do you want to do with your schemas on Confluent Cloud?",
+          "legend": [
+            "migrate → Migrate my existing schemas",
+            "fresh → Start fresh on Confluent Cloud",
+            "schemaless → Stay schemaless"
+          ],
+          "tokens": [
+            "migrate",
+            "fresh",
+            "schemaless"
+          ],
+          "required": true,
+          "status": "answered",
+          "value": "migrate",
+          "source": "all_clusters"
+        },
+        {
+          "key": "exceeds_standard_limits",
+          "prompt": "Does your workload exceed any of the following: 250 megabytes/sec ingress, 750 megabytes/sec egress, or 15,000 requests/sec?",
+          "hint": "If you exceed any of these, we'll plan for an Enterprise cluster instead of Standard. Enterprise runs on private networking.",
+          "legend": [
+            "true → Yes",
+            "false → No  (default)"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "false",
+          "source": "built_in_default"
+        },
+        {
+          "key": "target_cloud",
+          "prompt": "Which cloud should your new Confluent Cloud cluster run on?",
+          "hint": "This is independent of your source cloud. Confluent supports cross-cloud migrations.",
+          "legend": [
+            "aws → AWS  (default)",
+            "azure → Azure",
+            "gcp → GCP"
+          ],
+          "tokens": [
+            "aws",
+            "azure",
+            "gcp"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "aws",
+          "source": "built_in_default"
+        },
+        {
+          "key": "target_auth",
+          "prompt": "Which authentication methods should your Confluent Cloud cluster support? Select all that apply.",
+          "hint": "A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.",
+          "legend": [
+            "api-keys → API keys (SASL/PLAIN)",
+            "oauth → OAuth",
+            "mtls → mTLS"
+          ],
+          "tokens": [
+            "api-keys",
+            "oauth",
+            "mtls"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "",
+          "multi": true
+        },
+        {
+          "key": "client_coordination",
+          "prompt": "How much coordination will it take to cut over all your clients and apps at the same time?",
+          "legend": [
+            "easy → Low (few clients, one team)",
+            "moderate → Moderate  (default)",
+            "hard → High (many clients and teams)"
+          ],
+          "tokens": [
+            "easy",
+            "moderate",
+            "hard"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "moderate",
+          "source": "built_in_default"
+        },
+        {
+          "key": "eos_streams",
+          "prompt": "Do any applications use exactly-once transactions and/or Kafka Streams?",
+          "legend": [
+            "eos → Exactly-once or transactions",
+            "kstreams → Kafka Streams"
+          ],
+          "tokens": [
+            "eos",
+            "kstreams"
+          ],
+          "required": false,
+          "status": "open_optional",
+          "value": "",
+          "multi": true
+        },
+        {
+          "key": "source_cluster_type",
+          "prompt": "Source cluster type",
+          "legend": [
+            "provisioned → Provisioned",
+            "serverless → Serverless"
+          ],
+          "tokens": [
+            "provisioned",
+            "serverless"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "provisioned",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "kafka_version",
+          "prompt": "What Kafka version does your source cluster run?",
+          "hint": "Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.",
+          "legend": [
+            "3.0-plus → 3.0 or newer",
+            "2.4-2.9 → 2.4-2.9",
+            "older → Older than 2.4"
+          ],
+          "tokens": [
+            "3.0-plus",
+            "2.4-2.9",
+            "older"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "2.4-2.9",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "source_auth",
+          "prompt": "How your Kafka clients authenticate today",
+          "legend": [
+            "iam → AWS IAM",
+            "scram → SASL/SCRAM",
+            "mtls → TLS client certificates (mTLS)",
+            "unauth → None / plaintext"
+          ],
+          "tokens": [
+            "iam",
+            "scram",
+            "mtls",
+            "unauth"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "scram",
+          "value_list": [
+            "scram"
+          ],
+          "multi": true,
+          "scan": true,
+          "source": "scan"
+        },
+        {
+          "key": "tiered_storage",
+          "prompt": "Do your topics use tiered storage?",
+          "hint": "Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "read_only": true,
+          "source": "scan"
+        },
+        {
+          "key": "topics_have_custom_settings",
+          "prompt": "Do any of your topics use non-default settings?",
+          "hint": "This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete.",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "read_only": true,
+          "source": "override"
+        },
+        {
+          "key": "msk_connect_present",
+          "prompt": "Do you use MSK Connect?",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "read_only": true,
+          "source": "override"
+        },
+        {
+          "key": "self_managed_connectors",
+          "prompt": "Do you run self-managed Kafka Connect?",
+          "legend": [
+            "true → Yes",
+            "false → No"
+          ],
+          "tokens": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "status": "scan",
+          "value": "false",
+          "scan": true,
+          "overridden": true,
+          "source": "override"
+        }
+      ],
+      "observations": [
+        {
+          "severity": "warn",
+          "title": "No throughput metrics scanned",
+          "detail": "Sizing is based on the partition count alone and is a lower bound. Run `kcp scan metrics` to size from real ingress/egress before you commit: a higher measured throughput can raise the recommended cluster type, and a move to Dedicated changes the private-networking design (PNI is not available on Dedicated)."
+        }
+      ],
+      "plan": {
+        "cluster_type": {
+          "value": "Standard",
+          "tier": "Standard",
+          "dedicated": false,
+          "crossed_to_private": false,
+          "self_serve": true,
+          "zone_config": "Multi-zone",
+          "zone_reason": "Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.",
+          "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option for it. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
+          "why": "Public networking works for your workload size.",
+          "assessment_reason": "Your answers point to Standard: private networking is not a hard requirement for you, and Standard holds this workload.",
+          "action": "Create a Standard cluster",
+          "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html"
+        },
+        "sizing": {
+          "value": "Autoscales, nothing to provision",
+          "band": 1,
+          "partitions_dim": {
+            "display": "400",
+            "band": 1
+          },
+          "missing_partitions": false,
+          "reason": "Based on your scan (400 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.",
+          "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html",
+          "signals": [
+            {
+              "name": "partition count",
+              "value": "400 partitions",
+              "measured": true,
+              "driver": true
+            },
+            {
+              "name": "ingress throughput",
+              "value": "",
+              "measured": false
+            },
+            {
+              "name": "egress throughput",
+              "value": "",
+              "measured": false
+            },
+            {
+              "name": "request rate",
+              "value": "",
+              "measured": false
+            }
+          ]
+        },
+        "networking": {
+          "value": "Public endpoint",
+          "reason": "Based on your answer (private networking not required), a public endpoint is the simplest way in. Moving to private networking later means moving to a different cluster type.",
+          "why": "No private networking to set up.",
+          "action": null,
+          "forces_dedicated": false,
+          "pros": [
+            "Fastest to set up, with no networking configuration"
+          ],
+          "cons": [
+            "Your brokers are reachable over the internet, so authentication and network policy are doing all the work",
+            "Moving to private networking later means moving to a different cluster type"
+          ],
+          "fit": "A quick evaluation, not production",
+          "source": "https://docs.confluent.io/cloud/current/networking/overview.html"
+        },
+        "auth": {
+          "value": "API keys (SASL/PLAIN)",
+          "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+          "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
+          "action": "Set up API keys (SASL/PLAIN)",
+          "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
+        },
+        "switchover": {
+          "value": "Confluent Replicator",
+          "mm2": false,
+          "replicator": true,
+          "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one.",
+          "how": "Confluent Replicator is a Confluent tool that runs on Kafka Connect and copies topics between clusters.",
+          "action": "Set up Confluent Replicator",
+          "pros": [
+            "Works where Cluster Linking cannot reach your source",
+            "Runs in your own account, using the credentials your clients already use"
+          ],
+          "cons": [
+            "Part of Confluent Platform Enterprise, so it needs a license",
+            "You run and operate the Connect worker for the length of the migration",
+            "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only"
+          ],
+          "tech_assist": true,
+          "source_credential_handling": [
+            {
+              "method": "SASL/SCRAM",
+              "note": "No change. Replicator runs in your own account and reads your source with your existing SCRAM credentials."
+            }
+          ],
+          "source": "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/index.html"
+        },
+        "schema": {
+          "value": "Glue bulk re-registration",
+          "reason": "Based on your answer (AWS Glue Schema Registry, migrate your schemas), Glue schemas use a different wire format and cannot be linked, so we bulk re-register them instead. This does not preserve schema IDs, so plan a phased client cutover.",
+          "how": "Glue bulk re-registration re-registers your Glue schemas into Confluent Cloud Schema Registry using Confluent's migration tool (kcp).",
+          "action": "Migrate Glue schemas",
+          "tool": "kcp create-asset migrate-schemas --glue-registry",
+          "pros": [
+            "Automated re-registration of your Glue schemas",
+            "Works where Schema Linking cannot, since Glue cannot be linked"
+          ],
+          "cons": [
+            "Schema IDs are not preserved",
+            "Consumers run bilingual and producers switch over in a phased client cutover, which can take weeks",
+            "Your subject naming strategy must match on Confluent Cloud"
+          ],
+          "source": "https://docs.confluent.io/cloud/current/sr/index.html"
+        },
+        "connectors": {
+          "value": "None to move",
+          "reason": "Based on your answer (no MSK Connect or self-managed Connect), there is no connector work in this plan.",
+          "action": null
+        },
+        "topics": {
+          "value": "Topics carry over as they are",
+          "tiered": false,
+          "reason": "Based on your answer (topic settings match the defaults), your topics carry over as they are.",
+          "source": "https://docs.confluent.io/cloud/current/client-apps/topics/manage.html"
+        },
+        "historical_data": {
+          "value": "No separate backfill to plan",
+          "reason": "Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.",
+          "action": null,
+          "source": "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/index.html"
+        },
+        "human_assist": {
+          "value": "Not needed",
+          "required": false,
+          "reason": "Your answers land inside what we can plan. This plan is yours to run. Talk to us if you want a second opinion.",
+          "action": "Talk to a person"
+        },
+        "withheld": false
+      },
+      "state": "ready",
+      "infra_state": "ready",
+      "app_state": "ready",
+      "partition_count": 400,
+      "apps": [
+        {
+          "name": "analytics-worker",
+          "questions": [
+            {
+              "key": "move_existing_data",
+              "prompt": "Do you need to move your existing data?",
+              "legend": [
+                "true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.",
+                "false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire"
+              ],
+              "tokens": [
+                "true",
+                "false"
+              ],
+              "required": true,
+              "status": "answered",
+              "value": "true",
+              "source": "all_clusters"
+            },
+            {
+              "key": "schema_registry",
+              "prompt": "What Schema Registry does your source environment use?",
+              "legend": [
+                "none → None: Schemaless, or schemas kept in app code",
+                "glue → AWS Glue Schema Registry",
+                "cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later",
+                "cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1",
+                "other → Other, not sure"
+              ],
+              "tokens": [
+                "none",
+                "glue",
+                "cp-enterprise-7.1",
+                "cp-community",
+                "other"
+              ],
+              "required": true,
+              "status": "answered",
+              "value": "glue",
+              "source": "cluster"
+            },
+            {
+              "key": "schema_strategy",
+              "prompt": "What do you want to do with your schemas on Confluent Cloud?",
+              "legend": [
+                "migrate → Migrate my existing schemas",
+                "fresh → Start fresh on Confluent Cloud",
+                "schemaless → Stay schemaless"
+              ],
+              "tokens": [
+                "migrate",
+                "fresh",
+                "schemaless"
+              ],
+              "required": true,
+              "status": "answered",
+              "value": "migrate",
+              "source": "all_clusters"
+            },
+            {
+              "key": "client_coordination",
+              "prompt": "How much coordination will it take to cut over all your clients and apps at the same time?",
+              "legend": [
+                "easy → Low (few clients, one team)",
+                "moderate → Moderate  (default)",
+                "hard → High (many clients and teams)"
+              ],
+              "tokens": [
+                "easy",
+                "moderate",
+                "hard"
+              ],
+              "required": false,
+              "status": "open_optional",
+              "value": "moderate",
+              "source": "built_in_default"
+            },
+            {
+              "key": "eos_streams",
+              "prompt": "Do any applications use exactly-once transactions and/or Kafka Streams?",
+              "legend": [
+                "eos → Exactly-once or transactions",
+                "kstreams → Kafka Streams"
+              ],
+              "tokens": [
+                "eos",
+                "kstreams"
+              ],
+              "required": false,
+              "status": "open_optional",
+              "value": "",
+              "multi": true
+            }
+          ],
+          "plan": {
+            "cluster_type": {
+              "value": "Standard",
+              "tier": "Standard",
+              "dedicated": false,
+              "crossed_to_private": false,
+              "self_serve": true,
+              "zone_config": "Multi-zone",
+              "zone_reason": "Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.",
+              "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option for it. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
+              "why": "Public networking works for your workload size.",
+              "assessment_reason": "Your answers point to Standard: private networking is not a hard requirement for you, and Standard holds this workload.",
+              "action": "Create a Standard cluster",
+              "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html"
+            },
+            "sizing": {
+              "value": "Autoscales, nothing to provision",
+              "band": 1,
+              "partitions_dim": {
+                "display": "400",
+                "band": 1
+              },
+              "missing_partitions": false,
+              "reason": "Based on your scan (400 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.",
+              "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html",
+              "signals": [
+                {
+                  "name": "partition count",
+                  "value": "400 partitions",
+                  "measured": true,
+                  "driver": true
+                },
+                {
+                  "name": "ingress throughput",
+                  "value": "",
+                  "measured": false
+                },
+                {
+                  "name": "egress throughput",
+                  "value": "",
+                  "measured": false
+                },
+                {
+                  "name": "request rate",
+                  "value": "",
+                  "measured": false
+                }
+              ]
+            },
+            "networking": {
+              "value": "Public endpoint",
+              "reason": "Based on your answer (private networking not required), a public endpoint is the simplest way in. Moving to private networking later means moving to a different cluster type.",
+              "why": "No private networking to set up.",
+              "action": null,
+              "forces_dedicated": false,
+              "pros": [
+                "Fastest to set up, with no networking configuration"
+              ],
+              "cons": [
+                "Your brokers are reachable over the internet, so authentication and network policy are doing all the work",
+                "Moving to private networking later means moving to a different cluster type"
+              ],
+              "fit": "A quick evaluation, not production",
+              "source": "https://docs.confluent.io/cloud/current/networking/overview.html"
+            },
+            "auth": {
+              "value": "API keys (SASL/PLAIN)",
+              "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+              "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
+              "action": "Set up API keys (SASL/PLAIN)",
+              "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
+            },
+            "switchover": {
+              "value": "Confluent Replicator",
+              "mm2": false,
+              "replicator": true,
+              "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one.",
+              "how": "Confluent Replicator is a Confluent tool that runs on Kafka Connect and copies topics between clusters.",
+              "action": "Set up Confluent Replicator",
+              "pros": [
+                "Works where Cluster Linking cannot reach your source",
+                "Runs in your own account, using the credentials your clients already use"
+              ],
+              "cons": [
+                "Part of Confluent Platform Enterprise, so it needs a license",
+                "You run and operate the Connect worker for the length of the migration",
+                "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only"
+              ],
+              "tech_assist": true,
+              "source_credential_handling": [
+                {
+                  "method": "SASL/SCRAM",
+                  "note": "No change. Replicator runs in your own account and reads your source with your existing SCRAM credentials."
+                }
+              ],
+              "source": "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/index.html"
+            },
+            "schema": {
+              "value": "Glue bulk re-registration",
+              "reason": "Based on your answer (AWS Glue Schema Registry, migrate your schemas), Glue schemas use a different wire format and cannot be linked, so we bulk re-register them instead. This does not preserve schema IDs, so plan a phased client cutover.",
+              "how": "Glue bulk re-registration re-registers your Glue schemas into Confluent Cloud Schema Registry using Confluent's migration tool (kcp).",
+              "action": "Migrate Glue schemas",
+              "tool": "kcp create-asset migrate-schemas --glue-registry",
+              "pros": [
+                "Automated re-registration of your Glue schemas",
+                "Works where Schema Linking cannot, since Glue cannot be linked"
+              ],
+              "cons": [
+                "Schema IDs are not preserved",
+                "Consumers run bilingual and producers switch over in a phased client cutover, which can take weeks",
+                "Your subject naming strategy must match on Confluent Cloud"
+              ],
+              "source": "https://docs.confluent.io/cloud/current/sr/index.html"
+            },
+            "connectors": {
+              "value": "None to move",
+              "reason": "Based on your answer (no MSK Connect or self-managed Connect), there is no connector work in this plan.",
+              "action": null
+            },
+            "topics": {
+              "value": "Topics carry over as they are",
+              "tiered": false,
+              "reason": "Based on your answer (topic settings match the defaults), your topics carry over as they are.",
+              "source": "https://docs.confluent.io/cloud/current/client-apps/topics/manage.html"
+            },
+            "historical_data": {
+              "value": "No separate backfill to plan",
+              "reason": "Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.",
+              "action": null,
+              "source": "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/index.html"
+            },
+            "human_assist": {
+              "value": "Not needed",
+              "required": false,
+              "reason": "Your answers land inside what we can plan. This plan is yours to run. Talk to us if you want a second opinion.",
+              "action": "Talk to a person"
+            },
+            "withheld": false
+          }
+        },
+        {
+          "name": "ingest-api",
+          "questions": [
+            {
+              "key": "move_existing_data",
+              "prompt": "Do you need to move your existing data?",
+              "legend": [
+                "true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.",
+                "false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire"
+              ],
+              "tokens": [
+                "true",
+                "false"
+              ],
+              "required": true,
+              "status": "answered",
+              "value": "true",
+              "source": "all_clusters"
+            },
+            {
+              "key": "schema_registry",
+              "prompt": "What Schema Registry does your source environment use?",
+              "legend": [
+                "none → None: Schemaless, or schemas kept in app code",
+                "glue → AWS Glue Schema Registry",
+                "cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later",
+                "cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1",
+                "other → Other, not sure"
+              ],
+              "tokens": [
+                "none",
+                "glue",
+                "cp-enterprise-7.1",
+                "cp-community",
+                "other"
+              ],
+              "required": true,
+              "status": "answered",
+              "value": "glue",
+              "source": "cluster"
+            },
+            {
+              "key": "schema_strategy",
+              "prompt": "What do you want to do with your schemas on Confluent Cloud?",
+              "legend": [
+                "migrate → Migrate my existing schemas",
+                "fresh → Start fresh on Confluent Cloud",
+                "schemaless → Stay schemaless"
+              ],
+              "tokens": [
+                "migrate",
+                "fresh",
+                "schemaless"
+              ],
+              "required": true,
+              "status": "answered",
+              "value": "migrate",
+              "source": "all_clusters"
+            },
+            {
+              "key": "client_coordination",
+              "prompt": "How much coordination will it take to cut over all your clients and apps at the same time?",
+              "legend": [
+                "easy → Low (few clients, one team)",
+                "moderate → Moderate  (default)",
+                "hard → High (many clients and teams)"
+              ],
+              "tokens": [
+                "easy",
+                "moderate",
+                "hard"
+              ],
+              "required": false,
+              "status": "open_optional",
+              "value": "moderate",
+              "source": "built_in_default"
+            },
+            {
+              "key": "eos_streams",
+              "prompt": "Do any applications use exactly-once transactions and/or Kafka Streams?",
+              "legend": [
+                "eos → Exactly-once or transactions",
+                "kstreams → Kafka Streams"
+              ],
+              "tokens": [
+                "eos",
+                "kstreams"
+              ],
+              "required": false,
+              "status": "open_optional",
+              "value": "",
+              "multi": true
+            }
+          ],
+          "plan": {
+            "cluster_type": {
+              "value": "Standard",
+              "tier": "Standard",
+              "dedicated": false,
+              "crossed_to_private": false,
+              "self_serve": true,
+              "zone_config": "Multi-zone",
+              "zone_reason": "Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.",
+              "reason": "Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option for it. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license.",
+              "why": "Public networking works for your workload size.",
+              "assessment_reason": "Your answers point to Standard: private networking is not a hard requirement for you, and Standard holds this workload.",
+              "action": "Create a Standard cluster",
+              "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html"
+            },
+            "sizing": {
+              "value": "Autoscales, nothing to provision",
+              "band": 1,
+              "partitions_dim": {
+                "display": "400",
+                "band": 1
+              },
+              "missing_partitions": false,
+              "reason": "Based on your scan (400 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.",
+              "source": "https://docs.confluent.io/cloud/current/clusters/cluster-types.html",
+              "signals": [
+                {
+                  "name": "partition count",
+                  "value": "400 partitions",
+                  "measured": true,
+                  "driver": true
+                },
+                {
+                  "name": "ingress throughput",
+                  "value": "",
+                  "measured": false
+                },
+                {
+                  "name": "egress throughput",
+                  "value": "",
+                  "measured": false
+                },
+                {
+                  "name": "request rate",
+                  "value": "",
+                  "measured": false
+                }
+              ]
+            },
+            "networking": {
+              "value": "Public endpoint",
+              "reason": "Based on your answer (private networking not required), a public endpoint is the simplest way in. Moving to private networking later means moving to a different cluster type.",
+              "why": "No private networking to set up.",
+              "action": null,
+              "forces_dedicated": false,
+              "pros": [
+                "Fastest to set up, with no networking configuration"
+              ],
+              "cons": [
+                "Your brokers are reachable over the internet, so authentication and network policy are doing all the work",
+                "Moving to private networking later means moving to a different cluster type"
+              ],
+              "fit": "A quick evaluation, not production",
+              "source": "https://docs.confluent.io/cloud/current/networking/overview.html"
+            },
+            "auth": {
+              "value": "API keys (SASL/PLAIN)",
+              "reason": "After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). This is the default baseline; OAuth and mTLS are also available if you need them. All credentials land as Confluent Cloud service accounts.",
+              "why": "Default baseline you can change with `target_auth`; Confluent Cloud issues new credentials after cutover.",
+              "action": "Set up API keys (SASL/PLAIN)",
+              "source": "https://docs.confluent.io/cloud/current/security/authenticate/overview.html"
+            },
+            "switchover": {
+              "value": "Confluent Replicator",
+              "mm2": false,
+              "replicator": true,
+              "reason": "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one.",
+              "how": "Confluent Replicator is a Confluent tool that runs on Kafka Connect and copies topics between clusters.",
+              "action": "Set up Confluent Replicator",
+              "pros": [
+                "Works where Cluster Linking cannot reach your source",
+                "Runs in your own account, using the credentials your clients already use"
+              ],
+              "cons": [
+                "Part of Confluent Platform Enterprise, so it needs a license",
+                "You run and operate the Connect worker for the length of the migration",
+                "Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only"
+              ],
+              "tech_assist": true,
+              "source_credential_handling": [
+                {
+                  "method": "SASL/SCRAM",
+                  "note": "No change. Replicator runs in your own account and reads your source with your existing SCRAM credentials."
+                }
+              ],
+              "source": "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/index.html"
+            },
+            "schema": {
+              "value": "Glue bulk re-registration",
+              "reason": "Based on your answer (AWS Glue Schema Registry, migrate your schemas), Glue schemas use a different wire format and cannot be linked, so we bulk re-register them instead. This does not preserve schema IDs, so plan a phased client cutover.",
+              "how": "Glue bulk re-registration re-registers your Glue schemas into Confluent Cloud Schema Registry using Confluent's migration tool (kcp).",
+              "action": "Migrate Glue schemas",
+              "tool": "kcp create-asset migrate-schemas --glue-registry",
+              "pros": [
+                "Automated re-registration of your Glue schemas",
+                "Works where Schema Linking cannot, since Glue cannot be linked"
+              ],
+              "cons": [
+                "Schema IDs are not preserved",
+                "Consumers run bilingual and producers switch over in a phased client cutover, which can take weeks",
+                "Your subject naming strategy must match on Confluent Cloud"
+              ],
+              "source": "https://docs.confluent.io/cloud/current/sr/index.html"
+            },
+            "connectors": {
+              "value": "None to move",
+              "reason": "Based on your answer (no MSK Connect or self-managed Connect), there is no connector work in this plan.",
+              "action": null
+            },
+            "topics": {
+              "value": "Topics carry over as they are",
+              "tiered": false,
+              "reason": "Based on your answer (topic settings match the defaults), your topics carry over as they are.",
+              "source": "https://docs.confluent.io/cloud/current/client-apps/topics/manage.html"
+            },
+            "historical_data": {
+              "value": "No separate backfill to plan",
+              "reason": "Based on your scan (no tiered or long-retention history), the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm.",
+              "action": null,
+              "source": "https://docs.confluent.io/platform/current/multi-dc-deployments/replicator/index.html"
+            },
+            "human_assist": {
+              "value": "Not needed",
+              "required": false,
+              "reason": "Your answers land inside what we can plan. This plan is yours to run. Talk to us if you want a second opinion.",
+              "action": "Talk to a person"
+            },
+            "withheld": false
+          }
+        }
+      ]
+    }
+  ],
+  "total_regions": 2
+}

@@ -128,7 +128,7 @@ var catalog = []question{
 	{Key: "cc_egress_required", Prompt: "Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?", Disp: dispRequired,
 		Hint:    "For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network.",
 		Opts:    yn("Yes", "No", "Yes", "No"),
-		Applies: func(p engine.Profile) bool { return engine.WillBePrivate(p) },
+		Applies: engine.WillBePrivate,
 		set:     func(in *IntakeInputs, v []string) { in.CCEgressRequired = first(v) }},
 
 	{Key: "schema_registry", Prompt: "What Schema Registry does your source environment use?", Disp: dispRequired,
@@ -183,7 +183,7 @@ var catalog = []question{
 		},
 		// Only the Cluster Linking cutover reads downtime tolerance; a Replicator or
 		// start-fresh plan is decided without it, so don't require it there.
-		Applies: func(p engine.Profile) bool { return clusterLinkingPath(p) },
+		Applies: clusterLinkingPath,
 		set:     func(in *IntakeInputs, v []string) { in.DowntimeTolerance = first(v) }},
 
 	// ── Optional (default pre-selected) ────────────────────────────────────────

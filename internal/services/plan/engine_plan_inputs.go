@@ -130,7 +130,7 @@ func writeInputsHeader(b *strings.Builder, ep *EnginePlan, layered bool) {
 	b.WriteString("# Fill the lines marked `# not set`, then re-run (adjust the paths to where your files are):\n")
 	b.WriteString("#   " + rerunCommand(ep) + "\n")
 	if n := ep.Summary.OpenRequired; n > 0 {
-		b.WriteString(fmt.Sprintf("# %d required question%s still open before a full plan.\n", n, plural(n)))
+		fmt.Fprintf(b, "# %d required question%s still open before a full plan.\n", n, plural(n))
 	} else {
 		b.WriteString("# All required questions answered. The plan is ready.\n")
 	}
@@ -758,9 +758,15 @@ func yamlKey(s string) string {
 		return `""`
 	}
 	for _, r := range s {
-		if !(r == '-' || r == '_' || r == '.' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+		if !isYAMLKeyChar(r) {
 			return strconv.Quote(s)
 		}
 	}
 	return s
+}
+
+// isYAMLKeyChar reports whether r is safe to appear unquoted in a YAML mapping key.
+func isYAMLKeyChar(r rune) bool {
+	return r == '-' || r == '_' || r == '.' ||
+		(r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
 }

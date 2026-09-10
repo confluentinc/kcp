@@ -66,11 +66,12 @@ func connectorsDecision(p Profile) ConnectorsResult {
 		}
 	}
 	reason := basis(leadDrivers...) + "connectors do not travel with your topics, so whichever way you go, you set each one up again on the other side."
-	if mskConnect && dest == "Keep self-managed" {
+	switch {
+	case mskConnect && dest == "Keep self-managed":
 		reason += " You are on MSK Connect today, which is a managed service with no Confluent Cloud equivalent, so \"self-managed\" here means running a Connect cluster yourself. That is infrastructure you do not operate at the moment."
-	} else if mskConnect && selfManaged {
+	case mskConnect && selfManaged:
 		reason += " You run both MSK Connect and your own self-managed connectors today, and each is recreated as a Confluent-managed connector."
-	} else if mskConnect {
+	case mskConnect:
 		reason += " You are on MSK Connect today, so each connector is recreated as a Confluent-managed connector."
 	}
 	if defaulted {

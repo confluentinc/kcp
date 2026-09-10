@@ -326,13 +326,14 @@ func attachCitations(plan *PlanResult, tc string) {
 	plan.Topics.Source = citeFor(plan.Topics.Value, srcTopics)
 	// Backfill doc follows the data-movement mechanism: Replicator on that path,
 	// Cluster Linking otherwise (so a Replicator cluster doesn't link to CL docs).
-	if plan.Switchover.Replicator {
+	switch {
+	case plan.Switchover.Replicator:
 		plan.HistoricalData.Source = citeFor(plan.HistoricalData.Value, srcReplicator)
-	} else if plan.Switchover.StartFresh {
+	case plan.Switchover.StartFresh:
 		// Start fresh copies no data over no cluster link, so there is no backfill doc to
 		// cite; the Cluster Linking migrate doc would be misleading here.
 		plan.HistoricalData.Source = ""
-	} else {
+	default:
 		plan.HistoricalData.Source = citeFor(plan.HistoricalData.Value, srcSwitchoverCL)
 	}
 
