@@ -3,11 +3,13 @@
 package migration_tbm_e2e
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/goccy/go-yaml"
@@ -22,12 +24,12 @@ import (
 // suite proves, since TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
 // only exercise migplan.Reconcile and the harness's own apply path directly.
 //
-// Every transition is real, including verify_fence — though no manifest in
-// this suite sets a nonzero detectUnroutedProducersDuration, so verify_fence
-// only exercises its detection-disabled skip path here, not the unrouted-
-// producer detection or abort_fence rollback (unit-tested at the package
-// level in internal/services/migration/tbm, not covered live by this suite).
-// This still proves the whole real migration path: fence genuinely mutates
+// Every transition is real, including verify_fence — this test's manifests
+// leave detectUnroutedProducersDuration at its default (0, disabled), so
+// verify_fence only exercises its detection-disabled skip path here; the
+// unrouted-producer detection and abort_fence rollback have their own live
+// coverage in TestUnroutedProducerDetection below. This still proves the
+// whole real migration path: fence genuinely mutates
 // the live gateway CR (proven via the command's own stdout narrative, not by
 // re-reading the CR — switch legitimately clears the fence in the same
 // synchronous run, before any external observer could see it; see the
@@ -141,6 +143,87 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 		require.NotEmpty(t, res.SwitchoverYAML)
 		require.Truef(t, unchangedTopics(res.Report)[already], "%s must classify Unchanged", already)
 	})
+}
+
+// TestUnroutedProducerDetection drives a real unrouted-producer scenario
+// against the live gateway: a producer writes directly to the source cluster
+// (bypassing the fenced route entirely) while execute-tbm holds the fence, so
+// verify_fence's real detectUnroutedProducers
+// (internal/services/migration/tbm/workflow.go) must observe the source
+// offset rise and trigger the real abort_fence rollback
+// (orchestrator.go's onAbortFence/handleStepFailure).
+//
+// No manifest elsewhere in this suite sets a nonzero
+// detectUnroutedProducersDuration (see TestSuccessBatchesMigrate's own doc
+// comment), so this is the suite's only live coverage of verify_fence's
+// detection and rollback path; the detection logic and the rollback's FSM
+// transition are otherwise unit-tested only
+// (internal/services/migration/tbm/workflow_test.go, orchestrator_test.go).
+//
+// Topic 046 (mirrored headroom, per testdata/batches/batch-01.yaml.tmpl's own
+// comment) is used because it is the one mirrored topic no other test in
+// this suite touches: 045 is reserved for the halt suite, 047 stays an
+// active mirror for the halt suite (tbm_e2e_test.go's own
+// mixed-already-migrated-and-unmigrated sub-test), and 048 is used by
+// TestHarnessAppliesSwitchoverWithoutRoll.
+func TestUnroutedProducerDetection(t *testing.T) {
+	h := newHarness(t)
+	require.NotEmpty(t, h.e.sourceBootstrap, "KCP_TBM_SOURCE_BOOTSTRAP must be set (see run.sh)")
+
+	topic := h.e.topicName(46)
+	g := h.manifestForTopics(t, "batch-01.yaml", []string{topic})
+
+	res := h.Decide(t, g)
+	require.Falsef(t, res.Refused, "topic %s must be migratable: %v", topic, res.Reasons)
+	require.Equal(t, []string{topic}, res.Topics)
+
+	// The repo enforces a 10s floor on a nonzero detectUnroutedProducersDuration
+	// (internal/manifest/gateway.go's minDetectUnroutedProducersDuration) — also
+	// the exact value the sibling AAO e2e suite already proved live for this
+	// same check (migration_e2e_test.go's own rogue-producer tests).
+	g.Spec.DefaultPolicies.DetectUnroutedProducersDuration = 10 * time.Second
+
+	manifestBytes, err := yaml.Marshal(g)
+	require.NoError(t, err)
+	manifestPath := filepath.Join(t.TempDir(), "unrouted-producer.yaml")
+	require.NoError(t, os.WriteFile(manifestPath, manifestBytes, 0o600))
+	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
+
+	rogueCtx, stopRogue := context.WithCancel(context.Background())
+	rogueDone := startRogueProducer(t, rogueCtx, h.e.sourceBootstrap, topic)
+	t.Cleanup(func() {
+		stopRogue()
+		<-rogueDone
+	})
+
+	// handleStepFailure returns the original step error even after a
+	// successful rollback (orchestrator.go:224-240), so execute-tbm exits
+	// non-zero here — this is expected, not a test failure.
+	out, err := runKCP(t, manifestPath, stateFile)
+	require.Errorf(t, err, "execute-tbm must exit non-zero on unrouted-producer detection:\n%s", out)
+	require.NotContains(t, out, "panic", "execute-tbm must not panic")
+	require.Contains(t, out, "Unrouted producers detected", "execute-tbm's narrative must show detection fired")
+	require.Contains(t, out, "Gateway unfenced", "execute-tbm's narrative must show the rollback completed")
+
+	data, readErr := os.ReadFile(stateFile)
+	require.NoError(t, readErr, "execute-tbm must write --tbm-state-file even on a rolled-back run")
+	var parsed struct {
+		Migrations []struct {
+			MigrationId  string `json:"migration_id"`
+			CurrentState string `json:"current_state"`
+		} `json:"migrations"`
+	}
+	require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
+	require.Lenf(t, parsed.Migrations, 1, "state file must record exactly one migration")
+	require.Equal(t, "lags_ok", parsed.Migrations[0].CurrentState,
+		"abort_fence must roll the FSM back to lags_ok, not leave it at fenced/fence_verified")
+
+	require.Falsef(t, routeSwitchedToTargetForAll(t, h, []string{topic}),
+		"a rolled-back batch must never reach switch — %s must not be routed to the target domain", topic)
+
+	mirrors := mirrorStatuses(t, h)
+	require.Equalf(t, clusterlink.MirrorStatusActive, mirrors[topic],
+		"a rolled-back batch must never promote its mirror — %s must still be ACTIVE, got %s", topic, mirrors[topic])
 }
 
 // routeSwitchedToTargetForAll reports whether the live gateway route's

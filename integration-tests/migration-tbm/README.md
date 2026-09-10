@@ -4,10 +4,14 @@ Runs a real Topic-Based Migration over a **live dynamic-mode Confluent Gateway
 with hot reload** and a real cluster link. `TestSuccessBatchesMigrate` and
 `TestExecuteTBMThinPosture` drive the real `execute-tbm` command
 (`internal/services/migration/tbm`'s FSM): `initialize`, `wait_for_lags`,
-`fence`, `verify_fence`, `promote` and `switch` are all real (verify_fence's
-unrouted-producer detection and abort_fence rollback are unit-tested, not
-exercised live by this suite — no manifest here sets a nonzero
-`detectUnroutedProducersDuration`). `TestHaltScenarios` and `TestHarnessAppliesSwitchoverWithoutRoll`
+`fence`, `verify_fence`, `promote` and `switch` are all real — these two
+tests' manifests leave `detectUnroutedProducersDuration` at its default (0,
+disabled), so they only exercise `verify_fence`'s detection-disabled skip
+path. `TestUnroutedProducerDetection` is this suite's live coverage of
+`verify_fence`'s unrouted-producer detection and its `abort_fence` rollback:
+it produces directly to a source topic while the batch is fenced and asserts
+execute-tbm's own narrative shows detection firing and the gateway being
+unfenced. `TestHaltScenarios` and `TestHarnessAppliesSwitchoverWithoutRoll`
 instead exercise the reconciliation engine `migplan.Reconcile` and the gateway
 hot-reload apply path directly, independent of the FSM: the suite asserts the
 engine **refuses** batches on known-bad conditions and **succeeds** several
