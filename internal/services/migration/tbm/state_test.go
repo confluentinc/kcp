@@ -75,3 +75,27 @@ func TestTBMState_GetMigrationById_NotFound(t *testing.T) {
 	_, err := state.GetMigrationById("missing")
 	require.Error(t, err)
 }
+
+func TestTBMConfig_IdentityFieldsRoundTripThroughStateFile(t *testing.T) {
+	state := NewTBMState()
+	state.Migrations = []TBMConfig{
+		{
+			MigrationId:   "tbm-1",
+			CurrentState:  StateInitialized,
+			ManifestHash:  "hash1",
+			K8sNamespace:  "confluent",
+			InitialCrName: "gateway-initial",
+			Route:         "migration-route",
+		},
+	}
+
+	filePath := filepath.Join(t.TempDir(), "tbm-state.json")
+	require.NoError(t, state.WriteToFile(filePath))
+
+	loaded, err := NewTBMStateFromFile(filePath)
+	require.NoError(t, err)
+	require.Len(t, loaded.Migrations, 1)
+	assert.Equal(t, "confluent", loaded.Migrations[0].K8sNamespace)
+	assert.Equal(t, "gateway-initial", loaded.Migrations[0].InitialCrName)
+	assert.Equal(t, "migration-route", loaded.Migrations[0].Route)
+}
