@@ -15,6 +15,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
+	"github.com/goccy/go-yaml"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -23,17 +24,18 @@ import (
 // cross-imports (see the tbm package doc comment in state.go).
 const maxConsecutiveSweepFailures = 3
 
-// TransitionSimulatedDelay is how long each still-noop action sleeps to
-// simulate real execution timing, until real per-batch migration logic
-// replaces it. A package variable, not a const, so tests can shrink it — see
-// setFastTransitions in workflow_test.go.
+// TransitionSimulatedDelay was how long each still-noop action slept to
+// simulate real execution timing. No transition calls simulateTransition any
+// more — every FSM transition (Initialize, WaitForLags, Fence, VerifyFence,
+// Promote, Switch) is now real — but the variable and simulateTransition
+// itself are left in place until Task 5's cleanup removes them, since
+// setFastTransitions (workflow_test.go) and newTestOrchestrator
+// (orchestrator_test.go) still reference them.
 var TransitionSimulatedDelay = 7 * time.Second
 
 // TBMActions holds the business logic behind each FSM transition. Initialize,
-// WaitForLags, Fence, Promote and Switch are real; only VerifyFence remains a
-// noop that sleeps TransitionSimulatedDelay — cancellable via ctx, mirroring
-// the wait pattern in migration.MigrationActions.CheckLags — then reports
-// completion.
+// WaitForLags, Fence, VerifyFence, Promote and Switch are all real now — none
+// of the FSM's forward transitions remain a noop.
 type TBMActions struct {
 	reporter          *reporter
 	sourceOffset      offset.Provider
@@ -110,8 +112,11 @@ func (a *TBMActions) SetPromoteBatchSize(n int) {
 	a.promoteBatchSize = n
 }
 
-// simulateTransition is the shared noop body the sole remaining noop action
-// (verify_fence) calls.
+// simulateTransition was the shared noop body verify_fence called before it
+// became real. Unused now — kept until Task 5's cleanup removes it alongside
+// TransitionSimulatedDelay and setFastTransitions.
+//
+//nolint:unused // scheduled for removal alongside TransitionSimulatedDelay
 func (a *TBMActions) simulateTransition(ctx context.Context, doneMsg string) error {
 	select {
 	case <-ctx.Done():
@@ -337,9 +342,121 @@ func (a *TBMActions) Fence(ctx context.Context, config *TBMConfig) error {
 	return nil
 }
 
-// VerifyFence runs the verify_fence transition.
-func (a *TBMActions) VerifyFence(ctx context.Context, config *TBMConfig) error {
-	return a.simulateTransition(ctx, "Fence verified")
+// unfenceGateway reapplies the cleaned GatewayYAML snapshot captured once at
+// Initialize, verbatim — no rules graft. That snapshot IS this batch's
+// pre-fence state (see deriveFencedCRYAML: the same snapshot is what Fence
+// grafts config.FenceYAML onto), so reapplying it unmodified is the exact
+// inverse of Fence, the same way migration.MigrationActions.unfenceGateway
+// reapplies cleanInitialCR(config.InitialCrYAML) verbatim with no separate
+// "derive unfenced CR" function. Called only by onAbortFence, on a verify_fence
+// detection.
+//
+// Calls ensureGatewayCapability first, exactly like Fence does: a process
+// that resumes directly at verify_fence (Fence already completed in an
+// earlier process) has never touched a.gatewayCapability in this process, so
+// without this call it would apply and verify the unfence using the
+// unresolved zero-value capability — the exact staleness bug already found
+// and fixed for Switch (see resolveGatewayCapability's own doc comment).
+func (a *TBMActions) unfenceGateway(ctx context.Context, config *TBMConfig) error {
+	if err := a.ensureGatewayCapability(ctx, config); err != nil {
+		return fmt.Errorf("failed to resolve gateway capability: %w", err)
+	}
+
+	obj, err := cleanGatewayYAML(config.GatewayYAML)
+	if err != nil {
+		return err
+	}
+	cleanYAML, err := yaml.Marshal(obj)
+	if err != nil {
+		return fmt.Errorf("failed to marshal cleaned gateway CR YAML: %w", err)
+	}
+
+	applied, err := a.applyGatewayCR(ctx, config, cleanYAML, "unfence")
+	if err != nil {
+		return fmt.Errorf("failed to apply cleaned gateway CR: %w", err)
+	}
+	a.reporter.success("Cleaned gateway CR applied")
+
+	if err := a.waitForGatewayAccepted(ctx, config, "unfence"); err != nil {
+		return err
+	}
+
+	return a.verifyGatewayTransition(ctx, config, applied, "unfence")
+}
+
+// VerifyFence runs the verify_fence transition: verifies the fence held by
+// checking that source offsets are stable across detectUnroutedProducersDuration
+// — an increasing offset after fencing means a producer bypassing the gateway
+// and writing directly to the source cluster. When detection is disabled
+// (detectUnroutedProducersDuration <= 0) the step succeeds immediately so the
+// FSM still records fence_verified. Mirrors migration.MigrationActions.VerifyFence,
+// except the duration is a parameter here (see ExecutionParams.DetectUnroutedProducersDuration)
+// rather than a TBMConfig field — TBM threads per-run policy the same way
+// WaitForLags already threads LagThreshold.
+func (a *TBMActions) VerifyFence(ctx context.Context, config *TBMConfig, detectUnroutedProducersDuration time.Duration) error {
+	if detectUnroutedProducersDuration <= 0 {
+		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
+		a.reporter.detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
+		return nil
+	}
+
+	if err := a.detectUnroutedProducers(ctx, config.Topics, detectUnroutedProducersDuration); err != nil {
+		return err
+	}
+	a.reporter.success("Source offsets stable — no unrouted producers detected")
+	return nil
+}
+
+// detectUnroutedProducers takes two source offset snapshots separated by the
+// given duration. If any partition's offset increases between snapshots, a
+// producer is writing directly to the source cluster, bypassing the fenced
+// gateway. Mirrors migration.MigrationActions.detectUnroutedProducers
+// verbatim — duplicated, not shared (see the tbm package doc comment in
+// state.go).
+func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
+	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
+	snapshot1, err := a.sourceOffset.GetMany(ctx, topics)
+	if err != nil {
+		return fmt.Errorf("failed to get source offsets: %w", err)
+	}
+
+	a.reporter.detail("Monitoring source offsets for %s...", duration)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(duration):
+	}
+
+	slog.Debug("taking second source offset snapshot")
+	snapshot2, err := a.sourceOffset.GetMany(ctx, topics)
+	if err != nil {
+		return fmt.Errorf("failed to get source offsets: %w", err)
+	}
+
+	var violations []string
+	for _, topic := range topics {
+		for p, o2 := range snapshot2[topic] {
+			// A partition absent from the first snapshot (e.g. created during
+			// the window) starts at offset 0, so any data on it was written
+			// after fencing — the zero-value baseline flags it.
+			o1 := snapshot1[topic][p]
+			if o2 > o1 {
+				delta := o2 - o1
+				rate := float64(delta) / duration.Seconds()
+				violations = append(violations, fmt.Sprintf(
+					"topic %s partition %d: offset %d → %d (+%d, ~%.0f msg/s)",
+					topic, p, o1, o2, delta, rate))
+			}
+		}
+	}
+
+	if len(violations) > 0 {
+		sort.Strings(violations)
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute-tbm' to resume",
+			ErrUnroutedProducers, strings.Join(violations, "\n  "))
+	}
+
+	return nil
 }
 
 // Promote runs the promote transition: polls source/destination offsets for

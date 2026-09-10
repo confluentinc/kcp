@@ -589,3 +589,64 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 
 	assert.Equal(t, 1, detectCalls, "Switch alone (Fence never ran this process) must still resolve capability")
 }
+
+func TestTBMActions_UnfenceGateway_AppliesCleanedSnapshotVerbatim(t *testing.T) {
+	var appliedYAML []byte
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
+			appliedYAML = yamlData
+			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	err := actions.unfenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	require.NotEmpty(t, appliedYAML, "ApplyGatewayYAML must have been called")
+
+	var applied map[string]interface{}
+	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &applied))
+	var expected map[string]interface{}
+	require.NoError(t, yamlUnmarshalForTest(t, []byte(testGatewayYAML), &expected))
+	if metadata, ok := expected["metadata"].(map[string]interface{}); ok {
+		delete(metadata, "managedFields")
+		delete(metadata, "resourceVersion")
+		delete(metadata, "uid")
+		delete(metadata, "creationTimestamp")
+		delete(metadata, "generation")
+	}
+	delete(expected, "status")
+	assert.Equal(t, expected, applied, "unfence must reapply the cleaned GatewayYAML snapshot verbatim, with nothing grafted onto it")
+}
+
+func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
+			return "", fmt.Errorf("the server rejected our request")
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	err := actions.unfenceGateway(context.Background(), config)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "the server rejected our request")
+}
+
+func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
+	gw := &mockGatewayService{
+		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
+			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "spec.routes[0] references an unknown streamingDomain"}
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+
+	err := actions.unfenceGateway(context.Background(), config)
+	require.Error(t, err)
+	var rejected *gateway.GatewayRejectedError
+	require.ErrorAs(t, err, &rejected)
+}

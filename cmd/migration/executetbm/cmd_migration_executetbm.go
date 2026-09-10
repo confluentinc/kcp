@@ -259,7 +259,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}
 
-	if err := orchestrator.Execute(context.Background(), res, int64(g.Spec.DefaultPolicies.LagThreshold), restCreds.Authenticator()); err != nil {
+	if err := orchestrator.Execute(context.Background(), res, int64(g.Spec.DefaultPolicies.LagThreshold), g.Spec.DefaultPolicies.DetectUnroutedProducersDuration, restCreds.Authenticator()); err != nil {
 		return fmt.Errorf("failed to execute tbm migration: %w", err)
 	}
 

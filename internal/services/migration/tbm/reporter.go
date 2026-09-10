@@ -67,8 +67,9 @@ func (r *reporter) detail(format string, a ...any) {
 	r.mirror(msg)
 }
 
-// warn prints an indented yellow-⚠️ line to stdout (in-flow caution).
-func (r *reporter) warn(format string, a ...any) { //nolint:unused // reserved for a future in-flow caution (verify_fence); not yet called
+// warn prints an indented yellow-⚠️ line to stdout (in-flow caution). Called
+// by onAbortFence when verify_fence detects unrouted producers.
+func (r *reporter) warn(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
 	r.printf("   %s %s\n", color.YellowString("⚠️"), msg)
 	r.mirrorWarn(msg)

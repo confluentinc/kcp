@@ -108,31 +108,9 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	require.NoError(t, actions.Initialize(ctx, config, realisticReconcileResult()))
 	require.NoError(t, actions.WaitForLags(ctx, config, 10))
 	require.NoError(t, actions.Fence(ctx, config))
-	require.NoError(t, actions.VerifyFence(ctx, config))
+	require.NoError(t, actions.VerifyFence(ctx, config, 0))
 	require.NoError(t, actions.Promote(ctx, config, clusterlink.BasicAuth{}))
 	require.NoError(t, actions.Switch(ctx, config))
-}
-
-func TestTBMActions_CtxCancellationExitsPromptly(t *testing.T) {
-	// Deliberately NOT setFastTransitions: this proves cancellation wins the
-	// race against the real 7s default, not against an already-short delay.
-	// VerifyFence exercises this now: WaitForLags and Fence are both real and
-	// have their own dedicated cancellation tests (WaitForLags: pre-cancelled
-	// ctx, no ticker wait needed; Fence: TestTBMActions_Fence_* in
-	// gateway_test.go), while VerifyFence is still a noop with something to
-	// cancel.
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
-	defer cancel()
-
-	start := time.Now()
-	err := actions.VerifyFence(ctx, config)
-	elapsed := time.Since(start)
-
-	require.ErrorIs(t, err, context.DeadlineExceeded)
-	assert.Less(t, elapsed, 1*time.Second, "expected cancellation to exit well before the 7s simulated delay")
 }
 
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
@@ -551,4 +529,110 @@ func TestTBMActions_Promote_AbortsAfterMaxConsecutiveSweepFailures(t *testing.T)
 	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "offset sweep failed")
+}
+
+// ===========================================================================
+// VerifyFence tests — mirror migration's TestOrchestrator_Execute_Unrouted*
+// suite at the action level (detection logic only; rollback is exercised at
+// the orchestrator level in orchestrator_test.go).
+// ===========================================================================
+
+func TestTBMActions_VerifyFence_DetectionDisabled_SkipsCheck(t *testing.T) {
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			t.Fatal("GetMany must not be called when detection is disabled")
+			return nil, nil
+		},
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &TBMConfig{Topics: []string{"t1.order"}}
+
+	err := actions.VerifyFence(context.Background(), config, 0)
+	require.NoError(t, err)
+}
+
+func TestTBMActions_VerifyFence_StableOffsets_Passes(t *testing.T) {
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &TBMConfig{Topics: []string{"t1.order"}}
+
+	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
+	require.NoError(t, err)
+}
+
+func TestTBMActions_VerifyFence_RisingOffset_ReturnsErrUnroutedProducers(t *testing.T) {
+	var call int32
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt32(&call, 1)
+			if n == 1 {
+				return map[int32]int64{0: 1000}, nil
+			}
+			return map[int32]int64{0: 1500}, nil // rose during the window
+		},
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &TBMConfig{Topics: []string{"t1.order"}}
+
+	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "t1.order partition 0")
+	assert.Contains(t, err.Error(), "1000 → 1500")
+}
+
+func TestTBMActions_VerifyFence_PartitionAbsentFromFirstSnapshot_TreatedAsZeroBaseline(t *testing.T) {
+	var call int32
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			n := atomic.AddInt32(&call, 1)
+			if n == 1 {
+				return map[int32]int64{}, nil // partition 0 doesn't exist yet
+			}
+			return map[int32]int64{0: 5}, nil // created and written to during the window
+		},
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &TBMConfig{Topics: []string{"t1.order"}}
+
+	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "0 → 5")
+}
+
+func TestTBMActions_VerifyFence_FirstSnapshotFetchError_PropagatesWithoutErrUnroutedProducers(t *testing.T) {
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) { return nil, fmt.Errorf("kafka: connection refused") },
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &TBMConfig{Topics: []string{"t1.order"}}
+
+	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
+
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, err.Error(), "connection refused")
+}
+
+func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *testing.T) {
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
+	}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	config := &TBMConfig{Topics: []string{"t1.order"}}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	err := actions.VerifyFence(ctx, config, 20*time.Second)
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Less(t, elapsed, 1*time.Second, "expected cancellation to exit well before the 20s monitoring window")
 }
