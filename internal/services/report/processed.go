@@ -116,6 +116,10 @@ type ProcessedCluster struct {
 	AWSClientInformation        types.AWSClientInformation        `json:"aws_client_information"`
 	KafkaAdminClientInformation types.KafkaAdminClientInformation `json:"kafka_admin_client_information"`
 	DiscoveredClients           []types.DiscoveredClient          `json:"discovered_clients"`
+	// SourceInterBrokerProtocol is the cluster's inter-broker protocol relative to
+	// the 2.8 Cluster Linking floor ("Yes" >= 2.8, "No" below, "" unknown), read from
+	// the source configuration during processing.
+	SourceInterBrokerProtocol string `json:"source_inter_broker_protocol,omitempty"`
 }
 
 type CostAggregate struct {

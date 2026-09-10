@@ -80,13 +80,16 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
 
 test-tf-validation: build-frontend ## Run Terraform validation tests (requires terraform on PATH)
 	go test -tags=terraform_validation -timeout 15m $(GOTEST_FLAGS) ./internal/services/hcl/...
+
+examples: ## Regenerate the committed docs/assets/report-plan-examples/** reference outputs from the demo-scan.json fixture
+	UPDATE_EXAMPLES=1 go test ./internal/services/plan/ -run TestReportPlanExamples_UpToDate
 
 test-playwright: build ## Run Playwright browser tests
 	@cd cmd/ui/frontend && npx playwright test --reporter=list

@@ -46,6 +46,9 @@ crash.*.log
 !internal/manifest/migration.schema.json
 !internal/manifest/gatewaymigration.schema.json
 !internal/state/migrate/testdata/*.json
+# Allow committed `kcp report plan` reference fixtures (synthetic scan + rendered plans)
+!docs/assets/report-plan-examples/demo-scan.json
+!docs/assets/report-plan-examples/*/plan.json
 
 # Ignore coverage files
 coverage.out

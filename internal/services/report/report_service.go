@@ -56,6 +56,7 @@ func (rs *ReportService) ProcessState(state types.State) ProcessedState {
 					AWSClientInformation:        cluster.AWSClientInformation,
 					KafkaAdminClientInformation: cluster.KafkaAdminClientInformation,
 					DiscoveredClients:           cluster.DiscoveredClients,
+					SourceInterBrokerProtocol:   resolveInterBrokerProtocol(region.Configurations, cluster),
 				})
 			}
 
