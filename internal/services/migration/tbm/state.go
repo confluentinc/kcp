@@ -133,6 +133,29 @@ func HashManifest(data []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+// HashManifestAndCredentials returns the sha256 (hex-encoded) digest of the
+// manifest bytes plus the current contents of every credentials file it
+// references. Credentials are always referenced files now, never inline, so
+// hashing the manifest alone misses drift entirely: an operator can rotate a
+// credential file's contents at its existing path and resolveTBMConfig would
+// see the same manifest hash and silently resume under the new secret. Each
+// credential file's bytes are separated by a NUL so no ambiguous
+// concatenation boundary can make two different (manifest, credentials) pairs
+// hash the same.
+func HashManifestAndCredentials(manifestBytes []byte, credPaths ...string) (string, error) {
+	h := sha256.New()
+	h.Write(manifestBytes)
+	for _, p := range credPaths {
+		h.Write([]byte{0})
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return "", fmt.Errorf("failed to read credentials file %q for drift hash: %w", p, err)
+		}
+		h.Write(data)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
 // ----- TBM state file -----
 
 // TBMState is the on-disk TBM state file structure — a dedicated file,

@@ -12,8 +12,7 @@ spec:
     type: apache-kafka
     bootstrapServers:
       - "__SOURCE_BOOTSTRAP__"
-    credentials:
-      unauthenticated_plaintext: {}
+    credentials: __CRED_DIR__/source-creds.yaml
   target:
     type: confluent-platform
     clusterId: "__DEST_CLUSTER_ID__"
@@ -21,14 +20,12 @@ spec:
       bootstrapServers:
         - "__DEST_BOOTSTRAP__"
       restEndpoint: "__REST_ENDPOINT__"
-      credentials:
-        sasl_plain:
-          username: "__DEST_SASL_USER__"
-          password: "__DEST_SASL_PASSWORD__"
-          tls: true
-        insecure_skip_tls_verify: true
+      clusterCredentials: __CRED_DIR__/dest-kafka-creds.yaml
   clusterLink:
     name: "__CLUSTER_LINK_NAME__"
+    bootstrapServers:
+      - "__DEST_BOOTSTRAP__"
+    linkCredentials: __CRED_DIR__/link-creds.yaml
   gateway:
     namespace: "__NAMESPACE__"
     cr-name: "__GATEWAY_NAME__"

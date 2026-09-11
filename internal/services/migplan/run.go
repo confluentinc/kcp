@@ -253,7 +253,7 @@ func buildTargetTopicLister(g *manifest.GatewayMigration) (TopicLister, io.Close
 	}
 	creds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return nil, nil, manifest.JoinProblems("spec.target.kafka.credentials", errs)
+		return nil, nil, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 	conn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, creds)
 
