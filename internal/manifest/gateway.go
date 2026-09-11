@@ -204,8 +204,8 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 //
 // It does no I/O, so a credentials slot spelled as a path is checked for
 // presence only; the rules that need the block's contents (source auth gating,
-// the destination iam rejection) run here for an inline block and again
-// in SourceCredentials / DestinationKafkaCredentials for both spellings.
+// the destination iam rejection) run only in SourceCredentials /
+// DestinationKafkaCredentials, which read and parse the referenced file.
 func (g *GatewayMigration) Validate() []error {
 	var errs []error
 	add := func(format string, args ...any) {
@@ -470,10 +470,11 @@ func LoadGatewayMigrationFile(path string) (*GatewayMigration, error) {
 	return g, nil
 }
 
-// warnIfGroupOrWorldReadable flags a secret-bearing manifest with loose
-// permissions. A warning rather than an error: the file may legitimately be a
-// read-only Kubernetes projected volume, and refusing to read it would break
-// the in-cluster path entirely.
+// warnIfGroupOrWorldReadable flags a secret-bearing file (the manifest itself,
+// or a credentials file resolved from it) with loose permissions. A warning
+// rather than an error: the file may legitimately be a read-only Kubernetes
+// projected volume, and refusing to read it would break the in-cluster path
+// entirely.
 func warnIfGroupOrWorldReadable(path string) {
 	info, err := os.Stat(path)
 	if err != nil {

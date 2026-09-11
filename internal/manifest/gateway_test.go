@@ -306,15 +306,20 @@ func TestGateway_RequiresLinkCredentials(t *testing.T) {
 }
 
 // TestGateway_LinkCredentialsRequiredEvenUnderSaslPlain — the old shortcut that
-// let restCredentials be omitted when the Kafka leg was sasl_plain is gone: an
-// omitted linkCredentials fails validation regardless of the Kafka leg (AE3).
+// let restCredentials be derived from a sasl_plain Kafka leg is gone:
+// RestCredentials() itself never reads spec.target.kafka, so a blank
+// linkCredentials fails to resolve regardless of the destination Kafka leg's
+// auth method. Unlike TestGateway_RequiresLinkCredentials (which checks
+// Validate()'s presence-only rule), this exercises the resolver directly (AE3).
 func TestGateway_LinkCredentialsRequiredEvenUnderSaslPlain(t *testing.T) {
 	doc := strings.Replace(validGatewayDoc,
 		"    linkCredentials: ./link-creds.yaml", "    linkCredentials: \"\"", 1)
-	// The default target Kafka leg is sasl_plain; omitting linkCredentials must
-	// still fail — no auto-derivation fallback.
-	g := parseGateway(t, doc)
-	requireErrContains(t, g.Validate(), "spec.clusterLink.linkCredentials")
+	// The default target Kafka leg (./dest-kafka-creds.yaml, unresolved here) is
+	// sasl_plain-shaped; RestCredentials() must still fail, since it has no
+	// derivation fallback to reach for.
+	_, err := parseGateway(t, doc).RestCredentials()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "must not be empty")
 }
 
 // TestGateway_RestCredentialsResolveFromClusterLink — RestCredentials() reads

@@ -57,8 +57,9 @@ second one. Init refuses to overwrite a migration that is already past the point
 return; run 'kcp migration execute' there instead — it proceeds with the edited spec
 (warning loudly) rather than discarding the state a live cutover needs.
 
-The manifest is secret-bearing when credentials are written inline. Keep it 0600, or
-reference a credentials file and/or use ${ENV_VAR} interpolation (interpolate: true).`,
+Credentials are never written inline — each connection leg names a path to its own
+credentials file. Keep those files, not the manifest, at 0600; kcp warns if one is
+group- or world-readable.`,
 		Example: `  # Initialize from a manifest
   kcp migration init --migration-yaml gateway-migration.yaml
 

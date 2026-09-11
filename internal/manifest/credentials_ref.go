@@ -21,8 +21,10 @@ type CredentialsRef struct {
 	Path string
 }
 
-// IsZero reports whether the slot was omitted entirely.
-func (r CredentialsRef) IsZero() bool { return r.Path == "" }
+// IsZero reports whether the slot was omitted, or is a path of only
+// whitespace — treated the same as omitted so callers see one clear "must not
+// be empty" error instead of a raw OS error from resolving a blank path.
+func (r CredentialsRef) IsZero() bool { return strings.TrimSpace(r.Path) == "" }
 
 // UnmarshalYAML implements goccy's BytesUnmarshaler. The slot must be a scalar
 // file path; a mapping (an inline secret block) is rejected. The error names
@@ -51,6 +53,7 @@ func (r CredentialsRef) ResolveMigrateCluster() (types.MigrateClusterCredentials
 	if r.IsZero() {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("credentials: must not be empty")}
 	}
+	warnIfGroupOrWorldReadable(r.Path)
 	data, err := os.ReadFile(r.Path)
 	if err != nil {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("failed to read migrate credentials file: %w", err)}
@@ -67,6 +70,7 @@ func (r CredentialsRef) ResolveTarget() (*targets.Credentials, error) {
 	if r.IsZero() {
 		return nil, fmt.Errorf("credentials: must not be empty")
 	}
+	warnIfGroupOrWorldReadable(r.Path)
 	return targets.LoadCredentials(r.Path)
 }
 
@@ -77,7 +81,7 @@ func (r CredentialsRef) String() string {
 
 // blankRef reports whether a ref is absent or is a path of only whitespace.
 func blankRef(r CredentialsRef) bool {
-	return strings.TrimSpace(r.Path) == ""
+	return r.IsZero()
 }
 
 // NewCredentialsPath builds a path-form CredentialsRef. It exists so callers

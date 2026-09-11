@@ -335,6 +335,7 @@ func TestLagCheck_PropagatesRestCredentialsResolutionError(t *testing.T) {
 	_, _, err := buildLagCheckConfig(g)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolving destination REST credentials")
+	assert.Contains(t, err.Error(), "api_key and api_secret must both be set or both omitted")
 }
 
 // TestLagCheck_PropagatesHTTPClientBuildError — an mtls client_cert/client_key

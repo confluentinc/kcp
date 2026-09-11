@@ -83,8 +83,8 @@ func ParseCredentials(data []byte) (*Credentials, error) {
 }
 
 // ValidateCredentials applies every target-credentials rule to an already-built
-// struct, so a caller that assembled the block itself (an inline manifest
-// block) is held to the same rules as a file.
+// struct, so any caller that assembles a Credentials value itself (e.g. a test)
+// is held to the same rules as one parsed from a file.
 func ValidateCredentials(c *Credentials) error {
 	if (c.APIKey != "") != (c.APISecret != "") {
 		return fmt.Errorf("api_key and api_secret must both be set or both omitted")
