@@ -65,13 +65,21 @@ const (
 	// survives a restart, so a resume re-runs the verify_fence detection
 	// window. Fired only by NewTBMOrchestrator; it has no action.
 	EventExpireVerification = "expire_verification"
-	// EventExpireFence demotes fenced to lags_ok at FSM bootstrap: whether the
-	// live gateway still holds the fenced CR is equally a point-in-time fact —
-	// a crash mid-abort_fence rollback (unfence applied, state file not yet
-	// updated) would otherwise leave the state file saying fenced while the
-	// live gateway is not. Demoting makes the resume re-apply the fenced CR —
-	// a no-op rollout when the gateway never diverged. Fired only by
-	// NewTBMOrchestrator; it has no action.
+	// EventExpireFence demotes fenced to initialized at FSM bootstrap: whether
+	// the live gateway still holds the fenced CR is equally a point-in-time
+	// fact — a crash mid-abort_fence rollback (unfence applied, state file not
+	// yet updated) would otherwise leave the state file saying fenced while
+	// the live gateway is not. The state file can't distinguish that from an
+	// ordinary still-fenced resume, so this targets initialized (not lags_ok)
+	// for the same reason EventAbortFence does: if the gateway really was
+	// silently unfenced, normal (non-rogue) traffic may have raised lag during
+	// the gap, and re-fencing without re-checking it would reopen the downtime
+	// window without the guarantee wait_for_lags exists to provide. When the
+	// gateway never actually diverged, the extra wait_for_lags/fence pass costs
+	// little — the only way lag rises while genuinely fenced is an unrouted
+	// producer, which verify_fence re-checks unconditionally on this same
+	// resume regardless, and source connectivity is already required for that
+	// same reason. Fired only by NewTBMOrchestrator; it has no action.
 	EventExpireFence = "expire_fence"
 )
 

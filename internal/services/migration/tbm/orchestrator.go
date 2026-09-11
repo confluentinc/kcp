@@ -128,7 +128,7 @@ func NewTBMOrchestrator(
 	events = append(events, fsm.EventDesc{
 		Name: EventExpireFence,
 		Src:  []string{StateFenced},
-		Dst:  StateLagsOk,
+		Dst:  StateInitialized,
 	})
 
 	orchestrator.fsm = fsm.NewFSM(
@@ -152,10 +152,10 @@ func NewTBMOrchestrator(
 	// Key both demotions off the state the config was loaded in, captured
 	// once here — not off orchestrator.fsm.Is after the fact. The two are
 	// independent, single-level demotions (fence_verified -> fenced,
-	// fenced -> lags_ok), not a cascade: re-checking fsm.Is(StateFenced) after
-	// the first demotion has already landed the FSM on fenced would fire the
-	// second unconditionally on every fence_verified resume too, demoting all
-	// the way to lags_ok instead of stopping at fenced.
+	// fenced -> initialized), not a cascade: re-checking fsm.Is(StateFenced)
+	// after the first demotion has already landed the FSM on fenced would
+	// fire the second unconditionally on every fence_verified resume too,
+	// demoting all the way to initialized instead of stopping at fenced.
 	bootstrapState := config.CurrentState
 
 	// fence_verified is a point-in-time attestation and never survives a

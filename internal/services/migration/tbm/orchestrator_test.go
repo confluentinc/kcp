@@ -70,10 +70,11 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 }
 
 func TestTBMOrchestrator_Execute_ResumesFromPartialState(t *testing.T) {
-	// Resuming at fenced is bootstrap-demoted to lags_ok (see
+	// Resuming at fenced is bootstrap-demoted to initialized (see
 	// TestTBMOrchestrator_Bootstrap_ExpiresFencePostureOnResume), so this walk
-	// re-runs Fence for real — harmlessly, since config.Topics is empty here
-	// and Fence's own no-topics guard makes it a no-op success.
+	// re-runs WaitForLags and Fence for real — harmlessly, since config.Topics
+	// is empty here and both have their own no-topics guard making them a
+	// no-op success.
 	orchestrator, config, _ := newTestOrchestrator(t, StateFenced)
 
 	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}, 10, 0, clusterlink.BasicAuth{}))
@@ -261,5 +262,5 @@ func TestTBMOrchestrator_Bootstrap_ExpiresFencePostureOnResume(t *testing.T) {
 	state := NewTBMState()
 	NewTBMOrchestrator(config, actions, state, filepath.Join(t.TempDir(), "s.json"))
 
-	assert.Equal(t, StateLagsOk, config.CurrentState, "a resume at fenced must demote to lags_ok so it re-asserts the fence rather than trusting a posture that may not still hold")
+	assert.Equal(t, StateInitialized, config.CurrentState, "a resume at fenced must demote to initialized so it re-checks lag for real (not just lags_ok) before re-asserting a fence posture that may not still hold")
 }

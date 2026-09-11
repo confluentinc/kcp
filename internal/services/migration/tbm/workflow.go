@@ -276,10 +276,12 @@ func formatLag64(n int64) string {
 // verified on the live cluster, proves hot-reload actually works if the
 // gateway claims to support it, derives the fenced CR by replacing
 // config.Route's rules with config.FenceYAML, applies it, and confirms it
-// landed. Unlike migration.FenceGateway there is no pod-UID capture for
-// rogue-producer detection (that is verify_fence's concern, not yet built)
-// and no compensating rollback on failure — a failure here just returns an
-// error and leaves the FSM at lags_ok; re-running execute-tbm retries fencing.
+// landed. Unlike migration.FenceGateway there is no pod-UID capture (that
+// strengthening is deferred, unlike verify_fence's rogue/unrouted-producer
+// detection, which is real — see VerifyFence). A failure here has no
+// compensating rollback of its own (abort_fence only fires from
+// verify_fence's ErrUnroutedProducers) — it just returns an error, leaving
+// the FSM at lags_ok; re-running execute-tbm retries fencing.
 func (a *TBMActions) Fence(ctx context.Context, config *TBMConfig) error {
 	// config.Topics is empty whenever migplan.Reconcile's Result was a
 	// legitimate "nothing to migrate" outcome (Refused: false, Artifacts nil —
