@@ -46,7 +46,6 @@ apiVersion: kcp.confluent.io/v1alpha1 # required, exact literal
 kind: GatewayMigration # required, exact literal
 metadata:
   name: my-migration # required, non-blank — the migration identity
-interpolate: true # optional; opt this file in to ${ENV_VAR} resolution
 spec:
   source: { ... } # required — cluster being migrated from
   target: { ... } # required — cluster being migrated to
@@ -63,23 +62,9 @@ uuid-keyed migrations keep working, addressed instead with `--migration-id`).
 `spec.source`, `spec.target`, `spec.clusterLink`, `spec.gateway`, and
 `spec.topicGroup` are always required; `spec.defaultPolicies` is optional.
 
-## `interpolate`
-
-A top-level boolean (not `spec.interpolate` — a referenced credentials file uses
-the identical key with no envelope, so both spellings are the same field).
-Absent (the default) means every value in the file is literal.
-
-Syntax is intentionally narrow: only `${VAR}` is a reference — a bare `$VAR` is
-left alone — `$${` escapes a literal `${`, and **an unset variable is a hard
-error naming the variable** (never a silent empty string, which would attempt
-auth with an empty secret). Only string fields are interpolated; numeric and
-duration fields (e.g. `spec.defaultPolicies.rolloutTimeout`) must be written as
-literals.
-
-This flag governs only its own file. An **inline** credentials block inside this
-manifest is resolved under this same flag; a credentials file referenced **by
-path** does not inherit it — that file needs its own top-level `interpolate:
-true` to opt in independently.
+Every credentials field is a **path to a credentials file** — the manifest never
+holds secret material inline, and there is no `${ENV_VAR}` substitution: a
+`${VAR}`-shaped value is read literally.
 
 ## `spec.source`
 
@@ -89,7 +74,7 @@ The cluster being migrated from. `kcp` only ever reads from it.
 | ------------------ | -------------- | -------- | ------------------------------------------------------------------- |
 | `type`             | enum           | yes      | `msk` or `apache-kafka`. Gates auth: `iam` is valid only for `msk`. |
 | `bootstrapServers` | `[]string`     | yes      | Non-empty; each entry `host:port`.                                  |
-| `credentials`      | path or inline | yes      | Kafka-family credentials — see [Credentials](#credentials) below.   |
+| `credentials`      | path           | yes      | Path to a Kafka-family credentials file — see [Credentials](#credentials) below.   |
 
 `confluent-platform` is not a valid value here — this manifest only ever
 points at a link that already exists, so it never needs to act as a
@@ -104,11 +89,14 @@ The cluster being migrated to.
 | `type`                   | enum           | yes                                                           | `confluent-cloud` or `confluent-platform`.                                                                                                                                               |
 | `clusterId`              | string         | yes                                                           | Required for **both** destination types — this kind never discovers it live.                                                                                                             |
 | `kafka.bootstrapServers` | `[]string`     | yes                                                           | Destination Kafka bootstrap.                                                                                                                                                             |
-| `kafka.restEndpoint`     | string         | yes                                                           | Destination Admin REST endpoint (cluster link + topic operations).                                                                                                                       |
-| `kafka.credentials`      | path or inline | yes                                                           | Destination Kafka leg, dialled directly to read destination-side offsets. Accepts `sasl_plain`, `sasl_scram`, `mtls`, `unauthenticated_tls`, or `unauthenticated_plaintext` — see below. |
-| `kafka.restCredentials`  | path or inline | no (except when `credentials` isn't `sasl_plain` — see below) | Destination REST leg.                                                                                                                                                                    |
+| `kafka.restEndpoint`      | string         | yes                                                           | Destination Admin REST endpoint (cluster link + topic operations).                                                                                                                       |
+| `kafka.clusterCredentials` | path          | yes                                                           | Path to the destination Kafka leg credentials file, dialled directly to read destination-side offsets. Accepts `sasl_plain`, `sasl_scram`, `mtls`, `unauthenticated_tls`, or `unauthenticated_plaintext` — see below. |
 
-`kafka.credentials` accepts any Kafka auth method **except** `iam` — the
+The destination REST (cluster-link) credential is **not** on `spec.target.kafka`
+— it lives at [`spec.clusterLink.linkCredentials`](#specclusterlink), separately
+and always required.
+
+`kafka.clusterCredentials` accepts any Kafka auth method **except** `iam` — the
 destination is Confluent Cloud or Confluent Platform, never MSK, so `iam` is
 rejected outright rather than silently accepted and then failing opaquely at
 connection time. Unlike the source leg, a `ca_cert` inside `sasl_plain` is
@@ -125,40 +113,30 @@ no `sasl_plain` field that opts back into `SASL_PLAINTEXT` against the
 destination; use `unauthenticated_plaintext` for a genuinely plaintext
 destination (test/lab only).
 
-`kafka.restCredentials` is **optional and derived in full** from `credentials`
-**only when that block is `sasl_plain`**: `api_key`/`api_secret` come from
-`sasl_plain.username`/`password`, and `ca_cert`/`insecure_skip_verify` are
-inherited from their `sasl_plain` siblings. For every other `credentials`
-method there is no principal to derive a REST credential from, so
-`restCredentials` becomes **required** — spell out any of `api_key`/`api_secret`,
-`basic`, `bearer`, or `mtls` (see the REST credentials table below). A block
-that is present is always used exactly as written, never partially derived, so
-a `sasl_plain` destination that spells it out anyway must restate the key and
-secret even if they match `credentials`.
-
-**Why two credentials at all?** `kafka.credentials` authenticates a direct
-Kafka-protocol connection to `bootstrapServers`; `kafka.restCredentials`
-authenticates HTTP calls to `restEndpoint`'s Admin REST API, which is what
-actually manages the cluster link (status, list/promote mirror topics,
-alter configs). These are two different servers speaking two
-different protocols. On self-managed Confluent Platform they are backed by two
-independent credential stores the operator configures separately on the
-cluster: the Kafka SASL/SCRAM (or mTLS) listener has its own store, while the
-REST API's auth (`kafka.rest.authentication.method` — a Basic realm file, MDS
-for bearer, or its own mTLS trust store) has another. A valid Kafka SASL/SCRAM
-credential is **not** automatically a valid REST credential, even against the
-same broker process — the two stores only match if the operator has explicitly
-provisioned the same principal into both. Confluent Cloud's `sasl_plain` API
-key is the one exception: Confluent Cloud issues it as a single artifact valid
-in both places by platform design, which is exactly why it's the only method
-kcp can safely derive from.
-
 ## `spec.clusterLink`
 
-| Field                     | Type   | Required | Default | Notes                                                                                                                                            |
-| ------------------------- | ------ | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `name`                    | string | yes      | —       | Name of a cluster link that **already exists** on the destination. This kind never creates one.                                                  |
-| `pauseConsumerOffsetSync` | bool   | no       | `false` | Disable the link's `consumer.offset.sync.enable` during execute and restore it after switchover. Requires the link to currently have it enabled. |
+| Field                     | Type       | Required | Default | Notes                                                                                                                                            |
+| ------------------------- | ---------- | -------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                    | string     | yes      | —       | Name of a cluster link that **already exists** on the destination. This kind never creates one.                                                  |
+| `bootstrapServers`        | `[]string` | no       | —       | Repeats `spec.target.kafka.bootstrapServers` for manifest self-documentation. Not validated against it.                                          |
+| `linkCredentials`         | path       | yes      | —       | Path to the destination REST (cluster-link) credentials file — see [REST credentials](#rest-credentials-specclusterlinklinkcredentials) below.  |
+| `pauseConsumerOffsetSync` | bool       | no       | `false` | Disable the link's `consumer.offset.sync.enable` during execute and restore it after switchover. Requires the link to currently have it enabled. |
+
+**Why two destination credentials at all?** `spec.target.kafka.clusterCredentials`
+authenticates a direct Kafka-protocol connection to the destination
+`bootstrapServers`; `spec.clusterLink.linkCredentials` authenticates HTTP calls
+to `restEndpoint`'s Admin REST API, which is what actually manages the cluster
+link (status, list/promote mirror topics, alter configs). These are two
+different servers speaking two different protocols. On self-managed Confluent
+Platform they are backed by two independent credential stores the operator
+configures separately on the cluster: the Kafka SASL/SCRAM (or mTLS) listener
+has its own store, while the REST API's auth (`kafka.rest.authentication.method`
+— a Basic realm file, MDS for bearer, or its own mTLS trust store) has another. A
+valid Kafka credential is **not** automatically a valid REST credential, even
+against the same broker process. `linkCredentials` is therefore **always
+required** and never derived from the Kafka leg — its top-level shape is one of
+`api_key`/`api_secret`, `basic`, `bearer`, or `mtls` (see the
+[REST credentials table](#rest-credentials-specclusterlinklinkcredentials)).
 
 ## `spec.gateway`
 
@@ -229,29 +207,20 @@ on every `execute`, never frozen at `init`.
 ## Credentials
 
 Every `credentials`-shaped slot (`spec.source.credentials`,
-`spec.target.kafka.credentials`, `spec.target.kafka.restCredentials`) accepts
-**either** a path to an external file **or** the same content written inline —
-the two spellings are a copy-paste apart, since the inline mapping is the file's
-top-level content dropped straight into the manifest:
+`spec.target.kafka.clusterCredentials`, `spec.clusterLink.linkCredentials`) is a
+**path to an external credentials file** — inline credential blocks are not
+accepted, so the manifest itself never holds secret material:
 
 ```yaml
-# path form
 credentials: /etc/kcp/source-creds.yaml
-
-# inline form — identical shape, no envelope
-credentials:
-  sasl_scram:
-    username: ${MSK_USERNAME}
-    password: ${MSK_PASSWORD}
-    mechanism: SHA512
 ```
 
-Prefer the path form for a credential mounted as a Kubernetes Secret file;
-prefer inline with `${ENV_VAR}` references for everything else. A manifest with
-inline credentials is secret-bearing — `kcp` warns (not errors) if the file is
-group- or world-readable, so keep it `0600`.
+The referenced file's top-level content is the credential (a Kafka-family block
+for the Kafka legs, a REST block for `linkCredentials`). Prefer a credential
+mounted as a Kubernetes Secret file. Each credentials file is secret-bearing —
+`kcp` warns (not errors) if it is group- or world-readable, so keep it `0600`.
 
-### Kafka credentials (`spec.source.credentials`, `spec.target.kafka.credentials`)
+### Kafka credentials (`spec.source.credentials`, `spec.target.kafka.clusterCredentials`)
 
 Specify **exactly one** method block — its **presence** selects it (no
 `auth_method:` wrapper, no `use:` flag). An optional top-level
@@ -271,7 +240,7 @@ PEM file path used to verify the broker's TLS certificate. Supply it only for a
 **private/internal CA**; public-CA brokers (AWS MSK, Confluent Cloud) validate
 against the system trust store and need no `ca_cert`.
 
-### REST credentials (`spec.target.kafka.restCredentials`)
+### REST credentials (`spec.clusterLink.linkCredentials`)
 
 Specify **exactly one** block (or the `api_key`/`api_secret` pair).
 
@@ -291,8 +260,8 @@ One restriction is specific to **this** manifest, narrower than the two
 tables above:
 
 - `spec.source.credentials.iam` is valid only when `spec.source.type: msk`.
-  `spec.target.kafka.credentials.iam` is rejected outright, on both source and
-  destination legs — the destination is Confluent Cloud/Platform, never MSK.
+  `spec.target.kafka.clusterCredentials.iam` is rejected outright — the
+  destination is Confluent Cloud/Platform, never MSK.
 
 ## How the commands read this file
 
@@ -305,7 +274,7 @@ tables above:
 |                           | `--migration-state-file`                                                                                                                                                                         | yes                                 | Produced by `init`.                                                                                                                      |
 |                           | `--migration-id`                                                                                                                                                                                 | no                                  | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
 |                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no                                  | Per-run overrides of the matching `spec.defaultPolicies` field for this run only.                                                        |
-| `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`kafka.restCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
+| `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`spec.clusterLink.linkCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
 |                           | `--poll-interval`                                                                                                                                                                                | no (default `1`)                    | Poll interval in seconds, `1`-`60`.                                                                                                      |
 
 Every path in the manifest resolves relative to the **process working
@@ -315,9 +284,9 @@ directory**, not the manifest's own location — the one exception is
 ## Validation
 
 There is no separate `kcp migration validate` subcommand. Every read of this
-manifest — by `init`, `execute`, or `lag-check` alike — parses, resolves
-interpolation, and structurally validates in one step, so all three commands
-get validation automatically and none can skip it by accident.
+manifest — by `init`, `execute`, or `lag-check` alike — parses and structurally
+validates in one step, so all three commands get validation automatically and
+none can skip it by accident.
 
 Validation collects **every** problem before returning, rather than
 fail-fast, so an operator fixes the file in one pass:
@@ -336,7 +305,11 @@ Key rules, beyond required/optional per field above:
   values.
 - Every `bootstrapServers` entry must be `host:port`.
 - `spec.clusterLink.name` must not be blank (existence itself isn't checked
-  until `init` touches the destination).
+  until `init` touches the destination); `spec.clusterLink.linkCredentials` must
+  not be blank.
+- Every credentials field (`spec.source.credentials`,
+  `spec.target.kafka.clusterCredentials`, `spec.clusterLink.linkCredentials`)
+  must be a non-blank file path; an inline mapping is rejected at parse.
 - `spec.gateway.namespace` and `cr-name` must not be blank; the retired
   `crs`/`routes` keys must not be set at all (they fail the strict decode).
 - `spec.topicGroup` must have exactly one entry, with a non-blank `route` and
@@ -359,17 +332,17 @@ Key rules, beyond required/optional per field above:
 | `apiVersion`                                              | string         | yes                                                    | —                                            | `kcp.confluent.io/v1alpha1`                                  |
 | `kind`                                                    | string         | yes                                                    | —                                            | `GatewayMigration`                                           |
 | `metadata.name`                                           | string         | yes                                                    | —                                            | non-blank                                                    |
-| `interpolate`                                             | bool           | no                                                     | `false`                                      | —                                                            |
 | `spec.source.type`                                        | enum           | yes                                                    | —                                            | `msk`, `apache-kafka`                                        |
 | `spec.source.bootstrapServers`                            | `[]string`     | yes                                                    | —                                            | `host:port`                                                  |
-| `spec.source.credentials`                                 | path or inline | yes                                                    | —                                            | Kafka family; `iam` only if `type: msk`                      |
+| `spec.source.credentials`                                 | path           | yes                                                    | —                                            | file path; Kafka family, `iam` only if `type: msk`          |
 | `spec.target.type`                                        | enum           | yes                                                    | —                                            | `confluent-cloud`, `confluent-platform`                      |
 | `spec.target.clusterId`                                   | string         | yes                                                    | —                                            | required for both target types                               |
 | `spec.target.kafka.bootstrapServers`                      | `[]string`     | yes                                                    | —                                            | `host:port`                                                  |
 | `spec.target.kafka.restEndpoint`                          | string         | yes                                                    | —                                            | URL                                                          |
-| `spec.target.kafka.credentials`                           | path or inline | yes                                                    | —                                            | Kafka family except `iam`                                    |
-| `spec.target.kafka.restCredentials`                       | path or inline | no if `credentials` is `sasl_plain`; **yes** otherwise | derived from `credentials` when `sasl_plain` | `api_key`/`api_secret`, `basic`, `bearer`, or `mtls`         |
+| `spec.target.kafka.clusterCredentials`                    | path           | yes                                                    | —                                            | file path; Kafka family except `iam`                        |
 | `spec.clusterLink.name`                                   | string         | yes                                                    | —                                            | must reference an existing link                              |
+| `spec.clusterLink.bootstrapServers`                       | `[]string`     | no                                                     | —                                            | repeats `spec.target.kafka.bootstrapServers`; unvalidated   |
+| `spec.clusterLink.linkCredentials`                        | path           | yes                                                    | —                                            | file path; `api_key`/`api_secret`, `basic`, `bearer`, or `mtls` |
 | `spec.clusterLink.pauseConsumerOffsetSync`                | bool           | no                                                     | `false`                                      | —                                                            |
 | `spec.gateway.namespace`                                  | string         | yes                                                    | —                                            | —                                                            |
 | `spec.gateway.kubeconfig`                                 | string         | no                                                     | —                                            | `~/` expanded                                                |

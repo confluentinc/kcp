@@ -245,7 +245,7 @@ func checkCredentialsResolve(g *manifest.GatewayMigration) error {
 		return fmt.Errorf("spec.source.credentials: %w", manifest.JoinProblems("the migration manifest", errs))
 	}
 	if _, errs := g.DestinationKafkaCredentials(); len(errs) > 0 {
-		return fmt.Errorf("spec.target.kafka.credentials: %w", manifest.JoinProblems("the migration manifest", errs))
+		return fmt.Errorf("spec.target.kafka.clusterCredentials: %w", manifest.JoinProblems("the migration manifest", errs))
 	}
 	return nil
 }

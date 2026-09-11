@@ -28,11 +28,7 @@ spec:
     type: msk
     bootstrapServers:
       - b-1.msk.us-east-1.amazonaws.com:9096
-    credentials:
-      sasl_scram:
-        username: admin
-        password: secret
-        mechanism: SHA512
+    credentials: SOURCE_CREDS_PATH
   target:
     type: confluent-cloud
     clusterId: lkc-abc123
@@ -40,13 +36,12 @@ spec:
       bootstrapServers:
         - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
-      credentials:
-        sasl_plain:
-          username: CC_KEY
-          password: CC_SECRET
-          tls: true
+      clusterCredentials: DEST_KAFKA_CREDS_PATH
   clusterLink:
     name: msk-to-cc
+    bootstrapServers:
+      - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+    linkCredentials: LINK_CREDS_PATH
   gateway:
     namespace: confluent
     cr-name: gateway-initial
@@ -57,6 +52,21 @@ spec:
       route: migration-route
       targetStreamingDomain: confluent-cloud
 `
+
+// Default credentials-file bodies the canonical manifest references. Credentials
+// are files now, not inline blocks, so the secret material lives here while the
+// manifest carries only paths.
+const (
+	defaultSourceCreds   = "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n"
+	defaultDestKafkaCred = "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  tls: true\n"
+	defaultLinkCred      = "api_key: CC_KEY\napi_secret: CC_SECRET\n"
+)
+
+// credOverrides lets a test vary a credentials-FILE body; empty fields use the
+// defaults above.
+type credOverrides struct {
+	source, destKafka, link string
+}
 
 // defaultFixtureCR is the live initial CR the early derivation reads. It
 // declares the domain the manifest targets — confluent-cloud, single-homed with
@@ -122,14 +132,32 @@ func matchAllTopicPatterns(doc string) string {
 	return strings.Replace(doc, defaultTopicsBlock, "    - topicPatterns:\n        - '.*'\n", 1)
 }
 
-// writeManifest writes the manifest and returns its path. There is no fenced
-// or switchover CR file — both are derived from the live initial CR at
-// cutover.
+// writeManifest writes the manifest (with default credentials files) and returns
+// its path. There is no fenced or switchover CR file — both are derived from the
+// live initial CR at cutover.
 func writeManifest(t *testing.T, mutate func(string) string) string {
+	return writeManifestCreds(t, mutate, credOverrides{})
+}
+
+// writeManifestCreds writes the three referenced credentials files into a temp
+// dir (using the given bodies, or the defaults for empty ones), substitutes their
+// absolute paths into the manifest, applies mutate, and writes the manifest.
+func writeManifestCreds(t *testing.T, mutate func(string) string, creds credOverrides) string {
 	t.Helper()
 	dir := t.TempDir()
+	write := func(name, body, def string) string {
+		if body == "" {
+			body = def
+		}
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		return p
+	}
 
 	doc := gatewayManifest
+	doc = strings.ReplaceAll(doc, "SOURCE_CREDS_PATH", write("source-creds.yaml", creds.source, defaultSourceCreds))
+	doc = strings.ReplaceAll(doc, "DEST_KAFKA_CREDS_PATH", write("dest-kafka-creds.yaml", creds.destKafka, defaultDestKafkaCred))
+	doc = strings.ReplaceAll(doc, "LINK_CREDS_PATH", write("link-creds.yaml", creds.link, defaultLinkCred))
 	if mutate != nil {
 		doc = mutate(doc)
 	}
@@ -498,8 +526,8 @@ func TestInit_RejectsMissingFile(t *testing.T) {
 // --skip-validate counterpart.
 func TestInit_RejectsInvalidSourceCredentials(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	manifest := writeManifest(t, func(doc string) string {
-		return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: NOPE", 1)
+	manifest := writeManifestCreds(t, nil, credOverrides{
+		source: "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: NOPE\n",
 	})
 	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile)
 	require.Error(t, err)
@@ -510,12 +538,9 @@ func TestInit_RejectsInvalidSourceCredentials(t *testing.T) {
 // command. No --skip-validate: see TestInit_RejectsInvalidSourceCredentials.
 func TestInit_RejectsIAMOnApacheKafkaSource(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	manifest := writeManifest(t, func(doc string) string {
-		doc = strings.Replace(doc, "    type: msk", "    type: apache-kafka", 1)
-		return strings.Replace(doc,
-			"      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
-			"      iam:\n        region: us-east-1", 1)
-	})
+	manifest := writeManifestCreds(t, func(doc string) string {
+		return strings.Replace(doc, "    type: msk", "    type: apache-kafka", 1)
+	}, credOverrides{source: "iam:\n  region: us-east-1\n"})
 	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "iam")
@@ -530,8 +555,8 @@ func TestInit_RejectsIAMOnApacheKafkaSource(t *testing.T) {
 // methods (e.g. mTLS certs) that may need local file access to resolve.
 func TestInit_SkipValidateSkipsCredentialResolution(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	manifest := writeManifest(t, func(doc string) string {
-		return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: NOPE", 1)
+	manifest := writeManifestCreds(t, nil, credOverrides{
+		source: "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: NOPE\n",
 	})
 	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.NoError(t, err, "credential resolution is deferred, not performed, under --skip-validate")
@@ -645,9 +670,10 @@ func TestInit_StateFilePermissions(t *testing.T) {
 // that will hurt them.
 func TestInit_MidFlightRefusalDoesNotDependOnCredentials(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "migration-state.json")
-	manifest := writeManifest(t, func(doc string) string {
-		doc = strings.Replace(doc, "kind: GatewayMigration", "kind: GatewayMigration\ninterpolate: true", 1)
-		return strings.Replace(doc, "        password: secret", "        password: ${KCP_UNSET_PW}", 1)
+	// A source credentials file that would fail to resolve (bad mechanism), so the
+	// safety refusal must fire before — and instead of — any credential error.
+	manifest := writeManifestCreds(t, nil, credOverrides{
+		source: "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: NOPE\n",
 	})
 
 	// Register the migration, then advance it past the point of no return.
@@ -661,6 +687,6 @@ func TestInit_MidFlightRefusalDoesNotDependOnCredentials(t *testing.T) {
 	_, err := runInit(t, "--migration-yaml", manifest, "--migration-state-file", stateFile, "--skip-validate")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "fenced")
-	assert.NotContains(t, err.Error(), "KCP_UNSET_PW",
+	assert.NotContains(t, strings.ToLower(err.Error()), "mechanism",
 		"the credentials error must not mask the safety refusal")
 }

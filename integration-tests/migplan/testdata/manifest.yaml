@@ -1,9 +1,9 @@
 # GatewayMigration manifest for the migplan command-level e2e (the plaintext
 # docker env). It stands in for the operator's declared migration intent: the
 # connection topology plus spec.topicGroup (which topics move, on which route, to
-# which target domain). Plaintext everywhere; the unauthenticated cp-server REST
-# ignores the bogus `basic` restCredentials block (the schema has no
-# unauthenticated-REST form).
+# which target domain). Plaintext everywhere; the credentials files are siblings
+# of this manifest. The unauthenticated cp-server REST ignores the bogus `basic`
+# linkCredentials block (the schema has no unauthenticated-REST form).
 apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
@@ -22,8 +22,7 @@ spec:
     type: apache-kafka
     bootstrapServers:
       - localhost:19092
-    credentials:
-      unauthenticated_plaintext: {}
+    credentials: testdata/source-creds.yaml
 
   target:
     type: confluent-platform
@@ -32,15 +31,13 @@ spec:
       bootstrapServers:
         - localhost:29092
       restEndpoint: http://localhost:28090
-      credentials:
-        unauthenticated_plaintext: {}
-      restCredentials:
-        basic:
-          username: ignored
-          password: ignored
+      clusterCredentials: testdata/dest-kafka-creds.yaml
 
   clusterLink:
     name: migplan-link
+    bootstrapServers:
+      - localhost:29092
+    linkCredentials: testdata/link-creds.yaml
 
   # Not read by `migration reconcile` (it uses --gateway-config), but the manifest
   # still validates the gateway section. Minimal satisfying values: the reshaped

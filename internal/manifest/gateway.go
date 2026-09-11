@@ -34,18 +34,6 @@ type GatewayMigration struct {
 	Kind       string      `yaml:"kind" json:"kind"`
 	Metadata   Metadata    `yaml:"metadata" json:"metadata"`
 	Spec       GatewaySpec `yaml:"spec" json:"spec"`
-
-	// Interpolate opts this file in to ${ENV_VAR} resolution. Top level rather
-	// than under spec because credentials files need the same key and have no
-	// envelope, and because a --interpolate flag could not express "this file
-	// yes, that referenced file no".
-	//
-	// What the opt-in defends against is ACCIDENTAL expansion — a secret that
-	// legitimately contains "${" staying literal, and an already-shipped
-	// credentials file being read exactly as before. It is not a defence
-	// against a hostile manifest: the opt-in lives in the file itself, so a
-	// manifest is a trust boundary equal to a shell script.
-	Interpolate bool `yaml:"interpolate,omitempty" json:"interpolate,omitempty"`
 }
 
 type GatewaySpec struct {
@@ -83,8 +71,17 @@ type GatewayTarget struct {
 
 type GatewayClusterLink struct {
 	// Name identifies an ALREADY EXISTING cluster link; this kind never creates one.
-	Name                    string `yaml:"name" json:"name"`
-	PauseConsumerOffsetSync bool   `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
+	Name string `yaml:"name" json:"name"`
+	// BootstrapServers repeats spec.target.kafka.bootstrapServers for manifest
+	// self-documentation. It is an intentionally unvalidated duplicate: nothing
+	// reads it yet and no cross-field equality check enforces that the two lists
+	// match.
+	BootstrapServers []string `yaml:"bootstrapServers,omitempty" json:"bootstrapServers,omitempty"`
+	// LinkCredentials is the destination REST leg used to drive the cluster link
+	// (mirror promotion, offset sync). Always required — there is no derivation
+	// from the Kafka leg.
+	LinkCredentials         CredentialsRef `yaml:"linkCredentials" json:"linkCredentials"`
+	PauseConsumerOffsetSync bool           `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
 }
 
 // TopicGroupEntry pairs a topic selection with the route it migrates and the
@@ -184,11 +181,8 @@ func wrongKindError(got, want string) error {
 }
 
 // ParseGatewayMigration decodes a GatewayMigration manifest with strict
-// decoding, then resolves ${ENV_VAR} references if the file opted in.
-//
-// Resolution runs after the parse and before any use of the values, and it does
-// NOT reach inline credential blocks: those are held as raw bytes and resolved
-// on demand, which keeps every block to exactly one resolution pass.
+// decoding. Credentials are referenced files only, resolved on demand by the
+// per-leg resolver methods.
 func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 	kind, err := ParseKind(data)
 	if err != nil {
@@ -201,11 +195,6 @@ func ParseGatewayMigration(data []byte) (*GatewayMigration, error) {
 	var g GatewayMigration
 	if err := parseStrict(data, &g); err != nil {
 		return nil, fmt.Errorf("parsing gateway migration manifest: %w", yamlsafe.StripSourceExcerpt(err))
-	}
-	if g.Interpolate {
-		if err := interpolateInto(&g); err != nil {
-			return nil, fmt.Errorf("resolving gateway migration manifest: %w", err)
-		}
 	}
 	return &g, nil
 }
@@ -240,10 +229,6 @@ func (g *GatewayMigration) Validate() []error {
 	errs = append(errs, validateBootstrapServers("spec.source.bootstrapServers", g.Spec.Source.BootstrapServers)...)
 	if blankRef(g.Spec.Source.Credentials) {
 		add("spec.source.credentials: must not be empty")
-	} else if g.Spec.Source.Credentials.IsInline() {
-		if mc, ok := peekMigrateCreds(g.Spec.Source.Credentials); ok {
-			errs = append(errs, checkSourceAuthAgainstType(mc, g.Spec.Source.Type)...)
-		}
 	}
 
 	// --- target ---
@@ -266,26 +251,17 @@ func (g *GatewayMigration) Validate() []error {
 		if blank(k.RestEndpoint) {
 			add("spec.target.kafka.restEndpoint: must not be empty")
 		}
-		if blankRef(k.Credentials) {
-			add("spec.target.kafka.credentials: must not be empty")
-		} else if k.Credentials.IsInline() {
-			if mc, ok := peekMigrateCreds(k.Credentials); ok {
-				errs = append(errs, checkDestinationKafkaAuth(mc)...)
-				if k.RestCredentials == nil && mc.SASLPlain == nil {
-					add("spec.target.kafka.restCredentials: required — it can only be derived from spec.target.kafka.credentials when that block is sasl_plain")
-				}
-			}
-		}
-		if k.RestCredentials != nil {
-			if blankRef(*k.RestCredentials) {
-				add("spec.target.kafka.restCredentials: present but empty — fill it in, or omit it entirely to derive from credentials (only possible when that block is sasl_plain)")
-			}
+		if blankRef(k.ClusterCredentials) {
+			add("spec.target.kafka.clusterCredentials: must not be empty")
 		}
 	}
 
 	// --- cluster link ---
 	if blank(g.Spec.ClusterLink.Name) {
 		add("spec.clusterLink.name: must not be empty (the link must already exist)")
+	}
+	if blankRef(g.Spec.ClusterLink.LinkCredentials) {
+		add("spec.clusterLink.linkCredentials: must not be empty")
 	}
 
 	// --- gateway ---
@@ -392,17 +368,6 @@ func (p DefaultPolicies) Validate() []error {
 	return errs
 }
 
-// peekMigrateCreds decodes an inline credentials block for validation without
-// I/O. A decode failure is not reported here: the same block is decoded again
-// with a proper error by SourceCredentials.
-func peekMigrateCreds(ref CredentialsRef) (types.MigrateClusterCredentials, bool) {
-	var mc types.MigrateClusterCredentials
-	if err := yaml.Unmarshal(ref.Inline, &mc); err != nil {
-		return mc, false
-	}
-	return mc, true
-}
-
 // checkSourceAuthAgainstType gates iam to an MSK source. Only MSK serves IAM,
 // so declaring it against an apache-kafka source is a typo that would otherwise
 // surface as an opaque auth failure mid-run.
@@ -426,14 +391,14 @@ func checkSourceAuthAgainstType(mc types.MigrateClusterCredentials, sourceType s
 func checkDestinationKafkaAuth(mc types.MigrateClusterCredentials) []error {
 	if mc.IAM != nil {
 		return []error{fmt.Errorf(
-			"spec.target.kafka.credentials.iam: not supported for the destination (the destination is Confluent Cloud/Platform, never MSK)")}
+			"spec.target.kafka.clusterCredentials.iam: not supported for the destination (the destination is Confluent Cloud/Platform, never MSK)")}
 	}
 	return nil
 }
 
 // SourceCredentials resolves the source Kafka leg.
 func (g *GatewayMigration) SourceCredentials() (types.MigrateClusterCredentials, []error) {
-	mc, errs := g.Spec.Source.Credentials.ResolveMigrateCluster(g.Interpolate)
+	mc, errs := g.Spec.Source.Credentials.ResolveMigrateCluster()
 	if len(errs) > 0 {
 		return mc, errs
 	}
@@ -450,7 +415,7 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 	if g.Spec.Target.Kafka == nil {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("spec.target.kafka: required")}
 	}
-	mc, errs := g.Spec.Target.Kafka.Credentials.ResolveMigrateCluster(g.Interpolate)
+	mc, errs := g.Spec.Target.Kafka.ClusterCredentials.ResolveMigrateCluster()
 	if len(errs) > 0 {
 		return mc, errs
 	}
@@ -460,46 +425,11 @@ func (g *GatewayMigration) DestinationKafkaCredentials() (types.MigrateClusterCr
 	return mc, nil
 }
 
-// RestCredentials resolves the destination REST leg.
-//
-// When spec.target.kafka.restCredentials is omitted AND the Kafka leg is
-// sasl_plain, it is DERIVED, in full, from that leg: one flag pair feeds both
-// destination legs today, so requiring both blocks would make the operator
-// type the same secret twice for the overwhelmingly common case. Derivation
-// is full-or-nothing — a block that is present is used exactly as written,
-// because a block that reads as complete while silently acquiring fields from
-// elsewhere is worse than either. For every other Kafka auth method there is
-// no principal to derive a REST credential from, so restCredentials becomes
-// required.
+// RestCredentials resolves the destination REST leg used to drive the cluster
+// link. It reads spec.clusterLink.linkCredentials, which is always required —
+// there is no derivation from the Kafka leg.
 func (g *GatewayMigration) RestCredentials() (*targets.Credentials, error) {
-	if g.Spec.Target.Kafka == nil {
-		return nil, fmt.Errorf("spec.target.kafka: required")
-	}
-	if ref := g.Spec.Target.Kafka.RestCredentials; ref != nil {
-		return ref.ResolveTarget(g.Interpolate)
-	}
-
-	mc, errs := g.DestinationKafkaCredentials()
-	if len(errs) > 0 {
-		return nil, fmt.Errorf("deriving spec.target.kafka.restCredentials from credentials: %w", errs[0])
-	}
-	if mc.SASLPlain == nil {
-		return nil, fmt.Errorf("spec.target.kafka.restCredentials: required — it can only be derived from spec.target.kafka.credentials when that block is sasl_plain")
-	}
-	derived := &targets.Credentials{
-		APIKey:    mc.SASLPlain.Username,
-		APISecret: mc.SASLPlain.Password,
-		// Inherited so the single fan-out --insecure-skip-tls-verify (and, now,
-		// a private destination CA) has today is preserved: a derived REST leg
-		// must not silently verify — or trust a different CA — while the Kafka
-		// leg does not.
-		CACert:             mc.SASLPlain.CACert,
-		InsecureSkipVerify: mc.InsecureSkipTLSVerify,
-	}
-	if err := targets.ValidateCredentials(derived); err != nil {
-		return nil, fmt.Errorf("deriving spec.target.kafka.restCredentials from credentials: %w", err)
-	}
-	return derived, nil
+	return g.Spec.ClusterLink.LinkCredentials.ResolveTarget()
 }
 
 // KubeconfigPath returns spec.gateway.kubeconfig with a leading ~/ expanded.

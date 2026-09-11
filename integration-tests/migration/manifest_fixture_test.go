@@ -30,8 +30,49 @@ type manifestOpts struct {
 	FenceRoutes     []fenceRouteOpts
 	KubePath        string
 
+	// Paths the manifest references for each credentials leg. Credentials are
+	// files, not inline blocks — the file bodies are rendered separately by
+	// renderCredentialFiles and written alongside the manifest.
+	SourceCredPath    string
+	DestKafkaCredPath string
+	LinkCredPath      string
+
 	PauseConsumerOffsetSync bool
 	Policy                  policyOpts
+}
+
+// credentialFiles are the three credentials files the manifest references.
+type credentialFiles struct {
+	Source    string
+	DestKafka string
+	Link      string
+}
+
+// renderCredentialFiles renders the credentials files a scenario needs. The
+// source is a plaintext CFK cluster (no secret); the destination Kafka leg is
+// SASL/PLAIN over a self-signed CA (hence insecure_skip_tls_verify); the
+// cluster-link REST leg reuses the same api_key/api_secret. Secret values pass
+// through yamlQuote for the same YAML-injection reason the manifest fields do —
+// these files are the secret-bearing artifacts now, not the manifest.
+func renderCredentialFiles(opts manifestOpts) (credentialFiles, error) {
+	user, err := yamlQuote(opts.APIKey)
+	if err != nil {
+		return credentialFiles{}, err
+	}
+	secret, err := yamlQuote(opts.APISecret)
+	if err != nil {
+		return credentialFiles{}, err
+	}
+	return credentialFiles{
+		Source: "unauthenticated_plaintext: {}\n",
+		DestKafka: "sasl_plain:\n" +
+			"  username: " + user + "\n" +
+			"  password: " + secret + "\n" +
+			"  tls: true\n" +
+			"insecure_skip_tls_verify: true\n",
+		Link: "api_key: " + user + "\n" +
+			"api_secret: " + secret + "\n",
+	}, nil
 }
 
 // fenceRouteOpts is one spec.topicGroup[] entry: a route to fence, paired with
