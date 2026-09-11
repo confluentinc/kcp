@@ -121,25 +121,7 @@ func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled 
 	// Cluster identity: the clusters we read must be the migration's real source
 	// and destination. An empty id (destination omits source_cluster_id, or the
 	// metadata could not be read) can't prove a mismatch, so it passes.
-	switch {
-	case ids.LinkSource == "" || ids.Source == "":
-		res = append(res, pass("source cluster matches the cluster link"))
-	case ids.LinkSource == ids.Source:
-		res = append(res, pass("source cluster matches the cluster link"))
-	default:
-		res = append(res, fail("source cluster matches the cluster link",
-			fmt.Sprintf("the cluster link mirrors from cluster %q, but spec.source is cluster %q", ids.LinkSource, ids.Source)))
-	}
-
-	switch {
-	case in.TargetClusterID == "" || ids.Target == "":
-		res = append(res, pass("target cluster matches the manifest"))
-	case ids.Target == in.TargetClusterID:
-		res = append(res, pass("target cluster matches the manifest"))
-	default:
-		res = append(res, fail("target cluster matches the manifest",
-			fmt.Sprintf("spec.target.clusterId is %q, but the target cluster reports %q", in.TargetClusterID, ids.Target)))
-	}
+	res = checkClusterIdentities(res, in, ids)
 
 	// The operator's routing-condition patterns are used by OwnerRoute to resolve
 	// which domain owns a topic. A pattern RE2 cannot compile (e.g. a Java-only
@@ -190,4 +172,33 @@ func routingParent(rules map[string]any) map[string]any {
 		return map[string]any{}
 	}
 	return rules
+}
+
+// checkClusterIdentities appends the two live-cluster-identity checks shared
+// by both route-mode strategies: the source cluster we read must be the
+// migration's real source (proven via the cluster link's own
+// source_cluster_id), and the target cluster we read must match the
+// manifest's declared spec.target.clusterId. An empty id on either side
+// can't prove a mismatch, so it passes.
+func checkClusterIdentities(res []PreconditionResult, in ReconcileInput, ids ClusterIDs) []PreconditionResult {
+	switch {
+	case ids.LinkSource == "" || ids.Source == "":
+		res = append(res, pass("source cluster matches the cluster link"))
+	case ids.LinkSource == ids.Source:
+		res = append(res, pass("source cluster matches the cluster link"))
+	default:
+		res = append(res, fail("source cluster matches the cluster link",
+			fmt.Sprintf("the cluster link mirrors from cluster %q, but spec.source is cluster %q", ids.LinkSource, ids.Source)))
+	}
+
+	switch {
+	case in.TargetClusterID == "" || ids.Target == "":
+		res = append(res, pass("target cluster matches the manifest"))
+	case ids.Target == in.TargetClusterID:
+		res = append(res, pass("target cluster matches the manifest"))
+	default:
+		res = append(res, fail("target cluster matches the manifest",
+			fmt.Sprintf("spec.target.clusterId is %q, but the target cluster reports %q", in.TargetClusterID, ids.Target)))
+	}
+	return res
 }
