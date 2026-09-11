@@ -1,0 +1,21 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        name: msk-cluster
+    - name: cc
+      kafkaCluster:
+        name: cc-cluster
+  routes:
+    - name: migration-route
+      endpoint: kafka-gw.example.com:9092
+      streamingDomain:
+        name: msk
+        bootstrapServerId: sasl-scram
+      rules:
+        routing:
+          default: msk

@@ -46,7 +46,7 @@ func TestReconcileHappyPath(t *testing.T) {
 	target := []string{"team-a.orders", "team-a.payments"}
 	mirrors := map[string]MirrorState{"team-a.orders": MirrorActive, "team-a.payments": MirrorActive}
 
-	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{})
+	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{}, nil)
 	if p.Report.Refused() {
 		t.Fatalf("expected success, refused with %+v", p.Report)
 	}
@@ -93,7 +93,7 @@ func TestReconcileRefusesOnFailFast(t *testing.T) {
 	gw := dynGateway()
 	in := ReconcileInput{Topics: []string{"lonely"}, Route: "migration-route", TargetDomain: "cc"}
 	// present on source, but not a mirror -> blocked (not on the cluster link)
-	p := Reconcile(in, gw, []string{"lonely"}, nil, map[string]MirrorState{}, false, ClusterIDs{})
+	p := Reconcile(in, gw, []string{"lonely"}, nil, map[string]MirrorState{}, false, ClusterIDs{}, nil)
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatal("a fail-fast topic must refuse and emit no artifacts")
 	}
@@ -106,7 +106,7 @@ func TestReconcileRefusesOnPrecondition(t *testing.T) {
 	gw := dynGateway()
 	gw.Route.Mode = "static"
 	in := ReconcileInput{Topics: []string{"x"}, Route: "migration-route", TargetDomain: "cc"}
-	p := Reconcile(in, gw, []string{"x"}, nil, map[string]MirrorState{"x": MirrorActive}, false, ClusterIDs{})
+	p := Reconcile(in, gw, []string{"x"}, nil, map[string]MirrorState{"x": MirrorActive}, false, ClusterIDs{}, nil)
 	if !p.Report.Refused() || p.Artifacts != nil {
 		t.Fatal("failed precondition must refuse and emit no artifacts")
 	}
@@ -132,7 +132,7 @@ func TestReconcileRefusesOnOversizedRules(t *testing.T) {
 	// topic routes to source -> !routesToTarget -> Migratable, for all n.
 	in := ReconcileInput{TopicPatterns: []string{".*"}, Route: "migration-route", TargetDomain: "cc"}
 
-	p := Reconcile(in, gw, source, nil, mirrors, false, ClusterIDs{})
+	p := Reconcile(in, gw, source, nil, mirrors, false, ClusterIDs{}, nil)
 
 	if !p.Report.Refused() {
 		t.Fatal("oversized rules block must refuse")
@@ -171,7 +171,7 @@ func TestReconcileNoopWhenAllUnchanged(t *testing.T) {
 	target := []string{"done"}
 	mirrors := map[string]MirrorState{"done": MirrorStopped}
 
-	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{})
+	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{}, nil)
 
 	if p.Report.Refused() {
 		t.Fatalf("an all-Unchanged batch must not be refused, got %+v", p.Report)
@@ -193,7 +193,7 @@ func TestReconcileWiresExplodeError(t *testing.T) {
 	// "[" anchors to ^(?:[)$ — an unterminated character class, a compile error.
 	in := ReconcileInput{TopicPatterns: []string{"["}, Route: "migration-route", TargetDomain: "cc"}
 
-	p := Reconcile(in, gw, []string{"team-a.orders"}, nil, map[string]MirrorState{}, false, ClusterIDs{})
+	p := Reconcile(in, gw, []string{"team-a.orders"}, nil, map[string]MirrorState{}, false, ClusterIDs{}, nil)
 
 	if !p.Report.Refused() {
 		t.Fatal("a bad selector pattern must refuse the run")
@@ -230,7 +230,7 @@ func TestReconcileEmitsShadowWarning(t *testing.T) {
 	target := []string{"team-a.orders"}
 	mirrors := map[string]MirrorState{"team-a.orders": MirrorActive}
 
-	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{})
+	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{}, nil)
 
 	if p.Report.Refused() {
 		t.Fatalf("a shadowing migration must warn, not refuse: %+v", p.Report)
@@ -243,5 +243,124 @@ func TestReconcileEmitsShadowWarning(t *testing.T) {
 	}
 	if !strings.Contains(p.Report.Warnings[0], "team-a.orders") || !strings.Contains(p.Report.Warnings[0], "shadowed") {
 		t.Fatalf("shadow warning must name the shadowed topic, got %q", p.Report.Warnings[0])
+	}
+}
+
+func TestReconcileStaticHappyPath(t *testing.T) {
+	gw := staticGateway()
+	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "cc"}
+	source := []string{"team-a.orders"}
+	target := []string{}
+	mirrors := map[string]MirrorState{"team-a.orders": MirrorActive}
+
+	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{}, nil)
+	if p.Mode != "static" {
+		t.Fatalf("Mode = %q, want static", p.Mode)
+	}
+	if p.Report.Refused() {
+		t.Fatalf("expected success, refused with %+v", p.Report)
+	}
+	if p.Artifacts == nil {
+		t.Fatal("expected artifacts")
+	}
+	if len(p.Artifacts.Topics) != 1 || p.Artifacts.Topics[0] != "team-a.orders" {
+		t.Fatalf("promote list = %v, want [team-a.orders]", p.Artifacts.Topics)
+	}
+	if !strings.Contains(string(p.Artifacts.FenceRules), "fence:") {
+		t.Fatalf("FenceRules = %q, want a fence fragment", p.Artifacts.FenceRules)
+	}
+	if !strings.Contains(string(p.Artifacts.SwitchoverRules), "streamingDomain:") {
+		t.Fatalf("SwitchoverRules = %q, want a streamingDomain fragment", p.Artifacts.SwitchoverRules)
+	}
+}
+
+func TestReconcileStaticRefusesOnPrecondition(t *testing.T) {
+	gw := staticGateway()
+	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "gcp"} // undeclared domain
+	p := Reconcile(in, gw, []string{"team-a.orders"}, nil, map[string]MirrorState{"team-a.orders": MirrorActive}, false, ClusterIDs{}, nil)
+	if !p.Report.Refused() {
+		t.Fatal("expected refusal on undeclared target domain")
+	}
+	if p.Artifacts != nil {
+		t.Fatal("a refused plan must carry no artifacts")
+	}
+}
+
+func TestReconcileStaticNarrowsTopicScopeToSelector(t *testing.T) {
+	// A topic NOT resolved by this run's selector must never affect this
+	// plan's outcome, even if it's a bad/inactive mirror elsewhere on the
+	// link — confirms the deliberately narrowed scope (design doc decision
+	// 8): only topics resolved by Explode/Classify are evaluated, not every
+	// mirror on the whole cluster link.
+	gw := staticGateway()
+	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "cc"}
+	source := []string{"team-a.orders", "unrelated.topic"}
+	mirrors := map[string]MirrorState{
+		"team-a.orders":   MirrorActive,
+		"unrelated.topic": MirrorBad, // must not affect this run at all
+	}
+	p := Reconcile(in, gw, source, nil, mirrors, false, ClusterIDs{}, nil)
+	if p.Report.Refused() {
+		t.Fatalf("an unrelated bad-mirror topic outside the selector must not refuse this plan, got %+v", p.Report)
+	}
+}
+
+func TestReconcileStaticTopicPatterns(t *testing.T) {
+	// Static mode gains full topicPatterns support, unified with dynamic's
+	// Explode — design doc decision 6.
+	gw := staticGateway()
+	in := ReconcileInput{TopicPatterns: []string{"team-a.*"}, Route: "migration-route", TargetDomain: "cc"}
+	source := []string{"team-a.orders", "team-a.payments", "team-b.other"}
+	mirrors := map[string]MirrorState{"team-a.orders": MirrorActive, "team-a.payments": MirrorActive}
+	p := Reconcile(in, gw, source, nil, mirrors, false, ClusterIDs{}, nil)
+	if p.Report.Refused() {
+		t.Fatalf("expected success, refused with %+v", p.Report)
+	}
+	if len(p.Artifacts.Topics) != 2 {
+		t.Fatalf("promote list = %v, want 2 topics (team-b.other must not match)", p.Artifacts.Topics)
+	}
+}
+
+func TestReconcileStaticNoopWhenAlreadySwitched(t *testing.T) {
+	// DEVIATION FROM BRIEF (documented in task-6-report.md): the brief's
+	// original version of this test asserted `!p.Report.Refused()`, expecting
+	// the run to reach per-topic classification and land Unchanged. But
+	// CheckStaticPreconditions (Task 4, already committed, out of this
+	// task's scope) has its own locked-in, separately-tested behavior
+	// (TestStaticPreconditionsRoutesToTargetWhenAlreadyBound in
+	// staticpreconditions_test.go) that fails the "route is not already
+	// bound to the target domain" precondition whenever routesToTarget is
+	// true — which this scenario's setup requires, since Classify's
+	// Unchanged verdict itself needs routesToTarget==true. So a re-run
+	// against an already-switched static route can never reach
+	// classification: it is refused at the precondition gate instead, with
+	// no artifacts either way. reconcileStatic deliberately adds no logic to
+	// suppress that refusal (see reconcileStatic's doc comment / design doc
+	// decision 8: "no new refusal logic is needed"), so this test asserts
+	// the real, correct outcome — refused, no artifacts — rather than the
+	// brief's original (unreachable) expectation.
+	gw := staticGateway()
+	route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
+	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"} // already switched
+	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "cc"}
+	p := Reconcile(in, gw, []string{"team-a.orders"}, []string{"team-a.orders"},
+		map[string]MirrorState{"team-a.orders": MirrorStopped}, false, ClusterIDs{}, nil)
+	if !p.Report.Refused() {
+		t.Fatalf("a re-run against an already-switched static route is refused at the precondition gate (see comment above), got: %+v", p.Report)
+	}
+	if p.Artifacts != nil {
+		t.Fatal("a refused re-run must produce no artifacts")
+	}
+}
+
+func TestReconcileDynamicStillReturnsMode(t *testing.T) {
+	// Confirms the new Mode field is set correctly on the existing dynamic
+	// path too, not just static.
+	gw := dynGateway()
+	gw.Route.Rules = map[string]any{"routing": map[string]any{"coordination": map[string]any{"group": "msk"}, "default": "msk"}}
+	in := ReconcileInput{TopicPatterns: []string{"team-a.*"}, Route: "migration-route", TargetDomain: "cc"}
+	p := Reconcile(in, gw, []string{"team-a.orders"}, []string{"team-a.orders"}, map[string]MirrorState{"team-a.orders": MirrorActive}, false, ClusterIDs{}, nil)
+	if p.Mode != "dynamic" {
+		t.Fatalf("Mode = %q, want dynamic", p.Mode)
 	}
 }
