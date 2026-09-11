@@ -34,12 +34,13 @@ type Result struct {
 	Refused        bool     // true ⇔ infeasible; the three above are empty
 	Reasons        []string // why, when Refused (failed checks + blocked topics)
 
-	// GatewayYAML is the whole gateway CR the engine pulled, exactly as read.
-	// Set on both success and refusal (the pull precedes the checks). A caller
-	// can re-pull the CR just before mutating it and diff against this to detect
-	// drift since the plan was computed — diffing a stable sub-tree (e.g. spec),
-	// not the raw bytes, which also carry volatile status/resourceVersion/
-	// managedFields that change on every unrelated update.
+	// GatewayYAML is the whole gateway CR the engine pulled, cleaned of
+	// server-managed metadata (managedFields, resourceVersion, uid,
+	// creationTimestamp, generation, status — see migplan/gatewayfile.go's
+	// cleanGatewayDoc). Set on both success and refusal (the pull precedes the
+	// checks). A caller can re-pull the CR just before mutating it and diff
+	// against this directly to detect drift since the plan was computed — once
+	// cleaned, the whole document is stable enough to diff as-is.
 	GatewayYAML string
 
 	// Report is the full per-topic report, for rendering/diagnostics (the CLI
