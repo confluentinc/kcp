@@ -96,4 +96,11 @@ type Plan struct {
 	// only if the source did not carry it. It exists for a later drift diff, not
 	// for the plan itself.
 	GatewayYAML string
+
+	// Mode is the route mode this plan was reconciled under ("dynamic" or
+	// "static"), so a caller knows how to interpret Artifacts.FenceRules/
+	// SwitchoverRules: a rules: fragment for dynamic, a fence/streamingDomain
+	// block fragment for static — both meaning "splice this onto the named
+	// route," never "apply this as the whole CR."
+	Mode string
 }
