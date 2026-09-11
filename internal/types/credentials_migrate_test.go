@@ -278,22 +278,12 @@ func writeMigrateCreds(t *testing.T, content string) string {
 	return p
 }
 
-// --- ${ENV_VAR} interpolation (opt-in, per file) ---
+// --- no ${ENV_VAR} substitution ---
 
-func TestLoadMigrateClusterCredentials_InterpolatesWhenOptedIn(t *testing.T) {
-	t.Setenv("MSK_USERNAME", "admin")
-	t.Setenv("MSK_PASSWORD", "s3cret")
-	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
-		"interpolate: true\nsasl_scram:\n  username: ${MSK_USERNAME}\n  password: ${MSK_PASSWORD}\n  mechanism: SHA512\n"))
-	require.Empty(t, errs)
-	require.NotNil(t, creds.SASLScram)
-	require.Equal(t, "admin", creds.SASLScram.Username)
-	require.Equal(t, "s3cret", creds.SASLScram.Password)
-}
-
-// TestLoadMigrateClusterCredentials_NoInterpolationByDefault pins that every
-// already-shipped kcp migrate credentials file is read byte-for-byte as before.
-func TestLoadMigrateClusterCredentials_NoInterpolationByDefault(t *testing.T) {
+// TestLoadMigrateClusterCredentials_NoEnvSubstitution pins that a ${VAR}-shaped
+// value is read literally: there is no environment-variable substitution
+// anywhere in the credentials-loading path.
+func TestLoadMigrateClusterCredentials_NoEnvSubstitution(t *testing.T) {
 	t.Setenv("MSK_PASSWORD", "s3cret")
 	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
 		"sasl_scram:\n  username: admin\n  password: ${MSK_PASSWORD}\n  mechanism: SHA512\n"))
@@ -301,47 +291,24 @@ func TestLoadMigrateClusterCredentials_NoInterpolationByDefault(t *testing.T) {
 	require.Equal(t, "${MSK_PASSWORD}", creds.SASLScram.Password)
 }
 
-func TestLoadMigrateClusterCredentials_InterpolateUndefinedVariableFails(t *testing.T) {
-	t.Setenv("MSK_USERNAME", "admin-name")
+// TestLoadMigrateClusterCredentials_RejectsInterpolateKey — the retired
+// interpolate key is now an unknown field, so a stale file that still sets it
+// fails the strict decode.
+func TestLoadMigrateClusterCredentials_RejectsInterpolateKey(t *testing.T) {
 	_, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
-		"interpolate: true\nsasl_scram:\n  username: ${MSK_USERNAME}\n  password: ${KCP_UNSET_PW}\n  mechanism: SHA512\n"))
+		"interpolate: true\nsasl_scram:\n  username: u\n  password: p\n  mechanism: SHA512\n"))
 	require.NotEmpty(t, errs)
-	joined := joinErrStrings(errs)
-	require.Contains(t, joined, "KCP_UNSET_PW")
-	require.NotContains(t, joined, "admin-name", "a resolved value must never reach an error string")
-}
-
-// TestLoadMigrateClusterCredentials_InterpolatesBeforeValidation — the loader
-// rejects an unrecognised sasl_scram.mechanism, so resolution placed after
-// validation would reject the literal "${MECH}".
-func TestLoadMigrateClusterCredentials_InterpolatesBeforeValidation(t *testing.T) {
-	t.Setenv("MECH", "SHA512")
-	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
-		"interpolate: true\nsasl_scram:\n  username: u\n  password: p\n  mechanism: ${MECH}\n"))
-	require.Empty(t, errs)
-	require.Equal(t, "SHA512", creds.SASLScram.Mechanism)
+	require.Contains(t, joinErrStrings(errs), "interpolate")
 }
 
 // TestLoadMigrateClusterCredentials_MechanismErrorDoesNotEchoValue is the §10
-// logging hazard: an invalid mechanism must not echo the resolved value, which
-// on a mis-set variable is somebody else's secret.
+// logging hazard: an invalid mechanism must not echo the offending value into
+// the error string.
 func TestLoadMigrateClusterCredentials_MechanismErrorDoesNotEchoValue(t *testing.T) {
-	t.Setenv("MECH", "super-secret-leak")
 	_, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
-		"interpolate: true\nsasl_scram:\n  username: u\n  password: p\n  mechanism: ${MECH}\n"))
+		"sasl_scram:\n  username: u\n  password: p\n  mechanism: super-secret-leak\n"))
 	require.NotEmpty(t, errs)
 	require.NotContains(t, joinErrStrings(errs), "super-secret-leak")
-}
-
-// TestLoadMigrateClusterCredentials_InterpolatedValueIsNotReparsed proves the
-// post-parse design: a password carrying YAML structure cannot inject a key.
-func TestLoadMigrateClusterCredentials_InterpolatedValueIsNotReparsed(t *testing.T) {
-	t.Setenv("EVIL", "p\nusername: attacker")
-	creds, errs := LoadMigrateClusterCredentials(writeMigrateCreds(t,
-		"interpolate: true\nsasl_scram:\n  username: real-user\n  password: ${EVIL}\n  mechanism: SHA512\n"))
-	require.Empty(t, errs)
-	require.Equal(t, "real-user", creds.SASLScram.Username)
-	require.Equal(t, "p\nusername: attacker", creds.SASLScram.Password)
 }
 
 // --- parse / validate split ---

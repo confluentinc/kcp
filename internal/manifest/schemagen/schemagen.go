@@ -5,11 +5,8 @@ package schemagen
 
 import (
 	"encoding/json"
-	"fmt"
 
 	"github.com/confluentinc/kcp/internal/manifest"
-	"github.com/confluentinc/kcp/internal/targets"
-	"github.com/confluentinc/kcp/internal/types"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -18,11 +15,6 @@ import (
 // schema would disagree and every editor honouring the yaml-language-server
 // header would flag the documented example as invalid.
 const durationPattern = `^[0-9]+(ns|us|ms|s|m|h)([0-9]+(ns|us|ms|s|m|h))*$`
-
-const (
-	defMigrateCredentials = "migrateClusterCredentials"
-	defTargetCredentials  = "targetCredentials"
-)
 
 // Generate reflects the Migration struct into a JSON Schema, injects the enums
 // (from the manifest constants) and the intended required sets, and returns the
@@ -51,31 +43,26 @@ func Generate() ([]byte, error) {
 		}
 	}
 
-	if err := addCredentialDefs(s); err != nil {
-		return nil, err
-	}
-	// Every credentials slot is a CredentialsRef: a path string or an inline
-	// mapping of the referenced file's shape.
-	polymorphic(source.Properties["credentials"], defMigrateCredentials)
-	polymorphic(target.Properties["clusterCredentials"], defTargetCredentials)
-	polymorphic(target.Properties["cloudCredentials"], defTargetCredentials)
+	// Every credentials slot is a CredentialsRef: a path to a credentials file.
+	stringCredential(source.Properties["credentials"])
+	stringCredential(target.Properties["clusterCredentials"])
+	stringCredential(target.Properties["cloudCredentials"])
 	for _, key := range []string{"source", "destination"} {
 		if kc, ok := clusterLink.Properties[key]; ok && kc.Properties != nil {
-			polymorphic(kc.Properties["credentials"], defMigrateCredentials)
+			stringCredential(kc.Properties["credentials"])
 		}
 	}
 	if sr, ok := clusterLink.Properties["sourceRest"]; ok && sr.Properties != nil {
-		polymorphic(sr.Properties["credentials"], defTargetCredentials)
+		stringCredential(sr.Properties["credentials"])
 	}
 
-	// target.kafka.credentials / restCredentials live on the shared TargetKafka
-	// for kind: GatewayMigration only — kcp migrate authenticates the destination
-	// via spec.target.clusterCredentials and never reads them. Validate() rejects
-	// them here, so drop them from this schema too; otherwise an editor would
-	// offer a raw {Path, Inline} object for a field that does nothing in this kind.
+	// target.kafka.clusterCredentials lives on the shared TargetKafka for kind:
+	// GatewayMigration only — kcp migrate authenticates the destination via
+	// spec.target.clusterCredentials and never reads it. Validate() rejects it
+	// here, so drop it from this schema too; otherwise an editor would offer a
+	// field that does nothing in this kind.
 	if kafka, ok := target.Properties["kafka"]; ok && kafka.Properties != nil {
-		delete(kafka.Properties, "credentials")
-		delete(kafka.Properties, "restCredentials")
+		delete(kafka.Properties, "clusterCredentials")
 	}
 
 	return marshal(s)
@@ -101,19 +88,15 @@ func GenerateGateway() ([]byte, error) {
 	source.Properties["type"].Enum = []any{manifest.SourceMSK, manifest.SourceApacheKafka}
 	target.Properties["type"].Enum = []any{manifest.TargetConfluentCloud, manifest.TargetConfluentPlatform}
 
-	if err := addCredentialDefs(s); err != nil {
-		return nil, err
-	}
-	polymorphic(source.Properties["credentials"], defMigrateCredentials)
 	kafka := target.Properties["kafka"]
-	polymorphic(kafka.Properties["credentials"], defMigrateCredentials)
-	polymorphic(kafka.Properties["restCredentials"], defTargetCredentials)
+	stringCredential(source.Properties["credentials"])
+	stringCredential(kafka.Properties["clusterCredentials"])
+	stringCredential(clusterLink.Properties["linkCredentials"])
 	// The reflected schema requires only restEndpoint (the one field without
-	// omitempty), but Validate() also requires bootstrapServers and credentials.
-	// Patch the schema to match so an editor/CI lint cannot pass a manifest that
-	// init will then reject; restCredentials stays optional (derived from
-	// credentials when omitted).
-	kafka.Required = []string{"restEndpoint", "bootstrapServers", "credentials"}
+	// omitempty), but Validate() also requires bootstrapServers and
+	// clusterCredentials. Patch the schema to match so an editor/CI lint cannot
+	// pass a manifest that init will then reject.
+	kafka.Required = []string{"restEndpoint", "bootstrapServers", "clusterCredentials"}
 
 	// lagThreshold's zero value is a legitimate, fail-safe setting (strictest:
 	// zero lag before proceeding), so it is indistinguishable from "omitted" —
@@ -152,21 +135,20 @@ func GenerateGateway() ([]byte, error) {
 	// field carries its flag's usage text, reworded away from the
 	// Confluent-Cloud-specific phrasing where "the destination" is meant.
 	describe(map[*jsonschema.Schema]string{
-		s.Properties["interpolate"]: "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key. Only string values are interpolated; numeric and duration fields (e.g. spec.defaultPolicies.rolloutTimeout) must be written as literals.",
-
 		source.Properties["type"]:             "Source Kafka flavour. Gates authentication: iam is msk-only.",
 		source.Properties["bootstrapServers"]: "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092, broker2:9092).",
-		source.Properties["credentials"]:      "Source cluster credentials: either a path to a credentials file, or the same content inline. Exactly one authentication block must be present.",
+		source.Properties["credentials"]:      "Path to the source cluster credentials file. Exactly one authentication block must be present in that file.",
 
 		target.Properties["type"]:      "Destination flavour: a Confluent Cloud or Confluent Platform cluster.",
 		target.Properties["clusterId"]: "Destination cluster ID (e.g. lkc-abc123). Required for both destination types.",
 
-		kafka.Properties["bootstrapServers"]: "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).",
-		kafka.Properties["restEndpoint"]:     "REST endpoint of the destination cluster.",
-		kafka.Properties["credentials"]:      "Destination Kafka credentials, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
-		kafka.Properties["restCredentials"]:  "Destination REST (cluster-link) credentials: api_key/api_secret, basic, bearer, or mtls. OPTIONAL only when credentials is sasl_plain — then derived in full (api_key/api_secret from sasl_plain.username/password, ca_cert and insecure_skip_verify inherited). Required for every other credentials method, since there is no principal to derive one from. A present block is used exactly as written, never partially derived.",
+		kafka.Properties["bootstrapServers"]:   "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092).",
+		kafka.Properties["restEndpoint"]:       "REST endpoint of the destination cluster.",
+		kafka.Properties["clusterCredentials"]: "Path to the destination Kafka credentials file, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
 
 		clusterLink.Properties["name"]:                    "Name of the cluster link on the destination cluster. The link must ALREADY EXIST.",
+		clusterLink.Properties["bootstrapServers"]:        "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it.",
+		clusterLink.Properties["linkCredentials"]:         "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg.",
 		clusterLink.Properties["pauseConsumerOffsetSync"]: "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true.",
 
 		gateway.Properties["namespace"]:  "Kubernetes namespace where the gateway is deployed.",
@@ -192,23 +174,18 @@ func GenerateGateway() ([]byte, error) {
 	return marshal(s)
 }
 
-// polymorphic rewrites a credentials property into "a path string OR the
-// referenced file's shape inline".
-func polymorphic(p *jsonschema.Schema, def string) {
+// stringCredential rewrites a credentials property into a plain file-path
+// string, preserving any existing description. Inline credential blocks are no
+// longer accepted, so no credentials property is polymorphic and no $defs are
+// emitted.
+func stringCredential(p *jsonschema.Schema) {
 	if p == nil {
 		return
 	}
-	desc := p.Description
-	*p = jsonschema.Schema{
-		Description: desc,
-		OneOf: []*jsonschema.Schema{
-			{Type: "string"},
-			{Ref: "#/$defs/" + def},
-		},
-	}
+	*p = jsonschema.Schema{Type: "string", Description: p.Description}
 }
 
-// describe applies descriptions after the polymorphic rewrite, so a rewritten
+// describe applies descriptions after the credential rewrites, so a rewritten
 // property keeps its text.
 func describe(m map[*jsonschema.Schema]string) {
 	for p, text := range m {
@@ -216,31 +193,6 @@ func describe(m map[*jsonschema.Schema]string) {
 			p.Description = text
 		}
 	}
-}
-
-// addCredentialDefs reflects the two real credentials structs into $defs, so
-// the inline branch validates against the actual shape rather than "any
-// object" — and stays in step automatically when a field is added.
-func addCredentialDefs(s *jsonschema.Schema) error {
-	mc, err := jsonschema.For[types.MigrateClusterCredentials](nil)
-	if err != nil {
-		return fmt.Errorf("reflecting migrate credentials: %w", err)
-	}
-	tc, err := jsonschema.For[targets.Credentials](nil)
-	if err != nil {
-		return fmt.Errorf("reflecting target credentials: %w", err)
-	}
-	// `interpolate` is file-level and is rejected inside an inline block, so the
-	// inline definitions must not advertise it.
-	delete(mc.Properties, "interpolate")
-	delete(tc.Properties, "interpolate")
-
-	if s.Defs == nil {
-		s.Defs = map[string]*jsonschema.Schema{}
-	}
-	s.Defs[defMigrateCredentials] = mc
-	s.Defs[defTargetCredentials] = tc
-	return nil
 }
 
 func marshal(s *jsonschema.Schema) ([]byte, error) {

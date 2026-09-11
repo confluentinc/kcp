@@ -252,8 +252,9 @@ func runExecuteTBMStubbed(t *testing.T, args ...string) (string, error) {
 	return runExecuteTBMWithReconcile(t, stubReconcile, args...)
 }
 
-// gatewayManifestTemplate is a complete, valid GatewayMigration document with
-// a templated metadata.name — the only field these tests vary.
+// gatewayManifestTemplate is a complete, valid GatewayMigration document.
+// Credentials are referenced files (written alongside by writeManifest); the
+// templated fields are metadata.name, the three credential paths, and clusterId.
 const gatewayManifestTemplate = `apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
@@ -263,11 +264,7 @@ spec:
     type: msk
     bootstrapServers:
       - b-1.msk.us-east-1.amazonaws.com:9096
-    credentials:
-      sasl_scram:
-        username: admin
-        password: secret
-        mechanism: SHA512
+    credentials: %s
   target:
     type: confluent-cloud
     clusterId: %s
@@ -275,13 +272,12 @@ spec:
       bootstrapServers:
         - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
-      credentials:
-        sasl_plain:
-          username: CC_KEY
-          password: CC_SECRET
-          tls: true
+      clusterCredentials: %s
   clusterLink:
     name: msk-to-cc
+    bootstrapServers:
+      - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+    linkCredentials: %s
   gateway:
     namespace: confluent
     cr-name: gateway-initial
@@ -292,10 +288,22 @@ spec:
       targetStreamingDomain: confluent-cloud
 `
 
+// writeManifest writes the GatewayMigration manifest and the three credentials
+// files it references into dir, returning the manifest path. Credentials are
+// referenced files now, not inline blocks, so each leg is its own file.
 func writeManifest(t *testing.T, dir, name, clusterId string) string {
 	t.Helper()
+	writeCred := func(fname, body string) string {
+		p := filepath.Join(dir, fname)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		return p
+	}
+	sourceCred := writeCred("source-creds.yaml", "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n")
+	destCred := writeCred("dest-kafka-creds.yaml", "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  tls: true\n")
+	linkCred := writeCred("link-creds.yaml", "api_key: CC_KEY\napi_secret: CC_SECRET\n")
+
 	p := filepath.Join(dir, "gateway-migration.yaml")
-	doc := fmt.Sprintf(gatewayManifestTemplate, name, clusterId)
+	doc := fmt.Sprintf(gatewayManifestTemplate, name, sourceCred, clusterId, destCred, linkCred)
 	require.NoError(t, os.WriteFile(p, []byte(doc), 0600))
 	return p
 }
@@ -472,7 +480,9 @@ func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Edit the manifest (still schema-valid, still the same metadata.name).
-	mutated := strings.ReplaceAll(fmt.Sprintf(gatewayManifestTemplate, "tbm-batch-3", "lkc-abc123"), "lkc-abc123", "lkc-changed")
+	original, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	mutated := strings.ReplaceAll(string(original), "lkc-abc123", "lkc-changed")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(mutated), 0600))
 
 	_, err = runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)

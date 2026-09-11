@@ -12,32 +12,47 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// writeManifestToPod renders the GatewayMigration manifest for a scenario and
-// writes it into the runner pod at podPath, mode 0600.
+// writeManifestToPod renders a scenario's GatewayMigration manifest and the
+// three credentials files it references, and writes all four into the runner pod
+// at mode 0600. Credentials are files now, not inline blocks, so the secret
+// material lives in the credentials files while the manifest carries only paths.
 //
-// The YAML travels over STDIN. Passing it as an argument would put the
+// Every file travels over STDIN. Passing content as an argument would put a
 // destination password into the container's process table and into the host
 // kubectl command line; stdin puts it in neither. The mode and path-handling
 // properties live in podWriteCommand, which is unit-tested without a cluster.
 //
-// Safe to call more than once for the same path: re-rendering is how a scenario
+// Safe to call more than once for the same paths: re-rendering is how a scenario
 // varies execute-time policy between init and execute, which is legal because execute
 // reads policy fresh and the drift check compares topology only.
 func writeManifestToPod(t *testing.T, cfg envConfig, podPath string, opts manifestOpts) {
 	t.Helper()
 
+	creds, err := renderCredentialFiles(opts)
+	require.NoError(t, err, "rendering the credentials files for %s", podPath)
+	// Redacted: test output is CI output, and these files are secret-bearing.
+	writeFileToPod(t, cfg, opts.SourceCredPath, creds.Source)
+	writeFileToPod(t, cfg, opts.DestKafkaCredPath, creds.DestKafka)
+	writeFileToPod(t, cfg, opts.LinkCredPath, creds.Link)
+
 	rendered, err := renderGatewayMigration(opts)
 	require.NoError(t, err, "rendering the GatewayMigration manifest for %s", podPath)
-
-	// Redacted: test output is CI output.
 	t.Logf("manifest written to %s:\n%s", podPath, manifestForLog(rendered))
+	writeFileToPod(t, cfg, podPath, rendered)
+}
+
+// writeFileToPod writes content into the runner pod at podPath, mode 0600, over
+// stdin. The content is redacted for the test log because a credentials file (or
+// a manifest) may be secret-bearing.
+func writeFileToPod(t *testing.T, cfg envConfig, podPath, content string) {
+	t.Helper()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
 	argv := podWriteCommand(cfg.KubeContext, cfg.Namespace, cfg.KCPPod, podPath)
 	cmd := exec.CommandContext(ctx, "kubectl", argv...)
-	cmd.Stdin = strings.NewReader(rendered)
+	cmd.Stdin = strings.NewReader(content)
 
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
@@ -63,18 +78,21 @@ func manifestOptsFor(cfg envConfig) manifestOpts {
 		}
 	}
 	return manifestOpts{
-		MetadataName:    "e2e-" + cfg.Scenario,
-		SourceBootstrap: cfg.SourceBootstrap,
-		DestBootstrap:   cfg.DestBootstrap,
-		DestClusterID:   cfg.DestClusterID,
-		RestEndpoint:    cfg.RestProxyEndpoint,
-		ClusterLinkName: cfg.ClusterLinkName,
-		APIKey:          cfg.ClusterAPIKey,
-		APISecret:       cfg.ClusterAPISecret,
-		Namespace:       cfg.Namespace,
-		GatewayName:     cfg.GatewayName,
-		FenceRoutes:     fenceRoutes,
-		KubePath:        cfg.KubePath,
+		MetadataName:      "e2e-" + cfg.Scenario,
+		SourceBootstrap:   cfg.SourceBootstrap,
+		DestBootstrap:     cfg.DestBootstrap,
+		DestClusterID:     cfg.DestClusterID,
+		RestEndpoint:      cfg.RestProxyEndpoint,
+		ClusterLinkName:   cfg.ClusterLinkName,
+		APIKey:            cfg.ClusterAPIKey,
+		APISecret:         cfg.ClusterAPISecret,
+		Namespace:         cfg.Namespace,
+		GatewayName:       cfg.GatewayName,
+		FenceRoutes:       fenceRoutes,
+		KubePath:          cfg.KubePath,
+		SourceCredPath:    "/workspace/source-creds-" + cfg.Scenario + ".yaml",
+		DestKafkaCredPath: "/workspace/dest-kafka-creds-" + cfg.Scenario + ".yaml",
+		LinkCredPath:      "/workspace/link-creds-" + cfg.Scenario + ".yaml",
 	}
 }
 

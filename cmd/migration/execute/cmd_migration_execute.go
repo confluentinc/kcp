@@ -410,7 +410,7 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	}
 	dstCreds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.credentials", errs)
+		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 
 	// A nil bootstrap is fine here: MigrateConn folds it straight into
@@ -472,9 +472,10 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		GatewayConfigPort:  g.Spec.DefaultPolicies.GatewayConfigPort,
 		PromoteBatchSize:   g.Spec.DefaultPolicies.PromoteBatchSize,
 
-		// The destination Kafka leg authenticates with the KAFKA block. When
-		// restCredentials is spelled out it may name a different, broader
-		// principal, and sending that to the broker would invert least privilege.
+		// The destination Kafka leg authenticates with the KAFKA block. The
+		// cluster-link REST credential (spec.clusterLink.linkCredentials) may name
+		// a different, broader principal, and sending that to the broker would
+		// invert least privilege.
 		DestAuthType:   destAuthType,
 		DestAuthMethod: destAuthMethod,
 

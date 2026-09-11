@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/confluentinc/kcp/internal/interpolate"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/confluentinc/kcp/internal/yamlsafe"
@@ -58,11 +57,6 @@ type Credentials struct {
 	// CACert / InsecureSkipVerify are the api_key form's TLS-trust siblings.
 	CACert             string `yaml:"ca_cert,omitempty" json:"ca_cert,omitempty"`
 	InsecureSkipVerify bool   `yaml:"insecure_skip_verify,omitempty" json:"insecure_skip_verify,omitempty"`
-
-	// Interpolate opts this file in to ${ENV_VAR} resolution. It is file-level
-	// rather than a CLI flag so each file governs itself: a manifest that opts
-	// in never changes how a credentials file it references is read.
-	Interpolate bool `yaml:"interpolate,omitempty" json:"interpolate,omitempty"`
 }
 
 // LoadCredentials reads, parses and validates a target-creds.yaml file.
@@ -75,22 +69,12 @@ func LoadCredentials(path string) (*Credentials, error) {
 }
 
 // ParseCredentials parses and validates target credentials from bytes. It is
-// the shared entry point so an inline block and a referenced file run exactly
-// the same validation — a rule can never apply to one spelling and not the
-// other.
-//
-// ${ENV_VAR} resolution runs immediately after the unmarshal and before every
-// validation, because validation stats ca_cert paths: resolving afterwards
-// would report `ca_cert file "${CA_PATH}": no such file`.
+// the shared entry point so every caller runs exactly the same validation — a
+// rule can never apply to one caller and not another.
 func ParseCredentials(data []byte) (*Credentials, error) {
 	var c Credentials
 	if err := yaml.UnmarshalWithOptions(data, &c, yaml.Strict()); err != nil {
 		return nil, fmt.Errorf("parsing target credentials: %w", yamlsafe.StripSourceExcerpt(err))
-	}
-	if c.Interpolate {
-		if err := interpolate.Struct(&c); err != nil {
-			return nil, fmt.Errorf("resolving target credentials: %w", err)
-		}
 	}
 	if err := ValidateCredentials(&c); err != nil {
 		return nil, err
