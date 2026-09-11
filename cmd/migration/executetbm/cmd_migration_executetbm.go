@@ -207,7 +207,14 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	if err != nil {
 		return fmt.Errorf("failed to read migration manifest: %w", err)
 	}
-	hash := tbm.HashManifest(manifestBytes)
+	// Credentials are always referenced files (never inline), so the drift
+	// hash must cover their current contents too — otherwise rotating a
+	// credential file at its existing path is invisible to resolveTBMConfig.
+	hash, err := tbm.HashManifestAndCredentials(manifestBytes,
+		g.Spec.Source.Credentials.Path, g.Spec.Target.Kafka.ClusterCredentials.Path, g.Spec.ClusterLink.LinkCredentials.Path)
+	if err != nil {
+		return fmt.Errorf("failed to hash manifest and credentials: %w", err)
+	}
 
 	var tbmState *tbm.TBMState
 	if _, statErr := os.Stat(tbmStateFile); statErr == nil {

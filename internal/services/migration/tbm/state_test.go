@@ -22,6 +22,42 @@ func TestHashManifest_DifferentContentDifferentHash(t *testing.T) {
 	assert.NotEqual(t, HashManifest([]byte("a")), HashManifest([]byte("b")))
 }
 
+// --- mega-review PR #438 finding #5: the drift hash must also cover the
+// credential files a manifest references, not just the manifest's own bytes,
+// so rotating a credential file's contents (same path) is drift too. ---
+
+func TestHashManifestAndCredentials_IsDeterministic(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("api_key: KEY\n"), 0600))
+
+	h1, err := HashManifestAndCredentials([]byte("manifest"), p)
+	require.NoError(t, err)
+	h2, err := HashManifestAndCredentials([]byte("manifest"), p)
+	require.NoError(t, err)
+	assert.Equal(t, h1, h2)
+}
+
+func TestHashManifestAndCredentials_ChangesWhenACredentialFileContentChanges(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "creds.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("api_key: KEY\n"), 0600))
+
+	before, err := HashManifestAndCredentials([]byte("manifest"), p)
+	require.NoError(t, err)
+
+	require.NoError(t, os.WriteFile(p, []byte("api_key: ROTATED_KEY\n"), 0600))
+	after, err := HashManifestAndCredentials([]byte("manifest"), p)
+	require.NoError(t, err)
+
+	assert.NotEqual(t, before, after, "rotating a credential file's contents must change the hash even though its path and the manifest bytes are unchanged")
+}
+
+func TestHashManifestAndCredentials_ErrorsWhenACredentialFileCannotBeRead(t *testing.T) {
+	_, err := HashManifestAndCredentials([]byte("manifest"), filepath.Join(t.TempDir(), "missing.yaml"))
+	require.Error(t, err)
+}
+
 func TestTBMState_WriteAndRead_RoundTrip(t *testing.T) {
 	state := NewTBMState()
 	state.Migrations = []TBMConfig{
