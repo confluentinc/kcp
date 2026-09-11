@@ -1,0 +1,44 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+  resourceVersion: "12345"
+  uid: 1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d
+  generation: 3
+  creationTimestamp: "2026-01-01T00:00:00Z"
+  managedFields:
+    - manager: kubectl
+      operation: Update
+      apiVersion: platform.confluent.io/v1beta1
+      time: "2026-01-01T00:00:00Z"
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        name: msk-cluster
+    - name: cc
+      kafkaCluster:
+        name: cc-cluster
+  routes:
+    - name: migration-route
+      endpoint: kafka-gw.example.com:9092
+      mode: dynamic
+      streamingDomains:
+        - name: msk
+          bootstrapServerId: sasl-scram
+        - name: cc
+          bootstrapServerId: sasl-plain
+      rules:
+        fencing:
+          - trafficType: TRANSACTION
+        routing:
+          coordination:
+            group: msk
+          conditions:
+            - topicPatterns: ["team-a.*"]
+              streamingDomain: msk
+          default: msk
+status:
+  conditions:
+    - type: Ready
+      status: "True"

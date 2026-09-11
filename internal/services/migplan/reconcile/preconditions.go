@@ -31,10 +31,20 @@ type ClusterIDs struct {
 type GatewayConfig struct {
 	Route *RouteConfig // the single route named by the input, resolved by the provider
 
-	// RawYAML is the whole gateway CR exactly as it was pulled, carried through
-	// untouched. The reconcile core does not read it — it is provenance the
-	// caller can diff against a later re-pull to detect drift before mutating.
+	// RawYAML is the whole gateway CR, cleaned of server-managed metadata
+	// (see cleanGatewayDoc in migplan/gatewayfile.go) but otherwise exactly as
+	// pulled. The reconcile core does not read it — it is provenance a caller
+	// can diff against a later re-pull to detect drift before mutating; once
+	// cleaned, the whole document is stable enough to diff directly (the
+	// volatile fields that made a caller carve out just `spec` before are
+	// gone).
 	RawYAML string
+
+	// RawObj is the same cleaned tree RawYAML re-marshals from, already
+	// parsed — surfaced for the static-route strategy's precondition reads
+	// that are CR-level, not route-level (declared spec.streamingDomains[]).
+	// The reconcile core still does not mutate it.
+	RawObj map[string]any
 }
 
 type RouteConfig struct {
@@ -42,6 +52,13 @@ type RouteConfig struct {
 	Mode         string   // "static" | "dynamic"
 	BoundDomains []string // the route's bound streaming-domain names
 	Rules        map[string]any
+
+	// Raw is the route's own raw map exactly as found in spec.routes[] —
+	// the same object findRoute already extracts Name/Mode/BoundDomains/Rules
+	// from, surfaced here rather than re-derived by a second by-name lookup
+	// into GatewayConfig.RawObj. Static preconditions need fields (security.
+	// cluster, streamingDomain) none of this struct's other fields carry.
+	Raw map[string]any
 }
 
 func pass(name string) PreconditionResult { return PreconditionResult{Name: name, OK: true} }
