@@ -18,6 +18,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// executeManifest is the canonical GatewayMigration. Every credentials slot is a
+// PATH; newFixture substitutes the SOURCE_CREDS / DEST_KAFKA_CREDS / LINK_CREDS
+// sentinels with real files it writes into the temp dir, so the resolvers read
+// them exactly as init/execute do at runtime.
 const executeManifest = `apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
@@ -27,11 +31,7 @@ spec:
     type: msk
     bootstrapServers:
       - b-1.msk.us-east-1.amazonaws.com:9096
-    credentials:
-      sasl_scram:
-        username: admin
-        password: secret
-        mechanism: SHA512
+    credentials: SOURCE_CREDS
   target:
     type: confluent-cloud
     clusterId: lkc-abc123
@@ -39,13 +39,12 @@ spec:
       bootstrapServers:
         - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
-      credentials:
-        sasl_plain:
-          username: CC_KEY
-          password: CC_SECRET
-          tls: true
+      clusterCredentials: DEST_KAFKA_CREDS
   clusterLink:
     name: msk-to-cc
+    bootstrapServers:
+      - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+    linkCredentials: LINK_CREDS
   gateway:
     namespace: confluent
     cr-name: gateway-initial
@@ -56,16 +55,39 @@ spec:
       targetStreamingDomain: confluent-cloud
 `
 
+// Default credentials-file bodies for the canonical fixture. Values match the
+// state written by writeState so the baseline resolves and drift-compares clean.
+const (
+	defaultSourceCred    = "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n"
+	defaultDestKafkaCred = "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  tls: true\n"
+	defaultLinkCred      = "api_key: CC_KEY\napi_secret: CC_SECRET\n"
+)
+
+// credOverrides customises the three credentials files a fixture writes. An
+// empty field uses the default body.
+type credOverrides struct {
+	source    string
+	destKafka string
+	link      string
+}
+
 type fixture struct {
 	manifestPath string
 	stateFile    string
 	dir          string
 }
 
-// newFixture writes a manifest and a state file holding a migration whose
-// persisted config matches the manifest. There is no fenced or switchover CR
-// file — both are derived from the live initial CR at cutover.
+// newFixture writes a manifest (with the default credentials files) and a state
+// file holding a migration whose persisted config matches the manifest. There is
+// no fenced or switchover CR file — both are derived from the live initial CR at
+// cutover.
 func newFixture(t *testing.T, mutate func(string) string) fixture {
+	return newFixtureCreds(t, credOverrides{}, mutate)
+}
+
+// newFixtureCreds is newFixture with control over the credentials-file bodies,
+// for tests that exercise a specific auth block or per-leg TLS setting.
+func newFixtureCreds(t *testing.T, creds credOverrides, mutate func(string) string) fixture {
 	t.Helper()
 	dir := t.TempDir()
 	f := fixture{
@@ -74,7 +96,18 @@ func newFixture(t *testing.T, mutate func(string) string) fixture {
 		stateFile:    filepath.Join(dir, "migration-state.json"),
 	}
 
+	writeCred := func(name, body, def string) string {
+		if body == "" {
+			body = def
+		}
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		return p
+	}
 	doc := executeManifest
+	doc = strings.Replace(doc, "SOURCE_CREDS", writeCred("source-creds.yaml", creds.source, defaultSourceCred), 1)
+	doc = strings.Replace(doc, "DEST_KAFKA_CREDS", writeCred("dest-kafka-creds.yaml", creds.destKafka, defaultDestKafkaCred), 1)
+	doc = strings.Replace(doc, "LINK_CREDS", writeCred("link-creds.yaml", creds.link, defaultLinkCred), 1)
 	if mutate != nil {
 		doc = mutate(doc)
 	}
@@ -362,9 +395,9 @@ func TestDrift_PolicyIsNeverCompared(t *testing.T) {
 // TestDrift_CredentialsAreNotComparable — credentials are never persisted, so
 // defect 1's changed-between-runs half stays open by construction.
 func TestDrift_CredentialsAreNotComparable(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "        password: secret", "        password: rotated", 1)
-	})
+	f := newFixtureCreds(t, credOverrides{
+		source: "sasl_scram:\n  username: admin\n  password: rotated\n  mechanism: SHA512\n",
+	}, nil)
 	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
 }
 
@@ -684,7 +717,7 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 		assert func(*testing.T, MigrationExecutorOpts)
 	}{
 		"sasl_scram": {
-			"      sasl_scram:\n        username: u\n        password: p\n        mechanism: SHA256",
+			"sasl_scram:\n  username: u\n  password: p\n  mechanism: SHA256\n",
 			func(t *testing.T, o MigrationExecutorOpts) {
 				assert.Equal(t, "u", o.SaslScramUsername)
 				assert.Equal(t, "p", o.SaslScramPassword)
@@ -692,31 +725,27 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 			},
 		},
 		"iam": {
-			"      iam:\n        region: eu-west-2",
+			"iam:\n  region: eu-west-2\n",
 			func(t *testing.T, o MigrationExecutorOpts) {
 				assert.Equal(t, "eu-west-2", o.AWSRegion, "iam.region replaces --aws-region")
 			},
 		},
 		"sasl_plain": {
-			"      sasl_plain:\n        username: pu\n        password: pp\n        tls: true",
+			"sasl_plain:\n  username: pu\n  password: pp\n  tls: true\n",
 			func(t *testing.T, o MigrationExecutorOpts) {
 				assert.Equal(t, "pu", o.SaslPlainUsername)
 				assert.True(t, o.SaslPlainUseTLS, "tls: true must not be silently dropped to cleartext")
 			},
 		},
 		"unauthenticated_plaintext": {
-			"      unauthenticated_plaintext: {}",
+			"unauthenticated_plaintext: {}\n",
 			func(t *testing.T, o MigrationExecutorOpts) {
 				assert.Empty(t, o.SaslScramUsername)
 			},
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := newFixture(t, func(doc string) string {
-				return strings.Replace(doc,
-					"      sasl_scram:\n        username: admin\n        password: secret\n        mechanism: SHA512",
-					tc.block, 1)
-			})
+			f := newFixtureCreds(t, credOverrides{source: tc.block}, nil)
 			g := loadGateway(t, f.manifestPath)
 			opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 			require.NoError(t, err)
@@ -725,16 +754,15 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 	}
 }
 
-// TestExecute_InsecureSkipReachesAllThreeLegs preserves today's single-flag
-// fan-out: --insecure-skip-tls-verify reached the source, the destination Kafka
-// leg and the destination REST leg from one place.
-func TestExecute_InsecureSkipReachesAllThreeLegs(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		doc = strings.Replace(doc, "    credentials:\n      sasl_scram:",
-			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
-		return strings.Replace(doc, "      credentials:\n        sasl_plain:",
-			"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
-	})
+// TestExecute_InsecureSkipIsPerLegFile — each credentials file opts into
+// skipping TLS verification independently, so all three legs can be relaxed by
+// setting it on each file. There is no longer a single fan-out flag.
+func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
+	f := newFixtureCreds(t, credOverrides{
+		source:    "insecure_skip_tls_verify: true\n" + defaultSourceCred,
+		destKafka: "insecure_skip_tls_verify: true\n" + defaultDestKafkaCred,
+		link:      "api_key: CC_KEY\napi_secret: CC_SECRET\ninsecure_skip_verify: true\n",
+	}, nil)
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
@@ -744,11 +772,12 @@ func TestExecute_InsecureSkipReachesAllThreeLegs(t *testing.T) {
 
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
-	assert.True(t, rest.InsecureSkipVerify, "the derived REST leg inherits it")
+	assert.True(t, rest.InsecureSkipVerify, "the REST leg reads its own linkCredentials file")
 }
 
-// TestExecute_DestinationKeyAndSecretFeedBothLegs — one pair, two legs, as today.
-func TestExecute_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
+// TestExecute_DestinationKafkaUsesItsClusterCredentials — the destination Kafka
+// leg is authenticated from spec.target.kafka.clusterCredentials.
+func TestExecute_DestinationKafkaUsesItsClusterCredentials(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
@@ -766,11 +795,9 @@ func TestExecute_DestinationKeyAndSecretFeedBothLegs(t *testing.T) {
 // neither is set — the single most important regression to prove, since every
 // existing manifest never sets tls: nor ca_cert: on the destination.
 func TestExecute_DestSASLPlainDefaultsToTLS(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc,
-			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET", 1)
-	})
+	f := newFixtureCreds(t, credOverrides{
+		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n",
+	}, nil)
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
@@ -785,11 +812,9 @@ func TestExecute_DestSASLPlainCACertIsNotOverridden(t *testing.T) {
 	ca := filepath.Join(t.TempDir(), "dest-ca.pem")
 	require.NoError(t, os.WriteFile(ca, []byte("pem"), 0600))
 
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc,
-			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          tls: true",
-			"        sasl_plain:\n          username: CC_KEY\n          password: CC_SECRET\n          ca_cert: "+ca, 1)
-	})
+	f := newFixtureCreds(t, credOverrides{
+		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  ca_cert: " + ca + "\n",
+	}, nil)
 	g := loadGateway(t, f.manifestPath)
 	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
@@ -805,9 +830,9 @@ func TestExecute_DestSASLPlainCACertIsNotOverridden(t *testing.T) {
 // are silently dropped when the flag lattice is deleted.
 func TestExecute_PortsBespokePreRunErrors(t *testing.T) {
 	t.Run("invalid sasl_scram mechanism", func(t *testing.T) {
-		f := newFixture(t, func(doc string) string {
-			return strings.Replace(doc, "        mechanism: SHA512", "        mechanism: SHA1", 1)
-		})
+		f := newFixtureCreds(t, credOverrides{
+			source: "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA1\n",
+		}, nil)
 		_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 		require.Error(t, err)
 		assert.Contains(t, strings.ToLower(err.Error()), "mechanism")
@@ -862,10 +887,9 @@ func TestExecute_NeverPersistsCredentials(t *testing.T) {
 // destination API key as SASL/PLAIN and as HTTP Basic. Anyone able to MITM the
 // path to the destination then harvests them.
 func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "    credentials:\n      sasl_scram:",
-			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
-	})
+	f := newFixtureCreds(t, credOverrides{
+		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
+	}, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
@@ -875,66 +899,60 @@ func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 }
 
 // TestExecute_DestinationInsecureSkipDoesNotReachTheSource — the same in reverse.
+// Each leg is its own file, so the destination Kafka leg relaxing verification
+// reaches neither the source nor the (separate) REST leg.
 func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "      credentials:\n        sasl_plain:",
-			"      credentials:\n        insecure_skip_tls_verify: true\n        sasl_plain:", 1)
-	})
+	f := newFixtureCreds(t, credOverrides{
+		destKafka: "insecure_skip_tls_verify: true\n" + defaultDestKafkaCred,
+	}, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	assert.False(t, opts.SourceInsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
-	assert.True(t, opts.RestCreds.InsecureSkipVerify, "a DERIVED REST leg inherits from the Kafka block")
+	assert.False(t, opts.RestCreds.InsecureSkipVerify, "the REST leg is its own file and did not ask for it")
 }
 
-// TestExecute_ExplicitRestCredentialsGovernTheRestLeg — with restCredentials
-// spelled out, its own insecure_skip_verify governs, and nothing else leaks in.
-// Otherwise a declared private-CA ca_cert would be loaded and then rendered
-// meaningless by an InsecureSkipVerify inherited from another leg.
-func TestExecute_ExplicitRestCredentialsGovernTheRestLeg(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		doc = strings.Replace(doc, "    credentials:\n      sasl_scram:",
-			"    credentials:\n      insecure_skip_tls_verify: true\n      sasl_scram:", 1)
-		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
-        api_key: K
-        api_secret: S
-  clusterLink:`, 1)
-	})
+// TestExecute_LinkCredentialsGovernTheRestLeg — the REST leg is driven entirely
+// by spec.clusterLink.linkCredentials, so a link file that did not ask to skip
+// verification keeps verifying no matter what the other legs set.
+func TestExecute_LinkCredentialsGovernTheRestLeg(t *testing.T) {
+	f := newFixtureCreds(t, credOverrides{
+		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
+		link:   "api_key: K\napi_secret: S\n",
+	}, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
 	assert.False(t, opts.RestCreds.InsecureSkipVerify,
-		"an explicit REST block that did not ask for it must keep verifying")
+		"a link credentials file that did not ask for it must keep verifying")
 }
 
 // --- security review F5: the Kafka leg authenticates with the KAFKA block ---
 
-// TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne. The
-// destination bootstrap is dialled with SASL/PLAIN. Feeding it from
-// restCredentials means a deliberately broader REST key reaches the broker
-// instead of the narrower Kafka-scoped one — least privilege inverted.
-func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheRestOne(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "  clusterLink:", `      restCredentials:
-        api_key: REST_ONLY_KEY
-        api_secret: REST_ONLY_SECRET
-  clusterLink:`, 1)
-	})
+// TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheLinkOne. The
+// destination bootstrap is dialled with SASL/PLAIN from clusterCredentials, while
+// the REST leg uses the separate linkCredentials — feeding the broker from the
+// REST credential would send a deliberately broader REST key to the broker
+// instead of the narrower Kafka-scoped one.
+func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheLinkOne(t *testing.T) {
+	f := newFixtureCreds(t, credOverrides{
+		link: "api_key: REST_ONLY_KEY\napi_secret: REST_ONLY_SECRET\n",
+	}, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
-	require.NotNil(t, opts.DestAuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.credentials")
+	require.NotNil(t, opts.DestAuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.clusterCredentials")
 	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
 	assert.Equal(t, "CC_SECRET", opts.DestAuthMethod.SASLPlain.Password)
-	assert.Equal(t, "REST_ONLY_KEY", opts.RestCreds.APIKey, "the REST leg uses restCredentials")
+	assert.Equal(t, "REST_ONLY_KEY", opts.RestCreds.APIKey, "the REST leg uses linkCredentials")
 	assert.Equal(t, "REST_ONLY_SECRET", opts.RestCreds.APISecret)
 }
 
-// TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg — the common case is
-// unchanged: one pair feeds both legs.
-func TestExecute_DerivedRestCredentialsStillMatchTheKafkaLeg(t *testing.T) {
+// TestExecute_RestCredentialsComeFromLinkCredentials — the REST leg is resolved
+// from spec.clusterLink.linkCredentials, never derived from the Kafka leg.
+func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 	f := newFixture(t, nil)
 	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
