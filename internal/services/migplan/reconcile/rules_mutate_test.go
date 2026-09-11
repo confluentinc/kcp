@@ -24,6 +24,27 @@ func TestPrependFencePreservesExisting(t *testing.T) {
 	}
 }
 
+// TestPrependFenceSetsBlocked proves the batch fence entry declares
+// blocked: true — the CRD-required field on rules.fencing[] entries. A
+// caller applying FenceYAML/SwitchoverYAML straight to a live Gateway CR
+// (e.g. the TBM fence transition) must never need to patch this in itself;
+// migplan.Reconcile's own artifact must already satisfy the schema.
+func TestPrependFenceSetsBlocked(t *testing.T) {
+	rt := mustTree(t).Clone()
+	rt.PrependFence([]string{"a", "b"})
+	fencing, ok := sliceField(rt.root, "fencing")
+	if !ok || len(fencing) == 0 {
+		t.Fatal("expected a fencing entry")
+	}
+	entry, ok := fencing[0].(map[string]any)
+	if !ok {
+		t.Fatalf("expected the prepended entry to be a map, got %T", fencing[0])
+	}
+	if blocked, ok := entry["blocked"].(bool); !ok || !blocked {
+		t.Errorf("expected the batch fence entry to declare blocked: true, got %v", entry["blocked"])
+	}
+}
+
 func TestPrependConditionWins(t *testing.T) {
 	rt := mustTree(t).Clone()
 	rt.PrependCondition([]string{"team-a.orders"}, "cc")
