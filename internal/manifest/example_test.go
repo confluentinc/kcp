@@ -3,6 +3,7 @@ package manifest
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -47,13 +48,9 @@ func TestValidCCFixtureIsValid(t *testing.T) {
 }
 
 // TestGatewayExampleManifestIsValid keeps the documented gateway example in
-// step with the parser and validator. The example is secret-bearing by design
-// (inline credentials), so it uses ${ENV_VAR} references throughout — which
-// means the test must supply them.
+// step with the parser and validator. Credentials are referenced files, so the
+// example carries no secrets and validates structurally without any I/O.
 func TestGatewayExampleManifestIsValid(t *testing.T) {
-	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
-		t.Setenv(v, "example-value")
-	}
 	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
 	require.NoError(t, err)
 	g, err := ParseGatewayMigration(data)
@@ -62,15 +59,30 @@ func TestGatewayExampleManifestIsValid(t *testing.T) {
 }
 
 // TestGatewayExampleResolvesEveryLeg proves the example is not merely
-// structurally valid: all three connection legs resolve from it.
+// structurally valid: substituting real credential files for its illustrative
+// /etc/kcp/*.yaml paths, all three connection legs resolve to the auth shapes
+// the file's own comments document.
 func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
-	for _, v := range []string{"MSK_USERNAME", "MSK_PASSWORD", "CC_API_KEY", "CC_API_SECRET"} {
-		t.Setenv(v, "example-value")
-	}
 	data, err := os.ReadFile("../../docs/assets/gateway-examples/gateway-migration.yaml")
 	require.NoError(t, err)
-	g, err := ParseGatewayMigration(data)
+	doc := string(data)
+
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
+		return p
+	}
+	doc = strings.Replace(doc, "credentials: /etc/kcp/source-creds.yaml",
+		"credentials: "+write("source-creds.yaml", "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n"), 1)
+	doc = strings.Replace(doc, "clusterCredentials: /etc/kcp/dest-kafka-creds.yaml",
+		"clusterCredentials: "+write("dest-kafka-creds.yaml", "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  tls: true\n"), 1)
+	doc = strings.Replace(doc, "linkCredentials: /etc/kcp/link-creds.yaml",
+		"linkCredentials: "+write("link-creds.yaml", "api_key: CC_KEY\napi_secret: CC_SECRET\n"), 1)
+
+	g, err := ParseGatewayMigration([]byte(doc))
 	require.NoError(t, err)
+	require.Empty(t, g.Validate())
 
 	src, errs := g.SourceCredentials()
 	require.Empty(t, errs)
@@ -82,5 +94,5 @@ func TestGatewayExampleResolvesEveryLeg(t *testing.T) {
 
 	rest, err := g.RestCredentials()
 	require.NoError(t, err)
-	require.Equal(t, "example-value", rest.APIKey)
+	require.Equal(t, "CC_KEY", rest.APIKey)
 }

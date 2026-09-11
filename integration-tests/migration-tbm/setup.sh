@@ -446,11 +446,22 @@ render_batch() {
       -e "s/__CLUSTER_LINK_NAME__/${CLUSTER_LINK_NAME}/g" \
       -e "s/__DEST_SASL_USER__/${DEST_SASL_USER}/g" \
       -e "s/__DEST_SASL_PASSWORD__/${DEST_SASL_PASSWORD}/g" \
+      -e "s|__CRED_DIR__|/workspace/rendered|g" \
       "${tmpl}" > "${out}"
 }
 shopt -s nullglob
 for tmpl in "${BATCHES_DIR}"/*.yaml.tmpl; do render_batch "${tmpl}"; done
 shopt -u nullglob
+
+# Credentials are files, not inline blocks. The manifests reference three shared
+# credentials files at /workspace/rendered/; render them here (into .rendered/,
+# gitignored) so run.sh cp's them into the runner pod alongside the manifests.
+# The destination SASL secret lives only here, never committed.
+printf 'unauthenticated_plaintext: {}\n' > "${RENDERED_DIR}/source-creds.yaml"
+printf 'sasl_plain:\n  username: "%s"\n  password: "%s"\n  tls: true\ninsecure_skip_tls_verify: true\n' \
+  "${DEST_SASL_USER}" "${DEST_SASL_PASSWORD}" > "${RENDERED_DIR}/dest-kafka-creds.yaml"
+printf 'api_key: "%s"\napi_secret: "%s"\n' \
+  "${DEST_SASL_USER}" "${DEST_SASL_PASSWORD}" > "${RENDERED_DIR}/link-creds.yaml"
 # Hermetic route-shape probe fixture needs no live creds — copy verbatim.
 [ -f "${SCRIPT_DIR}/testdata/gateway-static-probe.yaml" ] && \
   cp "${SCRIPT_DIR}/testdata/gateway-static-probe.yaml" "${RENDERED_DIR}/gateway-static-probe.yaml"

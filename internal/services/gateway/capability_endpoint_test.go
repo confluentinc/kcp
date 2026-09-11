@@ -31,7 +31,7 @@ func mixedProber(byPod map[string]ProbeOutcome, fallback ProbeOutcome) podProber
 		if !ok {
 			outcome = fallback
 		}
-		return ProbeResult{Outcome: outcome, Addr: endpoint.IP, ConfigID: "rev-1"}, nil
+		return ProbeResult{Outcome: outcome, Addr: endpoint.Name, ConfigID: "rev-1"}, nil
 	}
 }
 
@@ -84,12 +84,12 @@ func TestDetectCapability_ConfigEndpointGate(t *testing.T) {
 			"one pod already serves the endpoint, so the image roll in flight is bringing the rest")
 	})
 
-	t.Run("nothing reachable - error naming pod routing", func(t *testing.T) {
+	t.Run("nothing reachable - error naming the proxy failure", func(t *testing.T) {
 		_, err := detectCapability(context.Background(), capableCluster(ns, gw),
 			servingPods(ns, gw, 2), probeStub(ProbeUnreachable), ns, gw, nil, nil)
 		require.Error(t, err, "unreachable pods are an environment problem, not a reason to silently downgrade")
 
-		assert.Contains(t, err.Error(), "route pod IPs")
+		assert.Contains(t, err.Error(), "pods/proxy")
 		assert.Contains(t, err.Error(), "2 ready gateway pods")
 		assert.NotContains(t, err.Error(), "10.0.1.", "pod IPs belong in the log, not the error")
 	})

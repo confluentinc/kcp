@@ -47,9 +47,9 @@ type MigrationExecutorOpts struct {
 	// RestCreds authenticates the destination cluster-link REST surface. It is
 	// the full resolved credential (basic, bearer, mtls, or the api_key form),
 	// not just an api_key/api_secret pair, and is kept separate from the Kafka
-	// leg's DestAuthMethod because an explicit spec.target.kafka.restCredentials
-	// may name a different principal — the Kafka leg must not silently
-	// authenticate as the REST one.
+	// leg's DestAuthMethod because spec.clusterLink.linkCredentials may name a
+	// different principal — the Kafka leg must not silently authenticate as the
+	// REST one.
 	RestCreds *targets.Credentials
 	// TLS trust is per leg. One shared boolean meant relaxing verification for a
 	// self-signed source also stopped verifying the destination connections,
