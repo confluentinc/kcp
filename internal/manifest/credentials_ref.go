@@ -27,13 +27,14 @@ type CredentialsRef struct {
 func (r CredentialsRef) IsZero() bool { return strings.TrimSpace(r.Path) == "" }
 
 // UnmarshalYAML implements goccy's BytesUnmarshaler. The slot must be a scalar
-// file path; a mapping (an inline secret block) is rejected. The error names
-// only the field and never echoes the node's contents, so a secret spelled
-// inline by mistake does not reach err.Error() and therefore kcp.log.
+// file path; a mapping (an inline secret block) is rejected. The error never
+// names a specific field — this hook runs identically for every credentials
+// slot in the manifest — and never echoes the node's contents, so a secret
+// spelled inline by mistake does not reach err.Error() and therefore kcp.log.
 func (r *CredentialsRef) UnmarshalYAML(b []byte) error {
 	var s string
 	if err := yaml.Unmarshal(b, &s); err != nil {
-		return fmt.Errorf("credentials: must be a path to a credentials file; inline credential blocks are not supported")
+		return fmt.Errorf("this credentials field must be a path to a credentials file; inline credential blocks are not supported")
 	}
 	r.Path = s
 	return nil
@@ -53,7 +54,7 @@ func (r CredentialsRef) ResolveMigrateCluster() (types.MigrateClusterCredentials
 	if r.IsZero() {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("credentials: must not be empty")}
 	}
-	warnIfGroupOrWorldReadable(r.Path)
+	warnIfGroupOrWorldReadable(r.Path, "credentials file")
 	data, err := os.ReadFile(r.Path)
 	if err != nil {
 		return types.MigrateClusterCredentials{}, []error{fmt.Errorf("failed to read migrate credentials file: %w", err)}
@@ -70,7 +71,7 @@ func (r CredentialsRef) ResolveTarget() (*targets.Credentials, error) {
 	if r.IsZero() {
 		return nil, fmt.Errorf("credentials: must not be empty")
 	}
-	warnIfGroupOrWorldReadable(r.Path)
+	warnIfGroupOrWorldReadable(r.Path, "credentials file")
 	return targets.LoadCredentials(r.Path)
 }
 

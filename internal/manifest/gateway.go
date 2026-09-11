@@ -458,7 +458,7 @@ func LoadGatewayMigrationFile(path string) (*GatewayMigration, error) {
 	if err != nil {
 		return nil, fmt.Errorf("reading migration manifest: %w", err)
 	}
-	warnIfGroupOrWorldReadable(path)
+	warnIfGroupOrWorldReadable(path, "migration manifest")
 
 	g, err := ParseGatewayMigration(data)
 	if err != nil {
@@ -471,17 +471,19 @@ func LoadGatewayMigrationFile(path string) (*GatewayMigration, error) {
 }
 
 // warnIfGroupOrWorldReadable flags a secret-bearing file (the manifest itself,
-// or a credentials file resolved from it) with loose permissions. A warning
-// rather than an error: the file may legitimately be a read-only Kubernetes
-// projected volume, and refusing to read it would break the in-cluster path
-// entirely.
-func warnIfGroupOrWorldReadable(path string) {
+// or a credentials file resolved from it) with loose permissions. what names
+// the file's role (e.g. "migration manifest", "credentials file") so the
+// message identifies what was actually checked instead of assuming the caller
+// is always the manifest. A warning rather than an error: the file may
+// legitimately be a read-only Kubernetes projected volume, and refusing to
+// read it would break the in-cluster path entirely.
+func warnIfGroupOrWorldReadable(path, what string) {
 	info, err := os.Stat(path)
 	if err != nil {
 		return
 	}
 	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		slog.Warn("⚠️ migration manifest is group- or world-readable and may contain credentials",
+		slog.Warn(fmt.Sprintf("⚠️ %s is group- or world-readable", what),
 			"path", path, "mode", fmt.Sprintf("%#o", perm))
 	}
 }

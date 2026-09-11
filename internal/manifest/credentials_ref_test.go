@@ -1,6 +1,7 @@
 package manifest
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"testing"
@@ -46,6 +47,21 @@ func TestCredentialsRef_MappingFormIsRejected(t *testing.T) {
 		&h, yaml.Strict())
 	require.Error(t, err, "an inline credentials mapping must be rejected")
 	assert.Contains(t, err.Error(), "credentials")
+}
+
+// TestCredentialsRef_MappingRejection_DoesNotClaimAFieldNamedCredentials —
+// the rejection error fires identically for every credentials slot in the
+// manifest (source, clusterCredentials, linkCredentials, ...), so it must not
+// read as "the field named credentials" via a literal "credentials:" prefix,
+// which names the wrong field whenever the actual slot is any of the others.
+func TestCredentialsRef_MappingRejection_DoesNotClaimAFieldNamedCredentials(t *testing.T) {
+	var h refHolder
+	err := yaml.UnmarshalWithOptions(
+		[]byte("credentials:\n  sasl_scram:\n    username: admin\n    mechanism: SHA512\n"),
+		&h, yaml.Strict())
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "credentials:",
+		"the message must not assert a specific field name, since it fires for any credentials slot")
 }
 
 // TestCredentialsRef_MappingRejectionDoesNotLeakSecret — the rejection error for
@@ -171,4 +187,42 @@ func TestParseCredentials_ParseErrorDoesNotEchoNeighbouringSecrets(t *testing.T)
 	_, err := targets.ParseCredentials([]byte("api_key: KEY\napi_secret: REST_SECRET_VALUE\ntypo_field: x\n"))
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "REST_SECRET_VALUE")
+}
+
+// --- mega-review PR #438 finding #1: the loose-permission warning must name
+// what it actually checked, not misattribute a credentials file to the manifest ---
+
+// TestCredentialsRef_ResolveTarget_WarnsOnLooseCredentialsFilePermissions_NamesCredentialsFile
+// covers ResolveTarget (the REST leg): a loosely-permissioned credentials file
+// must warn as a "credentials file", never as "migration manifest".
+func TestCredentialsRef_ResolveTarget_WarnsOnLooseCredentialsFilePermissions_NamesCredentialsFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "rest.yaml")
+	require.NoError(t, os.WriteFile(p, []byte("api_key: KEY\napi_secret: SECRET\n"), 0644))
+
+	var buf bytes.Buffer
+	restore := captureSlog(t, &buf)
+	_, err := parseRef(t, "credentials: "+p+"\n").Credentials.ResolveTarget()
+	restore()
+
+	require.NoError(t, err)
+	assert.Contains(t, buf.String(), "credentials file")
+	assert.Contains(t, buf.String(), "group- or world-readable")
+	assert.NotContains(t, buf.String(), "migration manifest")
+}
+
+// TestCredentialsRef_ResolveMigrateCluster_WarnsOnLooseCredentialsFilePermissions_NamesCredentialsFile
+// covers ResolveMigrateCluster (the Kafka leg): same rule.
+func TestCredentialsRef_ResolveMigrateCluster_WarnsOnLooseCredentialsFilePermissions_NamesCredentialsFile(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "kafka.yaml")
+	require.NoError(t, os.WriteFile(p,
+		[]byte("sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n"), 0644))
+
+	var buf bytes.Buffer
+	restore := captureSlog(t, &buf)
+	_, errs := parseRef(t, "credentials: "+p+"\n").Credentials.ResolveMigrateCluster()
+	restore()
+
+	require.Empty(t, errs)
+	assert.Contains(t, buf.String(), "credentials file")
+	assert.NotContains(t, buf.String(), "migration manifest")
 }
