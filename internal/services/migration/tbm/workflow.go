@@ -15,7 +15,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
-	"github.com/goccy/go-yaml"
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
@@ -340,16 +339,10 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *TBMConfig) erro
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
 	}
 
-	obj, err := cleanGatewayYAML(config.GatewayYAML)
-	if err != nil {
-		return err
-	}
-	cleanYAML, err := yaml.Marshal(obj)
-	if err != nil {
-		return fmt.Errorf("failed to marshal cleaned gateway CR YAML: %w", err)
-	}
-
-	applied, err := a.applyGatewayCR(ctx, config, cleanYAML, "unfence")
+	// config.GatewayYAML is already clean (migplan strips server-managed
+	// metadata once, centrally — see migplan/gatewayfile.go's cleanGatewayDoc),
+	// so this can be applied directly with no parse/re-marshal round trip.
+	applied, err := a.applyGatewayCR(ctx, config, []byte(config.GatewayYAML), "unfence")
 	if err != nil {
 		return fmt.Errorf("failed to apply cleaned gateway CR: %w", err)
 	}

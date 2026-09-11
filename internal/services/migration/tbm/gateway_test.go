@@ -590,7 +590,7 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 	assert.Equal(t, 1, detectCalls, "Switch alone (Fence never ran this process) must still resolve capability")
 }
 
-func TestTBMActions_UnfenceGateway_AppliesCleanedSnapshotVerbatim(t *testing.T) {
+func TestTBMActions_UnfenceGateway_AppliesGatewayYAMLSnapshotVerbatim(t *testing.T) {
 	var appliedYAML []byte
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
@@ -610,15 +610,7 @@ func TestTBMActions_UnfenceGateway_AppliesCleanedSnapshotVerbatim(t *testing.T) 
 	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &applied))
 	var expected map[string]interface{}
 	require.NoError(t, yamlUnmarshalForTest(t, []byte(testGatewayYAML), &expected))
-	if metadata, ok := expected["metadata"].(map[string]interface{}); ok {
-		delete(metadata, "managedFields")
-		delete(metadata, "resourceVersion")
-		delete(metadata, "uid")
-		delete(metadata, "creationTimestamp")
-		delete(metadata, "generation")
-	}
-	delete(expected, "status")
-	assert.Equal(t, expected, applied, "unfence must reapply the cleaned GatewayYAML snapshot verbatim, with nothing grafted onto it")
+	assert.Equal(t, expected, applied, "unfence must reapply the config.GatewayYAML snapshot verbatim, with nothing grafted onto it and no re-cleaning (migplan already cleans it once, centrally)")
 }
 
 func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) {

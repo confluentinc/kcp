@@ -25,27 +25,6 @@ type gatewayApplyResult struct {
 	BaselineDeploymentGeneration int64
 }
 
-// cleanGatewayYAML parses config.GatewayYAML and strips the server-managed
-// metadata (managedFields, resourceVersion, uid, creationTimestamp,
-// generation) and top-level status that a live-read CR carries and that
-// server-side apply rejects. Mirrors migration.cleanInitialCR — duplicated,
-// not shared (see the tbm package doc comment in state.go).
-func cleanGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
-	var obj map[string]interface{}
-	if err := yaml.Unmarshal([]byte(gatewayYAML), &obj); err != nil {
-		return nil, fmt.Errorf("failed to parse gateway CR YAML: %w", err)
-	}
-	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
-		delete(metadata, "managedFields")
-		delete(metadata, "resourceVersion")
-		delete(metadata, "uid")
-		delete(metadata, "creationTimestamp")
-		delete(metadata, "generation")
-	}
-	delete(obj, "status")
-	return obj, nil
-}
-
 // deriveFencedCRYAML builds the fenced CR bytes from the captured gateway CR
 // snapshot by replacing config.Route's rules subtree with config.FenceYAML,
 // applied unmodified — migplan.Reconcile's artifact already satisfies the
@@ -53,11 +32,13 @@ func cleanGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 // migplan/reconcile/rules.go), so there is nothing to patch here. There is no
 // separately-snapshotted fenced CR: this and resolveGatewayCapability's
 // detection both derive from the same source, so they can never drift from
-// each other.
+// each other. config.GatewayYAML is already clean (migplan strips
+// server-managed metadata once, centrally — see gatewayfile.go's
+// cleanGatewayDoc), so this only needs to parse it.
 func deriveFencedCRYAML(config *TBMConfig) ([]byte, error) {
-	base, err := cleanGatewayYAML(config.GatewayYAML)
-	if err != nil {
-		return nil, err
+	var base map[string]interface{}
+	if err := yaml.Unmarshal([]byte(config.GatewayYAML), &base); err != nil {
+		return nil, fmt.Errorf("failed to parse gateway CR YAML: %w", err)
 	}
 	return gateway.ReplaceRouteRulesObj(base, config.Route, []byte(config.FenceYAML))
 }
@@ -70,9 +51,9 @@ func deriveFencedCRYAML(config *TBMConfig) ([]byte, error) {
 // pick rollout verification for a migration that will hot-reload, and then
 // observe nothing (see migration.ResolveGatewayCapability's comment).
 func deriveSwitchedCRYAML(config *TBMConfig) ([]byte, error) {
-	base, err := cleanGatewayYAML(config.GatewayYAML)
-	if err != nil {
-		return nil, err
+	var base map[string]interface{}
+	if err := yaml.Unmarshal([]byte(config.GatewayYAML), &base); err != nil {
+		return nil, fmt.Errorf("failed to parse gateway CR YAML: %w", err)
 	}
 	return gateway.ReplaceRouteRulesObj(base, config.Route, []byte(config.SwitchoverYAML))
 }
