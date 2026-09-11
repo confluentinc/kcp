@@ -66,6 +66,7 @@ func TestNewResult(t *testing.T) {
 			SwitchoverRules: []byte("switch-yaml"),
 		},
 		GatewayYAML: "gw-yaml",
+		Mode:        "static",
 	})
 	if ok.Refused {
 		t.Error("a plan with artifacts must not be Refused")
@@ -78,6 +79,9 @@ func TestNewResult(t *testing.T) {
 	}
 	if len(ok.Topics) != 2 || len(ok.Reasons) != 0 {
 		t.Errorf("topics=%v reasons=%v", ok.Topics, ok.Reasons)
+	}
+	if ok.Mode != "static" {
+		t.Errorf("Mode = %q, want static (must mirror plan.Mode)", ok.Mode)
 	}
 
 	// refused: nil artifacts, Refused true, reasons from failed checks + fail-fast,

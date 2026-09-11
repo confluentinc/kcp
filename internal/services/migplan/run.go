@@ -13,6 +13,8 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 // defaultKafkaVersion mirrors the version the other migrate/scan admin builders
@@ -43,13 +45,22 @@ type Result struct {
 	// Report is the full per-topic report, for rendering/diagnostics (the CLI
 	// uses it). In-code callers can ignore it and use the fields above.
 	Report reconcile.Report
+
+	// Mode is the route mode this plan was reconciled under ("dynamic" or
+	// "static"), mirroring reconcile.Plan.Mode — so a caller knows how to
+	// interpret FenceYAML/SwitchoverYAML: a rules: fragment for dynamic, a
+	// fence/streamingDomain block fragment for static — both meaning "splice
+	// this onto the named route," never "apply this as the whole CR."
+	Mode string
 }
 
-// reconcileOptions holds the two dependencies Reconcile builds by default but
-// lets a caller override: the gateway source and the report's destination.
+// reconcileOptions holds the dependencies Reconcile builds by default but lets
+// a caller override: the gateway source, the secrets provider and the
+// report's destination.
 type reconcileOptions struct {
-	gateway GatewayConfigSource // nil ⇒ pull the live CR from spec.gateway
-	out     io.Writer           // nil ⇒ os.Stdout
+	gateway GatewayConfigSource    // nil ⇒ pull the live CR from spec.gateway
+	secrets SecretExistenceChecker // nil ⇒ built from the manifest's spec.gateway.namespace + kubeconfig
+	out     io.Writer              // nil ⇒ os.Stdout
 }
 
 // Option customises Reconcile. Production and the state machine pass none.
@@ -60,6 +71,13 @@ type Option func(*reconcileOptions)
 // without reaching Kubernetes; production pulls the live CR.
 func WithGatewaySource(s GatewayConfigSource) Option {
 	return func(o *reconcileOptions) { o.gateway = s }
+}
+
+// WithSecretExistenceChecker overrides the secret-existence provider. Tests
+// use it to inject a fake so the static-route path can be exercised without
+// a live cluster; production builds a real K8s-backed checker.
+func WithSecretExistenceChecker(s SecretExistenceChecker) Option {
+	return func(o *reconcileOptions) { o.secrets = s }
 }
 
 // WithOutput redirects the plan report (default os.Stdout), so a caller can
@@ -116,7 +134,15 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 	}
 	defer func() { _ = tgtCloser.Close() }()
 
-	plan, err := NewReconciliationEngine(gw, src, tgt, link).Run(ctx, in)
+	secrets := o.secrets
+	if secrets == nil {
+		secrets, err = buildSecretExistenceChecker(g)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	plan, err := NewReconciliationEngine(gw, src, tgt, link, secrets).Run(ctx, in)
 	if err != nil {
 		return nil, err
 	}
@@ -139,7 +165,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 }
 
 func newResult(plan *reconcile.Plan) *Result {
-	r := &Result{Refused: plan.Report.Refused(), GatewayYAML: plan.GatewayYAML, Report: plan.Report}
+	r := &Result{Refused: plan.Report.Refused(), GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
 		r.Topics = plan.Artifacts.Topics
 		r.FenceYAML = string(plan.Artifacts.FenceRules)
@@ -168,6 +194,31 @@ func buildGatewaySource(g *manifest.GatewayMigration, route string) (GatewayConf
 	}
 	svc := gateway.NewK8sService(kubeconfig)
 	return NewGatewayLive(svc, g.Spec.Gateway.Namespace, g.Spec.Gateway.CrName, route), nil
+}
+
+// buildSecretExistenceChecker wires the live Secret-existence check from
+// spec.gateway.namespace, using the same kubeconfig resolution
+// buildGatewaySource does. gateway.K8sService itself does not expose a
+// clientset (each of its methods builds one internally, ad hoc, from its own
+// kubeConfigPath — see internal/services/gateway/gateway.go), so this
+// mirrors that same clientcmd.BuildConfigFromFlags + kubernetes.NewForConfig
+// pattern directly rather than hand-rolling a new one. Built unconditionally
+// (mirroring every other provider builder here) even for a dynamic-route
+// manifest, which will simply never invoke it — see engine.go's Run.
+func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceChecker, error) {
+	kubeconfig, err := g.KubeconfigPath()
+	if err != nil {
+		return nil, err
+	}
+	config, err := clientcmd.BuildConfigFromFlags("", kubeconfig)
+	if err != nil {
+		return nil, fmt.Errorf("building kubeconfig: %w", err)
+	}
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return nil, fmt.Errorf("building kubernetes clientset: %w", err)
+	}
+	return NewK8sSecretChecker(clientset, g.Spec.Gateway.Namespace), nil
 }
 
 // buildReconcileInput maps the manifest's spec.topicGroup onto the engine-owned
