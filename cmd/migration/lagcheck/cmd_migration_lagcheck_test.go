@@ -12,6 +12,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,18 +93,10 @@ U+PcgMDYT48U6chMykYv0VBh4vquBYLBrC9AlTlIdCZaELbpCe7FU3yO
 func writeLagManifestFull(t *testing.T, source, dest, link string, mutate func(string) string) string {
 	t.Helper()
 	dir := t.TempDir()
-	write := func(name, body, def string) string {
-		if body == "" {
-			body = def
-		}
-		p := filepath.Join(dir, name)
-		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
-		return p
-	}
 	doc := lagCheckManifestTmpl
-	doc = strings.Replace(doc, "__SOURCE_CRED__", write("source-creds.yaml", source, defLagSourceCred), 1)
-	doc = strings.Replace(doc, "__DEST_CRED__", write("dest-kafka-creds.yaml", dest, defLagDestCred), 1)
-	doc = strings.Replace(doc, "__LINK_CRED__", write("link-creds.yaml", link, defLagLinkCred), 1)
+	doc = strings.Replace(doc, "__SOURCE_CRED__", testsupport.WriteCredFile(t, dir, "source-creds.yaml", source, defLagSourceCred), 1)
+	doc = strings.Replace(doc, "__DEST_CRED__", testsupport.WriteCredFile(t, dir, "dest-kafka-creds.yaml", dest, defLagDestCred), 1)
+	doc = strings.Replace(doc, "__LINK_CRED__", testsupport.WriteCredFile(t, dir, "link-creds.yaml", link, defLagLinkCred), 1)
 	if mutate != nil {
 		doc = mutate(doc)
 	}

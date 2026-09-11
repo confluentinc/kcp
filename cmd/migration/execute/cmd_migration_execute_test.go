@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
@@ -96,18 +97,10 @@ func newFixtureCreds(t *testing.T, creds credOverrides, mutate func(string) stri
 		stateFile:    filepath.Join(dir, "migration-state.json"),
 	}
 
-	writeCred := func(name, body, def string) string {
-		if body == "" {
-			body = def
-		}
-		p := filepath.Join(dir, name)
-		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
-		return p
-	}
 	doc := executeManifest
-	doc = strings.Replace(doc, "SOURCE_CREDS", writeCred("source-creds.yaml", creds.source, defaultSourceCred), 1)
-	doc = strings.Replace(doc, "DEST_KAFKA_CREDS", writeCred("dest-kafka-creds.yaml", creds.destKafka, defaultDestKafkaCred), 1)
-	doc = strings.Replace(doc, "LINK_CREDS", writeCred("link-creds.yaml", creds.link, defaultLinkCred), 1)
+	doc = strings.Replace(doc, "SOURCE_CREDS", testsupport.WriteCredFile(t, dir, "source-creds.yaml", creds.source, defaultSourceCred), 1)
+	doc = strings.Replace(doc, "DEST_KAFKA_CREDS", testsupport.WriteCredFile(t, dir, "dest-kafka-creds.yaml", creds.destKafka, defaultDestKafkaCred), 1)
+	doc = strings.Replace(doc, "LINK_CREDS", testsupport.WriteCredFile(t, dir, "link-creds.yaml", creds.link, defaultLinkCred), 1)
 	if mutate != nil {
 		doc = mutate(doc)
 	}

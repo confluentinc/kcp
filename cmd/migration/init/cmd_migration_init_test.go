@@ -11,6 +11,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -145,19 +146,11 @@ func writeManifest(t *testing.T, mutate func(string) string) string {
 func writeManifestCreds(t *testing.T, mutate func(string) string, creds credOverrides) string {
 	t.Helper()
 	dir := t.TempDir()
-	write := func(name, body, def string) string {
-		if body == "" {
-			body = def
-		}
-		p := filepath.Join(dir, name)
-		require.NoError(t, os.WriteFile(p, []byte(body), 0600))
-		return p
-	}
 
 	doc := gatewayManifest
-	doc = strings.ReplaceAll(doc, "SOURCE_CREDS_PATH", write("source-creds.yaml", creds.source, defaultSourceCreds))
-	doc = strings.ReplaceAll(doc, "DEST_KAFKA_CREDS_PATH", write("dest-kafka-creds.yaml", creds.destKafka, defaultDestKafkaCred))
-	doc = strings.ReplaceAll(doc, "LINK_CREDS_PATH", write("link-creds.yaml", creds.link, defaultLinkCred))
+	doc = strings.ReplaceAll(doc, "SOURCE_CREDS_PATH", testsupport.WriteCredFile(t, dir, "source-creds.yaml", creds.source, defaultSourceCreds))
+	doc = strings.ReplaceAll(doc, "DEST_KAFKA_CREDS_PATH", testsupport.WriteCredFile(t, dir, "dest-kafka-creds.yaml", creds.destKafka, defaultDestKafkaCred))
+	doc = strings.ReplaceAll(doc, "LINK_CREDS_PATH", testsupport.WriteCredFile(t, dir, "link-creds.yaml", creds.link, defaultLinkCred))
 	if mutate != nil {
 		doc = mutate(doc)
 	}
