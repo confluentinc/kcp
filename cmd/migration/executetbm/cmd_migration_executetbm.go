@@ -60,8 +60,7 @@ type gatewayServiceFunc func(g *manifest.GatewayMigration) (gateway.Service, err
 type clusterLinkServiceFunc func(g *manifest.GatewayMigration) (clusterlink.Service, error)
 
 // buildClusterLinkService opens a real clusterlink.Service using the
-// manifest's destination REST credentials (spec.target.kafka.restCredentials,
-// or derived from spec.target.kafka.credentials when that leg is sasl_plain —
+// manifest's cluster-link REST credentials (spec.clusterLink.linkCredentials —
 // see (*GatewayMigration).RestCredentials's own doc comment).
 func buildClusterLinkService(g *manifest.GatewayMigration) (clusterlink.Service, error) {
 	restCreds, err := g.RestCredentials()
@@ -208,7 +207,14 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	if err != nil {
 		return fmt.Errorf("failed to read migration manifest: %w", err)
 	}
-	hash := tbm.HashManifest(manifestBytes)
+	// Credentials are always referenced files (never inline), so the drift
+	// hash must cover their current contents too — otherwise rotating a
+	// credential file at its existing path is invisible to resolveTBMConfig.
+	hash, err := tbm.HashManifestAndCredentials(manifestBytes,
+		g.Spec.Source.Credentials.Path, g.Spec.Target.Kafka.ClusterCredentials.Path, g.Spec.ClusterLink.LinkCredentials.Path)
+	if err != nil {
+		return fmt.Errorf("failed to hash manifest and credentials: %w", err)
+	}
 
 	var tbmState *tbm.TBMState
 	if _, statErr := os.Stat(tbmStateFile); statErr == nil {
@@ -361,7 +367,7 @@ func buildOffsetProviders(g *manifest.GatewayMigration) (offset.Provider, offset
 	destCreds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
 		_ = srcClient.Close()
-		return nil, nil, nil, manifest.JoinProblems("spec.target.kafka.credentials", errs)
+		return nil, nil, nil, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 	destConn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, destCreds)
 	// Backward-compat parity with migration execute (and migplan): a

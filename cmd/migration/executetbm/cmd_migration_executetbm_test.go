@@ -16,6 +16,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/services/offset"
+	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/spf13/pflag"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -252,8 +253,9 @@ func runExecuteTBMStubbed(t *testing.T, args ...string) (string, error) {
 	return runExecuteTBMWithReconcile(t, stubReconcile, args...)
 }
 
-// gatewayManifestTemplate is a complete, valid GatewayMigration document with
-// a templated metadata.name — the only field these tests vary.
+// gatewayManifestTemplate is a complete, valid GatewayMigration document.
+// Credentials are referenced files (written alongside by writeManifest); the
+// templated fields are metadata.name, the three credential paths, and clusterId.
 const gatewayManifestTemplate = `apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
@@ -263,11 +265,7 @@ spec:
     type: msk
     bootstrapServers:
       - b-1.msk.us-east-1.amazonaws.com:9096
-    credentials:
-      sasl_scram:
-        username: admin
-        password: secret
-        mechanism: SHA512
+    credentials: %s
   target:
     type: confluent-cloud
     clusterId: %s
@@ -275,13 +273,12 @@ spec:
       bootstrapServers:
         - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
       restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
-      credentials:
-        sasl_plain:
-          username: CC_KEY
-          password: CC_SECRET
-          tls: true
+      clusterCredentials: %s
   clusterLink:
     name: msk-to-cc
+    bootstrapServers:
+      - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+    linkCredentials: %s
   gateway:
     namespace: confluent
     cr-name: gateway-initial
@@ -292,10 +289,17 @@ spec:
       targetStreamingDomain: confluent-cloud
 `
 
+// writeManifest writes the GatewayMigration manifest and the three credentials
+// files it references into dir, returning the manifest path. Credentials are
+// referenced files now, not inline blocks, so each leg is its own file.
 func writeManifest(t *testing.T, dir, name, clusterId string) string {
 	t.Helper()
+	sourceCred := testsupport.WriteCredFile(t, dir, "source-creds.yaml", "sasl_scram:\n  username: admin\n  password: secret\n  mechanism: SHA512\n", "")
+	destCred := testsupport.WriteCredFile(t, dir, "dest-kafka-creds.yaml", "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  tls: true\n", "")
+	linkCred := testsupport.WriteCredFile(t, dir, "link-creds.yaml", "api_key: CC_KEY\napi_secret: CC_SECRET\n", "")
+
 	p := filepath.Join(dir, "gateway-migration.yaml")
-	doc := fmt.Sprintf(gatewayManifestTemplate, name, clusterId)
+	doc := fmt.Sprintf(gatewayManifestTemplate, name, sourceCred, clusterId, destCred, linkCred)
 	require.NoError(t, os.WriteFile(p, []byte(doc), 0600))
 	return p
 }
@@ -472,7 +476,9 @@ func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	require.NoError(t, err)
 
 	// Edit the manifest (still schema-valid, still the same metadata.name).
-	mutated := strings.ReplaceAll(fmt.Sprintf(gatewayManifestTemplate, "tbm-batch-3", "lkc-abc123"), "lkc-abc123", "lkc-changed")
+	original, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	mutated := strings.ReplaceAll(string(original), "lkc-abc123", "lkc-changed")
 	require.NoError(t, os.WriteFile(manifestPath, []byte(mutated), 0600))
 
 	_, err = runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
@@ -482,6 +488,34 @@ func TestExecuteTBM_ChangedManifest_RefusesEvenAfterDone(t *testing.T) {
 	state, err := tbm.NewTBMStateFromFile(stateFile)
 	require.NoError(t, err)
 	cfg, err := state.GetMigrationById("tbm-batch-3")
+	require.NoError(t, err)
+	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState, "the stale entry must be untouched by the refused run")
+}
+
+// TestExecuteTBM_RotatedCredentialFile_RefusesEvenAfterDone is mega-review PR
+// #438 finding #5: credentials are always referenced files, so rotating a
+// credential file's contents in place (same path, unchanged manifest text)
+// must be caught as drift exactly like editing the manifest is.
+func TestExecuteTBM_RotatedCredentialFile_RefusesEvenAfterDone(t *testing.T) {
+	dir := t.TempDir()
+	manifestPath := writeManifest(t, dir, "tbm-batch-rotated-cred", "lkc-abc123")
+	stateFile := filepath.Join(dir, "tbm-state.json")
+
+	_, err := runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.NoError(t, err)
+
+	// Rotate the link credential's contents at its existing path; the
+	// manifest text (and therefore its own hash) is untouched.
+	linkCredPath := filepath.Join(dir, "link-creds.yaml")
+	require.NoError(t, os.WriteFile(linkCredPath, []byte("api_key: CC_KEY\napi_secret: ROTATED_SECRET\n"), 0600))
+
+	_, err = runExecuteTBMStubbed(t, "--migration-yaml", manifestPath, "--tbm-state-file", stateFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "changed since it was last run")
+
+	state, err := tbm.NewTBMStateFromFile(stateFile)
+	require.NoError(t, err)
+	cfg, err := state.GetMigrationById("tbm-batch-rotated-cred")
 	require.NoError(t, err)
 	assert.Equal(t, tbm.StateSwitched, cfg.CurrentState, "the stale entry must be untouched by the refused run")
 }
