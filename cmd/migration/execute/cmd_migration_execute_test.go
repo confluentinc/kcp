@@ -1057,7 +1057,7 @@ func TestExecute_DryRun_TouchesNoStateFile(t *testing.T) {
 	f := newFixture(t, nil)
 	require.NoError(t, os.Remove(f.stateFile))
 
-	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run")
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, "--dry-run")
 	require.Error(t, err, "reconcile fails deterministically against the fixture's unreachable kubeconfig")
 	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
 
@@ -1069,7 +1069,7 @@ func TestExecute_DryRun_DoesNotRequireMigrationStateFileFlag(t *testing.T) {
 	f := newFixture(t, nil)
 	require.NoError(t, os.Remove(f.stateFile))
 
-	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run")
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, "--dry-run")
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "migration-state-file", "dry-run must not require --migration-state-file")
 }
