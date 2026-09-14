@@ -48,7 +48,7 @@ For public product documentation, see the [Confluent Cloud Gateway Overview](htt
 
 KCP expects three things to already exist and be reachable: the CC Gateway deployed in Kubernetes with Confluent for Kubernetes, a Confluent Cloud destination cluster (Dedicated or Enterprise) with Cluster Linking enabled, and a network path from wherever KCP runs to both the source cluster brokers and the CC REST API.
 
-The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before cutover init.
+The gateway needs a stable DNS name that clients will use as their bootstrap address for the duration of the migration. This doesn't change at cutover, which is the whole point. The gateway also needs a TLS certificate that client trust stores already accept, network connectivity to source cluster brokers, and network connectivity to Confluent Cloud. Gateway backend credentials (the credentials it uses to authenticate to the source cluster and CC on behalf of clients) must be pre-loaded into your secret store (HashiCorp Vault, AWS Secrets Manager, or Azure Key Vault) before running the cutover.
 
 KCP itself needs credentials to the source cluster's cloud provider in the standard credential chain and a kubeconfig pointing at the Kubernetes cluster hosting the gateway. Full permissions required are in §7.
 
@@ -235,7 +235,7 @@ Before running any `kcp migration` command, confirm the following are in place:
 
 ### Step 1: Prepare Gateway CRs
 
-Before init, you need three gateway CR files ready on disk. The **initial CR** is your currently deployed gateway config — you reference it by name, KCP reads it from Kubernetes. The **fenced CR** is a modified version that blocks all traffic on the route and returns `BROKER_NOT_AVAILABLE` to clients. The **switchover CR** is another version that points the route at Confluent Cloud instead of the source cluster.
+Before running execute, you need three gateway CR files ready on disk. The **initial CR** is your currently deployed gateway config — you reference it by name, KCP reads it from Kubernetes. The **fenced CR** is a modified version that blocks all traffic on the route and returns `BROKER_NOT_AVAILABLE` to clients. The **switchover CR** is another version that points the route at Confluent Cloud instead of the source cluster.
 
 KCP does not generate these files. You author the fenced and switchover variants from your initial CR before running execute. Working examples for every supported auth combination are in the KCP repo at under [Gateway Switchover](https://confluentinc.github.io/kcp/latest/gateway-switchover/).
 

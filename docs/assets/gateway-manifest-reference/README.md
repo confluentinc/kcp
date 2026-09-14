@@ -13,30 +13,19 @@ see [gateway migration example](gateway-migration-example.md).
 
 This manifest drives an imperative, resumable state machine:
 
-- **`init`** validates the manifest and the live infrastructure it describes
-  (gateway, Kubernetes objects, credentials), then snapshots the topology into
-  `migration-state.json`. It reads the live initial gateway CR to resolve the
-  route's mode and derive its bootstrap server id. `--skip-validate` skips the
-  credential resolution and the gateway/Kubernetes resource validation, but still
-  reads the initial CR (the derived id is part of the snapshot) — useful for
-  testing.
-- **`execute`** drives the fence → promote → switchover FSM forward, resuming
-  from wherever the state file says it left off. It re-reads the manifest on
-  every invocation.
+- **`execute`** registers the migration on its first run (if not already registered), validates the manifest and live infrastructure, and drives the fence → promote → switchover FSM forward. On first run, it snapshots the topology into `migration-state.json`, reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and continues directly into the cutover. On subsequent runs, it resumes from wherever the state file says the last run left off. It re-reads the manifest (topology and policy) on every invocation.
+  - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. No migration state file is created or touched, and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
 - **`lag-check`** polls mirror-topic replication lag independently of `execute`.
 
-**Drift between the manifest and the init-time snapshot** is handled
+**Drift between the manifest and the first-run registration** is handled
 automatically, gated on how far the migration has progressed — there is no flag
 to force it through:
 
-- Before the point of no return, any difference is a hard stop: re-run `init` to
-  adopt the new spec.
-- Past the point of no return, re-running `init` would discard FSM position and
-  strand a live cutover, so `execute` instead proceeds on the edited spec with a
-  loud warning.
+- Before the point of no return, any difference is a hard stop: re-run `execute` with an updated manifest to drift-check and adopt the new spec (only at `StateUninitialized`, where no FSM transition has yet fired).
+- Past the point of no return, re-running `execute` with a changed manifest would lose FSM position and potentially strand a live cutover, so instead it proceeds on the edited spec with a loud warning.
 
 `spec.defaultPolicies` is the one section re-read fresh on **every** `execute`
-run rather than snapshotted at `init` — each field is a default that a matching
+run rather than frozen at registration — each field is a default that a matching
 CLI flag can override for a single run, without editing the file.
 
 ## At a glance
@@ -152,7 +141,7 @@ the strict decode with an unknown-field error.
 | ------------ | ------ | -------- | --------------------------------------------------------------------------------------------------- |
 | `namespace`  | string | yes      | Kubernetes namespace where the gateway is deployed.                                                 |
 | `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
-| `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster at `init`, not a file path. |
+| `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on first migration registration (the first `execute` run), not a file path. |
 
 ## `spec.topicGroup`
 
@@ -174,12 +163,12 @@ write an explicit match-all pattern, `topicPatterns: ['.*']`, with `topics`
 absent.
 
 The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
-— is **not** declared here; kcp reads it from the live CR's route binding at
-`init` (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
+— is **not** declared here; kcp reads it from the live CR's route binding on the
+first execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
-from the target domain's declaration in the live CR at `init`, not written in
+from the target domain's declaration in the live CR, not written in
 the manifest. (Topic-based/dynamic routes are not yet implemented; a route that
-resolves to dynamic is refused at `init`. On a static route, `topicPatterns` is
+resolves to dynamic is refused at first execute. On a static route, `topicPatterns` is
 only consulted when `topics` is absent, and only the match-all pattern is
 expanded — any other pattern is refused, and a union with `topics` isn't
 implemented, until general pattern expansion lands alongside the topic-based
@@ -192,7 +181,7 @@ topic.
 
 Optional. Every field is a default that a matching `kcp migration execute` flag
 can override for a single run; the section is re-read fresh from the manifest
-on every `execute`, never frozen at `init`.
+on every `execute`, never frozen at registration.
 
 | Field                             | Type     | Default | Override flag                           | Notes                                                                                                                                                                                                                                                                          |
 | --------------------------------- | -------- | ------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -268,7 +257,7 @@ tables above:
 | Command                   | Flag                                                                                                                                                                                             | Required                            | Notes                                                                                                                                    |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `kcp migration execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
-|                           | `--migration-state-file`                                                                                                                                                                         | yes                                 | Produced by `init`.                                                                                                                      |
+|                           | `--migration-state-file`                                                                                                                                                                         | yes                                 | Created on first registration (first `execute` run); re-used on subsequent runs.                                                                                                                      |
 |                           | `--migration-id`                                                                                                                                                                                 | no                                  | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
 |                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no                                  | Per-run overrides of the matching `spec.defaultPolicies` field for this run only.                                                        |
 | `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`spec.clusterLink.linkCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
@@ -281,9 +270,9 @@ directory**, not the manifest's own location — the one exception is
 ## Validation
 
 There is no separate `kcp migration validate` subcommand. Every read of this
-manifest — by `init`, `execute`, or `lag-check` alike — parses and structurally
-validates in one step, so all three commands get validation automatically and
-none can skip it by accident.
+manifest — by `execute` or `lag-check` — parses and structurally
+validates in one step, so both commands get validation automatically and
+neither can skip it by accident.
 
 Validation collects **every** problem before returning, rather than
 fail-fast, so an operator fixes the file in one pass:
@@ -302,7 +291,7 @@ Key rules, beyond required/optional per field above:
   values.
 - Every `bootstrapServers` entry must be `host:port`.
 - `spec.clusterLink.name` must not be blank (existence itself isn't checked
-  until `init` touches the destination); `spec.clusterLink.linkCredentials` must
+  until the first `execute` run touches the destination); `spec.clusterLink.linkCredentials` must
   not be blank.
 - Every credentials field (`spec.source.credentials`,
   `spec.target.kafka.clusterCredentials`, `spec.clusterLink.linkCredentials`)
@@ -319,8 +308,7 @@ Key rules, beyond required/optional per field above:
   `detectUnroutedProducersDuration`, if greater than zero, must be at least
   `10s`.
 
-`--skip-validate` on `init` bypasses infrastructure/credential validation only
-— structural validation above still always runs.
+`kcp migration execute --dry-run` performs the same validation `execute` would on first registration (manifest structure, credentials, cluster link and gateway CR existence/health) and prints a reconcile plan, but touches no migration state file and runs no FSM transitions — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.
 
 ## Field reference
 
