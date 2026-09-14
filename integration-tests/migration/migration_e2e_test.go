@@ -462,6 +462,33 @@ func readMigrationState(t *testing.T, cfg envConfig, podPath string) migrationSt
 	return state
 }
 
+// readMigrationStateSoft is the goroutine-safe variant of readMigrationState:
+// it returns (state, error) instead of calling require on a *testing.T. Use
+// this inside background goroutines — Go's testing package documents
+// FailNow/require as unsafe outside the test goroutine. Used by
+// PauseOffsetSync_DriftRollsBackFence to poll the state file for a state
+// transition while a single execute call is in flight.
+func readMigrationStateSoft(cfg envConfig, podPath string) (migrationState, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "kubectl",
+		"--context", cfg.KubeContext,
+		"-n", cfg.Namespace,
+		"exec", cfg.KCPPod, "--",
+		"cat", podPath)
+	out, err := cmd.Output()
+	if err != nil {
+		return migrationState{}, fmt.Errorf("reading %s from pod: %w", podPath, err)
+	}
+
+	var state migrationState
+	if err := json.Unmarshal(out, &state); err != nil {
+		return migrationState{}, fmt.Errorf("unmarshalling migration state: %w", err)
+	}
+	return state, nil
+}
+
 // mirrorTopicStatus is a single entry from the cluster link's mirrors listing.
 type mirrorTopicStatus struct {
 	Name   string
@@ -1609,9 +1636,11 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 // This one proves the pause stage carries its own defense-in-depth check,
 // independent of registration's, for drift introduced after registration
 // succeeds — which, now that registration and the first cutover attempt
-// share a single execute call, has to be timed relative to that one call
-// rather than split across a separate init invocation and a later execute
-// one. See the "pause_refusal_rolls_back_fence" sub-test below for how.
+// share a single execute call, has to be introduced concurrently with that
+// one call rather than split across a separate init invocation and a later
+// execute one. See the "pause_refusal_rolls_back_fence" sub-test below,
+// which polls the state file for the "fenced" transition (a real signal,
+// not a guessed sleep) before injecting the drift.
 //
 // The restore half of the rollback must be a NO-OP here: kcp never flipped
 // anything, so the externally-set false must be left untouched.
@@ -1669,24 +1698,46 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 	// There is no longer a separate init step to serve as an external
 	// checkpoint between "registration saw healthy" and "pause saw
 	// drifted": a single execute call now does both. A background
-	// goroutine introduces the drift a few seconds into the one in-flight
-	// execute call — comfortably after registration's own check (a single,
-	// near-instant REST call at the very start of the run) and comfortably
-	// before the pause stage's check, which only runs once the gateway
-	// fence has been applied AND its rollout confirmed (a real Kubernetes
-	// pod rollout, taking several seconds). setClusterLinkConfigSoft (not
+	// goroutine polls the state file (readMigrationStateSoft, on a
+	// 200ms ticker — the same interval the HappyPath poller above uses)
+	// for CurrentState=="fenced": that state is only persisted once the
+	// gateway fence has been applied AND its rollout confirmed, i.e. the
+	// FSM is about to (or is about to start) attempting the pause stage.
+	// The moment it's observed, the goroutine injects the drift — a real
+	// signal instead of a guessed sleep duration, so this is correct
+	// regardless of how fast or slow the live gateway rollout happens to
+	// be on any given run. setClusterLinkConfigSoft (not
 	// setClusterLinkConfig) is required here — the testing package
 	// documents require/FailNow as unsafe from a non-test goroutine — so
-	// its result is reported back over a channel and asserted on the main
+	// its result (or a "never reached fenced" error if execute finishes
+	// first) is reported back over a channel and asserted on the main
 	// goroutine after execute returns.
 	t.Run("pause_refusal_rolls_back_fence", func(t *testing.T) {
 		driftErr := make(chan error, 1)
+		pollCtx, cancelPoll := context.WithCancel(context.Background())
 		go func() {
-			time.Sleep(3 * time.Second)
-			driftErr <- setClusterLinkConfigSoft(cfg, "consumer.offset.sync.enable", "false")
+			ticker := time.NewTicker(200 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-pollCtx.Done():
+					driftErr <- fmt.Errorf(`drift was never injected — state file never reported CurrentState=="fenced" before execute finished`)
+					return
+				case <-ticker.C:
+					state, err := readMigrationStateSoft(cfg, stateFile)
+					if err != nil {
+						continue
+					}
+					if len(state.Migrations) == 1 && state.Migrations[0].CurrentState == "fenced" {
+						driftErr <- setClusterLinkConfigSoft(cfg, "consumer.offset.sync.enable", "false")
+						return
+					}
+				}
+			}
 		}()
 
 		stdout, stderr, err := runKCP(t, cfg, executeArgs...)
+		cancelPoll()
 		t.Logf("execute stdout:\n%s", stdout)
 		t.Logf("execute stderr:\n%s", stderr)
 		combined := stdout + stderr
