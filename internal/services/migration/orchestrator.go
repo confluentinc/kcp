@@ -227,17 +227,6 @@ func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
 	o.runReport = r
 }
 
-// Initialize triggers the initialization event. res is the migplan.Result the
-// init command already computed live — threaded to onInitialize, mirroring
-// TBM's own Execute(ctx, res, ...) shape.
-func (o *MigrationOrchestrator) Initialize(ctx context.Context, restAuth clusterlink.Authenticator, res *migplan.Result) error {
-	params := ExecutionParams{RestAuth: restAuth, ReconcileResult: res}
-	if err := o.fsm.Event(ctx, EventInitialize, params); err != nil {
-		return err
-	}
-	return o.PersistState()
-}
-
 // Execute runs the full migration workflow from the current state. res is
 // non-nil only when resuming a migration still at StateUninitialized (a
 // deferred --skip-validate init completing here) — the command layer

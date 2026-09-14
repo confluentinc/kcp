@@ -221,41 +221,6 @@ func uninitializedReconcileResult(topics []string) *migplan.Result {
 
 // --- FSM transition tests ---
 
-func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
-
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, testReconcileResult())
-	require.NoError(t, err)
-
-	assert.Equal(t, StateInitialized, config.CurrentState)
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState)
-}
-
-// TestOrchestrator_Initialize_ThreadsReconcileResult proves the migplan.Result
-// passed to Initialize flows through the FSM to onInitialize/actions.Initialize
-// and lands the reconcile-derived fields on the persisted config — see
-// ExecutionParams.ReconcileResult.
-func TestOrchestrator_Initialize_ThreadsReconcileResult(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
-
-	res := testReconcileResult()
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
-	require.NoError(t, err)
-
-	assert.Equal(t, StateInitialized, config.CurrentState)
-	assert.Equal(t, res.Route, config.Route)
-	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
-	assert.Equal(t, res.FenceYAML, config.FenceYAML)
-	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
-	assert.Equal(t, res.Topics, config.Topics)
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState)
-	assert.Equal(t, res.Route, persisted.Route)
-}
-
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
@@ -328,45 +293,6 @@ func TestHasPendingWork(t *testing.T) {
 }
 
 // --- Error handling tests ---
-
-// TestOrchestrator_Initialize_WorkflowError proves an AAO-specific precondition
-// failure inside the thinned MigrationActions.Initialize — here, the
-// cluster-link ListConfigs call the PauseConsumerOffsetSync precondition and
-// the offset-sync restore bookend both depend on — still cancels the
-// initialize transition and leaves the FSM at StateUninitialized. Unlike
-// before this integration, a live gateway CR fetch failure can no longer
-// surface here: migplan.Reconcile owns that fetch now, before Initialize ever
-// runs.
-func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
-	orch.actions.clusterLinkService = &mockClusterLinkService{
-		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
-			return nil, fmt.Errorf("k8s connection refused")
-		},
-	}
-
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, testReconcileResult())
-	require.Error(t, err)
-
-	// Config state should NOT have advanced
-	assert.Equal(t, StateUninitialized, config.CurrentState)
-
-	// State file should not have been written (PersistState is called after fsm.Event,
-	// and fsm.Event returns error when the callback cancels)
-	_, loadErr := NewMigrationStateFromFile(stateFilePath)
-	if loadErr == nil {
-		// If file exists, verify the migration is NOT at initialized
-		state, _ := NewMigrationStateFromFile(stateFilePath)
-		if state != nil {
-			m, getErr := state.GetMigrationById(config.MigrationId)
-			if getErr == nil {
-				assert.NotEqual(t, StateInitialized, m.CurrentState,
-					"state file should NOT contain migration at initialized state after init failure")
-			}
-		}
-	}
-	// If file doesn't exist, that's fine — no state was persisted
-}
 
 func TestOrchestrator_Execute_FenceError(t *testing.T) {
 	overrides := orchestratorOverrides{

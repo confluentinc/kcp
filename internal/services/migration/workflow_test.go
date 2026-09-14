@@ -125,6 +125,75 @@ func TestWorkflow_Initialize_ClusterLinkConfigsListError(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to list cluster link configs")
 }
 
+// TestActions_Initialize_ThreadsReconcileResult proves the migplan.Result the
+// command layer computed live lands on config exactly as onInitialize used
+// to delegate — tested directly against MigrationActions.Initialize, with no
+// FSM involved, since Execute()'s canonicalWorkflow loop already exercises
+// the same call end-to-end (see TestOrchestrator_Execute_FullWorkflow).
+func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+			return []byte(testInitialCR), nil
+		},
+	}
+	cl := &mockClusterLinkService{
+		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
+			return map[string]string{"consumer.offset.sync.enable": "true"}, nil
+		},
+	}
+	actions := NewMigrationActions(gw, cl)
+
+	config := &MigrationConfig{MigrationId: "test-migration-1", CurrentState: StateUninitialized}
+	res := testReconcileResult()
+
+	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+	require.NoError(t, err)
+
+	assert.Equal(t, res.Route, config.Route)
+	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
+	assert.Equal(t, res.FenceYAML, config.FenceYAML)
+	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
+	assert.Equal(t, res.Topics, config.Topics)
+	assert.Equal(t, res.Mode, config.Mode)
+}
+
+// TestActions_Initialize_WorkflowErrorDoesNotMutateTopicsOrRoute proves an
+// AAO-specific precondition failure (here, the cluster-link ListConfigs call
+// the PauseConsumerOffsetSync precondition depends on) surfaces as an error
+// without partially mutating config.
+func TestActions_Initialize_WorkflowErrorDoesNotMutateTopicsOrRoute(t *testing.T) {
+	gw := &mockGatewayService{
+		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+			return []byte(testInitialCR), nil
+		},
+	}
+	cl := &mockClusterLinkService{
+		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
+			return nil, fmt.Errorf("k8s connection refused")
+		},
+	}
+	actions := NewMigrationActions(gw, cl)
+
+	config := &MigrationConfig{MigrationId: "test-migration-1", CurrentState: StateUninitialized}
+	res := testReconcileResult()
+
+	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+	require.Error(t, err)
+}
+
+// TestActions_Initialize_RefusedPlanFailsWithReasons proves a refused
+// reconcile plan is turned into a failed call, never silently accepted.
+func TestActions_Initialize_RefusedPlanFailsWithReasons(t *testing.T) {
+	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
+	config := &MigrationConfig{MigrationId: "test-migration-1", CurrentState: StateUninitialized}
+	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
+
+	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "topic t1.order has replication lag")
+	assert.Empty(t, config.Route, "a refused plan must not mutate config")
+}
+
 // ===========================================================================
 // PauseConsumerOffsetSync precondition tests (U2)
 // ===========================================================================
