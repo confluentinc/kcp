@@ -1068,10 +1068,15 @@ func TestExecute_DryRun_TouchesNoStateFile(t *testing.T) {
 func TestExecute_DryRun_DoesNotRequireMigrationStateFileFlag(t *testing.T) {
 	f := newFixture(t, nil)
 	require.NoError(t, os.Remove(f.stateFile))
+	dir := filepath.Dir(f.manifestPath)
+	t.Chdir(dir)
 
-	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, "--dry-run")
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run")
 	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "migration-state-file", "dry-run must not require --migration-state-file")
+	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
+
+	_, statErr := os.Stat(filepath.Join(dir, "migration-state.json"))
+	assert.True(t, os.IsNotExist(statErr), "dry-run must not create migration-state.json in the CWD even when --migration-state-file is omitted")
 }
 
 func TestExecute_DryRun_ExistingEntryIsNotDriftChecked(t *testing.T) {
