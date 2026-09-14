@@ -3,8 +3,7 @@
 # The declarative form of a `kcp migration` run. One file replaces the topology
 # and auth flags that used to be repeated across `init` and `execute`.
 #
-#   kcp migration init      --migration-yaml gateway-migration.yaml
-#   kcp migration execute   --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
+#   kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
 #   kcp migration lag-check --migration-yaml gateway-migration.yaml
 #
 # Paths in this file resolve relative to the PROCESS working directory, not to
