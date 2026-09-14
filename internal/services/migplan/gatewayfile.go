@@ -65,18 +65,35 @@ func cleanGatewayDoc(doc map[string]any) {
 }
 
 // resolveModeStructurally infers a route's mode when it carries no explicit
-// mode field: a singular streamingDomain object binding means static; a
-// plural streamingDomains array means dynamic. Mirrors
-// gateway.ResolveRouteMode's structural resolution (used in production by
-// AAO today) — the real Gateway CRD has no mode field at all; findRoute's
-// mode string, when present, is a kcp-authored test-fixture convenience, per
-// the migplan static-route-strategy design doc's mode-resolution rule
-// (field-first, structural-fallback).
-func resolveModeStructurally(route map[string]any) string {
-	if sds, ok := route["streamingDomains"].([]any); ok && len(sds) > 0 {
-		return "dynamic"
+// mode field: a singular streamingDomain object binding (with a non-empty
+// name — see the CRD-default note below) means static; a non-empty plural
+// streamingDomains array means dynamic. Mirrors gateway.ResolveRouteMode's
+// structural resolution exactly, including its strictness: a route declaring
+// neither or both bindings is an error, not a silent default — the real
+// Gateway CRD enforces mutual exclusivity via a CEL XOR, so this shape only
+// occurs on a hand-edited or malformed CR, which should fail loudly here
+// rather than resolve to "static" and fail more confusingly later.
+func resolveModeStructurally(route map[string]any) (string, error) {
+	// CFK's Gateway CRD schema defaults a zero-valued streamingDomain object
+	// (name: "", bootstrapServerId: "") onto EVERY route, including
+	// dynamic-mode ones that only ever set streamingDomains (plural) — a
+	// present-but-unnamed singular binding is that default, not a
+	// user-declared static binding, so it doesn't count toward hasSingular.
+	singularDomain, _ := route["streamingDomain"].(map[string]any)
+	singularName, _ := singularDomain["name"].(string)
+	hasSingular := singularDomain != nil && singularName != ""
+	sds, _ := route["streamingDomains"].([]any)
+	hasPlural := len(sds) > 0
+	switch {
+	case hasSingular && hasPlural:
+		return "", fmt.Errorf("route declares both a singular streamingDomain and a plural streamingDomains binding")
+	case hasPlural:
+		return "dynamic", nil
+	case hasSingular:
+		return "static", nil
+	default:
+		return "", fmt.Errorf("route declares neither a streamingDomain nor a streamingDomains binding")
 	}
-	return "static"
 }
 
 // findRoute extracts the named route from spec.routes[] into a RouteConfig:
@@ -115,7 +132,11 @@ func findRoute(doc map[string]any, name string) (*reconcile.RouteConfig, error) 
 		if mode, ok := route["mode"].(string); ok && mode != "" {
 			rc.Mode = mode
 		} else {
-			rc.Mode = resolveModeStructurally(route)
+			mode, err := resolveModeStructurally(route)
+			if err != nil {
+				return nil, fmt.Errorf("resolving mode for route %q: %w", name, err)
+			}
+			rc.Mode = mode
 		}
 		rc.Raw = route
 

@@ -152,3 +152,45 @@ func TestGatewayFile_Load_ModeFieldWinsWhenPresent(t *testing.T) {
 		t.Fatalf("Mode = %q, want dynamic (explicit field)", gw.Route.Mode)
 	}
 }
+
+func TestGatewayFile_Load_ErrorsOnRouteWithNeitherBinding(t *testing.T) {
+	// A route with no mode field and neither streamingDomain nor
+	// streamingDomains declared is malformed — must error, not silently
+	// default to static (mirrors gateway.ResolveRouteMode's old strictness).
+	_, err := NewGatewayFile("testdata/gateway-route-neither-binding.yaml", "migration-route").Load(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for a route declaring neither binding, got nil")
+	}
+	if !strings.Contains(err.Error(), "neither") {
+		t.Fatalf("error = %q, want it to mention the route declares neither binding", err.Error())
+	}
+}
+
+func TestGatewayFile_Load_ErrorsOnRouteWithBothBindings(t *testing.T) {
+	// A route with no mode field but BOTH streamingDomain and
+	// streamingDomains declared is equally malformed (the real CRD enforces
+	// mutual exclusivity via a CEL XOR) — must error, not silently pick one.
+	_, err := NewGatewayFile("testdata/gateway-route-both-bindings.yaml", "migration-route").Load(context.Background())
+	if err == nil {
+		t.Fatal("expected an error for a route declaring both bindings, got nil")
+	}
+	if !strings.Contains(err.Error(), "both") {
+		t.Fatalf("error = %q, want it to mention the route declares both bindings", err.Error())
+	}
+}
+
+func TestGatewayFile_Load_EmptyNameSingularDomainDoesNotCountAsStatic(t *testing.T) {
+	// CFK's Gateway CRD schema defaults a zero-valued streamingDomain object
+	// (name: "", bootstrapServerId: "") onto EVERY route, including
+	// dynamic-mode ones — a present-but-unnamed singular binding must not
+	// count as a user-declared static binding. Combined with a real plural
+	// streamingDomains binding, this must resolve to dynamic, not error as
+	// "both" and not silently resolve to static.
+	gw, err := NewGatewayFile("testdata/gateway-dynamic-with-crd-defaulted-empty-singular.yaml", "migration-route").Load(context.Background())
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if gw.Route.Mode != "dynamic" {
+		t.Fatalf("Mode = %q, want dynamic (empty-name singular binding must not count)", gw.Route.Mode)
+	}
+}
