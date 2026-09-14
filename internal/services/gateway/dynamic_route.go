@@ -11,8 +11,8 @@ import (
 // metadata-stripped gateway CR; the result is the fenced (or switched) CR that
 // Fence (or, later, Switch) applies.
 //
-// Unlike FenceRoutes (which injects a fence block onto a static route),
-// dynamic routes fence by rules replacement: migplan's reconciliation engine
+// Unlike ReplaceRouteFenceObj (which injects a fence block onto a static
+// route), dynamic routes fence by rules replacement: migplan's reconciliation engine
 // already computes the complete replacement rules subtree — see
 // reconcile.RulesTree.Serialize()'s doc comment — so the caller here only
 // needs to graft it onto the right route. The same function serves both

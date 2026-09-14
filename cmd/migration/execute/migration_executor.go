@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/targets"
@@ -76,6 +77,12 @@ type MigrationExecutorOpts struct {
 	// RunReportPath, when non-empty, is where per-stage timings are written as
 	// JSON. Empty (the default) disables the report.
 	RunReportPath string
+	// ReconcileResult is the migplan.Result the command layer computed live,
+	// via migplan.Reconcile, ONLY when resuming a migration still at
+	// StateUninitialized (a deferred --skip-validate init completing here —
+	// see cmd_migration_execute.go). nil on every ordinary invocation, in
+	// which case Execute never reaches onInitialize and this is never read.
+	ReconcileResult *migplan.Result
 }
 
 type MigrationExecutor struct {
@@ -187,7 +194,7 @@ func (m *MigrationExecutor) Run() error {
 	// pause_offset_sync stage, right after fencing) so destination offsets
 	// stay fresh through the lag and fence phases instead of going stale for
 	// the whole run. Only the restore below remains a bookend.
-	if execErr = orchestrator.Execute(ctx, m.opts.LagThreshold, restAuth); execErr != nil {
+	if execErr = orchestrator.Execute(ctx, m.opts.LagThreshold, restAuth, m.opts.ReconcileResult); execErr != nil {
 		migration.WarnIfPausedOnExecuteFailure(&config, execErr)
 		return fmt.Errorf("failed to execute migration: %w", execErr)
 	}

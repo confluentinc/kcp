@@ -113,10 +113,6 @@ func (stubGatewayServiceImpl) WaitForGatewayConfigID(context.Context, string, st
 	return nil
 }
 
-func (stubGatewayServiceImpl) CheckRedundantAuthStaged(context.Context, string, []byte, []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error) {
-	return gateway.CRValidationResult{}, nil
-}
-
 func (stubGatewayServiceImpl) CheckPermissions(context.Context, string, string, string, string) (bool, error) {
 	return true, nil
 }

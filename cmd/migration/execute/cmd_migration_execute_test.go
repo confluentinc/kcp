@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/confluentinc/kcp/internal/types"
@@ -125,8 +124,8 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 		ClusterRestEndpoint: "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443",
 		ClusterLinkName:     "msk-to-cc",
 		Topics:              []string{"t1.order", "t2.inventory"},
-		FenceRoutes:         []string{"migration-route"},
-		SwitchoverTargets:   []gateway.RouteSwitchoverTarget{{RouteName: "migration-route", StreamingDomainName: "confluent-cloud", BootstrapServerId: "SASL_PLAIN"}},
+		Route:               "migration-route",
+		TargetDomain:        "confluent-cloud",
 		CurrentState:        migration.StateInitialized,
 	}
 	edit(&cfg)
@@ -303,18 +302,6 @@ func TestDrift_DetectsChangedTopology(t *testing.T) {
 	}
 }
 
-// TestDrift_MatchAllTopicsMatchTheExpandedSnapshot covers the drift asymmetry:
-// after the first execute a match-all topicGroup selection compares against a
-// snapshot back-filled with every active mirror, so match-all (no literal
-// topics) must equal "whatever was expanded", not an empty list.
-func TestDrift_MatchAllTopicsMatchTheExpandedSnapshot(t *testing.T) {
-	f := newFixture(t, nil)
-	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.Topics = []string{"anything", "at", "all"}
-	})
-	assert.Empty(t, detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f)))
-}
-
 func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
 	f := newFixture(t, explicitTopics("t1.order", "t3.new"))
 	f.writeState(t, func(c *migration.MigrationConfig) {
@@ -339,33 +326,29 @@ func TestDrift_NeverNamesTopics(t *testing.T) {
 	assert.NotContains(t, joined, "other-topic")
 }
 
-// TestDrift_DetectsChangedSwitchoverTarget — editing a route's target streaming
+// TestDrift_DetectsChangedTargetDomain — editing a route's target streaming
 // domain after init is drift. The bootstrap server id is NOT part of the diff:
 // it is derived from the live CR, not authored in the manifest, so there is
 // nothing manifest-side to compare it against.
-func TestDrift_DetectsChangedSwitchoverTarget(t *testing.T) {
+func TestDrift_DetectsChangedTargetDomain(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc, "targetStreamingDomain: confluent-cloud", "targetStreamingDomain: confluent-cloud-2", 1)
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
-	assert.Contains(t, strings.Join(drift, " "), "switchover targets")
+	assert.Contains(t, strings.Join(drift, " "), "target domain")
 }
 
-// TestDrift_DetectsChangedRoutes — a fence-route set that no longer matches the
-// snapshot is drift, reported as a bare flag: counts/flag only, never route
-// names. With one topicGroup entry the change is a snapshot that fenced an extra
-// route the manifest no longer names.
-func TestDrift_DetectsChangedRoutes(t *testing.T) {
+// TestDrift_DetectsChangedRoute — a route that no longer matches the
+// snapshot is drift.
+func TestDrift_DetectsChangedRoute(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.FenceRoutes = []string{"migration-route", "extra-route"}
+		c.Route = "a-different-route"
 	})
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
-	joined := strings.Join(drift, " ")
-	assert.Contains(t, joined, "routes")
-	assert.NotContains(t, joined, "extra-route", "drift output must never name routes")
+	assert.Contains(t, strings.Join(drift, " "), "route")
 }
 
 // TestDrift_KubeconfigPathIsNotCompared — for the same reason: execute may
@@ -420,8 +403,8 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		"PauseConsumerOffsetSync": true,
 		"K8sNamespace":            true,
 		"InitialCrName":           true,
-		"FenceRoutes":             true,
-		"SwitchoverTargets":       true,
+		"Route":                   true,
+		"TargetDomain":            true,
 	}
 	// Deliberately not compared by detectDrift — each entry says why.
 	driftExempt := map[string]bool{
@@ -435,16 +418,23 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		// snapshot's copy is never authoritative (TestDrift_PolicyIsNeverCompared)
 		"DetectUnroutedProducersDuration": true,
 		"ConsumerOffsetSyncDrainDuration": true,
-		// runtime data populated by init from the live cluster link, not part
-		// of the operator's declared spec
-		"ClusterLinkTopics":  true,
-		"ClusterLinkConfigs": true,
 		// execute-time bookkeeping for whether kcp itself has already flipped
 		// offset sync, not something the operator's YAML declares
 		"PauseConsumerOffsetSyncFlipped": true,
-		// only the fenced/switchover CRs are drift-checked; the initial CR is
-		// applied once at init and never revisited
-		"InitialCrYAML": true,
+		// runtime data populated by init from the live cluster link, not part
+		// of the operator's declared spec
+		"ClusterLinkConfigs": true,
+		// derived artifacts migplan produced at init, not part of the
+		// operator's declared spec — only the fence/switchover fragments'
+		// SOURCE fields (Route, TargetDomain) are drift-checked; the rendered
+		// artifacts and cleaned CR snapshot are not.
+		"GatewayYAML":    true,
+		"FenceYAML":      true,
+		"SwitchoverYAML": true,
+		// resolved live against the cluster's route-binding shape at init,
+		// re-resolved authoritatively wherever migplan is re-run — reflects
+		// the cluster's shape, not something the operator's manifest declares
+		"Mode": true,
 		// observational record of the effective policy the last execute ran with —
 		// written for humans/support, never read back by kcp, so it can no more
 		// drift than policy itself (TestExecute_RecordsLastRunPolicies)
@@ -518,7 +508,7 @@ func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	})
 	g := loadGateway(t, f.manifestPath)
 	cfg := persistedConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 
 	assert.EqualValues(t, 42, opts.LagThreshold)
@@ -571,7 +561,7 @@ func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
 	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
 	require.Empty(t, g.Spec.DefaultPolicies.Validate())
 
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 	assert.EqualValues(t, 99, opts.LagThreshold)
 	assert.EqualValues(t, 60, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
@@ -596,7 +586,7 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
 	require.Empty(t, g.Spec.DefaultPolicies.Validate())
 
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 
 	rec := opts.MigrationConfig.LastRunPolicies
@@ -608,27 +598,6 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration, "an unset knob is recorded as its zero")
 	assert.Equal(t, 45*time.Second, rec.HotReloadTimeout)
 	assert.Equal(t, 9090, rec.GatewayConfigPort)
-}
-
-// TestExecute_RefusesStateFilePredatingSwitchover — a migration-state.json
-// written before redundant-auth switchover existed has fence routes but no
-// switchover targets. Left alone it fails deep in the switch step ("no
-// switchover targets given") after traffic is already fenced; execute must
-// refuse it up front, before any cluster contact, and point at the fix.
-func TestExecute_RefusesStateFilePredatingSwitchover(t *testing.T) {
-	f := newFixture(t, nil)
-	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.SwitchoverTargets = nil // the shape only a pre-feature state file has
-	})
-
-	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "redundant-auth switchover",
-		"the message must name the feature the state file predates")
-	assert.Contains(t, strings.ToLower(err.Error()), "init",
-		"the message must point the operator at re-running init")
-	assert.NotContains(t, err.Error(), "no switchover targets given",
-		"it must fail here, not late at the switch step")
 }
 
 // TestExecute_PolicyLogArgsCoverEveryDefaultPolicy — the audit log line that
@@ -740,7 +709,7 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixtureCreds(t, credOverrides{source: tc.block}, nil)
 			g := loadGateway(t, f.manifestPath)
-			opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+			opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 			require.NoError(t, err)
 			tc.assert(t, opts)
 		})
@@ -757,7 +726,7 @@ func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 		link:      "api_key: CC_KEY\napi_secret: CC_SECRET\ninsecure_skip_verify: true\n",
 	}, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
@@ -773,7 +742,7 @@ func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 func TestExecute_DestinationKafkaUsesItsClusterCredentials(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 	assert.Equal(t, types.AuthTypeSASLPlain, opts.DestAuthType)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
@@ -792,7 +761,7 @@ func TestExecute_DestSASLPlainDefaultsToTLS(t *testing.T) {
 		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n",
 	}, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
 	assert.True(t, opts.DestAuthMethod.SASLPlain.UseTLS, "no ca_cert/tls set must still default to SASL_SSL, not a silent downgrade to SASL_PLAINTEXT")
@@ -809,7 +778,7 @@ func TestExecute_DestSASLPlainCACertIsNotOverridden(t *testing.T) {
 		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  ca_cert: " + ca + "\n",
 	}, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
 	assert.Equal(t, ca, opts.DestAuthMethod.SASLPlain.CACert)
@@ -856,7 +825,7 @@ func TestExecute_NeverPersistsCredentials(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
 	cfg := persistedConfig(t, f)
-	_, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile)
+	_, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 
 	state := migration.NewMigrationState()
@@ -883,7 +852,7 @@ func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify, "the source asked for it")
@@ -898,7 +867,7 @@ func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		destKafka: "insecure_skip_tls_verify: true\n" + defaultDestKafkaCred,
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 
 	assert.False(t, opts.SourceInsecureSkipTLSVerify)
@@ -914,7 +883,7 @@ func TestExecute_LinkCredentialsGovernTheRestLeg(t *testing.T) {
 		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
 		link:   "api_key: K\napi_secret: S\n",
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
@@ -933,7 +902,7 @@ func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheLinkOne(t *testing.
 	f := newFixtureCreds(t, credOverrides{
 		link: "api_key: REST_ONLY_KEY\napi_secret: REST_ONLY_SECRET\n",
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.clusterCredentials")
@@ -947,9 +916,59 @@ func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheLinkOne(t *testing.
 // from spec.clusterLink.linkCredentials, never derived from the Kafka leg.
 func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 	f := newFixture(t, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
 	require.NoError(t, err)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
 	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)
 	assert.Equal(t, "CC_KEY", opts.RestCreds.APIKey)
+}
+
+// --- StateUninitialized resume triggers a live migplan.Reconcile ---
+//
+// Neither test can reach MigrationExecutor.Run() successfully — there is no
+// live Kubernetes cluster or Kafka broker in this test process, matching
+// every other test in this file that drives the full runExecute surface (see
+// e.g. TestExecute_ErrorsWhenMigrationNotInStateFile,
+// TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit). What distinguishes
+// the two cases is WHERE the run fails: migplan.Reconcile is called directly
+// in runMigrationExecute (no injectable gateway source at that call site — see
+// cmd_migration_execute.go), so a migration still at StateUninitialized fails
+// fast inside Reconcile's own live gateway pull, surfacing runMigrationExecute's
+// "failed to produce the reconcile plan" wrap. A migration already past
+// StateUninitialized skips that call entirely and fails later, deeper in
+// MigrationExecutor.Run() (e.g. connecting to the source Kafka cluster) — an
+// error that does not carry the reconcile-plan wrap at all.
+
+// TestExecute_ResumeFromUninitialized_CallsReconcile proves a migration still
+// at StateUninitialized (a deferred --skip-validate init completing here)
+// reaches migplan.Reconcile: the fixture's kubeconfig path does not exist, so
+// Reconcile's live gateway pull fails immediately and deterministically,
+// surfacing through runMigrationExecute's own wrap.
+func TestExecute_ResumeFromUninitialized_CallsReconcile(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.CurrentState = migration.StateUninitialized
+	})
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to produce the reconcile plan",
+		"resuming from StateUninitialized must call migplan.Reconcile")
+}
+
+// TestExecute_ResumeFromInitialized_NeverCallsReconcile confirms a migration
+// already past StateUninitialized never triggers a live migplan.Reconcile call
+// — the state-gated cost this task is specifically designed to avoid. The run
+// still fails (no live cluster to execute against), but not via Reconcile's
+// wrap: proof the call was skipped rather than merely tolerant of failure.
+func TestExecute_ResumeFromInitialized_NeverCallsReconcile(t *testing.T) {
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.CurrentState = migration.StateInitialized
+	})
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "reconcile plan",
+		"a migration already past StateUninitialized must not call migplan.Reconcile")
 }

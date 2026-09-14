@@ -26,18 +26,17 @@ func yamlUnmarshalForTest(t *testing.T, data []byte, v any) error {
 // mockGatewayService — this is TBM's own copy, not shared, since the two
 // packages intentionally have no cross-imports.
 type mockGatewayService struct {
-	getGatewayYAMLFn           func(ctx context.Context, namespace, name string) ([]byte, error)
-	detectCapabilityFn         func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
-	waitForConfigIDFn          func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
-	checkRedundantAuthStagedFn func(ctx context.Context, namespace string, initial []byte, targets []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error)
-	checkPermissionsFn         func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	applyGatewayYAMLFn         func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
-	applyGatewayConfigIDFn     func(ctx context.Context, namespace, name, configID string) (string, error)
-	waitForGatewayAcceptedFn   func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
-	getGatewayPodUIDsFn        func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
-	getDeploymentGenFn         func(ctx context.Context, namespace, name string) (int64, error)
-	waitForGatewayPodsFn       func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
-	waitForGatewayReadyFn      func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
+	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
+	detectCapabilityFn       func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
+	waitForConfigIDFn        func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
+	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
+	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
+	applyGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
+	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
+	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
+	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
+	waitForGatewayPodsFn     func(ctx context.Context, namespace, name string, initialPodUIDs map[k8stypes.UID]struct{}, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.PodRolloutProgress)) error
+	waitForGatewayReadyFn    func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error
 }
 
 func (m *mockGatewayService) GetGatewayYAML(ctx context.Context, namespace, name string) ([]byte, error) {
@@ -62,13 +61,6 @@ func (m *mockGatewayService) WaitForGatewayConfigID(ctx context.Context, namespa
 		return m.waitForConfigIDFn(ctx, namespace, name, opts)
 	}
 	return nil
-}
-
-func (m *mockGatewayService) CheckRedundantAuthStaged(ctx context.Context, namespace string, initial []byte, targets []gateway.RouteSwitchoverTarget) (gateway.CRValidationResult, error) {
-	if m.checkRedundantAuthStagedFn != nil {
-		return m.checkRedundantAuthStagedFn(ctx, namespace, initial, targets)
-	}
-	return gateway.CRValidationResult{}, nil
 }
 
 func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error) {

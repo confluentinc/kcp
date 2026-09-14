@@ -6,6 +6,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/targets"
 )
@@ -19,10 +20,10 @@ type MigrationInitializerOpts struct {
 	// than a scalar api_key/api_secret pair) is what lets a basic, bearer or
 	// mTLS destination REST leg reach a Confluent Platform cluster.
 	RestCreds *targets.Credentials
-	// InitialCrYAML is the initial gateway CR the caller already read live
-	// for mode/id derivation (cmd_migration_init.go), passed through so
-	// Initialize reuses it instead of fetching it again.
-	InitialCrYAML []byte
+	// ReconcileResult is the migplan.Result the caller already computed live
+	// (cmd_migration_init.go), threaded through so Initialize consumes it
+	// directly instead of re-deriving anything.
+	ReconcileResult *migplan.Result
 }
 
 type MigrationInitializer struct {
@@ -57,7 +58,7 @@ func (m *MigrationInitializer) Run() error {
 	)
 
 	ctx := context.Background()
-	if err := orchestrator.Initialize(ctx, m.opts.RestCreds.Authenticator(), m.opts.InitialCrYAML); err != nil {
+	if err := orchestrator.Initialize(ctx, m.opts.RestCreds.Authenticator(), m.opts.ReconcileResult); err != nil {
 		return fmt.Errorf("failed to initialize migration: %w", err)
 	}
 

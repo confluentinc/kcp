@@ -8,10 +8,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// baseRouteCR is a minimal live-read gateway CR with two named routes. The
+// nodeIdRanges integers are the goccy uint64 hazard (see mapField's comment):
+// route patchers must round-trip them without a DeepCopyJSONValue panic.
+const baseRouteCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+spec:
+  streamingDomains:
+    - name: source-kafka-cluster
+      type: kafka
+      kafkaCluster:
+        nodeIdRanges:
+          - name: pool-1
+            start: 1
+            end: 3
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
+      security:
+        auth: passthrough
+    - name: scram-preregistration
+      endpoint: gateway:9599
+      security:
+        auth: passthrough
+`
+
 // routeRules returns the named route's rules subtree, or nil if the route has
 // none (or does not exist). It re-parses the marshalled output so the
-// assertion is against what a subsequent apply would actually see. Mirrors
-// fence_test.go's routeFenceBlock.
+// assertion is against what a subsequent apply would actually see.
 func routeRules(t *testing.T, crBytes []byte, routeName string) map[string]any {
 	t.Helper()
 	var obj map[string]any
