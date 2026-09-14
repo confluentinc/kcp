@@ -1639,8 +1639,10 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 // share a single execute call, has to be introduced concurrently with that
 // one call rather than split across a separate init invocation and a later
 // execute one. See the "pause_refusal_rolls_back_fence" sub-test below,
-// which polls the state file for the "fenced" transition (a real signal,
-// not a guessed sleep) before injecting the drift.
+// which polls the state file for the "lags_ok" transition (a real signal,
+// not a guessed sleep) before injecting the drift — well before the fence
+// stage even starts, so the drift lands with the entire multi-second fence
+// rollout as headroom ahead of the pause stage's check.
 //
 // The restore half of the rollback must be a NO-OP here: kcp never flipped
 // anything, so the externally-set false must be left untouched.
@@ -1700,18 +1702,24 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 	// drifted": a single execute call now does both. A background
 	// goroutine polls the state file (readMigrationStateSoft, on a
 	// 200ms ticker — the same interval the HappyPath poller above uses)
-	// for CurrentState=="fenced": that state is only persisted once the
-	// gateway fence has been applied AND its rollout confirmed, i.e. the
-	// FSM is about to (or is about to start) attempting the pause stage.
-	// The moment it's observed, the goroutine injects the drift — a real
-	// signal instead of a guessed sleep duration, so this is correct
-	// regardless of how fast or slow the live gateway rollout happens to
-	// be on any given run. setClusterLinkConfigSoft (not
-	// setClusterLinkConfig) is required here — the testing package
-	// documents require/FailNow as unsafe from a non-test goroutine — so
-	// its result (or a "never reached fenced" error if execute finishes
-	// first) is reported back over a channel and asserted on the main
-	// goroutine after execute returns.
+	// for CurrentState=="lags_ok": that state is persisted right after the
+	// wait_for_lags step, BEFORE fence even starts — deliberately NOT
+	// "fenced", which is persisted immediately before the pause stage's own
+	// ListConfigs check runs with no sleep or I/O gap in between, leaving no
+	// real window to land the drift in. Polling for "lags_ok" instead means
+	// the drift lands with the entire multi-second gateway-fence rollout as
+	// headroom before the pause stage ever checks. No producer runs
+	// continuously during this scenario's execute call (the seed producer
+	// already stopped beforehand), so lags_ok is expected to be reached
+	// quickly. The moment it's observed, the goroutine injects the drift —
+	// a real signal instead of a guessed sleep duration, so this is correct
+	// regardless of how fast or slow the live gateway rollout happens to be
+	// on any given run. setClusterLinkConfigSoft (not setClusterLinkConfig)
+	// is required here — the testing package documents require/FailNow as
+	// unsafe from a non-test goroutine — so its result (or a "never
+	// reached lags_ok" error if execute finishes first) is reported back
+	// over a channel and asserted on the main goroutine after execute
+	// returns.
 	t.Run("pause_refusal_rolls_back_fence", func(t *testing.T) {
 		driftErr := make(chan error, 1)
 		pollCtx, cancelPoll := context.WithCancel(context.Background())
@@ -1721,14 +1729,14 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 			for {
 				select {
 				case <-pollCtx.Done():
-					driftErr <- fmt.Errorf(`drift was never injected — state file never reported CurrentState=="fenced" before execute finished`)
+					driftErr <- fmt.Errorf(`drift was never injected — state file never reported CurrentState=="lags_ok" before execute finished`)
 					return
 				case <-ticker.C:
 					state, err := readMigrationStateSoft(cfg, stateFile)
 					if err != nil {
 						continue
 					}
-					if len(state.Migrations) == 1 && state.Migrations[0].CurrentState == "fenced" {
+					if len(state.Migrations) == 1 && state.Migrations[0].CurrentState == "lags_ok" {
 						driftErr <- setClusterLinkConfigSoft(cfg, "consumer.offset.sync.enable", "false")
 						return
 					}
