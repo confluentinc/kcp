@@ -3,6 +3,8 @@ package execute
 import (
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -76,7 +78,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "", "Path to the migration-state.json file (produced by kcp migration init).")
+	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
 	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
 
 	// Per-policy overrides. Each replaces the matching spec.defaultPolicies value
@@ -101,8 +103,51 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("run-report")
 
 	_ = cmd.MarkFlagRequired("migration-yaml")
-	_ = cmd.MarkFlagRequired("migration-state-file")
 	return cmd
+}
+
+// resolveKubeConfigPath applies the ~/.kube/config default. spec.gateway.
+// kubeconfig is the one manifest field where a leading ~/ is expanded.
+func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
+	p, err := g.KubeconfigPath()
+	if err != nil {
+		return "", err
+	}
+	if p != "" {
+		return p, nil
+	}
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get user home directory: %w", err)
+	}
+	return filepath.Join(homeDir, ".kube", "config"), nil
+}
+
+// buildFreshMigrationConfig builds the MigrationConfig for a migration seen
+// for the first time — pure manifest projections, no live call. Mirrors
+// exactly what `kcp migration init`'s Phase 2 used to populate before it was
+// retired: Topics/FenceYAML/SwitchoverYAML/GatewayYAML/Mode are deliberately
+// NOT set here — they require migplan.Reconcile (a live call), which only
+// runs once the FSM actually reaches the initialize transition, exactly as
+// before.
+func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath string) migration.MigrationConfig {
+	entry := g.Spec.TopicGroup[0] // manifest validation guarantees exactly one entry
+	return migration.MigrationConfig{
+		MigrationId:             id,
+		SourceBootstrap:         strings.Join(g.Spec.Source.BootstrapServers, ","),
+		ClusterBootstrap:        strings.Join(g.Spec.Target.Kafka.BootstrapServers, ","),
+		K8sNamespace:            g.Spec.Gateway.Namespace,
+		InitialCrName:           g.Spec.Gateway.CrName,
+		KubeConfigPath:          kubeConfigPath,
+		ClusterId:               g.Spec.Target.ClusterID,
+		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
+		ClusterLinkName:         g.Spec.ClusterLink.Name,
+		Route:                   entry.Route,
+		TargetDomain:            entry.TargetStreamingDomain,
+		CurrentState:            migration.StateUninitialized,
+		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
+		GatewayConfigPort:       g.Spec.DefaultPolicies.GatewayConfigPort,
+	}
 }
 
 func runMigrationExecute(cmd *cobra.Command, args []string) error {
@@ -119,15 +164,45 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
 	}
 
-	state, err := migration.NewMigrationStateFromFile(migrationStateFile)
-	if err != nil {
-		return fmt.Errorf("failed to load migration state file %q: %w\nRun 'kcp migration init --migration-yaml %s' to create a new migration first", migrationStateFile, err, manifestFile)
+	if migrationStateFile == "" {
+		migrationStateFile = "migration-state.json"
+	}
+
+	var state *migration.MigrationState
+	if _, statErr := os.Stat(migrationStateFile); statErr == nil {
+		state, err = migration.NewMigrationStateFromFile(migrationStateFile)
+		if err != nil {
+			return fmt.Errorf("failed to load migration state file %q: %w", migrationStateFile, err)
+		}
+	} else if os.IsNotExist(statErr) {
+		state = migration.NewMigrationState()
+	} else {
+		return fmt.Errorf("failed to check migration state file %q: %w", migrationStateFile, statErr)
 	}
 
 	id := resolveMigrationID(g, migrationId)
-	config, err := state.GetMigrationById(id)
-	if err != nil {
-		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", id, migrationStateFile)
+
+	// A migration seen for the first time is registered here, from pure
+	// manifest projections — mirroring execute-tbm's resolveTBMConfig create-
+	// if-missing pattern. An existing entry is drift-checked against the
+	// current manifest instead; a freshly created one is, by construction,
+	// identical to the manifest it was just built from, so drift-checking it
+	// immediately would be checking a config against the exact data it was
+	// derived from a moment ago.
+	config, lookupErr := state.GetMigrationById(id)
+	if lookupErr != nil {
+		kubeConfigPathResolved, kerr := resolveKubeConfigPath(g)
+		if kerr != nil {
+			return kerr
+		}
+		fresh := buildFreshMigrationConfig(g, id, kubeConfigPathResolved)
+		config = &fresh
+		state.UpsertMigration(*config)
+		if err := state.WriteToFile(migrationStateFile); err != nil {
+			return fmt.Errorf("failed to write migration state file: %w", err)
+		}
+	} else if err := checkSpecDrift(g, config); err != nil {
+		return err
 	}
 
 	// Record what this run will execute with — the effective policy (manifest
@@ -135,10 +210,6 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// this is the durable audit trail of the knobs a given execute used; the same
 	// values are also snapshotted into the state file as LastRunPolicies.
 	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, config.CurrentState, g.Spec.DefaultPolicies)...)
-
-	if err := checkSpecDrift(g, config); err != nil {
-		return err
-	}
 
 	// migplan.Reconcile is called here — not by MigrationActions.Initialize
 	// itself — ONLY when resuming a migration still at StateUninitialized: a
@@ -224,11 +295,13 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 	}
 }
 
-// checkSpecDrift compares the manifest against the topology snapshot and
-// converts any difference into the response §13 prescribes for the current FSM
-// state. A warning would not do in either row: users are taught this YAML is
-// desired state, and a line that scrolls past during an irreversible cutover is
-// not consent.
+// checkSpecDrift compares the manifest against the topology snapshot taken
+// when this migration was registered. Any difference refuses the run
+// outright, at any state, with no override: a migration's topology must not
+// change once registered. This is deliberately unconditional — there is no
+// longer a separate re-registration step a pre-cutover drift could be
+// steered through, matching execute-tbm's own manifest-drift refusal, which
+// has never had one either.
 func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig) error {
 	drift := detectDrift(g, config)
 	if len(drift) == 0 {
@@ -237,24 +310,14 @@ func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationCon
 
 	// Per-item detail goes to the log for support; the terminal gets section
 	// names and counts only, never a topic list.
-	slog.Debug("manifest differs from the topology snapshot taken at init",
+	slog.Debug("manifest differs from the registered migration's topology",
 		"migration_id", config.MigrationId, "state", config.CurrentState, "sections", strings.Join(drift, "; "))
 
-	// Before the point of no return, drift is a hard stop: re-running init is
-	// safe and is how a new spec is adopted, so a scrolled-past warning would not
-	// be consent. The trailing guidance line is deliberately part of the error —
-	// it is the only thing the operator can act on.
-	if migration.IsReversibleState(config.CurrentState) {
-		header := fmt.Sprintf("config file has changed since this migration was initialised:\n   %s", strings.Join(drift, ",\n   "))
-		return fmt.Errorf("%s\n   Re-run init to adopt the new spec", header) //nolint:staticcheck // multi-line operator guidance
-	}
-
-	// Past the point of no return, re-running init would discard the FSM position
-	// and pre-disable snapshot and strand the live cutover — so proceeding with
-	// the edited spec is the only safe path. Warn loudly rather than block.
-	slog.Warn("⚠️ proceeding with an edited spec: this migration is past the point where re-running init is safe",
-		"state", config.CurrentState, "sections", strings.Join(drift, "; "))
-	return nil
+	return fmt.Errorf( //nolint:staticcheck // multi-line operator guidance
+		"the migration manifest has changed since %q was registered (%s).\n"+
+			"A migration's topology must not change once registered. Use a new metadata.name for a new migration, "+
+			"or revert this file to match the registered topology.",
+		config.MigrationId, strings.Join(drift, ", "))
 }
 
 // detectDrift returns the changed sections, described by field path and count.

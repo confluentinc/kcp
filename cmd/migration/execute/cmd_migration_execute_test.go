@@ -188,10 +188,10 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 
 // TestExecute_VisibleFlagSurface — the manifest work moved topology and auth
 // into the config file; what stays on the command line is the manifest path,
-// the state file, the id override, and the per-policy overrides that vary a
-// spec.defaultPolicies value for a single run. --run-report is registered but
-// hidden (a diagnostics path whose only consumer is the performance rig), so it
-// is asserted separately rather than padding the advertised surface.
+// the state file (now optional, defaults to migration-state.json), the id override,
+// and the per-policy overrides that vary a spec.defaultPolicies value for a single run.
+// --run-report is registered but hidden (a diagnostics path whose only consumer is
+// the performance rig), so it is asserted separately rather than padding the advertised surface.
 func TestExecute_VisibleFlagSurface(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	var visible []string
@@ -237,16 +237,6 @@ func TestExecute_RequiresMigrationYaml(t *testing.T) {
 	assert.Contains(t, err.Error(), "migration-yaml")
 }
 
-// TestExecute_RequiresMigrationStateFile — the state file holds the topology
-// snapshot execute treats as the source of truth, so it is a required input
-// (no CWD default), matching every other state-file-consuming command.
-func TestExecute_RequiresMigrationStateFile(t *testing.T) {
-	f := newFixture(t, nil)
-	_, err := runExecute(t, "--migration-yaml", f.manifestPath)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "migration-state-file")
-}
-
 // --- migration id resolution ---
 
 // TestExecute_ResolvesMigrationIdFromMetadataName — --migration-id survives as an
@@ -257,16 +247,6 @@ func TestExecute_ResolvesMigrationIdFromMetadataName(t *testing.T) {
 	assert.Equal(t, "msk-prod-to-cc-batch-1", resolveMigrationID(g, ""))
 	assert.Equal(t, "migration-abc-uuid", resolveMigrationID(g, "migration-abc-uuid"),
 		"an explicit --migration-id addresses a pre-existing uuid-keyed row")
-}
-
-func TestExecute_ErrorsWhenMigrationNotInStateFile(t *testing.T) {
-	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "  name: msk-prod-to-cc-batch-1", "  name: no-such-migration", 1)
-	})
-	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no-such-migration")
-	assert.Contains(t, err.Error(), "kcp migration list")
 }
 
 // --- drift check (§13) ---
@@ -458,40 +438,99 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 	}
 }
 
-// --- drift response (§13's two rows) ---
+// --- drift response (unconditional refusal at every state) ---
 
-func TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit(t *testing.T) {
-	for _, state := range []string{migration.StateUninitialized, migration.StateInitialized, migration.StateLagsOk} {
+func TestExecute_DriftRefusesUnconditionallyAtEveryState(t *testing.T) {
+	for _, state := range []string{
+		migration.StateUninitialized, migration.StateInitialized, migration.StateLagsOk,
+		migration.StateFenced, migration.StateOffsetSyncPaused, migration.StateFenceVerified,
+		migration.StatePromoted, migration.StateSwitched,
+	} {
 		t.Run(state, func(t *testing.T) {
 			f := newFixture(t, nil)
 			f.writeState(t, func(c *migration.MigrationConfig) {
 				c.CurrentState = state
 				c.ClusterLinkName = "changed-link"
 			})
-			_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
-			require.Error(t, err)
-			assert.Contains(t, err.Error(), "Re-run init")
-			assert.Contains(t, err.Error(), "spec.clusterLink")
+			g := loadGateway(t, f.manifestPath)
+			cfg := persistedConfig(t, f)
+			require.NotEmpty(t, detectDrift(g, cfg), "the fixture must actually have drift")
+
+			err := checkSpecDrift(g, cfg)
+			require.Error(t, err, "drift must refuse regardless of CurrentState — no override")
+			assert.Contains(t, err.Error(), "changed since")
+			assert.Contains(t, err.Error(), "new metadata.name")
 		})
 	}
 }
 
-// TestExecute_DriftMidFlightProceedsWithoutBlocking — past the point of no
-// return, re-running init would strand the live cutover, so there is no longer a
-// safe alternative to proceeding with the edited spec. checkSpecDrift warns and
-// returns nil rather than blocking; the drift-consent flag it used to require is
-// gone.
-func TestExecute_DriftMidFlightProceedsWithoutBlocking(t *testing.T) {
-	f := newFixture(t, nil)
-	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.CurrentState = migration.StateFenced
-		c.ClusterLinkName = "changed-link"
-	})
+func TestExecute_DriftRefusalNeverNamesTopics(t *testing.T) {
+	f := newFixture(t, explicitTopics("secret-topic-name"))
+	f.writeState(t, func(c *migration.MigrationConfig) { c.Topics = []string{"other-topic"} })
 	g := loadGateway(t, f.manifestPath)
+
+	err := checkSpecDrift(g, persistedConfig(t, f))
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "secret-topic-name")
+	assert.NotContains(t, err.Error(), "other-topic")
+}
+
+// --- auto-create on first execute ---
+
+// TestExecute_NoExistingStateFile_AutoCreatesEntryFromManifest proves a
+// missing entry registers instead of erroring. The run then fails deep
+// inside migplan.Reconcile's live gateway pull (no reachable cluster in this
+// test process, same technique TestExecute_ResumeFromUninitialized_CallsReconcile
+// already uses) — what this test cares about is that the entry landed on
+// disk before that failure, not the failure itself.
+func TestExecute_NoExistingStateFile_AutoCreatesEntryFromManifest(t *testing.T) {
+	f := newFixture(t, nil)
+	require.NoError(t, os.Remove(f.stateFile))
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
+
+	state, err := migration.NewMigrationStateFromFile(f.stateFile)
+	require.NoError(t, err, "the state file must exist even though the run then failed")
+	cfg, err := state.GetMigrationById("msk-prod-to-cc-batch-1")
+	require.NoError(t, err)
+	assert.Equal(t, migration.StateUninitialized, cfg.CurrentState)
+	assert.Equal(t, "lkc-abc123", cfg.ClusterId)
+	assert.Equal(t, "msk-to-cc", cfg.ClusterLinkName)
+}
+
+// TestExecute_MigrationStateFileFlagIsOptional_DefaultsToMigrationStateJSON
+// mirrors execute-tbm's TestExecuteTBM_TbmStateFileOptional_DefaultsToMetadataNameAndResumes.
+func TestExecute_MigrationStateFileFlagIsOptional_DefaultsToMigrationStateJSON(t *testing.T) {
+	f := newFixture(t, nil)
+	require.NoError(t, os.Remove(f.stateFile))
+	dir := filepath.Dir(f.manifestPath)
+	t.Chdir(dir)
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
+
+	_, statErr := os.Stat(filepath.Join(dir, "migration-state.json"))
+	assert.NoError(t, statErr, "omitting --migration-state-file must default to migration-state.json in the CWD")
+}
+
+// TestExecute_ExistingEntryIsUnaffectedByAutoCreate is the backward-
+// compatibility guarantee: a pre-existing entry (as newFixture's own
+// f.writeState already sets up at StateInitialized) resolves via
+// GetMigrationById, never buildFreshMigrationConfig — proven here by an
+// existing entry whose fields could not possibly have come from the
+// manifest (a KubeConfigPath the manifest has no way to produce).
+func TestExecute_ExistingEntryIsUnaffectedByAutoCreate(t *testing.T) {
+	f := newFixture(t, nil)
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.Error(t, err) // fails later, past config resolution (no live cluster)
+
 	cfg := persistedConfig(t, f)
-	require.NotEmpty(t, detectDrift(g, cfg), "the fixture must actually have drift")
-	assert.NoError(t, checkSpecDrift(g, cfg),
-		"drift past the point of no return must not block the cutover")
+	assert.Equal(t, "/some/kube/config", cfg.KubeConfigPath, "the pre-existing entry's own KubeConfigPath must survive untouched")
+	assert.Equal(t, migration.StateInitialized, cfg.CurrentState, "an already-registered migration must not be reset to uninitialized")
 }
 
 // --- policy is read fresh ---
@@ -971,4 +1010,43 @@ func TestExecute_ResumeFromInitialized_NeverCallsReconcile(t *testing.T) {
 	require.Error(t, err)
 	assert.NotContains(t, err.Error(), "reconcile plan",
 		"a migration already past StateUninitialized must not call migplan.Reconcile")
+}
+
+// --- helper functions for auto-create and unconditional drift ---
+
+func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
+	f := newFixture(t, nil)
+	g := loadGateway(t, f.manifestPath)
+	kubeConfigPath, err := resolveKubeConfigPath(g)
+	require.NoError(t, err)
+
+	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
+
+	assert.Equal(t, "msk-prod-to-cc-batch-1", cfg.MigrationId)
+	assert.Equal(t, "b-1.msk.us-east-1.amazonaws.com:9096", cfg.SourceBootstrap)
+	assert.Equal(t, "pkc-xxxxx.us-east-1.aws.confluent.cloud:9092", cfg.ClusterBootstrap)
+	assert.Equal(t, "lkc-abc123", cfg.ClusterId)
+	assert.Equal(t, "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443", cfg.ClusterRestEndpoint)
+	assert.Equal(t, "msk-to-cc", cfg.ClusterLinkName)
+	assert.Equal(t, "confluent", cfg.K8sNamespace)
+	assert.Equal(t, "gateway-initial", cfg.InitialCrName)
+	assert.Equal(t, migration.StateUninitialized, cfg.CurrentState)
+	assert.Equal(t, "migration-route", cfg.Route)
+	assert.Equal(t, "confluent-cloud", cfg.TargetDomain)
+	assert.False(t, cfg.PauseConsumerOffsetSync)
+	assert.Empty(t, cfg.Topics, "topics require a live migplan.Reconcile — not set here")
+	assert.Empty(t, cfg.FenceYAML)
+	assert.Empty(t, cfg.Mode)
+}
+
+func TestResolveKubeConfigPath_DefaultsToHomeDir(t *testing.T) {
+	f := newFixture(t, nil)
+	g := loadGateway(t, f.manifestPath)
+
+	kubeConfigPath, err := resolveKubeConfigPath(g)
+	require.NoError(t, err)
+
+	home, err := os.UserHomeDir()
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(home, ".kube", "config"), kubeConfigPath)
 }
