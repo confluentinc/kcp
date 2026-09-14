@@ -831,7 +831,7 @@ func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
 	require.NotNil(t, applied, "FenceGateway must apply a CR")
@@ -865,7 +865,7 @@ func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -903,7 +903,7 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 	// keeps the lightweight readiness-only wait and never touches pod UIDs. The
 	// operator-acceptance wait, by contrast, now runs on every path — the
 	// Deployment-only wait cannot tell a no-op apply from a rejected one.
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -930,7 +930,7 @@ func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -975,7 +975,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 	// observe the fenced CR (so "no rollout detected" downstream is trustworthy),
 	// then wait for those old pods to actually terminate so no unfenced pod is
 	// still serving traffic when detection's first offset snapshot is taken.
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, DetectUnroutedProducersDuration: 10 * time.Second}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML, DetectUnroutedProducersDuration: 10 * time.Second}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -993,7 +993,7 @@ func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1013,7 +1013,7 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	wf.SetRolloutTimeout(100 * time.Millisecond)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1032,7 +1032,7 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
@@ -1056,7 +1056,7 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
 	wf.SetRolloutTimeout(15 * time.Minute)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1074,7 +1074,7 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1097,7 +1097,7 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", SwitchoverYAML: testSwitchoverYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.NoError(t, err)
@@ -1114,7 +1114,7 @@ func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	}
 	cl := &mockClusterLinkService{}
 	wf := NewMigrationActions(gw, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", SwitchoverYAML: testSwitchoverYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1159,7 +1159,7 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", SwitchoverYAML: testSwitchoverYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err, "a switchover the operator rejected must not be reported as a success")
@@ -1191,7 +1191,7 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", SwitchoverYAML: testSwitchoverYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1207,7 +1207,7 @@ func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", SwitchoverYAML: testSwitchoverYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1230,7 +1230,7 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
 	wf.SetRolloutTimeout(15 * time.Minute)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", SwitchoverYAML: testSwitchoverYAML}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	require.NoError(t, wf.SwitchGateway(context.Background(), config))
 	assert.Equal(t, 15*time.Minute, observedTimeout)

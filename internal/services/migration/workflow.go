@@ -54,7 +54,11 @@ type MigrationActions struct {
 	// an unresolved capability behaves exactly as kcp did before hot-reload
 	// support existed.
 	gatewayCapability gateway.Capability
-	reporter          *reporter // user-facing terminal output
+	// capabilityResolved guards ensureGatewayCapability so resolution happens
+	// at most once per process, no matter which of FenceGateway/SwitchGateway
+	// runs first.
+	capabilityResolved bool
+	reporter           *reporter // user-facing terminal output
 }
 
 func NewMigrationActions(
@@ -100,15 +104,32 @@ func (s *MigrationActions) SetHotReloadTimeout(d time.Duration) {
 	s.hotReloadTimeout = d
 }
 
+// ensureGatewayCapability resolves gatewayCapability at most once per
+// process: the first of FenceGateway or SwitchGateway to run this call
+// actually resolves it (and smoke-tests hot-reload); whichever runs second,
+// if any, in the same process is then a no-op. Mirrors
+// tbm.TBMActions.ensureGatewayCapability: resolution is lazy, tied to the
+// first gateway-touching step, rather than a blanket pre-Execute check in
+// the command layer — the command layer cannot resolve capability before a
+// fresh migration's Initialize step has populated config.FenceYAML and
+// config.SwitchoverYAML, which deriveFencedCRYAML/deriveSwitchedCRYAML need.
+func (s *MigrationActions) ensureGatewayCapability(ctx context.Context, config *MigrationConfig) error {
+	if s.capabilityResolved {
+		return nil
+	}
+	if err := s.ResolveGatewayCapability(ctx, config); err != nil {
+		return err
+	}
+	return s.VerifyHotReloadCapability(ctx, config)
+}
+
 // ResolveGatewayCapability determines how gateway state transitions will be
 // verified on the live cluster, adopts it for this run, and records it on the
-// migration config.
-//
-// Called twice in a migration's life, for different reasons. At init it is an
-// advisory: it tells the operator what to expect before they commit to a
-// migration. At execute it is authoritative, because the cluster may have been
-// upgraded — or rolled back — in between, and the value that governs the run has
-// to reflect the cluster as it is now rather than as it was at init.
+// migration config. Called once, authoritatively, via ensureGatewayCapability
+// — there is no separate advisory call at Initialize: execute is the only
+// command now, so there is no earlier "review, then commit" moment to advise
+// at (this function used to be called a second, advisory time from Initialize,
+// back when init and execute were separate commands).
 func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
 	// Settle the port first: the last gate probes /config, so detection needs it.
 	if config.GatewayConfigPort == 0 {
@@ -138,6 +159,15 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 
 	previous := config.GatewayVerificationMode
 	s.gatewayCapability = capability
+	// Set here, not only in ensureGatewayCapability: a caller that resolves
+	// capability directly (bypassing ensureGatewayCapability — every
+	// pre-existing unit test in gateway_capability_test.go/
+	// gateway_transition_test.go/gateway_baseline_test.go does exactly this)
+	// must still be honored as "already resolved" by a later
+	// FenceGateway/SwitchGateway call in the same process — otherwise
+	// ensureGatewayCapability would silently re-resolve (harmless) AND
+	// re-run VerifyHotReloadCapability a second, unrequested time.
+	s.capabilityResolved = true
 	config.GatewayVerificationMode = string(capability.Mode)
 	config.GatewayHotReloadEnabled = capability.HotReloadEnabled
 
@@ -431,15 +461,12 @@ func (s *MigrationActions) Initialize(
 	config.Mode = res.Mode
 	s.reporter.success("Reconcile plan accepted (%d topic(s) in plan)", len(res.Topics))
 
-	// Resolve how transitions will be verified, and tell the operator now rather
-	// than mid-cutover. This is read-only — it inspects the CRD and the live CR
-	// and changes nothing. Execute re-derives it authoritatively.
-	if err := s.ResolveGatewayCapability(ctx, config); err != nil {
-		return err
-	}
-	if s.gatewayCapability.Mode == gateway.VerifyPerPodConfigID {
-		s.reporter.success("Gateway transitions will be verified per pod via %s", gateway.GatewayConfigEndpointPath)
-	}
+	// Gateway capability is NOT resolved here: there is no separate advisory
+	// moment to resolve it for anymore (execute is the only command), and
+	// config.FenceYAML/SwitchoverYAML were only just set above in the same
+	// process — ensureGatewayCapability resolves it lazily, once, from
+	// whichever of FenceGateway/SwitchGateway runs first later in this same
+	// Execute() call.
 
 	clusterLinkConfig := clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
@@ -688,6 +715,14 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 // set (via SetRolloutTimeout).
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
+
+	// Capability must be resolved before capturePods below reads it (and
+	// before deriveFencedCRYAML, which needs config.FenceYAML — already set
+	// by Initialize earlier in this same run). A no-op on any run past the
+	// first gateway-touching step in this process.
+	if err := s.ensureGatewayCapability(ctx, config); err != nil {
+		return err
+	}
 
 	// When unrouted-producer detection is enabled the fence must be genuinely
 	// in effect before the detector's first source-offset snapshot. A plain
@@ -1267,6 +1302,14 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // e2e test infrastructure.
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
+
+	// A no-op if FenceGateway already resolved capability earlier in this
+	// process (the normal case); only load-bearing for a resume that jumps
+	// straight to switch in a fresh process (e.g. every earlier step already
+	// completed in a prior run).
+	if err := s.ensureGatewayCapability(ctx, config); err != nil {
+		return err
+	}
 
 	switchedCrYAML, err := deriveSwitchedCRYAML(config)
 	if err != nil {

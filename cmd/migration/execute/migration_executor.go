@@ -152,23 +152,15 @@ func (m *MigrationExecutor) Run() error {
 		return nil
 	}
 
-	// Re-derive the gateway verification capability against the live cluster.
-	// The mode recorded at init is only what the operator was told to expect —
-	// the cluster can be upgraded, or rolled back, in between, and a downgrade
-	// matters for correctness: writing spec.configId to a CRD that no longer
-	// declares it makes server-side apply fail outright.
-	if err := actions.ResolveGatewayCapability(ctx, &config); err != nil {
-		return err
-	}
-
-	// Prove hot-reload actually works before anything blocks traffic. The gateway
-	// gates its config watcher on an Enterprise licence, and when that gate is
-	// shut CFK still reports success while the gateway serves stale config — so
-	// this is the only place the failure is visible, and the only safe time to
-	// look is before fencing.
-	if err := actions.VerifyHotReloadCapability(ctx, &config); err != nil {
-		return err
-	}
+	// Gateway capability is NOT resolved here. It used to be: a blanket
+	// pre-Execute check, safe only because a separate `init` process had
+	// already populated config.FenceYAML/SwitchoverYAML on disk before this
+	// process ever ran. Now that execute can register a migration for the
+	// first time in this very process, that data may not exist yet at this
+	// point — deriving a fence/switchover CR from it would fail. Capability
+	// instead resolves lazily, at most once per process, from whichever of
+	// FenceGateway/SwitchGateway orchestrator.Execute reaches first (mirrors
+	// tbm.TBMActions.ensureGatewayCapability).
 
 	// The run report is stamped on the way out whatever the outcome: a migration
 	// that failed — or one whose lag never converged — is a result worth
