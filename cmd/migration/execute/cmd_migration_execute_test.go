@@ -204,7 +204,7 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		"migration-yaml", "migration-state-file", "migration-id",
 		"lag-threshold", "promote-batch-size", "rollout-timeout",
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
-		"hot-reload-timeout", "gateway-config-port",
+		"hot-reload-timeout", "gateway-config-port", "dry-run",
 	}, visible)
 
 	runReport := cmd.Flags().Lookup("run-report")
@@ -1049,4 +1049,39 @@ func TestResolveKubeConfigPath_DefaultsToHomeDir(t *testing.T) {
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, ".kube", "config"), kubeConfigPath)
+}
+
+// --- --dry-run ---
+
+func TestExecute_DryRun_TouchesNoStateFile(t *testing.T) {
+	f := newFixture(t, nil)
+	require.NoError(t, os.Remove(f.stateFile))
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run")
+	require.Error(t, err, "reconcile fails deterministically against the fixture's unreachable kubeconfig")
+	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
+
+	_, statErr := os.Stat(f.stateFile)
+	assert.True(t, os.IsNotExist(statErr), "dry-run must not create the migration state file")
+}
+
+func TestExecute_DryRun_DoesNotRequireMigrationStateFileFlag(t *testing.T) {
+	f := newFixture(t, nil)
+	require.NoError(t, os.Remove(f.stateFile))
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--dry-run")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "migration-state-file", "dry-run must not require --migration-state-file")
+}
+
+func TestExecute_DryRun_ExistingEntryIsNotDriftChecked(t *testing.T) {
+	// Drift-checking happens only on the non-dry-run path; dry-run never even
+	// loads the state file, so a drifted existing entry must not surface as a
+	// drift refusal under --dry-run.
+	f := newFixture(t, nil)
+	f.writeState(t, func(c *migration.MigrationConfig) { c.ClusterLinkName = "changed-link" })
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, "--dry-run")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), "changed since", "dry-run must not run the drift check")
 }

@@ -21,6 +21,7 @@ var (
 	manifestFile       string
 	migrationStateFile string
 	migrationId        string
+	dryRun             bool
 	// Per-policy overrides. Each mirrors a field in spec.defaultPolicies and,
 	// when the flag (or its bound env var) is explicitly set, replaces the
 	// manifest's default for this one run. "Explicitly set" is read from
@@ -80,6 +81,7 @@ func NewMigrationExecuteCmd() *cobra.Command {
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
 	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
 	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; touch no migration state file and run no FSM transition.")
 
 	// Per-policy overrides. Each replaces the matching spec.defaultPolicies value
 	// for this run only; omit the flag to use the manifest's default. Only a flag
@@ -154,6 +156,24 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
+	}
+
+	// --dry-run stops here: the reconcile step is self-contained (it opens its
+	// own live Gateway CR + source/target/cluster-link reads directly from the
+	// manifest) and renders its own report to the command's writer. Nothing
+	// past this point — the migration state file, config resolution, drift
+	// checking, any FSM transition — runs under --dry-run. Mirrors
+	// execute-tbm's identical --dry-run branch.
+	if dryRun {
+		res, err := migplan.Reconcile(cmd.Context(), g, migplan.WithOutput(cmd.OutOrStdout()))
+		if err != nil {
+			return fmt.Errorf("failed to produce the reconcile plan: %w", err)
+		}
+		if res.Refused {
+			return fmt.Errorf("dry-run: reconcile plan refused (see reasons above)")
+		}
+		cmd.Printf("✅ dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
+		return nil
 	}
 
 	// Command-line overrides replace the manifest's per-policy defaults for this
