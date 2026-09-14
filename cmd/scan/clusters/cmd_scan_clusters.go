@@ -478,6 +478,9 @@ func collectPrometheusMetrics(ctx context.Context, clusterCreds types.OSKCluster
 		}
 		promOpts = append(promOpts, client.WithPrometheusTLS(caPool, clusterCreds.Prometheus.TLS.InsecureSkipVerify))
 	}
+	if clusterCreds.Prometheus.Timeout > 0 {
+		promOpts = append(promOpts, client.WithPrometheusTimeout(clusterCreds.Prometheus.Timeout))
+	}
 
 	var labels map[string]string
 	if clusterCreds.Prometheus.Filter != nil {

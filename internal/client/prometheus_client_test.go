@@ -244,3 +244,31 @@ func TestPrometheusClient_QueryRange_ErrorStatus(t *testing.T) {
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "prometheus query failed")
 }
+
+func TestPrometheusClient_DefaultTimeoutIsThirtySeconds(t *testing.T) {
+	c := NewPrometheusClient("http://example.com")
+	assert.Equal(t, 30*time.Second, c.httpClient.Timeout)
+}
+
+func TestPrometheusClient_WithTimeout(t *testing.T) {
+	c := NewPrometheusClient("http://example.com", WithPrometheusTimeout(90*time.Second))
+	assert.Equal(t, 90*time.Second, c.httpClient.Timeout)
+}
+
+func TestPrometheusClient_QueryRange_TimeoutExceeded(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(100 * time.Millisecond)
+		resp := prometheusAPIResponse{
+			Status: "success",
+			Data:   prometheusResponseData{ResultType: "matrix", Result: []prometheusMatrixResult{}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer server.Close()
+
+	client := NewPrometheusClient(server.URL, WithPrometheusTimeout(20*time.Millisecond))
+	_, err := client.QueryRange(context.Background(), "test_metric", time.Now().Add(-time.Hour), time.Now(), time.Minute)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to query Prometheus")
+}

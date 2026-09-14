@@ -272,9 +272,13 @@ func TestBrokerQueryDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
 		"BrokerQueryDefinitions labels must match the canonical override label set")
 }
 
-// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName
-// covers the common case: the override is a bare series name with no
-// selector of its own, so the {name="..."} discriminator is simply appended.
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName covers
+// the common case: the override points at a bare series name with no selector
+// of its own. The {name="GlobalPartitionCount"} discriminator must NOT be
+// appended — the override already identifies the series, and the exporters
+// this feature exists for (flattened jmx_exporter output) do not emit a `name`
+// label at all, so appending the discriminator would filter the series to
+// nothing.
 func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName(t *testing.T) {
 	defs := BrokerQueryDefinitions(map[string]string{"GlobalPartitionCount": "acme_controller_value"})
 
@@ -285,19 +289,18 @@ func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_BareSeriesName(t *t
 		}
 	}
 
-	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount"}`, global.Query)
+	assert.Equal(t, "acme_controller_value", global.Query)
 	assert.Equal(t, global.Query, global.PrometheusMetric)
 	assert.True(t, global.Overridden)
 }
 
-// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges
-// is a regression test: GlobalPartitionCount's query is built by appending a
-// static {name="GlobalPartitionCount"} discriminator to the override value. If
-// the override itself already carries a label selector (e.g. it points at a
-// job-scoped series), naively appending a second brace group produces invalid
-// PromQL (two adjacent selectors on one series). The discriminator must be
-// merged into the existing selector instead.
-func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMerges(t *testing.T) {
+// TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorPreserved
+// is a regression test: an override that already carries its own label
+// selector (e.g. a job-scoped series) must be used exactly as given, with no
+// discriminator merged in. The discriminator is a default-path concept only —
+// once the operator has overridden the series, kcp must not still be able to
+// filter it down based on a `name` label it never asked for.
+func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorPreserved(t *testing.T) {
 	defs := BrokerQueryDefinitions(map[string]string{
 		"GlobalPartitionCount": `acme_controller_value{job="acme"}`,
 	})
@@ -309,10 +312,8 @@ func TestBrokerQueryDefinitions_GlobalPartitionCountOverride_ExistingSelectorMer
 		}
 	}
 
-	// A single, valid selector — not two adjacent brace groups.
-	assert.Equal(t, `acme_controller_value{name="GlobalPartitionCount",job="acme"}`, global.Query)
+	assert.Equal(t, `acme_controller_value{job="acme"}`, global.Query)
 	assert.Equal(t, global.Query, global.PrometheusMetric)
-	assert.NotContains(t, global.Query, "}{", "must not produce two adjacent brace groups")
 	assert.True(t, global.Overridden)
 }
 
@@ -371,6 +372,57 @@ func TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud(t *testing.T) {
 	}
 	assert.True(t, warnedBytesIn, "overridden-but-empty metric should be logged at WARN")
 	assert.False(t, warnedBytesOut, "non-overridden empty metric should not be logged at WARN")
+}
+
+// TestConnectQueryDefinitions_CollectMetrics_OverriddenEmptyIsLoud is the
+// Connect analog of TestPrometheusService_CollectMetrics_OverriddenEmptyIsLoud:
+// it proves the shared overridden-but-empty WARN path also fires for Connect
+// query definitions, not just broker ones.
+func TestConnectQueryDefinitions_CollectMetrics_OverriddenEmptyIsLoud(t *testing.T) {
+	// Only connector-count returns data; every other query (including the
+	// overridden task-count) is empty. This keeps allMetrics non-empty so the
+	// generic "no metrics collected" warning stays silent and we isolate the
+	// per-metric empty signal.
+	mockData := map[string][]float64{
+		"connector_count": {2.0, 2.0},
+	}
+	server := newMockPrometheusServer(t, mockData)
+	defer server.Close()
+
+	var logBuf bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prevLogger) })
+
+	promClient := client.NewPrometheusClient(server.URL)
+	// Override task-count to a series the mock has no data for.
+	defs := ConnectQueryDefinitions(map[string]string{"task-count": "totally_missing_connect_series"})
+	svc := NewPrometheusService(promClient, defs, nil)
+
+	_, err := svc.CollectMetrics(context.Background(), 24*time.Hour)
+	require.NoError(t, err)
+
+	// An overridden query that still returns nothing is actionable → WARN.
+	// A non-overridden empty query (e.g. incoming-byte-rate) stays quiet (DEBUG).
+	var warnedTaskCount, warnedIncomingByteRate bool
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		if !strings.Contains(line, "level=WARN") {
+			continue
+		}
+		if strings.Contains(line, "task-count") {
+			warnedTaskCount = true
+			// CollectMetrics is shared by broker scans (metric_names) and Connect
+			// scans (connect_metric_names) — the WARN text must stay key-agnostic
+			// rather than naming the broker-only "metric_names" key.
+			assert.NotContains(t, line, "metric_names",
+				"WARN for a Connect override must not name the broker-only metric_names key")
+		}
+		if strings.Contains(line, "incoming-byte-rate") {
+			warnedIncomingByteRate = true
+		}
+	}
+	assert.True(t, warnedTaskCount, "overridden-but-empty Connect metric should be logged at WARN")
+	assert.False(t, warnedIncomingByteRate, "non-overridden empty Connect metric should not be logged at WARN")
 }
 
 func TestBuildPrometheusQueryInfo(t *testing.T) {
@@ -641,7 +693,7 @@ func TestPrometheusService_CollectMetrics_GroupByConnector_MissingConnectorLabel
 }
 
 func TestConnectQueryDefinitions_GroupByConnector(t *testing.T) {
-	defs := ConnectQueryDefinitions()
+	defs := ConnectQueryDefinitions(nil)
 
 	grouped := map[string]MetricQuery{}
 	for _, mq := range defs {
@@ -671,4 +723,99 @@ func TestConnectQueryDefinitions_GroupByConnector(t *testing.T) {
 		assert.Contains(t, mq.Query, "sum(")
 		assert.NotContains(t, mq.Query, "by (connector)")
 	}
+}
+
+func TestConnectQueryDefinitions_NoOverrideRegression(t *testing.T) {
+	expected := []MetricQuery{
+		{Label: "connector-count", Query: "sum(kafka_connect_worker_connector_count)", PrometheusMetric: "kafka_connect_worker_connector_count"},
+		{Label: "task-count", Query: "sum(kafka_connect_worker_task_count)", PrometheusMetric: "kafka_connect_worker_task_count"},
+		{Label: "incoming-byte-rate", Query: "sum(kafka_connect_metrics_incoming_byte_rate)", PrometheusMetric: "kafka_connect_metrics_incoming_byte_rate"},
+		{Label: "outgoing-byte-rate", Query: "sum(kafka_connect_metrics_outgoing_byte_rate)", PrometheusMetric: "kafka_connect_metrics_outgoing_byte_rate"},
+		{Label: "connection-count", Query: "sum(kafka_connect_metrics_connection_count)", PrometheusMetric: "kafka_connect_metrics_connection_count"},
+		{Label: "request-rate", Query: "sum(kafka_connect_metrics_request_rate)", PrometheusMetric: "kafka_connect_metrics_request_rate"},
+		{Label: "source-record-write-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_write_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_write_rate", GroupByConnector: true},
+		{Label: "source-record-poll-rate", Query: "sum by (connector) (kafka_connect_source_task_source_record_poll_rate)", PrometheusMetric: "kafka_connect_source_task_source_record_poll_rate", GroupByConnector: true},
+		{Label: "sink-record-read-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_read_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_read_rate", GroupByConnector: true},
+		{Label: "sink-record-send-rate", Query: "sum by (connector) (kafka_connect_sink_task_sink_record_send_rate)", PrometheusMetric: "kafka_connect_sink_task_sink_record_send_rate", GroupByConnector: true},
+	}
+	assert.Equal(t, expected, ConnectQueryDefinitions(nil))
+	assert.Equal(t, expected, ConnectQueryDefinitions(map[string]string{}))
+}
+
+func TestConnectQueryDefinitions_Override(t *testing.T) {
+	overrides := map[string]string{
+		"task-count":               "acme_connect_task_count",   // plain gauge
+		"source-record-write-rate": "acme_connect_source_write", // per-connector
+	}
+	defs := ConnectQueryDefinitions(overrides)
+	byLabel := map[string]MetricQuery{}
+	for _, d := range defs {
+		byLabel[d.Label] = d
+	}
+
+	// Plain sum-wrapped.
+	tc := byLabel["task-count"]
+	assert.Equal(t, "sum(acme_connect_task_count)", tc.Query)
+	assert.Equal(t, "acme_connect_task_count", tc.PrometheusMetric)
+	assert.True(t, tc.Overridden)
+
+	// Per-connector: sum by (connector) wrapping + GroupByConnector preserved.
+	sw := byLabel["source-record-write-rate"]
+	assert.Equal(t, "sum by (connector) (acme_connect_source_write)", sw.Query)
+	assert.Equal(t, "acme_connect_source_write", sw.PrometheusMetric)
+	assert.True(t, sw.GroupByConnector)
+	assert.True(t, sw.Overridden)
+
+	// Non-overridden keeps default and is not flagged.
+	cc := byLabel["connector-count"]
+	assert.Equal(t, "sum(kafka_connect_worker_connector_count)", cc.Query)
+	assert.False(t, cc.Overridden)
+
+	// Empty override value ignored.
+	defsEmpty := ConnectQueryDefinitions(map[string]string{"task-count": ""})
+	for _, d := range defsEmpty {
+		if d.Label == "task-count" {
+			assert.Equal(t, "kafka_connect_worker_task_count", d.PrometheusMetric)
+			assert.False(t, d.Overridden)
+		}
+	}
+}
+
+func TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection(t *testing.T) {
+	defs := ConnectQueryDefinitions(map[string]string{"task-count": "acme_connect_task_count"})
+	var tc MetricQuery
+	for _, d := range defs {
+		if d.Label == "task-count" {
+			tc = d
+		}
+	}
+	filtered := applyLabelFilter(tc.Query, tc.PrometheusMetric, map[string]string{"job": "acme"})
+	assert.Equal(t, `sum(acme_connect_task_count{job="acme"})`, filtered)
+}
+
+// TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection_PerConnector
+// is the per-connector analog of
+// TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection: it proves
+// label-filter injection still lands inside the series selector — not outside
+// the `sum by (connector) (...)` wrapper — when the underlying series name has
+// been overridden.
+func TestConnectQueryDefinitions_OverridePreservesLabelFilterInjection_PerConnector(t *testing.T) {
+	defs := ConnectQueryDefinitions(map[string]string{"source-record-write-rate": "acme_connect_source_write"})
+	var sw MetricQuery
+	for _, d := range defs {
+		if d.Label == "source-record-write-rate" {
+			sw = d
+		}
+	}
+	filtered := applyLabelFilter(sw.Query, sw.PrometheusMetric, map[string]string{"job": "acme"})
+	assert.Equal(t, `sum by (connector) (acme_connect_source_write{job="acme"})`, filtered)
+}
+
+func TestConnectQueryDefinitions_LabelsMatchCanonicalSet(t *testing.T) {
+	var labels []string
+	for _, d := range ConnectQueryDefinitions(nil) {
+		labels = append(labels, d.Label)
+	}
+	assert.ElementsMatch(t, types.ValidConnectMetricLabels(), labels,
+		"ConnectQueryDefinitions labels must match the canonical Connect override label set")
 }
