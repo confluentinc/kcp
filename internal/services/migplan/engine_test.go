@@ -33,12 +33,13 @@ func (f *fakeLink) LinkStatus(context.Context) (*LinkStatus, error) { return f.l
 
 type fakeSecretChecker struct {
 	missing    []string
+	skipReason string
 	calledWith []string
 }
 
-func (f *fakeSecretChecker) MissingSecrets(_ context.Context, names []string) ([]string, error) {
+func (f *fakeSecretChecker) MissingSecrets(_ context.Context, names []string) ([]string, string, error) {
 	f.calledWith = names
-	return f.missing, nil
+	return f.missing, f.skipReason, nil
 }
 
 func dynGatewayConfig() *reconcile.GatewayConfig {
@@ -192,6 +193,42 @@ func TestReconciliationEngine_Run_StaticMode_ChecksOnlyTargetSecret(t *testing.T
 	}
 	if !plan2.Report.Refused() {
 		t.Fatalf("expected refusal when the secrets provider reports a missing secret, got %+v", plan2.Report)
+	}
+}
+
+// TestReconciliationEngine_Run_StaticMode_SecretCheckSkippedIsWarningNotRefusal
+// is a regression test for a real bug found via live e2e testing: a
+// permission denial reaching this far must surface as a Report.Warnings
+// entry, never a refusal — a skipped check is not the same fact as a
+// confirmed-missing secret, and conflating them made every AAO e2e migration
+// fail outright in an RBAC-restricted namespace.
+func TestReconciliationEngine_Run_StaticMode_SecretCheckSkippedIsWarningNotRefusal(t *testing.T) {
+	secrets := &fakeSecretChecker{skipReason: "no permission to read secrets in namespace \"confluent\""}
+	eng := NewReconciliationEngine(
+		&fakeGateway{gw: staticGatewayConfig()},
+		&fakeLister{topics: []string{"orders"}},
+		&fakeLister{topics: []string{"orders"}},
+		&fakeLink{ls: &LinkStatus{
+			Mirrors: map[string]reconcile.MirrorState{"orders": reconcile.MirrorActive},
+		}},
+		secrets,
+	)
+	in := reconcile.ReconcileInput{Topics: []string{"orders"}, Route: "migration-route", TargetDomain: "cc"}
+	plan, err := eng.Run(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Report.Refused() {
+		t.Fatalf("a skipped secret check must not refuse the plan, got %+v", plan.Report)
+	}
+	found := false
+	for _, w := range plan.Report.Warnings {
+		if w == secrets.skipReason {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("Report.Warnings = %v, want it to contain the skip reason %q", plan.Report.Warnings, secrets.skipReason)
 	}
 }
 

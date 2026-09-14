@@ -56,9 +56,10 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	ids := reconcile.ClusterIDs{Source: srcID, Target: tgtID, LinkSource: link.SourceClusterID}
 
 	var missingSecrets []string
+	var secretCheckSkipped string
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
 		if names := reconcile.ResolveStagedSecretNames(gw, in.TargetDomain); len(names) > 0 {
-			missingSecrets, err = e.secrets.MissingSecrets(ctx, names)
+			missingSecrets, secretCheckSkipped, err = e.secrets.MissingSecrets(ctx, names)
 			if err != nil {
 				return nil, fmt.Errorf("checking staged auth secrets: %w", err)
 			}
@@ -66,6 +67,15 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 	}
 
 	plan := reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, missingSecrets)
+	// A permission denial is a skip, not a precondition failure — surfaced as
+	// a warning (never blocking) rather than folded into missingSecrets,
+	// which would otherwise read as "these specific secrets don't exist"
+	// when the truth is "we couldn't check at all". See
+	// SecretExistenceChecker's own doc comment for why this distinction
+	// matters.
+	if secretCheckSkipped != "" {
+		plan.Report.Warnings = append(plan.Report.Warnings, secretCheckSkipped)
+	}
 	// Carry the gateway CR the plan was computed against, so a caller can re-pull
 	// it before mutating and diff for drift.
 	plan.GatewayYAML = gw.RawYAML
