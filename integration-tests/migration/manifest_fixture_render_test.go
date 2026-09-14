@@ -79,6 +79,30 @@ func TestRenderGatewayMigration_ParsesValidatesAndResolves(t *testing.T) {
 	require.NoError(t, restErr, "the cluster-link REST leg must resolve from clusterLink.linkCredentials")
 }
 
+// TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll is a regression
+// test for a real bug found via live e2e testing: this suite's ten scenarios
+// share one source/destination Kafka pair, so a match-all topicPatterns
+// resolves (per spec.topicGroup's real semantics) against every OTHER
+// scenario's topics too — not just this one's — tripping an all-or-nothing
+// refusal. A fenceRouteOpts entry with Topics set must render an explicit
+// topics: list instead, scoped to only the given names.
+func TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll(t *testing.T) {
+	opts := baselineOpts()
+	opts.FenceRoutes[0].Topics = []string{"e2e-test-topic-baseline"}
+	opts = withRenderedCreds(t, opts)
+
+	rendered, err := renderGatewayMigration(opts)
+	require.NoError(t, err)
+	g, err := manifest.ParseGatewayMigration([]byte(rendered))
+	require.NoError(t, err)
+
+	require.Len(t, g.Spec.TopicGroup, 1)
+	entry := g.Spec.TopicGroup[0]
+	assert.Nil(t, entry.TopicPatterns, "an explicit topics list must not also carry a match-all pattern")
+	require.NotNil(t, entry.Topics)
+	assert.Equal(t, []string{"e2e-test-topic-baseline"}, *entry.Topics)
+}
+
 // TestRenderGatewayMigration_TopologyMatchesOpts guards against a transposition
 // in the template — two fields of the same YAML type swapped still parses,
 // validates and resolves, so nothing above would catch it.

@@ -75,6 +75,9 @@ func manifestOptsFor(cfg envConfig) manifestOpts {
 		fenceRoutes[i] = fenceRouteOpts{
 			Name:                 name,
 			SwitchoverDomainName: e2eSwitchoverDomainName,
+			// Scoped to this scenario's own topic(s) — see fenceRouteOpts.Topics
+			// for why a match-all pattern is wrong in this shared-cluster suite.
+			Topics: cfg.TopicNames,
 		}
 	}
 	return manifestOpts{

@@ -48,11 +48,23 @@ spec:
     cr-name: {{ .GatewayName | yamlQuote }}
   topicGroup:
 {{- range .FenceRoutes }}
+{{- if .Topics }}
+      # Explicit topics, scoped to this scenario's own — this suite's
+      # scenarios share one source/destination Kafka pair, so a match-all
+      # pattern would resolve against every OTHER scenario's topics too (see
+      # fenceRouteOpts.Topics). The bootstrap server id is derived from the
+      # target domain's declaration in the live CR, not written here.
+    - topics:
+{{- range .Topics }}
+        - {{ . | yamlQuote }}
+{{- end }}
+{{- else }}
       # A match-all pattern migrates every active mirror topic — the behaviour
       # the old omitted spec.topics gave. The bootstrap server id is derived from
       # the target domain's declaration in the live CR, not written here.
     - topicPatterns:
         - {{ ".*" | yamlQuote }}
+{{- end }}
       route: {{ .Name | yamlQuote }}
       targetStreamingDomain: {{ .SwitchoverDomainName | yamlQuote }}
 {{- end }}
