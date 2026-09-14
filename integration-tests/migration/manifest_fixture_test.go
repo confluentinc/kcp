@@ -30,8 +30,49 @@ type manifestOpts struct {
 	FenceRoutes     []fenceRouteOpts
 	KubePath        string
 
+	// Paths the manifest references for each credentials leg. Credentials are
+	// files, not inline blocks — the file bodies are rendered separately by
+	// renderCredentialFiles and written alongside the manifest.
+	SourceCredPath    string
+	DestKafkaCredPath string
+	LinkCredPath      string
+
 	PauseConsumerOffsetSync bool
 	Policy                  policyOpts
+}
+
+// credentialFiles are the three credentials files the manifest references.
+type credentialFiles struct {
+	Source    string
+	DestKafka string
+	Link      string
+}
+
+// renderCredentialFiles renders the credentials files a scenario needs. The
+// source is a plaintext CFK cluster (no secret); the destination Kafka leg is
+// SASL/PLAIN over a self-signed CA (hence insecure_skip_tls_verify); the
+// cluster-link REST leg reuses the same api_key/api_secret. Secret values pass
+// through yamlQuote for the same YAML-injection reason the manifest fields do —
+// these files are the secret-bearing artifacts now, not the manifest.
+func renderCredentialFiles(opts manifestOpts) (credentialFiles, error) {
+	user, err := yamlQuote(opts.APIKey)
+	if err != nil {
+		return credentialFiles{}, err
+	}
+	secret, err := yamlQuote(opts.APISecret)
+	if err != nil {
+		return credentialFiles{}, err
+	}
+	return credentialFiles{
+		Source: "unauthenticated_plaintext: {}\n",
+		DestKafka: "sasl_plain:\n" +
+			"  username: " + user + "\n" +
+			"  password: " + secret + "\n" +
+			"  tls: true\n" +
+			"insecure_skip_tls_verify: true\n",
+		Link: "api_key: " + user + "\n" +
+			"api_secret: " + secret + "\n",
+	}, nil
 }
 
 // fenceRouteOpts is one spec.topicGroup[] entry: a route to fence, paired with
@@ -39,9 +80,20 @@ type manifestOpts struct {
 // switchover CR file — kcp derives the switch from the live initial CR plus this
 // target. The bootstrap server id is NOT set here: kcp derives it from the
 // target domain's declaration in the live CR at init.
+//
+// Topics names this entry's own topic(s) explicitly. Every real e2e scenario
+// sets it (from envConfig.TopicNames) — a match-all topicPatterns is only
+// still correct in the single-scenario case, since this suite's ten scenarios
+// share one source/destination Kafka pair: resolving ".*" against the full
+// source topic list (spec.topicGroup's real semantics — see the AAO-migplan
+// integration design doc's Decision 3) pulls in every OTHER scenario's own
+// topics too, tripping an all-or-nothing refusal. Found live, the hard way.
+// Empty falls back to the old match-all rendering, so callers that don't care
+// (unit tests asserting the fixture's default shape) are unaffected.
 type fenceRouteOpts struct {
 	Name                 string
 	SwitchoverDomainName string
+	Topics               []string
 }
 
 // policyOpts are the execute-time knobs the nine execute sites vary. Every zero

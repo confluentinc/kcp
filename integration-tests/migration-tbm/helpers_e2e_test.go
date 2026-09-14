@@ -2,10 +2,17 @@
 
 // Package migration_tbm_e2e runs a Topic-Based Migration against a live
 // dynamic-mode Confluent Gateway with hot reload (Minikube profile kcp-e2e-tbm).
-// The system under test is the real reconciliation engine migplan.Reconcile: the
-// tests assert it refuses known-bad batches and migrates good ones, applying the
-// engine's rendered fence/switchover rules to the live gateway CR by hot reload
-// (no pod roll) and promoting cluster-link mirrors between batches.
+// TestSuccessBatchesMigrate and TestExecuteTBMThinPosture drive the real
+// execute-tbm command (internal/services/migration/tbm's FSM): every
+// transition — initialize, wait_for_lags, fence, verify_fence, promote and
+// switch — is real; see each test's own doc comment for what it can and
+// cannot prove today. TestUnroutedProducerDetection is this suite's live
+// coverage of verify_fence's unrouted-producer detection and its abort_fence
+// rollback; TestSuccessBatchesMigrate and TestExecuteTBMThinPosture only
+// exercise verify_fence's detection-disabled skip path.
+// TestHaltScenarios and TestHarnessAppliesSwitchoverWithoutRoll
+// instead exercise migplan.Reconcile and the gateway hot-reload apply path
+// directly, independent of the FSM.
 //
 // Like the hot-reload suite, this binary runs INSIDE the cluster (see
 // manifests/kcp-runner.yaml): the gateway service dials each pod's /config port
@@ -27,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/IBM/sarama"
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
@@ -58,18 +66,19 @@ const (
 // vars). svc is kcp's own gateway service constructed in-cluster (empty kubeconfig
 // ⇒ in-cluster service account), the same way the migration workflow builds it.
 type env struct {
-	namespace     string
-	gateway       string
-	route         string
-	restEndpoint  string
-	destClusterID string
-	linkName      string
-	topicPrefix   string
-	successHi     int
-	reservedTopic int
-	renderedDir   string
-	saslUser      string
-	saslPassword  string
+	namespace       string
+	gateway         string
+	route           string
+	restEndpoint    string
+	destClusterID   string
+	linkName        string
+	topicPrefix     string
+	successHi       int
+	reservedTopic   int
+	renderedDir     string
+	saslUser        string
+	saslPassword    string
+	sourceBootstrap string
 
 	svc       *gateway.K8sService
 	clientset kubernetes.Interface
@@ -85,18 +94,19 @@ func newEnv(t *testing.T) *env {
 	require.NoError(t, err)
 
 	return &env{
-		namespace:     envOrDefault("KCP_TBM_NAMESPACE", "confluent"),
-		gateway:       envOrDefault("KCP_TBM_GATEWAY_NAME", "tbm-gateway"),
-		route:         envOrDefault("KCP_TBM_ROUTE_NAME", "tbm-route"),
-		restEndpoint:  os.Getenv("KCP_TBM_REST_ENDPOINT"),
-		destClusterID: os.Getenv("KCP_TBM_DEST_CLUSTER_ID"),
-		linkName:      envOrDefault("KCP_TBM_CLUSTER_LINK_NAME", "tbm-link"),
-		topicPrefix:   envOrDefault("KCP_TBM_TOPIC_PREFIX", "tbm-topic-"),
-		successHi:     envInt(t, "KCP_TBM_SUCCESS_HI", 44),
-		reservedTopic: envInt(t, "KCP_TBM_RESERVED_TOPIC", 45),
-		renderedDir:   envOrDefault("KCP_TBM_RENDERED_DIR", "/workspace/rendered"),
-		saslUser:      os.Getenv("KCP_TBM_DEST_SASL_USER"),
-		saslPassword:  os.Getenv("KCP_TBM_DEST_SASL_PASSWORD"),
+		namespace:       envOrDefault("KCP_TBM_NAMESPACE", "confluent"),
+		gateway:         envOrDefault("KCP_TBM_GATEWAY_NAME", "tbm-gateway"),
+		route:           envOrDefault("KCP_TBM_ROUTE_NAME", "tbm-route"),
+		restEndpoint:    os.Getenv("KCP_TBM_REST_ENDPOINT"),
+		destClusterID:   os.Getenv("KCP_TBM_DEST_CLUSTER_ID"),
+		linkName:        envOrDefault("KCP_TBM_CLUSTER_LINK_NAME", "tbm-link"),
+		topicPrefix:     envOrDefault("KCP_TBM_TOPIC_PREFIX", "tbm-topic-"),
+		successHi:       envInt(t, "KCP_TBM_SUCCESS_HI", 44),
+		reservedTopic:   envInt(t, "KCP_TBM_RESERVED_TOPIC", 45),
+		renderedDir:     envOrDefault("KCP_TBM_RENDERED_DIR", "/workspace/rendered"),
+		saslUser:        os.Getenv("KCP_TBM_DEST_SASL_USER"),
+		saslPassword:    os.Getenv("KCP_TBM_DEST_SASL_PASSWORD"),
+		sourceBootstrap: os.Getenv("KCP_TBM_SOURCE_BOOTSTRAP"),
 
 		svc:       gateway.NewK8sService(""),
 		clientset: cs,
@@ -242,6 +252,56 @@ func hasFailedPrecondition(r reconcile.Report, nameSubstr string) bool {
 		}
 	}
 	return false
+}
+
+// startRogueProducer produces directly to the source Kafka cluster (bypassing
+// the gateway route entirely — the fenced route is never in this path) until
+// ctx is cancelled, simulating a producer that ignores the fence. Used by
+// TestUnroutedProducerDetection to give verify_fence's real
+// detectUnroutedProducers (internal/services/migration/tbm/workflow.go) a
+// genuine source-offset rise to observe.
+//
+// The connection itself is made synchronously so a broken connection fails
+// the test immediately via require; the per-message send loop instead only
+// logs failures, since require/t.Fatal are unsafe from a non-test goroutine —
+// mirroring migration_e2e_test.go's own pollCtx/cancelPoll/pollDone idiom
+// (integration-tests/migration/migration_e2e_test.go:940-983) rather than the
+// sibling suite's separate-background-process producer, since this test
+// binary already runs inside the cluster and can produce in-process.
+func startRogueProducer(t *testing.T, ctx context.Context, brokers, topic string) (done <-chan struct{}) {
+	t.Helper()
+
+	cfg := sarama.NewConfig()
+	cfg.Producer.Return.Successes = true
+	cfg.Producer.RequiredAcks = sarama.WaitForAll
+	cfg.ClientID = "kcp-e2e-tbm-rogue-producer"
+	cfg.Version = sarama.V2_8_0_0
+
+	producer, err := sarama.NewSyncProducer([]string{brokers}, cfg)
+	require.NoError(t, err, "rogue producer: connect to source %s", brokers)
+
+	doneCh := make(chan struct{})
+	go func() {
+		defer close(doneCh)
+		defer producer.Close()
+
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if _, _, sendErr := producer.SendMessage(&sarama.ProducerMessage{
+					Topic: topic,
+					Value: sarama.StringEncoder("rogue"),
+				}); sendErr != nil {
+					t.Logf("rogue producer: send to %s failed: %v", topic, sendErr)
+				}
+			}
+		}
+	}()
+	return doneCh
 }
 
 // --- tbmHarness: the decide → apply → promote → advance seam ---------------

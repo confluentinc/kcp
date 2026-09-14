@@ -3,13 +3,12 @@ package execute
 import (
 	"fmt"
 	"log/slog"
-	"maps"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/manifest"
-	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
@@ -131,10 +130,6 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("migration '%s' not found in %s\nRun 'kcp migration list' to see available migrations", id, migrationStateFile)
 	}
 
-	if err := checkStateFilePredatesSwitchover(config); err != nil {
-		return err
-	}
-
 	// Record what this run will execute with — the effective policy (manifest
 	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
 	// this is the durable audit trail of the knobs a given execute used; the same
@@ -145,7 +140,24 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	opts, err := buildExecutorOpts(g, config, *state, migrationStateFile)
+	// migplan.Reconcile is called here — not by MigrationActions.Initialize
+	// itself — ONLY when resuming a migration still at StateUninitialized: a
+	// --skip-validate init deferred full validation to this exact moment (see
+	// the design doc's Decision 1 amendment). Every other starting state skips
+	// this: Execute is already past StateUninitialized, onInitialize never
+	// fires, and a live Reconcile call here would be pure waste.
+	var reconcileResult *migplan.Result
+	if config.CurrentState == migration.StateUninitialized {
+		reconcileResult, err = migplan.Reconcile(cmd.Context(), g)
+		if err != nil {
+			return fmt.Errorf("failed to produce the reconcile plan: %w", err)
+		}
+		if reconcileResult.Mode == "dynamic" {
+			return fmt.Errorf("route %q resolves to a topic-based (dynamic) migration; kcp does not yet implement the topic-based migration engine", g.Spec.TopicGroup[0].Route)
+		}
+	}
+
+	opts, err := buildExecutorOpts(g, config, *state, migrationStateFile, reconcileResult)
 	if err != nil {
 		return err
 	}
@@ -153,21 +165,6 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// carry it straight from the flag onto the opts.
 	opts.RunReportPath = runReport
 	return NewMigrationExecutor(opts).Run()
-}
-
-// checkStateFilePredatesSwitchover refuses a migration-state.json written before
-// redundant-auth switchover existed. Such a file has fence routes but no
-// switchover targets, so execute cannot derive the switched gateway CR — and
-// left alone it fails deep in the switch step ("no switchover targets given")
-// after traffic is already fenced. Failing here, before any cluster contact,
-// points the operator at the fix instead. Runs before the drift check so its
-// specific message wins over the generic "config file has changed" one.
-func checkStateFilePredatesSwitchover(config *migration.MigrationConfig) error {
-	if len(config.FenceRoutes) > 0 && len(config.SwitchoverTargets) == 0 {
-		return fmt.Errorf("migration %q was initialised before redundant-auth switchover was supported: its state file records %d fence route(s) but no switchover targets, so execute cannot derive the switched gateway CR.\nRe-run 'kcp migration init' with the current manifest to record them (only possible before the migration has fenced)",
-			config.MigrationId, len(config.FenceRoutes))
-	}
-	return nil
 }
 
 // effectivePolicyLogArgs renders the effective execute-time policy as slog
@@ -317,24 +314,23 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	}
 
 	// The route/topic topology now lives in spec.topicGroup, but the snapshot
-	// still holds it split across FenceRoutes/SwitchoverTargets/Topics, so the
-	// comparisons are unchanged in spirit — only the manifest-side projection
-	// moves.
+	// still holds it split across Route/TargetDomain/Topics — comparisons are
+	// unchanged in spirit, only the manifest-side projection moves.
 	var topicGroupChanges []string
-	// Fence routes drift as a set (reordering is not a change). Counts only,
-	// never names — a bare flag, like the retired fenced-CR byte check.
-	if added, removed := diffCounts(routeNamesFromTopicGroup(g), config.FenceRoutes); added > 0 || removed > 0 {
-		topicGroupChanges = append(topicGroupChanges, "routes")
-	}
-	if switchoverTargetsChanged(g.Spec.TopicGroup, config.SwitchoverTargets) {
-		topicGroupChanges = append(topicGroupChanges, "switchover targets")
-	}
-	// A match-all topicGroup selection means "every active mirror topic", and
-	// after the first execute the snapshot holds whatever that expanded to — so
-	// a match-all entry (no literal topics) must compare equal to the expansion,
-	// not to an empty list. When the entry lists literal topics, diff those.
 	if len(g.Spec.TopicGroup) > 0 {
-		if topics := g.Spec.TopicGroup[0].Topics; topics != nil {
+		entry := g.Spec.TopicGroup[0]
+		if entry.Route != config.Route {
+			topicGroupChanges = append(topicGroupChanges, "route")
+		}
+		if entry.TargetStreamingDomain != config.TargetDomain {
+			topicGroupChanges = append(topicGroupChanges, "target domain")
+		}
+		// A match-all topicGroup selection now resolves via migplan's Explode
+		// against source topics, exactly like an explicit list — no special
+		// "whatever the cluster link mirrors" case remains, so drift compares
+		// the manifest's declared topics against the snapshot the same way for
+		// both topics and topicPatterns entries.
+		if topics := entry.Topics; topics != nil {
 			added, removed := diffCounts(*topics, config.Topics)
 			if added > 0 || removed > 0 {
 				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topics: %d added, %d removed", added, removed))
@@ -346,38 +342,6 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 	}
 
 	return drift
-}
-
-// routeNamesFromTopicGroup projects the manifest's topicGroup entries to their
-// route names, the shape the fence-route drift set compares against.
-func routeNamesFromTopicGroup(g *manifest.GatewayMigration) []string {
-	names := make([]string, len(g.Spec.TopicGroup))
-	for i, e := range g.Spec.TopicGroup {
-		names[i] = e.Route
-	}
-	return names
-}
-
-// switchoverTargetsChanged reports whether the manifest's declared per-route
-// switchover target (route → target streaming domain) differs from the snapshot
-// taken at init. Compared as a map, so reordering is not a change.
-//
-// The bootstrap server id is intentionally NOT compared: it is derived from the
-// live CR, not authored in the manifest, so there is nothing manifest-side to
-// diff it against. A CR-side id change between init and execute is caught by
-// neither old nor new drift by design — at cutover the switch reapplies the
-// snapshotted initial CR wholesale, so a live CR edit is overwritten regardless;
-// a CR id change is a re-init concern, not a drift signal.
-func switchoverTargetsChanged(entries []manifest.TopicGroupEntry, snapshot []gateway.RouteSwitchoverTarget) bool {
-	want := make(map[string]string, len(entries))
-	for _, e := range entries {
-		want[e.Route] = e.TargetStreamingDomain
-	}
-	have := make(map[string]string, len(snapshot))
-	for _, t := range snapshot {
-		have[t.RouteName] = t.StreamingDomainName
-	}
-	return !maps.Equal(want, have)
 }
 
 // diffCounts returns how many entries want adds and drops relative to have.
@@ -399,7 +363,7 @@ func diffCounts(want, have []string) (added, removed int) {
 // buildExecutorOpts resolves every credential leg and the execute-time policy
 // from the manifest. The manifest is a second deserializer into the same
 // struct the flags filled, so nothing downstream changes shape.
-func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, state migration.MigrationState, stateFile string) (MigrationExecutorOpts, error) {
+func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, state migration.MigrationState, stateFile string, reconcileResult *migplan.Result) (MigrationExecutorOpts, error) {
 	srcCreds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
 		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.source.credentials", errs)
@@ -410,7 +374,7 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	}
 	dstCreds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.credentials", errs)
+		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 
 	// A nil bootstrap is fine here: MigrateConn folds it straight into
@@ -472,9 +436,14 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		GatewayConfigPort:  g.Spec.DefaultPolicies.GatewayConfigPort,
 		PromoteBatchSize:   g.Spec.DefaultPolicies.PromoteBatchSize,
 
-		// The destination Kafka leg authenticates with the KAFKA block. When
-		// restCredentials is spelled out it may name a different, broader
-		// principal, and sending that to the broker would invert least privilege.
+		// nil except when resuming a migration still at StateUninitialized —
+		// see runMigrationExecute's conditional migplan.Reconcile call.
+		ReconcileResult: reconcileResult,
+
+		// The destination Kafka leg authenticates with the KAFKA block. The
+		// cluster-link REST credential (spec.clusterLink.linkCredentials) may name
+		// a different, broader principal, and sending that to the broker would
+		// invert least privilege.
 		DestAuthType:   destAuthType,
 		DestAuthMethod: destAuthMethod,
 

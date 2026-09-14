@@ -116,9 +116,13 @@ func asAnySlice(ss []string) []any {
 }
 
 // PrependFence adds a batch fence entry (all traffic, exact names) at the head
-// of rules.fencing, preserving the operator's existing entries.
+// of rules.fencing, preserving the operator's existing entries. blocked: true
+// is set directly on the entry — the CFK Gateway CRD requires
+// rules.fencing[].blocked, and a batch fence entry always means "block these
+// topics," so every consumer applying FenceYAML/SwitchoverYAML to a live
+// Gateway CR can do so unmodified.
 func (rt *RulesTree) PrependFence(topics []string) {
-	entry := map[string]any{"topics": asAnySlice(topics)}
+	entry := map[string]any{"topics": asAnySlice(topics), "blocked": true}
 	existing, _ := sliceField(rt.root, "fencing")
 	rt.root["fencing"] = append([]any{entry}, existing...)
 }

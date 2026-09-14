@@ -15,6 +15,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/looplab/fsm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,14 +53,16 @@ func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string
 		Topics:              topics,
 		InitialCrName:       "my-gateway",
 		K8sNamespace:        "confluent",
-		InitialCrYAML:       []byte(testInitialCR),
-		FenceRoutes:         []string{"migration-route"},
-		SwitchoverTargets:   testSwitchoverTargets,
+		GatewayYAML:         testInitialCR,
+		Route:               "migration-route",
+		Mode:                "static",
+		FenceYAML:           testFenceYAML,
+		SwitchoverYAML:      testSwitchoverYAML,
 	}
 
-	// Default mock implementations. The initial CR must be a real routed gateway
-	// CR: FenceGateway derives the fenced CR from it (cleanInitialCR +
-	// gateway.FenceRoutes), so a scalar placeholder would fail to parse.
+	// Default mock implementations. The gateway CR must be a real routed gateway
+	// CR: FenceGateway derives the fenced CR from it (deriveFencedCRYAML splices
+	// FenceYAML onto Route), so a scalar placeholder would fail to parse.
 	getGatewayYAMLFn := func(ctx context.Context, namespace, name string) ([]byte, error) {
 		return []byte(testInitialCR), nil
 	}
@@ -194,12 +197,34 @@ func loadPersistedMigration(t *testing.T, stateFilePath, migrationID string) *Mi
 	return m
 }
 
+// uninitializedReconcileResult builds the migplan.Result an orchestrator test
+// starting at StateUninitialized must pass to Initialize/Execute (onInitialize
+// dereferences res.Refused, so a nil res panics). topics mirrors
+// newHappyPathOrchestrator's own default-resolution — nil resolves to the same
+// two-topic default — so a test that drives a full run through PromoteTopics
+// sees ListMirrorTopics (built from the same resolved topic set at
+// construction) agree with config.Topics after Initialize overwrites it from
+// res.Topics.
+func uninitializedReconcileResult(topics []string) *migplan.Result {
+	if len(topics) == 0 {
+		topics = []string{"topic-a", "topic-b"}
+	}
+	return &migplan.Result{
+		Route:          "migration-route",
+		Topics:         topics,
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+	}
+}
+
 // --- FSM transition tests ---
 
 func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, testReconcileResult())
 	require.NoError(t, err)
 
 	assert.Equal(t, StateInitialized, config.CurrentState)
@@ -208,33 +233,33 @@ func TestOrchestrator_Initialize_FromUninitialized(t *testing.T) {
 	assert.Equal(t, StateInitialized, persisted.CurrentState)
 }
 
-// TestOrchestrator_Initialize_ReusesPreFetchedCR proves a pre-fetched CR
+// TestOrchestrator_Initialize_ThreadsReconcileResult proves the migplan.Result
 // passed to Initialize flows through the FSM to onInitialize/actions.Initialize
-// without a redundant live fetch — see ExecutionParams.PreFetchedInitialCR.
-func TestOrchestrator_Initialize_ReusesPreFetchedCR(t *testing.T) {
-	var getYAMLCalls int32
-	overrides := orchestratorOverrides{
-		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
-			atomic.AddInt32(&getYAMLCalls, 1)
-			return []byte(testInitialCR), nil
-		},
-	}
+// and lands the reconcile-derived fields on the persisted config — see
+// ExecutionParams.ReconcileResult.
+func TestOrchestrator_Initialize_ThreadsReconcileResult(t *testing.T) {
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
-
-	preFetchedCR := []byte(testInitialCR)
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, preFetchedCR)
+	res := testReconcileResult()
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 	require.NoError(t, err)
 
 	assert.Equal(t, StateInitialized, config.CurrentState)
-	assert.Equal(t, int32(0), atomic.LoadInt32(&getYAMLCalls), "Initialize must reuse the pre-fetched CR instead of fetching live")
-	assert.Equal(t, testInitialCR, string(config.InitialCrYAML))
+	assert.Equal(t, res.Route, config.Route)
+	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
+	assert.Equal(t, res.FenceYAML, config.FenceYAML)
+	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
+	assert.Equal(t, res.Topics, config.Topics)
+
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateInitialized, persisted.CurrentState)
+	assert.Equal(t, res.Route, persisted.Route)
 }
 
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.NoError(t, err)
 
 	assert.Equal(t, StateSwitched, config.CurrentState)
@@ -246,30 +271,19 @@ func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
 	for _, startState := range []string{StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted} {
 		t.Run("from_"+startState, func(t *testing.T) {
-			var getYAMLCalls int32
-			overrides := orchestratorOverrides{
-				getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
-					atomic.AddInt32(&getYAMLCalls, 1)
-					return []byte(testInitialCR), nil
-				},
-			}
+			orch, config, stateFilePath := newHappyPathOrchestrator(t, startState, nil)
 
-			orch, config, stateFilePath := newHappyPathOrchestrator(t, startState, nil, overrides)
-
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+			// Every one of these starting states is already past
+			// StateUninitialized, so onInitialize never fires and a nil res is
+			// correct — mirrors cmd/migration/execute's own state gate on when
+			// migplan.Reconcile is computed.
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 			require.NoError(t, err)
 
 			assert.Equal(t, StateSwitched, config.CurrentState)
 
 			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 			assert.Equal(t, StateSwitched, persisted.CurrentState)
-
-			// For initialized and later states, init step should be skipped
-			// (GetGatewayYAML is called during init, so 0 calls means init was skipped)
-			if startState == StateInitialized {
-				assert.Equal(t, int32(0), atomic.LoadInt32(&getYAMLCalls),
-					"GetGatewayYAML should not be called when resuming from initialized (init step should be skipped)")
-			}
 		})
 	}
 }
@@ -307,7 +321,7 @@ func TestHasPendingWork(t *testing.T) {
 		orch, _, _ := newHappyPathOrchestrator(t, "some-future-state", nil)
 		require.True(t, orch.HasPendingWork())
 
-		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "unrecognized migration state")
 	})
@@ -315,16 +329,23 @@ func TestHasPendingWork(t *testing.T) {
 
 // --- Error handling tests ---
 
+// TestOrchestrator_Initialize_WorkflowError proves an AAO-specific precondition
+// failure inside the thinned MigrationActions.Initialize — here, the
+// cluster-link ListConfigs call the PauseConsumerOffsetSync precondition and
+// the offset-sync restore bookend both depend on — still cancels the
+// initialize transition and leaves the FSM at StateUninitialized. Unlike
+// before this integration, a live gateway CR fetch failure can no longer
+// surface here: migplan.Reconcile owns that fetch now, before Initialize ever
+// runs.
 func TestOrchestrator_Initialize_WorkflowError(t *testing.T) {
-	overrides := orchestratorOverrides{
-		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
+	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
+	orch.actions.clusterLinkService = &mockClusterLinkService{
+		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
 			return nil, fmt.Errorf("k8s connection refused")
 		},
 	}
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
-
-	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Initialize(context.Background(), clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, testReconcileResult())
 	require.Error(t, err)
 
 	// Config state should NOT have advanced
@@ -356,7 +377,7 @@ func TestOrchestrator_Execute_FenceError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.Error(t, err)
 
 	// The orchestrator should have persisted state after each successful step.
@@ -389,8 +410,8 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	// Set valid YAML for InitialCrYAML so unfenceGateway can parse it
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	// Set valid YAML for GatewayYAML so unfenceGateway can parse it
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// Override source offset provider to return increasing offsets (simulating rogue)
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -409,7 +430,7 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -459,7 +480,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// Override source offset provider to return increasing offsets
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -469,7 +490,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceFails_StaysAtOffsetSyncPa
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	// Unrouted producers were detected, so the surfaced error still wraps
 	// ErrUnroutedProducers; the unfence happens on the abort_fence rollback and
@@ -507,7 +528,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 
 	// Enable unrouted producer detection
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// Override source offset provider to return increasing offsets
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -517,7 +538,7 @@ func TestOrchestrator_Execute_UnroutedProducers_UnfenceReadinessFails_StaysAtOff
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -545,7 +566,7 @@ func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
 	config.DetectUnroutedProducersDuration = time.Millisecond
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 
 	// The verify step succeeded (stable offsets) and was persisted; the promote
@@ -639,7 +660,7 @@ func TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection(t *test
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.NoError(t, err)
 
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&getCalls), int64(2),
@@ -671,7 +692,7 @@ func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T
 
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, state, nil, overrides)
 
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 			require.NoError(t, err)
 
 			mu.Lock()
@@ -713,7 +734,7 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 	stateDir = filepath.Dir(stateFilePath)
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// Rogue producer: source offsets keep increasing.
 	var sourceCalls int64
@@ -724,7 +745,7 @@ func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers,
 		"the step error must keep its classification through the persist-failure wrap")
@@ -784,7 +805,7 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.NoError(t, err)
 
 	mu.Lock()
@@ -837,7 +858,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
 	config.PauseConsumerOffsetSync = true
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	orch.actions.clusterLinkService = &mockClusterLinkService{
 		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
@@ -849,7 +870,7 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
@@ -897,7 +918,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge",
@@ -941,7 +962,7 @@ func TestOrchestrator_Execute_UnconfirmedFence_RestoreFails_ReportsBoth(t *testi
 
 	orch, _, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Contains(t, err.Error(), "gateway pods did not converge", "the fence failure")
@@ -968,7 +989,7 @@ func TestOrchestrator_Execute_FenceApplyFails_DoesNotRestore(t *testing.T) {
 
 	orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrFenceUnconfirmed)
 	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
@@ -1015,7 +1036,7 @@ func TestOrchestrator_Execute_RejectedFence_RestoresWithRejectionMessage(t *test
 	stderr := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
 			orch, _, _ := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
-			err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+			err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 		})
 	})
 	out := stdout + stderr
@@ -1055,7 +1076,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
 	config.PauseConsumerOffsetSync = true
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	var alterFail int32 = 1
 	originalCL := orch.actions.clusterLinkService
@@ -1075,7 +1096,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom")
 
@@ -1088,7 +1109,7 @@ func TestOrchestrator_Execute_PauseError_UnfenceFails_StaysAtFenced(t *testing.T
 	// Re-run recovery: the transient pause failure is gone; execute resumes
 	// from fenced, pauses, and completes — no pending-rollback bookkeeping.
 	atomic.StoreInt32(&alterFail, 0)
-	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.NoError(t, err, "a re-run after a failed rollback must retry the pause and proceed")
 	persisted = loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
@@ -1114,7 +1135,7 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateInitialized, nil, overrides)
 	config.PauseConsumerOffsetSync = true
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	orch.actions.clusterLinkService = &mockClusterLinkService{
 		listConfigsFn: func(c context.Context, cfg clusterlink.Config) (map[string]string, error) {
@@ -1126,7 +1147,7 @@ func TestOrchestrator_Execute_PauseError_CtxCancelledMidUnfence_NoRestore(t *tes
 		},
 	}
 
-	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "503 pause boom", "the original pause error must surface")
 
@@ -1164,7 +1185,7 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, overrides)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
 	var listCalls int64
@@ -1194,7 +1215,7 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
@@ -1227,7 +1248,7 @@ func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *test
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
 	var listCalls int64
@@ -1252,7 +1273,7 @@ func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *test
 	}
 
 	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnroutedProducers)
 	})
@@ -1278,7 +1299,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
 	var listCalls int64
@@ -1312,7 +1333,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 	}
 
 	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 		require.Error(t, err)
 		assert.ErrorIs(t, err, ErrUnroutedProducers)
 	})
@@ -1340,7 +1361,7 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 // change that would silently mis-shape the operator guidance while both isolated
 // unit tests still pass.
 func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
-	validCR := []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	validCR := "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// enableTrue is the drift-check/happy list response used by every case.
 	enableTrue := func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
@@ -1375,7 +1396,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
 				config.PauseConsumerOffsetSync = true
 				config.DetectUnroutedProducersDuration = time.Millisecond
-				config.InitialCrYAML = validCR
+				config.GatewayYAML = validCR
 				originalCL := orch.actions.clusterLinkService
 				orch.actions.clusterLinkService = &mockClusterLinkService{
 					listMirrorTopicsFn:    originalCL.ListMirrorTopics,
@@ -1404,7 +1425,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 				// Detection disabled: verify_fence is an immediate success, so
 				// the promote failure rests the FSM at fence_verified.
 				config.DetectUnroutedProducersDuration = 0
-				config.InitialCrYAML = validCR
+				config.GatewayYAML = validCR
 				originalCL := orch.actions.clusterLinkService
 				orch.actions.clusterLinkService = &mockClusterLinkService{
 					listMirrorTopicsFn: originalCL.ListMirrorTopics,
@@ -1439,7 +1460,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			configure: func(orch *MigrationOrchestrator, config *MigrationConfig) {
 				config.PauseConsumerOffsetSync = true
 				config.DetectUnroutedProducersDuration = 0
-				config.InitialCrYAML = validCR
+				config.GatewayYAML = validCR
 				originalCL := orch.actions.clusterLinkService
 				orch.actions.clusterLinkService = &mockClusterLinkService{
 					listMirrorTopicsFn:    originalCL.ListMirrorTopics,
@@ -1460,7 +1481,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil, tc.overrides)
 			tc.configure(orch, config)
 
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 			require.Error(t, err)
 
 			// The FSM rests in the expected urgent state, in memory (the value
@@ -1509,7 +1530,7 @@ func TestOrchestrator_Execute_NoOptIn_NeverTouchesClusterLinkConfig(t *testing.T
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls),
@@ -1545,7 +1566,7 @@ func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *tes
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.NoError(t, err)
 
 	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls), "no second pause")
@@ -1583,7 +1604,7 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 	orch, config, _ := newHappyPathOrchestrator(t, StateLagsOk, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 	config.ClusterLinkConfigs = map[string]string{
 		"consumer.offset.sync.enable":   "true",
 		"consumer.offset.group.filters": `{"groups":["SENSITIVE-GROUP-FILTER"]}`,
@@ -1613,7 +1634,7 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 	var stdout string
 	stderrOut := captureStderr(t, func() {
 		stdout = captureStdout(t, func() {
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "super-secret-value"})
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "super-secret-value"}, nil)
 			require.Error(t, err)
 		})
 	})
@@ -1633,7 +1654,7 @@ func TestOrchestrator_Execute_UnknownState_Fails(t *testing.T) {
 	// and printing "Migration complete!" is the failure mode this guards.
 	orch, config, _ := newHappyPathOrchestrator(t, "bogus_state", nil)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err, "an unrecognized persisted state must not execute as a silent no-op")
 	assert.Contains(t, err.Error(), "bogus_state")
 	assert.Equal(t, "bogus_state", config.CurrentState,
@@ -1649,7 +1670,7 @@ func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenceVerified, nil)
 	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.InitialCrYAML = []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n")
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// Rogue producer: source offsets keep increasing on every call
 	orch.actions.sourceOffset = &mockOffsetProvider{
@@ -1664,7 +1685,7 @@ func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err,
 		"resume from fence_verified must re-run detection and catch the rogue producer")
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
@@ -1701,7 +1722,7 @@ func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
 		},
 	}
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
 		"a fetch failure must not be classified as a detection")
@@ -1724,7 +1745,7 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil, overrides)
 
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 
 	// The verify_fence transition succeeded first (detection disabled → no-op),
