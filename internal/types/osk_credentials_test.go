@@ -1446,6 +1446,35 @@ func TestOSKCredentials_Validate_UnknownConnectMetricNameKey(t *testing.T) {
 	assert.NotContains(t, joined, "acme_connect_task_count") // never echo override values
 }
 
+func TestOSKCredentials_Validate_UnknownConnectMBeanOverrideKey(t *testing.T) {
+	creds := &OSKCredentials{Clusters: []OSKClusterAuth{{
+		ID:               "prod-connect-01",
+		BootstrapServers: []string{"broker1:9092"},
+		AuthMethod:       AuthMethodConfig{SASLScram: &SASLScramConfig{Use: true, Username: "u", Password: "p"}},
+		Jolokia: &JolokiaConfig{
+			Endpoints: []string{"http://connect-worker:8778/jolokia"},
+			ConnectMBeanOverrides: map[string]string{
+				"task-count":     "acme.connect:type=connect-worker-metrics", // valid
+				"Task-Count":     "typo_here",                                // invalid: wrong case
+				"not-a-real-one": "whatever",                                 // invalid: unknown
+			},
+		},
+	}}}
+
+	valid, errs := creds.Validate()
+	assert.False(t, valid)
+	require.NotEmpty(t, errs)
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	assert.Contains(t, joined, "connect_mbean_overrides")
+	assert.Contains(t, joined, "Task-Count")
+	assert.Contains(t, joined, "not-a-real-one")
+	assert.Contains(t, joined, "task-count")                                  // a valid label is listed for self-correction
+	assert.NotContains(t, joined, "acme.connect:type=connect-worker-metrics") // never echo override values
+}
+
 func TestOSKCredentials_Validate_ConnectAndBrokerOverridesValidatedIndependently(t *testing.T) {
 	// A valid broker key AND a valid connect key on the same cluster both pass;
 	// a broker label used under a connect key (and vice versa) is rejected.
@@ -1571,5 +1600,56 @@ func TestOSKCredentials_Validate_PrometheusNegativeTimeout(t *testing.T) {
 	for _, e := range errs {
 		joined += e.Error() + "\n"
 	}
-	assert.Contains(t, joined, "timeout must not be negative")
+	// A negative value is below the minimum, so it is rejected by the floor check.
+	assert.Contains(t, joined, "timeout must be at least 30s")
+}
+
+func TestOSKCredentials_Validate_PrometheusTimeoutBelowMinimum(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL:     "http://prometheus:9090",
+					Timeout: 10 * time.Second, // below the 30s floor
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.False(t, valid)
+	require.NotEmpty(t, errs)
+
+	joined := ""
+	for _, e := range errs {
+		joined += e.Error() + "\n"
+	}
+	assert.Contains(t, joined, "timeout must be at least 30s")
+	assert.Contains(t, joined, "got 10s")
+}
+
+func TestOSKCredentials_Validate_PrometheusTimeoutAtMinimumIsValid(t *testing.T) {
+	creds := &OSKCredentials{
+		Clusters: []OSKClusterAuth{
+			{
+				ID:               "prod-kafka-01",
+				BootstrapServers: []string{"broker1:9092"},
+				AuthMethod: AuthMethodConfig{
+					UnauthenticatedPlaintext: &UnauthenticatedPlaintextConfig{Use: true},
+				},
+				Prometheus: &PrometheusConfig{
+					URL:     "http://prometheus:9090",
+					Timeout: 30 * time.Second, // exactly the floor
+				},
+			},
+		},
+	}
+
+	valid, errs := creds.Validate()
+	assert.True(t, valid, "a timeout equal to the 30s floor must be valid, got errors: %v", errs)
 }

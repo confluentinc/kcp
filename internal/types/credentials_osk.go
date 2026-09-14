@@ -382,13 +382,22 @@ func validateAuthMethodConfig(authMethod AuthMethodConfig, enabledMethods []Auth
 	return nil
 }
 
+// minPrometheusTimeout is the floor for an explicitly-set prometheus.timeout.
+// It matches the client's built-in default (client.NewPrometheusClient); the two
+// must stay in agreement, since an unset (zero) timeout falls back to that default.
+const minPrometheusTimeout = 30 * time.Second
+
 // validatePrometheusConfig validates Prometheus configuration
 func validatePrometheusConfig(prom *PrometheusConfig) error {
 	if prom.URL == "" {
 		return fmt.Errorf("url is required")
 	}
-	if prom.Timeout < 0 {
-		return fmt.Errorf("timeout must not be negative")
+	// A zero (unset) timeout is valid and falls back to the client's default.
+	// Any explicit value must be at least that default: a shorter timeout is
+	// almost always a mistake and reintroduces the "context deadline exceeded"
+	// failures on large --metrics-range queries that this field exists to avoid.
+	if prom.Timeout != 0 && prom.Timeout < minPrometheusTimeout {
+		return fmt.Errorf("timeout must be at least %s (or omitted to use the %s default), got %s", minPrometheusTimeout, minPrometheusTimeout, prom.Timeout)
 	}
 	if prom.Auth != nil {
 		if prom.Auth.Username == "" {
