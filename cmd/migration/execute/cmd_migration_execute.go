@@ -43,17 +43,18 @@ var (
 
 const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
 
-The migration must already be registered with 'kcp migration init'. Topology comes from
-the state file's snapshot, taken at init; policy and credentials are read FRESH from the
-manifest on every run, so they can be varied between runs.
+On first run, the migration is registered in the state file from the manifest; topology
+is snapshotted at registration and remains immutable. On subsequent runs, the command
+resumes from the last completed FSM step. Policy defaults and credentials are read FRESH
+from the manifest on every run, so they can be varied between runs or overridden with flags.
 
 Each spec.defaultPolicies value can also be overridden for a single run with its flag
 (e.g. --detect-unrouted-producers-duration), without editing the manifest.
 
-If the manifest's topology no longer matches the snapshot, execute stops rather than
-silently reconciling. Before the point of no return the answer is to re-run init; once
-past it — where re-running init would strand the live cutover — execute warns loudly and
-proceeds with the edited spec, since there is no longer a safe alternative.
+If the manifest's topology has changed since registration, execute stops immediately and
+refuses to proceed, at any FSM state — topology cannot be changed once registered. To
+migrate with different topology, use a new metadata.name to create a fresh registration
+in the same state file.
 
 If a run is interrupted at any step, re-running 'kcp migration execute' resumes from the
 last completed step.`

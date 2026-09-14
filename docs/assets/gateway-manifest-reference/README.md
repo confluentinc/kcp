@@ -17,12 +17,7 @@ This manifest drives an imperative, resumable state machine:
   - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. No migration state file is created or touched, and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
 - **`lag-check`** polls mirror-topic replication lag independently of `execute`.
 
-**Drift between the manifest and the first-run registration** is handled
-automatically, gated on how far the migration has progressed — there is no flag
-to force it through:
-
-- Before the point of no return, any difference is a hard stop: re-run `execute` with an updated manifest to drift-check and adopt the new spec (only at `StateUninitialized`, where no FSM transition has yet fired).
-- Past the point of no return, re-running `execute` with a changed manifest would lose FSM position and potentially strand a live cutover, so instead it proceeds on the edited spec with a loud warning.
+**Drift between the manifest and the first-run registration** is forbidden outright: any manifest change to an already-registered migration refuses `execute` unconditionally, at any FSM state, with no override. The topology registered at first run must remain stable. To migrate with a different topology, use a new `metadata.name` to create a fresh registration in the same state file.
 
 `spec.defaultPolicies` is the one section re-read fresh on **every** `execute`
 run rather than frozen at registration — each field is a default that a matching
