@@ -322,6 +322,12 @@ type KafkaAdminClient struct {
 	saramaConfig    *sarama.Config
 	resourceAcls    map[string]sarama.ResourceAcls
 	brokerAddresses []string
+
+	// ownsClient is false when the admin was built from a client dialed and
+	// owned elsewhere (NewKafkaAdminFromClient), so Close() must not close that
+	// shared client. It is true for admins that dialed their own connection
+	// (NewKafkaAdmin), which do own and close it.
+	ownsClient bool
 }
 
 /*
@@ -501,6 +507,12 @@ func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
 }
 
 func (k *KafkaAdminClient) Close() error {
+	// A from-client admin does not own the underlying sarama.Client (its
+	// lifetime belongs to whoever dialed it — e.g. the offset providers), so
+	// closing here would pull the connection out from under that owner.
+	if !k.ownsClient {
+		return nil
+	}
 	return k.admin.Close()
 }
 
@@ -612,5 +624,30 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		saramaConfig:    saramaConfig,
 		resourceAcls:    make(map[string]sarama.ResourceAcls),
 		brokerAddresses: brokerAddresses,
+		ownsClient:      true,
+	}, nil
+}
+
+// NewKafkaAdminFromClient wraps an already-dialed sarama.Client as a KafkaAdmin,
+// reusing its open broker connections instead of dialing the cluster again.
+//
+// The returned admin does NOT own the client: its Close() is a no-op and the
+// caller that created the client stays responsible for closing it. This lets a
+// topic lister be backed by a client already dialed for offset fetching, so
+// execute-tbm connects to each cluster once instead of twice.
+//
+// saramaConfig is taken from the client so the config-read and cluster-metadata
+// paths (which consult k.saramaConfig for the protocol version and broker dial
+// settings) behave exactly as they would for a natively dialed admin.
+func NewKafkaAdminFromClient(c sarama.Client) (KafkaAdmin, error) {
+	admin, err := sarama.NewClusterAdminFromClient(c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin from existing client: %w", err)
+	}
+	return &KafkaAdminClient{
+		admin:        admin,
+		saramaConfig: c.Config(),
+		resourceAcls: make(map[string]sarama.ResourceAcls),
+		ownsClient:   false,
 	}, nil
 }

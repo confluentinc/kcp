@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/IBM/sarama"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
@@ -62,6 +63,13 @@ type reconcileOptions struct {
 	gateway GatewayConfigSource    // nil ⇒ pull the live CR from spec.gateway
 	secrets SecretExistenceChecker // nil ⇒ built from the manifest's spec.gateway.namespace + kubeconfig
 	out     io.Writer              // nil ⇒ os.Stdout
+
+	// srcClient/tgtClient are already-dialed Kafka connections the caller owns
+	// (e.g. execute-tbm's offset providers). When set, the topic listers are
+	// backed off them instead of dialing the clusters again — nil ⇒ dial fresh
+	// from the manifest. See WithSharedClients.
+	srcClient sarama.Client
+	tgtClient sarama.Client
 }
 
 // Option customises Reconcile. Production and the state machine pass none.
@@ -85,6 +93,19 @@ func WithSecretExistenceChecker(s SecretExistenceChecker) Option {
 // capture, quiet, or relocate it.
 func WithOutput(w io.Writer) Option {
 	return func(o *reconcileOptions) { o.out = w }
+}
+
+// WithSharedClients backs the source and target topic listers off Kafka
+// connections the caller has already dialed and owns, so Reconcile does not dial
+// the same clusters a second time. execute-tbm passes the clients behind its
+// offset providers here, halving its startup broker connections. A nil client
+// falls back to dialing that side fresh from the manifest. The caller retains
+// ownership: Reconcile never closes a shared client.
+func WithSharedClients(src, tgt sarama.Client) Option {
+	return func(o *reconcileOptions) {
+		o.srcClient = src
+		o.tgtClient = tgt
+	}
 }
 
 // Reconcile is the single in-code entry point: given the parsed manifest, it
@@ -123,13 +144,13 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return nil, err
 	}
 
-	src, srcCloser, err := buildSourceTopicLister(g)
+	src, srcCloser, err := sourceTopicLister(g, o.srcClient)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { _ = srcCloser.Close() }()
 
-	tgt, tgtCloser, err := buildTargetTopicLister(g)
+	tgt, tgtCloser, err := targetTopicLister(g, o.tgtClient)
 	if err != nil {
 		return nil, err
 	}
@@ -281,6 +302,38 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, 
 		Topics:       []string{}, // empty ⇒ all mirrors
 	}
 	return NewClusterLinkStatus(svc, cfg), nil
+}
+
+// sourceTopicLister resolves the source-cluster topic lister for a reconcile
+// run. When sharedClient is non-nil (a connection the caller dialed and owns),
+// the lister is backed off it via a from-client admin so the cluster is not
+// dialed twice; the returned io.Closer is that admin, whose Close is a no-op, so
+// the caller keeps sole ownership. Otherwise a fresh admin is dialed from the
+// manifest and its Close releases the connection.
+func sourceTopicLister(g *manifest.GatewayMigration, sharedClient sarama.Client) (TopicLister, io.Closer, error) {
+	if sharedClient != nil {
+		return topicListerFromClient(sharedClient)
+	}
+	return buildSourceTopicLister(g)
+}
+
+// targetTopicLister mirrors sourceTopicLister for the destination cluster.
+func targetTopicLister(g *manifest.GatewayMigration, sharedClient sarama.Client) (TopicLister, io.Closer, error) {
+	if sharedClient != nil {
+		return topicListerFromClient(sharedClient)
+	}
+	return buildTargetTopicLister(g)
+}
+
+// topicListerFromClient wraps an already-dialed client as a topic lister. The
+// returned io.Closer is the from-client admin, whose Close is a no-op — the
+// caller that dialed the client remains responsible for closing it.
+func topicListerFromClient(c sarama.Client) (TopicLister, io.Closer, error) {
+	admin, err := client.NewKafkaAdminFromClient(c)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reusing shared Kafka client for topic listing: %w", err)
+	}
+	return NewKafkaTopicLister(admin), admin, nil
 }
 
 // buildSourceTopicLister builds the source-cluster topic lister from the manifest
