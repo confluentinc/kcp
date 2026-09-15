@@ -121,6 +121,14 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
+	// Persist the resolved route mode, mirroring AAO's Initialize exactly.
+	// The unified `execute` dispatcher reads config.Mode on every resume (it
+	// re-runs migplan.Reconcile only while still StateUninitialized), so a
+	// dynamic migration interrupted after Initialize MUST carry Mode:"dynamic"
+	// forward — otherwise the next run's `switch mode` falls through to the
+	// static/AAO branch and drives the wrong executor. See
+	// cmd/migration/execute's runMigrationExecute.
+	config.Mode = res.Mode
 
 	a.reporter.success("TBM migration initialized (%d topic(s) in plan)", len(res.Topics))
 	return nil

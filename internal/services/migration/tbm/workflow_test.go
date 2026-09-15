@@ -111,6 +111,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 		FenceYAML:      "rules:\n  fenced: true\n",
 		SwitchoverYAML: "rules:\n  switched: true\n",
 		GatewayYAML:    "apiVersion: v1\nkind: Gateway\n",
+		Mode:           "dynamic",
 	}
 
 	require.NoError(t, actions.Initialize(context.Background(), config, res))
@@ -120,6 +121,11 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
+	// Mode must be persisted, mirroring AAO's Initialize: the unified `execute`
+	// dispatcher reads config.Mode on resume, so an interrupted dynamic
+	// migration that dropped Mode here would be re-dispatched to the static
+	// (AAO) branch on its next run.
+	assert.Equal(t, res.Mode, config.Mode)
 }
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {

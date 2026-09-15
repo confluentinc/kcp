@@ -12,7 +12,9 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -309,6 +311,74 @@ func TestExecute_StaticModeSetup_DoesNotReachSwitchedWithTBMStubs(t *testing.T) 
 	cfg := persistedConfig(t, f)
 	assert.NotEqual(t, migration.StateSwitched, cfg.CurrentState,
 		"the static branch must not use the TBM stubs, so it cannot reach switched here")
+}
+
+// TestExecute_DynamicMode_InitializePersistsMode_ResumeDispatchesToTBM is the
+// two-invocation regression guard for the plan defect where TBMActions.Initialize
+// never wrote config.Mode: a dynamic migration interrupted after Initialize
+// persisted Mode:"" and the NEXT run's dispatch (mode := config.Mode) fell
+// through to the static/AAO branch, silently driving the wrong executor. Unlike
+// this file's other tests it does NOT pre-set Mode on a fixture — run 1 registers
+// a fresh migration and completes a REAL TBMActions.Initialize, which must
+// persist Mode itself; run 2 reads only what run 1 wrote.
+//
+// Run 1 is driven through the orchestrator directly (with the TBM services
+// stubbed) rather than the command, because the command's live migplan.Reconcile
+// cannot run in this process — it dials real Kafka and the live Gateway CR. That
+// call is exactly what runTBMBranch makes in production once reconcile has
+// produced the Result; here we supply that Result directly, standing in for the
+// live reconcile. Nothing pre-sets config.Mode; TBMActions.Initialize must.
+func TestExecute_DynamicMode_InitializePersistsMode_ResumeDispatchesToTBM(t *testing.T) {
+	f := newFixture(t, nil)
+
+	// Run 1: a fresh, unregistered dynamic migration, built exactly as the
+	// command registers a new one (buildFreshMigrationConfig → StateUninitialized,
+	// Mode unset). Drive its real Initialize to completion via the orchestrator.
+	const id = "msk-prod-to-cc-batch-1"
+	g := loadGateway(t, f.manifestPath)
+	kubePath, err := resolveKubeConfigPath(g)
+	require.NoError(t, err)
+	fresh := buildFreshMigrationConfig(g, id, kubePath)
+	require.Empty(t, fresh.Mode, "sanity: a freshly-registered migration carries no Mode")
+	require.Equal(t, migration.StateUninitialized, fresh.CurrentState)
+
+	state := migration.NewMigrationState()
+	state.UpsertMigration(fresh)
+	require.NoError(t, state.WriteToFile(f.stateFile))
+
+	restCreds, err := g.RestCredentials()
+	require.NoError(t, err)
+	actions := tbm.NewTBMActions(zeroLagOffsetProvider{}, zeroLagOffsetProvider{}, stubGatewayServiceImpl{}, stubClusterLinkServiceImpl{})
+	orchestrator := tbm.NewTBMOrchestrator(&fresh, actions, state, f.stateFile)
+	res := &migplan.Result{
+		Route:          "migration-route",
+		Topics:         []string{"t1.order"},
+		FenceYAML:      dynamicFenceYAML,
+		SwitchoverYAML: dynamicSwitchoverYAML,
+		GatewayYAML:    dynamicRouteGatewayYAML,
+		Mode:           "dynamic",
+	}
+	require.NoError(t, orchestrator.Execute(context.Background(), res, 0, 0, restCreds.Authenticator()))
+
+	// Direct regression proof: Initialize itself persisted Mode. Without the fix
+	// this reads "" and the assertion fails here.
+	cfgAfterRun1 := persistedConfig(t, f)
+	require.Equal(t, "dynamic", cfgAfterRun1.Mode,
+		"TBMActions.Initialize must persist config.Mode to the state file")
+	require.Equal(t, migration.StateSwitched, cfgAfterRun1.CurrentState)
+
+	// Run 2: a fresh command invocation resumes from the file run 1 wrote.
+	// CurrentState != StateUninitialized, so the dispatcher never re-runs
+	// reconcile — it reads mode := config.Mode and must route to runTBMBranch.
+	// With the fix (Mode "dynamic") the TBM branch sees no pending work and
+	// returns cleanly WITHOUT dialing anything. Without the fix (Mode ""), the
+	// dispatch falls to the AAO branch, whose executor dials the fixture's
+	// unreachable source cluster and errors — it can never reach this clean
+	// short-circuit. NoError is therefore proof the run routed to the TBM branch.
+	out, err := runExecuteWithTBMDeps(t, stubOffsetProviders, stubGatewayService, stubClusterLinkService,
+		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
+	require.NoError(t, err, "run 2 must route to the TBM branch on the persisted Mode, not the AAO branch")
+	assert.Contains(t, out, "already complete")
 }
 
 // --- Test 2: --promote-batch-size reaches TBMActions.SetPromoteBatchSize ---
