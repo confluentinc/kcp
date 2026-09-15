@@ -28,6 +28,10 @@ var schemaShapes = map[int]string{
 	// v3: restructures self-managed Connect's kafka_admin_client_information.self_managed_connectors
 	// into connect_clusters (a list of Connect REST endpoints, each with its own connectors+metrics).
 	3: "sha256:da1abb1c08daa232d886ff09a3eaf1eed41614b57568937d93ccdf15ba2cdc5a",
+	// v4: added the additive, omitempty consumer_groups field to
+	// kafka_admin_client_information (consumer-group discovery: summary + per-group
+	// details, members, and assigned/consumed topics).
+	4: "sha256:73d14eccc9247792c50fb2d3cc21854c562b2ea8e5310a48a4e42573e03320ec",
 }
 
 // schemaFloor is the first versioned schema.

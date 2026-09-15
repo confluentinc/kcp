@@ -142,6 +142,30 @@ blocks:
             - cd cmd/ui/frontend && yarn install && yarn build && cd -
             - make test-kafka-connect
 
+  - name: 'integration: consumer group scan'
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
+    task:
+      agent:
+        machine:
+          # Runs five Kafka brokers (AK 3.7-4.2) plus a Streams JVM concurrently;
+          # the pipeline default (amd64-1) is memory-tight, so use the larger
+          # machine like the connect-scan / migration blocks. Broker heaps are
+          # also capped in docker-compose.yml.
+          type: s1-prod-ubuntu24-04-amd64-2
+      prologue:
+        commands:
+          # JDK (javac/java) is required to compile + run the Streams app that
+          # forms the streams-type (KIP-1071) group — there is no console tool.
+          - sem-version java 17
+      jobs:
+        - name: 'consumer group scan'
+          commands:
+            - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-consumer-group-scan
+
   - name: 'integration: schema registry scan'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:
