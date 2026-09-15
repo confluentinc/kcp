@@ -57,6 +57,16 @@ func countOffsetRequests(broker *sarama.MockBroker) int {
 	return count
 }
 
+func TestServiceClient(t *testing.T) {
+	// Client() exposes the underlying connection so a caller (execute-tbm) can
+	// back a topic lister off the same dialed client instead of dialing again.
+	_, client, _ := newMockCluster(t, 1)
+	svc := NewOffsetService(client)
+	if svc.Client() != client {
+		t.Error("Client() must return the exact client the service was built with")
+	}
+}
+
 func TestGetMany_OffsetsMatchPerTopicGet(t *testing.T) {
 	_, client, topics := newMockCluster(t, 25)
 	svc := NewOffsetService(client)

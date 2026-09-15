@@ -39,6 +39,14 @@ func (t *Service) Close() error {
 	return t.client.Close()
 }
 
+// Client returns the underlying Kafka client, so a caller can back another
+// service (e.g. a topic lister) off the same already-dialed connection rather
+// than dialing the cluster again. The returned client's lifetime is still owned
+// by this Service — the caller must not close it.
+func (t *Service) Client() sarama.Client {
+	return t.client
+}
+
 // Get fetches the log end offset (LEO) for every partition of a topic. It
 // is a single-topic wrapper over GetMany kept for the package tests and the
 // offsetbench loop-vs-batch contrast; production sweeps call GetMany, which

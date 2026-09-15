@@ -297,7 +297,14 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	// result is only consumed by onInitialize (skipped via canTransition once
 	// initialize has already completed), so a resume pays for a live reconcile
 	// whose output then goes unused. Revisit if that cost matters in practice.
-	res, err := reconcile(cmd.Context(), g, migplan.WithOutput(cmd.OutOrStdout()))
+	// Reuse the offset providers' already-dialed source/target connections for
+	// the reconcile engine's topic listing, instead of dialing each cluster a
+	// second time. A provider that surfaces no client (a test stub) yields nil,
+	// and reconcile falls back to dialing its own — see migplan.WithSharedClients.
+	res, err := reconcile(cmd.Context(), g,
+		migplan.WithOutput(cmd.OutOrStdout()),
+		migplan.WithSharedClients(offsetClient(sourceOffset), offsetClient(destinationOffset)),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 	}
@@ -387,6 +394,18 @@ func buildOffsetProviders(g *manifest.GatewayMigration) (offset.Provider, offset
 		return errors.Join(srcClient.Close(), destClient.Close())
 	}
 	return offset.NewOffsetService(srcClient), offset.NewOffsetService(destClient), closeFn, nil
+}
+
+// offsetClient returns the sarama.Client backing an offset provider so the
+// reconcile step can reuse it for topic listing, halving execute-tbm's startup
+// broker connections to the source and destination clusters. It returns nil for
+// any provider that does not expose one (e.g. a test stub), leaving reconcile to
+// dial its own connections.
+func offsetClient(p offset.Provider) sarama.Client {
+	if s, ok := p.(*offset.Service); ok {
+		return s.Client()
+	}
+	return nil
 }
 
 // newKafkaClientForConn resolves conn's auth option and dials it as a
