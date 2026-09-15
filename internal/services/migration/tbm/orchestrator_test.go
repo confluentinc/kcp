@@ -9,21 +9,21 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *TBMConfig, string) {
+func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *migration.MigrationConfig, string) {
 	t.Helper()
 
-	config := &TBMConfig{
+	config := &migration.MigrationConfig{
 		MigrationId:   "test-tbm-1",
 		CurrentState:  initialState,
-		ManifestHash:  "deadbeef",
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
 	}
-	state := NewTBMState()
+	state := migration.NewMigrationState()
 	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 	gw := &mockGatewayService{
 		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
@@ -62,7 +62,7 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 	assert.Equal(t, StateSwitched, config.CurrentState)
 	assert.False(t, orchestrator.HasPendingWork())
 
-	loaded, err := NewTBMStateFromFile(stateFile)
+	loaded, err := migration.NewMigrationStateFromFile(stateFile)
 	require.NoError(t, err)
 	persisted, err := loaded.GetMigrationById("test-tbm-1")
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
 	assert.Equal(t, res.Route, config.Route)
 
-	loaded, err := NewTBMStateFromFile(stateFile)
+	loaded, err := migration.NewMigrationStateFromFile(stateFile)
 	require.NoError(t, err)
 	persisted, err := loaded.GetMigrationById("test-tbm-1")
 	require.NoError(t, err)
@@ -193,13 +193,13 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 			return map[int32]int64{0: 1500}, nil // rogue producer during the window
 		},
 	}
-	config := &TBMConfig{
+	config := &migration.MigrationConfig{
 		MigrationId:   "test-tbm-rollback",
 		CurrentState:  StateUninitialized,
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
 	}
-	state := NewTBMState()
+	state := migration.NewMigrationState()
 	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
 	orchestrator := NewTBMOrchestrator(config, actions, state, stateFile)
@@ -231,7 +231,7 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	_, hasRouting := rules["routing"]
 	assert.True(t, hasRouting, "the unfenced route must still have the routing block testGatewayYAML always had")
 
-	loaded, err := NewTBMStateFromFile(stateFile)
+	loaded, err := migration.NewMigrationStateFromFile(stateFile)
 	require.NoError(t, err)
 	persisted, err := loaded.GetMigrationById("test-tbm-rollback")
 	require.NoError(t, err)
@@ -248,18 +248,18 @@ func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {
 }
 
 func TestTBMOrchestrator_Bootstrap_ExpiresFenceVerificationOnResume(t *testing.T) {
-	config := &TBMConfig{MigrationId: "t1", CurrentState: StateFenceVerified, K8sNamespace: "confluent", InitialCrName: "gw"}
+	config := &migration.MigrationConfig{MigrationId: "t1", CurrentState: StateFenceVerified, K8sNamespace: "confluent", InitialCrName: "gw"}
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	state := NewTBMState()
+	state := migration.NewMigrationState()
 	NewTBMOrchestrator(config, actions, state, filepath.Join(t.TempDir(), "s.json"))
 
 	assert.Equal(t, StateFenced, config.CurrentState, "fence_verified is a point-in-time attestation and must not survive a restart")
 }
 
 func TestTBMOrchestrator_Bootstrap_ExpiresFencePostureOnResume(t *testing.T) {
-	config := &TBMConfig{MigrationId: "t1", CurrentState: StateFenced, K8sNamespace: "confluent", InitialCrName: "gw"}
+	config := &migration.MigrationConfig{MigrationId: "t1", CurrentState: StateFenced, K8sNamespace: "confluent", InitialCrName: "gw"}
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	state := NewTBMState()
+	state := migration.NewMigrationState()
 	NewTBMOrchestrator(config, actions, state, filepath.Join(t.TempDir(), "s.json"))
 
 	assert.Equal(t, StateInitialized, config.CurrentState, "a resume at fenced must demote to initialized so it re-checks lag for real (not just lags_ok) before re-asserting a fence posture that may not still hold")

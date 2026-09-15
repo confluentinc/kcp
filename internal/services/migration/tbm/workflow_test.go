@@ -10,6 +10,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -103,7 +104,7 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
+	config := &migration.MigrationConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 	res := &migplan.Result{
 		Route:          "migration-route",
 		Topics:         []string{"t1.order"},
@@ -123,7 +124,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
+	config := &migration.MigrationConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
 	err := actions.Initialize(context.Background(), config, res)
@@ -147,7 +148,7 @@ func TestTBMActions_WaitForLags_ImmediatelyBelowThreshold(t *testing.T) {
 	}
 
 	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"topic-1", "topic-2"}}
+	config := &migration.MigrationConfig{Topics: []string{"topic-1", "topic-2"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err)
@@ -162,7 +163,7 @@ func TestTBMActions_WaitForLags_NoTopics(t *testing.T) {
 	}
 
 	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{}}
+	config := &migration.MigrationConfig{Topics: []string{}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err)
@@ -178,7 +179,7 @@ func TestTBMActions_WaitForLags_ContextCancelled(t *testing.T) {
 	}
 
 	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"topic-1"}}
+	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel
@@ -197,7 +198,7 @@ func TestTBMActions_WaitForLags_DestinationAhead(t *testing.T) {
 	}
 
 	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"topic-1"}}
+	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err, "negative lag (destination ahead) should be treated as 0 and pass threshold")
@@ -223,7 +224,7 @@ func TestTBMActions_WaitForLags_ToleratesTransientSweepFailures(t *testing.T) {
 
 	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
-	config := &TBMConfig{Topics: []string{"topic-1"}}
+	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err, "two transient sweep failures must be ridden out")
@@ -246,7 +247,7 @@ func TestTBMActions_WaitForLags_AbortsAfterMaxConsecutiveSweepFailures(t *testin
 
 	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
-	config := &TBMConfig{Topics: []string{"topic-1"}}
+	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.Error(t, err)
@@ -281,15 +282,15 @@ func TestTBMActions_WaitForLags_SweepFailureCounterResetsOnSuccess(t *testing.T)
 
 	actions := NewTBMActions(sourceOffset, destOffset, &mockGatewayService{}, &mockClusterLinkService{})
 	actions.lagPollInterval = time.Millisecond
-	config := &TBMConfig{Topics: []string{"topic-1"}}
+	config := &migration.MigrationConfig{Topics: []string{"topic-1"}}
 
 	err := actions.WaitForLags(context.Background(), config, 10)
 	require.NoError(t, err, "four non-consecutive failures must not abort")
 	assert.Equal(t, int32(6), calls.Load())
 }
 
-func promoteTestConfig(topics []string) *TBMConfig {
-	return &TBMConfig{
+func promoteTestConfig(topics []string) *migration.MigrationConfig {
+	return &migration.MigrationConfig{
 		MigrationId:         "tbm-promote-1",
 		CurrentState:        StateFenceVerified,
 		Topics:              topics,
@@ -533,7 +534,7 @@ func TestTBMActions_VerifyFence_DetectionDisabled_SkipsCheck(t *testing.T) {
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 0)
 	require.NoError(t, err)
@@ -544,7 +545,7 @@ func TestTBMActions_VerifyFence_StableOffsets_Passes(t *testing.T) {
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 	require.NoError(t, err)
@@ -562,7 +563,7 @@ func TestTBMActions_VerifyFence_RisingOffset_ReturnsErrUnroutedProducers(t *test
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -584,7 +585,7 @@ func TestTBMActions_VerifyFence_PartitionAbsentFromFirstSnapshot_TreatedAsZeroBa
 		},
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -598,7 +599,7 @@ func TestTBMActions_VerifyFence_FirstSnapshotFetchError_PropagatesWithoutErrUnro
 		getFn: func(topic string) (map[int32]int64, error) { return nil, fmt.Errorf("kafka: connection refused") },
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
 
 	err := actions.VerifyFence(context.Background(), config, 5*time.Millisecond)
 
@@ -612,7 +613,7 @@ func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *te
 		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 1000}, nil },
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &TBMConfig{Topics: []string{"t1.order"}}
+	config := &migration.MigrationConfig{Topics: []string{"t1.order"}}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
