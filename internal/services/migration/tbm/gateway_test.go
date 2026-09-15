@@ -677,4 +677,5 @@ func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
 
 	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
 	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort)
+	assert.Equal(t, gateway.DefaultGatewayConfigPort, config.GatewayConfigPort, "resolveGatewayCapability must settle the default onto config itself, not just pass it to DetectCapability")
 }
