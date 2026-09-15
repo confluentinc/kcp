@@ -31,11 +31,6 @@ func TestNewKafkaAdminFromClient(t *testing.T) {
 		require.NotNil(t, admin)
 	})
 
-	// The whole point of the from-client path: the topic lister must reuse the
-	// offset client's connections without ever closing them — the offset side
-	// owns the client's lifetime. If Close() closed the shared client, the
-	// offset providers would get a dead client for wait_for_lags/promote after
-	// reconcile returns.
 	t.Run("Close is a no-op and leaves the shared client open", func(t *testing.T) {
 		_, c := testsupport.MockSaramaClient(t)
 
@@ -44,17 +39,11 @@ func TestNewKafkaAdminFromClient(t *testing.T) {
 
 		require.NoError(t, admin.Close())
 		assert.False(t, c.Closed(), "admin.Close() must NOT close the client it was built from")
-
-		// The shared client is still usable after admin.Close().
-		require.NoError(t, c.RefreshMetadata())
+		require.NoError(t, c.RefreshMetadata(), "the shared client is still usable after admin.Close()")
 	})
 
-	// A freshly dialed admin (NewKafkaAdmin) still owns and closes its client —
-	// the no-op behaviour is confined to the from-client path. Unlike the two
-	// subtests above, this exercises NewKafkaAdmin directly (not
-	// NewKafkaAdminFromClient) against its own mock broker, so a regression
-	// that silenced the owning-path Close() would leave the connection open
-	// and this assertion would fail.
+	// The no-op behaviour above is confined to the from-client path; a natively
+	// dialed admin must still own and close its client.
 	t.Run("does not affect NewKafkaAdmin's owning Close", func(t *testing.T) {
 		broker := sarama.NewMockBroker(t, 1)
 		defer broker.Close()
@@ -79,14 +68,10 @@ func TestNewKafkaAdminFromClient(t *testing.T) {
 	})
 }
 
-// A from-client admin must read the cluster id over the shared client's existing
-// broker connection, not dial a fresh one each time — the getClusterIDFromBroker
-// NewBroker().Open() path is the per-cluster ~5s minikube stall this avoids. The
-// mock has no ClusterID setter, so the call itself returns an error; the
-// behaviour under test is connection reuse: once the connection is warm, a
-// further cluster-id read opens no new connection (the old fresh-dial path would
-// handshake on every call). Measured on clusterIDFromClient directly to exclude
-// DescribeCluster's own one-time controller open.
+// A from-client admin must read the cluster id over the shared client's
+// existing connection, not dial a fresh one each call. The mock has no
+// ClusterID setter, so clusterIDFromClient itself errors; what's under test
+// is that a second call opens no new broker connection.
 func TestFromClientAdminReusesConnectionForClusterID(t *testing.T) {
 	broker, c := testsupport.MockSaramaClient(t)
 

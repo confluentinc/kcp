@@ -65,12 +65,8 @@ type reconcileOptions struct {
 	secrets SecretExistenceChecker // nil ⇒ built from the manifest's spec.gateway.namespace + kubeconfig
 	out     io.Writer              // nil ⇒ os.Stdout
 
-	// srcClient/tgtClient are already-dialed Kafka connections the caller owns
-	// (e.g. execute-tbm's offset providers). When set, the topic listers are
-	// backed off them instead of dialing the clusters again — nil ⇒ dial fresh
-	// from the manifest. See WithSharedClients.
-	srcClient sarama.Client
-	tgtClient sarama.Client
+	srcClient sarama.Client // non-nil ⇒ back the source topic lister off it, see WithSharedClients
+	tgtClient sarama.Client // same, for the target
 }
 
 // Option customises Reconcile. Production and the state machine pass none.
@@ -97,11 +93,9 @@ func WithOutput(w io.Writer) Option {
 }
 
 // WithSharedClients backs the source and target topic listers off Kafka
-// connections the caller has already dialed and owns, so Reconcile does not dial
-// the same clusters a second time. execute-tbm passes the clients behind its
-// offset providers here, halving its startup broker connections. A nil client
-// falls back to dialing that side fresh from the manifest. The caller retains
-// ownership: Reconcile never closes a shared client.
+// connections the caller has already dialed and owns, so Reconcile does not
+// dial the same clusters a second time. A nil client falls back to dialing
+// that side fresh from the manifest. Reconcile never closes a shared client.
 func WithSharedClients(src, tgt sarama.Client) Option {
 	return func(o *reconcileOptions) {
 		o.srcClient = src
@@ -145,10 +139,7 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return nil, err
 	}
 
-	// Source and target are independent clusters, so resolve their topic
-	// listers concurrently: when both fall back to a fresh manifest dial (every
-	// caller except execute-tbm's non-dry-run path), this costs the slower of
-	// the two dials rather than their sum.
+	// Independent clusters, so resolve both topic listers concurrently.
 	var src, tgt TopicLister
 	var srcCloser, tgtCloser io.Closer
 	var eg errgroup.Group
@@ -328,12 +319,8 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, 
 	return NewClusterLinkStatus(svc, cfg), nil
 }
 
-// resolveTopicLister is the one place that decides shared-client vs. fresh
-// dial: when sharedClient is non-nil (a connection the caller dialed and
-// owns), the lister is backed off it via a from-client admin so the cluster is
-// not dialed twice; the returned io.Closer is that admin, whose Close is a
-// no-op, so the caller keeps sole ownership. Otherwise buildFresh dials a new
-// admin from the manifest and its Close releases the connection.
+// resolveTopicLister backs the lister off sharedClient when non-nil, else
+// dials fresh via buildFresh.
 func resolveTopicLister(sharedClient sarama.Client, buildFresh func() (TopicLister, io.Closer, error)) (TopicLister, io.Closer, error) {
 	if sharedClient != nil {
 		return topicListerFromClient(sharedClient)

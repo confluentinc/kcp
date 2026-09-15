@@ -93,10 +93,8 @@ func TestClientOf(t *testing.T) {
 
 	t.Run("returns nil for a typed-nil *Service instead of panicking", func(t *testing.T) {
 		var svc *Service
-		// svc is nil, but boxing it into the Provider interface produces a
-		// non-nil interface value wrapping a nil pointer — the type assertion
-		// inside ClientOf succeeds, so the nil check must be explicit or
-		// Client()'s field access would panic.
+		// Boxing svc into the Provider interface makes the type assertion
+		// inside ClientOf succeed despite svc being nil.
 		if ClientOf(svc) != nil {
 			t.Error("ClientOf must return nil for a typed-nil *Service, not panic")
 		}

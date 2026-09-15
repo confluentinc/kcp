@@ -19,9 +19,6 @@ func TestSourceTopicListerSharesClient(t *testing.T) {
 	require.NotNil(t, lister)
 	require.NotNil(t, closer)
 
-	// Reconcile defers closer.Close(); for a shared client that must be a no-op
-	// so the offset side (which owns the client) keeps a live connection for
-	// wait_for_lags/promote after reconcile returns.
 	require.NoError(t, closer.Close())
 	assert.False(t, c.Closed(), "sharing a client must not let the lister close it")
 }
@@ -38,10 +35,8 @@ func TestTargetTopicListerSharesClient(t *testing.T) {
 	assert.False(t, c.Closed(), "sharing a client must not let the lister close it")
 }
 
-// The two tests above cover only construction, Close()-as-a-no-op, and
-// connection reuse. This proves the actual data path: a topic lister backed
-// by a from-client admin must still return the cluster's real topics, not
-// just wrap the shared client without error.
+// Proves the data path, not just construction: a topic lister backed by a
+// from-client admin must return the cluster's real topics.
 func TestSharedClientTopicListerListsRealTopics(t *testing.T) {
 	broker := sarama.NewMockBroker(t, 1)
 	defer broker.Close()

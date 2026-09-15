@@ -241,11 +241,8 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// carry it straight from the flag onto the opts.
 	opts.RunReportPath = runReport
 
-	// Dial the source/destination offset connections wait_for_lags needs. This
-	// runs on every invocation (mirroring execute-tbm's buildOffsetProviders),
-	// so the connections can be reused below by migplan.Reconcile (via
-	// WithSharedClients) instead of dialing each cluster a second time when
-	// resuming a migration still at StateUninitialized.
+	// Dialed here, ahead of the state-gated Reconcile call below, so Reconcile
+	// can reuse these connections instead of dialing each cluster twice.
 	sourceOffset, destinationOffset, err := buildOffsetProviders(opts)
 	if err != nil {
 		return fmt.Errorf("failed to connect to source/destination clusters: %w", err)
@@ -275,12 +272,9 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	return NewMigrationExecutor(opts, sourceOffset, destinationOffset).Run()
 }
 
-// buildOffsetProviders dials the source and destination clusters described by
-// opts (already resolved by buildExecutorOpts), for wait_for_lags. Dialing
-// here — in the command layer, before the state-gated migplan.Reconcile call
-// above — lets Reconcile reuse these same connections via
-// migplan.WithSharedClients instead of dialing each cluster a second time on
-// a migration's first run. Mirrors execute-tbm's buildOffsetProviders.
+// buildOffsetProviders dials the source and destination clusters wait_for_lags
+// needs, from opts already resolved by buildExecutorOpts. Mirrors
+// execute-tbm's buildOffsetProviders.
 func buildOffsetProviders(opts MigrationExecutorOpts) (*offset.Service, *offset.Service, error) {
 	sourceOffset, err := createSourceOffset(opts)
 	if err != nil {

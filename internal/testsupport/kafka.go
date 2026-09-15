@@ -9,10 +9,7 @@ import (
 
 // MockSaramaClient starts a MockBroker acting as controller and returns it
 // alongside a real sarama.Client dialed against it, so a shared-client code
-// path can be exercised without a live cluster. Both the client and the
-// broker are closed on cleanup. Extracted from three near-identical copies
-// across the migration/topic-lister/admin test suites (execute-tbm,
-// migplan, the from-client Kafka admin).
+// path can be exercised without a live cluster. Both are closed on cleanup.
 func MockSaramaClient(t *testing.T) (*sarama.MockBroker, sarama.Client) {
 	t.Helper()
 	broker := sarama.NewMockBroker(t, 1)

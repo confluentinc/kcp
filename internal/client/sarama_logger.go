@@ -52,10 +52,9 @@ func (saramaSlogAdapter) Println(v ...any) {
 // the signal this bridge exists to surface. Both point at the same adapter.
 //
 // The install is process-global by sarama's design, so it captures dials
-// originating in every package that uses sarama. Idempotent via sync.Once:
-// sarama.Logger/DebugLogger are plain, unsynchronized package vars, so a
-// second concurrent call (e.g. a test driving cmd_root's PersistentPreRun
-// more than once) must not race the first call's writes.
+// originating in every package that uses sarama. Idempotent via sync.Once,
+// since sarama.Logger/DebugLogger are plain, unsynchronized package vars and
+// a second concurrent call must not race the first call's writes.
 var installSaramaLoggingOnce sync.Once
 
 func InstallSaramaLogging() {

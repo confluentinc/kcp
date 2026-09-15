@@ -40,21 +40,15 @@ func (t *Service) Close() error {
 }
 
 // Client returns the underlying Kafka client, so a caller can back another
-// service (e.g. a topic lister) off the same already-dialed connection rather
-// than dialing the cluster again. The returned client's lifetime is still owned
-// by this Service — the caller must not close it.
+// service off the same already-dialed connection. Still owned by this
+// Service — the caller must not close it.
 func (t *Service) Client() sarama.Client {
 	return t.client
 }
 
-// ClientOf returns the sarama.Client backing a Provider, so a caller can back
-// a second service (e.g. a topic lister) off the same already-dialed
-// connection instead of dialing the cluster again. It returns nil for any
-// Provider that is not a *Service — including a nil *Service, which would
-// otherwise be a typed-nil interface value that still satisfies the type
-// assertion and would panic on the field access inside Client() — or any
-// future Provider implementation that exposes no client, leaving the caller
-// to fall back to dialing its own connection.
+// ClientOf returns the sarama.Client backing a Provider, or nil for any
+// Provider that isn't a *Service (including a typed-nil one, which would
+// otherwise panic on the field access inside Client()).
 func ClientOf(p Provider) sarama.Client {
 	s, ok := p.(*Service)
 	if !ok || s == nil {

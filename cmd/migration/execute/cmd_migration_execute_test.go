@@ -964,27 +964,17 @@ func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 
 // --- StateUninitialized resume triggers a live migplan.Reconcile ---
 //
-// The source/destination offset connections are now dialed BEFORE the
-// state-gated migplan.Reconcile call (so Reconcile can reuse them via
-// WithSharedClients instead of dialing each cluster a second time), which
-// means both a StateUninitialized and a past-StateUninitialized run fail at
-// that SAME early dial step against an unreachable manifest broker — dial
-// failure no longer distinguishes the two cases. TestExecute_ResumeFrom
-// UninitializedCallsReconcile therefore points the manifest at a real local
-// mock broker so the dial succeeds and the run reaches Reconcile's own live
-// gateway pull (which fails deterministically: the fixture's kubeconfig path
-// does not exist), surfacing runMigrationExecute's "failed to produce the
-// reconcile plan" wrap. TestExecute_ResumeFromInitialized_NeverCallsReconcile
-// keeps the unreachable manifest broker (no live cluster is needed once
-// Reconcile is skipped) and proves the run fails at the dial step itself,
-// never reaching a "reconcile plan" wrap.
+// Offset connections now dial BEFORE the state-gated Reconcile call, so both
+// states below fail at that same early dial step against the manifest's
+// unreachable brokers unless the dial is made to succeed. The two tests
+// distinguish "reached Reconcile" from "never called it" by whether the
+// error carries Reconcile's "failed to produce the reconcile plan" wrap.
 
 // TestExecute_ResumeFromUninitialized_CallsReconcile proves a migration still
 // at StateUninitialized (a deferred --skip-validate init completing here)
 // reaches migplan.Reconcile: a local mock broker lets both offset dials
 // succeed, so the run reaches Reconcile's live gateway pull, which fails
-// immediately and deterministically against the fixture's nonexistent
-// kubeconfig path, surfacing through runMigrationExecute's own wrap.
+// deterministically against the fixture's nonexistent kubeconfig path.
 func TestExecute_ResumeFromUninitialized_CallsReconcile(t *testing.T) {
 	broker, _ := testsupport.MockSaramaClient(t)
 
@@ -1010,10 +1000,9 @@ func TestExecute_ResumeFromUninitialized_CallsReconcile(t *testing.T) {
 
 // TestExecute_ResumeFromInitialized_NeverCallsReconcile confirms a migration
 // already past StateUninitialized never triggers a live migplan.Reconcile
-// call — the state-gated cost this task is specifically designed to avoid.
-// The manifest's brokers are unreachable (no mock broker needed once
-// Reconcile is skipped), so the run fails at the offset dial itself; proof
-// the call was skipped is that the error carries no reconcile-plan wrap.
+// call. No mock broker is needed: the run fails at the offset dial itself,
+// and the error carrying no reconcile-plan wrap is the proof Reconcile was
+// skipped rather than merely tolerant of failure.
 func TestExecute_ResumeFromInitialized_NeverCallsReconcile(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {

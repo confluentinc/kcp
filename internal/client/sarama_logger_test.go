@@ -48,8 +48,6 @@ func TestSaramaSlogAdapter(t *testing.T) {
 		assert.NotContains(t, recs[0].Message, "\n")
 	})
 
-	// Security invariant (i): sarama output must never reach the default Warn+
-	// console. All three methods emit at exactly LevelDebug, never >= LevelInfo.
 	t.Run("every method emits at LevelDebug, never at or above LevelInfo", func(t *testing.T) {
 		h := testsupport.WithRecordingSlog(t)
 		a := saramaSlogAdapter{}
@@ -66,9 +64,6 @@ func TestSaramaSlogAdapter(t *testing.T) {
 		}
 	})
 
-	// Security invariant (ii): the adapter forwards verbatim and introduces no
-	// new exposure path — a credential-shaped substring is emitted unchanged in
-	// exactly one record and duplicated to no second sink.
 	t.Run("forwards a credential-shaped substring unchanged, once, at Debug", func(t *testing.T) {
 		h := testsupport.WithRecordingSlog(t)
 
@@ -101,13 +96,10 @@ func TestInstallSaramaLogging(t *testing.T) {
 // line, standalone or inside a require ( ... ) block.
 var saramaRequireLine = regexp.MustCompile(`(?m)^\s*github\.com/IBM/sarama\s+(v\S+)`)
 
-// TestAuditedSaramaVersionMatchesGoMod turns a silent drift into a build
-// failure: auditedSaramaVersion's whole point is "this exact sarama release's
-// Logger/DebugLogger output was checked for credential leakage." A future
-// sarama bump (a CVE fix, a new feature) must not compile and pass every
-// other test while quietly invalidating that guarantee. Reads go.mod directly
-// (rather than runtime/debug.ReadBuildInfo) since a single-package test binary
-// is not guaranteed to embed its full module dependency list.
+// TestAuditedSaramaVersionMatchesGoMod fails the build when a sarama bump
+// silently outdates auditedSaramaVersion's credential-leakage audit. Reads
+// go.mod directly: a single-package test binary isn't guaranteed to embed
+// its full module dependency list (runtime/debug.ReadBuildInfo).
 func TestAuditedSaramaVersionMatchesGoMod(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
 	require.NoError(t, err, "reading the repo's go.mod")

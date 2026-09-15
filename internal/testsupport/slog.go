@@ -9,8 +9,7 @@ import (
 
 // RecordingSlogHandler is a slog.Handler test double that records every
 // slog.Record it is handed, at any level, so a test can assert on what was
-// logged. Extracted from two near-identical copies (internal/client,
-// internal/services/gateway).
+// logged.
 type RecordingSlogHandler struct {
 	mu      sync.Mutex
 	records []slog.Record

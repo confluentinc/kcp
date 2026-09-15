@@ -87,12 +87,8 @@ type MigrationExecutorOpts struct {
 
 type MigrationExecutor struct {
 	opts MigrationExecutorOpts
-	// sourceOffset/destinationOffset are dialed by the command layer — BEFORE
-	// the state-gated migplan.Reconcile call — so Reconcile can reuse the same
-	// connections (via migplan.WithSharedClients) instead of dialing each
-	// cluster a second time on a migration's first run. The executor uses but
-	// does not own them: Run() never closes them, mirroring execute-tbm's own
-	// buildOffsetProviders/offsetClient split.
+	// Dialed by the command layer, not owned here: Run() uses but never
+	// closes them. See buildOffsetProviders in cmd_migration_execute.go.
 	sourceOffset      *offset.Service
 	destinationOffset *offset.Service
 }
@@ -237,11 +233,8 @@ func sourceClusterAuth(opts MigrationExecutorOpts) types.ClusterAuth {
 }
 
 // createSourceOffset dials the source cluster and wraps it as an offset
-// provider. Package-level (not a *MigrationExecutor method) so the command
-// layer can dial it BEFORE building the executor — see buildOffsetProviders
-// in cmd_migration_execute.go, which needs both this and createDestinationOffset's
-// clients open before the state-gated migplan.Reconcile call, so Reconcile can
-// reuse them instead of dialing each cluster a second time.
+// provider. Package-level, not a *MigrationExecutor method, so the command
+// layer's buildOffsetProviders can dial it before the executor exists.
 func createSourceOffset(opts MigrationExecutorOpts) (*offset.Service, error) {
 	authType := opts.AuthType
 	brokerAddresses := strings.Split(opts.SourceBootstrap, ",")

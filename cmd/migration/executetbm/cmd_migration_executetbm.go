@@ -298,10 +298,9 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	// result is only consumed by onInitialize (skipped via canTransition once
 	// initialize has already completed), so a resume pays for a live reconcile
 	// whose output then goes unused. Revisit if that cost matters in practice.
-	// Reuse the offset providers' already-dialed source/target connections for
-	// the reconcile engine's topic listing, instead of dialing each cluster a
-	// second time. A provider that surfaces no client (a test stub) yields nil,
-	// and reconcile falls back to dialing its own — see migplan.WithSharedClients.
+	//
+	// WithSharedClients backs the topic listers off the offset providers'
+	// already-dialed connections instead of dialing each cluster again.
 	res, err := reconcile(cmd.Context(), g,
 		migplan.WithOutput(cmd.OutOrStdout()),
 		migplan.WithSharedClients(offset.ClientOf(sourceOffset), offset.ClientOf(destinationOffset)),
