@@ -1,0 +1,204 @@
+//go:build e2e
+
+package migplan_e2e
+
+import (
+	"context"
+	"net/http"
+	"reflect"
+	"strings"
+	"testing"
+
+	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
+)
+
+// newLiveEngine wires the reconciliation engine to the live source + dest
+// clusters and cluster link, plus the default (rich) gateway-config fixture.
+func newLiveEngine(t *testing.T) *migplan.ReconciliationEngine {
+	return newLiveEngineFor(t, "testdata/gateway.yaml", "migration-route")
+}
+
+// newLiveEngineFor is newLiveEngine parameterised by gateway fixture + route, so
+// tests can drive the same live providers against different gateway shapes.
+func newLiveEngineFor(t *testing.T, gatewayFile, route string) *migplan.ReconciliationEngine {
+	t.Helper()
+	gw := migplan.NewGatewayFile(gatewayFile, route)
+	source := newPlaintextLister(t, sourceBroker)
+	target := newPlaintextLister(t, destBroker)
+
+	svc := clusterlink.NewConfluentCloudService(http.DefaultClient)
+	cfg := clusterlink.Config{
+		RestEndpoint: destRESTEndpoint,
+		ClusterID:    destClusterID,
+		LinkName:     linkName,
+		Topics:       []string{},
+		Auth:         nil,
+	}
+	link := migplan.NewClusterLinkStatus(svc, cfg)
+
+	return migplan.NewReconciliationEngine(gw, source, target, link)
+}
+
+// TestEngineHappyPathLive runs the whole engine end-to-end against the live
+// environment for the three ACTIVE-mirror topics and asserts they are all
+// classified MIGRATABLE with the expected artifacts.
+func TestEngineHappyPathLive(t *testing.T) {
+	eng := newLiveEngine(t)
+	in := reconcile.ReconcileInput{
+		Topics:          []string{"team-a.orders", "team-a.payments", "billing-v2"},
+		Route:           "migration-route",
+		TargetDomain:    "cc",
+		TargetClusterID: destClusterID, // exercises the cluster-identity checks live (must pass)
+	}
+
+	plan, err := eng.Run(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if plan.Report.Refused() {
+		t.Fatalf("expected success, got refusal: preconditions=%+v failFast=%+v",
+			plan.Report.Preconditions, plan.Report.FailFast)
+	}
+	if len(plan.Report.Migratable) != 3 {
+		t.Fatalf("expected 3 migratable, got %d: %+v", len(plan.Report.Migratable), plan.Report.Migratable)
+	}
+	for _, tv := range plan.Report.Migratable {
+		t.Logf("migratable: %s (S=%s M=%s T=%s R=%s)", tv.Topic, tv.S, tv.M, tv.T, tv.R)
+	}
+
+	if plan.Artifacts == nil {
+		t.Fatal("expected non-nil Artifacts")
+	}
+
+	// The plan must carry the gateway CR it was computed against, for the caller's
+	// later drift diff. Here the source is the file fixture, so it equals it.
+	if !strings.Contains(plan.GatewayYAML, "migration-route") {
+		t.Errorf("plan.GatewayYAML should carry the pulled gateway CR, got:\n%s", plan.GatewayYAML)
+	}
+	wantTopics := []string{"billing-v2", "team-a.orders", "team-a.payments"} // sorted
+	if !reflect.DeepEqual(plan.Artifacts.Topics, wantTopics) {
+		t.Errorf("Artifacts.Topics = %v, want %v", plan.Artifacts.Topics, wantTopics)
+	}
+
+	fence := string(plan.Artifacts.FenceRules)
+	switchover := string(plan.Artifacts.SwitchoverRules)
+	t.Logf("fence-rules.yaml:\n%s", fence)
+	t.Logf("switchover-rules.yaml:\n%s", switchover)
+
+	// Both artifacts must be the whole `rules` subtree, wrapped under a
+	// top-level rules: key (the hot-reloadable, KCP-patched subtree the
+	// gateway consumes).
+	for _, a := range []struct{ name, body string }{{"FenceRules", fence}, {"SwitchoverRules", switchover}} {
+		if !strings.HasPrefix(strings.TrimSpace(a.body), "rules:") {
+			t.Errorf("%s must be wrapped under a top-level rules: key:\n%s", a.name, a.body)
+		}
+	}
+
+	for _, topic := range wantTopics {
+		if !strings.Contains(fence, topic) {
+			t.Errorf("FenceRules missing topic %q:\n%s", topic, fence)
+		}
+		if !strings.Contains(switchover, topic) {
+			t.Errorf("SwitchoverRules missing topic %q:\n%s", topic, switchover)
+		}
+	}
+	// The switchover must route the migrated topics to the target domain (cc).
+	if !strings.Contains(switchover, "cc") {
+		t.Errorf("SwitchoverRules does not route to target domain cc:\n%s", switchover)
+	}
+
+	// PRESERVATION: the operator's pre-existing gateway edits (a TRANSACTION
+	// fence, an ops-audit fence, a team-a.* routing condition) must survive
+	// untouched in both artifacts — the engine only adds the migrated batch.
+	for _, must := range []string{"TRANSACTION", "ops-audit"} {
+		if !strings.Contains(fence, must) {
+			t.Errorf("FenceRules dropped the operator's entry %q:\n%s", must, fence)
+		}
+		if !strings.Contains(switchover, must) {
+			t.Errorf("SwitchoverRules dropped the operator's entry %q:\n%s", must, switchover)
+		}
+	}
+	if !strings.Contains(switchover, "team-a.*") {
+		t.Errorf("SwitchoverRules dropped the operator's routing condition (team-a.*):\n%s", switchover)
+	}
+}
+
+// TestEngineFailFastLive runs the engine for team-b.audit, which exists on the
+// source but is deliberately NOT mirrored on the link, so the engine must
+// refuse (F3) with nil artifacts and a fail-fast reason that references the
+// cluster link.
+func TestEngineFailFastLive(t *testing.T) {
+	eng := newLiveEngine(t)
+	in := reconcile.ReconcileInput{
+		Topics:       []string{"team-b.audit"},
+		Route:        "migration-route",
+		TargetDomain: "cc",
+	}
+
+	plan, err := eng.Run(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	if !plan.Report.Refused() {
+		t.Fatalf("expected refusal for an un-mirrored topic, got success: %+v", plan.Report)
+	}
+	if plan.Artifacts != nil {
+		t.Errorf("expected nil Artifacts on refusal, got %+v", plan.Artifacts)
+	}
+	if len(plan.Report.FailFast) != 1 {
+		t.Fatalf("expected 1 fail-fast topic, got %d: %+v", len(plan.Report.FailFast), plan.Report.FailFast)
+	}
+
+	reason := plan.Report.FailFast[0].Reason
+	t.Logf("fail-fast: %s -> %s", plan.Report.FailFast[0].Topic, reason)
+	// reason reads: "<topic> is not on the cluster link"
+	if !strings.Contains(reason, "cluster link") {
+		t.Errorf("fail-fast reason should mention the cluster link, got %q", reason)
+	}
+}
+
+// TestReconcileClusterIdentityMismatchLive points the "source" lister at the DEST
+// cluster, so the source cluster id (read live) won't match the link's
+// source_cluster_id. The engine must refuse on the cluster-identity precondition
+// — proving the check works against real cluster ids, not just unit fakes.
+func TestReconcileClusterIdentityMismatchLive(t *testing.T) {
+	gw := migplan.NewGatewayFile("testdata/gateway.yaml", "migration-route")
+	wrongSource := newPlaintextLister(t, destBroker) // WRONG on purpose: dest, not source
+	target := newPlaintextLister(t, destBroker)
+
+	svc := clusterlink.NewConfluentCloudService(http.DefaultClient)
+	cfg := clusterlink.Config{RestEndpoint: destRESTEndpoint, ClusterID: destClusterID, LinkName: linkName, Topics: []string{}, Auth: nil}
+	link := migplan.NewClusterLinkStatus(svc, cfg)
+	eng := migplan.NewReconciliationEngine(gw, wrongSource, target, link)
+
+	in := reconcile.ReconcileInput{
+		Topics:          []string{"team-a.orders"},
+		Route:           "migration-route",
+		TargetDomain:    "cc",
+		TargetClusterID: destClusterID,
+	}
+	plan, err := eng.Run(context.Background(), in)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !plan.Report.Refused() {
+		t.Fatalf("a source-cluster mismatch must refuse; preconditions=%+v", plan.Report.Preconditions)
+	}
+	if plan.Artifacts != nil {
+		t.Error("a refused run must emit no artifacts")
+	}
+	found := false
+	for _, pc := range plan.Report.Preconditions {
+		if pc.Name == "source cluster matches the cluster link" && !pc.OK {
+			found = true
+			t.Logf("refused as expected: %s — %s", pc.Name, pc.Detail)
+		}
+	}
+	if !found {
+		t.Errorf("expected the source-identity precondition to fail, got %+v", plan.Report.Preconditions)
+	}
+}
