@@ -102,14 +102,11 @@ type TargetKafka struct {
 	// BootstrapServers is the destination bootstrap, dialled directly (not only
 	// via REST) to read destination-side offsets.
 	BootstrapServers []string `yaml:"bootstrapServers,omitempty" json:"bootstrapServers,omitempty"`
-	// Credentials is the destination KAFKA leg: sasl_plain, sasl_scram, mtls,
-	// unauthenticated_tls, or unauthenticated_plaintext (iam is rejected — the
-	// destination is Confluent Cloud/Platform, never MSK).
-	Credentials CredentialsRef `yaml:"credentials,omitempty" json:"credentials,omitempty"`
-	// RestCredentials is the destination REST leg. A POINTER so that omitted
-	// (⇒ derived from Credentials) stays distinguishable from present-but-empty
-	// (⇒ a validation error).
-	RestCredentials *CredentialsRef `yaml:"restCredentials,omitempty" json:"restCredentials,omitempty"`
+	// ClusterCredentials is the destination KAFKA leg: sasl_plain, sasl_scram,
+	// mtls, unauthenticated_tls, or unauthenticated_plaintext (iam is rejected —
+	// the destination is Confluent Cloud/Platform, never MSK). Used by kind:
+	// GatewayMigration only; kind: Migration rejects it.
+	ClusterCredentials CredentialsRef `yaml:"clusterCredentials,omitempty" json:"clusterCredentials,omitempty"`
 }
 
 type Endpoint struct {

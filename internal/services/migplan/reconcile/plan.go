@@ -91,9 +91,17 @@ type Plan struct {
 	Report    Report
 	Artifacts *Artifacts // nil when refused OR when nothing is migratable (a no-op)
 
-	// GatewayYAML is the whole gateway CR the plan was computed against, exactly
-	// as pulled. Set even on a refusal (the pull precedes the checks) and empty
-	// only if the source did not carry it. It exists for a later drift diff, not
-	// for the plan itself.
+	// GatewayYAML is the whole gateway CR the plan was computed against,
+	// cleaned of server-managed metadata by the provider layer (see
+	// migplan/gatewayfile.go's cleanGatewayDoc). Set even on a refusal (the
+	// pull precedes the checks) and empty only if the source did not carry
+	// it. It exists for a later drift diff, not for the plan itself.
 	GatewayYAML string
+
+	// Mode is the route mode this plan was reconciled under ("dynamic" or
+	// "static"), so a caller knows how to interpret Artifacts.FenceRules/
+	// SwitchoverRules: a rules: fragment for dynamic, a fence/streamingDomain
+	// block fragment for static — both meaning "splice this onto the named
+	// route," never "apply this as the whole CR."
+	Mode string
 }

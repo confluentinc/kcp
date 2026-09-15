@@ -52,7 +52,7 @@ func runMigrationList(cmd *cobra.Command, args []string) error {
 	// Load migration state (following KCP pattern)
 	state, err := migration.NewMigrationStateFromFile(migrationStateFile)
 	if err != nil {
-		return fmt.Errorf("failed to load migration state file %q: %w\nEnsure the file exists or run 'kcp migration init' to create a new migration", migrationStateFile, err)
+		return fmt.Errorf("failed to load migration state file %q: %w\nEnsure the file exists or run 'kcp migration execute' to create a new migration", migrationStateFile, err)
 	}
 
 	opts := MigrationListerOpts{

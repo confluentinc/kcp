@@ -3,7 +3,6 @@ package migration
 import (
 	"github.com/confluentinc/kcp/cmd/migration/execute"
 	"github.com/confluentinc/kcp/cmd/migration/executetbm"
-	i "github.com/confluentinc/kcp/cmd/migration/init"
 	"github.com/confluentinc/kcp/cmd/migration/lagcheck"
 	"github.com/confluentinc/kcp/cmd/migration/list"
 	"github.com/confluentinc/kcp/cmd/migration/reconcile"
@@ -19,7 +18,7 @@ func NewMigrationCmd() *cobra.Command {
 
 The migration workflow follows a defined lifecycle managed by a finite state machine:
 
-1. **Initialize** — validate cluster link and gateway CRs, persist migration config (` + "`kcp migration init --migration-yaml gateway-migration.yaml`" + `).
+1. **Register and validate** — the first ` + "`kcp migration execute`" + ` run for a manifest registers the migration, validates cluster link and gateway CRs, and persists the migration config — no separate init step. ` + "`--dry-run`" + ` runs this validation alone and exits, touching no state.
 2. **Check Lags** — compare source and destination offsets until lag drops below the configured threshold.
 3. **Fence Gateway** — apply the fenced gateway CR to block traffic during cutover.
 4. **Pause Offset Sync** — with ` + "`spec.clusterLink.pauseConsumerOffsetSync`" + `, pause cluster-link consumer offset sync (passes through otherwise); on failure the fence is rolled back automatically.
@@ -38,7 +37,6 @@ Supporting documentation:
 	}
 
 	migrationCmd.AddCommand(
-		i.NewMigrationInitCmd(),
 		execute.NewMigrationExecuteCmd(),
 		executetbm.NewMigrationExecuteTBMCmd(),
 		lagcheck.NewMigrationLagCheckCmd(),
