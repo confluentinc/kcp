@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 
 	"github.com/IBM/sarama"
 )
@@ -51,11 +52,17 @@ func (saramaSlogAdapter) Println(v ...any) {
 // the signal this bridge exists to surface. Both point at the same adapter.
 //
 // The install is process-global by sarama's design, so it captures dials
-// originating in every package that uses sarama. Safe to call once per
-// invocation (from cmd_root PersistentPreRun, after slog.Default is set).
+// originating in every package that uses sarama. Idempotent via sync.Once:
+// sarama.Logger/DebugLogger are plain, unsynchronized package vars, so a
+// second concurrent call (e.g. a test driving cmd_root's PersistentPreRun
+// more than once) must not race the first call's writes.
+var installSaramaLoggingOnce sync.Once
+
 func InstallSaramaLogging() {
-	adapter := saramaSlogAdapter{}
-	sarama.Logger = adapter
-	sarama.DebugLogger = adapter
-	slog.Debug("sarama logging bridged into slog", "auditedSaramaVersion", auditedSaramaVersion)
+	installSaramaLoggingOnce.Do(func() {
+		adapter := saramaSlogAdapter{}
+		sarama.Logger = adapter
+		sarama.DebugLogger = adapter
+		slog.Debug("sarama logging bridged into slog", "auditedSaramaVersion", auditedSaramaVersion)
+	})
 }

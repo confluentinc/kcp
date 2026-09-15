@@ -18,6 +18,7 @@ import (
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
+	"golang.org/x/sync/errgroup"
 )
 
 var (
@@ -303,7 +304,7 @@ func runMigrationExecuteTBM(cmd *cobra.Command, reconcile reconcileFunc, buildOf
 	// and reconcile falls back to dialing its own — see migplan.WithSharedClients.
 	res, err := reconcile(cmd.Context(), g,
 		migplan.WithOutput(cmd.OutOrStdout()),
-		migplan.WithSharedClients(offsetClient(sourceOffset), offsetClient(destinationOffset)),
+		migplan.WithSharedClients(offset.ClientOf(sourceOffset), offset.ClientOf(destinationOffset)),
 	)
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
@@ -362,18 +363,12 @@ func buildOffsetProviders(g *manifest.GatewayMigration) (offset.Provider, offset
 		return nil, nil, nil, manifest.JoinProblems("spec.source.credentials", errs)
 	}
 	srcConn := types.MigrateConn(g.Spec.Source.BootstrapServers, srcCreds)
-	srcClient, err := newKafkaClientForConn(srcConn)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("connecting to source cluster: %w", err)
-	}
 
 	if g.Spec.Target.Kafka == nil {
-		_ = srcClient.Close()
 		return nil, nil, nil, fmt.Errorf("spec.target.kafka: required")
 	}
 	destCreds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
-		_ = srcClient.Close()
 		return nil, nil, nil, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 	destConn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, destCreds)
@@ -384,28 +379,41 @@ func buildOffsetProviders(g *manifest.GatewayMigration) (offset.Provider, offset
 	if sp := destConn.AuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
 		sp.UseTLS = true
 	}
-	destClient, err := newKafkaClientForConn(destConn)
-	if err != nil {
-		_ = srcClient.Close()
-		return nil, nil, nil, fmt.Errorf("connecting to destination cluster: %w", err)
+
+	// The two clusters are independent, so dial them concurrently — startup
+	// then costs the slower of the two dials, not their sum.
+	var srcClient, destClient sarama.Client
+	var eg errgroup.Group
+	eg.Go(func() error {
+		c, err := newKafkaClientForConn(srcConn)
+		if err != nil {
+			return fmt.Errorf("connecting to source cluster: %w", err)
+		}
+		srcClient = c
+		return nil
+	})
+	eg.Go(func() error {
+		c, err := newKafkaClientForConn(destConn)
+		if err != nil {
+			return fmt.Errorf("connecting to destination cluster: %w", err)
+		}
+		destClient = c
+		return nil
+	})
+	if err := eg.Wait(); err != nil {
+		if srcClient != nil {
+			_ = srcClient.Close()
+		}
+		if destClient != nil {
+			_ = destClient.Close()
+		}
+		return nil, nil, nil, err
 	}
 
 	closeFn := func() error {
 		return errors.Join(srcClient.Close(), destClient.Close())
 	}
 	return offset.NewOffsetService(srcClient), offset.NewOffsetService(destClient), closeFn, nil
-}
-
-// offsetClient returns the sarama.Client backing an offset provider so the
-// reconcile step can reuse it for topic listing, halving execute-tbm's startup
-// broker connections to the source and destination clusters. It returns nil for
-// any provider that does not expose one (e.g. a test stub), leaving reconcile to
-// dial its own connections.
-func offsetClient(p offset.Provider) sarama.Client {
-	if s, ok := p.(*offset.Service); ok {
-		return s.Client()
-	}
-	return nil
 }
 
 // newKafkaClientForConn resolves conn's auth option and dials it as a

@@ -1,6 +1,7 @@
 package offset
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -65,6 +66,41 @@ func TestServiceClient(t *testing.T) {
 	if svc.Client() != client {
 		t.Error("Client() must return the exact client the service was built with")
 	}
+}
+
+// stubProvider is a Provider implementation that is not *Service, standing in
+// for a future second production implementation that exposes no client.
+type stubProvider struct{}
+
+func (stubProvider) GetMany(_ context.Context, _ []string) (map[string]map[int32]int64, error) {
+	return nil, nil
+}
+
+func TestClientOf(t *testing.T) {
+	t.Run("returns the underlying client for a real offset service", func(t *testing.T) {
+		_, client, _ := newMockCluster(t, 1)
+		svc := NewOffsetService(client)
+		if ClientOf(svc) != client {
+			t.Error("ClientOf must surface the service's own client for reuse")
+		}
+	})
+
+	t.Run("returns nil for a Provider that is not *Service", func(t *testing.T) {
+		if ClientOf(stubProvider{}) != nil {
+			t.Error("ClientOf must return nil for a Provider exposing no client")
+		}
+	})
+
+	t.Run("returns nil for a typed-nil *Service instead of panicking", func(t *testing.T) {
+		var svc *Service
+		// svc is nil, but boxing it into the Provider interface produces a
+		// non-nil interface value wrapping a nil pointer — the type assertion
+		// inside ClientOf succeeds, so the nil check must be explicit or
+		// Client()'s field access would panic.
+		if ClientOf(svc) != nil {
+			t.Error("ClientOf must return nil for a typed-nil *Service, not panic")
+		}
+	})
 }
 
 func TestGetMany_OffsetsMatchPerTopicGet(t *testing.T) {

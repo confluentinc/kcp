@@ -1,39 +1,18 @@
 package migplan
 
 import (
+	"context"
 	"strings"
 	"testing"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// mockSaramaClient dials a real sarama.Client against an in-process MockBroker,
-// so the shared-client reuse path can be exercised without a live cluster.
-func mockSaramaClient(t *testing.T) sarama.Client {
-	t.Helper()
-	broker := sarama.NewMockBroker(t, 1)
-	metadata := sarama.NewMockMetadataResponse(t).
-		SetBroker(broker.Addr(), broker.BrokerID()).
-		SetController(broker.BrokerID())
-	broker.SetHandlerByMap(map[string]sarama.MockResponse{
-		"ApiVersionsRequest": sarama.NewMockApiVersionsResponse(t),
-		"MetadataRequest":    metadata,
-	})
-	cfg := sarama.NewConfig()
-	cfg.Version = sarama.V2_8_0_0
-	c, err := sarama.NewClient([]string{broker.Addr()}, cfg)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = c.Close()
-		broker.Close()
-	})
-	return c
-}
-
 func TestSourceTopicListerSharesClient(t *testing.T) {
-	c := mockSaramaClient(t)
+	_, c := testsupport.MockSaramaClient(t)
 
 	lister, closer, err := sourceTopicLister(nil, c)
 	require.NoError(t, err)
@@ -48,7 +27,7 @@ func TestSourceTopicListerSharesClient(t *testing.T) {
 }
 
 func TestTargetTopicListerSharesClient(t *testing.T) {
-	c := mockSaramaClient(t)
+	_, c := testsupport.MockSaramaClient(t)
 
 	lister, closer, err := targetTopicLister(nil, c)
 	require.NoError(t, err)
@@ -57,6 +36,41 @@ func TestTargetTopicListerSharesClient(t *testing.T) {
 
 	require.NoError(t, closer.Close())
 	assert.False(t, c.Closed(), "sharing a client must not let the lister close it")
+}
+
+// The two tests above cover only construction, Close()-as-a-no-op, and
+// connection reuse. This proves the actual data path: a topic lister backed
+// by a from-client admin must still return the cluster's real topics, not
+// just wrap the shared client without error.
+func TestSharedClientTopicListerListsRealTopics(t *testing.T) {
+	broker := sarama.NewMockBroker(t, 1)
+	defer broker.Close()
+
+	metadata := sarama.NewMockMetadataResponse(t).
+		SetBroker(broker.Addr(), broker.BrokerID()).
+		SetController(broker.BrokerID()).
+		SetLeader("orders", 0, broker.BrokerID()).
+		SetLeader("payments", 0, broker.BrokerID())
+	broker.SetHandlerByMap(map[string]sarama.MockResponse{
+		"ApiVersionsRequest":     sarama.NewMockApiVersionsResponse(t),
+		"MetadataRequest":        metadata,
+		"DescribeConfigsRequest": sarama.NewMockDescribeConfigsResponse(t),
+	})
+
+	cfg := sarama.NewConfig()
+	cfg.Version = sarama.V2_8_0_0
+	c, err := sarama.NewClient([]string{broker.Addr()}, cfg)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = c.Close() })
+
+	lister, closer, err := sourceTopicLister(nil, c)
+	require.NoError(t, err)
+	defer func() { _ = closer.Close() }()
+
+	topics, err := lister.ListTopics(context.Background())
+	require.NoError(t, err)
+	assert.ElementsMatch(t, []string{"orders", "payments"}, topics,
+		"a shared-client-backed topic lister must return the cluster's real topics")
 }
 
 // With no shared client, resolution falls back to dialing from the manifest —

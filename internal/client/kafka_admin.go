@@ -323,15 +323,13 @@ type KafkaAdminClient struct {
 	resourceAcls    map[string]sarama.ResourceAcls
 	brokerAddresses []string
 
-	// ownsClient is false when the admin was built from a client dialed and
-	// owned elsewhere (NewKafkaAdminFromClient), so Close() must not close that
-	// shared client. It is true for admins that dialed their own connection
-	// (NewKafkaAdmin), which do own and close it.
-	ownsClient bool
-
 	// client is the shared sarama.Client a from-client admin was built from
 	// (nil for a natively dialed admin). It lets cluster-metadata reads reuse the
-	// client's already-open broker connection instead of dialing a fresh one.
+	// client's already-open broker connection instead of dialing a fresh one,
+	// and doubles as the ownership flag: client == nil means this admin dialed
+	// its own connection (NewKafkaAdmin) and Close() must close it; a non-nil
+	// client means it was built from a connection dialed and owned elsewhere
+	// (NewKafkaAdminFromClient), so Close() must not close it.
 	client sarama.Client
 }
 
@@ -451,9 +449,17 @@ func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, err
 	}
 
 	var clusterID string
-	// Get cluster ID by requesting metadata from a broker.
+	// Get cluster ID by requesting metadata. A from-client admin reuses the
+	// shared client's already-open controller connection, avoiding the fresh
+	// NewBroker().Open() dial getClusterIDFromBroker would otherwise pay (a
+	// per-cluster connection setup that can be slow to reach an advertised
+	// listener). A natively dialed admin opens a connection to the given broker.
 	if len(brokers) > 0 {
-		clusterID, err = k.clusterID(brokers[0])
+		if k.client != nil {
+			clusterID, err = k.clusterIDFromClient()
+		} else {
+			clusterID, err = k.getClusterIDFromBroker(brokers[0])
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -466,20 +472,15 @@ func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, err
 	}, nil
 }
 
-// clusterID reads the cluster's own id. A from-client admin reuses the shared
-// client's already-open controller connection, avoiding the fresh
-// NewBroker().Open() dial getClusterIDFromBroker would otherwise pay (a
-// per-cluster connection setup that can be slow to reach an advertised
-// listener). A natively dialed admin opens a connection to the given broker.
-func (k *KafkaAdminClient) clusterID(broker *sarama.Broker) (string, error) {
-	if k.client != nil {
-		controller, err := k.client.Controller()
-		if err != nil {
-			return "", fmt.Errorf("failed to get controller for cluster id: %w", err)
-		}
-		return clusterIDFromBrokerConn(controller)
+// clusterIDFromClient reads the cluster's own id over the shared client's
+// already-open controller connection, avoiding the fresh NewBroker().Open()
+// dial getClusterIDFromBroker would otherwise pay.
+func (k *KafkaAdminClient) clusterIDFromClient() (string, error) {
+	controller, err := k.client.Controller()
+	if err != nil {
+		return "", fmt.Errorf("failed to get controller for cluster id: %w", err)
 	}
-	return k.getClusterIDFromBroker(broker)
+	return clusterIDFromBrokerConn(controller)
 }
 
 // getClusterIDFromBroker opens a fresh connection to a specific broker and
@@ -531,7 +532,7 @@ func (k *KafkaAdminClient) Close() error {
 	// A from-client admin does not own the underlying sarama.Client (its
 	// lifetime belongs to whoever dialed it — e.g. the offset providers), so
 	// closing here would pull the connection out from under that owner.
-	if !k.ownsClient {
+	if k.client != nil {
 		return nil
 	}
 	return k.admin.Close()
@@ -548,7 +549,12 @@ func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption
 	}
 
 	saramaConfig := sarama.NewConfig()
-	configureCommonSettings(saramaConfig, "kcp-cli", sarama.V2_6_0_0)
+	// Same protocol version NewKafkaAdmin's callers pin (defaultKafkaVersion,
+	// "3.6.0") — this client backs both offset fetching and, via
+	// NewKafkaAdminFromClient, a from-client admin, so it must observe the same
+	// wire version a natively dialed admin would, or the two admin construction
+	// paths silently diverge on protocol behavior for the identical cluster.
+	configureCommonSettings(saramaConfig, "kcp-cli", sarama.V3_6_0_0)
 
 	switch config.authType {
 	case types.AuthTypeIAM:
@@ -645,7 +651,6 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		saramaConfig:    saramaConfig,
 		resourceAcls:    make(map[string]sarama.ResourceAcls),
 		brokerAddresses: brokerAddresses,
-		ownsClient:      true,
 	}, nil
 }
 
@@ -657,19 +662,23 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 // topic lister be backed by a client already dialed for offset fetching, so
 // execute-tbm connects to each cluster once instead of twice.
 //
-// saramaConfig is taken from the client so the config-read and cluster-metadata
-// paths (which consult k.saramaConfig for the protocol version and broker dial
-// settings) behave exactly as they would for a natively dialed admin.
+// saramaConfig is COPIED from the client (not aliased) so the config-read and
+// cluster-metadata paths (which consult k.saramaConfig for the protocol
+// version and broker dial settings) behave exactly as they would for a
+// natively dialed admin, without holding the same *sarama.Config pointer the
+// client's other owner (e.g. the offset.Service backing wait_for_lags) is
+// concurrently using — a future mutation on one side must not rewrite the
+// other's live config.
 func NewKafkaAdminFromClient(c sarama.Client) (KafkaAdmin, error) {
 	admin, err := sarama.NewClusterAdminFromClient(c)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create admin from existing client: %w", err)
 	}
+	saramaConfig := *c.Config()
 	return &KafkaAdminClient{
 		admin:        admin,
-		saramaConfig: c.Config(),
+		saramaConfig: &saramaConfig,
 		resourceAcls: make(map[string]sarama.ResourceAcls),
-		ownsClient:   false,
 		client:       c,
 	}, nil
 }

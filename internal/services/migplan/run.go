@@ -14,6 +14,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -144,16 +145,39 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return nil, err
 	}
 
-	src, srcCloser, err := sourceTopicLister(g, o.srcClient)
-	if err != nil {
+	// Source and target are independent clusters, so resolve their topic
+	// listers concurrently: when both fall back to a fresh manifest dial (every
+	// caller except execute-tbm's non-dry-run path), this costs the slower of
+	// the two dials rather than their sum.
+	var src, tgt TopicLister
+	var srcCloser, tgtCloser io.Closer
+	var eg errgroup.Group
+	eg.Go(func() error {
+		l, c, err := sourceTopicLister(g, o.srcClient)
+		if err != nil {
+			return err
+		}
+		src, srcCloser = l, c
+		return nil
+	})
+	eg.Go(func() error {
+		l, c, err := targetTopicLister(g, o.tgtClient)
+		if err != nil {
+			return err
+		}
+		tgt, tgtCloser = l, c
+		return nil
+	})
+	if err := eg.Wait(); err != nil {
+		if srcCloser != nil {
+			_ = srcCloser.Close()
+		}
+		if tgtCloser != nil {
+			_ = tgtCloser.Close()
+		}
 		return nil, err
 	}
 	defer func() { _ = srcCloser.Close() }()
-
-	tgt, tgtCloser, err := targetTopicLister(g, o.tgtClient)
-	if err != nil {
-		return nil, err
-	}
 	defer func() { _ = tgtCloser.Close() }()
 
 	secrets := o.secrets
@@ -304,25 +328,27 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, 
 	return NewClusterLinkStatus(svc, cfg), nil
 }
 
-// sourceTopicLister resolves the source-cluster topic lister for a reconcile
-// run. When sharedClient is non-nil (a connection the caller dialed and owns),
-// the lister is backed off it via a from-client admin so the cluster is not
-// dialed twice; the returned io.Closer is that admin, whose Close is a no-op, so
-// the caller keeps sole ownership. Otherwise a fresh admin is dialed from the
-// manifest and its Close releases the connection.
-func sourceTopicLister(g *manifest.GatewayMigration, sharedClient sarama.Client) (TopicLister, io.Closer, error) {
+// resolveTopicLister is the one place that decides shared-client vs. fresh
+// dial: when sharedClient is non-nil (a connection the caller dialed and
+// owns), the lister is backed off it via a from-client admin so the cluster is
+// not dialed twice; the returned io.Closer is that admin, whose Close is a
+// no-op, so the caller keeps sole ownership. Otherwise buildFresh dials a new
+// admin from the manifest and its Close releases the connection.
+func resolveTopicLister(sharedClient sarama.Client, buildFresh func() (TopicLister, io.Closer, error)) (TopicLister, io.Closer, error) {
 	if sharedClient != nil {
 		return topicListerFromClient(sharedClient)
 	}
-	return buildSourceTopicLister(g)
+	return buildFresh()
+}
+
+// sourceTopicLister resolves the source-cluster topic lister for a reconcile run.
+func sourceTopicLister(g *manifest.GatewayMigration, sharedClient sarama.Client) (TopicLister, io.Closer, error) {
+	return resolveTopicLister(sharedClient, func() (TopicLister, io.Closer, error) { return buildSourceTopicLister(g) })
 }
 
 // targetTopicLister mirrors sourceTopicLister for the destination cluster.
 func targetTopicLister(g *manifest.GatewayMigration, sharedClient sarama.Client) (TopicLister, io.Closer, error) {
-	if sharedClient != nil {
-		return topicListerFromClient(sharedClient)
-	}
-	return buildTargetTopicLister(g)
+	return resolveTopicLister(sharedClient, func() (TopicLister, io.Closer, error) { return buildTargetTopicLister(g) })
 }
 
 // topicListerFromClient wraps an already-dialed client as a topic lister. The

@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/manifest"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
 	"github.com/confluentinc/kcp/internal/utils"
 	"github.com/spf13/cobra"
@@ -232,6 +233,26 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// values are also snapshotted into the state file as LastRunPolicies.
 	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, config.CurrentState, g.Spec.DefaultPolicies)...)
 
+	opts, err := buildExecutorOpts(g, config, *state, migrationStateFile)
+	if err != nil {
+		return err
+	}
+	// run-report is an execute-time diagnostics path, not part of the manifest;
+	// carry it straight from the flag onto the opts.
+	opts.RunReportPath = runReport
+
+	// Dial the source/destination offset connections wait_for_lags needs. This
+	// runs on every invocation (mirroring execute-tbm's buildOffsetProviders),
+	// so the connections can be reused below by migplan.Reconcile (via
+	// WithSharedClients) instead of dialing each cluster a second time when
+	// resuming a migration still at StateUninitialized.
+	sourceOffset, destinationOffset, err := buildOffsetProviders(opts)
+	if err != nil {
+		return fmt.Errorf("failed to connect to source/destination clusters: %w", err)
+	}
+	defer func() { _ = sourceOffset.Close() }()
+	defer func() { _ = destinationOffset.Close() }()
+
 	// migplan.Reconcile is called here — not by MigrationActions.Initialize
 	// itself — ONLY when resuming a migration still at StateUninitialized: a
 	// --skip-validate init deferred full validation to this exact moment (see
@@ -240,7 +261,8 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// fires, and a live Reconcile call here would be pure waste.
 	var reconcileResult *migplan.Result
 	if config.CurrentState == migration.StateUninitialized {
-		reconcileResult, err = migplan.Reconcile(cmd.Context(), g)
+		reconcileResult, err = migplan.Reconcile(cmd.Context(), g,
+			migplan.WithSharedClients(offset.ClientOf(sourceOffset), offset.ClientOf(destinationOffset)))
 		if err != nil {
 			return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 		}
@@ -248,15 +270,28 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("route %q resolves to a topic-based (dynamic) migration; kcp does not yet implement the topic-based migration engine", g.Spec.TopicGroup[0].Route)
 		}
 	}
+	opts.ReconcileResult = reconcileResult
 
-	opts, err := buildExecutorOpts(g, config, *state, migrationStateFile, reconcileResult)
+	return NewMigrationExecutor(opts, sourceOffset, destinationOffset).Run()
+}
+
+// buildOffsetProviders dials the source and destination clusters described by
+// opts (already resolved by buildExecutorOpts), for wait_for_lags. Dialing
+// here — in the command layer, before the state-gated migplan.Reconcile call
+// above — lets Reconcile reuse these same connections via
+// migplan.WithSharedClients instead of dialing each cluster a second time on
+// a migration's first run. Mirrors execute-tbm's buildOffsetProviders.
+func buildOffsetProviders(opts MigrationExecutorOpts) (*offset.Service, *offset.Service, error) {
+	sourceOffset, err := createSourceOffset(opts)
 	if err != nil {
-		return err
+		return nil, nil, fmt.Errorf("connecting to source cluster: %w", err)
 	}
-	// run-report is an execute-time diagnostics path, not part of the manifest;
-	// carry it straight from the flag onto the opts.
-	opts.RunReportPath = runReport
-	return NewMigrationExecutor(opts).Run()
+	destinationOffset, err := createDestinationOffset(opts)
+	if err != nil {
+		_ = sourceOffset.Close()
+		return nil, nil, fmt.Errorf("connecting to destination cluster: %w", err)
+	}
+	return sourceOffset, destinationOffset, nil
 }
 
 // effectivePolicyLogArgs renders the effective execute-time policy as slog
@@ -447,7 +482,7 @@ func diffCounts(want, have []string) (added, removed int) {
 // buildExecutorOpts resolves every credential leg and the execute-time policy
 // from the manifest. The manifest is a second deserializer into the same
 // struct the flags filled, so nothing downstream changes shape.
-func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, state migration.MigrationState, stateFile string, reconcileResult *migplan.Result) (MigrationExecutorOpts, error) {
+func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, state migration.MigrationState, stateFile string) (MigrationExecutorOpts, error) {
 	srcCreds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
 		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.source.credentials", errs)
@@ -520,9 +555,9 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		GatewayConfigPort:  g.Spec.DefaultPolicies.GatewayConfigPort,
 		PromoteBatchSize:   g.Spec.DefaultPolicies.PromoteBatchSize,
 
-		// nil except when resuming a migration still at StateUninitialized —
-		// see runMigrationExecute's conditional migplan.Reconcile call.
-		ReconcileResult: reconcileResult,
+		// ReconcileResult is left nil here — runMigrationExecute sets it after
+		// buildExecutorOpts returns, once (and only when) its conditional
+		// migplan.Reconcile call has run.
 
 		// The destination Kafka leg authenticates with the KAFKA block. The
 		// cluster-link REST credential (spec.clusterLink.linkCredentials) may name

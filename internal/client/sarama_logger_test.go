@@ -1,59 +1,25 @@
 package client
 
 import (
-	"context"
 	"log/slog"
-	"sync"
+	"os"
+	"path/filepath"
+	"regexp"
 	"testing"
 
 	"github.com/IBM/sarama"
+	"github.com/confluentinc/kcp/internal/testsupport"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// captureHandler records every slog.Record it is handed, at any level, so tests
-// can assert on the message, level and count of what the adapter emitted.
-type captureHandler struct {
-	mu      sync.Mutex
-	records []slog.Record
-}
-
-func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
-
-func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.records = append(h.records, r.Clone())
-	return nil
-}
-
-func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
-func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
-
-func (h *captureHandler) captured() []slog.Record {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.records
-}
-
-// withCapturedSlog installs a capturing handler as slog.Default() and restores
-// the previous default when the test finishes.
-func withCapturedSlog(t *testing.T) *captureHandler {
-	t.Helper()
-	prev := slog.Default()
-	h := &captureHandler{}
-	slog.SetDefault(slog.New(h))
-	t.Cleanup(func() { slog.SetDefault(prev) })
-	return h
-}
-
 func TestSaramaSlogAdapter(t *testing.T) {
 	t.Run("Printf folds the format and emits one Debug record with the sarama marker", func(t *testing.T) {
-		h := withCapturedSlog(t)
+		h := testsupport.WithRecordingSlog(t)
 
 		saramaSlogAdapter{}.Printf("dialing %s", "broker:9092")
 
-		recs := h.captured()
+		recs := h.Records()
 		require.Len(t, recs, 1)
 		assert.Equal(t, slog.LevelDebug, recs[0].Level)
 		assert.Contains(t, recs[0].Message, "dialing broker:9092")
@@ -61,22 +27,22 @@ func TestSaramaSlogAdapter(t *testing.T) {
 	})
 
 	t.Run("Print folds args with fmt.Sprint spacing into one Debug record", func(t *testing.T) {
-		h := withCapturedSlog(t)
+		h := testsupport.WithRecordingSlog(t)
 
 		saramaSlogAdapter{}.Print("x", "y")
 
-		recs := h.captured()
+		recs := h.Records()
 		require.Len(t, recs, 1)
 		// fmt.Sprint adds no space between two strings.
 		assert.Equal(t, saramaLogPrefix+"xy", recs[0].Message)
 	})
 
 	t.Run("Println emits space-separated args with no trailing newline", func(t *testing.T) {
-		h := withCapturedSlog(t)
+		h := testsupport.WithRecordingSlog(t)
 
 		saramaSlogAdapter{}.Println("a", "b")
 
-		recs := h.captured()
+		recs := h.Records()
 		require.Len(t, recs, 1)
 		assert.Equal(t, saramaLogPrefix+"a b", recs[0].Message)
 		assert.NotContains(t, recs[0].Message, "\n")
@@ -85,14 +51,14 @@ func TestSaramaSlogAdapter(t *testing.T) {
 	// Security invariant (i): sarama output must never reach the default Warn+
 	// console. All three methods emit at exactly LevelDebug, never >= LevelInfo.
 	t.Run("every method emits at LevelDebug, never at or above LevelInfo", func(t *testing.T) {
-		h := withCapturedSlog(t)
+		h := testsupport.WithRecordingSlog(t)
 		a := saramaSlogAdapter{}
 
 		a.Print("p")
 		a.Printf("%s", "f")
 		a.Println("l")
 
-		recs := h.captured()
+		recs := h.Records()
 		require.Len(t, recs, 3)
 		for _, r := range recs {
 			assert.Equal(t, slog.LevelDebug, r.Level)
@@ -104,11 +70,11 @@ func TestSaramaSlogAdapter(t *testing.T) {
 	// new exposure path — a credential-shaped substring is emitted unchanged in
 	// exactly one record and duplicated to no second sink.
 	t.Run("forwards a credential-shaped substring unchanged, once, at Debug", func(t *testing.T) {
-		h := withCapturedSlog(t)
+		h := testsupport.WithRecordingSlog(t)
 
 		saramaSlogAdapter{}.Printf("connecting %s", "password=hunter2")
 
-		recs := h.captured()
+		recs := h.Records()
 		require.Len(t, recs, 1, "the adapter must not duplicate the line to a second sink")
 		assert.Equal(t, slog.LevelDebug, recs[0].Level)
 		assert.Contains(t, recs[0].Message, "password=hunter2")
@@ -129,4 +95,26 @@ func TestInstallSaramaLogging(t *testing.T) {
 	_, okDebug := sarama.DebugLogger.(saramaSlogAdapter)
 	assert.True(t, okDebug, "sarama.DebugLogger must be set to the slog adapter")
 	assert.Equal(t, sarama.Logger, sarama.DebugLogger, "both loggers must be the same adapter")
+}
+
+// saramaRequireLine matches go.mod's "github.com/IBM/sarama vX.Y.Z" require
+// line, standalone or inside a require ( ... ) block.
+var saramaRequireLine = regexp.MustCompile(`(?m)^\s*github\.com/IBM/sarama\s+(v\S+)`)
+
+// TestAuditedSaramaVersionMatchesGoMod turns a silent drift into a build
+// failure: auditedSaramaVersion's whole point is "this exact sarama release's
+// Logger/DebugLogger output was checked for credential leakage." A future
+// sarama bump (a CVE fix, a new feature) must not compile and pass every
+// other test while quietly invalidating that guarantee. Reads go.mod directly
+// (rather than runtime/debug.ReadBuildInfo) since a single-package test binary
+// is not guaranteed to embed its full module dependency list.
+func TestAuditedSaramaVersionMatchesGoMod(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", "go.mod"))
+	require.NoError(t, err, "reading the repo's go.mod")
+
+	m := saramaRequireLine.FindStringSubmatch(string(data))
+	require.NotNil(t, m, "github.com/IBM/sarama require line not found in go.mod")
+
+	assert.Equal(t, auditedSaramaVersion, m[1],
+		"go.mod pins sarama at %s; re-audit Logger/DebugLogger output for credential leakage, then update auditedSaramaVersion", m[1])
 }

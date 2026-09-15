@@ -47,6 +47,22 @@ func (t *Service) Client() sarama.Client {
 	return t.client
 }
 
+// ClientOf returns the sarama.Client backing a Provider, so a caller can back
+// a second service (e.g. a topic lister) off the same already-dialed
+// connection instead of dialing the cluster again. It returns nil for any
+// Provider that is not a *Service — including a nil *Service, which would
+// otherwise be a typed-nil interface value that still satisfies the type
+// assertion and would panic on the field access inside Client() — or any
+// future Provider implementation that exposes no client, leaving the caller
+// to fall back to dialing its own connection.
+func ClientOf(p Provider) sarama.Client {
+	s, ok := p.(*Service)
+	if !ok || s == nil {
+		return nil
+	}
+	return s.Client()
+}
+
 // Get fetches the log end offset (LEO) for every partition of a topic. It
 // is a single-topic wrapper over GetMany kept for the package tests and the
 // offsetbench loop-vs-batch contrast; production sweeps call GetMany, which
