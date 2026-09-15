@@ -59,8 +59,21 @@ in the same state file.
 If a run is interrupted at any step, re-running 'kcp migration execute' resumes from the
 last completed step.`
 
-// NewMigrationExecuteCmd builds the `execute` command.
+// NewMigrationExecuteCmd builds the `execute` command bound to real, live
+// dependencies for a dynamic-mode (TBM) run. A static-mode (AAO) run never
+// uses these — it calls migplan.Reconcile and its own live service
+// constructors directly, exactly as before this command was unified.
 func NewMigrationExecuteCmd() *cobra.Command {
+	return newMigrationExecuteCmd(buildTBMOffsetProviders, buildTBMGatewayService, buildTBMClusterLinkService)
+}
+
+// newMigrationExecuteCmd builds the command with the TBM branch's live
+// dependencies injected, so this package's own tests can pass stubs for a
+// dynamic-mode run without dialing Kafka, Kubernetes, or a cluster-link REST
+// endpoint. A static-mode (AAO) run has no equivalent injection point — see
+// this plan's Global Constraints on the deliberately asymmetric test posture
+// between the two branches.
+func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway gatewayServiceFunc, buildTBMClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "execute",
 		Short: "Execute a migration (run the cutover)",
@@ -76,7 +89,9 @@ func NewMigrationExecuteCmd() *cobra.Command {
 		SilenceUsage: true,
 		Args:         cobra.NoArgs,
 		PreRunE:      func(c *cobra.Command, _ []string) error { return utils.BindEnvToFlags(c) },
-		RunE:         runMigrationExecute,
+		RunE: func(c *cobra.Command, args []string) error {
+			return runMigrationExecute(c, args, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
+		},
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
@@ -153,7 +168,7 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 	}
 }
 
-func runMigrationExecute(cmd *cobra.Command, args []string) error {
+func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offsetProvidersFunc, buildTBMGateway gatewayServiceFunc, buildTBMClusterLink clusterLinkServiceFunc) error {
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
@@ -232,31 +247,51 @@ func runMigrationExecute(cmd *cobra.Command, args []string) error {
 	// values are also snapshotted into the state file as LastRunPolicies.
 	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, config.CurrentState, g.Spec.DefaultPolicies)...)
 
-	// migplan.Reconcile is called here — not by MigrationActions.Initialize
-	// itself — ONLY when resuming a migration still at StateUninitialized: a
-	// --skip-validate init deferred full validation to this exact moment (see
-	// the design doc's Decision 1 amendment). Every other starting state skips
-	// this: Execute is already past StateUninitialized, onInitialize never
-	// fires, and a live Reconcile call here would be pure waste.
+	// migplan.Reconcile is called here — not by either FSM's Initialize itself
+	// — ONLY when resuming a migration still at StateUninitialized. Every other
+	// starting state skips this: the mode was already resolved and persisted by
+	// a prior run's Initialize step (see config.Mode, driftExempt because it
+	// "reflects the cluster's shape" — resolved once, live, and never
+	// re-derived on resume for either mode), so a live Reconcile call here
+	// would be pure waste.
 	var reconcileResult *migplan.Result
+	mode := config.Mode
 	if config.CurrentState == migration.StateUninitialized {
 		reconcileResult, err = migplan.Reconcile(cmd.Context(), g)
 		if err != nil {
 			return fmt.Errorf("failed to produce the reconcile plan: %w", err)
 		}
-		if reconcileResult.Mode == "dynamic" {
-			return fmt.Errorf("route %q resolves to a topic-based (dynamic) migration; kcp does not yet implement the topic-based migration engine", g.Spec.TopicGroup[0].Route)
+		if reconcileResult.Refused {
+			return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(reconcileResult.Reasons, "\n"))
+		}
+		mode = reconcileResult.Mode
+
+		// Pause-offset-sync has no effect for a topic-based (dynamic)
+		// migration — TBM's FSM has no offset_sync_paused state at all. Warn
+		// rather than refuse: the field may be set on a manifest template
+		// shared with static routes for an unrelated reason.
+		if pauseOffsetSyncIgnoredForDynamic(mode, g) {
+			slog.Warn("⚠️ spec.clusterLink.pauseConsumerOffsetSync has no effect for topic-based migrations; ignoring",
+				"migration_id", id)
 		}
 	}
 
-	opts, err := buildExecutorOpts(g, config, *state, migrationStateFile, reconcileResult)
-	if err != nil {
-		return err
+	switch mode {
+	case "dynamic":
+		return runTBMBranch(cmd, g, config, *state, migrationStateFile, reconcileResult, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
+	default:
+		// "static", and any value not yet recognized as dynamic — matches
+		// today's behavior for every migration this codebase has ever
+		// registered, none of which were dynamic-mode before this plan.
+		opts, err := buildExecutorOpts(g, config, *state, migrationStateFile, reconcileResult)
+		if err != nil {
+			return err
+		}
+		// run-report is an execute-time diagnostics path, not part of the
+		// manifest; carry it straight from the flag onto the opts.
+		opts.RunReportPath = runReport
+		return NewMigrationExecutor(opts).Run()
 	}
-	// run-report is an execute-time diagnostics path, not part of the manifest;
-	// carry it straight from the flag onto the opts.
-	opts.RunReportPath = runReport
-	return NewMigrationExecutor(opts).Run()
 }
 
 // effectivePolicyLogArgs renders the effective execute-time policy as slog
@@ -276,6 +311,18 @@ func effectivePolicyLogArgs(migrationID, state string, p manifest.DefaultPolicie
 		"hot_reload_timeout", p.HotReloadTimeout,
 		"gateway_config_port", p.GatewayConfigPort,
 	}
+}
+
+// pauseOffsetSyncIgnoredForDynamic reports whether spec.clusterLink.
+// pauseConsumerOffsetSync is set on a manifest that resolved to a topic-based
+// (dynamic) migration, where the field has no effect — TBM's FSM has no
+// offset_sync_paused state. It is the guard for the warn-not-refuse decision
+// runMigrationExecute makes on the StateUninitialized reconcile path; a static
+// route honors the field, so this is false for one. Factored out so the
+// decision can be unit-tested without a live migplan.Reconcile — the only path
+// that reaches the warning through the command.
+func pauseOffsetSyncIgnoredForDynamic(mode string, g *manifest.GatewayMigration) bool {
+	return mode == "dynamic" && g.Spec.ClusterLink.PauseConsumerOffsetSync
 }
 
 // resolveMigrationID prefers an explicit override. metadata.name is the
