@@ -1,15 +1,20 @@
-# TBM halt — the named route is static, not dynamic (HERMETIC).
+# TBM halt — a static route with no pre-staged redundant auth for the target
+# domain (HERMETIC).
 #
 # route names "static-route", which exists only in gateway-static-probe.yaml. The
 # halt sub-test drives this against that fixture via
 # migplan.WithGatewaySource(NewGatewayFile(gateway-static-probe.yaml, "static-route")),
-# so the live tbm-route stays valid. The engine refuses on the failed precondition
-# "route is dynamic" (reconcile/preconditions.go). The topic selection is incidental
-# (the shape check refuses first).
+# so the live tbm-route stays valid. static-route has no security.cluster.
+# destination-domain block, so the engine refuses on the failed precondition
+# "route carries pre-staged auth for the target domain"
+# (reconcile/staticpreconditions.go) — the static-route strategy dispatches on
+# mode == "static" (reconcile/reconcile.go) before the dynamic-only "route is
+# dynamic" check ever runs. The topic selection is incidental (the shape check
+# refuses first).
 apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 metadata:
-  name: tbm-halt-route-not-dynamic
+  name: tbm-halt-route-missing-staged-auth
 spec:
   source:
     type: apache-kafka
