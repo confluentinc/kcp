@@ -432,7 +432,7 @@ func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []strin
 
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute-tbm' to resume",
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
 			ErrUnroutedProducers, strings.Join(violations, "\n  "))
 	}
 
