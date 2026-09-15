@@ -188,7 +188,7 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 
 // TestExecute_VisibleFlagSurface — the manifest work moved topology and auth
 // into the config file; what stays on the command line is the manifest path,
-// the state file (now optional, defaults to migration-state.json), the id override,
+// the state file (now optional, defaults to <metadata.name>-state.json), the id override,
 // and the per-policy overrides that vary a spec.defaultPolicies value for a single run.
 // --run-report is registered but hidden (a diagnostics path whose only consumer is
 // the performance rig), so it is asserted separately rather than padding the advertised surface.
@@ -500,9 +500,10 @@ func TestExecute_NoExistingStateFile_AutoCreatesEntryFromManifest(t *testing.T) 
 	assert.Equal(t, "msk-to-cc", cfg.ClusterLinkName)
 }
 
-// TestExecute_MigrationStateFileFlagIsOptional_DefaultsToMigrationStateJSON
-// mirrors execute-tbm's TestExecuteTBM_TbmStateFileOptional_DefaultsToMetadataNameAndResumes.
-func TestExecute_MigrationStateFileFlagIsOptional_DefaultsToMigrationStateJSON(t *testing.T) {
+// TestExecute_MigrationStateFileFlagIsOptional_DefaultsToMetadataNameStateJSON
+// mirrors execute-tbm's own TestExecuteTBM_TbmStateFileOptional_DefaultsToMetadataNameAndResumes,
+// which this default now matches for both modes (see Global Constraints).
+func TestExecute_MigrationStateFileFlagIsOptional_DefaultsToMetadataNameStateJSON(t *testing.T) {
 	f := newFixture(t, nil)
 	require.NoError(t, os.Remove(f.stateFile))
 	dir := filepath.Dir(f.manifestPath)
@@ -512,8 +513,8 @@ func TestExecute_MigrationStateFileFlagIsOptional_DefaultsToMigrationStateJSON(t
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
 
-	_, statErr := os.Stat(filepath.Join(dir, "migration-state.json"))
-	assert.NoError(t, statErr, "omitting --migration-state-file must default to migration-state.json in the CWD")
+	_, statErr := os.Stat(filepath.Join(dir, "msk-prod-to-cc-batch-1-state.json"))
+	assert.NoError(t, statErr, "omitting --migration-state-file must default to <metadata.name>-state.json in the CWD")
 }
 
 // TestExecute_ExistingEntryIsUnaffectedByAutoCreate is the backward-
@@ -1075,8 +1076,8 @@ func TestExecute_DryRun_DoesNotRequireMigrationStateFileFlag(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to produce the reconcile plan")
 
-	_, statErr := os.Stat(filepath.Join(dir, "migration-state.json"))
-	assert.True(t, os.IsNotExist(statErr), "dry-run must not create migration-state.json in the CWD even when --migration-state-file is omitted")
+	_, statErr := os.Stat(filepath.Join(dir, "msk-prod-to-cc-batch-1-state.json"))
+	assert.True(t, os.IsNotExist(statErr), "dry-run must not create <metadata.name>-state.json in the CWD even when --migration-state-file is omitted")
 }
 
 func TestExecute_DryRun_ExistingEntryIsNotDriftChecked(t *testing.T) {

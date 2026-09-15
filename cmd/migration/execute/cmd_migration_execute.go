@@ -78,11 +78,11 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 		Use:   "execute",
 		Short: "Execute a migration (run the cutover)",
 		Long:  executeLong,
-		Example: `  # Run (or resume) the cutover
-  kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
+		Example: `  # Run (or resume) the cutover — defaults to <metadata.name>-state.json
+  kcp migration execute --migration-yaml gateway-migration.yaml
 
   # Override a policy default for this run only
-  kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json --detect-unrouted-producers-duration 60s`,
+  kcp migration execute --migration-yaml gateway-migration.yaml --detect-unrouted-producers-duration 60s`,
 		SilenceErrors: true,
 		// A runtime failure mid-cutover (e.g. a source-connect error) must not
 		// bury the error under Cobra's usage block.
@@ -95,7 +95,7 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended.")
+	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended. Defaults to \"<metadata.name>-state.json\" in the current directory when omitted.")
 	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; touch no migration state file and run no FSM transition.")
 
@@ -200,8 +200,12 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
 	}
 
+	// metadata.name already uniquely identifies the migration and doubles as
+	// migration_id on the persisted MigrationConfig, so a separate mandatory
+	// path is not required for a fresh or resumed run — mirrors execute-tbm's
+	// own default before this command absorbed it.
 	if migrationStateFile == "" {
-		migrationStateFile = "migration-state.json"
+		migrationStateFile = g.Metadata.Name + "-state.json"
 	}
 
 	var state *migration.MigrationState
