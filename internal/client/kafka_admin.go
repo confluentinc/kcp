@@ -527,9 +527,18 @@ func (k *KafkaAdminClient) Close() error {
 	return k.admin.Close()
 }
 
-// NewKafkaClient creates a sarama.Client (not a ClusterAdmin) for offset fetching.
-// Uses the same auth configuration options as NewKafkaAdmin.
-func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption) (sarama.Client, error) {
+// buildKafkaClientConfig applies opts to a fresh AdminConfig (defaulting to IAM
+// auth, same as NewKafkaClient/NewKafkaAdmin always have), then runs the shared
+// per-authType configurator switch against a *sarama.Config pinned to version.
+// It returns the resolved AdminConfig alongside the *sarama.Config so callers can
+// still report authType in their own error messages.
+//
+// Shared by NewKafkaClient (pinned at sarama.V3_6_0_0, matching the "3.6.0"
+// NewKafkaAdmin callers pin so a from-client admin built off this client
+// observes the same wire version a natively dialed admin would) and
+// NewConsumerGroupClient (pinned at sarama.V3_8_0_0, the version KIP-848
+// ListGroups v5 requires) so the auth switch is defined once.
+func buildKafkaClientConfig(region string, version sarama.KafkaVersion, opts ...AdminOption) (*sarama.Config, AdminConfig, error) {
 	config := AdminConfig{
 		authType: types.AuthTypeIAM,
 	}
@@ -538,36 +547,44 @@ func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption
 	}
 
 	saramaConfig := sarama.NewConfig()
-	// Matches the "3.6.0" NewKafkaAdmin callers pin, so a from-client admin
-	// (built off this client via NewKafkaAdminFromClient) observes the same
-	// wire version a natively dialed admin would.
-	configureCommonSettings(saramaConfig, "kcp-cli", sarama.V3_6_0_0)
+	configureCommonSettings(saramaConfig, "kcp-cli", version)
 
 	switch config.authType {
 	case types.AuthTypeIAM:
 		configureSASLTypeOAuthAuthentication(saramaConfig, region, config.insecureSkipTLSVerify)
 	case types.AuthTypeSASLSCRAM:
 		if err := configureSASLTypeSCRAMAuthentication(saramaConfig, config.username, config.password, config.saslMechanism, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
-			return nil, fmt.Errorf("failed to configure SASL/SCRAM authentication: %w", err)
+			return nil, config, fmt.Errorf("failed to configure SASL/SCRAM authentication: %w", err)
 		}
 	case types.AuthTypeSASLPlain:
 		if err := configureSASLTypePlainAuthentication(saramaConfig, config.username, config.password, !config.disableTLS, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
-			return nil, fmt.Errorf("failed to configure SASL/PLAIN authentication: %w", err)
+			return nil, config, fmt.Errorf("failed to configure SASL/PLAIN authentication: %w", err)
 		}
 	case types.AuthTypeUnauthenticatedTLS:
 		if err := configureUnauthenticatedAuthentication(saramaConfig, true, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
-			return nil, fmt.Errorf("failed to configure unauthenticated TLS authentication: %w", err)
+			return nil, config, fmt.Errorf("failed to configure unauthenticated TLS authentication: %w", err)
 		}
 	case types.AuthTypeUnauthenticatedPlaintext:
 		if err := configureUnauthenticatedAuthentication(saramaConfig, false, config.caCertFile, config.insecureSkipTLSVerify); err != nil {
-			return nil, fmt.Errorf("failed to configure unauthenticated plaintext authentication: %w", err)
+			return nil, config, fmt.Errorf("failed to configure unauthenticated plaintext authentication: %w", err)
 		}
 	case types.AuthTypeTLS:
 		if err := configureTLSAuth(saramaConfig, config.caCertFile, config.clientCertFile, config.clientKeyFile, config.insecureSkipTLSVerify); err != nil {
-			return nil, fmt.Errorf("failed to configure TLS authentication: %w", err)
+			return nil, config, fmt.Errorf("failed to configure TLS authentication: %w", err)
 		}
 	default:
-		return nil, fmt.Errorf("auth type %v not supported", config.authType)
+		return nil, config, fmt.Errorf("auth type %v not supported", config.authType)
+	}
+
+	return saramaConfig, config, nil
+}
+
+// NewKafkaClient creates a sarama.Client (not a ClusterAdmin) for offset fetching.
+// Uses the same auth configuration options as NewKafkaAdmin.
+func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption) (sarama.Client, error) {
+	saramaConfig, config, err := buildKafkaClientConfig(region, sarama.V3_6_0_0, opts...)
+	if err != nil {
+		return nil, err
 	}
 
 	client, err := sarama.NewClient(brokerAddresses, saramaConfig)

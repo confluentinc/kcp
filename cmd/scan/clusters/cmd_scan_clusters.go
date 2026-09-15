@@ -24,15 +24,16 @@ import (
 )
 
 var (
-	stateFile       string
-	credentialsFile string
-	sourceType      string
-	skipTopics      bool
-	skipACLs        bool
-	metricsSource   string
-	metricsDuration string
-	metricsInterval string
-	metricsRange    string
+	stateFile          string
+	credentialsFile    string
+	sourceType         string
+	skipTopics         bool
+	skipACLs           bool
+	skipConsumerGroups bool
+	metricsSource      string
+	metricsDuration    string
+	metricsInterval    string
+	metricsRange       string
 )
 
 func scanClustersIAMAnnotation() string {
@@ -45,10 +46,12 @@ func scanClustersIAMAnnotation() string {
 					"kafka-cluster:Connect",
 					"kafka-cluster:DescribeCluster",
 					"kafka-cluster:DescribeClusterDynamicConfiguration",
+					"kafka-cluster:DescribeGroup",
 					"kafka-cluster:DescribeTopic",
 				},
 				Resources: []string{
 					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
+					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:group/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
 					"arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>",
 				},
 			},
@@ -66,6 +69,12 @@ Source-specific notes:
 
 - ` + "`--source-type msk`" + ` reads cluster connection details from the ` + "`msk-credentials.yaml`" + ` file produced by ` + "`kcp discover`" + `. SCRAM is forced to SHA-512 (the only mechanism MSK supports).
 - ` + "`--source-type apache-kafka`" + ` reads from a hand-authored ` + "`apache-kafka-credentials.yaml`" + ` file. SASL/SCRAM defaults to SHA-256 — set ` + "`auth_method.sasl_scram.mechanism: SHA512`" + ` if your cluster requires SHA-512. The full schema and worked examples are documented at [Apache Kafka configuration → Credentials](../../apache-kafka-configuration/credentials.md).
+
+Consumer groups:
+
+- Consumer group discovery runs by default; pass ` + "`--skip-consumer-groups`" + ` to turn it off. For every group KCP records its KIP-848 type (` + "`classic`" + `, ` + "`consumer`" + `, ` + "`share`" + `, ` + "`streams`" + `), state, and coordinator, and merges them into the state file.
+- Reading the group *type* requires a broker running Kafka 3.8 or newer; against older brokers the type is reported as blank and every group is treated as classic-protocol.
+- Only ` + "`classic`" + ` groups are fully described (members and their assigned topics). ` + "`consumer`" + `, ` + "`share`" + `, and ` + "`streams`" + ` groups record type, state, and coordinator but not member-level detail (that needs the newer ConsumerGroupDescribe API); they are flagged with incomplete detail in the state file and UI.
 
 Metrics collection (Apache Kafka only):
 
@@ -108,6 +117,7 @@ Both backends produce the same metric shape and feed reports and the UI. See [Ap
 	optionalFlags.SortFlags = false
 	optionalFlags.BoolVar(&skipTopics, "skip-topics", false, "Skip topic discovery")
 	optionalFlags.BoolVar(&skipACLs, "skip-acls", false, "Skip ACL discovery")
+	optionalFlags.BoolVar(&skipConsumerGroups, "skip-consumer-groups", false, "Skip consumer group discovery")
 	scanClustersCmd.Flags().AddFlagSet(optionalFlags)
 
 	metricsFlags := pflag.NewFlagSet("metrics", pflag.ExitOnError)
@@ -232,9 +242,10 @@ func runScanClusters(cmd *cobra.Command, args []string) error {
 
 	// Perform scan
 	scanOpts := sources.ScanOptions{
-		SkipTopics: skipTopics,
-		SkipACLs:   skipACLs,
-		State:      state,
+		SkipTopics:         skipTopics,
+		SkipACLs:           skipACLs,
+		SkipConsumerGroups: skipConsumerGroups,
+		State:              state,
 	}
 
 	slog.Info("starting cluster scan", "source", sourceType)

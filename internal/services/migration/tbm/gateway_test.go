@@ -8,6 +8,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -151,8 +152,8 @@ spec:
           default: source
 `
 
-func testTBMConfig() *TBMConfig {
-	return &TBMConfig{
+func testTBMConfig() *migration.MigrationConfig {
+	return &migration.MigrationConfig{
 		MigrationId:    "tbm-1",
 		CurrentState:   StateLagsOk,
 		K8sNamespace:   "confluent",
@@ -633,4 +634,48 @@ func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t 
 	require.Error(t, err)
 	var rejected *gateway.GatewayRejectedError
 	require.ErrorAs(t, err, &rejected)
+}
+
+// TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability proves
+// resolveGatewayCapability passes config.GatewayConfigPort — not a hard-coded
+// constant — through to DetectCapability, mirroring
+// migration.ResolveGatewayCapability's own port-settling behavior (see
+// internal/services/migration/workflow.go's ResolveGatewayCapability).
+// mockGatewayService already supports overriding DetectCapability via its
+// detectCapabilityFn function field, so no new stub type is needed here.
+func TestResolveGatewayCapability_NonDefaultPort_ReachesDetectCapability(t *testing.T) {
+	var sawPort int
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(_ context.Context, _, _ string, port int, _, _ []byte) (gateway.Capability, error) {
+			sawPort = port
+			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.GatewayConfigPort = 9999
+
+	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
+	assert.Equal(t, 9999, sawPort)
+}
+
+// TestResolveGatewayCapability_ZeroPort_DefaultsTo9180 proves an unset
+// (zero-value) config.GatewayConfigPort still settles onto
+// gateway.DefaultGatewayConfigPort before the capability probe, exactly like
+// migration.ResolveGatewayCapability.
+func TestResolveGatewayCapability_ZeroPort_DefaultsTo9180(t *testing.T) {
+	var sawPort int
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(_ context.Context, _, _ string, port int, _, _ []byte) (gateway.Capability, error) {
+			sawPort = port
+			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.GatewayConfigPort = 0
+
+	require.NoError(t, actions.ensureGatewayCapability(context.Background(), config))
+	assert.Equal(t, gateway.DefaultGatewayConfigPort, sawPort)
+	assert.Equal(t, gateway.DefaultGatewayConfigPort, config.GatewayConfigPort, "resolveGatewayCapability must settle the default onto config itself, not just pass it to DetectCapability")
 }

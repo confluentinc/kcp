@@ -13,6 +13,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
 )
@@ -110,7 +111,7 @@ func (a *TBMActions) SetPromoteBatchSize(n int) {
 // partially mutated. There is no simulated delay here: the expensive work
 // (contacting source/target/gateway/cluster-link) already happened producing
 // res; this step is pure validate-and-copy.
-func (a *TBMActions) Initialize(ctx context.Context, config *TBMConfig, res *migplan.Result) error {
+func (a *TBMActions) Initialize(ctx context.Context, config *migration.MigrationConfig, res *migplan.Result) error {
 	if res.Refused {
 		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
@@ -120,6 +121,14 @@ func (a *TBMActions) Initialize(ctx context.Context, config *TBMConfig, res *mig
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
+	// Persist the resolved route mode, mirroring AAO's Initialize exactly.
+	// The unified `execute` dispatcher reads config.Mode on every resume (it
+	// re-runs migplan.Reconcile only while still StateUninitialized), so a
+	// dynamic migration interrupted after Initialize MUST carry Mode:"dynamic"
+	// forward — otherwise the next run's `switch mode` falls through to the
+	// static/AAO branch and drives the wrong executor. See
+	// cmd/migration/execute's runMigrationExecute.
+	config.Mode = res.Mode
 
 	a.reporter.success("TBM migration initialized (%d topic(s) in plan)", len(res.Topics))
 	return nil
@@ -128,7 +137,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *TBMConfig, res *mig
 // WaitForLags runs the wait_for_lags transition: polls source and destination
 // offsets for config.Topics until every topic's total lag is at or below
 // lagThreshold. Mirrors migration.MigrationActions.CheckLags.
-func (a *TBMActions) WaitForLags(ctx context.Context, config *TBMConfig, lagThreshold int64) error {
+func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.MigrationConfig, lagThreshold int64) error {
 	a.reporter.blank()
 	a.reporter.line(fmt.Sprintf("%s Checking replication lag across %s (threshold: %s)",
 		color.CyanString("⏳"),
@@ -281,7 +290,7 @@ func formatLag64(n int64) string {
 // compensating rollback of its own (abort_fence only fires from
 // verify_fence's ErrUnroutedProducers) — it just returns an error, leaving
 // the FSM at lags_ok; re-running execute-tbm retries fencing.
-func (a *TBMActions) Fence(ctx context.Context, config *TBMConfig) error {
+func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
 	// config.Topics is empty whenever migplan.Reconcile's Result was a
 	// legitimate "nothing to migrate" outcome (Refused: false, Artifacts nil —
 	// see reconcile.go: Refused() is checked first, then len(migratable)==0 is
@@ -334,7 +343,7 @@ func (a *TBMActions) Fence(ctx context.Context, config *TBMConfig) error {
 // without this call it would apply and verify the unfence using the
 // unresolved zero-value capability — the exact staleness bug already found
 // and fixed for Switch (see resolveGatewayCapability's own doc comment).
-func (a *TBMActions) unfenceGateway(ctx context.Context, config *TBMConfig) error {
+func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.MigrationConfig) error {
 	if err := a.ensureGatewayCapability(ctx, config); err != nil {
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
 	}
@@ -364,7 +373,7 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *TBMConfig) erro
 // except the duration is a parameter here (see ExecutionParams.DetectUnroutedProducersDuration)
 // rather than a TBMConfig field — TBM threads per-run policy the same way
 // WaitForLags already threads LagThreshold.
-func (a *TBMActions) VerifyFence(ctx context.Context, config *TBMConfig, detectUnroutedProducersDuration time.Duration) error {
+func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, detectUnroutedProducersDuration time.Duration) error {
 	if detectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
 		a.reporter.detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
@@ -423,7 +432,7 @@ func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []strin
 
 	if len(violations) > 0 {
 		sort.Strings(violations)
-		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute-tbm' to resume",
+		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
 			ErrUnroutedProducers, strings.Join(violations, "\n  "))
 	}
 
@@ -437,7 +446,7 @@ func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []strin
 // restAuth is per-run authentication for the cluster-link REST surface — not
 // stored on TBMActions, mirroring how AAO's own PromoteTopics takes it as a
 // parameter rather than construction-time state.
-func (a *TBMActions) Promote(ctx context.Context, config *TBMConfig, restAuth clusterlink.Authenticator) error {
+func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationConfig, restAuth clusterlink.Authenticator) error {
 	slog.Debug("topic promotion process started")
 
 	const maxPromoteRetries = 3
@@ -625,7 +634,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *TBMConfig, restAuth cl
 // capture or compensating rollback on failure — a failure here just returns
 // an error and leaves the FSM at promoted; re-running execute-tbm retries
 // switching.
-func (a *TBMActions) Switch(ctx context.Context, config *TBMConfig) error {
+func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
 	// config.Topics is empty whenever migplan.Reconcile's Result was a
 	// legitimate "nothing to migrate" outcome — see Fence's identical guard
 	// for the full explanation. config.SwitchoverYAML is then "", which

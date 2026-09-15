@@ -9,6 +9,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/looplab/fsm"
 )
 
@@ -84,27 +85,27 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
 // execution. Mirrors migration.MigrationOrchestrator.
 type TBMOrchestrator struct {
-	config        *TBMConfig
-	fsm           *fsm.FSM
-	actions       *TBMActions
-	tbmState      *TBMState
-	stateFilePath string
-	reporter      *reporter
+	config         *migration.MigrationConfig
+	fsm            *fsm.FSM
+	actions        *TBMActions
+	migrationState *migration.MigrationState
+	stateFilePath  string
+	reporter       *reporter
 }
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
 func NewTBMOrchestrator(
-	config *TBMConfig,
+	config *migration.MigrationConfig,
 	actions *TBMActions,
-	tbmState *TBMState,
+	migrationState *migration.MigrationState,
 	stateFilePath string,
 ) *TBMOrchestrator {
 	orchestrator := &TBMOrchestrator{
-		config:        config,
-		actions:       actions,
-		tbmState:      tbmState,
-		stateFilePath: stateFilePath,
-		reporter:      newReporter(),
+		config:         config,
+		actions:        actions,
+		migrationState: migrationState,
+		stateFilePath:  stateFilePath,
+		reporter:       newReporter(),
 	}
 
 	events := make(fsm.Events, 0, len(canonicalWorkflow)+3)
@@ -234,7 +235,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 
 	if err := o.PersistState(); err != nil {
-		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute-tbm will re-assert the fence and resume from it", stepFailure, err)
+		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, err)
 	}
 	return stepFailure
 }
@@ -325,8 +326,8 @@ func (o *TBMOrchestrator) PersistState() error {
 }
 
 func (o *TBMOrchestrator) saveState() error {
-	o.tbmState.UpsertMigration(*o.config)
-	if err := o.tbmState.WriteToFile(o.stateFilePath); err != nil {
+	o.migrationState.UpsertMigration(*o.config)
+	if err := o.migrationState.WriteToFile(o.stateFilePath); err != nil {
 		return fmt.Errorf("failed to save state: %w", err)
 	}
 	return nil

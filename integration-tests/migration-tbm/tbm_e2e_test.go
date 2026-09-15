@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestSuccessBatchesMigrate drives batch-01..04 through the real execute-tbm
+// TestSuccessBatchesMigrate drives batch-01..04 through the real execute
 // command (U7): Decide (a cheap, read-only pre-check confirming the batch is
 // genuinely migratable and how many topics it selects) → runKCP (the actual
 // kcp binary, exercising internal/services/migration/tbm's real FSM, not the
@@ -69,11 +69,11 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 			manifestPath := h.e.manifestPath(name + ".yaml")
 			stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 			out, err := runKCP(t, manifestPath, stateFile)
-			require.NoErrorf(t, err, "execute-tbm must exit 0 for %s:\n%s", name, out)
-			require.NotContains(t, out, "panic", "execute-tbm must not panic")
+			require.NoErrorf(t, err, "execute must exit 0 for %s:\n%s", name, out)
+			require.NotContains(t, out, "panic", "execute must not panic")
 
 			data, readErr := os.ReadFile(stateFile)
-			require.NoError(t, readErr, "execute-tbm must write --tbm-state-file")
+			require.NoError(t, readErr, "execute must write --migration-state-file")
 			var parsed struct {
 				Migrations []struct {
 					MigrationId  string `json:"migration_id"`
@@ -86,7 +86,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 				"the real FSM must walk every transition through to switched for "+name)
 
 			// A full batch run always reaches switched in one synchronous
-			// execute-tbm call, and switch legitimately clears the fence
+			// execute call, and switch legitimately clears the fence
 			// switchover applies (migplan derives SwitchoverYAML from the
 			// pre-fence rules tree, not the fenced one — see
 			// reconcile_test.go's own invariant: the batch topic must not
@@ -99,7 +99,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 			// narrative (migration_e2e_test.go's fenceIdx checks) — not by
 			// inspecting a live artifact a later step legitimately clears.
 			require.Containsf(t, out, "Gateway fenced and ready",
-				"execute-tbm's own narrative must show fence completed successfully for %s", name)
+				"execute's own narrative must show fence completed successfully for %s", name)
 
 			mirrors := mirrorStatuses(t, h)
 			for _, tp := range batchTopics {
@@ -147,7 +147,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 
 // TestUnroutedProducerDetection drives a real unrouted-producer scenario
 // against the live gateway: a producer writes directly to the source cluster
-// (bypassing the fenced route entirely) while execute-tbm holds the fence, so
+// (bypassing the fenced route entirely) while execute holds the fence, so
 // verify_fence's real detectUnroutedProducers
 // (internal/services/migration/tbm/workflow.go) must observe the source
 // offset rise and trigger the real abort_fence rollback
@@ -197,16 +197,16 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	})
 
 	// handleStepFailure returns the original step error even after a
-	// successful rollback (orchestrator.go:224-240), so execute-tbm exits
+	// successful rollback (orchestrator.go:224-240), so execute exits
 	// non-zero here — this is expected, not a test failure.
 	out, err := runKCP(t, manifestPath, stateFile)
-	require.Errorf(t, err, "execute-tbm must exit non-zero on unrouted-producer detection:\n%s", out)
-	require.NotContains(t, out, "panic", "execute-tbm must not panic")
-	require.Contains(t, out, "Unrouted producers detected", "execute-tbm's narrative must show detection fired")
-	require.Contains(t, out, "Gateway unfenced", "execute-tbm's narrative must show the rollback completed")
+	require.Errorf(t, err, "execute must exit non-zero on unrouted-producer detection:\n%s", out)
+	require.NotContains(t, out, "panic", "execute must not panic")
+	require.Contains(t, out, "Unrouted producers detected", "execute's narrative must show detection fired")
+	require.Contains(t, out, "Gateway unfenced", "execute's narrative must show the rollback completed")
 
 	data, readErr := os.ReadFile(stateFile)
-	require.NoError(t, readErr, "execute-tbm must write --tbm-state-file even on a rolled-back run")
+	require.NoError(t, readErr, "execute must write --migration-state-file even on a rolled-back run")
 	var parsed struct {
 		Migrations []struct {
 			MigrationId  string `json:"migration_id"`

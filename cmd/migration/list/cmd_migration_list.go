@@ -15,28 +15,25 @@ var (
 
 func NewMigrationListCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List all migrations from the migration state file",
-		Long:  "Display all migrations from the migration state file in a human-readable format, showing migration IDs, status, gateway configuration, and topics.",
-		Example: `  # Default state file
-  kcp migration list
-
-  # Specific state file
-  kcp migration list --migration-state-file /path/to/migration-state.json`,
+		Use:           "list",
+		Short:         "List all migrations from a migration state file",
+		Long:          "Display all migrations from a migration state file in a human-readable format, showing migration IDs, status, gateway configuration, and topics. There is no default file: since kcp migration execute now names each migration's state file after its own metadata.name, list has no single file to guess — pass the exact path.",
+		Example:       `  kcp migration list --migration-state-file /path/to/msk-prod-to-cc-batch-1-state.json`,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		PreRunE:       preRunMigrationList,
 		RunE:          runMigrationList,
 	}
 
-	optionalFlags := pflag.NewFlagSet("optional", pflag.ExitOnError)
-	optionalFlags.SortFlags = false
-	optionalFlags.StringVar(&migrationStateFile, "migration-state-file", "migration-state.json", "The path to the migration state file to read.")
-	cmd.Flags().AddFlagSet(optionalFlags)
+	requiredFlags := pflag.NewFlagSet("required", pflag.ExitOnError)
+	requiredFlags.SortFlags = false
+	requiredFlags.StringVar(&migrationStateFile, "migration-state-file", "", "The path to the migration state file to read.")
+	cmd.Flags().AddFlagSet(requiredFlags)
+	_ = cmd.MarkFlagRequired("migration-state-file")
 
 	cmd.SetUsageFunc(func(c *cobra.Command) error {
 		fmt.Printf("%s\n\n", c.Short)
-		fmt.Printf("Optional:\n%s\n", optionalFlags.FlagUsages())
+		fmt.Printf("Required:\n%s\n", requiredFlags.FlagUsages())
 		fmt.Println("All flags can be provided via environment variables (uppercase, with underscores).")
 		return nil
 	})

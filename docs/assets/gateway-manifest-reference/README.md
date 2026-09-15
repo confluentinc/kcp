@@ -13,7 +13,7 @@ see [gateway migration example](gateway-migration-example.md).
 
 This manifest drives an imperative, resumable state machine:
 
-- **`execute`** registers the migration on its first run (if not already registered), validates the manifest and live infrastructure, and drives the fence → promote → switchover FSM forward. On first run, it snapshots the topology into `migration-state.json`, reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and continues directly into the cutover. On subsequent runs, it resumes from wherever the state file says the last run left off. It re-reads the manifest (topology and policy) on every invocation.
+- **`execute`** registers the migration on its first run (if not already registered), validates the manifest and live infrastructure, and drives the fence → promote → switchover FSM forward. On first run, it snapshots the topology into its state file (`--migration-state-file`, defaulting to `<metadata.name>-state.json` in the current directory), reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and continues directly into the cutover. On subsequent runs, it resumes from wherever the state file says the last run left off. It re-reads the manifest (topology and policy) on every invocation.
   - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. No migration state file is created or touched, and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
 - **`lag-check`** polls mirror-topic replication lag independently of `execute`.
 
@@ -162,12 +162,13 @@ The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
 first execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR, not written in
-the manifest. (Topic-based/dynamic routes are not yet implemented; a route that
-resolves to dynamic is refused at first execute. On a static route, `topicPatterns` is
-only consulted when `topics` is absent, and only the match-all pattern is
-expanded — any other pattern is refused, and a union with `topics` isn't
-implemented, until general pattern expansion lands alongside the topic-based
-migration engine.)
+the manifest. Both modes are fully implemented: `kcp migration execute` resolves
+the mode once, at first registration, persists it on the migration's config
+entry, and dispatches every run after that to the matching engine and FSM —
+AAO's for static routes, TBM's for dynamic — without re-resolving the mode on
+a resume. `spec.clusterLink.pauseConsumerOffsetSync` has no effect on a
+dynamic-mode migration (TBM's FSM has no pause/restore stage for it); kcp
+warns and proceeds rather than refusing a manifest that sets it.
 
 `lag-check` ignores the topic selection entirely and always watches every mirror
 topic.
