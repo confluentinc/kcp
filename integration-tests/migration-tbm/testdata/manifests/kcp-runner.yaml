@@ -94,7 +94,7 @@ spec:
     workingDir: /workspace
     # The destination SASL credential reaches the runner ONLY here, from the
     # tbm-rest-credentials Secret — never on a kubectl exec argv (apiserver
-    # audit-log leak). PromoteMirrors/execute-tbm read these via os.Getenv.
+    # audit-log leak). PromoteMirrors/execute read these via os.Getenv.
     env:
     - name: KCP_TBM_DEST_SASL_USER
       valueFrom:

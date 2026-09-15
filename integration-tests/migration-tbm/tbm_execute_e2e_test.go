@@ -22,7 +22,7 @@ const execTBMTimeout = 5 * time.Minute
 // kcpBinary is the in-pod kcp binary run.sh builds and cp's into the runner.
 func kcpBinary() string { return envOrDefault("KCP_TBM_KCP_BIN", "/workspace/kcp") }
 
-// TestExecuteTBMThinPosture covers the execute-tbm command's behavior that is
+// TestExecuteTBMThinPosture covers the execute command's behavior that is
 // genuinely independent of batch/topic state, plus the live regression test
 // for the bug that once crashed Fence on a zero-topic result. Its per-batch
 // happy path (does a real batch actually fence/promote/switch) moved to
@@ -30,7 +30,7 @@ func kcpBinary() string { return envOrDefault("KCP_TBM_KCP_BIN", "/workspace/kcp
 // — since fence, promote and switch are all real — also proves the genuine
 // zero-topic steady state at the engine level, via its own restored
 // steady-state-noop and mixed-already-migrated-and-unmigrated sub-tests
-// (Decide-only, never a second execute-tbm run). That is a strictly weaker
+// (Decide-only, never a second execute run). That is a strictly weaker
 // claim than this test's own zero-topic-batch sub-test below, which proves
 // the COMMAND — not just the engine — completes cleanly when there is
 // nothing to migrate.
@@ -38,14 +38,14 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 	h := newHarness(t)
 	manifestPath := h.e.manifestPath("batch-01.yaml")
 
-	// Abuse: an unwritable --tbm-state-file (missing parent directory) must fail
-	// cleanly — non-zero exit, no panic — because the command writes the state file
-	// early, before the reconcile.
+	// Abuse: an unwritable --migration-state-file (missing parent directory) must
+	// fail cleanly — non-zero exit, no panic — because the command writes the
+	// state file early, before the reconcile.
 	t.Run("unwritable-state-file-fails-cleanly", func(t *testing.T) {
 		badState := filepath.Join(t.TempDir(), "missing-parent", "tbm-state.json")
 
 		out, err := runKCP(t, manifestPath, badState)
-		require.Error(t, err, "an unwritable --tbm-state-file must fail")
+		require.Error(t, err, "an unwritable --migration-state-file must fail")
 		require.NotContains(t, out, "panic", "a write failure must not panic")
 
 		_, statErr := os.Stat(badState)
@@ -61,11 +61,12 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 	// Refused()-then-len(migratable)==0 split). By the time this runs,
 	// TestSuccessBatchesMigrate (which runs first, alphabetically, in this
 	// same suite) has already fully migrated batch-01's topics for real, so
-	// a fresh execute-tbm run against the same manifest — a brand-new
-	// throwaway state file, so resolveTBMConfig sees this as a first-ever
-	// run and Reconcile really runs fresh — hits exactly this case. Every
-	// real transition (fence, promote, switch) must recognize it and no-op;
-	// this proves execute-tbm itself does, not just Decide.
+	// a fresh execute run against the same manifest — a brand-new
+	// throwaway state file, so runMigrationExecute's config lookup (state.
+	// GetMigrationById miss -> buildFreshMigrationConfig, cmd_migration_execute.go)
+	// sees this as a first-ever run and Reconcile really runs fresh — hits
+	// exactly this case. Every real transition (fence, promote, switch) must
+	// recognize it and no-op; this proves execute itself does, not just Decide.
 	t.Run("zero-topic-batch-completes-cleanly-leaves-world-unchanged", func(t *testing.T) {
 		stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 
@@ -73,11 +74,11 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 		mirrorsBefore := mirrorStatuses(t, h)
 
 		out, err := runKCP(t, manifestPath, stateFile)
-		require.NoErrorf(t, err, "execute-tbm must exit 0 against an already-migrated batch:\n%s", out)
-		require.NotContains(t, out, "panic", "execute-tbm must not panic")
+		require.NoErrorf(t, err, "execute must exit 0 against an already-migrated batch:\n%s", out)
+		require.NotContains(t, out, "panic", "execute must not panic")
 
 		data, readErr := os.ReadFile(stateFile)
-		require.NoError(t, readErr, "execute-tbm must write --tbm-state-file")
+		require.NoError(t, readErr, "execute must write --migration-state-file")
 		require.NotEmpty(t, data)
 		var parsed map[string]any
 		require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
@@ -103,7 +104,7 @@ func gatewayRoutes(t *testing.T, h *tbmHarness) []byte {
 	return out
 }
 
-// runKCP invokes the in-pod kcp binary's execute-tbm with only file-path args (no
+// runKCP invokes the in-pod kcp binary's execute with only file-path args (no
 // secrets on argv) and returns the combined output.
 func runKCP(t *testing.T, manifestPath, stateFile string) (string, error) {
 	t.Helper()
@@ -111,9 +112,9 @@ func runKCP(t *testing.T, manifestPath, stateFile string) (string, error) {
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, kcpBinary(),
-		"migration", "execute-tbm",
+		"migration", "execute",
 		"--migration-yaml", manifestPath,
-		"--tbm-state-file", stateFile,
+		"--migration-state-file", stateFile,
 	)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
