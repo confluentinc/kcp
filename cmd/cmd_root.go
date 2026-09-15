@@ -24,6 +24,7 @@ import (
 	"github.com/confluentinc/kcp/cmd/update"
 	"github.com/confluentinc/kcp/cmd/version"
 	"github.com/confluentinc/kcp/internal/build_info"
+	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/logging"
 	"github.com/fatih/color"
 	"github.com/spf13/cobra"
@@ -72,6 +73,11 @@ var RootCmd = &cobra.Command{
 		// File-only mirror sink for components that own rich terminal output
 		// (e.g. the migration reporter) and must still be captured in kcp.log.
 		logging.SetFile(slog.New(fileHandler))
+
+		// Bridge sarama's client logging into slog now that the default handler is
+		// installed, so broker dials/metadata/retries land in kcp.log (and the
+		// --verbose console) instead of sarama's default io.Discard.
+		client.InstallSaramaLogging()
 
 		// --- End logging setup ---
 
