@@ -162,12 +162,13 @@ The route's **migration mode** — all-at-once (static) vs topic-based (dynamic)
 first execute run (a singular `streamingDomain` ⇒ static, a plural `streamingDomains` ⇒
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR, not written in
-the manifest. (Topic-based/dynamic routes are not yet implemented; a route that
-resolves to dynamic is refused at first execute. On a static route, `topicPatterns` is
-only consulted when `topics` is absent, and only the match-all pattern is
-expanded — any other pattern is refused, and a union with `topics` isn't
-implemented, until general pattern expansion lands alongside the topic-based
-migration engine.)
+the manifest. Both modes are fully implemented: `kcp migration execute` resolves
+the mode once, at first registration, persists it on the migration's config
+entry, and dispatches every run after that to the matching engine and FSM —
+AAO's for static routes, TBM's for dynamic — without re-resolving the mode on
+a resume. `spec.clusterLink.pauseConsumerOffsetSync` has no effect on a
+dynamic-mode migration (TBM's FSM has no pause/restore stage for it); kcp
+warns and proceeds rather than refusing a manifest that sets it.
 
 `lag-check` ignores the topic selection entirely and always watches every mirror
 topic.
