@@ -235,7 +235,7 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 	}
 
 	if err := o.PersistState(); err != nil {
-		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute-tbm will re-assert the fence and resume from it", stepFailure, err)
+		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, err)
 	}
 	return stepFailure
 }
