@@ -1,0 +1,141 @@
+# plan-inputs.yaml: your answers for `kcp report plan`.
+# Re-running reads this file and writes it back; your answers are preserved (it only adds any new follow-up questions).
+# Fill the lines marked `# not set`, then re-run (adjust the paths to where your files are):
+#   kcp report plan --plan-inputs plan-inputs.yaml
+# 14 required questions still open before a full plan.
+
+clusters:
+  your-cluster:   # region:  · 14 open required, 6 open optional
+    # ── REQUIRED: answer these ──
+    # How widely is this cluster used?
+    #   one-app → One team, one application
+    #   few-teams → A few teams or applications
+    #   shared-fabric → Shared fabric across many apps and teams
+    use_case_breadth:   # not set
+
+    # Do you need to move your existing data?
+    #   true → Yes, move my existing data: Brings your history along. Availability depends on your source setup.
+    #   false → No, we can start fresh: Points producers and consumers at the new cluster and lets the old one retire
+    move_existing_data:   # not set
+
+    # Is private networking a hard requirement?
+    #   (Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted.)
+    #   true → Yes, private networking is required
+    #   false → No, public endpoints are fine
+    private_networking_required:   # not set
+
+    # How do you connect to your cluster today?
+    #   same-vpc → Same VPC
+    #   peered → Peered
+    #   privatelink → PrivateLink
+    #   other → Other or more than one
+    connects_today:   # not set
+
+    # What Schema Registry does your source environment use?
+    #   none → None: Schemaless, or schemas kept in app code
+    #   glue → AWS Glue Schema Registry
+    #   cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later
+    #   cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1
+    #   other → Other, not sure
+    schema_registry:   # not set
+
+    # What do you want to do with your schemas on Confluent Cloud?
+    #   migrate → Migrate my existing schemas
+    #   fresh → Start fresh on Confluent Cloud
+    #   schemaless → Stay schemaless
+    schema_strategy:   # not set
+
+    # What is your target downtime window at cutover?
+    #   window-all → A scheduled window, all at once
+    #   window-sequential → A scheduled window, one service at a time
+    #   minutes → Minutes per service
+    #   seconds → Seconds per service
+    #   zero → Zero downtime
+    downtime_tolerance:   # not set
+
+    # What Kafka version does your source cluster run?
+    #   (Below Kafka 2.4, Cluster Linking isn't available, so we use Confluent Replicator instead.)
+    #   3.0-plus → 3.0 or newer
+    #   2.4-2.9 → 2.4-2.9
+    #   older → Older than 2.4
+    kafka_version:   # not set
+
+    # Roughly how many partitions do you have, not counting replicas?
+    #   under-2500 → Under 2,500
+    #   2500-30000 → 2,500 to 30,000
+    #   over-30000 → Over 30,000
+    partition_band:   # not set
+
+    # How your Kafka clients authenticate today
+    #   iam → AWS IAM
+    #   scram → SASL/SCRAM
+    #   mtls → TLS client certificates (mTLS)
+    #   unauth → None / plaintext
+    source_auth:   # not set
+
+    # Do your topics use tiered storage?
+    #   (Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost.)
+    #   true → Yes
+    #   false → No
+    tiered_storage:   # not set
+
+    # Do any of your topics use non-default settings?
+    #   (This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete.)
+    #   true → Yes
+    #   false → No
+    topics_have_custom_settings:   # not set
+
+    # Do you use MSK Connect?
+    #   true → Yes
+    #   false → No
+    msk_connect_present:   # not set
+
+    # Do you run self-managed Kafka Connect?
+    #   true → Yes
+    #   false → No
+    self_managed_connectors:   # not set
+
+    # ── OPTIONAL: defaults pre-selected, change if needed ──
+    # Will any of Confluent Cloud's managed connectors or consumers need to connect into your private network?
+    #   (For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network.)
+    #   true → Yes
+    #   false → No
+    # cc_egress_required:   # optional here — doesn't change this cluster's plan · [true | false]
+
+    # Does your workload exceed any of the following: 250 megabytes/sec ingress, 750 megabytes/sec egress, or 15,000 requests/sec?
+    #   (If you exceed any of these, we'll plan for an Enterprise cluster instead of Standard. Enterprise runs on private networking.)
+    #   true → Yes
+    #   false → No  (default)
+    exceeds_standard_limits: false
+
+    # Which cloud should your new Confluent Cloud cluster run on?
+    #   (This is independent of your source cloud. Confluent supports cross-cloud migrations.)
+    #   aws → AWS  (default)
+    #   azure → Azure
+    #   gcp → GCP
+    target_cloud: aws
+
+    # Which authentication methods should your Confluent Cloud cluster support? Select all that apply.
+    #   (A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new.)
+    #   api-keys → API keys (SASL/PLAIN)
+    #   oauth → OAuth
+    #   mtls → mTLS
+    target_auth: []
+
+    # How much coordination will it take to cut over all your clients and apps at the same time?
+    #   easy → Low (few clients, one team)
+    #   moderate → Moderate  (default)
+    #   hard → High (many clients and teams)
+    client_coordination: moderate
+
+    # Do any applications use exactly-once transactions and/or Kafka Streams?
+    #   eos → Exactly-once or transactions
+    #   kstreams → Kafka Streams
+    eos_streams: []
+
+    # ── ALREADY ANSWERED / PRESET: edit to override ──
+    # Source cluster type
+    #   provisioned → Provisioned
+    #   serverless → Serverless
+    # source_cluster_type: provisioned   # preset (uncomment to override)
+

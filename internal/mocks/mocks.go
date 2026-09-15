@@ -45,6 +45,31 @@ func (m *MockKafkaAdmin) Close() error {
 	return m.CloseFunc()
 }
 
+// MockConsumerGroupScanner is a mock implementation of the
+// client.ConsumerGroupScanner interface
+type MockConsumerGroupScanner struct {
+	ListGroupsWithTypeFunc func() ([]types.ConsumerGroupListing, error)
+	DescribeGroupsFunc     func(groupIDs []string) ([]*sarama.GroupDescription, error)
+	CoordinatorsFunc       func(groupIDs []string) map[string]string
+	CloseFunc              func() error
+}
+
+func (m *MockConsumerGroupScanner) ListGroupsWithType() ([]types.ConsumerGroupListing, error) {
+	return m.ListGroupsWithTypeFunc()
+}
+
+func (m *MockConsumerGroupScanner) DescribeGroups(groupIDs []string) ([]*sarama.GroupDescription, error) {
+	return m.DescribeGroupsFunc(groupIDs)
+}
+
+func (m *MockConsumerGroupScanner) Coordinators(groupIDs []string) map[string]string {
+	return m.CoordinatorsFunc(groupIDs)
+}
+
+func (m *MockConsumerGroupScanner) Close() error {
+	return m.CloseFunc()
+}
+
 // MockMSKService is a mock implementation of the MSKService interface
 type MockMSKService struct {
 	GetBootstrapBrokersFunc        func(ctx context.Context, clusterArn string) (*kafka.GetBootstrapBrokersOutput, error)
