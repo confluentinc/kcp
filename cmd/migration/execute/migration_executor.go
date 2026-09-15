@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/targets"
@@ -47,9 +48,9 @@ type MigrationExecutorOpts struct {
 	// RestCreds authenticates the destination cluster-link REST surface. It is
 	// the full resolved credential (basic, bearer, mtls, or the api_key form),
 	// not just an api_key/api_secret pair, and is kept separate from the Kafka
-	// leg's DestAuthMethod because an explicit spec.target.kafka.restCredentials
-	// may name a different principal — the Kafka leg must not silently
-	// authenticate as the REST one.
+	// leg's DestAuthMethod because spec.clusterLink.linkCredentials may name a
+	// different principal — the Kafka leg must not silently authenticate as the
+	// REST one.
 	RestCreds *targets.Credentials
 	// TLS trust is per leg. One shared boolean meant relaxing verification for a
 	// self-signed source also stopped verifying the destination connections,
@@ -76,6 +77,12 @@ type MigrationExecutorOpts struct {
 	// RunReportPath, when non-empty, is where per-stage timings are written as
 	// JSON. Empty (the default) disables the report.
 	RunReportPath string
+	// ReconcileResult is the migplan.Result the command layer computed live,
+	// via migplan.Reconcile, ONLY when resuming a migration still at
+	// StateUninitialized (a deferred --skip-validate init completing here —
+	// see cmd_migration_execute.go). nil on every ordinary invocation, in
+	// which case Execute never reaches onInitialize and this is never read.
+	ReconcileResult *migplan.Result
 }
 
 type MigrationExecutor struct {
@@ -145,23 +152,15 @@ func (m *MigrationExecutor) Run() error {
 		return nil
 	}
 
-	// Re-derive the gateway verification capability against the live cluster.
-	// The mode recorded at init is only what the operator was told to expect —
-	// the cluster can be upgraded, or rolled back, in between, and a downgrade
-	// matters for correctness: writing spec.configId to a CRD that no longer
-	// declares it makes server-side apply fail outright.
-	if err := actions.ResolveGatewayCapability(ctx, &config); err != nil {
-		return err
-	}
-
-	// Prove hot-reload actually works before anything blocks traffic. The gateway
-	// gates its config watcher on an Enterprise licence, and when that gate is
-	// shut CFK still reports success while the gateway serves stale config — so
-	// this is the only place the failure is visible, and the only safe time to
-	// look is before fencing.
-	if err := actions.VerifyHotReloadCapability(ctx, &config); err != nil {
-		return err
-	}
+	// Gateway capability is NOT resolved here. It used to be: a blanket
+	// pre-Execute check, safe only because a separate `init` process had
+	// already populated config.FenceYAML/SwitchoverYAML on disk before this
+	// process ever ran. Now that execute can register a migration for the
+	// first time in this very process, that data may not exist yet at this
+	// point — deriving a fence/switchover CR from it would fail. Capability
+	// instead resolves lazily, at most once per process, from whichever of
+	// FenceGateway/SwitchGateway orchestrator.Execute reaches first (mirrors
+	// tbm.TBMActions.ensureGatewayCapability).
 
 	// The run report is stamped on the way out whatever the outcome: a migration
 	// that failed — or one whose lag never converged — is a result worth
@@ -187,7 +186,7 @@ func (m *MigrationExecutor) Run() error {
 	// pause_offset_sync stage, right after fencing) so destination offsets
 	// stay fresh through the lag and fence phases instead of going stale for
 	// the whole run. Only the restore below remains a bookend.
-	if execErr = orchestrator.Execute(ctx, m.opts.LagThreshold, restAuth); execErr != nil {
+	if execErr = orchestrator.Execute(ctx, m.opts.LagThreshold, restAuth, m.opts.ReconcileResult); execErr != nil {
 		migration.WarnIfPausedOnExecuteFailure(&config, execErr)
 		return fmt.Errorf("failed to execute migration: %w", execErr)
 	}
