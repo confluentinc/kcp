@@ -1,0 +1,41 @@
+# Permutation fixture: a static route that is otherwise fully valid (same
+# shape as gateway-static-redundant-auth.yaml) but already carries a non-null
+# `fence` block. The "route is not already fenced" precondition must fail and
+# refuse — fencing an already-fenced route means this batch was already
+# fenced by a prior run, or something upstream lost track of state.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-static-already-fenced
+spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        bootstrapServers:
+          - id: MSK
+            endpoint: localhost:19092
+    - name: cc
+      kafkaCluster:
+        bootstrapServers:
+          - id: CC
+            endpoint: localhost:29092
+  routes:
+    - name: migration-route
+      mode: static
+      streamingDomain:
+        name: msk
+        bootstrapServerId: MSK
+      security:
+        cluster:
+          cc:
+            secretStore: vault
+            authentication:
+              secretRef: cc-redundant-auth
+      fence:
+        scope: ALL
+        errorCode: BROKER_NOT_AVAILABLE
+      rules:
+        routing:
+          coordination:
+            group: msk
+          default: msk
