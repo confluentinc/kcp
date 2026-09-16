@@ -45,9 +45,15 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	_, _ = fmt.Fprintln(w, "Route checks")
 	failedGates := 0
 	for _, p := range r.Preconditions {
-		if p.OK {
+		switch {
+		case p.Skipped:
+			// Advisory, never a refusal reason (OK is always true here) — but
+			// must not render as a plain "✓ passed" the way a real pass does,
+			// since that would claim a verification that never happened.
+			_, _ = fmt.Fprintf(w, "  %s %s\n", yellow.Sprint("⚠"), yellow.Sprintf("%s — %s", p.Name, p.Detail))
+		case p.OK:
 			_, _ = fmt.Fprintf(w, "  %s %s\n", green.Sprint("✓"), p.Name)
-		} else {
+		default:
 			failedGates++
 			_, _ = fmt.Fprintf(w, "  %s %s\n", red.Sprint("✗"), red.Sprintf("%s — %s", p.Name, p.Detail))
 		}

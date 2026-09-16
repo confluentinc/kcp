@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
-	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -36,11 +35,13 @@ func hotReloadConfig() *MigrationConfig {
 	return &MigrationConfig{
 		K8sNamespace:  "confluent",
 		InitialCrName: "gw-1",
-		// A real routed CR: FenceGateway's cleanInitialCR + gateway.FenceRoutesObj
-		// derive the fenced CR from it, which needs spec.routes to inject onto.
-		InitialCrYAML:     []byte("apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n"),
-		FenceRoutes:       []string{"migration-route"},
-		SwitchoverTargets: testSwitchoverTargets,
+		// A real routed CR: FenceGateway's deriveFencedCRYAML splices FenceYAML
+		// onto Route, which needs spec.routes to contain it.
+		GatewayYAML:    "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: gw-1\n  resourceVersion: \"123\"\nspec:\n  replicas: 1\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\nstatus:\n  observedGeneration: 4\n",
+		Route:          "migration-route",
+		Mode:           "static",
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
 	}
 }
 
@@ -431,50 +432,5 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 		out := stdout + stderr
 		assert.Contains(t, out, "logs -l app=gw-1", "the hint must select the gateway pods by app label")
 		assert.NotContains(t, out, " -c ", "the hint must not pass a container name — the gateway CR name is not the container name")
-	})
-}
-
-func TestCleanInitialCR(t *testing.T) {
-	t.Run("removes every server-managed field", func(t *testing.T) {
-		in := []byte(`
-apiVersion: platform.confluent.io/v1beta1
-kind: Gateway
-metadata:
-  name: gw-1
-  managedFields:
-    - manager: kcp-migration
-  resourceVersion: "123"
-  uid: 1234-5678
-  creationTimestamp: "2026-01-01T00:00:00Z"
-  generation: 7
-spec:
-  replicas: 3
-status:
-  observedGeneration: 7
-`)
-		obj, err := cleanInitialCR(in)
-		require.NoError(t, err)
-		out, err := yaml.Marshal(obj)
-		require.NoError(t, err)
-
-		body := string(out)
-		for _, field := range []string{"managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "status"} {
-			assert.NotContains(t, body, field)
-		}
-		assert.Contains(t, body, "gw-1", "the identity must survive")
-		assert.Contains(t, body, "replicas", "the spec must survive")
-	})
-
-	t.Run("tolerates a CR with no metadata block", func(t *testing.T) {
-		obj, err := cleanInitialCR([]byte("apiVersion: v1\nkind: Gateway\nspec: {}\n"))
-		require.NoError(t, err)
-		out, err := yaml.Marshal(obj)
-		require.NoError(t, err)
-		assert.Contains(t, string(out), "Gateway")
-	})
-
-	t.Run("rejects unparseable YAML", func(t *testing.T) {
-		_, err := cleanInitialCR([]byte("\tnot: [valid"))
-		require.Error(t, err)
 	})
 }

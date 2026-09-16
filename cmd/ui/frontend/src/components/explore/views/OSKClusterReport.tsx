@@ -5,6 +5,7 @@ import { OSKClusterHeader } from './OSKClusterHeader'
 import { OSKClusterOverview } from './OSKClusterOverview'
 import { ClusterTopics } from '../clusters/ClusterTopics'
 import { ClusterACLs } from '../clusters/ClusterACLs'
+import { ClusterConsumerGroups } from '../clusters/ClusterConsumerGroups'
 import { ClusterConnectors } from '../clusters/ClusterConnectors'
 import { ClusterClients } from '../clusters/ClusterClients'
 import { ClusterMetrics } from '../clusters/ClusterMetrics'
@@ -37,6 +38,7 @@ export const OSKClusterReport = () => {
     { id: 'metrics', label: 'Metrics' },
     { id: 'topics', label: 'Topics' },
     { id: 'acls', label: 'ACLs' },
+    { id: 'consumerGroups', label: 'Consumer Groups' },
     { id: 'connectors', label: 'Connectors' },
   ]
 
@@ -74,6 +76,10 @@ export const OSKClusterReport = () => {
 
           {activeTab === 'acls' && (
             <ClusterACLs acls={cluster.kafka_admin_client_information?.acls || []} />
+          )}
+
+          {activeTab === 'consumerGroups' && (
+            <ClusterConsumerGroups kafkaAdminInfo={cluster.kafka_admin_client_information} />
           )}
 
           {activeTab === 'connectors' && (

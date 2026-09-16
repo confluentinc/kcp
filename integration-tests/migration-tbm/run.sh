@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compiles the TBM hot-reload suite (and a linux kcp binary for execute-tbm's
+# Compiles the TBM hot-reload suite (and a linux kcp binary for execute's
 # subprocess in U9) for the cluster node's architecture, ships them plus the
 # rendered manifests into the runner pod, and executes the test binary there.
 #
@@ -51,7 +51,7 @@ echo "Compiling the TBM e2e suite for linux/${NODE_ARCH}..."
     go test -c -tags e2e -o "${TEST_BIN}" ./integration-tests/migration-tbm/
 )
 
-echo "Building the linux kcp binary (execute-tbm subprocess) ..."
+echo "Building the linux kcp binary (execute subprocess) ..."
 (
   cd "${REPO_ROOT}"
   GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux GOARCH="${NODE_ARCH}" \

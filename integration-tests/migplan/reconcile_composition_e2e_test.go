@@ -35,8 +35,14 @@ func TestReconcileResultReflectsManifest(t *testing.T) {
 	}
 	route := g.Spec.TopicGroup[0].Route
 
+	// The manifest's route is dynamic-mode, which never consults the secrets
+	// provider (see engine.go's Run) — but Reconcile builds one unconditionally,
+	// which needs a real kubeconfig. WithSecretExistenceChecker skips that build,
+	// mirroring WithGatewaySource's own reason for existing: this test drives the
+	// whole in-code composition without reaching Kubernetes at all.
 	res, err := migplan.Reconcile(context.Background(), g,
 		migplan.WithGatewaySource(migplan.NewGatewayFile("testdata/gateway.yaml", route)),
+		migplan.WithSecretExistenceChecker(fakeSecretChecker{}),
 		migplan.WithOutput(io.Discard),
 	)
 	if err != nil {
