@@ -76,13 +76,30 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 	// Build both artifacts from one pristine copy of the operator's rules, so the
 	// fence and switchover derive independently from the same baseline.
 	base, _ := ParseRules(gw.Route.Rules)
-	fence := base.Clone()
+	fence, err := base.Clone()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("fence rules clone", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
 	fence.PrependFence(migratable)
-	switchover := base.Clone()
+
+	switchover, err := base.Clone()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("switchover rules clone", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
 	switchover.PrependCondition(migratable, view.TargetDomain)
 
-	fenceBytes, _ := fence.Serialize()
-	switchBytes, _ := switchover.Serialize()
+	fenceBytes, err := fence.Serialize()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("fence rules serialize", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
+	switchBytes, err := switchover.Serialize()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("switchover rules serialize", err.Error()))
+		return &Plan{Report: report, Mode: "dynamic"}
+	}
 
 	// Guardrail: refuse if either serialized rules block exceeds the size limit.
 	if len(fenceBytes) > MaxRulesBytes || len(switchBytes) > MaxRulesBytes {

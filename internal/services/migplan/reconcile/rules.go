@@ -1,6 +1,8 @@
 package reconcile
 
 import (
+	"fmt"
+
 	"github.com/goccy/go-yaml"
 )
 
@@ -87,12 +89,21 @@ func (rt *RulesTree) CoordinationGroup() string {
 	return stringField(coord, "group")
 }
 
-// Clone deep-copies the tree so fence and switchover mutations are independent.
-func (rt *RulesTree) Clone() *RulesTree {
-	b, _ := yaml.Marshal(rt.root)
+// Clone deep-copies the tree (via a marshal/unmarshal round trip) so fence and
+// switchover mutations are independent. Returns an error rather than a
+// silently corrupt copy if the tree contains something that cannot be
+// marshaled — callers must not proceed to mutate a clone built from a
+// discarded error, since a nil/empty root would panic on the first write.
+func (rt *RulesTree) Clone() (*RulesTree, error) {
+	b, err := yaml.Marshal(rt.root)
+	if err != nil {
+		return nil, fmt.Errorf("marshaling rules tree to clone: %w", err)
+	}
 	var cp map[string]any
-	_ = yaml.Unmarshal(b, &cp)
-	return &RulesTree{root: cp}
+	if err := yaml.Unmarshal(b, &cp); err != nil {
+		return nil, fmt.Errorf("unmarshaling cloned rules tree: %w", err)
+	}
+	return &RulesTree{root: cp}, nil
 }
 
 func (rt *RulesTree) ensureRouting() map[string]any {

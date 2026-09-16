@@ -353,6 +353,41 @@ func TestReconcileStaticNoopWhenAlreadySwitched(t *testing.T) {
 	}
 }
 
+// TestReconcileRefusesOnCloneError is the end-to-end counterpart to
+// TestCloneReturnsErrorOnUnmarshalableValue: an operator's rules tree that
+// cannot be cloned must refuse the whole run — via the normal
+// Preconditions/Refused() machinery, not a panic — rather than let a
+// corrupt clone reach PrependFence.
+func TestReconcileRefusesOnCloneError(t *testing.T) {
+	gw := dynGateway()
+	gw.Route.Rules = map[string]any{
+		"routing": map[string]any{"coordination": map[string]any{"group": "msk"}, "default": "msk"},
+		"bad":     make(chan int), // unmarshalable: yaml.Marshal fails inside Clone
+	}
+	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "cc"}
+	source := []string{"team-a.orders"}
+	target := []string{"team-a.orders"}
+	mirrors := map[string]MirrorState{"team-a.orders": MirrorActive}
+
+	p := Reconcile(in, gw, source, target, mirrors, false, ClusterIDs{}, nil)
+
+	if !p.Report.Refused() {
+		t.Fatalf("an unclonable rules tree must refuse the run, got %+v", p.Report)
+	}
+	if p.Artifacts != nil {
+		t.Fatal("a refused run must emit no artifacts")
+	}
+	found := false
+	for _, pc := range p.Report.Preconditions {
+		if pc.Name == "fence rules clone" && !pc.OK {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a failed %q precondition, got %+v", "fence rules clone", p.Report.Preconditions)
+	}
+}
+
 func TestReconcileDynamicStillReturnsMode(t *testing.T) {
 	// Confirms the new Mode field is set correctly on the existing dynamic
 	// path too, not just static.
