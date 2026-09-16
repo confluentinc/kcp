@@ -219,18 +219,14 @@ func (m *Migration) Validate() []error {
 	if m.Spec.ServiceAccounts != nil && m.Spec.ServiceAccounts.AutoCreate && m.Spec.Target.Type == TargetConfluentCloud && blankRef(m.Spec.Target.CloudCredentials) {
 		add("spec.target.cloudCredentials: required for spec.serviceAccounts.autoCreate on a confluent-cloud target (used to provision accounts via IAM v2)")
 	}
-	// spec.target.kafka.credentials / restCredentials exist on the shared
-	// TargetKafka for kind: GatewayMigration only. kcp migrate authenticates the
-	// destination via spec.target.clusterCredentials and never reads them, so a
-	// value here would be silently ignored at apply — reject it rather than let an
-	// author believe they configured destination auth (the same stance the gateway
-	// kind takes on credentials it would otherwise drop).
+	// spec.target.kafka.clusterCredentials exists on the shared TargetKafka for
+	// kind: GatewayMigration only. kcp migrate authenticates the destination via
+	// spec.target.clusterCredentials (on Target, not TargetKafka) and never reads
+	// this one, so a value here would be silently ignored at apply — reject it
+	// rather than let an author believe they configured destination auth.
 	if k := m.Spec.Target.Kafka; k != nil {
-		if !blankRef(k.Credentials) {
-			add("spec.target.kafka.credentials: not supported by kind: %s — the destination is authenticated via spec.target.clusterCredentials (this field applies only to kind: %s)", KindMigration, KindGatewayMigration)
-		}
-		if k.RestCredentials != nil {
-			add("spec.target.kafka.restCredentials: not supported by kind: %s — the destination is authenticated via spec.target.clusterCredentials (this field applies only to kind: %s)", KindMigration, KindGatewayMigration)
+		if !blankRef(k.ClusterCredentials) {
+			add("spec.target.kafka.clusterCredentials: not supported by kind: %s — the destination is authenticated via spec.target.clusterCredentials (this field applies only to kind: %s)", KindMigration, KindGatewayMigration)
 		}
 	}
 

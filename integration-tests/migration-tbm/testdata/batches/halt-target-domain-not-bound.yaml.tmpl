@@ -1,0 +1,37 @@
+# TBM halt — targetStreamingDomain not bound to the route.
+#
+# targetStreamingDomain names "phantom-domain", which the live route does not bind
+# (it binds source-domain + destination-domain). The engine refuses on the failed
+# precondition "target domain is bound" (reconcile/preconditions.go). Runs against
+# the LIVE gateway.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-target-domain-not-bound
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials: __CRED_DIR__/source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      clusterCredentials: __CRED_DIR__/dest-kafka-creds.yaml
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+    bootstrapServers:
+      - "__DEST_BOOTSTRAP__"
+    linkCredentials: __CRED_DIR__/link-creds.yaml
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-048"
+      route: "__ROUTE_NAME__"
+      targetStreamingDomain: "phantom-domain"
