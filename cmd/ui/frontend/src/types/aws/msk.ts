@@ -384,6 +384,36 @@ export interface ConnectClusterMetrics {
 /**
  * Kafka Admin Client Information
  */
+export interface ConsumerGroupMember {
+  member_id: string
+  client_id: string
+  client_host: string
+  group_instance_id?: string
+  assigned_topics: string[]
+}
+
+export interface ConsumerGroupDetail {
+  group_id: string
+  type: string
+  state: string
+  protocol_type: string
+  coordinator?: string
+  members: ConsumerGroupMember[]
+  topics: string[]
+  detail_complete: boolean
+}
+
+export interface ConsumerGroupSummary {
+  total: number
+  by_type: Record<string, number>
+  by_state: Record<string, number>
+}
+
+export interface ConsumerGroupsInfo {
+  summary: ConsumerGroupSummary
+  details: ConsumerGroupDetail[]
+}
+
 export interface KafkaAdminInfo {
   cluster_id?: string
   discovered_brokers?: string[]
@@ -391,6 +421,7 @@ export interface KafkaAdminInfo {
   topics?: TopicsInfo
   acls?: KafkaACL[]
   connect_clusters?: ConnectCluster[]
+  consumer_groups?: ConsumerGroupsInfo
   [key: string]: unknown
 }
 

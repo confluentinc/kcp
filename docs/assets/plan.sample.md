@@ -1,172 +1,110 @@
-# Migration Plan — Amazon MSK → Confluent Cloud
+# Migration Plan
 
-_Generated 2026-05-15 15:00:00 UTC by KCP 0.0.0-localdev from `sample-state.json` · plan schema `1-experimental`._
+Source: Amazon MSK · Generated 2026-09-01 12:00 UTC · kcp 0.0.0-localdev · scanned 2026-09-01 12:00 UTC
 
-## Definitions
+## Cluster: orders-prod (us-east-1)
 
-- **Enterprise / Dedicated** — Confluent Cloud cluster tiers. Enterprise has elastic billing per eCKU; Dedicated is fixed-provisioned per CKU. **MZ** (Multi-Zone) is the default Dedicated topology; **SZ** (Single-Zone) fires only when `requires_99_95_sla_within_a_single_zone: true` is set in `plan-inputs.yaml`.
-- **eCKU** — Elastic Confluent Kafka Unit, the throughput unit on Enterprise clusters. 60 MB/s ingress + 180 MB/s egress per eCKU at the per-eCKU caps used below.
-- **CKU** — Confluent Kafka Unit, the Dedicated-tier equivalent of eCKU. Sizing math is the same; only the unit name changes. Dedicated clusters always render with `CKU`.
-- **P95** — the 95th-percentile sustained throughput observed in the metrics window. Sizing uses P95 (override with `sizing_percentile`) so a transient spike doesn't permanently inflate the recommended cluster size.
-- **Final size** — the recommended eCKU (Enterprise) or CKU (Dedicated) count for the cluster. `(floor)` next to a value means the SLA minimum was binding (the math came in below the floor and was rounded up).
-- **Peak burst** — short-window peak throughput observed in metrics, expressed as eCKU. Surfaces in the spiky-workload note when peak diverges from P95 by more than the configured ratio.
-- **PNI** (Private Network Interface) — AWS-to-AWS private connectivity, up to 32 eCKU on Enterprise. The default for AWS Enterprise; **always required on Dedicated** (AWS).
-- **PrivateLink** — capped at 10 eCKU on Enterprise. Fires when `target_cloud != "aws"` (PNI is AWS-only), when `cc_egress_required: true` (PNI lacks native CC→customer egress), or when `projected_pni_gateway_count >= 2`. Also the cross-cloud private path on Dedicated when `target_cloud` is Azure / GCP.
-- **ACL cap (4000)** — Enterprise supports up to 4000 ACLs; exceeding the cap forces Dedicated. Source: [https://docs.confluent.io/cloud/current/clusters/cluster-types.html](https://docs.confluent.io/cloud/current/clusters/cluster-types.html).
+**Source:** MSK Provisioned · 143 topics · 6 brokers · auth: scram
 
-<details><summary>Cutover-related terms (Stop-Restart-Repeat, Blue/Green, CC Gateway-mediated, etc.)</summary>
+### Recommendation
 
-- **Stop-Restart-Repeat** — phased per-service cutover. Each application (or topic) is stopped on MSK, mirrored to CC, and resumed at the CC endpoint, one at a time. Recoverable per step; longer elapsed time.
-- **Stop-Wait-Restart** — single coordinated maintenance window. Producers stop, the mirror catches up, services resume in sequence inside the window.
-- **Restart-All-At-Once** — single window where every client reconfigures and reconnects at the same instant. Largest blast radius; one rollback point for the whole fleet.
-- **Blue/Green** — parallel run on both sides via Cluster Linking. Zero downtime, highest operational complexity; customer-designed orchestration.
-- **CC Gateway-mediated** — a sidecar component that absorbs the cutover with a 30–90 s `BROKER_NOT_AVAILABLE` window per service, after which clients auto-retry against CC. Removes the per-service producer restart; requires Confluent for Kubernetes + a Gateway Add-On license.
-- **Plain Cluster Linking** — Cluster Linking without the CC Gateway; the simpler op model. Each service stops, mirror drains, restarts against the CC endpoint (minutes per service). Fully supported; chosen via `prefer_gateway: false`.
+| Category | Recommendation | Why |
+| --- | --- | --- |
+| Cluster type | Enterprise | Private networking is required for your workload. [docs](https://docs.confluent.io/cloud/current/clusters/cluster-types.html) |
+| Sizing | Autoscales, nothing to provision (Band 2) |  |
+| Networking | PNI + Egress PrivateLink Endpoint | It scales to the full 32 eCKU, so it grows with you. The Egress PrivateLink Endpoint is added so the migration Cluster Link can reach your source cluster, which PNI doesn’t carry. [docs](https://docs.confluent.io/cloud/current/networking/aws-egress-privatelink-esku.html) |
+| Authentication | API keys (SASL/PLAIN) | Confluent Cloud issues new credentials for this method after cutover. [docs](https://docs.confluent.io/cloud/current/security/authenticate/overview.html) |
+| Data migration | Cluster Linking, service by service (Stop-Restart-Repeat) | [docs](https://docs.confluent.io/cloud/current/multi-cloud/cluster-linking/migrate-cc.html) |
+| Schema | Schema Linking | [docs](https://docs.confluent.io/cloud/current/sr/schema-linking.html) |
+| Connectors | Rebuild as Confluent-managed connectors | [docs](https://docs.confluent.io/cloud/current/connectors/index.html) |
+| Topics | Topics should mirror as they are |  |
+| Historical data | Cluster Linking backfills all history |  |
 
-</details>
+#### Why these recommendations
 
-## 1. Source Environment
+- **Cluster type** — An Enterprise cluster fits your needs. You need private networking, which starts at Enterprise, and nothing else you told us pushes it up to Dedicated. Zones: Spread across three Availability Zones, with an uptime SLA of up to 99.99% (at 2 or more eCKU). The cluster keeps serving through the loss of a zone.
+- **Sizing** — We size from the most demanding of the numbers you gave us. Here that’s your partition count. This tier scales with your workload, so there is no capacity for you to pick.
+- **Networking** — On AWS, we recommend PNI (Private Network Interface) for your private connection. It scales to the full 32 eCKU, so it grows with you. Confluent Cloud pulls your data over the Cluster Link, reaching out to your source cluster. PNI doesn’t carry Cluster Linking traffic, so the link needs an Egress PrivateLink Endpoint alongside PNI.
+- **Authentication** — After cutover, your clients authenticate to Confluent Cloud with API keys (SASL/PLAIN). All credentials land as Confluent Cloud service accounts.
+- **Data migration** — We recommend a Cluster Linking cutover. At cutover you stop your producers, let the link finish, then restart them against Confluent Cloud, when you are ready rather than all at once. Your source credentials: No change. Cluster Linking uses your SCRAM credentials as-is.
 
-- **4** source clusters across **1** region · **15** brokers · **265** topics
+#### Networking trade-offs
 
-| Cluster | Region | Brokers | Topics | Source auth |
-|---|---|---:|---:|---|
-| heavy-acls | us-east-1 | 3 | 65 | `scram` |
-| mtls-cluster | us-east-1 | 3 | 38 | `mtls` |
-| small-orders | us-east-1 | 3 | 42 | `scram` |
-| steady-events | us-east-1 | 6 | 120 | `scram` |
+**PNI + Egress PrivateLink Endpoint** — AWS deployments that want the most room to grow
 
-## 2. Sizing & Cluster Decisions
+- + Scales to the full 32 eCKU, the top of this tier
+- + Traffic stays inside the Availability Zone when your clients are zone-aligned
+- + Private, one-way access
 
-This section combines three per-cluster decisions: the **sizing** (how many eCKU each cluster needs to absorb its workload at the chosen percentile + headroom), the **cluster type** (Enterprise, Dedicated, or Freight — driven by hard limits like ACL count and customer-declared flags), and the **networking** topology (PNI, PrivateLink, Transit Gateway, or VPC Peering — driven by `target_cloud`, egress requirements, and projected PNI gateway count). They render together because each row's verdict in one column constrains the others: e.g. a Dedicated cluster opens up PrivateLink networking patterns that Enterprise caps.
+- − Available on AWS only
+- − Not available on Dedicated clusters
+- − More complex to set up
 
-| Cluster | P95 in / out (MBps) | Partitions | Final size | Cluster Type | Networking |
-|---|---|---:|---:|---|---|
-| heavy-acls | 15.0 / 25.0 | 300 | 1 CKU | Dedicated Multi-Zone (MZ) | PNI |
-| mtls-cluster | 12.0 / 18.0 | 250 | 1 eCKU | Enterprise | PNI |
-| small-orders | 10.0 / 20.0 | 200 | 1 eCKU | Enterprise | PNI |
-| steady-events | 100.0 / 180.0 | 800 | 3 eCKU | Enterprise | PNI |
+#### Data migration
 
-### Why These Recommendations
+We recommend a Cluster Linking cutover. At cutover you stop your producers, let the link finish, then restart them against Confluent Cloud, when you are ready rather than all at once. Your source credentials: No change. Cluster Linking uses your SCRAM credentials as-is.
 
-- **heavy-acls** — Cluster type **Dedicated Multi-Zone (MZ)** — ACL count exceeds Enterprise cap (4001 ACLs > Enterprise cap 4000). Networking **PNI** — Dedicated AWS cluster — PNI required (TGW / VPC Peering are alternatives only when the customer's existing MSK topology already uses them; see `existing_vpc_connectivity` in plan-inputs.yaml).
-  - ℹ **Cost direction:** Dedicated has a higher monthly cost than Enterprise. This verdict is state-derived (a hard-limit rule fired on the cluster as scanned), so the escalation isn't recoverable by editing `plan-inputs.yaml`. Confirm with your Confluent account team that the cluster's capacity reflects your actual workload before committing.
-- **mtls-cluster** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PNI** — default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap).
-- **small-orders** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PNI** — default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap).
-- **steady-events** — Cluster type **Enterprise** — no hard-limit rule fired. Networking **PNI** — default for AWS Enterprise (scales to 32 eCKU vs PrivateLink's 10-eCKU cap).
+**Action:** Create cluster link
 
-## 3. Cutover Approach
+**KCP migration infrastructure:** https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/
 
-_The cutover style below applies to the **entire fleet**. Per-cluster cutover overrides aren't supported in this kcp version (planned for a follow-up). Heterogeneous fleets can run kcp against a state-file subset that contains only the clusters sharing a style — re-run for each subset and combine the recommendations manually._
+#### Schema
 
-- **Style:** Stop-Restart-Repeat (app-by-app)
-- **Gateway mediation:** Plain Cluster Linking
-  - ℹ **Awaiting gateway intent** — no preference declared yet; the Plan uses plain Cluster Linking until you confirm. See **Actions Needed** for how to choose.
-- **Alternatives considered:**
-  - **Stop-Wait-Restart** — single coordinated window; needs the window to be long enough for re-mirroring + validation. Pick via `downtime_tolerance: scheduled_window_sequential`.
-  - **Restart-All-At-Once** — single window; every client reconfigures at the same instant. Highest blast radius. Pick via `downtime_tolerance: scheduled_window_all_at_once`.
-  - **Blue/Green** — parallel run via Cluster Linking; zero downtime, highest operational complexity. Pick via `downtime_tolerance: zero`.
-- **Prerequisites:**
+Your Confluent Platform Enterprise 7.1+ registry can reach Confluent Cloud, so we recommend Schema Linking. It preserves your schema IDs, and no client change is needed for the schema move.
 
-  | Prereq | Status |
-  |---|---|
-  | Confluent for Kubernetes (CFK) cluster | ⛔ not started |
-  | Confluent Cloud Gateway Add-On license | ⛔ not started |
+#### Connectors
 
-  _IAM pre-migration prereq omitted — no IAM source detected in this fleet._
+Connectors do not travel with your topics. Whichever way you go, you set each one up again on the other side. You are on MSK Connect today, so each connector is recreated as a Confluent-managed connector. Confluent’s Connect Migration Utility copies each connector’s configuration across, so you are not retyping them.
 
+### Observations
 
-## 4. Client Auth Migration
+- ℹ️ **Tiered storage in use** — Historical data sits in S3. Backfilling it during cutover takes time proportional to the tiered volume and can add S3 re-fetch cost.
+- ℹ️ **No throughput metrics scanned** — Sizing is based on the partition count alone and is a lower bound. Run `kcp scan metrics` to size from real ingress/egress.
 
-Per-cluster source→target mapping. Each source-auth method on every cluster maps to a recommended Confluent Cloud auth — the recommendation can be overridden globally via `target_auth_method` or per-cluster via `clusters[<name>].target_auth_method`. The **Works via CC Gateway** column describes whether this auth method *could* flow through the CC Gateway when the gateway path is in use — it's a property of the auth mapping, not a statement about which path §3 picked.
+### Talk to a person
 
-| Cluster | Source auth | Target on Confluent Cloud | Works via CC Gateway | Notes |
-|---|---|---|---|---|
-| heavy-acls | `scram` | `confluent_cloud_api_keys` | ✅ yes (transparent swap) | — |
-| mtls-cluster | `mtls` | `mtls` | ✅ yes (auth-swap mode) | Gateway terminates TLS and re-issues an ACM-PCA cert source-side (auth-swap mode). |
-| small-orders | `scram` | `confluent_cloud_api_keys` | ✅ yes (transparent swap) | — |
-| steady-events | `scram` | `confluent_cloud_api_keys` | ✅ yes (transparent swap) | — |
+Your answers land inside what we can plan. This plan is yours to run. Talk to us if you want a second opinion.
 
-_Mapping provenance:_
-- `mtls` mapping → https://docs.confluent.io/cloud/current/security/authenticate/workload-identities/identity-providers/mtls/configure.html (last verified 2026-05-20)
-- `scram` mapping → https://docs.confluent.io/cloud/current/security/authenticate/overview.html (last verified 2026-05-20)
+---
 
-## 5. Actions Needed
+## Actions needed — answer in plan-inputs.yaml
 
-Each item below is a concrete action that tightens the recommendation. The current recommendation stands; these close state-file gaps, fix invalid inputs, or resolve preference questions. **Severity prefix:** 🟢 preference (pick one).
+Answers are per cluster. Fill in the open questions below, then re-run `kcp report plan --plan-inputs plan-output/plan-inputs.yaml`. Answering some may reveal follow-up questions.
 
-1. 🟢 **Gateway intent — pick CC Gateway or plain Cluster Linking**
-   - `prefer_gateway: true` (default) AND all three gateway prereqs (`confluent_for_kubernetes_status`, `cc_gateway_license_status`, `iam_pre_migration_status`) are at `not_started`. Both paths are fully supported — the Plan just needs you to pick. Plain Cluster Linking applies while this is open.
-   - _How to close:_ In `plan-inputs.yaml`, either (a) set `prefer_gateway: false` to commit to plain Cluster Linking, OR (b) move at least one gateway prereq to `in_progress` to commit to the gateway path. Re-run `kcp report plan` to clear the OQ.
+### Cluster: orders-prod
 
-## Appendix A1 — Sizing Math
-<details><summary>Show sizing math per cluster</summary>
+_0 required, 5 optional open._
 
-Each cluster is sized by taking the largest of its three throughput-vs-cap ratios (ingress, egress, partitions) and scaling that by `(1 + headroom)`, so the recommended size has spare capacity above the observed P95. Headroom for this run is `0.30` (override via `headroom_fraction` in `plan-inputs.yaml`). SLA floor binds when the math comes in below the minimum eCKU for the target SLA (1 eCKU for 99.9, 1 eCKU for 99.95, 2 eCKU for 99.99 — published in the Confluent Cloud cluster-types SLA table). The `Sized` and `Final` columns are in eCKU on Enterprise and CKU on Dedicated.
+#### Optional — defaults pre-selected
 
-Formula: `CEIL(max(P95In/60, P95Out/180, partitions/3000) * (1 + 0.30 headroom))`
+| Default (key: token) | Question | Options (token → meaning) |
+| --- | --- | --- |
+| 🟡 exceeds_enterprise_limits: false | Does your workload exceed any of the following: 1,920 megabytes/sec ingress, 5,760 megabytes/sec egress, or 240,000 requests per second? | true → Yes<br>false → No  (default) |
+| 🟡 target_cloud: aws | Which cloud should your new Confluent Cloud cluster run on?<br>_This is independent of your source cloud. Confluent supports cross-cloud migrations._ | aws → AWS  (default)<br>azure → Azure<br>gcp → GCP |
+| 🟡 target_auth:  | Which authentication methods should your Confluent Cloud cluster support? Select all that apply.<br>_A cluster can support several at once. On AWS we keep your existing mTLS as-is; on Azure and GCP, mTLS needs a Dedicated cluster, which we plan with you. OAuth and API keys are always set up new._ | api-keys → API keys (SASL/PLAIN)<br>oauth → OAuth<br>mtls → mTLS |
+| 🟡 client_coordination: moderate | How much coordination will it take to cut over all your clients and apps at the same time? | easy → Low (few clients, one team)<br>moderate → Moderate  (default)<br>hard → High (many clients and teams) |
+| 🟡 eos_streams:  | Do any applications use exactly-once transactions and/or Kafka Streams? | eos → Exactly-once or transactions<br>kstreams → Kafka Streams |
 
-| Cluster | Ingress ratio | Egress ratio | Partition ratio | Max (driver) | Sized | SLA floor | Final |
-|---|---:|---:|---:|---|---:|---:|---:|
-| heavy-acls | 0.2500 | 0.1389 | 0.1000 | **0.2500** (ingress) | 1 | 1 | 1 |
-| mtls-cluster | 0.2000 | 0.1000 | 0.0833 | **0.2000** (ingress) | 1 | 1 | 1 |
-| small-orders | 0.1667 | 0.1111 | 0.0667 | **0.1667** (ingress) | 1 | 1 | 1 |
-| steady-events | 1.6667 | 1.0000 | 0.2667 | **1.6667** (ingress) | 3 | 1 | 3 |
+#### Already answered / from your scan — edit to override
 
-Max-ratio is multiplied by `(1 + headroom)` and rounded up to get `Sized`. `Final` is `max(Sized, SLA floor)`.
-
-</details>
-
-## Appendix A2 — Hard-Limit Rules Evaluated
-<details><summary>Show per-cluster rule-evaluation trace</summary>
-
-Every cluster runs the same hard-limit catalog; this table records each rule's outcome so a reviewer can confirm the verdict and see negative evidence (e.g. "47 ACLs ≤ 4000 cap"). `skipped` rows mean the rule couldn't be evaluated — the cluster's verdict resolves on the other rules.
-
-_Evidence below reflects the source state file as of 2026-05-15 15:00:00 UTC. Re-run `kcp discover` / `kcp scan ...` if the source environment has changed materially since._
-
-**Cluster** `heavy-acls`
-
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 1 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `fired` | 4001 ACLs > Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | no mTLS source + target_cloud="aws" |
-
-**Cluster** `mtls-cluster`
-
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 1 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `not_fired` | 0 ACLs ≤ Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | mTLS source + target_cloud="aws" (AWS supports mTLS on Enterprise/Freight) |
-
-**Cluster** `small-orders`
-
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 1 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `not_fired` | 0 ACLs ≤ Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | no mTLS source + target_cloud="aws" |
-
-**Cluster** `steady-events`
-
-| Rule | Outcome | Detail |
-|---|---|---|
-| `eCKU_exceeds_pni_cap` (Sized eCKU exceeds Enterprise PNI cap) | `not_fired` | sized 3 eCKU ≤ PNI cap 32 eCKU |
-| `acl_count_exceeds_cap` (ACL count exceeds Enterprise cap) | `not_fired` | 0 ACLs ≤ Enterprise cap 4000 |
-| `broker_side_schema_validation_required` (Broker-side schema ID validation required) | `not_fired` | `enforce_schemas_at_the_broker: false` |
-| `rest_produce_api_high_throughput` (High-throughput Kafka REST Produce v3 required) | `not_fired` | `requires_high_throughput_rest_produce_api: false` |
-| `sla_99_95_single_zone` (99.95% single-zone SLA required) | `not_fired` | `requires_99_95_sla_within_a_single_zone: false` |
-| `mtls_on_non_aws_target` (Source uses mTLS, target is non-AWS) | `not_fired` | no mTLS source + target_cloud="aws" |
-
-</details>
+| Current (key: token) | Question | Options (token → meaning) |
+| --- | --- | --- |
+| ✅ private_networking_required: true | Is private networking a hard requirement?<br>_Answer based on your requirement, not your current setup. Public endpoints on Confluent Cloud are authenticated and encrypted._ | true → Yes, private networking is required<br>false → No, public endpoints are fine |
+| ✅ use_case_breadth: few-teams | How widely is this cluster used? | one-app → One team, one application<br>few-teams → A few teams or applications<br>shared-fabric → Shared fabric across many apps and teams |
+| ✅ move_existing_data: true | Do you need to move your existing data? | true → Yes, move my existing data — Brings your history along. Availability depends on your source setup.<br>false → No, we can start fresh — Points producers and consumers at the new cluster and lets the old one retire |
+| ✅ connects_today: same-vpc | How do you connect to your cluster today? | same-vpc → Same VPC<br>peered → Peered<br>privatelink → PrivateLink<br>other → Other or more than one |
+| ✅ cc_egress_required: false | Will any of Confluent Cloud’s managed connectors or consumers need to connect into your private network?<br>_For example, a connector writing to a private database, or a managed Confluent component calling a private API inside your network._ | true → Yes<br>false → No |
+| ✅ downtime_tolerance: minutes | What is your target downtime window at cutover? | window-all → A scheduled window, all at once<br>window-sequential → A scheduled window, one service at a time<br>minutes → Minutes per service<br>seconds → Seconds per service<br>zero → Zero downtime |
+| ✅ schema_registry: cp-enterprise-7.1 | What Schema Registry does your source environment use? | none → None — Schemaless, or schemas kept in app code<br>glue → AWS Glue Schema Registry<br>cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later — Confluent Platform Enterprise, version 7.1 or later<br>cp-community → Confluent Schema Registry: Community, or below 7.1 — Community edition, or Confluent Platform below version 7.1<br>other → Other, not sure |
+| ✅ schema_strategy: migrate | What do you want to do with your schemas on Confluent Cloud? | migrate → Migrate my existing schemas<br>fresh → Start fresh on Confluent Cloud<br>schemaless → Stay schemaless |
+| ✅ schema_reachable_to_cc: yes | Can your Schema Registry reach Confluent Cloud to sync schemas (outbound, port 443)? | yes → Yes<br>no → No<br>unsure → Not sure |
+| ✅ topics_have_custom_settings: false | Do any of your topics use non-default settings?<br>_This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete._ | true → Yes<br>false → No |
+| ✅ connector_destination: confluent-managed | Do you want to keep your connectors self-managed, or move them to Confluent-managed? | self-managed → Keep self-managed — Continue to run your own Connect cluster, which is new infrastructure to stand up if you’re moving off MSK Connect<br>confluent-managed → Move to Confluent-managed — Confluent runs the connector for you — no Connect cluster to stand up, scale, or patch  (default) |
+| ✅ consumer_history_requirement: required | Do your consumers need historical data available after migration? | required → Yes  (default)<br>not-required → No |
+| 🔎 source_cluster_type: provisioned | Source cluster type (from your scan) | provisioned → Provisioned<br>serverless → Serverless |
+| 🔎 kafka_version: 3.0-plus | Source Kafka version (from your scan) | 3.0-plus → 3.0 or newer<br>2.4-2.9 → 2.4–2.9<br>older → Older than 2.4 |
+| 🔎 source_auth: scram | How your Kafka clients authenticate today (from your scan) | iam → AWS IAM<br>scram → SASL/SCRAM<br>mtls → TLS client certificates (mTLS)<br>unauth → None / plaintext |
+| 🔎 tiered_storage: true | Does this cluster use tiered storage? (from your scan) | true → Yes<br>false → No |
+| 🔎 msk_connect_present: true | Do you use MSK Connect? (from your scan) | true → Yes<br>false → No |
+| 🔎 self_managed_connectors: false | Do you run self-managed Kafka Connect? (from your scan) | true → Yes<br>false → No |
 
