@@ -10,6 +10,50 @@ func dynGateway() *GatewayConfig {
 	}}
 }
 
+// staticGateway builds a GatewayConfig for the static (all-at-once) route
+// strategy's precondition tests (staticpreconditions_test.go). The route is
+// built once and referenced from both obj (spec.routes[0]) and
+// RouteConfig.Raw — the same object, mirroring findRoute's real behavior
+// (Task 1): a test that mutates it via gw.RawObj[...] (as
+// TestStaticPreconditionsRoutesToTargetWhenAlreadyBound does) must see that
+// mutation through gw.Route.Raw too, exactly as production code would after
+// a live re-Load.
+func staticGateway() *GatewayConfig {
+	route := map[string]any{
+		"name":            "migration-route",
+		"streamingDomain": map[string]any{"name": "msk", "bootstrapServerId": "msk-bootstrap"},
+		"security": map[string]any{
+			"cluster": map[string]any{
+				"cc": map[string]any{
+					"secretStore": "vault",
+					"authentication": map[string]any{
+						"sasl": map[string]any{"secretRef": "cc-sasl-secret"},
+					},
+				},
+			},
+		},
+	}
+	obj := map[string]any{
+		"spec": map[string]any{
+			"streamingDomains": []any{
+				map[string]any{
+					"name":         "msk",
+					"kafkaCluster": map[string]any{"bootstrapServers": []any{map[string]any{"id": "msk-bootstrap"}}},
+				},
+				map[string]any{
+					"name":         "cc",
+					"kafkaCluster": map[string]any{"bootstrapServers": []any{map[string]any{"id": "cc-bootstrap"}}},
+				},
+			},
+			"routes": []any{route},
+		},
+	}
+	return &GatewayConfig{
+		Route:  &RouteConfig{Name: "migration-route", Mode: "static", BoundDomains: []string{"msk"}, Raw: route},
+		RawObj: obj,
+	}
+}
+
 func TestPreconditionsHappy(t *testing.T) {
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 	res, view, ok := CheckPreconditions(in, dynGateway(), false, ClusterIDs{})

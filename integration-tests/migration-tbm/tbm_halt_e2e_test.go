@@ -131,8 +131,24 @@ func TestHaltScenarios(t *testing.T) {
 
 	probe := h.e.manifestPath("gateway-static-probe.yaml")
 
-	t.Run("route-not-dynamic", func(t *testing.T) {
-		res := h.DecideHermetic(t, h.loadManifest(t, "halt-route-not-dynamic.yaml"), probe)
+	// static-route (gateway-static-probe.yaml) has no pre-staged
+	// security.cluster.<domain> block, so the static-route strategy
+	// (reconcile/staticpreconditions.go) refuses on missing staged auth before
+	// the dynamic-only "route is dynamic" check is ever reached — see
+	// route-mode-unrecognized below for that check.
+	t.Run("route-missing-staged-auth", func(t *testing.T) {
+		res := h.DecideHermetic(t, h.loadManifest(t, "halt-route-missing-staged-auth.yaml"), probe)
+		assertRefusedNoArtifacts(t, res)
+		require.Truef(t, hasFailedPrecondition(res.Report, "route carries pre-staged auth for the target domain"),
+			"preconditions=%+v", res.Report.Preconditions)
+	})
+
+	// A route mode that is neither "static" nor "dynamic" falls through
+	// Reconcile's static-only dispatch (reconcile/reconcile.go) into the
+	// dynamic strategy, whose "route is dynamic" precondition fails on the
+	// literal unrecognized value.
+	t.Run("route-mode-unrecognized", func(t *testing.T) {
+		res := h.DecideHermetic(t, h.loadManifest(t, "halt-route-mode-unrecognized.yaml"), probe)
 		assertRefusedNoArtifacts(t, res)
 		require.Truef(t, hasFailedPrecondition(res.Report, "route is dynamic"),
 			"preconditions=%+v", res.Report.Preconditions)

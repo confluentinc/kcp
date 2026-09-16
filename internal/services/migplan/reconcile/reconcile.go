@@ -7,7 +7,11 @@ import (
 
 const MaxRulesBytes = 512 * 1024
 
-func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
+// reconcileDynamic is today's dynamic-route reconciliation, unchanged —
+// renamed from the former top-level Reconcile so Reconcile itself can
+// dispatch by resolved route mode. See reconcileStatic for the static-route
+// counterpart.
+func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs) *Plan {
 
 	report := Report{}
@@ -19,7 +23,7 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	pcs, view, ok := CheckPreconditions(in, gw, offsetSyncEnabled, ids)
 	report.Preconditions = pcs
 	if !ok {
-		return &Plan{Report: report}
+		return &Plan{Report: report, Mode: "dynamic"}
 	}
 
 	// Resolve the selector (exact names + patterns) to concrete topic names by
@@ -27,7 +31,7 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	batch, err := Explode(in.Topics, in.TopicPatterns, sourceTopics)
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("selector patterns compile", err.Error()))
-		return &Plan{Report: report}
+		return &Plan{Report: report, Mode: "dynamic"}
 	}
 
 	srcSet := toSet(sourceTopics)
@@ -63,10 +67,10 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	// Refusal gate: any failed precondition or fail-fast topic means we emit no
 	// artifacts at all (all-or-nothing).
 	if report.Refused() {
-		return &Plan{Report: report}
+		return &Plan{Report: report, Mode: "dynamic"}
 	}
 	if len(migratable) == 0 {
-		return &Plan{Report: report} // nothing to do; artifacts nil (no-op)
+		return &Plan{Report: report, Mode: "dynamic"} // nothing to do; artifacts nil (no-op)
 	}
 
 	// Build both artifacts from one pristine copy of the operator's rules, so the
@@ -84,12 +88,102 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 	if len(fenceBytes) > MaxRulesBytes || len(switchBytes) > MaxRulesBytes {
 		report.Preconditions = append(report.Preconditions, fail("rules block within size limit",
 			fmt.Sprintf("rules block is %d bytes (> %d) — narrow the selector or migrate a smaller batch", max(len(fenceBytes), len(switchBytes)), MaxRulesBytes)))
-		return &Plan{Report: report}
+		return &Plan{Report: report, Mode: "dynamic"}
 	}
 
 	promote := append([]string(nil), migratable...)
 	sort.Strings(promote)
-	return &Plan{Report: report, Artifacts: &Artifacts{Topics: promote, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
+	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{Topics: promote, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
+}
+
+// reconcileStatic is the static-route reconciliation strategy. It reuses
+// Explode/Classify unchanged (design doc decision 6/7): topics resolve
+// against the source cluster's live topic list exactly like dynamic mode,
+// and classification uses the same truth table, with routesToTarget
+// computed once at the route level (view.RoutesToTarget) rather than
+// per-topic — a static route cannot bind different topics to different
+// domains. Report.Refused()'s existing definition already produces the
+// correct all-or-nothing policy; no new refusal logic is needed (decision
+// 8). Unlike dynamic mode, there is no shadow-warning concept (no
+// per-topic routing conditions exist to shadow) and no rules-size
+// guardrail (the fragments are a few dozen bytes, never realistically
+// oversized).
+func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
+	mirrors map[string]MirrorState, ids ClusterIDs, missingSecrets []string) *Plan {
+
+	report := Report{}
+
+	pcs, view, ok := CheckStaticPreconditions(in, gw, missingSecrets, ids)
+	report.Preconditions = pcs
+	if !ok {
+		return &Plan{Report: report, Mode: "static"}
+	}
+
+	batch, err := Explode(in.Topics, in.TopicPatterns, sourceTopics)
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("selector patterns compile", err.Error()))
+		return &Plan{Report: report, Mode: "static"}
+	}
+
+	srcSet := toSet(sourceTopics)
+	tgtSet := toSet(targetTopics)
+
+	var migratable []string
+	for _, topic := range batch {
+		_, onSource := srcSet[topic]
+		_, onTarget := tgtSet[topic]
+		mirror := mirrors[topic]
+
+		tv := Classify(topic, onSource, onTarget, mirror, view.RoutesToTarget)
+		switch tv.Verdict {
+		case Migratable:
+			report.Migratable = append(report.Migratable, tv)
+			migratable = append(migratable, topic)
+		case Unchanged:
+			report.Unchanged = append(report.Unchanged, tv)
+		default:
+			report.FailFast = append(report.FailFast, tv)
+		}
+	}
+
+	if report.Refused() {
+		return &Plan{Report: report, Mode: "static"}
+	}
+	if len(migratable) == 0 {
+		return &Plan{Report: report, Mode: "static"}
+	}
+
+	fenceFragment, err := BuildFenceFragment()
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("fence fragment builds", err.Error()))
+		return &Plan{Report: report, Mode: "static"}
+	}
+	switchoverFragment, err := BuildSwitchoverFragment(in.TargetDomain, view.BootstrapServerID)
+	if err != nil {
+		report.Preconditions = append(report.Preconditions, fail("switchover fragment builds", err.Error()))
+		return &Plan{Report: report, Mode: "static"}
+	}
+
+	promote := append([]string(nil), migratable...)
+	sort.Strings(promote)
+	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{Topics: promote, FenceRules: fenceFragment, SwitchoverRules: switchoverFragment}}
+}
+
+// Reconcile is the single entry point for both route-mode strategies. It
+// resolves the route's mode (already determined by the provider layer — see
+// migplan/gatewayfile.go's field-first, structural-fallback resolution) and
+// dispatches to reconcileDynamic or reconcileStatic. An unresolvable route
+// (gw == nil || gw.Route == nil) defaults to the dynamic path, matching this
+// function's pre-existing behavior for that case — both strategies' own
+// preconditions independently fail loudly on "route not found" as their
+// first check either way.
+func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
+	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string) *Plan {
+
+	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
+		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ids, missingSecrets)
+	}
+	return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
 }
 
 func toSet(ss []string) map[string]struct{} {

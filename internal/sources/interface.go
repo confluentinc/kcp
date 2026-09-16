@@ -30,8 +30,9 @@ type ClusterIdentifier struct {
 
 // ScanOptions contains options for scanning
 type ScanOptions struct {
-	SkipTopics bool
-	SkipACLs   bool
+	SkipTopics         bool
+	SkipACLs           bool
+	SkipConsumerGroups bool
 	// State is the existing kcp state. Required for MSK scanning (broker addresses
 	// come from prior kcp discover output). Ignored by OSK.
 	State *types.State
