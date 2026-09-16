@@ -44,6 +44,21 @@ func newPlaintextLister(t *testing.T, broker string) *migplan.KafkaTopicLister {
 	return migplan.NewKafkaTopicLister(admin)
 }
 
+// fakeSecretChecker is a configurable SecretExistenceChecker for tests that
+// have no live Kubernetes cluster to check against. The zero value reports no
+// missing secrets and no skip — the correct stand-in for a dynamic-route
+// fixture, which never consults the secrets provider at all (see engine.go's
+// Run), and for a static-route happy path with nothing missing.
+type fakeSecretChecker struct {
+	missing    []string
+	skipReason string
+	err        error
+}
+
+func (f fakeSecretChecker) MissingSecrets(_ context.Context, _ []string) ([]string, string, error) {
+	return f.missing, f.skipReason, f.err
+}
+
 func contains(ss []string, want string) bool {
 	for _, s := range ss {
 		if s == want {
