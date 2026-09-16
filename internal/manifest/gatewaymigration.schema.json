@@ -44,15 +44,8 @@
               "description": "Bootstrap server(s) of the source Kafka cluster (e.g. broker1:9092, broker2:9092)."
             },
             "credentials": {
-              "description": "Source cluster credentials: either a path to a credentials file, or the same content inline. Exactly one authentication block must be present.",
-              "oneOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "$ref": "#/$defs/migrateClusterCredentials"
-                }
-              ]
+              "type": "string",
+              "description": "Path to the source cluster credentials file. Exactly one authentication block must be present in that file."
             }
           },
           "required": [
@@ -97,33 +90,15 @@
                   },
                   "description": "Destination Kafka bootstrap endpoint (e.g. pkc-abc123.us-east-1.aws.confluent.cloud:9092)."
                 },
-                "credentials": {
-                  "description": "Destination Kafka credentials, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK).",
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "$ref": "#/$defs/migrateClusterCredentials"
-                    }
-                  ]
-                },
-                "restCredentials": {
-                  "description": "Destination REST (cluster-link) credentials: api_key/api_secret, basic, bearer, or mtls. OPTIONAL only when credentials is sasl_plain — then derived in full (api_key/api_secret from sasl_plain.username/password, ca_cert and insecure_skip_verify inherited). Required for every other credentials method, since there is no principal to derive one from. A present block is used exactly as written, never partially derived.",
-                  "oneOf": [
-                    {
-                      "type": "string"
-                    },
-                    {
-                      "$ref": "#/$defs/targetCredentials"
-                    }
-                  ]
+                "clusterCredentials": {
+                  "type": "string",
+                  "description": "Path to the destination Kafka credentials file, dialled directly to read destination-side offsets. Accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or unauthenticated_plaintext — iam is rejected (the destination is Confluent Cloud/Platform, never MSK)."
                 }
               },
               "required": [
                 "restEndpoint",
                 "bootstrapServers",
-                "credentials"
+                "clusterCredentials"
               ],
               "additionalProperties": false
             }
@@ -142,13 +117,28 @@
               "type": "string",
               "description": "Name of the cluster link on the destination cluster. The link must ALREADY EXIST."
             },
+            "bootstrapServers": {
+              "type": [
+                "null",
+                "array"
+              ],
+              "items": {
+                "type": "string"
+              },
+              "description": "Repeats spec.target.kafka.bootstrapServers for manifest self-documentation. Not validated against it."
+            },
+            "linkCredentials": {
+              "type": "string",
+              "description": "Path to the cluster-link REST credentials file (api_key/api_secret, basic, bearer, or mtls) that calls the destination Admin REST API to drive the link (status, list/promote mirror topics). Always required; it is never derived from the Kafka leg."
+            },
             "pauseConsumerOffsetSync": {
               "type": "boolean",
               "description": "Disable the cluster link's consumer.offset.sync.enable during execute and restore it after switchover. Requires the cluster link to currently have consumer.offset.sync.enable=true."
             }
           },
           "required": [
-            "name"
+            "name",
+            "linkCredentials"
           ],
           "additionalProperties": false
         },
@@ -280,216 +270,6 @@
         "gateway",
         "topicGroup"
       ],
-      "additionalProperties": false
-    },
-    "interpolate": {
-      "type": "boolean",
-      "description": "Opt in to ${ENV_VAR} resolution for this file. Absent (the default) means every value is literal. Each file governs itself: this does not reach into a referenced credentials file, which needs its own key. Only string values are interpolated; numeric and duration fields (e.g. spec.defaultPolicies.rolloutTimeout) must be written as literals."
-    }
-  },
-  "$defs": {
-    "migrateClusterCredentials": {
-      "type": "object",
-      "properties": {
-        "iam": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "region": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "region"
-          ],
-          "additionalProperties": false
-        },
-        "sasl_scram": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "username": {
-              "type": "string"
-            },
-            "password": {
-              "type": "string"
-            },
-            "mechanism": {
-              "type": "string"
-            },
-            "ca_cert": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "username",
-            "password"
-          ],
-          "additionalProperties": false
-        },
-        "sasl_plain": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "username": {
-              "type": "string"
-            },
-            "password": {
-              "type": "string"
-            },
-            "ca_cert": {
-              "type": "string"
-            },
-            "tls": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "username",
-            "password"
-          ],
-          "additionalProperties": false
-        },
-        "mtls": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "ca_cert": {
-              "type": "string"
-            },
-            "client_cert": {
-              "type": "string"
-            },
-            "client_key": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "client_cert",
-            "client_key"
-          ],
-          "additionalProperties": false
-        },
-        "unauthenticated_tls": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "ca_cert": {
-              "type": "string"
-            }
-          },
-          "additionalProperties": false
-        },
-        "unauthenticated_plaintext": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "additionalProperties": false
-        },
-        "insecure_skip_tls_verify": {
-          "type": "boolean"
-        }
-      },
-      "additionalProperties": false
-    },
-    "targetCredentials": {
-      "type": "object",
-      "properties": {
-        "basic": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "username": {
-              "type": "string"
-            },
-            "password": {
-              "type": "string"
-            },
-            "ca_cert": {
-              "type": "string"
-            },
-            "insecure_skip_verify": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "username",
-            "password"
-          ],
-          "additionalProperties": false
-        },
-        "api_key": {
-          "type": "string"
-        },
-        "api_secret": {
-          "type": "string"
-        },
-        "bearer": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "token": {
-              "type": "string"
-            },
-            "ca_cert": {
-              "type": "string"
-            },
-            "insecure_skip_verify": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "token"
-          ],
-          "additionalProperties": false
-        },
-        "mtls": {
-          "type": [
-            "null",
-            "object"
-          ],
-          "properties": {
-            "ca_cert": {
-              "type": "string"
-            },
-            "client_cert": {
-              "type": "string"
-            },
-            "client_key": {
-              "type": "string"
-            },
-            "insecure_skip_verify": {
-              "type": "boolean"
-            }
-          },
-          "required": [
-            "client_cert",
-            "client_key"
-          ],
-          "additionalProperties": false
-        },
-        "ca_cert": {
-          "type": "string"
-        },
-        "insecure_skip_verify": {
-          "type": "boolean"
-        }
-      },
       "additionalProperties": false
     }
   },

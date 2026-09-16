@@ -1,0 +1,38 @@
+# TBM halt — mirror promoted but the route was not switched over.
+#
+# Selects tbm-topic-045, the RESERVED mirrored topic. The halt sub-test stops the
+# mirror on 045 (promoting it) without switching the route, then Decide; the engine
+# fails fast per-topic: res.Reasons contains "is promoted but not switched over"
+# (reconcile/verdict.go). 045 is never selected by a success batch, and the sub-test
+# restores link state via t.Cleanup. Runs against the LIVE gateway.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-promoted-not-switched
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials: __CRED_DIR__/source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      clusterCredentials: __CRED_DIR__/dest-kafka-creds.yaml
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+    bootstrapServers:
+      - "__DEST_BOOTSTRAP__"
+    linkCredentials: __CRED_DIR__/link-creds.yaml
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-045"
+      route: "__ROUTE_NAME__"
+      targetStreamingDomain: "__DEST_DOMAIN__"
