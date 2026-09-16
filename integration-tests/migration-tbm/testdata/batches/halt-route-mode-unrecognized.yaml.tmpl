@@ -1,0 +1,44 @@
+# TBM halt — the named route declares an unrecognized mode (neither "static"
+# nor "dynamic") (HERMETIC).
+#
+# route names "unrecognized-mode-route", which exists only in
+# gateway-static-probe.yaml. The halt sub-test drives this against that fixture
+# via migplan.WithGatewaySource(NewGatewayFile(gateway-static-probe.yaml,
+# "unrecognized-mode-route")), so the live tbm-route stays valid. Reconcile only
+# special-cases mode == "static" (reconcile/reconcile.go); every other mode value
+# — including one findRoute passed through verbatim rather than normalizing
+# (internal/services/migplan/gatewayfile.go) — falls through to the dynamic
+# strategy, whose "route is dynamic" precondition then fails on the literal
+# unrecognized value (reconcile/preconditions.go). The topic selection is
+# incidental (the shape check refuses first).
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-route-mode-unrecognized
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials: __CRED_DIR__/source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      clusterCredentials: __CRED_DIR__/dest-kafka-creds.yaml
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+    bootstrapServers:
+      - "__DEST_BOOTSTRAP__"
+    linkCredentials: __CRED_DIR__/link-creds.yaml
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-046"
+      route: "unrecognized-mode-route"
+      targetStreamingDomain: "__DEST_DOMAIN__"
