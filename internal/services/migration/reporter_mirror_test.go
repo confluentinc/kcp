@@ -27,10 +27,10 @@ func TestReporterMirrorsToFileOnly(t *testing.T) {
 	r := &reporter{out: &out, err: &errOut}
 
 	r.section("🔍 Initializing migration...")
-	r.success("migrated topic %s", "orders")
-	r.detail("waiting for STOPPED")
+	r.Success("migrated topic %s", "orders")
+	r.Detail("waiting for STOPPED")
 	r.warn("offset lag high")
-	r.remediation("run recover to restore")
+	r.Remediation("run recover to restore")
 	r.complete("✅ Migration complete")
 	r.line(color.GreenString("promotion table row"))
 

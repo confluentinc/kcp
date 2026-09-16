@@ -61,15 +61,18 @@ func (r *reporter) section(msg string) {
 	r.mirror(msg)
 }
 
-// success prints an indented green-✔ line. The text may embed its own colour.
-func (r *reporter) success(format string, a ...any) {
+// Success prints an indented green-✔ line. The text may embed its own colour.
+// Exported so this reporter satisfies gateway.Reporter, letting
+// gateway.TransitionVerifier's shared apply/wait/verify logic report through
+// it without this package depending on gateway's own reporter shape.
+func (r *reporter) Success(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
 	r.printf("   %s %s\n", color.GreenString("✔"), msg)
 	r.mirror(msg)
 }
 
-// detail prints an indented ↳ progress line.
-func (r *reporter) detail(format string, a ...any) {
+// Detail prints an indented ↳ progress line. Exported — see Success.
+func (r *reporter) Detail(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
 	r.printf("   ↳ %s\n", msg)
 	r.mirror(msg)
@@ -82,11 +85,12 @@ func (r *reporter) warn(format string, a ...any) {
 	r.mirrorWarn(msg)
 }
 
-// remediation prints a yellow-⚠️ soft-fail note to stderr. The body may contain
+// Remediation prints a yellow-⚠️ soft-fail note to stderr. The body may contain
 // newlines for indented continuation lines; it is not indented on the first
 // line. Used by the offset-sync bookends, whose failures are surfaced as
-// operator guidance without aborting a successful migration.
-func (r *reporter) remediation(format string, a ...any) {
+// operator guidance without aborting a successful migration. Exported — see
+// Success.
+func (r *reporter) Remediation(format string, a ...any) {
 	msg := fmt.Sprintf(format, a...)
 	r.errf("%s %s\n", color.YellowString("⚠️"), msg)
 	r.mirrorWarn(msg)

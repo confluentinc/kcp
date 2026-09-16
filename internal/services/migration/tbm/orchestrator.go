@@ -10,13 +10,17 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/looplab/fsm"
 )
 
 // ErrUnroutedProducers is returned when verify_fence detects a producer
 // bypassing the gateway. The orchestrator catches this to trigger an
-// EventAbortFence transition back to initialized. Mirrors migration.ErrUnroutedProducers.
-var ErrUnroutedProducers = errors.New("unrouted producers detected")
+// EventAbortFence transition back to initialized. Re-exported from
+// offset.ErrUnroutedProducers (the package that actually detects and wraps
+// it) so every existing errors.Is call site in this package keeps working
+// unchanged.
+var ErrUnroutedProducers = offset.ErrUnroutedProducers
 
 // WorkflowStep defines a single step in the TBM workflow: pure FSM topology
 // plus an ops-facing Description. Mirrors migration.WorkflowStep.
@@ -313,7 +317,7 @@ func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}
-	o.reporter.success("Gateway unfenced — traffic restored to pre-fence state")
+	o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
 }
 
 // PersistState saves the current TBM config to the state file.
