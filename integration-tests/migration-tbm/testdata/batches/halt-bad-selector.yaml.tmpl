@@ -1,0 +1,38 @@
+# TBM halt — invalid anchored-RE2 topicPatterns selector.
+#
+# topicPatterns holds "tbm-topic-[", which does not compile as an anchored RE2
+# full-match. The manifest is refused rather than crashing: validateTopicGroup
+# rejects it at load (manifest.LoadGatewayMigrationFile), and the engine's
+# "gateway routing patterns compile" precondition covers the same class. Quoted so
+# the leading "[" is not read as a YAML flow sequence.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-bad-selector
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials: __CRED_DIR__/source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      clusterCredentials: __CRED_DIR__/dest-kafka-creds.yaml
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+    bootstrapServers:
+      - "__DEST_BOOTSTRAP__"
+    linkCredentials: __CRED_DIR__/link-creds.yaml
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topicPatterns:
+        - "tbm-topic-["
+      route: "__ROUTE_NAME__"
+      targetStreamingDomain: "__DEST_DOMAIN__"

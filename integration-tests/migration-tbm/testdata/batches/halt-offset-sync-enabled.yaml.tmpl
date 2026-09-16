@@ -1,0 +1,38 @@
+# TBM halt — consumer offset sync enabled on the cluster link.
+#
+# Selects a valid mirrored headroom topic; the trigger is run-level, not the topic.
+# The halt sub-test sets consumer.offset.sync.enable=true on the link (restoring it
+# via t.Cleanup), then Decide; the engine refuses on the failed precondition
+# "consumer offset sync disabled on link" (reconcile/preconditions.go). Runs against
+# the LIVE gateway.
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: tbm-halt-offset-sync-enabled
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - "__SOURCE_BOOTSTRAP__"
+    credentials: __CRED_DIR__/source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterId: "__DEST_CLUSTER_ID__"
+    kafka:
+      bootstrapServers:
+        - "__DEST_BOOTSTRAP__"
+      restEndpoint: "__REST_ENDPOINT__"
+      clusterCredentials: __CRED_DIR__/dest-kafka-creds.yaml
+  clusterLink:
+    name: "__CLUSTER_LINK_NAME__"
+    bootstrapServers:
+      - "__DEST_BOOTSTRAP__"
+    linkCredentials: __CRED_DIR__/link-creds.yaml
+  gateway:
+    namespace: "__NAMESPACE__"
+    cr-name: "__GATEWAY_NAME__"
+  topicGroup:
+    - topics:
+        - "tbm-topic-046"
+      route: "__ROUTE_NAME__"
+      targetStreamingDomain: "__DEST_DOMAIN__"
