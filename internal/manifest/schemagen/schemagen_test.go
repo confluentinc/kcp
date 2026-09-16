@@ -105,9 +105,10 @@ func gatewayMap(t *testing.T) map[string]any {
 func TestGenerateGateway_TopLevelProperties(t *testing.T) {
 	doc := gatewayMap(t)
 	p := props(t, doc)
-	for _, k := range []string{"apiVersion", "kind", "metadata", "spec", "interpolate"} {
+	for _, k := range []string{"apiVersion", "kind", "metadata", "spec"} {
 		require.Contains(t, p, k)
 	}
+	require.NotContains(t, p, "interpolate", "the top-level interpolate field is retired")
 	require.Equal(t, false, doc["additionalProperties"])
 }
 
@@ -168,35 +169,51 @@ func jsonFieldName(f reflect.StructField) string {
 	return tag
 }
 
-// TestGenerateGateway_CredentialsArePolymorphic — a credentials slot is either
-// a path string or an inline mapping, so the schema must accept both.
-func TestGenerateGateway_CredentialsArePolymorphic(t *testing.T) {
+// TestGenerateGateway_CredentialsAreStrings — every credentials slot is a
+// file-path string only; inline mappings are gone, so no property is a oneOf and
+// no $defs are emitted.
+func TestGenerateGateway_CredentialsAreStrings(t *testing.T) {
 	doc := gatewayMap(t)
 	spec := props(t, props(t, doc)["spec"].(map[string]any))
 	src := props(t, spec["source"].(map[string]any))
+	kafka := props(t, props(t, spec["target"].(map[string]any))["kafka"].(map[string]any))
+	link := props(t, spec["clusterLink"].(map[string]any))
 
-	oneOf, ok := src["credentials"].(map[string]any)["oneOf"].([]any)
-	require.True(t, ok, "spec.source.credentials must be a oneOf")
-	require.Len(t, oneOf, 2)
-	require.Equal(t, "string", oneOf[0].(map[string]any)["type"])
-	require.NotEmpty(t, oneOf[1].(map[string]any)["$ref"])
+	for _, f := range []map[string]any{
+		src["credentials"].(map[string]any),
+		kafka["clusterCredentials"].(map[string]any),
+		link["linkCredentials"].(map[string]any),
+	} {
+		require.Equal(t, "string", f["type"])
+		require.NotContains(t, f, "oneOf")
+		require.NotContains(t, f, "$ref")
+	}
 
-	defs, ok := doc["$defs"].(map[string]any)
-	require.True(t, ok, "the inline branch must $ref a real definition")
-	require.NotEmpty(t, defs)
+	require.NotContains(t, doc, "$defs", "no field accepts an inline object, so there are no credential $defs")
 }
 
-// TestGenerateGateway_InlineCredentialsDefRejectsInterpolate — `interpolate` is
-// a file-level key that kcp rejects inside an inline block, so the schema must
-// not advertise it there.
-func TestGenerateGateway_InlineCredentialsDefRejectsInterpolate(t *testing.T) {
-	defs := gatewayMap(t)["$defs"].(map[string]any)
-	for name, def := range defs {
-		p, ok := def.(map[string]any)["properties"].(map[string]any)
-		if !ok {
-			continue
+// TestGenerateGateway_NoOneOfAnywhere — with inline credentials removed, no
+// oneOf shape survives anywhere under source, target, or clusterLink.
+func TestGenerateGateway_NoOneOfAnywhere(t *testing.T) {
+	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
+	for _, sec := range []string{"source", "target", "clusterLink"} {
+		assertNoKey(t, spec[sec], "oneOf")
+	}
+}
+
+// assertNoKey fails if key appears anywhere in the nested map/slice structure.
+func assertNoKey(t *testing.T, v any, key string) {
+	t.Helper()
+	switch x := v.(type) {
+	case map[string]any:
+		require.NotContains(t, x, key)
+		for _, val := range x {
+			assertNoKey(t, val, key)
 		}
-		require.NotContains(t, p, "interpolate", "$defs.%s must not offer interpolate", name)
+	case []any:
+		for _, val := range x {
+			assertNoKey(t, val, key)
+		}
 	}
 }
 
@@ -238,11 +255,12 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway", "topicGroup"}, requiredOf(p["spec"].(map[string]any)))
 	require.ElementsMatch(t, []any{"type", "clusterId", "kafka"}, requiredOf(spec["target"].(map[string]any)))
 	// kafka's reflected required set is only restEndpoint, but Validate() also
-	// requires bootstrapServers and credentials — the schema must match so a lint
-	// pass cannot green-light a manifest init will reject. restCredentials is
-	// derived and stays optional.
-	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "credentials"},
+	// requires bootstrapServers and clusterCredentials — the schema must match so a
+	// lint pass cannot green-light a manifest init will reject.
+	require.ElementsMatch(t, []any{"restEndpoint", "bootstrapServers", "clusterCredentials"},
 		requiredOf(props(t, spec["target"].(map[string]any))["kafka"].(map[string]any)))
+	// linkCredentials is always required (no derivation), alongside the link name.
+	require.ElementsMatch(t, []any{"name", "linkCredentials"}, requiredOf(spec["clusterLink"].(map[string]any)))
 	require.ElementsMatch(t, []any{"namespace", "cr-name"}, requiredOf(spec["gateway"].(map[string]any)))
 	// The old crs/routes/topics shape is gone from the schema entirely: a
 	// stale key must be flagged by the editor, not offered as legal.
@@ -275,26 +293,35 @@ func TestGatewaySchemaInSync(t *testing.T) {
 		"gatewaymigration.schema.json is stale — run: go generate ./internal/manifest/...")
 }
 
-// TestGenerate_MigrationCredentialsArePolymorphicToo — widening the existing
-// credentials fields to CredentialsRef must be reflected in kind: Migration's
-// schema, or editors would flag the newly-legal inline spelling as invalid.
-func TestGenerate_MigrationCredentialsArePolymorphicToo(t *testing.T) {
+// TestGenerate_MigrationCredentialsAreStrings — every credentials field on kind:
+// Migration is a file-path string only; the inline spelling is gone repo-wide,
+// so no credentials property is a oneOf.
+func TestGenerate_MigrationCredentialsAreStrings(t *testing.T) {
 	doc := asMap(t)
 	spec := props(t, props(t, doc)["spec"].(map[string]any))
 	src := props(t, spec["source"].(map[string]any))
-	oneOf, ok := src["credentials"].(map[string]any)["oneOf"].([]any)
-	require.True(t, ok, "spec.source.credentials must be a oneOf")
-	require.Len(t, oneOf, 2)
+	require.Equal(t, "string", src["credentials"].(map[string]any)["type"])
+	require.NotContains(t, src["credentials"].(map[string]any), "oneOf")
+
+	tgt := props(t, spec["target"].(map[string]any))
+	require.Equal(t, "string", tgt["clusterCredentials"].(map[string]any)["type"])
+
+	for _, sec := range []string{"source", "target", "clusterLink"} {
+		if s, ok := spec[sec]; ok {
+			assertNoKey(t, s, "oneOf")
+		}
+	}
+	require.NotContains(t, doc, "$defs")
 }
 
-// TestGenerate_MigrationTargetKafkaOmitsGatewayOnlyCredentials — credentials and
-// restCredentials live on the shared TargetKafka for kind: GatewayMigration
-// only; kcp migrate ignores them and Validate() rejects them, so the kind:
-// Migration schema must not offer them (they otherwise reflect as a broken raw
-// {Path, Inline} object).
+// TestGenerate_MigrationTargetKafkaOmitsGatewayOnlyCredentials —
+// clusterCredentials lives on the shared TargetKafka for kind: GatewayMigration
+// only; kcp migrate ignores it and Validate() rejects it, so the kind: Migration
+// schema must not offer it (it otherwise reflects as a broken raw {Path} object).
 func TestGenerate_MigrationTargetKafkaOmitsGatewayOnlyCredentials(t *testing.T) {
 	spec := props(t, props(t, asMap(t))["spec"].(map[string]any))
 	kafka := props(t, props(t, spec["target"].(map[string]any))["kafka"].(map[string]any))
+	require.NotContains(t, kafka, "clusterCredentials")
 	require.NotContains(t, kafka, "credentials")
 	require.NotContains(t, kafka, "restCredentials")
 }

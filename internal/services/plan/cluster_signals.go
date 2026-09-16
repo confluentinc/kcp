@@ -1,30 +1,99 @@
 package plan
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/confluentinc/kcp/internal/services/report"
 	"github.com/confluentinc/kcp/internal/types"
 
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 )
 
-// defaultTargetCloud is the assumed target when `target_cloud` is unset
-// in plan-inputs.yaml. MSK is AWS-native, so AWS is the implicit default.
-const defaultTargetCloud = "aws"
-
-// targetCloud returns the customer's `target_cloud` plan-input or the
-// default ("aws") when unset. Centralizes the empty-string fallback so
-// every decision rule reads it the same way.
-func targetCloud(inputs PlanInputsResolved) string {
-	if inputs.TargetCloud == "" {
-		return defaultTargetCloud
+// topicsHaveCustomSettings reports, from the scanned per-topic configs, whether
+// any topic uses non-default settings — a replication factor other than 3,
+// retention over 7 days, a max message size over 2 MB, or a cleanup policy that
+// combines compact and delete. Returns nil when no topics were scanned (so the
+// plan asks the customer instead).
+func topicsHaveCustomSettings(c report.ProcessedCluster) *string {
+	t := c.KafkaAdminClientInformation.Topics
+	if t == nil || len(t.Details) == 0 {
+		return nil
 	}
-	return inputs.TargetCloud
+	const (
+		defaultRetentionMs int64 = 7 * 24 * 3600 * 1000 // 7 days
+		maxMessageCap      int64 = 2 * 1024 * 1024      // 2 MB
+	)
+	yes := "Yes"
+	no := "No"
+	for _, td := range t.Details {
+		if td.ReplicationFactor != 0 && td.ReplicationFactor != 3 {
+			return &yes
+		}
+		cfg := td.Configurations
+		if v := cfg["cleanup.policy"]; v != nil && strings.Contains(*v, "compact") && strings.Contains(*v, "delete") {
+			return &yes
+		}
+		if v := cfg["retention.ms"]; v != nil {
+			if ms, err := strconv.ParseInt(strings.TrimSpace(*v), 10, 64); err == nil && (ms < 0 || ms > defaultRetentionMs) {
+				return &yes
+			}
+		}
+		if v := cfg["max.message.bytes"]; v != nil {
+			if b, err := strconv.ParseInt(strings.TrimSpace(*v), 10, 64); err == nil && b > maxMessageCap {
+				return &yes
+			}
+		}
+	}
+	return &no
+}
+
+// hasLongRetention reports whether any scanned topic keeps history well beyond
+// the default local window — infinite retention, or retention.ms past the
+// threshold below — which is a real backfill volume even on a non-tiered cluster.
+// Returns nil when no topics were scanned (retention unknown).
+func hasLongRetention(c report.ProcessedCluster) *string {
+	t := c.KafkaAdminClientInformation.Topics
+	if t == nil || len(t.Details) == 0 {
+		return nil
+	}
+	const longRetentionMs int64 = 30 * 24 * 3600 * 1000 // 30 days — "well beyond" the 7-day default
+	yes, no := "Yes", "No"
+	for _, td := range t.Details {
+		v := td.Configurations["retention.ms"]
+		if v == nil {
+			continue
+		}
+		ms, err := strconv.ParseInt(strings.TrimSpace(*v), 10, 64)
+		if err != nil {
+			continue
+		}
+		if ms < 0 || ms > longRetentionMs { // -1 = infinite
+			return &yes
+		}
+	}
+	return &no
+}
+
+// storedGB returns the cluster's measured retained data (local + tiered), in GB,
+// from the scanned storage aggregates. The collector already sums these across
+// brokers into a cluster total, so this is the peak retained volume. Returns nil
+// when neither metric was scanned (metrics collection wasn't run).
+func storedGB(c report.ProcessedCluster) *float64 {
+	aggs := c.ClusterMetrics.Aggregates
+	local, okL := pickPercentile(aggs, "TotalLocalStorageUsage(GB)", "max")
+	remote, okR := pickPercentile(aggs, "TotalRemoteStorageUsage(GB)", "max")
+	if !okL && !okR {
+		return nil
+	}
+	total := local + remote
+	return &total
 }
 
 // Single source of truth for "what do null / empty values mean for this
-// cluster?" Both the rule evaluator (cluster_type.go) and the
-// Open-Question detector (plan_service.go) read these primitives so the
-// SERVERLESS-vs-PROVISIONED distinction lives in exactly one place.
+// cluster?" The profile builder (engine_adapter.go) reads these primitives when
+// it translates a scan into an engine Profile, so the SERVERLESS-vs-PROVISIONED
+// distinction lives in exactly one place.
 
 // isServerless reports whether the cluster is MSK Serverless. Serverless
 // clusters don't have broker nodes and don't expose ACLs through the
@@ -34,47 +103,11 @@ func isServerless(c report.ProcessedCluster) bool {
 	return c.AWSClientInformation.MskClusterConfig.ClusterType == kafkatypes.ClusterTypeServerless
 }
 
-// aclScanRan reports whether the ACL list represents a successful scan.
-//
-// **Known limitation:** the existing scanner persists `Acls = nil` for
-// three distinct cases — "admin scan didn't run", "scan ran with 0
-// ACLs", and "scan ran with `--skip-acls`". We can't disambiguate from
-// the cluster state alone today (the scanner doesn't carry an explicit
-// scanned-marker, and the plan layer can't change scanner output
-// without breaking backward compatibility with existing state files).
-// This helper takes the conservative position that `Acls == nil` means
-// "uncertain" → callers should treat the ACL-cap rule as inconclusive
-// and surface the `acls_not_scanned` Open Question. The false-positive
-// on a legitimate 0-ACL scan is preferable to the false-negative on
-// `--skip-acls`, which would recommend Enterprise when Dedicated may
-// actually be required. Serverless clusters don't expose ACLs via this
-// API and are excluded.
-func aclScanRan(c report.ProcessedCluster) bool {
-	if isServerless(c) {
-		return false
-	}
-	return c.KafkaAdminClientInformation.Acls != nil
-}
-
-// brokerInventoryGap reports whether the broker inventory is suspect (an
-// actual scan gap rather than an expected-empty state). Serverless
-// clusters have no broker nodes by design, so emptiness on Serverless is
-// not a gap; the gap is "MSK PROVISIONED cluster with no Nodes
-// populated" — that's almost certainly a missing or incomplete discover
-// run.
-func brokerInventoryGap(c report.ProcessedCluster) bool {
-	if isServerless(c) {
-		return false
-	}
-	return len(c.AWSClientInformation.Nodes) == 0
-}
-
 // clusterStorageMode returns the cluster's StorageMode enum
-// (`LOCAL` / `TIERED` / empty). Consumed by both the Red Flag
-// "tiered_storage_in_use" detector and the Tiered Storage
-// per-cluster section — same MskClusterConfig pointer-chase as
-// `brokerInstanceType` / `kafkaVersionOf`, so it lives here next to
-// its peers.
+// (`LOCAL` / `TIERED` / empty). The profile builder (engine_adapter.go) reads it
+// to set the tiered-storage signal on the Profile — the same MskClusterConfig
+// pointer-chase as the other Provisioned-only cluster facts, so it lives here
+// next to its peers.
 //
 // Serverless clusters always return empty — Provisioned is nil on
 // Serverless, and StorageMode is a Provisioned-only concept. Callers
@@ -89,25 +122,9 @@ func clusterStorageMode(c report.ProcessedCluster) kafkatypes.StorageMode {
 	return prov.StorageMode
 }
 
-// knownEnum reports whether `value` is one of `valid` (empty value
-// always counts as known — it means "default applies"). Used by enum
-// validators across decisions (downtime_tolerance, target_auth_method)
-// to surface typos as OQs.
-func knownEnum(value string, valid ...string) bool {
-	if value == "" {
-		return true
-	}
-	for _, v := range valid {
-		if value == v {
-			return true
-		}
-	}
-	return false
-}
-
-// Source-auth tokens. Stable strings — these appear in the rendered
-// Plan (AuthDecision.SourceAuths) and key the auth_mapping table in
-// plan-config.yaml. Don't rename without bumping a schema doc.
+// Source-auth tokens. Stable strings — the profile builder (engine_adapter.go)
+// and the plan renderer map on them to describe how the source authenticates.
+// Keep them in sync with the source-auth answer vocabulary.
 const (
 	SourceAuthSCRAM  = "scram"
 	SourceAuthIAM    = "iam"
@@ -179,8 +196,8 @@ func sourceAuthsDetected(c report.ProcessedCluster) []string {
 // authFromSaslMechanism maps the Kafka Admin probe's `sasl_mechanism`
 // field to a source-auth token. Used as a discover-gap fallback when
 // the MSK ClientAuthentication block is empty. Returns "" for
-// unrecognised mechanisms — the caller leaves SourceAuths empty so the
-// auth_posture_unknown OQ still fires.
+// unrecognised mechanisms — the caller then leaves the source auths
+// empty, so the plan asks the source_auth question instead.
 func authFromSaslMechanism(mech string) string {
 	switch types.NormalizeSaslMechanism(mech) {
 	case "SCRAM-SHA-256", "SCRAM-SHA-512":
@@ -203,74 +220,4 @@ func serverlessSourceAuths(c report.ProcessedCluster) []string {
 		return []string{SourceAuthIAM}
 	}
 	return nil
-}
-
-// fleetUsesIAM reports whether any cluster in the processed fleet has
-// IAM enabled on the source side. Drives gateway eligibility —
-// IAM clients cannot connect to the CC Gateway and must pre-migrate
-// to SCRAM or mTLS first.
-func fleetUsesIAM(clusters []report.ProcessedCluster) bool {
-	for _, c := range clusters {
-		for _, auth := range sourceAuthsDetected(c) {
-			if auth == SourceAuthIAM {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// inputsMissing names load-bearing scan signals that weren't available
-// when decisions were computed for this cluster. Returned as a stable,
-// ordered list of short identifiers so downstream consumers can branch
-// (e.g. surface "sizing is best-effort while these are missing"). The
-// renderer uses this to mark affected columns provisional rather than
-// blanket-deferring the cluster — a verdict driven by a customer-
-// declared flag is still valid even when scan signals are missing.
-// Serverless clusters are evaluated against a smaller signal set —
-// `acls` and `brokers` don't apply there, so the serverless check
-// inlines directly rather than going through aclScanRan (which
-// returns false for serverless AND for nil-on-provisioned, an
-// ambiguity the caller would have to re-disambiguate).
-func inputsMissing(c report.ProcessedCluster) []string {
-	var missing []string
-	// MskClusterConfig.Provisioned shape gap — affects every
-	// Provisioned-only helper (kafkaVersionOf, brokerInstanceType,
-	// clusterStorageMode, sourceUsesMTLS). Without surfacing this, the
-	// cluster silently flows through with empty/false everywhere and
-	// no signal back to the customer.
-	if !isServerless(c) && hasUnknownClusterType(c) {
-		missing = append(missing, "msk_cluster_config")
-	}
-	if c.KafkaAdminClientInformation.Topics == nil {
-		missing = append(missing, "topics")
-	}
-	if !isServerless(c) && c.KafkaAdminClientInformation.Acls == nil {
-		missing = append(missing, "acls")
-	}
-	if brokerInventoryGap(c) {
-		missing = append(missing, "brokers")
-	}
-	return missing
-}
-
-// hasUnknownClusterType reports whether the cluster's discriminator
-// is something other than the two known values (`PROVISIONED` /
-// `SERVERLESS`), OR is a Provisioned cluster missing its
-// `Provisioned` block entirely. Both cases mean the Provisioned-only
-// helpers will return empty/false silently. Callers should treat this
-// as an inputs-missing gap and surface a cluster-type OQ.
-func hasUnknownClusterType(c report.ProcessedCluster) bool {
-	ct := c.AWSClientInformation.MskClusterConfig.ClusterType
-	if ct == kafkatypes.ClusterTypeServerless {
-		return false
-	}
-	if ct == kafkatypes.ClusterTypeProvisioned {
-		// Provisioned discriminator set but the Provisioned block is
-		// missing — mid-flight scan failure or pre-0.7 file shape.
-		return c.AWSClientInformation.MskClusterConfig.Provisioned == nil
-	}
-	// Anything else (empty discriminator, future AWS variant) is
-	// unrecognised.
-	return true
 }
