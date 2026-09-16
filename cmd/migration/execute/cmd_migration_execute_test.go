@@ -124,6 +124,7 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 		ClusterRestEndpoint: "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443",
 		ClusterLinkName:     "msk-to-cc",
 		Topics:              []string{"t1.order", "t2.inventory"},
+		TopicPatterns:       []string{".*"}, // matches the canonical manifest's default topicPatterns
 		Route:               "migration-route",
 		TargetDomain:        "confluent-cloud",
 		CurrentState:        migration.StateInitialized,
@@ -295,6 +296,26 @@ func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
 	assert.Contains(t, joined, "1 removed")
 }
 
+// TestDrift_DetectsChangedTopicPatterns is a regression test: detectDrift
+// used to skip topicPatterns entirely (entry.Topics is nil for a
+// pattern-selected topic group, so the whole topic-drift block was
+// unreachable), silently proceeding against a stale resolved-topic snapshot
+// after an operator edited the patterns. The declared pattern list is now
+// compared against its own snapshot, independent of Topics.
+func TestDrift_DetectsChangedTopicPatterns(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "        - '.*'\n", "        - 'bar.*'\n", 1)
+	})
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.TopicPatterns = []string{"foo.*"}
+	})
+	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
+	require.NotEmpty(t, drift)
+	joined := strings.Join(drift, " ")
+	assert.Contains(t, joined, "spec.topicGroup")
+	assert.Contains(t, joined, "topicPatterns: 1 added, 1 removed")
+}
+
 // TestDrift_NeverNamesTopics — counts only. Dumping a topic list into a
 // terminal error is the one thing this project's error copy must not do.
 func TestDrift_NeverNamesTopics(t *testing.T) {
@@ -380,6 +401,7 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		"ClusterRestEndpoint":     true,
 		"ClusterLinkName":         true,
 		"Topics":                  true,
+		"TopicPatterns":           true,
 		"PauseConsumerOffsetSync": true,
 		"K8sNamespace":            true,
 		"InitialCrName":           true,
@@ -1034,6 +1056,7 @@ func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
 	assert.Equal(t, migration.StateUninitialized, cfg.CurrentState)
 	assert.Equal(t, "migration-route", cfg.Route)
 	assert.Equal(t, "confluent-cloud", cfg.TargetDomain)
+	assert.Equal(t, []string{".*"}, cfg.TopicPatterns, "declared topicPatterns must be snapshotted at registration for later drift checks")
 	assert.False(t, cfg.PauseConsumerOffsetSync)
 	assert.Empty(t, cfg.Topics, "topics require a live migplan.Reconcile — not set here")
 	assert.Empty(t, cfg.FenceYAML)

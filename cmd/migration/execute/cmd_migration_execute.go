@@ -150,6 +150,10 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 // before.
 func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath string) migration.MigrationConfig {
 	entry := g.Spec.TopicGroup[0] // manifest validation guarantees exactly one entry
+	var topicPatterns []string
+	if entry.TopicPatterns != nil {
+		topicPatterns = *entry.TopicPatterns
+	}
 	return migration.MigrationConfig{
 		MigrationId:             id,
 		SourceBootstrap:         strings.Join(g.Spec.Source.BootstrapServers, ","),
@@ -162,6 +166,7 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 		ClusterLinkName:         g.Spec.ClusterLink.Name,
 		Route:                   entry.Route,
 		TargetDomain:            entry.TargetStreamingDomain,
+		TopicPatterns:           topicPatterns,
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
 		GatewayConfigPort:       g.Spec.DefaultPolicies.GatewayConfigPort,
@@ -473,6 +478,17 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 			added, removed := diffCounts(*topics, config.Topics)
 			if added > 0 || removed > 0 {
 				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topics: %d added, %d removed", added, removed))
+			}
+		}
+		// TopicPatterns is compared against its own declared snapshot, not
+		// against config.Topics (the resolved set) — Topics and TopicPatterns
+		// are mutually exclusive on the manifest, so exactly one of these two
+		// blocks ever fires. An edited pattern must count as drift even if it
+		// happens to expand to the same topics today.
+		if patterns := entry.TopicPatterns; patterns != nil {
+			added, removed := diffCounts(*patterns, config.TopicPatterns)
+			if added > 0 || removed > 0 {
+				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topicPatterns: %d added, %d removed", added, removed))
 			}
 		}
 	}

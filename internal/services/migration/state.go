@@ -97,6 +97,15 @@ type MigrationConfig struct {
 	ClusterLinkName     string   `json:"cluster_link_name"`
 	Topics              []string `json:"topics"`
 
+	// TopicPatterns is the declared spec.topicGroup[0].topicPatterns snapshot,
+	// captured at registration alongside Route/TargetDomain — nil when the
+	// manifest instead used an explicit topics list. Unlike Topics (the
+	// resolved topic set, populated once reconcile runs), this is the raw
+	// declared patterns themselves, compared as-is on every resume so an
+	// edited pattern is caught as drift even if it happens to expand to the
+	// same topics today.
+	TopicPatterns []string `json:"topic_patterns,omitempty"`
+
 	// ClusterLinkConfigs is a snapshot of the cluster link's consumer.offset.*
 	// configs taken at init, before the pause-offset-sync bookend disables
 	// consumer.offset.sync.enable — the diff baseline RestoreOffsetSync
