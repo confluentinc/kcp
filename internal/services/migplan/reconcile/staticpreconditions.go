@@ -3,6 +3,7 @@ package reconcile
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // StaticRouteView carries the static-mode facts CheckStaticPreconditions
@@ -109,7 +110,7 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 	case secretCheckSkipped != "":
 		res = append(res, skip("staged auth secrets exist", secretCheckSkipped))
 	case len(missingSecrets) > 0:
-		res = append(res, fail("staged auth secrets exist", fmt.Sprintf("secret(s) %s referenced by route %q's staged auth for %q do not exist", joinNames(missingSecrets), in.Route, in.TargetDomain)))
+		res = append(res, fail("staged auth secrets exist", fmt.Sprintf("secret(s) %s referenced by route %q's staged auth for %q do not exist", strings.Join(missingSecrets, ", "), in.Route, in.TargetDomain)))
 	default:
 		res = append(res, pass("staged auth secrets exist"))
 	}
@@ -123,17 +124,6 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		}
 	}
 	return res, view, ok
-}
-
-func joinNames(names []string) string {
-	out := ""
-	for i, n := range names {
-		if i > 0 {
-			out += ", "
-		}
-		out += n
-	}
-	return out
 }
 
 // staticDomainBootstrapIDs maps each streaming domain the CR declares (at
