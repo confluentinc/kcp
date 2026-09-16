@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 )
 
@@ -23,19 +24,32 @@ func TestGatewayPermutationsLive(t *testing.T) {
 		name         string
 		gatewayFile  string
 		targetDomain string
+		secrets      migplan.SecretExistenceChecker // nil => fakeSecretChecker{} (no missing, no skip)
 		wantRefuse   bool
 		failPrecond  string // substring of the precondition name that must be failing
 	}{
-		{"rich dynamic route passes", "testdata/gateway.yaml", "cc", false, ""},
-		{"static route refused", "testdata/gateway-static.yaml", "cc", true, "route is dynamic"},
-		{"three bound domains refused", "testdata/gateway-three-domains.yaml", "cc", true, "binds exactly two"},
-		{"coordination on target refused", "testdata/gateway-coord-on-target.yaml", "cc", true, "coordination.group pinned on source"},
-		{"unbound target domain refused", "testdata/gateway.yaml", "gcp", true, "target domain is bound"},
+		{"rich dynamic route passes", "testdata/gateway.yaml", "cc", nil, false, ""},
+		{"three bound domains refused", "testdata/gateway-three-domains.yaml", "cc", nil, true, "binds exactly two"},
+		{"coordination on target refused", "testdata/gateway-coord-on-target.yaml", "cc", nil, true, "coordination.group pinned on source"},
+		{"unbound target domain refused", "testdata/gateway.yaml", "gcp", nil, true, "target domain is bound"},
+
+		// Static-route (AAO) strategy permutations — each fixture violates
+		// exactly one CheckStaticPreconditions check, same one-violation-per-row
+		// discipline as the dynamic rows above.
+		{"static route missing staged auth refused", "testdata/gateway-static.yaml", "cc", nil, true, "route carries pre-staged auth for the target domain"},
+		{"static route target domain not declared refused", "testdata/gateway-static-domain-not-declared.yaml", "cc", nil, true, "target domain is declared"},
+		{"static route multi-homed target domain refused", "testdata/gateway-static-multi-bootstrap.yaml", "cc", nil, true, "exactly one bootstrap server id"},
+		{"static route already bound to target refused", "testdata/gateway-static-already-bound.yaml", "cc", nil, true, "route is not already bound to the target domain"},
+		{"static route missing secrets refused", "testdata/gateway-static-redundant-auth.yaml", "cc", fakeSecretChecker{missing: []string{"cc-redundant-auth"}}, true, "staged auth secrets exist"},
 	}
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			eng := newLiveEngineFor(t, c.gatewayFile, "migration-route")
+			secrets := c.secrets
+			if secrets == nil {
+				secrets = fakeSecretChecker{}
+			}
+			eng := newLiveEngineFor(t, c.gatewayFile, "migration-route", secrets)
 			in := reconcile.ReconcileInput{Topics: batch, Route: "migration-route", TargetDomain: c.targetDomain}
 
 			plan, err := eng.Run(context.Background(), in)

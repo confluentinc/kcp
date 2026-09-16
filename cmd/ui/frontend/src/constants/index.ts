@@ -31,6 +31,7 @@ export const CLUSTER_REPORT_TABS = {
   TOPICS: 'topics',
   CONNECTORS: 'connectors',
   ACLS: 'acls',
+  CONSUMER_GROUPS: 'consumerGroups',
   CLIENTS: 'clients',
 } as const
 
