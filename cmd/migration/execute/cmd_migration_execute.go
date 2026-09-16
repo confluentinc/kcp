@@ -70,9 +70,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 // newMigrationExecuteCmd builds the command with the TBM branch's live
 // dependencies injected, so this package's own tests can pass stubs for a
 // dynamic-mode run without dialing Kafka, Kubernetes, or a cluster-link REST
-// endpoint. A static-mode (AAO) run has no equivalent injection point — see
-// this plan's Global Constraints on the deliberately asymmetric test posture
-// between the two branches.
+// endpoint. A static-mode (AAO) run has no equivalent injection point — the
+// test posture between the two branches is deliberately asymmetric.
 func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway gatewayServiceFunc, buildTBMClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "execute",

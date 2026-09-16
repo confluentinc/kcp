@@ -12,8 +12,7 @@ import (
 // SecretExistenceChecker reports which of a list of Kubernetes Secret names
 // don't exist in its namespace. Namespace is bound at construction (mirrors
 // GatewayLive/ClusterLinkStatus's shape), not passed per-call — the static
-// route strategy's one live-I/O precondition (see the migplan
-// static-route-strategy design doc, decision 4): does every secret the
+// route strategy's one live-I/O precondition: does every secret the
 // switchover target's own staged auth block references actually exist. Not
 // a CR-scanning interface — the caller (engine.go) resolves which names to
 // check via reconcile.ResolveStagedSecretNames and passes exactly those.

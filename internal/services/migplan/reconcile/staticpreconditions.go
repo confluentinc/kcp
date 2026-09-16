@@ -28,9 +28,7 @@ type StaticRouteView struct {
 // missing secret) — see SecretExistenceChecker's own doc comment. When set,
 // missingSecrets is expected to be empty (there was nothing to report), and
 // the "staged auth secrets exist" result records the skip rather than a
-// pass, so the report never claims a verification that never happened. See
-// the migplan static-route-strategy design doc, decision 10, for the exact
-// check list.
+// pass, so the report never claims a verification that never happened.
 func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecrets []string, secretCheckSkipped string, ids ClusterIDs) ([]PreconditionResult, StaticRouteView, bool) {
 	var res []PreconditionResult
 	var view StaticRouteView
@@ -178,7 +176,8 @@ func stagedAuthFor(route map[string]any, domainName string) (map[string]any, boo
 
 // staticSecretRefKeys are the Gateway CRD's Secret-naming field names —
 // mirrors internal/services/gateway/validate.go's own secretRefKeys,
-// duplicated per decision 13, not imported.
+// duplicated here rather than imported, to avoid a new dependency from
+// reconcile on internal/services/gateway.
 var staticSecretRefKeys = map[string]struct{}{
 	"secretRef":            {},
 	"configSecretRef":      {},
@@ -214,13 +213,12 @@ func collectStaticSecretRefs(v any, names map[string]struct{}) {
 // ResolveStagedSecretNames finds every Kubernetes Secret name gw.Route's
 // pre-staged security.cluster.<targetDomain> block references — the
 // secret(s) whose existence the redundant-auth switch depends on but has
-// never exercised (see the migplan static-route-strategy design doc,
-// decision 4). Exported for the I/O layer (engine.go) to call before
+// never exercised. Exported for the I/O layer (engine.go) to call before
 // building missingSecrets to pass into Reconcile — CheckStaticPreconditions
 // itself never calls this; it only consumes the already-gathered
 // missingSecrets fact. Takes no route name: gw.Route is already the one
-// route this GatewayConfig was resolved for (see RouteConfig.Raw, Task 1) —
-// there is nothing left to look up by name. Returns nil if the staged block
+// route this GatewayConfig was resolved for (see RouteConfig.Raw) — there
+// is nothing left to look up by name. Returns nil if the staged block
 // isn't present; that absence is itself a precondition failure
 // CheckStaticPreconditions reports separately, not an error here.
 func ResolveStagedSecretNames(gw *GatewayConfig, targetDomain string) []string {

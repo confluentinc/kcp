@@ -114,17 +114,16 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 }
 
 // reconcileStatic is the static-route reconciliation strategy. It reuses
-// Explode/Classify unchanged (design doc decision 6/7): topics resolve
-// against the source cluster's live topic list exactly like dynamic mode,
-// and classification uses the same truth table, with routesToTarget
-// computed once at the route level (view.RoutesToTarget) rather than
-// per-topic — a static route cannot bind different topics to different
-// domains. Report.Refused()'s existing definition already produces the
-// correct all-or-nothing policy; no new refusal logic is needed (decision
-// 8). Unlike dynamic mode, there is no shadow-warning concept (no
-// per-topic routing conditions exist to shadow) and no rules-size
-// guardrail (the fragments are a few dozen bytes, never realistically
-// oversized).
+// Explode/Classify unchanged: topics resolve against the source cluster's
+// live topic list exactly like dynamic mode, and classification uses the
+// same truth table, with routesToTarget computed once at the route level
+// (view.RoutesToTarget) rather than per-topic — a static route cannot bind
+// different topics to different domains. Report.Refused()'s existing
+// definition already produces the correct all-or-nothing policy; no new
+// refusal logic is needed. Unlike dynamic mode, there is no shadow-warning
+// concept (no per-topic routing conditions exist to shadow) and no
+// rules-size guardrail (the fragments are a few dozen bytes, never
+// realistically oversized).
 func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
 	mirrors map[string]MirrorState, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 

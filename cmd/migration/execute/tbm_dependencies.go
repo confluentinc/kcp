@@ -17,8 +17,8 @@ import (
 // dynamic-mode (TBM) run needs, plus a close function for both. Injected via
 // newMigrationExecuteCmd so this package's own tests (whose manifests point
 // at unreachable placeholder endpoints) can pass a stub; production dials
-// real Kafka connections. Ported from cmd/migration/executetbm, deleted in
-// Task 1.
+// real Kafka connections. Ported from cmd/migration/executetbm, which no
+// longer exists.
 type offsetProvidersFunc func(g *manifest.GatewayMigration) (source, destination offset.Provider, closeFn func() error, err error)
 
 // gatewayServiceFunc builds the gateway.Service a dynamic-mode run's

@@ -15,7 +15,7 @@ import (
 // tbm.TBMOrchestrator — the same shape execute-tbm's runMigrationExecuteTBM
 // used, minus its own registration/reconcile logic, which now lives once,
 // shared, in runMigrationExecute (both branches register and drift-check
-// through the same code — see this plan's Task 2, Step 3).
+// through the same code).
 //
 // Every policy value applied here is read from g.Spec.DefaultPolicies — the
 // EFFECTIVE policy, i.e. the manifest's spec.defaultPolicies after
