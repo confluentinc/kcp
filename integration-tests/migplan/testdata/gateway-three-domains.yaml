@@ -1,0 +1,23 @@
+# Permutation fixture: a dynamic route bound to THREE streaming domains. v1
+# requires exactly two, so the "route binds exactly two domains" precondition
+# must fail and refuse.
+apiVersion: gateway.confluent.io/v1
+kind: Gateway
+metadata:
+  name: migplan-three-domains
+spec:
+  routes:
+    - name: migration-route
+      mode: dynamic
+      streamingDomains:
+        - name: msk
+          bootstrapServers: localhost:19092
+        - name: cc
+          bootstrapServers: localhost:29092
+        - name: extra
+          bootstrapServers: localhost:39092
+      rules:
+        routing:
+          coordination:
+            group: msk
+          default: msk
