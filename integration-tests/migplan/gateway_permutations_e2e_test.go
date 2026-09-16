@@ -41,6 +41,7 @@ func TestGatewayPermutationsLive(t *testing.T) {
 		{"static route multi-homed target domain refused", "testdata/gateway-static-multi-bootstrap.yaml", "cc", nil, true, "exactly one bootstrap server id"},
 		{"static route already bound to target refused", "testdata/gateway-static-already-bound.yaml", "cc", nil, true, "route is not already bound to the target domain"},
 		{"static route missing secrets refused", "testdata/gateway-static-redundant-auth.yaml", "cc", fakeSecretChecker{missing: []string{"cc-redundant-auth"}}, true, "staged auth secrets exist"},
+		{"static route already fenced refused", "testdata/gateway-static-already-fenced.yaml", "cc", nil, true, "route is not already fenced"},
 	}
 
 	for _, c := range cases {

@@ -34,6 +34,40 @@ func TestStaticPreconditionsRoutesToTargetWhenAlreadyBound(t *testing.T) {
 	}
 }
 
+func TestStaticPreconditionsAlreadyFenced(t *testing.T) {
+	gw := staticGateway()
+	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
+	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
+
+	res, _, ok := CheckStaticPreconditions(in, gw, nil, ClusterIDs{})
+	if ok {
+		t.Fatalf("expected refusal (route already fenced), got pass: %+v", res)
+	}
+	found := false
+	for _, r := range res {
+		if r.Name == "route is not already fenced" && !r.OK {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a failed \"route is not already fenced\" precondition, got %+v", res)
+	}
+}
+
+func TestStaticPreconditionsNulledFenceCountsAsUnfenced(t *testing.T) {
+	// fence: null (explicitly present but nil) must NOT trip the already-fenced
+	// check — it means "being removed/unset," not "being set." Everything else
+	// about staticGateway() already satisfies every other precondition, so this
+	// must pass outright.
+	gw := staticGateway()
+	gw.Route.Raw["fence"] = nil
+	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
+
+	if _, _, ok := CheckStaticPreconditions(in, gw, nil, ClusterIDs{}); !ok {
+		t.Error("a nulled fence must count as unfenced and pass")
+	}
+}
+
 func TestStaticPreconditionsFailures(t *testing.T) {
 	base := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 
