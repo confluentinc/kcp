@@ -12,6 +12,7 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
 	"github.com/goccy/go-yaml"
@@ -53,7 +54,11 @@ type MigrationActions struct {
 	// an unresolved capability behaves exactly as kcp did before hot-reload
 	// support existed.
 	gatewayCapability gateway.Capability
-	reporter          *reporter // user-facing terminal output
+	// capabilityResolved guards ensureGatewayCapability so resolution happens
+	// at most once per process, no matter which of FenceGateway/SwitchGateway
+	// runs first.
+	capabilityResolved bool
+	reporter           *reporter // user-facing terminal output
 }
 
 func NewMigrationActions(
@@ -99,15 +104,32 @@ func (s *MigrationActions) SetHotReloadTimeout(d time.Duration) {
 	s.hotReloadTimeout = d
 }
 
+// ensureGatewayCapability resolves gatewayCapability at most once per
+// process: the first of FenceGateway or SwitchGateway to run this call
+// actually resolves it (and smoke-tests hot-reload); whichever runs second,
+// if any, in the same process is then a no-op. Mirrors
+// tbm.TBMActions.ensureGatewayCapability: resolution is lazy, tied to the
+// first gateway-touching step, rather than a blanket pre-Execute check in
+// the command layer — the command layer cannot resolve capability before a
+// fresh migration's Initialize step has populated config.FenceYAML and
+// config.SwitchoverYAML, which deriveFencedCRYAML/deriveSwitchedCRYAML need.
+func (s *MigrationActions) ensureGatewayCapability(ctx context.Context, config *MigrationConfig) error {
+	if s.capabilityResolved {
+		return nil
+	}
+	if err := s.ResolveGatewayCapability(ctx, config); err != nil {
+		return err
+	}
+	return s.VerifyHotReloadCapability(ctx, config)
+}
+
 // ResolveGatewayCapability determines how gateway state transitions will be
 // verified on the live cluster, adopts it for this run, and records it on the
-// migration config.
-//
-// Called twice in a migration's life, for different reasons. At init it is an
-// advisory: it tells the operator what to expect before they commit to a
-// migration. At execute it is authoritative, because the cluster may have been
-// upgraded — or rolled back — in between, and the value that governs the run has
-// to reflect the cluster as it is now rather than as it was at init.
+// migration config. Called once, authoritatively, via ensureGatewayCapability
+// — there is no separate advisory call at Initialize: execute is the only
+// command now, so there is no earlier "review, then commit" moment to advise
+// at (this function used to be called a second, advisory time from Initialize,
+// back when init and execute were separate commands).
 func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
 	// Settle the port first: the last gate probes /config, so detection needs it.
 	if config.GatewayConfigPort == 0 {
@@ -137,6 +159,15 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 
 	previous := config.GatewayVerificationMode
 	s.gatewayCapability = capability
+	// Set here, not only in ensureGatewayCapability: a caller that resolves
+	// capability directly (bypassing ensureGatewayCapability — every
+	// pre-existing unit test in gateway_capability_test.go/
+	// gateway_transition_test.go/gateway_baseline_test.go does exactly this)
+	// must still be honored as "already resolved" by a later
+	// FenceGateway/SwitchGateway call in the same process — otherwise
+	// ensureGatewayCapability would silently re-resolve (harmless) AND
+	// re-run VerifyHotReloadCapability a second, unrequested time.
+	s.capabilityResolved = true
 	config.GatewayVerificationMode = string(capability.Mode)
 	config.GatewayHotReloadEnabled = capability.HotReloadEnabled
 
@@ -404,72 +435,39 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 	s.promoteBatchSize = n
 }
 
-// Initialize prepares a migration for execution: fetching the initial CR,
-// validating redundant auth, and validating the cluster link and its topics.
-//
-// preFetchedCR, when non-empty, is a CR the caller already read live moments
-// earlier for mode/id derivation (see cmd/migration/init) — reusing it avoids
-// a second live fetch that bought no fresher data and risked observing a
-// different CR generation than the one derivation used. Empty means no such
-// read happened in this process (e.g. execute resuming a --skip-validate
-// migration), so Initialize fetches live as before.
+// Initialize captures the migplan-derived artifacts onto config and runs the
+// AAO-specific preconditions migplan does not cover: gateway capability
+// resolution and the PauseConsumerOffsetSync live precondition. Mirrors
+// TBMActions.Initialize's shape (check res.Refused, copy fields) — everything
+// migplan.Reconcile already validated (staged-auth/secret existence,
+// cluster-link topic classification) is NOT re-checked here.
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
-	preFetchedCR []byte,
+	res *migplan.Result,
 ) error {
 	slog.Debug("initializing migration", "migrationId", config.MigrationId)
 
-	initialCrYAML := preFetchedCR
-	if len(initialCrYAML) == 0 {
-		var err error
-		initialCrYAML, err = s.gatewayService.GetGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName)
-		if err != nil {
-			return fmt.Errorf("failed to get initial CR YAML: %w", err)
-		}
-	}
-	config.InitialCrYAML = initialCrYAML
-
-	// Prove the redundant auth this migration depends on is actually staged,
-	// and that the secrets it references exist. Report what was actually
-	// verified rather than a bare tick: the live secret check can legitimately
-	// be skipped (no RBAC to read secrets), and claiming a check ran when it
-	// did not is how a missing secretRef reached a cutover in the first place.
-	validation, err := s.gatewayService.CheckRedundantAuthStaged(ctx, config.K8sNamespace, config.InitialCrYAML, config.SwitchoverTargets)
-	for _, warning := range validation.Warnings {
-		s.reporter.warn("%s", warning)
-	}
-	if err != nil {
-		return fmt.Errorf("gateway CR validation failed: %w", err)
-	}
-	slog.Debug("gateway CRs validated", "secretRefsChecked", validation.SecretRefsChecked, "secretCheckSkipped", validation.SecretCheckSkipped)
-
-	switch {
-	case validation.SecretCheckSkipped != "":
-		// A check that could not run gets ⚠️ and a Warn in kcp.log, not a green
-		// tick at Info. An operator scanning a wall of ticks minutes before
-		// cutover must be able to see that the live check never happened — that
-		// is the whole premise of this validation.
-		s.reporter.warn("Gateway CRs validated, but secret references were NOT checked: %s", validation.SecretCheckSkipped)
-	case validation.SecretRefsChecked > 0:
-		s.reporter.success("Gateway CRs validated (%d secret reference(s) present in %s)", validation.SecretRefsChecked, config.K8sNamespace)
-	default:
-		s.reporter.success("Gateway CRs validated (no secret references)")
+	if res.Refused {
+		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(res.Reasons, "\n"))
 	}
 
-	// Resolve how transitions will be verified, and tell the operator now rather
-	// than mid-cutover. This is read-only — it inspects the CRD and the live CR
-	// and changes nothing — so it is safe to run before InitialCrYAML above has
-	// been used for anything. Execute re-derives it authoritatively.
-	if err := s.ResolveGatewayCapability(ctx, config); err != nil {
-		return err
-	}
-	if s.gatewayCapability.Mode == gateway.VerifyPerPodConfigID {
-		s.reporter.success("Gateway transitions will be verified per pod via %s", gateway.GatewayConfigEndpointPath)
-	}
+	config.Topics = res.Topics
+	config.FenceYAML = res.FenceYAML
+	config.SwitchoverYAML = res.SwitchoverYAML
+	config.GatewayYAML = res.GatewayYAML
+	config.Route = res.Route
+	config.Mode = res.Mode
+	s.reporter.success("Reconcile plan accepted (%d topic(s) in plan)", len(res.Topics))
 
-	// Validate cluster link and topics
+	// Gateway capability is NOT resolved here: there is no separate advisory
+	// moment to resolve it for anymore (execute is the only command), and
+	// config.FenceYAML/SwitchoverYAML were only just set above in the same
+	// process — ensureGatewayCapability resolves it lazily, once, from
+	// whichever of FenceGateway/SwitchGateway runs first later in this same
+	// Execute() call.
+
 	clusterLinkConfig := clusterlink.Config{
 		RestEndpoint: config.ClusterRestEndpoint,
 		ClusterID:    config.ClusterId,
@@ -478,31 +476,10 @@ func (s *MigrationActions) Initialize(
 		Topics:       config.Topics,
 	}
 
-	slog.Debug("describing cluster link", "clusterId", config.ClusterId, "clusterLinkName", config.ClusterLinkName)
-
-	mirrorTopics, err := s.clusterLinkService.ListMirrorTopics(ctx, clusterLinkConfig)
-	if err != nil {
-		return fmt.Errorf("failed to list mirror topics: %w", err)
-	}
-
-	clusterLinkTopics, inactiveTopics := clusterlink.ClassifyMirrorTopics(mirrorTopics)
-	if len(inactiveTopics) > 0 {
-		return fmt.Errorf("%d mirror topics are not active: %s", len(inactiveTopics), strings.Join(inactiveTopics, ", "))
-	}
-
-	// Validate topics
-	if len(config.Topics) > 0 {
-		slog.Debug("validating topics in cluster link", "topicCount", len(config.Topics))
-		if err := s.clusterLinkService.ValidateTopics(config.Topics, clusterLinkTopics); err != nil {
-			return fmt.Errorf("failed to validate topics in cluster link: %w", err)
-		}
-	} else {
-		config.Topics = clusterLinkTopics
-	}
-	slog.Debug("cluster link validated", "activeTopicCount", len(clusterLinkTopics))
-	s.reporter.success("Cluster link validated (%d mirror topics active)", len(clusterLinkTopics))
-
-	// Get cluster link configs
+	// Get cluster link configs — still needed for the PauseConsumerOffsetSync
+	// precondition below and for the offset-sync restore bookend's diff
+	// baseline. Topic classification/validation is no longer done here —
+	// migplan.Reconcile's Classify already proved config.Topics feasible.
 	configs, err := s.clusterLinkService.ListConfigs(ctx, clusterLinkConfig)
 	if err != nil {
 		return fmt.Errorf("failed to list cluster link configs: %w", err)
@@ -515,9 +492,7 @@ func (s *MigrationActions) Initialize(
 	//
 	// Skip the check when PauseConsumerOffsetSyncFlipped is already true: kcp
 	// itself set the value to "false" via DisableOffsetSync, so seeing "false"
-	// here is the expected mid-flight state, not drift. This matters when init
-	// ran with --skip-validate (no init-time precondition) and the first
-	// execute reaches Initialize via the FSM after the bookend has already run.
+	// here is the expected mid-flight state, not drift.
 	if config.PauseConsumerOffsetSync && !config.PauseConsumerOffsetSyncFlipped {
 		observed, present := configs[offsetSyncEnableKey]
 		switch {
@@ -529,17 +504,8 @@ func (s *MigrationActions) Initialize(
 		s.reporter.success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
 	}
 
-	// Update config with discovered data
-	config.ClusterLinkTopics = clusterLinkTopics
-
 	// Defensive guard: never overwrite the pre-disable snapshot once the
-	// bookend has flipped consumer.offset.sync.enable=false. If Initialize
-	// were ever called after DisableOffsetSync ran (today blocked at the CLI
-	// by --skip-validate / --pause-consumer-offset-sync mutual exclusion in
-	// cmd/migration/init), `configs` would reflect the post-disable live
-	// state and clobber the snapshot RestoreOffsetSync needs to diff against
-	// — silently leaving the cluster link disabled. Keep the existing
-	// snapshot in that case.
+	// bookend has flipped consumer.offset.sync.enable=false.
 	if !config.PauseConsumerOffsetSyncFlipped {
 		config.ClusterLinkConfigs = configs
 	}
@@ -750,6 +716,14 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
+	// Capability must be resolved before capturePods below reads it (and
+	// before deriveFencedCRYAML, which needs config.FenceYAML — already set
+	// by Initialize earlier in this same run). A no-op on any run past the
+	// first gateway-touching step in this process.
+	if err := s.ensureGatewayCapability(ctx, config); err != nil {
+		return err
+	}
+
 	// When unrouted-producer detection is enabled the fence must be genuinely
 	// in effect before the detector's first source-offset snapshot. A plain
 	// readiness wait returns as soon as the new fenced pod reports Ready, but
@@ -780,9 +754,9 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		}
 	}
 
-	// Derive the fenced CR from the same metadata-stripped initial snapshot that
-	// unfence re-applies: fence = InitialCrYAML + fence-block on the named
-	// route(s), so fence and its removal are exact inverses. There is no
+	// Derive the fenced CR from the same metadata-stripped gateway CR snapshot
+	// that unfence re-applies: fence = GatewayYAML + fence fragment spliced onto
+	// Route, so fence and its removal are exact inverses. There is no
 	// separately-snapshotted fenced CR.
 	fencedCrYAML, err := deriveFencedCRYAML(config)
 	if err != nil {
@@ -858,88 +832,68 @@ func (s *MigrationActions) confirmFence(
 	}
 }
 
-// deriveFencedCRYAML builds the fenced CR bytes from the live initial CR
-// snapshot by injecting a fence block onto config.FenceRoutes (see
-// gateway.FenceRoutesObj). There is no separately-snapshotted fenced CR:
-// FenceGateway's apply and ResolveGatewayCapability's detection both derive
-// from the same source, so they can never drift from each other.
-func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
-	base, err := cleanInitialCR(config.InitialCrYAML)
-	if err != nil {
-		return nil, err
-	}
-	return gateway.FenceRoutesObj(base, config.FenceRoutes)
-}
-
-// deriveSwitchedCRYAML builds the switched CR bytes from the live initial CR
-// snapshot by flipping each fence route's streamingDomain to its
-// config.SwitchoverTargets entry (see gateway.SwitchRoutesObj). There is no
-// separately-snapshotted switched CR: SwitchGateway's apply and
-// ResolveGatewayCapability's detection both derive from the same source, so
-// they can never drift from each other — the same property deriveFencedCRYAML
-// gives the fenced CR.
-func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
-	base, err := cleanInitialCR(config.InitialCrYAML)
-	if err != nil {
-		return nil, err
-	}
-	return gateway.SwitchRoutesObj(base, config.SwitchoverTargets)
-}
-
-// cleanInitialCR parses the initial CR YAML and strips the server-managed
-// metadata (managedFields, resourceVersion, uid, creationTimestamp,
-// generation) and top-level status that a live-read CR carries and that
-// server-side apply rejects, returning the cleaned tree as a plain
-// map[string]interface{} rather than re-marshalled bytes — FenceGateway hands
-// the tree straight to gateway.FenceRoutesObj, sparing a redundant
-// marshal/parse round trip; unfenceGateway, which needs bytes to apply
-// directly, marshals it itself.
-//
-// It is the single canonical base for both fence-removal paths and the fence
-// itself: unfenceGateway re-applies it verbatim, and FenceGateway injects a
-// fence block onto it. Deriving the fence from the same snapshot unfence
-// re-applies is what makes fence and unfence exact inverses.
-func cleanInitialCR(initialCrYAML []byte) (map[string]interface{}, error) {
+// parseGatewayYAML parses config.GatewayYAML — the whole gateway CR migplan
+// pulled and cleaned of server-managed metadata (managedFields,
+// resourceVersion, uid, creationTimestamp, generation, status — see
+// migplan/gatewayfile.go's cleanGatewayDoc) — into a plain
+// map[string]interface{} for the splice helpers below. Unlike the pre-migplan
+// cleanInitialCR this does no cleaning of its own: migplan already did that
+// once, centrally, when it captured GatewayYAML at init.
+func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 	var obj map[string]interface{}
-	if err := yaml.Unmarshal(initialCrYAML, &obj); err != nil {
-		return nil, fmt.Errorf("failed to parse initial CR YAML: %w", err)
+	if err := yaml.Unmarshal([]byte(gatewayYAML), &obj); err != nil {
+		return nil, fmt.Errorf("failed to parse gateway CR: %w", err)
 	}
-
-	// Remove server-managed fields that break re-apply.
-	if metadata, ok := obj["metadata"].(map[string]interface{}); ok {
-		delete(metadata, "managedFields")
-		delete(metadata, "resourceVersion")
-		delete(metadata, "uid")
-		delete(metadata, "creationTimestamp")
-		delete(metadata, "generation")
-	}
-	delete(obj, "status")
-
 	return obj, nil
 }
 
-// unfenceGateway reapplies the initial gateway CR to restore normal traffic,
-// then waits for the operator to report the gateway Ready at the restored
-// spec — the same convergence check FenceGateway uses. Without the wait we
-// would report traffic restored while pods are still cycling, and miss
-// rollout failures entirely. The initial CR YAML fetched from k8s contains
-// server-managed metadata (managedFields, resourceVersion, status) that
-// breaks server-side apply, so we strip it before applying.
-func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
-	obj, err := cleanInitialCR(config.InitialCrYAML)
+// deriveFencedCRYAML builds the fenced CR bytes from the gateway CR snapshot
+// migplan captured (config.GatewayYAML) by splicing config.FenceYAML onto
+// config.Route. There is no separately-snapshotted fenced CR: FenceGateway's
+// apply and ResolveGatewayCapability's detection both derive from the same
+// source, so they can never drift from each other.
+//
+// AAO's execute path is static-route-only by construction: a dynamic-resolved
+// route is refused before any MigrationConfig is ever persisted (see
+// MigrationConfig.Mode's own doc comment), so FenceYAML here is always the
+// static {fence: {...}} fragment gateway.ReplaceRouteFenceObj expects.
+func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
+	base, err := parseGatewayYAML(config.GatewayYAML)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	cleanYAML, err := yaml.Marshal(obj)
-	if err != nil {
-		return fmt.Errorf("failed to marshal cleaned initial CR YAML: %w", err)
-	}
+	return gateway.ReplaceRouteFenceObj(base, config.Route, []byte(config.FenceYAML))
+}
 
+// deriveSwitchedCRYAML builds the switched CR bytes from the gateway CR
+// snapshot migplan captured (config.GatewayYAML) by splicing
+// config.SwitchoverYAML onto config.Route. There is no separately-snapshotted
+// switched CR: SwitchGateway's apply and ResolveGatewayCapability's detection
+// both derive from the same source, so they can never drift from each other —
+// the same property deriveFencedCRYAML gives the fenced CR.
+//
+// Static-route-only by construction — see deriveFencedCRYAML's comment.
+func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
+	base, err := parseGatewayYAML(config.GatewayYAML)
+	if err != nil {
+		return nil, err
+	}
+	return gateway.ReplaceRouteStreamingDomainObj(base, config.Route, []byte(config.SwitchoverYAML))
+}
+
+// unfenceGateway reapplies the gateway CR snapshot migplan captured
+// (config.GatewayYAML) to restore normal traffic, then waits for the operator
+// to report the gateway Ready at the restored spec — the same convergence
+// check FenceGateway uses. Without the wait we would report traffic restored
+// while pods are still cycling, and miss rollout failures entirely.
+// GatewayYAML is already cleaned of server-managed metadata (see
+// migplan/gatewayfile.go's cleanGatewayDoc), so it can be applied verbatim.
+func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
 	// The rollback apply gets a fresh configId too. Without one it would carry
 	// whatever revision the initial CR was captured with, and the verification
 	// below would match against a value the pods already report — passing
 	// instantly while the gateway is still fenced.
-	applied, err := s.applyGatewayCR(ctx, config, cleanYAML, "unfence")
+	applied, err := s.applyGatewayCR(ctx, config, []byte(config.GatewayYAML), "unfence")
 	if err != nil {
 		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
 	}
@@ -1329,18 +1283,18 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 	}
 }
 
-// SwitchGateway derives the switched gateway CR from the live initial CR
-// snapshot — cleanInitialCR(config.InitialCrYAML) with each fence route's
-// streamingDomain flipped to its config.SwitchoverTargets entry (see
-// gateway.SwitchRoutesObj) — applies it, confirms the operator accepted the
-// new spec, then waits for it to report the gateway as Ready. The wait uses
-// the same no-deadline-by-default behavior as FenceGateway.
+// SwitchGateway derives the switched gateway CR from the gateway CR snapshot
+// migplan captured (config.GatewayYAML) with config.SwitchoverYAML spliced
+// onto config.Route (see deriveSwitchedCRYAML) — applies it, confirms the
+// operator accepted the new spec, then waits for it to report the gateway as
+// Ready. The wait uses the same no-deadline-by-default behavior as
+// FenceGateway.
 //
 // Because the initial CR is unfenced and its routes already carry pre-staged
-// ("redundant") auth for the target domain (proved at init by
-// checkRedundantAuthStaged), this one apply yields unfenced + target-domain +
-// target-auth with no secret or auth change at cutover — there is no
-// separately-authored switchover CR to apply.
+// ("redundant") auth for the target domain (proved by migplan.Reconcile's
+// redundant-auth check at init), this one apply yields unfenced +
+// target-domain + target-auth with no secret or auth change at cutover —
+// there is no separately-authored switchover CR to apply.
 //
 // The acceptance check is what stops this reporting a completed migration for a
 // switchover the operator refused — the failure mode described on
@@ -1348,6 +1302,14 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // e2e test infrastructure.
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
+
+	// A no-op if FenceGateway already resolved capability earlier in this
+	// process (the normal case); only load-bearing for a resume that jumps
+	// straight to switch in a fresh process (e.g. every earlier step already
+	// completed in a prior run).
+	if err := s.ensureGatewayCapability(ctx, config); err != nil {
+		return err
+	}
 
 	switchedCrYAML, err := deriveSwitchedCRYAML(config)
 	if err != nil {
