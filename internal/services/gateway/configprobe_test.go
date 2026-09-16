@@ -1,52 +1,77 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
-	"net/http"
-	"net/http/httptest"
+	"errors"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	kubernetesfake "k8s.io/client-go/kubernetes/fake"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
+	restclient "k8s.io/client-go/rest"
+	ktesting "k8s.io/client-go/testing"
 )
 
-// serveConfig starts a stub gateway config endpoint and returns its host:port.
-func serveConfig(t *testing.T, handler http.HandlerFunc) string {
-	t.Helper()
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-	return srv.Listener.Addr().String()
+// fakeProxyResponse implements restclient.ResponseWrapper so a test can script
+// what a pod's proxied /config answer looks like without a real API server.
+type fakeProxyResponse struct {
+	body []byte
+	err  error
 }
 
-// deadAddr returns a host:port that nothing is listening on.
-func deadAddr(t *testing.T) string {
-	t.Helper()
-	srv := httptest.NewServer(http.NotFoundHandler())
-	addr := srv.Listener.Addr().String()
-	srv.Close()
-	return addr
+func (r fakeProxyResponse) DoRaw(context.Context) ([]byte, error) { return r.body, r.err }
+func (r fakeProxyResponse) Stream(context.Context) (io.ReadCloser, error) {
+	return io.NopCloser(bytes.NewReader(r.body)), r.err
 }
 
-func jsonHandler(status int, body string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(status)
-		_, _ = w.Write([]byte(body))
-	}
+// proxyPods builds a fake clientset's Pods(ns), wired so every ProxyGet call
+// returns resp. When capture is non-nil, the action it was called with is
+// stashed there so a test can assert exactly which pod/port/path it targeted.
+func proxyPods(ns string, resp fakeProxyResponse, capture *ktesting.ProxyGetActionImpl) typedcorev1.PodInterface {
+	cs := newFakeClientset().(*kubernetesfake.Clientset)
+	cs.PrependProxyReactor("pods", func(action ktesting.Action) (bool, restclient.ResponseWrapper, error) {
+		if capture != nil {
+			*capture = action.(ktesting.ProxyGetActionImpl)
+		}
+		return true, resp, nil
+	})
+	return cs.CoreV1().Pods(ns)
 }
 
 func TestProbeGatewayConfig(t *testing.T) {
-	client := newConfigProbeClient(2 * time.Second)
+	const ns, podName, port = "confluent", "gw-1", 9180
 
-	t.Run("200 with a configId reports it as applied", func(t *testing.T) {
-		addr := serveConfig(t, jsonHandler(http.StatusOK,
-			`{"configId":"kcp-abc123","appliedAt":"2026-07-06T10:15:30.123Z"}`))
+	t.Run("reaches the pod via the API server's proxy subresource", func(t *testing.T) {
+		// The fix this whole change exists for: kcp must never need a network
+		// route into the pod CIDR, so the probe has to go through the API
+		// server's pods/proxy subresource rather than dialing the pod's IP.
+		var captured ktesting.ProxyGetActionImpl
+		pods := proxyPods(ns, fakeProxyResponse{body: []byte(`{"configId":"x"}`)}, &captured)
 
-		got, err := probeGatewayConfig(context.Background(), client, addr)
+		_, err := probeGatewayConfig(context.Background(), pods, podName, port)
+		require.NoError(t, err)
+
+		assert.Equal(t, "pods", captured.GetResource().Resource)
+		assert.Equal(t, podName, captured.GetName())
+		assert.Equal(t, "9180", captured.GetPort())
+		assert.Equal(t, GatewayConfigEndpointPath, captured.GetPath())
+	})
+
+	t.Run("a configId reports it as applied", func(t *testing.T) {
+		pods := proxyPods(ns, fakeProxyResponse{
+			body: []byte(`{"configId":"kcp-abc123","appliedAt":"2026-07-06T10:15:30.123Z"}`),
+		}, nil)
+
+		got, err := probeGatewayConfig(context.Background(), pods, podName, port)
 		require.NoError(t, err)
 
 		assert.Equal(t, ProbeApplied, got.Outcome)
@@ -55,73 +80,58 @@ func TestProbeGatewayConfig(t *testing.T) {
 		assert.Equal(t, time.July, got.AppliedAt.Month())
 	})
 
-	t.Run("hits the /config path", func(t *testing.T) {
-		var path string
-		addr := serveConfig(t, func(w http.ResponseWriter, r *http.Request) {
-			path = r.URL.Path
-			_, _ = w.Write([]byte(`{"configId":"x"}`))
-		})
+	t.Run("a null configId means never set", func(t *testing.T) {
+		// The contract's documented state for a gateway that has never been
+		// given a revision. Expected on a first run, and not a failure.
+		pods := proxyPods(ns, fakeProxyResponse{body: []byte(`{"configId":null,"appliedAt":null}`)}, nil)
 
-		_, err := probeGatewayConfig(context.Background(), client, addr)
-		require.NoError(t, err)
-		assert.Equal(t, GatewayConfigEndpointPath, path)
-	})
-
-	t.Run("200 with a null configId means never set", func(t *testing.T) {
-		// The contract's documented state for a gateway that has never been given
-		// a revision. Expected on a first run, and not a failure.
-		addr := serveConfig(t, jsonHandler(http.StatusOK, `{"configId":null,"appliedAt":null}`))
-
-		got, err := probeGatewayConfig(context.Background(), client, addr)
+		got, err := probeGatewayConfig(context.Background(), pods, podName, port)
 		require.NoError(t, err)
 
 		assert.Equal(t, ProbeNeverSet, got.Outcome)
 		assert.Empty(t, got.ConfigID)
 	})
 
-	t.Run("200 with no configId field means never set", func(t *testing.T) {
-		addr := serveConfig(t, jsonHandler(http.StatusOK, `{}`))
+	t.Run("no configId field means never set", func(t *testing.T) {
+		pods := proxyPods(ns, fakeProxyResponse{body: []byte(`{}`)}, nil)
 
-		got, err := probeGatewayConfig(context.Background(), client, addr)
+		got, err := probeGatewayConfig(context.Background(), pods, podName, port)
 		require.NoError(t, err)
 		assert.Equal(t, ProbeNeverSet, got.Outcome)
 	})
 
-	t.Run("404 means the gateway image predates the endpoint", func(t *testing.T) {
-		// A capability signal, not an environment one: /config arrived in gateway
-		// 1.3.0, so a 404 says the image is too old rather than unreachable.
-		addr := serveConfig(t, jsonHandler(http.StatusNotFound, `not found`))
+	t.Run("a 404 means the gateway image predates the endpoint", func(t *testing.T) {
+		// A capability signal, not an environment one: /config arrived in
+		// gateway 1.3.0, so a 404 says the image is too old rather than
+		// unreachable. The API server relays the pod's 404 as a NotFound
+		// StatusError from DoRaw.
+		notFound := apierrors.NewNotFound(schema.GroupResource{Resource: "pods"}, podName)
+		pods := proxyPods(ns, fakeProxyResponse{err: notFound}, nil)
 
-		got, err := probeGatewayConfig(context.Background(), client, addr)
+		got, err := probeGatewayConfig(context.Background(), pods, podName, port)
 		require.NoError(t, err)
 
 		assert.Equal(t, ProbeEndpointAbsent, got.Outcome)
 	})
 
-	t.Run("connection refused means unreachable", func(t *testing.T) {
-		// An environment signal: the pod CIDR is not routable from here. Must be
-		// distinguishable from a 404 so the operator is told the right thing.
-		got, err := probeGatewayConfig(context.Background(), client, deadAddr(t))
-		require.NoError(t, err, "an unreachable pod is an outcome, not a hard error")
+	t.Run("any other proxy failure is unreachable", func(t *testing.T) {
+		// Covers both a genuinely unreachable pod and the API server's own
+		// proxy backend error — the two are not reliably distinguishable
+		// once the request goes through the API server, and nothing
+		// downstream treats them differently.
+		pods := proxyPods(ns, fakeProxyResponse{err: errors.New("dial tcp 10.244.0.44:9180: connect: connection refused")}, nil)
+
+		got, err := probeGatewayConfig(context.Background(), pods, podName, port)
+		require.NoError(t, err, "a proxy failure is an outcome, not a hard error")
 
 		assert.Equal(t, ProbeUnreachable, got.Outcome)
 		require.Error(t, got.Err)
 	})
 
-	t.Run("a server error is unexpected, not absent", func(t *testing.T) {
-		addr := serveConfig(t, jsonHandler(http.StatusInternalServerError, `boom`))
-
-		got, err := probeGatewayConfig(context.Background(), client, addr)
-		require.NoError(t, err)
-
-		assert.Equal(t, ProbeUnexpected, got.Outcome)
-		require.Error(t, got.Err)
-	})
-
 	t.Run("an unparseable body is unexpected", func(t *testing.T) {
-		addr := serveConfig(t, jsonHandler(http.StatusOK, `<html>not json</html>`))
+		pods := proxyPods(ns, fakeProxyResponse{body: []byte(`<html>not json</html>`)}, nil)
 
-		got, err := probeGatewayConfig(context.Background(), client, addr)
+		got, err := probeGatewayConfig(context.Background(), pods, podName, port)
 		require.NoError(t, err)
 
 		assert.Equal(t, ProbeUnexpected, got.Outcome)
@@ -129,12 +139,13 @@ func TestProbeGatewayConfig(t *testing.T) {
 	})
 
 	t.Run("a malformed appliedAt does not invalidate the configId", func(t *testing.T) {
-		// appliedAt is informational in the contract; configId is what verifies a
-		// transition. A bad timestamp must not fail a switchover.
-		addr := serveConfig(t, jsonHandler(http.StatusOK,
-			`{"configId":"kcp-abc123","appliedAt":"not-a-timestamp"}`))
+		// appliedAt is informational in the contract; configId is what
+		// verifies a transition. A bad timestamp must not fail a switchover.
+		pods := proxyPods(ns, fakeProxyResponse{
+			body: []byte(`{"configId":"kcp-abc123","appliedAt":"not-a-timestamp"}`),
+		}, nil)
 
-		got, err := probeGatewayConfig(context.Background(), client, addr)
+		got, err := probeGatewayConfig(context.Background(), pods, podName, port)
 		require.NoError(t, err)
 
 		assert.Equal(t, ProbeApplied, got.Outcome)
@@ -142,46 +153,14 @@ func TestProbeGatewayConfig(t *testing.T) {
 		assert.True(t, got.AppliedAt.IsZero())
 	})
 
-	t.Run("does not follow redirects", func(t *testing.T) {
-		// A 30x from /config is not a valid response. Following one would let a
-		// misconfigured proxy or ingress return some other pod's configId and
-		// fake a successful verification.
-		elsewhere := serveConfig(t, jsonHandler(http.StatusOK, `{"configId":"someone-elses-id"}`))
-		addr := serveConfig(t, func(w http.ResponseWriter, _ *http.Request) {
-			w.Header().Set("Location", "http://"+elsewhere+GatewayConfigEndpointPath)
-			w.WriteHeader(http.StatusFound)
-		})
-
-		got, err := probeGatewayConfig(context.Background(), client, addr)
-		require.NoError(t, err)
-
-		assert.NotEqual(t, "someone-elses-id", got.ConfigID)
-		assert.Equal(t, ProbeUnexpected, got.Outcome)
-	})
-
 	t.Run("a cancelled context is a hard error, not an outcome", func(t *testing.T) {
 		// Cancellation means stop the whole wait, not "this pod is unreachable".
-		addr := serveConfig(t, jsonHandler(http.StatusOK, `{"configId":"x"}`))
+		pods := proxyPods(ns, fakeProxyResponse{body: []byte(`{"configId":"x"}`)}, nil)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		_, err := probeGatewayConfig(ctx, client, addr)
+		_, err := probeGatewayConfig(ctx, pods, podName, port)
 		require.Error(t, err)
-	})
-}
-
-func TestGatewayConfigAddr(t *testing.T) {
-	t.Run("ipv4", func(t *testing.T) {
-		assert.Equal(t, "10.0.1.5:9180", gatewayConfigAddr("10.0.1.5", 9180))
-	})
-
-	t.Run("ipv6 is bracketed", func(t *testing.T) {
-		// Without net.JoinHostPort this would produce an unparseable URL.
-		assert.Equal(t, "[fd00::1]:9180", gatewayConfigAddr("fd00::1", 9180))
-	})
-
-	t.Run("honours a non-default port", func(t *testing.T) {
-		assert.Equal(t, "10.0.1.5:19180", gatewayConfigAddr("10.0.1.5", 19180))
 	})
 }
 
@@ -208,7 +187,7 @@ func gatewayPodWithIP(name, namespace, gatewayName, uid, ip string, ready bool) 
 func TestListGatewayPodEndpoints(t *testing.T) {
 	const ns, gw = "confluent", "test-gateway"
 
-	t.Run("returns ready pods with their IPs", func(t *testing.T) {
+	t.Run("returns ready pods by name", func(t *testing.T) {
 		cs := newFakeClientset(
 			gatewayPodWithIP("gw-1", ns, gw, "uid-1", "10.0.1.1", true),
 			gatewayPodWithIP("gw-2", ns, gw, "uid-2", "10.0.1.2", true),
@@ -218,8 +197,8 @@ func TestListGatewayPodEndpoints(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, got, 2)
 
-		ips := []string{got[0].IP, got[1].IP}
-		assert.ElementsMatch(t, []string{"10.0.1.1", "10.0.1.2"}, ips)
+		names := []string{got[0].Name, got[1].Name}
+		assert.ElementsMatch(t, []string{"gw-1", "gw-2"}, names)
 		assert.True(t, got[0].Ready)
 	})
 
@@ -245,7 +224,8 @@ func TestListGatewayPodEndpoints(t *testing.T) {
 	})
 
 	t.Run("skips pods with no IP assigned yet", func(t *testing.T) {
-		// A freshly created pod has no PodIP; there is nothing to dial.
+		// A freshly created pod has no PodIP, which still means "not yet
+		// scheduled" regardless of how the endpoint is later dialled.
 		cs := newFakeClientset(
 			gatewayPodWithIP("gw-1", ns, gw, "uid-1", "10.0.1.1", true),
 			gatewayPodWithIP("gw-2", ns, gw, "uid-2", "", false),
@@ -254,7 +234,7 @@ func TestListGatewayPodEndpoints(t *testing.T) {
 		got, err := listGatewayPodEndpoints(context.Background(), cs, ns, gw)
 		require.NoError(t, err)
 		require.Len(t, got, 1)
-		assert.Equal(t, "10.0.1.1", got[0].IP)
+		assert.Equal(t, "gw-1", got[0].Name)
 	})
 
 	t.Run("selects only this gateway's pods", func(t *testing.T) {
@@ -266,7 +246,7 @@ func TestListGatewayPodEndpoints(t *testing.T) {
 		got, err := listGatewayPodEndpoints(context.Background(), cs, ns, gw)
 		require.NoError(t, err)
 		require.Len(t, got, 1)
-		assert.Equal(t, "10.0.1.1", got[0].IP)
+		assert.Equal(t, "gw-1", got[0].Name)
 	})
 
 	t.Run("no pods is not an error", func(t *testing.T) {

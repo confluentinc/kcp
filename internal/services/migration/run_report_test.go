@@ -64,7 +64,7 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	require.NotNil(t, recorder)
 	orch.SetRunReportRecorder(recorder)
 
-	err := orch.Execute(context.Background(), 42, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	err := orch.Execute(context.Background(), 42, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.NoError(t, err)
 	recorder.Finish(config.CurrentState, nil)
 
@@ -118,7 +118,7 @@ func TestRunReport_ResumeRecordsSkippedStages(t *testing.T) {
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
 	orch.SetRunReportRecorder(recorder)
 
-	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}))
+	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil))
 	recorder.Finish(config.CurrentState, nil)
 
 	report := readRunReport(t, reportPath)
@@ -146,7 +146,7 @@ func TestRunReport_FailedRunIsRecorded(t *testing.T) {
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
 	orch.SetRunReportRecorder(recorder)
 
-	execErr := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	execErr := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.Error(t, execErr)
 	recorder.Finish(config.CurrentState, execErr)
 
@@ -255,7 +255,7 @@ func TestRunReport_NoCredentialsOrTopicNames(t *testing.T) {
 	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
 	orch.SetRunReportRecorder(recorder)
 
-	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}))
+	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult([]string{"secret-topic-name"})))
 	recorder.Finish(config.CurrentState, nil)
 
 	raw, err := os.ReadFile(reportPath)

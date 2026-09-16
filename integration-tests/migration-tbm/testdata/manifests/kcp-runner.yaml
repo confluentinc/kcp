@@ -53,6 +53,13 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list"]
+- apiGroups: [""]
+  # proxy is how ensureGatewayCapability reaches each gateway pod's /config
+  # endpoint through the API server when the gateway has no REST endpoint of
+  # its own (PR #437, "Gateway config proxy transport") — get on pods alone
+  # does not cover this subresource.
+  resources: ["pods/proxy"]
+  verbs: ["get"]
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "list"]
@@ -87,7 +94,7 @@ spec:
     workingDir: /workspace
     # The destination SASL credential reaches the runner ONLY here, from the
     # tbm-rest-credentials Secret — never on a kubectl exec argv (apiserver
-    # audit-log leak). PromoteMirrors/execute-tbm read these via os.Getenv.
+    # audit-log leak). PromoteMirrors/execute read these via os.Getenv.
     env:
     - name: KCP_TBM_DEST_SASL_USER
       valueFrom:

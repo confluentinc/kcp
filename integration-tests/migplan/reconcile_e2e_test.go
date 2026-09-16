@@ -17,12 +17,15 @@ import (
 // newLiveEngine wires the reconciliation engine to the live source + dest
 // clusters and cluster link, plus the default (rich) gateway-config fixture.
 func newLiveEngine(t *testing.T) *migplan.ReconciliationEngine {
-	return newLiveEngineFor(t, "testdata/gateway.yaml", "migration-route")
+	return newLiveEngineFor(t, "testdata/gateway.yaml", "migration-route", fakeSecretChecker{})
 }
 
-// newLiveEngineFor is newLiveEngine parameterised by gateway fixture + route, so
-// tests can drive the same live providers against different gateway shapes.
-func newLiveEngineFor(t *testing.T, gatewayFile, route string) *migplan.ReconciliationEngine {
+// newLiveEngineFor is newLiveEngine parameterised by gateway fixture + route +
+// secrets provider, so tests can drive the same live providers against
+// different gateway shapes — including a static-route fixture, whose
+// preconditions consult secrets (a dynamic-route fixture never does; pass
+// fakeSecretChecker{} for those).
+func newLiveEngineFor(t *testing.T, gatewayFile, route string, secrets migplan.SecretExistenceChecker) *migplan.ReconciliationEngine {
 	t.Helper()
 	gw := migplan.NewGatewayFile(gatewayFile, route)
 	source := newPlaintextLister(t, sourceBroker)
@@ -38,7 +41,7 @@ func newLiveEngineFor(t *testing.T, gatewayFile, route string) *migplan.Reconcil
 	}
 	link := migplan.NewClusterLinkStatus(svc, cfg)
 
-	return migplan.NewReconciliationEngine(gw, source, target, link)
+	return migplan.NewReconciliationEngine(gw, source, target, link, secrets)
 }
 
 // TestEngineHappyPathLive runs the whole engine end-to-end against the live
@@ -173,7 +176,7 @@ func TestReconcileClusterIdentityMismatchLive(t *testing.T) {
 	svc := clusterlink.NewConfluentCloudService(http.DefaultClient)
 	cfg := clusterlink.Config{RestEndpoint: destRESTEndpoint, ClusterID: destClusterID, LinkName: linkName, Topics: []string{}, Auth: nil}
 	link := migplan.NewClusterLinkStatus(svc, cfg)
-	eng := migplan.NewReconciliationEngine(gw, wrongSource, target, link)
+	eng := migplan.NewReconciliationEngine(gw, wrongSource, target, link, fakeSecretChecker{})
 
 	in := reconcile.ReconcileInput{
 		Topics:          []string{"team-a.orders"},

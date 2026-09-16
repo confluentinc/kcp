@@ -43,9 +43,14 @@ func (g *GatewayLive) Load(ctx context.Context) (*reconcile.GatewayConfig, error
 	if err := yaml.Unmarshal(raw, &doc); err != nil {
 		return nil, fmt.Errorf("parsing gateway CR %q: %w", g.crName, err)
 	}
+	cleanGatewayDoc(doc)
 	route, err := findRoute(doc, g.routeName)
 	if err != nil {
 		return nil, err
 	}
-	return &reconcile.GatewayConfig{Route: route, RawYAML: string(raw)}, nil
+	cleaned, err := yaml.Marshal(doc)
+	if err != nil {
+		return nil, fmt.Errorf("marshalling cleaned gateway CR %q: %w", g.crName, err)
+	}
+	return &reconcile.GatewayConfig{Route: route, RawYAML: string(cleaned), RawObj: doc}, nil
 }

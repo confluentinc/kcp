@@ -8,7 +8,6 @@ import (
 
 	"github.com/confluentinc/kcp/internal/atomicwrite"
 	"github.com/confluentinc/kcp/internal/build_info"
-	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/types"
 )
 
@@ -33,25 +32,6 @@ func isKnownState(s string) bool {
 	switch s {
 	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
 		StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched:
-		return true
-	}
-	return false
-}
-
-// IsReversibleState reports whether state is one from which the migration can
-// still be safely re-initialised: nothing irreversible has happened yet, so
-// replacing the persisted config loses nothing. Past these (StateFenced onward)
-// producers have been fenced and/or consumer offset sync disabled, and the FSM
-// position plus the pre-disable link-config snapshot are the only things that
-// can complete or roll back the cutover.
-//
-// This classification belongs to the state machine, not the cobra layer: both
-// `kcp migration init` (refusing an unsafe re-init) and `kcp migration execute`
-// (choosing the drift response) ask the same question, and a copy in each
-// command would be one edit away from silently disagreeing with the FSM.
-func IsReversibleState(state string) bool {
-	switch state {
-	case StateUninitialized, StateInitialized, StateLagsOk:
 		return true
 	}
 	return false
@@ -117,8 +97,20 @@ type MigrationConfig struct {
 	ClusterLinkName     string   `json:"cluster_link_name"`
 	Topics              []string `json:"topics"`
 
-	// Migration runtime data (populated during initialization)
-	ClusterLinkTopics  []string          `json:"cluster_link_topics"`
+	// TopicPatterns is the declared spec.topicGroup[0].topicPatterns snapshot,
+	// captured at registration alongside Route/TargetDomain — nil when the
+	// manifest instead used an explicit topics list. Unlike Topics (the
+	// resolved topic set, populated once reconcile runs), this is the raw
+	// declared patterns themselves, compared as-is on every resume so an
+	// edited pattern is caught as drift even if it happens to expand to the
+	// same topics today.
+	TopicPatterns []string `json:"topic_patterns,omitempty"`
+
+	// ClusterLinkConfigs is a snapshot of the cluster link's consumer.offset.*
+	// configs taken at init, before the pause-offset-sync bookend disables
+	// consumer.offset.sync.enable — the diff baseline RestoreOffsetSync
+	// compares the live post-disable state against to decide what to restore.
+	// Runtime data populated by init, not part of the operator's declared spec.
 	ClusterLinkConfigs map[string]string `json:"cluster_link_configs"`
 
 	// Operator intent: pause cluster-link consumer offset sync for the duration of execute.
@@ -150,7 +142,13 @@ type MigrationConfig struct {
 	// Gateway CR configuration
 	InitialCrName string `json:"initial_cr_name"`
 	K8sNamespace  string `json:"k8s_namespace"`
-	InitialCrYAML []byte `json:"initial_cr_yaml"`
+
+	// GatewayYAML is the whole gateway CR migplan pulled and cleaned (see
+	// migplan/gatewayfile.go's cleanGatewayDoc), captured once at init — the
+	// fence/switch derivation base. Renamed from InitialCrYAML; no longer a
+	// separately re-cleaned []byte, since migplan strips server-managed
+	// metadata once, centrally.
+	GatewayYAML string `json:"gateway_yaml"`
 
 	// GatewayVerificationMode is how kcp confirms a gateway state transition
 	// landed, as resolved against the live cluster at init time. It records what
@@ -170,20 +168,30 @@ type MigrationConfig struct {
 	// this port, so kcp dials pod IPs on it directly.
 	GatewayConfigPort int `json:"gateway_config_port"`
 
-	// FenceRoutes are the spec.routes[].name values fenced at cutover. There is
-	// no snapshotted fenced CR: FenceGateway derives it at fence time by
-	// injecting a fence block onto these routes in the (metadata-stripped) live
-	// initial CR snapshot — see gateway.FenceRoutes. Deriving fence from the same
-	// InitialCrYAML that unfence re-applies makes the two exact inverses.
-	FenceRoutes []string `json:"fence_routes"`
+	// Route is the single spec.topicGroup[0].route this migration fences and
+	// switches — captured once at init, mirroring TBMConfig.Route. AAO, like
+	// TBM, only ever operates on one route per migration.
+	Route string `json:"route"`
 
-	// SwitchoverTargets names, for each route, the streaming domain the
-	// redundant-auth switch flips it to at cutover — projected from
-	// spec.gateway.routes[].streamingDomain (one entry per route, since a
-	// target is required on every entry). There is no snapshotted switched CR
-	// either: SwitchGateway derives it the same way FenceGateway derives the
-	// fenced CR, from InitialCrYAML plus these targets.
-	SwitchoverTargets []gateway.RouteSwitchoverTarget `json:"switchover_targets"`
+	// TargetDomain is spec.topicGroup[0].targetStreamingDomain, captured
+	// directly from the manifest (not from migplan.Result, which does not
+	// carry it) specifically so detectDrift can still catch a manifest edit
+	// to the target domain between init and execute.
+	TargetDomain string `json:"target_domain"`
+
+	// FenceYAML and SwitchoverYAML are the small, route-agnostic fragments
+	// migplan.Reconcile returns (a {fence: {...}} block, a
+	// {streamingDomain: {...}} block for a static route) — captured once at
+	// init, never re-derived. Applied by splicing onto Route's fence/
+	// streamingDomain key in GatewayYAML (see gateway.ReplaceRouteFenceObj/
+	// ReplaceRouteStreamingDomainObj) rather than the old whole-CR mutation.
+	FenceYAML      string `json:"fence_yaml"`
+	SwitchoverYAML string `json:"switchover_yaml"`
+
+	// Mode is the route mode migplan resolved this migration under ("static"
+	// today — a dynamic-mode result is refused at init, never persisted).
+	// Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
+	Mode string `json:"mode"`
 
 	// LastRunPolicies records the effective execute-time policy the most recent
 	// `kcp migration execute` ran with — the manifest's spec.defaultPolicies with

@@ -1,10 +1,8 @@
 # Runner pod for the hot-reload suite.
 #
-# The test binary runs IN the cluster rather than on the developer's machine
-# because kcp verifies a transition by dialling each gateway pod's IP on the
-# /config port. Pod IPs are not routable from the host under the minikube docker
-# driver, so a host-side run could only ever test a port-forwarded stand-in — and
-# the per-pod distinction is the whole point of the mechanism being tested.
+# The test binary runs IN the cluster because kcp is exercised in-cluster in
+# production (svc.cluster.local bootstraps, in-cluster kubeconfig) — the
+# runner reproduces that identity rather than the developer's own kubeconfig.
 apiVersion: v1
 kind: ServiceAccount
 metadata:
@@ -50,6 +48,11 @@ rules:
 - apiGroups: [""]
   resources: ["pods"]
   verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/proxy"]
+  # get lets kcp GET /config on a pod through the API server's proxy
+  # subresource, which is how the hot-reload probe reaches the gateway now.
+  verbs: ["get"]
 - apiGroups: ["apps"]
   resources: ["deployments"]
   verbs: ["get", "list"]
