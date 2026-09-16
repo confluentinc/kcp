@@ -80,7 +80,7 @@ pre-commit-install: ## Install git pre-commit hooks
 # Tests
 # ==============================================================================
 
-.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live
+.PHONY: test-go test-tf-validation examples test-playwright test-go-coverage test-go-coverage-ui test-integration test-integration-no-migration test-migration test-migration-setup test-migration-teardown test-migration-hot-reload test-migration-hot-reload-setup test-migration-hot-reload-run test-migration-hot-reload-teardown test-migration-tbm test-migration-tbm-setup test-migration-tbm-run test-migration-tbm-teardown test-osk-scan test-consumer-group-scan test-kafka-connect test-schema-registry test-env-up-migrate test-env-down-migrate test-migrate test-migrate-report test-migrate-cloud test-migrate-cloud-report test-migrate-acls test-migrate-acls-live test-env-up-migplan test-env-down-migplan test-migplan
 
 test-go: build-frontend ## Run Go unit tests (excludes Terraform validation; see test-tf-validation)
 	go test $(GOTEST_FLAGS) ./...
@@ -135,6 +135,19 @@ test-migration-hot-reload-run: ## Run the hot-reload E2E against an already-prov
 
 test-migration-hot-reload-teardown: ## Tear down the hot-reload E2E cluster
 	@bash integration-tests/migration-hot-reload/teardown.sh
+
+test-migration-tbm: test-migration-tbm-setup ## Run TBM hot-reload E2E (own cluster; needs a CP Enterprise licence)
+	@trap 'echo ""; echo "Tearing down TBM E2E infrastructure..."; bash integration-tests/migration-tbm/teardown.sh' EXIT; \
+	bash integration-tests/migration-tbm/run.sh
+
+test-migration-tbm-setup: ## Set up the licensed dynamic-gateway TBM cluster (separate Minikube profile)
+	@bash integration-tests/migration-tbm/setup.sh
+
+test-migration-tbm-run: ## Run the TBM E2E against an already-provisioned cluster (no teardown)
+	@bash integration-tests/migration-tbm/run.sh
+
+test-migration-tbm-teardown: ## Tear down the TBM E2E cluster
+	@bash integration-tests/migration-tbm/teardown.sh
 
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
@@ -197,6 +210,17 @@ test-migrate-acls: build-frontend ## Run the hermetic native-ACL migration tests
 
 test-migrate-acls-live: build ## Run the live native-ACL + SA-naming integration matrix (env-gated; needs CC_*/MSK_* creds; no docker)
 	cd integration-tests/migrate && go test -tags integration -run ACLsLive -v ./...
+
+test-env-up-migplan: ## Start the migplan reconciliation-engine test env (source + dest cp-server + cluster link + ACTIVE mirrors)
+	bash integration-tests/migplan/setup.sh
+
+test-env-down-migplan: ## Stop the migplan reconciliation-engine test env
+	bash integration-tests/migplan/teardown.sh
+
+test-migplan: build-frontend ## Run the migplan reconciliation-engine E2E tests (live source + dest + cluster link; no gateway — TBR gateway apply deferred)
+	$(MAKE) test-env-up-migplan
+	go test -tags e2e -v -count=1 ./integration-tests/migplan/... ; \
+	  status=$$? ; $(MAKE) test-env-down-migplan ; exit $$status
 
 # ==============================================================================
 # State-file backward-compat archive (real generated kcp-state.json fixtures)
