@@ -11,10 +11,12 @@ Only required for `--source-type msk`. Apache Kafka scans use credentials from t
         "kafka-cluster:Connect",
         "kafka-cluster:DescribeCluster",
         "kafka-cluster:DescribeClusterDynamicConfiguration",
+        "kafka-cluster:DescribeGroup",
         "kafka-cluster:DescribeTopic"
       ],
       "Resource": [
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:topic/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
+        "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:group/<MSK CLUSTER NAME>/<MSK CLUSTER ID>/*",
         "arn:aws:kafka:<AWS REGION>:<AWS ACCOUNT ID>:cluster/<MSK CLUSTER NAME>/<MSK CLUSTER ID>"
       ]
     }

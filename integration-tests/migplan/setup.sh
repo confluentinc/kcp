@@ -51,6 +51,15 @@ if [[ "$code" != "200" && "$code" != "201" && "$code" != "409" ]] \
   echo "unexpected status $code creating link: $body" >&2; exit 1
 fi
 
+# Link creation above only means the request was accepted — propagation through
+# the broker's controller is asynchronous. On a warm local Docker this always
+# won the race against the immediately-following mirror creation below, but on
+# a cold CI pull it can lose: the first mirror POST 404s ("link not found")
+# before the link is queryable yet. Wait for it the same way wait_rest does.
+echo "==> waiting for cluster link $LINK to be queryable"
+curl -sf --retry 60 --retry-delay 2 --retry-all-errors \
+  "$DST_REST/kafka/v3/clusters/$DST_CID/links/$LINK" >/dev/null
+
 echo "==> creating mirror topics"
 for t in "${MIRRORS[@]}"; do
   # the request field is source_topic_name; 400/409 if it already exists.
