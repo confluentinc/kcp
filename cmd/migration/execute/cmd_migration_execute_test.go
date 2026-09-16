@@ -1080,6 +1080,21 @@ func TestExecute_DryRun_DoesNotRequireMigrationStateFileFlag(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr), "dry-run must not create <metadata.name>-state.json in the CWD even when --migration-state-file is omitted")
 }
 
+// TestExecute_DryRun_ValidatesPolicyOverrides is a regression test: --dry-run
+// used to return before command-line policy overrides were applied and
+// validated, so an invalid override (e.g. a negative lag threshold, rejected
+// on a real run) silently passed under --dry-run instead. The override must
+// now be rejected before reconcile is ever attempted.
+func TestExecute_DryRun_ValidatesPolicyOverrides(t *testing.T) {
+	f := newFixture(t, nil)
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, "--dry-run", "--lag-threshold=-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lagThreshold: must not be negative")
+	assert.NotContains(t, err.Error(), "failed to produce the reconcile plan",
+		"an invalid override must be rejected before reconcile is attempted")
+}
+
 func TestExecute_DryRun_ExistingEntryIsNotDriftChecked(t *testing.T) {
 	// Drift-checking happens only on the non-dry-run path; dry-run never even
 	// loads the state file, so a drifted existing entry must not surface as a

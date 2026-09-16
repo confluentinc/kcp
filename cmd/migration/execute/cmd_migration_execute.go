@@ -174,6 +174,18 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		return err
 	}
 
+	// Command-line overrides replace the manifest's per-policy defaults for this
+	// run, then the effective block is re-validated: an override can carry a
+	// value the manifest itself never did (e.g. a sub-10s detect duration).
+	// Applied unconditionally, before the --dry-run branch below, so a dry run
+	// rejects an invalid override exactly as a real run would (e.g. --dry-run
+	// --lag-threshold=-1 must fail the same way --lag-threshold=-1 alone does),
+	// rather than silently accepting it because nothing downstream reads it.
+	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
+	if errs := g.Spec.DefaultPolicies.Validate(); len(errs) > 0 {
+		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
+	}
+
 	// --dry-run stops here: the reconcile step is self-contained (it opens its
 	// own live Gateway CR + source/target/cluster-link reads directly from the
 	// manifest) and renders its own report to the command's writer. Nothing
@@ -190,14 +202,6 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		}
 		cmd.Printf("✅ dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
 		return nil
-	}
-
-	// Command-line overrides replace the manifest's per-policy defaults for this
-	// run, then the effective block is re-validated: an override can carry a
-	// value the manifest itself never did (e.g. a sub-10s detect duration).
-	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
-	if errs := g.Spec.DefaultPolicies.Validate(); len(errs) > 0 {
-		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
 	}
 
 	// metadata.name already uniquely identifies the migration and doubles as
