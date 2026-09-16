@@ -22,9 +22,15 @@ type StaticRouteView struct {
 // static-mode analog of CheckPreconditions. ok is true only if every check
 // passed. missingSecrets is a plain-data fact already gathered by the I/O
 // layer (via ResolveStagedSecretNames + a SecretExistenceChecker) — this
-// pure function never does I/O itself. See the migplan
-// static-route-strategy design doc, decision 10, for the exact check list.
-func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecrets []string, ids ClusterIDs) ([]PreconditionResult, StaticRouteView, bool) {
+// pure function never does I/O itself. secretCheckSkipped is non-empty when
+// that live check could not be run at all (a permission denial, not a
+// missing secret) — see SecretExistenceChecker's own doc comment. When set,
+// missingSecrets is expected to be empty (there was nothing to report), and
+// the "staged auth secrets exist" result records the skip rather than a
+// pass, so the report never claims a verification that never happened. See
+// the migplan static-route-strategy design doc, decision 10, for the exact
+// check list.
+func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecrets []string, secretCheckSkipped string, ids ClusterIDs) ([]PreconditionResult, StaticRouteView, bool) {
 	var res []PreconditionResult
 	var view StaticRouteView
 
@@ -99,9 +105,12 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		}
 	}
 
-	if len(missingSecrets) > 0 {
+	switch {
+	case secretCheckSkipped != "":
+		res = append(res, skip("staged auth secrets exist", secretCheckSkipped))
+	case len(missingSecrets) > 0:
 		res = append(res, fail("staged auth secrets exist", fmt.Sprintf("secret(s) %s referenced by route %q's staged auth for %q do not exist", joinNames(missingSecrets), in.Route, in.TargetDomain)))
-	} else {
+	default:
 		res = append(res, pass("staged auth secrets exist"))
 	}
 

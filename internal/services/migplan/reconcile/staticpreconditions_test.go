@@ -6,7 +6,7 @@ import "testing"
 
 func TestStaticPreconditionsHappy(t *testing.T) {
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
-	res, view, ok := CheckStaticPreconditions(in, staticGateway(), nil, ClusterIDs{})
+	res, view, ok := CheckStaticPreconditions(in, staticGateway(), nil, "", ClusterIDs{})
 	if !ok {
 		t.Fatalf("expected pass, got %+v", res)
 	}
@@ -25,7 +25,7 @@ func TestStaticPreconditionsRoutesToTargetWhenAlreadyBound(t *testing.T) {
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 	// Already bound to the target — this specific precondition ("not already
 	// bound") must now fail even though RoutesToTarget itself is correctly true.
-	res, view, ok := CheckStaticPreconditions(in, gw, nil, ClusterIDs{})
+	res, view, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
 	if ok {
 		t.Fatalf("expected refusal (already bound to target), got pass: %+v", res)
 	}
@@ -39,7 +39,7 @@ func TestStaticPreconditionsAlreadyFenced(t *testing.T) {
 	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 
-	res, _, ok := CheckStaticPreconditions(in, gw, nil, ClusterIDs{})
+	res, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
 	if ok {
 		t.Fatalf("expected refusal (route already fenced), got pass: %+v", res)
 	}
@@ -63,8 +63,37 @@ func TestStaticPreconditionsNulledFenceCountsAsUnfenced(t *testing.T) {
 	gw.Route.Raw["fence"] = nil
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 
-	if _, _, ok := CheckStaticPreconditions(in, gw, nil, ClusterIDs{}); !ok {
+	if _, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{}); !ok {
 		t.Error("a nulled fence must count as unfenced and pass")
+	}
+}
+
+// TestStaticPreconditionsSecretCheckSkipped proves a non-empty
+// secretCheckSkipped produces a Skipped (OK: true, Skipped: true) result on
+// "staged auth secrets exist" — never a plain pass — and does not refuse the
+// run, regardless of what missingSecrets says (which should be empty
+// whenever the check itself was skipped, since there was nothing to report).
+func TestStaticPreconditionsSecretCheckSkipped(t *testing.T) {
+	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
+	const reason = "no permission to read secrets in namespace \"confluent\""
+	res, _, ok := CheckStaticPreconditions(in, staticGateway(), nil, reason, ClusterIDs{})
+	if !ok {
+		t.Fatalf("a skipped secret check must not refuse the run, got %+v", res)
+	}
+	found := false
+	for _, r := range res {
+		if r.Name == "staged auth secrets exist" {
+			found = true
+			if !r.OK || !r.Skipped {
+				t.Errorf("staged auth secrets exist = %+v, want OK: true, Skipped: true", r)
+			}
+			if r.Detail != reason {
+				t.Errorf("Detail = %q, want %q", r.Detail, reason)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("expected a %q result, got %+v", "staged auth secrets exist", res)
 	}
 }
 
@@ -72,27 +101,27 @@ func TestStaticPreconditionsFailures(t *testing.T) {
 	base := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 
 	// target domain not declared
-	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Route: "migration-route", TargetDomain: "gcp"}, staticGateway(), nil, ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Route: "migration-route", TargetDomain: "gcp"}, staticGateway(), nil, "", ClusterIDs{}); ok {
 		t.Error("undeclared target domain must fail")
 	}
 	// route not found
-	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Route: "nope", TargetDomain: "cc"}, staticGateway(), nil, ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(ReconcileInput{Route: "nope", TargetDomain: "cc"}, staticGateway(), nil, "", ClusterIDs{}); ok {
 		t.Error("missing route must fail")
 	}
 	// no staged auth block for target
 	gw := staticGateway()
 	delete(gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any), "security")
-	if _, _, ok := CheckStaticPreconditions(base, gw, nil, ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(base, gw, nil, "", ClusterIDs{}); ok {
 		t.Error("missing staged auth block must fail")
 	}
 	// missing secret
-	if _, _, ok := CheckStaticPreconditions(base, staticGateway(), []string{"cc-sasl-secret"}, ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(base, staticGateway(), []string{"cc-sasl-secret"}, "", ClusterIDs{}); ok {
 		t.Error("a reported-missing secret must fail")
 	}
 	// route mode is dynamic, not static
 	dyn := staticGateway()
 	dyn.Route.Mode = "dynamic"
-	if _, _, ok := CheckStaticPreconditions(base, dyn, nil, ClusterIDs{}); ok {
+	if _, _, ok := CheckStaticPreconditions(base, dyn, nil, "", ClusterIDs{}); ok {
 		t.Error("a dynamic-mode route must fail static preconditions")
 	}
 }

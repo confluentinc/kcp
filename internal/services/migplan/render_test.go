@@ -78,6 +78,38 @@ func TestRenderReportGateFailure(t *testing.T) {
 	}
 }
 
+// TestRenderReportSkippedPrecondition proves a Skipped precondition (a live
+// check that could not be run, e.g. a permission denial) renders as a
+// yellow ⚠ — never the green ✓ a real pass gets, since that would claim a
+// verification that never happened — and, being advisory (OK: true), does
+// not stop the run at the route-checks gate the way a real failure does.
+func TestRenderReportSkippedPrecondition(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		Preconditions: []reconcile.PreconditionResult{
+			{Name: "route is static", OK: true},
+			{Name: "staged auth secrets exist", OK: true, Skipped: true, Detail: "no permission to read secrets"},
+		},
+		Migratable: []reconcile.TopicVerdict{{Topic: "team-a.orders"}},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{Route: "migration-route", TargetDomain: "cc"})
+	out := buf.String()
+
+	if !strings.Contains(out, "⚠ staged auth secrets exist — no permission to read secrets") {
+		t.Errorf("skipped precondition must render as ⚠ with its detail; got:\n%s", out)
+	}
+	if strings.Contains(out, "✓ staged auth secrets exist") {
+		t.Errorf("a skipped precondition must never render as a plain ✓ pass; got:\n%s", out)
+	}
+	if strings.Contains(out, "Refused at route checks") {
+		t.Errorf("a skip is advisory and must not refuse at the route-checks gate; got:\n%s", out)
+	}
+	if !strings.Contains(out, "Topics ·") {
+		t.Errorf("topics must still be evaluated past a skip (only a real failure stops the run); got:\n%s", out)
+	}
+}
+
 // TestRenderReportSuccessAndVerbose: all ready ⇒ success footer with the artifact
 // note; --verbose adds the per-topic facts sub-line.
 func TestRenderReportSuccessAndVerbose(t *testing.T) {

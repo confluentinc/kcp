@@ -126,11 +126,11 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 // guardrail (the fragments are a few dozen bytes, never realistically
 // oversized).
 func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, ids ClusterIDs, missingSecrets []string) *Plan {
+	mirrors map[string]MirrorState, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	report := Report{}
 
-	pcs, view, ok := CheckStaticPreconditions(in, gw, missingSecrets, ids)
+	pcs, view, ok := CheckStaticPreconditions(in, gw, missingSecrets, secretCheckSkipped, ids)
 	report.Preconditions = pcs
 	if !ok {
 		return &Plan{Report: report, Mode: "static"}
@@ -195,10 +195,10 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 // preconditions independently fail loudly on "route not found" as their
 // first check either way.
 func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics []string,
-	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string) *Plan {
+	mirrors map[string]MirrorState, offsetSyncEnabled bool, ids ClusterIDs, missingSecrets []string, secretCheckSkipped string) *Plan {
 
 	if gw != nil && gw.Route != nil && gw.Route.Mode == "static" {
-		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ids, missingSecrets)
+		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ids, missingSecrets, secretCheckSkipped)
 	}
 	return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
 }

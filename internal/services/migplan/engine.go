@@ -66,13 +66,17 @@ func (e *ReconciliationEngine) Run(ctx context.Context, in reconcile.ReconcileIn
 		}
 	}
 
-	plan := reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, missingSecrets)
+	plan := reconcile.Reconcile(in, gw, src, tgt, link.Mirrors, link.OffsetSyncEnabled, ids, missingSecrets, secretCheckSkipped)
 	// A permission denial is a skip, not a precondition failure — surfaced as
 	// a warning (never blocking) rather than folded into missingSecrets,
 	// which would otherwise read as "these specific secrets don't exist"
 	// when the truth is "we couldn't check at all". See
 	// SecretExistenceChecker's own doc comment for why this distinction
-	// matters.
+	// matters. Reconcile also threads secretCheckSkipped into the "staged
+	// auth secrets exist" precondition itself (Skipped: true), so the
+	// rendered report never shows a green ✓ for a check that never ran —
+	// this warning and that precondition are two views of the same fact,
+	// not a contradiction.
 	if secretCheckSkipped != "" {
 		plan.Report.Warnings = append(plan.Report.Warnings, secretCheckSkipped)
 	}
