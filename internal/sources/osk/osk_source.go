@@ -134,11 +134,25 @@ func (s *OSKSource) scanCluster(ctx context.Context, clusterCreds types.OSKClust
 	}
 	defer func() { _ = kafkaAdmin.Close() }()
 
-	kafkaService := kafkaservice.NewKafkaService(kafkaAdmin, kafkaservice.KafkaServiceOpts{
-		AuthType:   authType,
-		ClusterArn: clusterCreds.ID,
-		SkipTopics: opts.SkipTopics,
-		SkipACLs:   opts.SkipACLs,
+	// Consumer-group discovery uses an isolated client pinned at Kafka 3.8.0
+	// (see client.NewConsumerGroupClient). If it cannot be built (e.g. auth
+	// error), degrade rather than fail the whole scan: log a warning and pass
+	// a nil scanner, which ScanKafkaResources nil-guards.
+	var groupScanner client.ConsumerGroupScanner
+	groupClient, err := s.createConsumerGroupClient(clusterCreds, authType)
+	if err != nil {
+		slog.Warn("⚠️ failed to create consumer group client; skipping consumer group discovery", "cluster", clusterCreds.ID, "error", err)
+	} else {
+		groupScanner = groupClient
+		defer func() { _ = groupClient.Close() }()
+	}
+
+	kafkaService := kafkaservice.NewKafkaService(kafkaAdmin, groupScanner, kafkaservice.KafkaServiceOpts{
+		AuthType:           authType,
+		ClusterArn:         clusterCreds.ID,
+		SkipTopics:         opts.SkipTopics,
+		SkipACLs:           opts.SkipACLs,
+		SkipConsumerGroups: opts.SkipConsumerGroups,
 	})
 
 	// OSK clusters are always provisioned (never serverless)
@@ -199,4 +213,21 @@ func (s *OSKSource) createKafkaAdmin(clusterCreds types.OSKClusterAuth, authType
 		return nil, fmt.Errorf("failed to create Kafka admin client: %w", err)
 	}
 	return kafkaAdmin, nil
+}
+
+// createConsumerGroupClient builds the isolated consumer-group discovery client
+// for the Apache Kafka cluster (client.NewConsumerGroupClient pins Kafka 3.8.0
+// internally; no version is passed here). Mirrors createKafkaAdmin's auth
+// resolution; region is inert for OSK.
+func (s *OSKSource) createConsumerGroupClient(clusterCreds types.OSKClusterAuth, authType types.AuthType) (*client.ConsumerGroupClient, error) {
+	authOpt, err := client.AdminOptionForAuthMethod(authType, clusterCreds.AuthMethod, clusterCreds.InsecureSkipTLSVerify)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve auth option for Apache Kafka: %w", err)
+	}
+
+	groupClient, err := client.NewConsumerGroupClient(clusterCreds.BootstrapServers, "", authOpt)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create consumer group client: %w", err)
+	}
+	return groupClient, nil
 }

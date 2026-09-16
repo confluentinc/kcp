@@ -61,4 +61,24 @@ curl -s http://localhost:28090/kafka/v3/clusters/LKsbYRvfTM-TVXKjdjgdxA/links/mi
   list the three sorted topics, fence + switchover rules contain them, and
   switchover routes them to the target domain `cc`;
 - fail-fast: `team-b.audit` (on source, not a mirror) refuses with nil artifacts
-  and an F3 reason that references the cluster link.
+  and an F3 reason that references the cluster link;
+- a source-cluster/link identity mismatch refuses on the cluster-identity
+  precondition.
+
+`gateway_permutations_e2e_test.go`
+- table-driven: each gateway-config fixture under `testdata/gateway-*.yaml`
+  violates exactly one route-level precondition (dynamic AND static-route
+  strategies) and must refuse with that precondition failing — offset-sync
+  enabled on the live link is covered separately (its own test, since it needs
+  a live mutation + cleanup, not a static fixture).
+
+`static_route_e2e_test.go`
+- static-route (AAO) happy path: `testdata/gateway-static-redundant-auth.yaml`
+  reconciles successfully, with `Plan.Mode == "static"` and artifacts shaped as
+  small `{fence: {...}}` / `{streamingDomain: {...}}` fragments — never the
+  dynamic strategy's whole `rules:` block.
+
+`reconcile_composition_e2e_test.go`
+- drives `migplan.Reconcile` (the in-code entry point the FSM calls, not the
+  bare engine) end-to-end and asserts `Result` faithfully encodes the
+  manifest's declared intent, including operator-edit preservation.
