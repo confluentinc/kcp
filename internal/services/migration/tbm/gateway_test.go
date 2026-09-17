@@ -9,18 +9,10 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
 )
-
-// yamlUnmarshalForTest is a thin wrapper so tests below don't need to import
-// goccy/go-yaml under a different alias than this file already uses.
-func yamlUnmarshalForTest(t *testing.T, data []byte, v any) error {
-	t.Helper()
-	return yaml.Unmarshal(data, v)
-}
 
 // mockGatewayService implements gateway.Service using function fields for test
 // control, mirroring migration's own (unexported, package-private)
@@ -199,10 +191,10 @@ func realisticReconcileResult() *migplan.Result {
 }
 
 func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
-	var appliedYAML []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
-			appliedYAML = yamlData
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
 			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
 			return "", nil
 		},
@@ -212,17 +204,15 @@ func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 
 	err := actions.Fence(context.Background(), config)
 	require.NoError(t, err)
-	require.NotEmpty(t, appliedYAML, "ApplyGatewayYAML must have been called")
-
-	var patched map[string]any
-	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &patched))
+	assert.Equal(t, config.Route, gotRP.RouteName, "PatchGatewayRoute must have been called")
+	assert.Equal(t, "rules", gotRP.Field)
 }
 
 func TestTBMActions_Fence_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
-	var appliedYAML []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, _ string) (string, error) {
-			appliedYAML = yamlData
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			gotRP = rp
 			return "", nil
 		},
 	}
@@ -231,14 +221,12 @@ func TestTBMActions_Fence_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
 
 	require.NoError(t, actions.Fence(context.Background(), config))
 
-	var obj map[string]any
-	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &obj))
-	spec := obj["spec"].(map[string]any)
-	routes := spec["routes"].([]any)
-	route := routes[0].(map[string]any)
-	rules := route["rules"].(map[string]any)
+	assert.Equal(t, config.Route, gotRP.RouteName)
+	assert.Equal(t, "rules", gotRP.Field)
+	rules, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "fence patch value must be a map")
 	fencing, ok := rules["fencing"].([]any)
-	require.True(t, ok, "the applied CR's route must carry the fencing block from config.FenceYAML")
+	require.True(t, ok, "the applied route patch must carry the fencing block from config.FenceYAML")
 	require.Len(t, fencing, 1)
 }
 
@@ -249,7 +237,7 @@ func TestTBMActions_Fence_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *test
 		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			sawConfigID = configID
 			return configID, nil
 		},
@@ -288,7 +276,7 @@ func TestTBMActions_Fence_HotReloadCheckFailure_ReturnsRemediationError(t *testi
 
 func TestTBMActions_Fence_ApplyErrorPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("connection refused")
 		},
 	}
@@ -312,8 +300,8 @@ func TestTBMActions_Fence_NoTopicsSkipsFencing(t *testing.T) {
 			t.Fatal("DetectCapability must not be called when there are no topics to fence")
 			return gateway.Capability{}, nil
 		},
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
-			t.Fatal("ApplyGatewayYAML must not be called when there are no topics to fence")
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			t.Fatal("PatchGatewayRoute must not be called when there are no topics to fence")
 			return "", nil
 		},
 	}
@@ -337,10 +325,10 @@ func TestTBMActions_Fence_NoTopicsSkipsFencing(t *testing.T) {
 func TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim(t *testing.T) {
 	for _, blocked := range []bool{true, false} {
 		t.Run(fmt.Sprintf("blocked=%v", blocked), func(t *testing.T) {
-			var appliedYAML []byte
+			var gotRP gateway.RoutePatch
 			gw := &mockGatewayService{
-				applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, _ string) (string, error) {
-					appliedYAML = yamlData
+				patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+					gotRP = rp
 					return "", nil
 				},
 			}
@@ -350,12 +338,8 @@ func TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim(t *testing.T) {
 
 			require.NoError(t, actions.Fence(context.Background(), config))
 
-			var obj map[string]any
-			require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &obj))
-			spec := obj["spec"].(map[string]any)
-			routes := spec["routes"].([]any)
-			route := routes[0].(map[string]any)
-			rules := route["rules"].(map[string]any)
+			rules, ok := gotRP.Value.(map[string]any)
+			require.True(t, ok, "fence patch value must be a map")
 			fencing := rules["fencing"].([]any)
 			require.Len(t, fencing, 1)
 			entry := fencing[0].(map[string]any)
@@ -369,7 +353,7 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 		// The apply itself must succeed so the rejection surfaces from the
 		// acceptance wait, mirroring migration's own
 		// TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage.
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 		},
@@ -384,10 +368,10 @@ func TestTBMActions_Fence_GatewayRejectedErrorPropagates(t *testing.T) {
 }
 
 func TestTBMActions_Switch_RolloutPath_AppliesAndConfirms(t *testing.T) {
-	var appliedYAML []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
-			appliedYAML = yamlData
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
 			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
 			return "", nil
 		},
@@ -397,17 +381,15 @@ func TestTBMActions_Switch_RolloutPath_AppliesAndConfirms(t *testing.T) {
 
 	err := actions.Switch(context.Background(), config)
 	require.NoError(t, err)
-	require.NotEmpty(t, appliedYAML, "ApplyGatewayYAML must have been called")
-
-	var patched map[string]any
-	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &patched))
+	assert.Equal(t, config.Route, gotRP.RouteName, "PatchGatewayRoute must have been called")
+	assert.Equal(t, "rules", gotRP.Field)
 }
 
 func TestTBMActions_Switch_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
-	var appliedYAML []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, _ string) (string, error) {
-			appliedYAML = yamlData
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			gotRP = rp
 			return "", nil
 		},
 	}
@@ -416,15 +398,11 @@ func TestTBMActions_Switch_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
 
 	require.NoError(t, actions.Switch(context.Background(), config))
 
-	var obj map[string]any
-	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &obj))
-	spec := obj["spec"].(map[string]any)
-	routes := spec["routes"].([]any)
-	route := routes[0].(map[string]any)
-	rules := route["rules"].(map[string]any)
+	rules, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "switch patch value must be a map")
 	routing := rules["routing"].(map[string]any)
 	conditions, ok := routing["conditions"].([]any)
-	require.True(t, ok, "the applied CR's route must carry the routing.conditions block from config.SwitchoverYAML")
+	require.True(t, ok, "the route patch must carry the routing.conditions block from config.SwitchoverYAML")
 	require.Len(t, conditions, 1)
 }
 
@@ -435,7 +413,7 @@ func TestTBMActions_Switch_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *tes
 		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			sawConfigID = configID
 			return configID, nil
 		},
@@ -474,7 +452,7 @@ func TestTBMActions_Switch_HotReloadCheckFailure_ReturnsRemediationError(t *test
 
 func TestTBMActions_Switch_ApplyErrorPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("connection refused")
 		},
 	}
@@ -492,8 +470,8 @@ func TestTBMActions_Switch_NoTopicsSkipsSwitch(t *testing.T) {
 			t.Fatal("DetectCapability must not be called when there are no topics to switch")
 			return gateway.Capability{}, nil
 		},
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
-			t.Fatal("ApplyGatewayYAML must not be called when there are no topics to switch")
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			t.Fatal("PatchGatewayRoute must not be called when there are no topics to switch")
 			return "", nil
 		},
 	}
@@ -509,7 +487,7 @@ func TestTBMActions_Switch_NoTopicsSkipsSwitch(t *testing.T) {
 
 func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "route not found"}
 		},
@@ -530,10 +508,10 @@ func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 // TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim for the
 // equivalent proof on the fence side).
 func TestTBMActions_Switch_AppliesSwitchoverYAMLVerbatim(t *testing.T) {
-	var appliedYAML []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, _ string) (string, error) {
-			appliedYAML = yamlData
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			gotRP = rp
 			return "", nil
 		},
 	}
@@ -543,12 +521,8 @@ func TestTBMActions_Switch_AppliesSwitchoverYAMLVerbatim(t *testing.T) {
 
 	require.NoError(t, actions.Switch(context.Background(), config))
 
-	var obj map[string]any
-	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &obj))
-	spec := obj["spec"].(map[string]any)
-	routes := spec["routes"].([]any)
-	route := routes[0].(map[string]any)
-	rules := route["rules"].(map[string]any)
+	rules, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "switch patch value must be a map")
 	routing := rules["routing"].(map[string]any)
 	conditions := routing["conditions"].([]any)
 	require.Len(t, conditions, 1)
@@ -568,7 +542,7 @@ func TestTBMActions_EnsureGatewayCapability_MemoizedAcrossFenceAndSwitch(t *test
 			detectCalls++
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
@@ -590,7 +564,7 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 			detectCalls++
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
 	config := testTBMConfig()
@@ -601,10 +575,10 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 }
 
 func TestTBMActions_UnfenceGateway_AppliesGatewayYAMLSnapshotVerbatim(t *testing.T) {
-	var appliedYAML []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
-			appliedYAML = yamlData
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
 			assert.Empty(t, configID, "rollout-mode capability must not stamp a configId")
 			return "", nil
 		},
@@ -614,18 +588,17 @@ func TestTBMActions_UnfenceGateway_AppliesGatewayYAMLSnapshotVerbatim(t *testing
 
 	err := actions.unfenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	require.NotEmpty(t, appliedYAML, "ApplyGatewayYAML must have been called")
+	assert.Equal(t, config.Route, gotRP.RouteName, "PatchGatewayRoute must have been called")
+	assert.Equal(t, "", gotRP.Field, "unfence must whole-route replace, not set a single field")
 
-	var applied map[string]interface{}
-	require.NoError(t, yamlUnmarshalForTest(t, appliedYAML, &applied))
-	var expected map[string]interface{}
-	require.NoError(t, yamlUnmarshalForTest(t, []byte(testGatewayYAML), &expected))
-	assert.Equal(t, expected, applied, "unfence must reapply the config.GatewayYAML snapshot verbatim, with nothing grafted onto it and no re-cleaning (migplan already cleans it once, centrally)")
+	expectedRoute, err := gateway.RouteObject([]byte(testGatewayYAML), config.Route)
+	require.NoError(t, err)
+	assert.Equal(t, expectedRoute, gotRP.Value, "unfence must restore config.Route to exactly its captured state in config.GatewayYAML, with nothing grafted onto it and no re-cleaning (migplan already cleans it once, centrally)")
 }
 
 func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) {
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("the server rejected our request")
 		},
 	}
@@ -639,7 +612,7 @@ func TestTBMActions_UnfenceGateway_ApplyFails_ReturnsWrappedError(t *testing.T) 
 
 func TestTBMActions_UnfenceGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 		waitForGatewayAcceptedFn: func(context.Context, string, string, time.Duration, time.Duration) error {
 			return &gateway.GatewayRejectedError{Reason: "InvalidSpec", Message: "spec.routes[0] references an unknown streamingDomain"}
 		},
