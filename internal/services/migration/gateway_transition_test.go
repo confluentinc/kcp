@@ -187,10 +187,10 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 	})
 
 	t.Run("an apply that landed but could not be confirmed IS an unconfirmed fence", func(t *testing.T) {
-		// Unlike the case above: gateway.ApplyGatewayYAML's post-apply read-back
-		// guards run AFTER the server-side apply persists, so this error means
-		// the fenced spec IS live in the cluster — the opposite of "an apply
-		// failure" above, despite both surfacing from the same call.
+		// Unlike the case above: PatchGatewayRoute's post-patch read-back guards
+		// run AFTER the JSON Patch persists, so this error means the fenced spec
+		// IS live in the cluster — the opposite of "an apply failure" above,
+		// despite both surfacing from the same call.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
 		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {

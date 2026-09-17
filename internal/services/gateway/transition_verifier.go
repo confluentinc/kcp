@@ -69,59 +69,10 @@ func (v *TransitionVerifier) DeploymentBaseline(ctx context.Context, namespace, 
 	return baseline
 }
 
-// ApplyCR applies a gateway CR, attaching a fresh config revision id when the
-// cluster supports one. A fresh id on every apply guarantees the spec
-// changes, so metadata.generation always advances — closing the no-op blind
-// spot where an apply that changed nothing leaves observedGeneration already
-// satisfied and every downstream wait reports success for a transition that
-// never happened.
-func (v *TransitionVerifier) ApplyCR(ctx context.Context, namespace, crName string, yamlData []byte, step string) (ApplyResult, error) {
-	var configID string
-	if v.Capability.InjectsConfigID() {
-		var err error
-		configID, err = NewConfigID()
-		if err != nil {
-			return ApplyResult{}, err
-		}
-	}
-
-	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
-
-	slog.Debug("applying gateway CR", "step", step, "gateway", crName,
-		"configId", configID, "baselineDeploymentGeneration", baseline)
-
-	storedConfigID, err := v.Service.ApplyGatewayYAML(ctx, namespace, crName, yamlData, configID)
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
-}
-
-// ApplyConfigIDOnly stamps a fresh configId on the gateway without applying —
-// or owning — anything else. Used only by VerifyHotReloadCapability; every
-// other caller needs the CR's actual spec change and uses ApplyCR.
-func (v *TransitionVerifier) ApplyConfigIDOnly(ctx context.Context, namespace, crName, step string) (ApplyResult, error) {
-	configID, err := NewConfigID()
-	if err != nil {
-		return ApplyResult{}, err
-	}
-
-	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
-
-	slog.Debug("applying gateway configId only", "step", step, "gateway", crName,
-		"configId", configID, "baselineDeploymentGeneration", baseline)
-
-	storedConfigID, err := v.Service.ApplyGatewayConfigID(ctx, namespace, crName, configID)
-	if err != nil {
-		return ApplyResult{}, err
-	}
-	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
-}
-
 // PatchCR patches a single route mutation onto the gateway CR, attaching a
 // fresh config revision id when the cluster supports one (a fresh id guarantees
 // the spec changes so metadata.generation always advances — same rationale as
-// the former ApplyCR).
+// the whole-CR server-side apply this replaced).
 func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName string, rp RoutePatch, step string) (ApplyResult, error) {
 	var configID string
 	if v.Capability.InjectsConfigID() {

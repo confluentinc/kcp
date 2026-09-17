@@ -38,14 +38,6 @@ func (m *mockService) CheckPermissions(context.Context, string, string, string, 
 	return true, nil
 }
 
-func (m *mockService) ApplyGatewayYAML(context.Context, string, string, []byte, string) (string, error) {
-	return "", nil
-}
-
-func (m *mockService) ApplyGatewayConfigID(context.Context, string, string, string) (string, error) {
-	return "", nil
-}
-
 func (m *mockService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
 	if m.patchGatewayRouteFn != nil {
 		return m.patchGatewayRouteFn(ctx, namespace, gatewayName, rp, configID)
@@ -130,7 +122,7 @@ func TestPatchConfigIDOnly(t *testing.T) {
 		getGatewayDeploymentGenerationFn: func(context.Context, string, string) (int64, error) { return 3, nil },
 	}
 	// Mode is irrelevant here — PatchConfigIDOnly always injects a configId,
-	// unlike PatchCR/ApplyCR which gate on Capability.InjectsConfigID.
+	// unlike PatchCR which gates on Capability.InjectsConfigID.
 	v := &TransitionVerifier{Service: svc, Reporter: noopReporter{}, Capability: Capability{Mode: VerifyRollout}}
 
 	res, err := v.PatchConfigIDOnly(context.Background(), "ns", "gw", "hot-reload check")

@@ -16,8 +16,6 @@ type mockGatewayService struct {
 	detectCapabilityFn       func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)
 	waitForConfigIDFn        func(ctx context.Context, namespace, name string, opts gateway.ConfigWaitOptions) error
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
-	applyGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
 	patchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
 	patchGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
@@ -58,13 +56,6 @@ func (m *mockGatewayService) CheckPermissions(ctx context.Context, verb, resourc
 	return true, nil
 }
 
-func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
-	if m.applyGatewayYAMLFn != nil {
-		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml, configID)
-	}
-	return "", fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
-}
-
 func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 	if m.patchGatewayRouteFn != nil {
 		return m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
@@ -77,13 +68,6 @@ func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace
 		return m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
 	}
 	return "", fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
-}
-
-func (m *mockGatewayService) ApplyGatewayConfigID(ctx context.Context, namespace, name, configID string) (string, error) {
-	if m.applyGatewayConfigIDFn != nil {
-		return m.applyGatewayConfigIDFn(ctx, namespace, name, configID)
-	}
-	return configID, nil
 }
 
 func (m *mockGatewayService) WaitForGatewayAccepted(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error {
