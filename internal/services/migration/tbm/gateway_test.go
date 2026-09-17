@@ -241,6 +241,9 @@ func TestTBMActions_Fence_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *test
 			sawConfigID = configID
 			return configID, nil
 		},
+		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForConfigIDFn: func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 			waitedForID = opts.ConfigID
 			return nil
@@ -259,7 +262,7 @@ func TestTBMActions_Fence_HotReloadCheckFailure_ReturnsRemediationError(t *testi
 		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		applyGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
 		waitForConfigIDFn: func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {
@@ -417,6 +420,9 @@ func TestTBMActions_Switch_PerPodConfigIdPath_StampsConfigIdAndWaitsForIt(t *tes
 			sawConfigID = configID
 			return configID, nil
 		},
+		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForConfigIDFn: func(_ context.Context, _, _ string, opts gateway.ConfigWaitOptions) error {
 			waitedForID = opts.ConfigID
 			return nil
@@ -435,7 +441,7 @@ func TestTBMActions_Switch_HotReloadCheckFailure_ReturnsRemediationError(t *test
 		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyPerPodConfigID, CRDSupportsConfigID: true}, nil
 		},
-		applyGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
+		patchGatewayConfigIDFn: func(_ context.Context, _, _, configID string) (string, error) {
 			return configID, nil
 		},
 		waitForConfigIDFn: func(_ context.Context, _, _ string, _ gateway.ConfigWaitOptions) error {

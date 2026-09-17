@@ -296,8 +296,8 @@ func (v *TransitionVerifier) printGatewayReadinessProgress(p GatewayReadinessPro
 // /config keeps serving the previous revision. Detecting that after fencing
 // would mean discovering it with traffic already blocked.
 //
-// The check applies spec.configId alone, under its own field manager
-// (Service.ApplyGatewayConfigID) rather than re-applying the live spec under
+// The check applies spec.configId alone, as a JSON Patch
+// (Service.PatchGatewayConfigID) rather than re-applying the live spec under
 // the caller's usual manager. That used to be the design — re-apply the live
 // CR verbatim plus a fresh configId — and it was safe to run at any point in
 // a migration for the same reason it was dangerous: server-side apply shares
@@ -308,9 +308,9 @@ func (v *TransitionVerifier) printGatewayReadinessProgress(p GatewayReadinessPro
 // repeat, e.g. spec.hotReload when the fenced CR relies on inheriting it —
 // then became a narrowing apply under that same manager, and server-side
 // apply prunes a field an earlier apply from the same manager declared once
-// a later one omits it. A dedicated, disjoint field manager that owns
-// nothing but spec.configId can't create that hazard, which is what makes
-// this safe to run at any point in a migration, including a resume.
+// a later one omits it. A JSON Patch naming only spec.configId declares no
+// manager and no spec, so it can't create that hazard either, which is what
+// makes this safe to run at any point in a migration, including a resume.
 func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, namespace, crName string, port int) error {
 	if !v.Capability.InjectsConfigID() {
 		return nil
@@ -318,7 +318,7 @@ func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, name
 
 	v.Reporter.Detail("Checking the gateway applies config revisions in place...")
 
-	applied, err := v.ApplyConfigIDOnly(ctx, namespace, crName, "hot-reload check")
+	applied, err := v.PatchConfigIDOnly(ctx, namespace, crName, "hot-reload check")
 	if err != nil {
 		return fmt.Errorf("failed to apply the gateway hot-reload check: %w", err)
 	}
