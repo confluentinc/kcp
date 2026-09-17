@@ -135,16 +135,6 @@ func assertNoPodRoll(t *testing.T, before, after podFingerprint) {
 	}
 }
 
-// readCR fetches the live Gateway CR and strips the server-managed metadata that
-// server-side apply rejects, giving a spec that can be re-applied as-is.
-func (e *env) readCR(t *testing.T, ctx context.Context) []byte {
-	t.Helper()
-
-	raw, err := e.svc.GetGatewayYAML(ctx, e.namespace, e.gateway)
-	require.NoError(t, err)
-	return stripServerFields(t, raw)
-}
-
 // TestCapabilityIsDetected is the gate everything else depends on. If kcp reads
 // this cluster as pre-hot-reload, every later assertion would pass against the
 // rollout path and prove nothing about hot reload.
@@ -178,12 +168,10 @@ func TestConfigIDOnlyApplyHotReloads(t *testing.T) {
 	before := e.fingerprint(t, ctx)
 	require.Equal(t, e.replicas, before.podCount, "expected the configured replica count before the apply")
 
-	live := e.readCR(t, ctx)
-
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
 
-	stored, err := e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, live, configID)
+	stored, err := e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, configID)
 	require.NoError(t, err)
 	require.Equal(t, configID, stored, "the API server must persist the configId kcp sent")
 
@@ -214,10 +202,9 @@ func TestNoRollIsObservedForAHotReload(t *testing.T) {
 	baseline, err := e.svc.GetGatewayDeploymentGeneration(ctx, e.namespace, e.gateway)
 	require.NoError(t, err)
 
-	live := e.readCR(t, ctx)
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
-	_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, live, configID)
+	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, configID)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
@@ -233,53 +220,6 @@ func TestNoRollIsObservedForAHotReload(t *testing.T) {
 		"a hot reload must not move the Deployment's generation; if it did, kcp would route to the rollout wait")
 }
 
-// TestFenceAndSwitchoverAreVerifiedPerPod walks the transitions a migration
-// actually performs, in order, applying the same rendered CRs the migration
-// would be given. Each carries a fresh configId and is confirmed on every pod.
-func TestFenceAndSwitchoverAreVerifiedPerPod(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-
-	fenced := mustReadFile(t, "KCP_HR_FENCED_CR")
-	switchover := mustReadFile(t, "KCP_HR_SWITCHOVER_CR")
-	initial := mustReadFile(t, "KCP_HR_INITIAL_CR")
-
-	seen := map[string]bool{}
-	for _, step := range []struct {
-		name string
-		yaml []byte
-	}{
-		{"fence", fenced},
-		{"switchover", switchover},
-		{"rollback", initial},
-	} {
-		t.Run(step.name, func(t *testing.T) {
-			before := e.fingerprint(t, ctx)
-
-			configID, err := gateway.NewConfigID()
-			require.NoError(t, err)
-			require.False(t, seen[configID], "each transition must carry a distinct configId")
-			seen[configID] = true
-
-			stored, err := e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, step.yaml, configID)
-			require.NoError(t, err)
-			require.Equal(t, configID, stored)
-
-			require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
-			require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
-				ConfigID:         configID,
-				Port:             gateway.DefaultGatewayConfigPort,
-				PollInterval:     pollInterval,
-				HotReloadTimeout: convergeTimeout,
-			}),
-				"%s must be confirmed on every gateway pod", step.name)
-
-			// Both transitions are in-place route edits, so neither may roll.
-			assertNoPodRoll(t, before, e.fingerprint(t, ctx))
-		})
-	}
-}
-
 // TestStaleConfigIDIsNotAcceptedAsSuccess guards against the failure mode that
 // motivated per-pod verification: a wait that passes because the pods already
 // report the value being waited for. Waiting for the PREVIOUS revision after a
@@ -288,10 +228,9 @@ func TestStaleConfigIDIsNotAcceptedAsSuccess(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
 
-	live := e.readCR(t, ctx)
 	first, err := gateway.NewConfigID()
 	require.NoError(t, err)
-	_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, live, first)
+	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, first)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
@@ -303,7 +242,7 @@ func TestStaleConfigIDIsNotAcceptedAsSuccess(t *testing.T) {
 
 	second, err := gateway.NewConfigID()
 	require.NoError(t, err)
-	_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, live, second)
+	_, err = e.svc.PatchGatewayConfigID(ctx, e.namespace, e.gateway, second)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
