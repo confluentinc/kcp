@@ -20,7 +20,7 @@ func rolloutVerifiedGateway() *mockGatewayService {
 		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
 			return gateway.Capability{Mode: gateway.VerifyRollout}, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			return configID, nil
 		},
 	}
@@ -37,7 +37,7 @@ func TestApplyGatewayCR_DeploymentGenerationBaseline(t *testing.T) {
 			calls = append(calls, "read-generation")
 			return 11, nil
 		}
-		gw.applyGatewayYAMLFn = func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
+		gw.patchGatewayRouteFn = func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			calls = append(calls, "apply")
 			return configID, nil
 		}

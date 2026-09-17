@@ -174,11 +174,11 @@ func (stubGatewayServiceImpl) CheckPermissions(context.Context, string, string, 
 	return true, nil
 }
 
-func (stubGatewayServiceImpl) ApplyGatewayYAML(context.Context, string, string, []byte, string) (string, error) {
+func (stubGatewayServiceImpl) PatchGatewayRoute(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 	return "", nil
 }
 
-func (stubGatewayServiceImpl) ApplyGatewayConfigID(context.Context, string, string, string) (string, error) {
+func (stubGatewayServiceImpl) PatchGatewayConfigID(context.Context, string, string, string) (string, error) {
 	return "", nil
 }
 
