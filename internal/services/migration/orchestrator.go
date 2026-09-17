@@ -8,13 +8,18 @@ import (
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
+	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/looplab/fsm"
 )
 
 // ErrUnroutedProducers is returned when the post-fence check detects producers
 // bypassing the gateway. The orchestrator catches this to trigger an
-// EventAbortFence transition back to initialized state.
-var ErrUnroutedProducers = errors.New("unrouted producers detected")
+// EventAbortFence transition back to initialized state. Re-exported from
+// offset.ErrUnroutedProducers (the package that actually detects and wraps
+// it) so every existing errors.Is call site in this package keeps working
+// unchanged.
+var ErrUnroutedProducers = offset.ErrUnroutedProducers
 
 // ErrFenceUnconfirmed marks a fence whose CR reached the cluster but whose
 // effect on the serving pods was never confirmed. The orchestrator catches it to
@@ -83,11 +88,11 @@ type ExecutionParams struct {
 	// full resolved Authenticator (basic, bearer, or mtls), not only an
 	// api_key/api_secret pair.
 	RestAuth clusterlink.Authenticator
-	// PreFetchedInitialCR carries a CR the init command already read live
-	// moments before triggering this transition, so onInitialize can reuse it
-	// instead of fetching again. Empty when no such read happened in this
-	// process (e.g. execute resuming a --skip-validate migration).
-	PreFetchedInitialCR []byte
+	// ReconcileResult is the migplan.Result the init command already computed
+	// live, moments before triggering this transition — mirrors TBM's own
+	// ExecutionParams shape. onInitialize consumes it directly instead of
+	// running any validation of its own; migplan.Reconcile already did that.
+	ReconcileResult *migplan.Result
 }
 
 // execParamsFromEvent returns the ExecutionParams passed to fsm.Event. Forward
@@ -226,19 +231,15 @@ func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
 	o.runReport = r
 }
 
-// Initialize triggers the initialization event. preFetchedCR, when non-empty,
-// is threaded to onInitialize so it can skip a redundant live CR fetch — see
-// ExecutionParams.PreFetchedInitialCR.
-func (o *MigrationOrchestrator) Initialize(ctx context.Context, restAuth clusterlink.Authenticator, preFetchedCR []byte) error {
-	params := ExecutionParams{RestAuth: restAuth, PreFetchedInitialCR: preFetchedCR}
-	if err := o.fsm.Event(ctx, EventInitialize, params); err != nil {
-		return err
-	}
-	return o.PersistState()
-}
-
-// Execute runs the full migration workflow from the current state
-func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator) error {
+// Execute runs the full migration workflow from the current state. res is
+// non-nil only when resuming a migration still at StateUninitialized (a
+// deferred --skip-validate init completing here) — the command layer
+// (cmd/migration/execute) computes it live via migplan.Reconcile before
+// calling Execute, exactly mirroring where AAO's own full validation already
+// ran in this exact scenario before this integration. Every other invocation
+// passes nil; onInitialize is never reached in that case, since the FSM is
+// already past StateUninitialized.
+func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator, res *migplan.Result) error {
 	// An unknown persisted state (corrupted file, or one written by a newer
 	// kcp) makes every canTransition check below return false, so the loop
 	// would skip every step and falsely report the migration complete. Refuse
@@ -248,8 +249,9 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	}
 
 	params := ExecutionParams{
-		LagThreshold: lagThreshold,
-		RestAuth:     restAuth,
+		LagThreshold:    lagThreshold,
+		RestAuth:        restAuth,
+		ReconcileResult: res,
 	}
 
 	// Drive execution from canonical workflow - single source of truth
@@ -399,9 +401,9 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	}
 
 	if definiteRejection {
-		o.reporter.success("Initial gateway CR restored — the rejected fenced spec has been superseded")
+		o.reporter.Success("Initial gateway CR restored — the rejected fenced spec has been superseded")
 	} else {
-		o.reporter.success("Initial gateway CR restored — the fenced config cannot take effect later")
+		o.reporter.Success("Initial gateway CR restored — the fenced config cannot take effect later")
 	}
 	return stepFailure
 }
@@ -447,7 +449,7 @@ func (o *MigrationOrchestrator) leaveStateCallback(ctx context.Context, e *fsm.E
 // onInitialize runs the initialize transition: delegates to workflow Initialize.
 func (o *MigrationOrchestrator) onInitialize(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.Initialize(ctx, o.config, p.RestAuth, p.PreFetchedInitialCR); err != nil {
+	if err := o.actions.Initialize(ctx, o.config, p.RestAuth, p.ReconcileResult); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -522,7 +524,7 @@ func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) 
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}
-	o.reporter.success("Gateway unfenced — traffic restored to pre-migration state")
+	o.reporter.Success("Gateway unfenced — traffic restored to pre-migration state")
 }
 
 // onSwitch runs the switch transition: delegates to workflow SwitchGateway.

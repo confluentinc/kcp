@@ -6,7 +6,7 @@ command isn't user-facing yet, which is why this whole folder is excluded from
 the built docs site (`mkdocs.yml`'s `exclude_docs`) — keep any future addition
 here scoped to that manifest, not the unrelated one below.
 
-`kcp migration init|execute|lag-check` (fully user-facing) is driven by a
+`kcp migration execute|lag-check` (fully user-facing) is driven by a
 different manifest, `gateway-migration.yaml` (`kind: GatewayMigration`), which
 shares this one's `apiVersion` and parser but nothing else. Its docs live
 **outside** this folder, published normally: see
