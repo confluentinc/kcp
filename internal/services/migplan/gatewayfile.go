@@ -50,9 +50,8 @@ func (g *GatewayFile) Load(_ context.Context) (*reconcile.GatewayConfig, error) 
 // generation, and top-level status — that a later re-apply rejects. Mutates
 // doc in place. Centralizes what internal/services/migration's
 // cleanInitialCR and (until this change) tbm's own cleanGatewayYAML each
-// independently re-implemented from this same source (see the migplan
-// static-route-strategy design doc, decision 14) — every migplan caller now
-// gets an already-clean snapshot.
+// independently re-implemented from this same source — every migplan
+// caller now gets an already-clean snapshot.
 func cleanGatewayDoc(doc map[string]any) {
 	if metadata, ok := doc["metadata"].(map[string]any); ok {
 		delete(metadata, "managedFields")

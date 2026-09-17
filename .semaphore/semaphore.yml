@@ -254,6 +254,23 @@ blocks:
           commands:
             - cache store minikube-cache ~/.minikube/cache/
 
+  - name: 'integration: migplan e2e'
+    dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
+    task:
+      jobs:
+        - name: 'migplan e2e'
+          commands:
+            - cache restore frontend-dependencies
+            - cache restore go-mod-cache
+            - cache restore go-build-cache
+            - cd cmd/ui/frontend && yarn install && yarn build && cd -
+            - make test-env-up-migplan
+            - go test -tags e2e -v -count=1 ./integration-tests/migplan/...
+      epilogue:
+        always:
+          commands:
+            - make test-env-down-migplan
+
   - name: 'static analysis'
     dependencies: ['resolve frontend dependencies', 'resolve go dependencies']
     task:

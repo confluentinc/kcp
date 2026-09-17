@@ -3,6 +3,7 @@ package reconcile
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // StaticRouteView carries the static-mode facts CheckStaticPreconditions
@@ -22,9 +23,13 @@ type StaticRouteView struct {
 // static-mode analog of CheckPreconditions. ok is true only if every check
 // passed. missingSecrets is a plain-data fact already gathered by the I/O
 // layer (via ResolveStagedSecretNames + a SecretExistenceChecker) — this
-// pure function never does I/O itself. See the migplan
-// static-route-strategy design doc, decision 10, for the exact check list.
-func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecrets []string, ids ClusterIDs) ([]PreconditionResult, StaticRouteView, bool) {
+// pure function never does I/O itself. secretCheckSkipped is non-empty when
+// that live check could not be run at all (a permission denial, not a
+// missing secret) — see SecretExistenceChecker's own doc comment. When set,
+// missingSecrets is expected to be empty (there was nothing to report), and
+// the "staged auth secrets exist" result records the skip rather than a
+// pass, so the report never claims a verification that never happened.
+func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecrets []string, secretCheckSkipped string, ids ClusterIDs) ([]PreconditionResult, StaticRouteView, bool) {
 	var res []PreconditionResult
 	var view StaticRouteView
 
@@ -37,6 +42,25 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		res = append(res, pass("route is static"))
 	} else {
 		res = append(res, fail("route is static", fmt.Sprintf("route %q is %q; the static (all-at-once) strategy requires a static route", rc.Name, rc.Mode)))
+	}
+
+	// A nulled `fence` (fence: null) counts as unfenced, matching the pre-migplan
+	// FenceRoutesObj safeguard this replaces: fencing an already-fenced route
+	// means either this batch was already fenced by a prior run, or something
+	// upstream lost track of state. Checked here, in the plan, rather than at
+	// apply time (gateway.ReplaceRouteFenceObj), so a caller can trust a
+	// non-refused Result was never going to double-fence — no separate
+	// apply-time check is needed.
+	//
+	// This reads rc.Raw, i.e. whatever gw.Route was resolved from — a fresh live
+	// pull on every Reconcile call. It catches "already fenced when this plan
+	// was computed," not a fence applied concurrently between plan and apply
+	// (a drift/staleness scenario, out of scope here).
+	if existing, has := rc.Raw["fence"]; has && existing != nil {
+		res = append(res, fail("route is not already fenced",
+			fmt.Sprintf("route %q already carries a fence block — this batch may already be fenced, or something upstream lost track of state", rc.Name)))
+	} else {
+		res = append(res, pass("route is not already fenced"))
 	}
 
 	domains := staticDomainBootstrapIDs(gw)
@@ -80,9 +104,12 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		}
 	}
 
-	if len(missingSecrets) > 0 {
-		res = append(res, fail("staged auth secrets exist", fmt.Sprintf("secret(s) %s referenced by route %q's staged auth for %q do not exist", joinNames(missingSecrets), in.Route, in.TargetDomain)))
-	} else {
+	switch {
+	case secretCheckSkipped != "":
+		res = append(res, skip("staged auth secrets exist", secretCheckSkipped))
+	case len(missingSecrets) > 0:
+		res = append(res, fail("staged auth secrets exist", fmt.Sprintf("secret(s) %s referenced by route %q's staged auth for %q do not exist", strings.Join(missingSecrets, ", "), in.Route, in.TargetDomain)))
+	default:
 		res = append(res, pass("staged auth secrets exist"))
 	}
 
@@ -95,17 +122,6 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		}
 	}
 	return res, view, ok
-}
-
-func joinNames(names []string) string {
-	out := ""
-	for i, n := range names {
-		if i > 0 {
-			out += ", "
-		}
-		out += n
-	}
-	return out
 }
 
 // staticDomainBootstrapIDs maps each streaming domain the CR declares (at
@@ -160,7 +176,8 @@ func stagedAuthFor(route map[string]any, domainName string) (map[string]any, boo
 
 // staticSecretRefKeys are the Gateway CRD's Secret-naming field names —
 // mirrors internal/services/gateway/validate.go's own secretRefKeys,
-// duplicated per decision 13, not imported.
+// duplicated here rather than imported, to avoid a new dependency from
+// reconcile on internal/services/gateway.
 var staticSecretRefKeys = map[string]struct{}{
 	"secretRef":            {},
 	"configSecretRef":      {},
@@ -196,13 +213,12 @@ func collectStaticSecretRefs(v any, names map[string]struct{}) {
 // ResolveStagedSecretNames finds every Kubernetes Secret name gw.Route's
 // pre-staged security.cluster.<targetDomain> block references — the
 // secret(s) whose existence the redundant-auth switch depends on but has
-// never exercised (see the migplan static-route-strategy design doc,
-// decision 4). Exported for the I/O layer (engine.go) to call before
+// never exercised. Exported for the I/O layer (engine.go) to call before
 // building missingSecrets to pass into Reconcile — CheckStaticPreconditions
 // itself never calls this; it only consumes the already-gathered
 // missingSecrets fact. Takes no route name: gw.Route is already the one
-// route this GatewayConfig was resolved for (see RouteConfig.Raw, Task 1) —
-// there is nothing left to look up by name. Returns nil if the staged block
+// route this GatewayConfig was resolved for (see RouteConfig.Raw) — there
+// is nothing left to look up by name. Returns nil if the staged block
 // isn't present; that absence is itself a precondition failure
 // CheckStaticPreconditions reports separately, not an error here.
 func ResolveStagedSecretNames(gw *GatewayConfig, targetDomain string) []string {

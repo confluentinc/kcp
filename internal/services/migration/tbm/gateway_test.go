@@ -24,8 +24,9 @@ func yamlUnmarshalForTest(t *testing.T, data []byte, v any) error {
 
 // mockGatewayService implements gateway.Service using function fields for test
 // control, mirroring migration's own (unexported, package-private)
-// mockGatewayService — this is TBM's own copy, not shared, since the two
-// packages intentionally have no cross-imports.
+// mockGatewayService — this is TBM's own copy: test
+// doubles are kept per-package even where the underlying interface is
+// shared.
 type mockGatewayService struct {
 	getGatewayYAMLFn         func(ctx context.Context, namespace, name string) ([]byte, error)
 	detectCapabilityFn       func(ctx context.Context, namespace, name string, port int, fenced, switchover []byte) (gateway.Capability, error)

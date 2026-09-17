@@ -230,6 +230,26 @@ func TestReconciliationEngine_Run_StaticMode_SecretCheckSkippedIsWarningNotRefus
 	if !found {
 		t.Fatalf("Report.Warnings = %v, want it to contain the skip reason %q", plan.Report.Warnings, secrets.skipReason)
 	}
+
+	// The precondition line itself must record the skip too — not a plain
+	// pass — so the rendered report never claims "✓ staged auth secrets
+	// exist" for a check that never ran (a real bug: the warning above and a
+	// false "✓" pass on this line used to coexist, contradicting each other).
+	foundPrecondition := false
+	for _, pc := range plan.Report.Preconditions {
+		if pc.Name == "staged auth secrets exist" {
+			foundPrecondition = true
+			if !pc.OK || !pc.Skipped {
+				t.Errorf("staged auth secrets exist precondition = %+v, want OK: true, Skipped: true", pc)
+			}
+			if pc.Detail != secrets.skipReason {
+				t.Errorf("precondition Detail = %q, want the skip reason %q", pc.Detail, secrets.skipReason)
+			}
+		}
+	}
+	if !foundPrecondition {
+		t.Fatalf("expected a %q precondition, got %+v", "staged auth secrets exist", plan.Report.Preconditions)
+	}
 }
 
 // TestReconciliationEngine_Run_DynamicMode_NeverCallsSecretsProvider proves

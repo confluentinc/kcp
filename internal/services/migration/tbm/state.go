@@ -2,10 +2,14 @@
 // Migration (TBM) workflow. It reads and writes migration.MigrationConfig /
 // migration.MigrationState — the same shape and file AAO's execute uses —
 // so both kinds of migration live in one state file. The FSM engine itself
-// (this package's Actions/Orchestrator, its state/event constants, its
-// gateway/promote/lag-check logic) remains a fully separate implementation
-// from internal/services/migration: no orchestrator or workflow code is
-// shared between the two, only the config/state type they both persist to.
+// (this package's Actions/Orchestrator, its state/event constants) is a
+// separate implementation from internal/services/migration: each has its
+// own state machine, since TBM and AAO progress through genuinely different
+// steps. Lower-level mechanics that are byte-for-byte identical between the
+// two — gateway CR apply/wait/verify (gateway.TransitionVerifier), the
+// source/destination offset sweep and unrouted-producer detection
+// (internal/services/offset) — are shared service modules both packages
+// call, rather than two hand-maintained copies drifting apart.
 package tbm
 
 // ----- TBM FSM state and events -----

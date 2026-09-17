@@ -68,6 +68,10 @@ func ReplaceRouteRulesObj(obj map[string]any, routeName string, rulesYAML []byte
 		// reconcile.RulesTree.Serialize), so a stale field from the route's
 		// previous rules must not survive.
 		route["rules"] = rules
+		// Stop at the first match, matching replaceRouteField's (static_route.go)
+		// single-route contract: a name is assumed unique, so only ever mutate
+		// the first occurrence rather than every name-matching route.
+		break
 	}
 	if !found {
 		return nil, fmt.Errorf("route %q not found in the base gateway CR's spec.routes", routeName)

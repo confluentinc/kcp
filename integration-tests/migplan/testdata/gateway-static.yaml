@@ -1,18 +1,34 @@
-# Permutation fixture: a STATIC route. The engine handles dynamic (topic-based)
-# routes only, so the "route is dynamic" precondition must fail and refuse.
+# Permutation fixture: a STATIC route with a properly declared target domain
+# but NO pre-staged security.cluster.<domain> block. Before the static-route
+# (AAO) strategy existed, this fixture modelled "the engine only handles
+# dynamic routes" and asserted "route is dynamic" — Reconcile now dispatches
+# mode: static to reconcileStatic instead, so that assertion went stale the
+# moment the static strategy shipped (the engine never reaches a dynamic-only
+# check for a static route at all). Repurposed to exercise the real failure a
+# static route with this shape now hits: CheckStaticPreconditions'
+# "route carries pre-staged auth for the target domain" check.
 apiVersion: gateway.confluent.io/v1
 kind: Gateway
 metadata:
   name: migplan-static
 spec:
+  streamingDomains:
+    - name: msk
+      kafkaCluster:
+        bootstrapServers:
+          - id: MSK
+            endpoint: localhost:19092
+    - name: cc
+      kafkaCluster:
+        bootstrapServers:
+          - id: CC
+            endpoint: localhost:29092
   routes:
     - name: migration-route
       mode: static
-      streamingDomains:
-        - name: msk
-          bootstrapServers: localhost:19092
-        - name: cc
-          bootstrapServers: localhost:29092
+      streamingDomain:
+        name: msk
+        bootstrapServerId: MSK
       rules:
         routing:
           coordination:

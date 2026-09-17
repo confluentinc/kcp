@@ -11,15 +11,14 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/confluentinc/kcp/internal/types"
-	"golang.org/x/sync/errgroup"
 )
 
 // offsetProvidersFunc builds the source and destination offset providers a
 // dynamic-mode (TBM) run needs, plus a close function for both. Injected via
 // newMigrationExecuteCmd so this package's own tests (whose manifests point
 // at unreachable placeholder endpoints) can pass a stub; production dials
-// real Kafka connections. Ported from cmd/migration/executetbm, deleted in
-// Task 1.
+// real Kafka connections. Ported from cmd/migration/executetbm, which no
+// longer exists.
 type offsetProvidersFunc func(g *manifest.GatewayMigration) (source, destination offset.Provider, closeFn func() error, err error)
 
 // gatewayServiceFunc builds the gateway.Service a dynamic-mode run's
@@ -37,55 +36,36 @@ type clusterLinkServiceFunc func(g *manifest.GatewayMigration) (clusterlink.Serv
 
 // buildTBMOffsetProviders opens real Kafka connections to the source and
 // destination clusters described in the manifest, for wait_for_lags. Ported
-// from cmd/migration/executetbm/cmd_migration_executetbm.go's
-// buildOffsetProviders — the two clusters are independent, so dial them
-// concurrently: startup then costs the slower of the two dials, not their
-// sum.
+// verbatim from cmd/migration/executetbm/cmd_migration_executetbm.go's
+// buildOffsetProviders.
 func buildTBMOffsetProviders(g *manifest.GatewayMigration) (offset.Provider, offset.Provider, func() error, error) {
 	srcCreds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
 		return nil, nil, nil, manifest.JoinProblems("spec.source.credentials", errs)
 	}
 	srcConn := types.MigrateConn(g.Spec.Source.BootstrapServers, srcCreds)
+	srcClient, err := newTBMKafkaClientForConn(srcConn)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("connecting to source cluster: %w", err)
+	}
 
 	if g.Spec.Target.Kafka == nil {
+		_ = srcClient.Close()
 		return nil, nil, nil, fmt.Errorf("spec.target.kafka: required")
 	}
 	destCreds, errs := g.DestinationKafkaCredentials()
 	if len(errs) > 0 {
+		_ = srcClient.Close()
 		return nil, nil, nil, manifest.JoinProblems("spec.target.kafka.clusterCredentials", errs)
 	}
 	destConn := types.MigrateConn(g.Spec.Target.Kafka.BootstrapServers, destCreds)
 	if sp := destConn.AuthMethod.SASLPlain; sp != nil && sp.CACert == "" && !sp.UseTLS {
 		sp.UseTLS = true
 	}
-
-	var srcClient, destClient sarama.Client
-	var eg errgroup.Group
-	eg.Go(func() error {
-		c, err := newTBMKafkaClientForConn(srcConn)
-		if err != nil {
-			return fmt.Errorf("connecting to source cluster: %w", err)
-		}
-		srcClient = c
-		return nil
-	})
-	eg.Go(func() error {
-		c, err := newTBMKafkaClientForConn(destConn)
-		if err != nil {
-			return fmt.Errorf("connecting to destination cluster: %w", err)
-		}
-		destClient = c
-		return nil
-	})
-	if err := eg.Wait(); err != nil {
-		if srcClient != nil {
-			_ = srcClient.Close()
-		}
-		if destClient != nil {
-			_ = destClient.Close()
-		}
-		return nil, nil, nil, err
+	destClient, err := newTBMKafkaClientForConn(destConn)
+	if err != nil {
+		_ = srcClient.Close()
+		return nil, nil, nil, fmt.Errorf("connecting to destination cluster: %w", err)
 	}
 
 	closeFn := func() error {

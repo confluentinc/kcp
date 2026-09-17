@@ -17,8 +17,9 @@ import (
 
 // mockOffsetProvider implements offset.Provider using function fields for
 // test control, mirroring migration's own (unexported, package-private)
-// mockOffsetProvider — this is TBM's own copy, not shared, since the two
-// packages intentionally have no cross-imports.
+// mockOffsetProvider — this is TBM's own copy: test
+// doubles are kept per-package even where the underlying interface is
+// shared.
 type mockOffsetProvider struct {
 	getFn     func(topic string) (map[int32]int64, error)
 	getManyFn func(topics []string) (map[string]map[int32]int64, error)

@@ -129,6 +129,69 @@ func TestReplaceRouteRulesObj_OnlyNamedRouteChanges(t *testing.T) {
 	assert.Nil(t, routeRules(t, patched, "scram-preregistration"), "an unnamed route's rules must stay untouched")
 }
 
+// duplicateNameRouteCR has two spec.routes entries sharing the same name,
+// distinguished only by endpoint — a malformed shape ReplaceRouteRulesObj
+// must still handle deterministically (see
+// TestReplaceRouteRulesObj_OnlyFirstDuplicateNamedRouteChanges).
+const duplicateNameRouteCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: migration-gateway
+spec:
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
+      security:
+        auth: passthrough
+    - name: migration-route
+      endpoint: gateway:9596
+      security:
+        auth: passthrough
+`
+
+// routeRulesByEndpoint returns the rules subtree of the route matching both
+// name and endpoint, distinguishing between two same-named routes.
+func routeRulesByEndpoint(t *testing.T, crBytes []byte, routeName, endpoint string) map[string]any {
+	t.Helper()
+	var obj map[string]any
+	require.NoError(t, yaml.Unmarshal(crBytes, &obj))
+	spec, ok := mapField(obj, "spec")
+	require.True(t, ok, "spec missing from patched CR")
+	routes, ok := sliceField(spec, "routes")
+	require.True(t, ok, "spec.routes missing from patched CR")
+	for _, raw := range routes {
+		route, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name, _ := stringField(route, "name")
+		ep, _ := stringField(route, "endpoint")
+		if name == routeName && ep == endpoint {
+			rules, _ := mapField(route, "rules")
+			return rules
+		}
+	}
+	return nil
+}
+
+// TestReplaceRouteRulesObj_OnlyFirstDuplicateNamedRouteChanges is a
+// regression test: the loop used to have no break, so a CR with two
+// same-named routes had rules replaced on both, disagreeing with
+// replaceRouteField's (static_route.go) single-route, first-match contract
+// for the identical CR shape. Only the first occurrence must change now.
+func TestReplaceRouteRulesObj_OnlyFirstDuplicateNamedRouteChanges(t *testing.T) {
+	var obj map[string]any
+	require.NoError(t, yaml.Unmarshal([]byte(duplicateNameRouteCR), &obj))
+
+	patched, err := ReplaceRouteRulesObj(obj, "migration-route", []byte("rules:\n  routing:\n    default: msk\n"))
+	require.NoError(t, err)
+
+	assert.NotNil(t, routeRulesByEndpoint(t, patched, "migration-route", "gateway:9595"),
+		"the first name-matching route must be patched")
+	assert.Nil(t, routeRulesByEndpoint(t, patched, "migration-route", "gateway:9596"),
+		"the second name-matching route must be left untouched")
+}
+
 func TestReplaceRouteRules_ParsesBytesAndDelegates(t *testing.T) {
 	patched, err := ReplaceRouteRules([]byte(baseRouteCR), "migration-route", []byte("rules:\n  routing:\n    default: msk\n"))
 	require.NoError(t, err)

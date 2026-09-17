@@ -9,8 +9,9 @@ import (
 
 // mockClusterLinkService implements clusterlink.Service using function fields
 // for test control, mirroring migration's own (unexported, package-private)
-// mockClusterLinkService — this is TBM's own copy, not shared, since the two
-// packages intentionally have no cross-imports.
+// mockClusterLinkService — this is TBM's own copy: test
+// doubles are kept per-package even where the underlying interface is
+// shared.
 type mockClusterLinkService struct {
 	getClusterLinkFn      func(ctx context.Context, config clusterlink.Config) (*clusterlink.ClusterLink, error)
 	listMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config) ([]clusterlink.MirrorTopic, error)

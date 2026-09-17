@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -104,6 +103,21 @@ func (s *MigrationActions) SetHotReloadTimeout(d time.Duration) {
 	s.hotReloadTimeout = d
 }
 
+// verifier builds the shared gateway apply/wait/verify mechanism, seeded
+// with this run's current capability and timeouts. TBM's own Actions type
+// builds the identical thing (see tbm's verifier() method) — only how each
+// derives CR bytes and adopts a newly resolved capability differs, which
+// stays here rather than in gateway.TransitionVerifier itself.
+func (s *MigrationActions) verifier() *gateway.TransitionVerifier {
+	return &gateway.TransitionVerifier{
+		Service:          s.gatewayService,
+		Reporter:         s.reporter,
+		Capability:       s.gatewayCapability,
+		RolloutTimeout:   s.rolloutTimeout,
+		HotReloadTimeout: s.hotReloadTimeout,
+	}
+}
+
 // ensureGatewayCapability resolves gatewayCapability at most once per
 // process: the first of FenceGateway or SwitchGateway to run this call
 // actually resolves it (and smoke-tests hot-reload); whichever runs second,
@@ -151,13 +165,13 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 	if err != nil {
 		return fmt.Errorf("failed to derive switched gateway CR: %w", err)
 	}
-	capability, err := s.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName,
-		gatewayConfigPort(config), fencedCrYAML, switchedCrYAML)
-	if err != nil {
-		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
-	}
 
 	previous := config.GatewayVerificationMode
+	capability, err := s.verifier().ResolveCapability(ctx, config.K8sNamespace, config.InitialCrName,
+		gatewayConfigPort(config), fencedCrYAML, switchedCrYAML)
+	if err != nil {
+		return err
+	}
 	s.gatewayCapability = capability
 	// Set here, not only in ensureGatewayCapability: a caller that resolves
 	// capability directly (bypassing ensureGatewayCapability — every
@@ -178,97 +192,14 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 			previous, capability.Mode)
 	}
 
-	if capability.Advisory != "" {
-		s.reporter.detail("%s", capability.Advisory)
-	}
-	slog.Debug("resolved gateway verification capability",
-		"mode", capability.Mode, "crdSupportsConfigId", capability.CRDSupportsConfigID,
-		"hotReloadEnabled", capability.HotReloadEnabled, "previousMode", previous)
-
 	return nil
 }
 
-// gatewayApplyResult carries what an apply produced that a later verification
-// needs to interpret the cluster's response.
-type gatewayApplyResult struct {
-	// ConfigID is the config revision the API server stored, or "" when the
-	// cluster cannot report one — which is the signal to verify by pod rollout
-	// instead.
-	ConfigID string
-	// BaselineDeploymentGeneration is the backing Deployment's
-	// metadata.generation read immediately BEFORE the apply. The rollout waits
-	// compare against it to tell a roll this apply caused from a Deployment that
-	// was simply already healthy. 0 means it could not be read, which those waits
-	// treat as "any generation counts as a bump" — the conservative direction.
-	BaselineDeploymentGeneration int64
-}
-
-// gatewayDeploymentBaseline reads the backing Deployment's generation
-// immediately before an apply, so a later rollout wait can recognise a roll
-// that apply caused. A read failure is not fatal: the baseline is only an
-// input to the rollout path, and 0 makes that path conservative rather than
-// wrong. Failing the migration here would be a regression for the configId
-// path, which never consults it.
-func (s *MigrationActions) gatewayDeploymentBaseline(ctx context.Context, config *MigrationConfig, step string) int64 {
-	baseline, err := s.gatewayService.GetGatewayDeploymentGeneration(ctx, config.K8sNamespace, config.InitialCrName)
-	if err != nil {
-		slog.Debug("could not read the gateway deployment generation before applying; "+
-			"any generation will count as a rollout", "step", step, "error", err)
-		return 0
-	}
-	return baseline
-}
-
 // applyGatewayCR applies a gateway CR, attaching a fresh config revision id when
-// the cluster supports one.
-//
-// A fresh id on every apply has a second benefit beyond verification: it
-// guarantees the spec changes, so metadata.generation always advances. That
-// closes the no-op blind spot where an apply that changed nothing leaves
-// observedGeneration already satisfied and every downstream wait reports success
-// for a transition that never happened.
-func (s *MigrationActions) applyGatewayCR(ctx context.Context, config *MigrationConfig, yamlData []byte, step string) (gatewayApplyResult, error) {
-	var configID string
-	if s.gatewayCapability.InjectsConfigID() {
-		var err error
-		configID, err = gateway.NewConfigID()
-		if err != nil {
-			return gatewayApplyResult{}, err
-		}
-	}
-
-	baseline := s.gatewayDeploymentBaseline(ctx, config, step)
-
-	slog.Debug("applying gateway CR", "step", step, "gateway", config.InitialCrName,
-		"configId", configID, "baselineDeploymentGeneration", baseline)
-
-	storedConfigID, err := s.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, yamlData, configID)
-	if err != nil {
-		return gatewayApplyResult{}, err
-	}
-	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
-}
-
-// applyGatewayConfigIDOnly stamps a fresh configId on the gateway without
-// applying — or owning — anything else. Used only by VerifyHotReloadCapability;
-// every other caller needs the CR's actual spec change and uses applyGatewayCR.
-// Callers must only reach this when InjectsConfigID() is true.
-func (s *MigrationActions) applyGatewayConfigIDOnly(ctx context.Context, config *MigrationConfig, step string) (gatewayApplyResult, error) {
-	configID, err := gateway.NewConfigID()
-	if err != nil {
-		return gatewayApplyResult{}, err
-	}
-
-	baseline := s.gatewayDeploymentBaseline(ctx, config, step)
-
-	slog.Debug("applying gateway configId only", "step", step, "gateway", config.InitialCrName,
-		"configId", configID, "baselineDeploymentGeneration", baseline)
-
-	storedConfigID, err := s.gatewayService.ApplyGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, configID)
-	if err != nil {
-		return gatewayApplyResult{}, err
-	}
-	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+// the cluster supports one. See gateway.TransitionVerifier.ApplyCR for why a
+// fresh id is attached on every apply.
+func (s *MigrationActions) applyGatewayCR(ctx context.Context, config *MigrationConfig, yamlData []byte, step string) (gateway.ApplyResult, error) {
+	return s.verifier().ApplyCR(ctx, config.K8sNamespace, config.InitialCrName, yamlData, step)
 }
 
 // waitForGatewayConfigApplied blocks until every ready gateway pod reports the
@@ -282,131 +213,24 @@ func (s *MigrationActions) applyGatewayConfigIDOnly(ctx context.Context, config 
 // transition that legitimately rolls — a switchover whose CR adds a route or a
 // TLS secret, exactly the case that motivated per-pod verification — would be cut
 // off at 90s with traffic already fenced.
-func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, config *MigrationConfig, applied gatewayApplyResult, step string) error {
-	s.reporter.detail("Waiting for every gateway pod to apply the new config...")
-	slog.Debug("waiting for per-pod configId", "step", step, "configId", applied.ConfigID,
-		"port", gatewayConfigPort(config), "hotReloadTimeout", s.gatewayHotReloadTimeout(),
-		"rollTimeout", s.rolloutTimeout, "baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
-
-	err := s.gatewayService.WaitForGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, gateway.ConfigWaitOptions{
-		ConfigID:                     applied.ConfigID,
-		Port:                         gatewayConfigPort(config),
-		BaselineDeploymentGeneration: applied.BaselineDeploymentGeneration,
-		// Load-bearing for fence correctness, not just a latency knob. This wait
-		// returns up to one interval after the gateway actually converged, and
-		// detectUnroutedProducers takes its first offset snapshot the instant it
-		// returns — with no tolerance, so a single late message aborts the
-		// migration for a rogue producer that does not exist. Measured against a
-		// real licensed gateway (see integration-tests/migration-hot-reload), the
-		// last acknowledged write landed 0.4s-2.5s BEFORE this returned, scattered
-		// across the interval: that margin is supplied by this poll lag, not by
-		// the fence, whose own settle time looks like roughly zero. Shrinking this
-		// shrinks the margin toward zero with it.
-		PollInterval:     2 * time.Second,
-		HotReloadTimeout: s.gatewayHotReloadTimeout(),
-		RollTimeout:      s.rolloutTimeout,
-		OnProgress:       s.printConfigWaitProgress,
-	})
-	if err != nil {
-		return fmt.Errorf("failed waiting for the gateway to apply the %s config on every pod: %w", step, err)
-	}
-
-	s.reporter.success("All gateway pods have applied the new config")
-	return nil
+func (s *MigrationActions) waitForGatewayConfigApplied(ctx context.Context, config *MigrationConfig, applied gateway.ApplyResult, step string) error {
+	return s.verifier().WaitForConfigApplied(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config), applied, step)
 }
 
 // verifyGatewayTransition confirms a transition landed, by whichever means the
 // cluster supports. An empty applied.ConfigID means the cluster cannot report a
 // config revision, so this falls back to the Deployment rollout wait.
-func (s *MigrationActions) verifyGatewayTransition(ctx context.Context, config *MigrationConfig, applied gatewayApplyResult, step string) error {
-	if applied.ConfigID != "" {
-		return s.waitForGatewayConfigApplied(ctx, config, applied, step)
-	}
-
-	s.reporter.detail("Waiting for gateway readiness...")
-	slog.Debug("waiting for gateway readiness", "step", step, "rolloutTimeout", s.rolloutTimeout,
-		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
-
-	if err := s.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName,
-		applied.BaselineDeploymentGeneration, 5*time.Second, s.rolloutTimeout, s.printGatewayReadinessProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway readiness during %s: %w", step, err)
-	}
-	return nil
+func (s *MigrationActions) verifyGatewayTransition(ctx context.Context, config *MigrationConfig, applied gateway.ApplyResult, step string) error {
+	return s.verifier().VerifyTransition(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config), applied, step)
 }
 
 // VerifyHotReloadCapability proves the gateway really does apply config
-// revisions, before any traffic-affecting change is made.
-//
-// This closes a hole that no Kubernetes or CFK signal can: the gateway gates its
-// config-file watcher on an Enterprise licence, so with a trial licence
-// spec.hotReload.enabled is true, CFK renders the new config, promotes the
-// shared ConfigMap, projects it into every pod, and reports
-// hot-reload-status=Succeeded — while the gateway never applies it and /config
-// keeps serving the previous revision. Detecting that after fencing would mean
-// discovering it with traffic already blocked.
-//
-// The check applies spec.configId alone, under its own field manager
-// (gateway.ApplyGatewayConfigID) rather than re-applying the live spec under
-// kcp-migration. That used to be the design — re-apply the live CR verbatim
-// plus a fresh configId — and it was safe to run at any point in a migration
-// for the same reason it was dangerous: server-side apply shares field
-// ownership by manager, so declaring the whole live spec under the same
-// manager the fence and switchover CRs apply under pre-seeded kcp's ownership
-// of every field on the gateway. The fence apply — which typically omits
-// fields the live spec carries and the fenced CR does not repeat, e.g.
-// spec.hotReload when the fenced CR relies on inheriting it — then became a
-// narrowing apply under that same manager, and server-side apply prunes a
-// field an earlier apply from the same manager declared once a later one
-// omits it. A dedicated, disjoint field manager that owns nothing but
-// spec.configId can't create that hazard, which is what makes this safe to
-// run at any point in a migration, including a resume.
+// revisions, before any traffic-affecting change is made. See
+// gateway.TransitionVerifier.VerifyHotReloadCapability's doc comment for why
+// this matters and why a dedicated field manager makes it safe to call at
+// any point, including a resume.
 func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config *MigrationConfig) error {
-	if !s.gatewayCapability.InjectsConfigID() {
-		return nil
-	}
-
-	s.reporter.detail("Checking the gateway applies config revisions in place...")
-
-	applied, err := s.applyGatewayConfigIDOnly(ctx, config, "hot-reload check")
-	if err != nil {
-		return fmt.Errorf("failed to apply the gateway hot-reload check: %w", err)
-	}
-	if applied.ConfigID == "" {
-		return fmt.Errorf("the gateway hot-reload check applied no config revision")
-	}
-
-	if err := s.waitForGatewayAccepted(ctx, config, "hot-reload check"); err != nil {
-		return err
-	}
-
-	if err := s.waitForGatewayConfigApplied(ctx, config, applied, "hot-reload check"); err != nil {
-		s.reporter.remediation("A configId-only change must hot-reload without restarting pods. When it never reaches the pods, the\n"+
-			"   gateway's config watcher is not running — most often because the gateway holds a trial rather than an\n"+
-			"   Enterprise licence. CFK reports success regardless, so check the gateway itself:\n"+
-			"   kubectl -n %s logs -l app=%s | grep -i hot-reload", config.K8sNamespace, config.InitialCrName)
-		return err
-	}
-
-	return nil
-}
-
-// printConfigWaitProgress renders one line per poll tick of the per-pod configId
-// wait. The converged tick is silent — the caller prints the success line.
-func (s *MigrationActions) printConfigWaitProgress(p gateway.ConfigWaitProgress) {
-	if p.Converged {
-		return
-	}
-	// Naming the mechanism explains why a wait is taking as long as it is: a
-	// roll has pods to replace, an in-place apply does not. It is only ever a
-	// description of what has been observed — the verdict comes from the pods
-	// reporting the configId, never from the mechanism.
-	if p.Mechanism == gateway.MechanismPodRoll {
-		s.reporter.detail("Gateway pods are rolling — %d/%d have applied the new config (elapsed %s)",
-			p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
-		return
-	}
-	s.reporter.detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config (elapsed %s)",
-		p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
+	return s.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config))
 }
 
 // gatewayConfigPort returns the port to poll GET /config on, tolerating a
@@ -421,10 +245,7 @@ func gatewayConfigPort(config *MigrationConfig) int {
 // gatewayHotReloadTimeout returns the configId verification deadline, never
 // unbounded — see the field comment.
 func (s *MigrationActions) gatewayHotReloadTimeout() time.Duration {
-	if s.hotReloadTimeout <= 0 {
-		return gateway.DefaultHotReloadTimeout
-	}
-	return s.hotReloadTimeout
+	return s.verifier().HotReloadTimeoutOrDefault()
 }
 
 // SetPromoteBatchSize caps how many mirror topics are promoted per batch during
@@ -459,7 +280,7 @@ func (s *MigrationActions) Initialize(
 	config.GatewayYAML = res.GatewayYAML
 	config.Route = res.Route
 	config.Mode = res.Mode
-	s.reporter.success("Reconcile plan accepted (%d topic(s) in plan)", len(res.Topics))
+	s.reporter.Success("Reconcile plan accepted (%d topic(s) in plan)", len(res.Topics))
 
 	// Gateway capability is NOT resolved here: there is no separate advisory
 	// moment to resolve it for anymore (execute is the only command), and
@@ -501,7 +322,7 @@ func (s *MigrationActions) Initialize(
 		case observed != "true":
 			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
 		}
-		s.reporter.success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
+		s.reporter.Success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
 	}
 
 	// Defensive guard: never overwrite the pre-disable snapshot once the
@@ -624,87 +445,19 @@ func (s *MigrationActions) CheckLags(
 // given topics concurrently — the clusters are independent, so a poll tick
 // pays the slower of the two sweeps rather than their sum.
 func (s *MigrationActions) fetchSourceAndDestinationOffsets(ctx context.Context, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
-	var (
-		wg                 sync.WaitGroup
-		source, dest       map[string]map[int32]int64
-		sourceErr, destErr error
-	)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		source, sourceErr = s.sourceOffset.GetMany(ctx, topics)
-	}()
-	go func() {
-		defer wg.Done()
-		dest, destErr = s.destinationOffset.GetMany(ctx, topics)
-	}()
-	wg.Wait()
-
-	var errs []error
-	if sourceErr != nil {
-		errs = append(errs, fmt.Errorf("failed to get source offsets: %w", sourceErr))
-	}
-	if destErr != nil {
-		errs = append(errs, fmt.Errorf("failed to get destination offsets: %w", destErr))
-	}
-	if len(errs) > 0 {
-		return nil, nil, errors.Join(errs...)
-	}
-	return source, dest, nil
+	return offset.FetchSourceAndDestinationOffsets(ctx, s.sourceOffset, s.destinationOffset, topics)
 }
 
 // formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655")
 func formatLag64(n int64) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var result []byte
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result = append(result, ',')
-		}
-		result = append(result, byte(c))
-	}
-	return string(result)
+	return gateway.FormatLag64(n)
 }
 
 // waitForGatewayAccepted blocks until the Confluent operator has accepted the
-// gateway CR just applied, and must be called after every apply and before the
-// Deployment-based readiness/pod waits.
-//
-// Those waits only ever look at the apps/v1 Deployment. When the operator
-// rejects a CR it never touches the Deployment, so the Deployment sits complete
-// and healthy running the *previous* generation's pods, still at the generation
-// the baseline captured — the readiness wait sees no rollout to converge on,
-// reports "No pod restart required" and returns nil. That is how a switchover
-// whose CR referenced a missing secret was reported as a completed migration
-// while the gateway stayed fenced and every client stayed blocked. Confirming the
-// operator accepted the spec is the only signal that distinguishes a genuine
-// no-op apply from a refused one.
-//
-// step names the phase for the error message ("fence", "switchover",
-// "unfence"). An operator rejection is returned as-is: gateway.GatewayRejectedError
-// already carries the operator's own reason and message, and callers can
-// errors.As it.
+// gateway CR just applied. See gateway.TransitionVerifier.WaitForAccepted's
+// doc comment for why this matters.
 func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *MigrationConfig, step string) error {
-	s.reporter.detail("Waiting for gateway reconcile...")
-	slog.Debug("waiting for gateway acceptance", "step", step, "gateway", config.InitialCrName, "rolloutTimeout", s.rolloutTimeout)
-
-	err := s.gatewayService.WaitForGatewayAccepted(ctx, config.K8sNamespace, config.InitialCrName, 2*time.Second, s.rolloutTimeout)
-	if err == nil {
-		return nil
-	}
-
-	var rejected *gateway.GatewayRejectedError
-	if errors.As(err, &rejected) {
-		// The rejection itself is rendered once upstream from the returned
-		// error; only add what the error cannot carry — how to go look.
-		s.reporter.remediation("Confluent operator rejected the %s gateway spec. Inspect its view of the gateway:\n"+
-			"   kubectl -n %s get gateway %s -o jsonpath='{.status.conditions}'", step, config.K8sNamespace, config.InitialCrName)
-		return err
-	}
-	return fmt.Errorf("failed waiting for gateway reconcile during %s: %w", step, err)
+	return s.verifier().WaitForAccepted(ctx, config.K8sNamespace, config.InitialCrName, step)
 }
 
 // FenceGateway applies the fenced gateway CR YAML to block traffic, confirms the
@@ -776,7 +529,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
 	slog.Debug("fenced gateway CR applied")
-	s.reporter.success("Fenced gateway CR applied")
+	s.reporter.Success("Fenced gateway CR applied")
 
 	// The fenced spec is now live in the cluster, so from here on every failure
 	// leaves it there — possibly holding client traffic on some or all pods.
@@ -789,7 +542,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	}
 
 	slog.Debug("gateway fenced and ready")
-	s.reporter.success("Gateway fenced and ready")
+	s.reporter.Success("Gateway fenced and ready")
 	return nil
 }
 
@@ -800,7 +553,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 func (s *MigrationActions) confirmFence(
 	ctx context.Context,
 	config *MigrationConfig,
-	applied gatewayApplyResult,
+	applied gateway.ApplyResult,
 	oldPodUIDs map[k8stypes.UID]struct{},
 	capturePods bool,
 ) error {
@@ -819,7 +572,7 @@ func (s *MigrationActions) confirmFence(
 		// With detection on and no configId to verify, wait until the old
 		// unfenced pods are gone rather than just until the new pod is Ready —
 		// see the comment in FenceGateway.
-		s.reporter.detail("Waiting for gateway readiness...")
+		s.reporter.Detail("Waiting for gateway readiness...")
 		slog.Debug("waiting for gateway pod replacement", "rolloutTimeout", s.rolloutTimeout,
 			"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
 		if err := s.gatewayService.WaitForGatewayPods(ctx, config.K8sNamespace, config.InitialCrName, oldPodUIDs,
@@ -898,7 +651,7 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
 	}
 	slog.Debug("initial gateway CR applied")
-	s.reporter.success("Initial gateway CR applied")
+	s.reporter.Success("Initial gateway CR applied")
 
 	// Rollback is the worst place to be blind to a rejected apply: without the
 	// acceptance check this reports traffic restored while the gateway is still
@@ -915,51 +668,7 @@ func (s *MigrationActions) unfenceGateway(ctx context.Context, config *Migration
 // means a producer is writing directly to the source cluster (bypassing the
 // fenced gateway) and the migration should not proceed.
 func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
-	// Snapshot 1 — one batched sweep across all topics.
-	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
-	snapshot1, err := s.sourceOffset.GetMany(ctx, topics)
-	if err != nil {
-		return fmt.Errorf("failed to get source offsets: %w", err)
-	}
-
-	// Wait, then snapshot 2
-	s.reporter.detail("Monitoring source offsets for %s...", duration)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(duration):
-	}
-
-	slog.Debug("taking second source offset snapshot")
-	snapshot2, err := s.sourceOffset.GetMany(ctx, topics)
-	if err != nil {
-		return fmt.Errorf("failed to get source offsets: %w", err)
-	}
-
-	var violations []string
-	for _, topic := range topics {
-		for p, o2 := range snapshot2[topic] {
-			// A partition absent from the first snapshot (e.g. created during
-			// the window) starts at offset 0, so any data on it was written
-			// after fencing — the zero-value baseline flags it.
-			o1 := snapshot1[topic][p]
-			if o2 > o1 {
-				delta := o2 - o1
-				rate := float64(delta) / duration.Seconds()
-				violations = append(violations, fmt.Sprintf(
-					"topic %s partition %d: offset %d → %d (+%d, ~%.0f msg/s)",
-					topic, p, o1, o2, delta, rate))
-			}
-		}
-	}
-
-	if len(violations) > 0 {
-		sort.Strings(violations)
-		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
-			ErrUnroutedProducers, strings.Join(violations, "\n  "))
-	}
-
-	return nil
+	return offset.DetectUnroutedProducers(ctx, s.sourceOffset, s.reporter, topics, duration)
 }
 
 // PauseOffsetSync runs the pause_offset_sync stage: with the operator's
@@ -975,12 +684,12 @@ func (s *MigrationActions) PauseOffsetSync(
 ) error {
 	if !config.PauseConsumerOffsetSync {
 		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
-		s.reporter.detail("Offset-sync pause not requested — skipping")
+		s.reporter.Detail("Offset-sync pause not requested — skipping")
 		return nil
 	}
 	if config.PauseConsumerOffsetSyncFlipped {
 		slog.Info("⏭️ consumer.offset.sync.enable already flipped, skipping pause", "migrationId", config.MigrationId)
-		s.reporter.detail("consumer.offset.sync already paused — skipping")
+		s.reporter.Detail("consumer.offset.sync already paused — skipping")
 		return nil
 	}
 
@@ -1015,7 +724,7 @@ func (s *MigrationActions) PauseOffsetSync(
 	// cancels the transition, matching the drift-refusal path above. 0 (the
 	// default) skips the wait entirely — the prior immediate-disable behaviour.
 	if drain := config.ConsumerOffsetSyncDrainDuration; drain > 0 {
-		s.reporter.detail("Draining consumer offset sync for %s before pausing...", drain)
+		s.reporter.Detail("Draining consumer offset sync for %s before pausing...", drain)
 		slog.Debug("draining consumer offset sync before disable", "duration", drain, "clusterLinkName", config.ClusterLinkName)
 		select {
 		case <-ctx.Done():
@@ -1041,7 +750,7 @@ func (s *MigrationActions) PauseOffsetSync(
 		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
 	}
 
-	s.reporter.success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
+	s.reporter.Success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
 	return nil
 }
 
@@ -1073,7 +782,7 @@ func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationConfig) error {
 	if config.DetectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
-		s.reporter.detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
+		s.reporter.Detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
 		return nil
 	}
 
@@ -1084,7 +793,7 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 	if err := s.detectUnroutedProducers(ctx, config.Topics, config.DetectUnroutedProducersDuration); err != nil {
 		return err
 	}
-	s.reporter.success("Source offsets stable — no unrouted producers detected")
+	s.reporter.Success("Source offsets stable — no unrouted producers detected")
 	return nil
 }
 
@@ -1141,7 +850,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 			for topic := range awaitingStop {
 				status := statusByTopic[topic]
 				if status == clusterlink.MirrorStatusStopped {
-					s.reporter.success("%s stopped", topic)
+					s.reporter.Success("%s stopped", topic)
 					slog.Debug("mirror topic promotion confirmed stopped", "topic", topic)
 					delete(awaitingStop, topic)
 					delete(remaining, topic)
@@ -1160,7 +869,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		// In batch mode, don't start a new batch until the current one has
 		// fully drained to STOPPED — this makes each batch synchronous.
 		if s.promoteBatchSize > 0 && len(awaitingStop) > 0 {
-			s.reporter.detail("Waiting for current batch of %d topic(s) to reach STOPPED...",
+			s.reporter.Detail("Waiting for current batch of %d topic(s) to reach STOPPED...",
 				len(awaitingStop))
 			slog.Debug("batch in flight, waiting for STOPPED before next batch",
 				"awaitingStop", len(awaitingStop), "pollInterval", s.promotePollInterval)
@@ -1216,12 +925,12 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 
 		if len(topicsToPromote) == 0 {
 			if len(awaitingStop) > 0 {
-				s.reporter.detail("Waiting for %d promoted topic(s) to reach STOPPED...",
+				s.reporter.Detail("Waiting for %d promoted topic(s) to reach STOPPED...",
 					len(awaitingStop))
 				slog.Debug("waiting for accepted promotions to reach STOPPED",
 					"awaitingStop", len(awaitingStop), "pollInterval", s.promotePollInterval)
 			} else {
-				s.reporter.detail("Waiting for lag to reach zero (%d topics remaining)...",
+				s.reporter.Detail("Waiting for lag to reach zero (%d topics remaining)...",
 					len(remaining))
 				slog.Debug("no topics at zero lag yet, waiting",
 					"remaining", len(remaining), "pollInterval", s.promotePollInterval)
@@ -1235,7 +944,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 		}
 
 		// Promote topics confirmed at zero lag
-		s.reporter.success("%s confirmed at zero lag",
+		s.reporter.Success("%s confirmed at zero lag",
 			color.WhiteString("%d/%d topics", len(topicsToPromote), len(remaining)))
 		for _, topic := range topicsToPromote {
 			s.reporter.line(fmt.Sprintf("   %s %s  %s %s",
@@ -1244,7 +953,7 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 				color.CyanString("lag:"),
 				color.GreenString("0")))
 		}
-		s.reporter.detail("Promoting %d mirror topics...", len(topicsToPromote))
+		s.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		promoteResponse, err := s.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
@@ -1321,7 +1030,7 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
 	slog.Debug("switchover gateway CR applied")
-	s.reporter.success("Switchover gateway CR applied")
+	s.reporter.Success("Switchover gateway CR applied")
 
 	if err := s.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
 		return err
@@ -1332,43 +1041,21 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 	}
 
 	slog.Debug("gateway switchover complete")
-	s.reporter.success("Gateway switchover complete")
+	s.reporter.Success("Gateway switchover complete")
 	return nil
 }
 
-// printGatewayReadinessProgress renders one line per poll tick combining the
-// operator-reported readiness with elapsed time and a pod-readiness snapshot.
-// A no-op signal (RolloutDetected=false) is preserved from the previous
-// implementation so users see "no pod restart required" when an apply did not
-// trigger a rollout.
-func (s *MigrationActions) printGatewayReadinessProgress(p gateway.GatewayReadinessProgress) {
-	if !p.RolloutDetected {
-		s.reporter.success("No pod restart required")
-		return
-	}
-	if p.InitialPodCount > 0 {
-		s.reporter.detail("%d/%d pods ready (elapsed %s)", p.PodsReady, p.InitialPodCount, formatElapsed(p.Elapsed))
-	} else {
-		s.reporter.detail("gateway reconciling (elapsed %s)", formatElapsed(p.Elapsed))
-	}
-}
-
 // printPodRolloutProgress renders WaitForGatewayPods progress. Mirrors
-// printGatewayReadinessProgress but reports the pod-replacement view — how many
-// new pods are Ready and how many old (pre-fence) pods still remain — since the
-// fence wait now gates on the old pods being gone, not just new-pod readiness.
+// gateway.TransitionVerifier's own printGatewayReadinessProgress but reports
+// the pod-replacement view — how many new pods are Ready and how many old
+// (pre-fence) pods still remain — since the fence wait now gates on the old
+// pods being gone, not just new-pod readiness. Unique to migration: TBM's
+// Fence has no equivalent pod-UID capture (see FenceGateway's doc comment).
 func (s *MigrationActions) printPodRolloutProgress(p gateway.PodRolloutProgress) {
 	if !p.RolloutDetected {
-		s.reporter.success("No pod restart required")
+		s.reporter.Success("No pod restart required")
 		return
 	}
-	s.reporter.detail("%d/%d new pods ready, %d old pods remaining",
+	s.reporter.Detail("%d/%d new pods ready, %d old pods remaining",
 		p.NewPodsReady, p.InitialPodCount, p.OldPodsRemaining)
-}
-
-// formatElapsed rounds the elapsed duration to whole seconds so the progress
-// line is stable across poll ticks (sub-second jitter would churn the
-// rendered string each tick).
-func formatElapsed(d time.Duration) string {
-	return d.Round(time.Second).String()
 }

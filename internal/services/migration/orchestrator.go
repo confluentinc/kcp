@@ -9,13 +9,17 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/looplab/fsm"
 )
 
 // ErrUnroutedProducers is returned when the post-fence check detects producers
 // bypassing the gateway. The orchestrator catches this to trigger an
-// EventAbortFence transition back to initialized state.
-var ErrUnroutedProducers = errors.New("unrouted producers detected")
+// EventAbortFence transition back to initialized state. Re-exported from
+// offset.ErrUnroutedProducers (the package that actually detects and wraps
+// it) so every existing errors.Is call site in this package keeps working
+// unchanged.
+var ErrUnroutedProducers = offset.ErrUnroutedProducers
 
 // ErrFenceUnconfirmed marks a fence whose CR reached the cluster but whose
 // effect on the serving pods was never confirmed. The orchestrator catches it to
@@ -397,9 +401,9 @@ func (o *MigrationOrchestrator) restoreAfterUnconfirmedFence(ctx context.Context
 	}
 
 	if definiteRejection {
-		o.reporter.success("Initial gateway CR restored — the rejected fenced spec has been superseded")
+		o.reporter.Success("Initial gateway CR restored — the rejected fenced spec has been superseded")
 	} else {
-		o.reporter.success("Initial gateway CR restored — the fenced config cannot take effect later")
+		o.reporter.Success("Initial gateway CR restored — the fenced config cannot take effect later")
 	}
 	return stepFailure
 }
@@ -520,7 +524,7 @@ func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) 
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))
 		return
 	}
-	o.reporter.success("Gateway unfenced — traffic restored to pre-migration state")
+	o.reporter.Success("Gateway unfenced — traffic restored to pre-migration state")
 }
 
 // onSwitch runs the switch transition: delegates to workflow SwitchGateway.

@@ -85,7 +85,7 @@ func restoreOffsetSync(
 		currentConfigs, err := cl.ListConfigs(listCtx, clCfg)
 		listCancel()
 		if err != nil {
-			r.remediation(
+			r.Remediation(
 				"%s failed to read current configs on cluster link %q for restore (%v).\n   The cluster link may still be in the paused state — re-apply %s=true and any %s* configs manually before resuming normal operation.",
 				situation,
 				config.ClusterLinkName,
@@ -151,7 +151,7 @@ func restoreOffsetSync(
 		if err := persist(); err != nil {
 			slog.Warn("cleared restore marker but failed to persist state file", "err", err)
 		}
-		r.success("%s* configs already match init snapshot on cluster link %s", consumerOffsetPrefix, config.ClusterLinkName)
+		r.Success("%s* configs already match init snapshot on cluster link %s", consumerOffsetPrefix, config.ClusterLinkName)
 		return
 	}
 
@@ -176,7 +176,7 @@ func restoreOffsetSync(
 			if len(applied) > 0 {
 				appliedStr = strings.Join(applied, ", ")
 			}
-			r.remediation(
+			r.Remediation(
 				"%s failed to restore %s* configs on cluster link %q (%v).\n   Applied: %s.\n   Still owed: %s — re-apply manually before resuming normal operation.",
 				situation,
 				consumerOffsetPrefix,
@@ -197,7 +197,7 @@ func restoreOffsetSync(
 	for i, a := range alterations {
 		names[i] = a.Name
 	}
-	r.success("restored %s* configs on cluster link %s: %s", consumerOffsetPrefix, config.ClusterLinkName, strings.Join(names, ", "))
+	r.Success("restored %s* configs on cluster link %s: %s", consumerOffsetPrefix, config.ClusterLinkName, strings.Join(names, ", "))
 }
 
 // WarnIfPausedOnExecuteFailure prints a stderr remediation message when
@@ -237,7 +237,7 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 	}
 	switch config.CurrentState {
 	case StateFenced, StateOffsetSyncPaused:
-		newReporter().remediation(
+		newReporter().Remediation(
 			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — it retries the pause or completes the rollback as needed.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
 			execErr,
 			config.ClusterLinkName,
@@ -245,7 +245,7 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 			offsetSyncEnableKey,
 		)
 	case StateFenceVerified:
-		newReporter().remediation(
+		newReporter().Remediation(
 			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to resume — traffic stays blocked until the switchover completes.\n   If a re-run is impossible, manually re-apply the initial gateway CR and re-enable %s=true on the cluster link.",
 			execErr,
 			config.ClusterLinkName,
@@ -253,14 +253,14 @@ func WarnIfPausedOnExecuteFailure(config *MigrationConfig, execErr error) {
 			offsetSyncEnableKey,
 		)
 	case StatePromoted:
-		newReporter().remediation(
+		newReporter().Remediation(
 			"Migration execute failed (%v) while the gateway is still fenced and cluster link %q has %s=false.\n   Client traffic through the gateway is blocked and consumer offsets are not syncing.\n   Re-run `kcp migration execute` to complete the switchover and restore client traffic.\n   Do not re-apply the initial gateway CR: topics are already promoted, and routing clients back to the source would diverge data.",
 			execErr,
 			config.ClusterLinkName,
 			offsetSyncEnableKey,
 		)
 	default:
-		newReporter().remediation(
+		newReporter().Remediation(
 			"Migration execute failed (%v) while cluster link %q has %s=false.\n   Re-run `kcp migration execute` to resume — the bookend is idempotent and the restore will run after a successful switchover — or manually re-enable %s=true on the cluster link.",
 			execErr,
 			config.ClusterLinkName,

@@ -2,29 +2,12 @@ package tbm
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"log/slog"
-	"time"
 
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/goccy/go-yaml"
 )
-
-// gatewayApplyResult carries what an apply produced that a later verification
-// needs to interpret the cluster's response. Mirrors
-// migration.gatewayApplyResult.
-type gatewayApplyResult struct {
-	// ConfigID is the config revision the API server stored, or "" when the
-	// cluster cannot report one — the signal to verify by pod rollout instead.
-	ConfigID string
-	// BaselineDeploymentGeneration is the backing Deployment's
-	// metadata.generation read immediately BEFORE the apply. 0 means it could
-	// not be read, which the rollout waits treat as "any generation counts as
-	// a bump".
-	BaselineDeploymentGeneration int64
-}
 
 // deriveFencedCRYAML builds the fenced CR bytes from the captured gateway CR
 // snapshot by replacing config.Route's rules subtree with config.FenceYAML,
@@ -57,6 +40,21 @@ func deriveSwitchedCRYAML(config *migration.MigrationConfig) ([]byte, error) {
 		return nil, fmt.Errorf("failed to parse gateway CR YAML: %w", err)
 	}
 	return gateway.ReplaceRouteRulesObj(base, config.Route, []byte(config.SwitchoverYAML))
+}
+
+// verifier builds the shared gateway apply/wait/verify mechanism, seeded
+// with this run's current capability and timeouts. migration's own Actions
+// type builds the identical thing (see migration.MigrationActions.verifier)
+// — only how each derives CR bytes and adopts a newly resolved capability
+// differs, which stays here rather than in gateway.TransitionVerifier itself.
+func (a *TBMActions) verifier() *gateway.TransitionVerifier {
+	return &gateway.TransitionVerifier{
+		Service:          a.gatewayService,
+		Reporter:         a.reporter,
+		Capability:       a.gatewayCapability,
+		RolloutTimeout:   a.rolloutTimeout,
+		HotReloadTimeout: a.hotReloadTimeout,
+	}
 }
 
 // ensureGatewayCapability resolves gatewayCapability at most once per
@@ -106,221 +104,44 @@ func (a *TBMActions) resolveGatewayCapability(ctx context.Context, config *migra
 		return fmt.Errorf("failed to derive switched gateway CR: %w", err)
 	}
 
-	capability, err := a.gatewayService.DetectCapability(ctx, config.K8sNamespace, config.InitialCrName,
+	capability, err := a.verifier().ResolveCapability(ctx, config.K8sNamespace, config.InitialCrName,
 		config.GatewayConfigPort, fencedCrYAML, switchedCrYAML)
 	if err != nil {
-		return fmt.Errorf("failed to determine how gateway transitions can be verified: %w", err)
+		return err
 	}
-
 	a.gatewayCapability = capability
-	if capability.Advisory != "" {
-		a.reporter.detail("%s", capability.Advisory)
-	}
 	if capability.Mode == gateway.VerifyPerPodConfigID {
-		a.reporter.success("Gateway transitions will be verified per pod via %s", gateway.GatewayConfigEndpointPath)
+		a.reporter.Success("Gateway transitions will be verified per pod via %s", gateway.GatewayConfigEndpointPath)
 	}
-	slog.Debug("resolved gateway verification capability",
-		"mode", capability.Mode, "crdSupportsConfigId", capability.CRDSupportsConfigID,
-		"hotReloadEnabled", capability.HotReloadEnabled)
 	return nil
 }
 
 // verifyHotReloadCapability proves the gateway really does apply config
-// revisions, before fencing touches any traffic. Ports
-// migration.MigrationActions.VerifyHotReloadCapability verbatim — see that
-// method's doc comment for why a dedicated, disjoint field manager (configId
-// only) is what makes this safe to call at any point, including a resume.
+// revisions, before fencing touches any traffic. See
+// gateway.TransitionVerifier.VerifyHotReloadCapability's doc comment for why
+// this matters and why a dedicated field manager makes it safe to call at
+// any point, including a resume.
 func (a *TBMActions) verifyHotReloadCapability(ctx context.Context, config *migration.MigrationConfig) error {
-	if !a.gatewayCapability.InjectsConfigID() {
-		return nil
-	}
-
-	a.reporter.detail("Checking the gateway applies config revisions in place...")
-
-	applied, err := a.applyGatewayConfigIDOnly(ctx, config, "hot-reload check")
-	if err != nil {
-		return fmt.Errorf("failed to apply the gateway hot-reload check: %w", err)
-	}
-	if applied.ConfigID == "" {
-		return fmt.Errorf("the gateway hot-reload check applied no config revision")
-	}
-
-	if err := a.waitForGatewayAccepted(ctx, config, "hot-reload check"); err != nil {
-		return err
-	}
-
-	if err := a.waitForGatewayConfigApplied(ctx, config, applied, "hot-reload check"); err != nil {
-		a.reporter.remediation("A configId-only change must hot-reload without restarting pods. When it never reaches the pods, the\n"+
-			"   gateway's config watcher is not running — most often because the gateway holds a trial rather than an\n"+
-			"   Enterprise licence. CFK reports success regardless, so check the gateway itself:\n"+
-			"   kubectl -n %s logs -l app=%s | grep -i hot-reload", config.K8sNamespace, config.InitialCrName)
-		return err
-	}
-
-	return nil
+	return a.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, config.GatewayConfigPort)
 }
 
 // applyGatewayCR applies a gateway CR, attaching a fresh config revision id
-// when the cluster supports one. Mirrors migration.MigrationActions.applyGatewayCR.
-func (a *TBMActions) applyGatewayCR(ctx context.Context, config *migration.MigrationConfig, yamlData []byte, step string) (gatewayApplyResult, error) {
-	var configID string
-	if a.gatewayCapability.InjectsConfigID() {
-		var err error
-		configID, err = gateway.NewConfigID()
-		if err != nil {
-			return gatewayApplyResult{}, err
-		}
-	}
-
-	baseline := a.gatewayDeploymentBaseline(ctx, config, step)
-
-	slog.Debug("applying gateway CR", "step", step, "gateway", config.InitialCrName,
-		"configId", configID, "baselineDeploymentGeneration", baseline)
-
-	storedConfigID, err := a.gatewayService.ApplyGatewayYAML(ctx, config.K8sNamespace, config.InitialCrName, yamlData, configID)
-	if err != nil {
-		return gatewayApplyResult{}, err
-	}
-	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+// when the cluster supports one. See gateway.TransitionVerifier.ApplyCR for
+// why a fresh id is attached on every apply.
+func (a *TBMActions) applyGatewayCR(ctx context.Context, config *migration.MigrationConfig, yamlData []byte, step string) (gateway.ApplyResult, error) {
+	return a.verifier().ApplyCR(ctx, config.K8sNamespace, config.InitialCrName, yamlData, step)
 }
 
-// applyGatewayConfigIDOnly stamps a fresh configId on the gateway without
-// applying — or owning — anything else. Used only by verifyHotReloadCapability.
-// Mirrors migration.MigrationActions.applyGatewayConfigIDOnly.
-func (a *TBMActions) applyGatewayConfigIDOnly(ctx context.Context, config *migration.MigrationConfig, step string) (gatewayApplyResult, error) {
-	configID, err := gateway.NewConfigID()
-	if err != nil {
-		return gatewayApplyResult{}, err
-	}
-
-	baseline := a.gatewayDeploymentBaseline(ctx, config, step)
-
-	slog.Debug("applying gateway configId only", "step", step, "gateway", config.InitialCrName,
-		"configId", configID, "baselineDeploymentGeneration", baseline)
-
-	storedConfigID, err := a.gatewayService.ApplyGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, configID)
-	if err != nil {
-		return gatewayApplyResult{}, err
-	}
-	return gatewayApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
-}
-
-// gatewayDeploymentBaseline reads the backing Deployment's generation
-// immediately before an apply. A read failure is not fatal — 0 makes the
-// rollout path conservative rather than wrong. Mirrors
-// migration.MigrationActions.gatewayDeploymentBaseline.
-func (a *TBMActions) gatewayDeploymentBaseline(ctx context.Context, config *migration.MigrationConfig, step string) int64 {
-	baseline, err := a.gatewayService.GetGatewayDeploymentGeneration(ctx, config.K8sNamespace, config.InitialCrName)
-	if err != nil {
-		slog.Debug("could not read the gateway deployment generation before applying; "+
-			"any generation will count as a rollout", "step", step, "error", err)
-		return 0
-	}
-	return baseline
-}
-
-// gatewayHotReloadTimeout returns the configId verification deadline, never
-// unbounded. Mirrors migration.MigrationActions.gatewayHotReloadTimeout.
-func (a *TBMActions) gatewayHotReloadTimeout() time.Duration {
-	if a.hotReloadTimeout <= 0 {
-		return gateway.DefaultHotReloadTimeout
-	}
-	return a.hotReloadTimeout
-}
-
-// waitForGatewayAccepted blocks until the Confluent operator has accepted the
-// gateway CR just applied. Mirrors migration.MigrationActions.waitForGatewayAccepted.
+// waitForGatewayAccepted blocks until the Confluent operator has accepted
+// the gateway CR just applied. See
+// gateway.TransitionVerifier.WaitForAccepted's doc comment for why this
+// matters.
 func (a *TBMActions) waitForGatewayAccepted(ctx context.Context, config *migration.MigrationConfig, step string) error {
-	a.reporter.detail("Waiting for gateway reconcile...")
-	slog.Debug("waiting for gateway acceptance", "step", step, "gateway", config.InitialCrName, "rolloutTimeout", a.rolloutTimeout)
-
-	err := a.gatewayService.WaitForGatewayAccepted(ctx, config.K8sNamespace, config.InitialCrName, 2*time.Second, a.rolloutTimeout)
-	if err == nil {
-		return nil
-	}
-
-	var rejected *gateway.GatewayRejectedError
-	if errors.As(err, &rejected) {
-		a.reporter.remediation("Confluent operator rejected the %s gateway spec. Inspect its view of the gateway:\n"+
-			"   kubectl -n %s get gateway %s -o jsonpath='{.status.conditions}'", step, config.K8sNamespace, config.InitialCrName)
-		return err
-	}
-	return fmt.Errorf("failed waiting for gateway reconcile during %s: %w", step, err)
+	return a.verifier().WaitForAccepted(ctx, config.K8sNamespace, config.InitialCrName, step)
 }
 
-// waitForGatewayConfigApplied blocks until every ready gateway pod reports the
-// applied configId. Mirrors migration.MigrationActions.waitForGatewayConfigApplied.
-func (a *TBMActions) waitForGatewayConfigApplied(ctx context.Context, config *migration.MigrationConfig, applied gatewayApplyResult, step string) error {
-	a.reporter.detail("Waiting for every gateway pod to apply the new config...")
-	slog.Debug("waiting for per-pod configId", "step", step, "configId", applied.ConfigID,
-		"port", config.GatewayConfigPort, "hotReloadTimeout", a.gatewayHotReloadTimeout(),
-		"rollTimeout", a.rolloutTimeout, "baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
-
-	err := a.gatewayService.WaitForGatewayConfigID(ctx, config.K8sNamespace, config.InitialCrName, gateway.ConfigWaitOptions{
-		ConfigID:                     applied.ConfigID,
-		Port:                         config.GatewayConfigPort,
-		BaselineDeploymentGeneration: applied.BaselineDeploymentGeneration,
-		PollInterval:                 2 * time.Second,
-		HotReloadTimeout:             a.gatewayHotReloadTimeout(),
-		RollTimeout:                  a.rolloutTimeout,
-		OnProgress:                   a.printConfigWaitProgress,
-	})
-	if err != nil {
-		return fmt.Errorf("failed waiting for the gateway to apply the %s config on every pod: %w", step, err)
-	}
-
-	a.reporter.success("All gateway pods have applied the new config")
-	return nil
-}
-
-// verifyGatewayTransition confirms a transition landed, by whichever means the
-// cluster supports. Mirrors migration.MigrationActions.verifyGatewayTransition.
-func (a *TBMActions) verifyGatewayTransition(ctx context.Context, config *migration.MigrationConfig, applied gatewayApplyResult, step string) error {
-	if applied.ConfigID != "" {
-		return a.waitForGatewayConfigApplied(ctx, config, applied, step)
-	}
-
-	a.reporter.detail("Waiting for gateway readiness...")
-	slog.Debug("waiting for gateway readiness", "step", step, "rolloutTimeout", a.rolloutTimeout,
-		"baselineDeploymentGeneration", applied.BaselineDeploymentGeneration)
-
-	if err := a.gatewayService.WaitForGatewayReady(ctx, config.K8sNamespace, config.InitialCrName,
-		applied.BaselineDeploymentGeneration, 5*time.Second, a.rolloutTimeout, a.printGatewayReadinessProgress); err != nil {
-		return fmt.Errorf("failed waiting for gateway readiness during %s: %w", step, err)
-	}
-	return nil
-}
-
-// printConfigWaitProgress renders one line per poll tick of the per-pod
-// configId wait. Mirrors migration.MigrationActions.printConfigWaitProgress.
-func (a *TBMActions) printConfigWaitProgress(p gateway.ConfigWaitProgress) {
-	if p.Converged {
-		return
-	}
-	if p.Mechanism == gateway.MechanismPodRoll {
-		a.reporter.detail("Gateway pods are rolling — %d/%d have applied the new config (elapsed %s)",
-			p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
-		return
-	}
-	a.reporter.detail("Applying in place, no pod restart — %d/%d gateway pods have applied the new config (elapsed %s)",
-		p.PodsAtWant, p.PodsReady, formatElapsed(p.Elapsed))
-}
-
-// printGatewayReadinessProgress renders WaitForGatewayReady progress. Mirrors
-// migration.MigrationActions.printGatewayReadinessProgress.
-func (a *TBMActions) printGatewayReadinessProgress(p gateway.GatewayReadinessProgress) {
-	if !p.RolloutDetected {
-		a.reporter.success("No pod restart required")
-		return
-	}
-	if p.InitialPodCount > 0 {
-		a.reporter.detail("%d/%d pods ready (elapsed %s)", p.PodsReady, p.InitialPodCount, formatElapsed(p.Elapsed))
-	} else {
-		a.reporter.detail("gateway reconciling (elapsed %s)", formatElapsed(p.Elapsed))
-	}
-}
-
-// formatElapsed formats a duration to whole seconds. Mirrors migration.formatElapsed.
-func formatElapsed(d time.Duration) string {
-	return d.Round(time.Second).String()
+// verifyGatewayTransition confirms a transition landed, by whichever means
+// the cluster supports.
+func (a *TBMActions) verifyGatewayTransition(ctx context.Context, config *migration.MigrationConfig, applied gateway.ApplyResult, step string) error {
+	return a.verifier().VerifyTransition(ctx, config.K8sNamespace, config.InitialCrName, config.GatewayConfigPort, applied, step)
 }

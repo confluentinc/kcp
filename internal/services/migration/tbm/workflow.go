@@ -2,12 +2,10 @@ package tbm
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -19,9 +17,9 @@ import (
 )
 
 // maxConsecutiveSweepFailures is how many offset sweeps in a row may fail
-// before WaitForLags aborts. Mirrors migration.maxConsecutiveSweepFailures —
-// duplicated, not shared: the two packages intentionally have no
-// cross-imports (see the tbm package doc comment in state.go).
+// before WaitForLags aborts. Matches migration.maxConsecutiveSweepFailures —
+// a bare tuning constant, not shared mechanism, so left as its own copy
+// rather than exported for one int.
 const maxConsecutiveSweepFailures = 3
 
 // TBMActions holds the business logic behind each FSM transition. Every
@@ -130,7 +128,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	// cmd/migration/execute's runMigrationExecute.
 	config.Mode = res.Mode
 
-	a.reporter.success("TBM migration initialized (%d topic(s) in plan)", len(res.Topics))
+	a.reporter.Success("TBM migration initialized (%d topic(s) in plan)", len(res.Topics))
 	return nil
 }
 
@@ -231,53 +229,14 @@ func (a *TBMActions) WaitForLags(ctx context.Context, config *migration.Migratio
 
 // fetchSourceAndDestinationOffsets sweeps both clusters' offsets for the
 // given topics concurrently — the clusters are independent, so a poll tick
-// pays the slower of the two sweeps rather than their sum. Mirrors
-// migration.MigrationActions.fetchSourceAndDestinationOffsets.
+// pays the slower of the two sweeps rather than their sum.
 func (a *TBMActions) fetchSourceAndDestinationOffsets(ctx context.Context, topics []string) (map[string]map[int32]int64, map[string]map[int32]int64, error) {
-	var (
-		wg                 sync.WaitGroup
-		source, dest       map[string]map[int32]int64
-		sourceErr, destErr error
-	)
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		source, sourceErr = a.sourceOffset.GetMany(ctx, topics)
-	}()
-	go func() {
-		defer wg.Done()
-		dest, destErr = a.destinationOffset.GetMany(ctx, topics)
-	}()
-	wg.Wait()
-
-	var errs []error
-	if sourceErr != nil {
-		errs = append(errs, fmt.Errorf("failed to get source offsets: %w", sourceErr))
-	}
-	if destErr != nil {
-		errs = append(errs, fmt.Errorf("failed to get destination offsets: %w", destErr))
-	}
-	if len(errs) > 0 {
-		return nil, nil, errors.Join(errs...)
-	}
-	return source, dest, nil
+	return offset.FetchSourceAndDestinationOffsets(ctx, a.sourceOffset, a.destinationOffset, topics)
 }
 
 // formatLag64 formats an int64 with comma separators (e.g. 21655 -> "21,655").
-// Mirrors migration.formatLag64.
 func formatLag64(n int64) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-	var result []byte
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result = append(result, ',')
-		}
-		result = append(result, byte(c))
-	}
-	return string(result)
+	return gateway.FormatLag64(n)
 }
 
 // Fence runs the fence transition: resolves how gateway transitions will be
@@ -298,7 +257,7 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	// batch). config.FenceYAML is then "", which deriveFencedCRYAML cannot
 	// parse. Mirrors WaitForLags's identical guard.
 	if len(config.Topics) == 0 {
-		a.reporter.success("No topics to fence")
+		a.reporter.Success("No topics to fence")
 		return nil
 	}
 
@@ -315,7 +274,7 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	if err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
-	a.reporter.success("Fenced gateway CR applied")
+	a.reporter.Success("Fenced gateway CR applied")
 
 	if err := a.waitForGatewayAccepted(ctx, config, "fence"); err != nil {
 		return err
@@ -324,7 +283,7 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 		return err
 	}
 
-	a.reporter.success("Gateway fenced and ready")
+	a.reporter.Success("Gateway fenced and ready")
 	return nil
 }
 
@@ -355,7 +314,7 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 	if err != nil {
 		return fmt.Errorf("failed to apply cleaned gateway CR: %w", err)
 	}
-	a.reporter.success("Cleaned gateway CR applied")
+	a.reporter.Success("Cleaned gateway CR applied")
 
 	if err := a.waitForGatewayAccepted(ctx, config, "unfence"); err != nil {
 		return err
@@ -376,67 +335,23 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 func (a *TBMActions) VerifyFence(ctx context.Context, config *migration.MigrationConfig, detectUnroutedProducersDuration time.Duration) error {
 	if detectUnroutedProducersDuration <= 0 {
 		slog.Debug("⏭️ unrouted producer detection disabled, skipping")
-		a.reporter.detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
+		a.reporter.Detail("Detection disabled (spec.defaultPolicies.detectUnroutedProducersDuration=0) — skipping check")
 		return nil
 	}
 
 	if err := a.detectUnroutedProducers(ctx, config.Topics, detectUnroutedProducersDuration); err != nil {
 		return err
 	}
-	a.reporter.success("Source offsets stable — no unrouted producers detected")
+	a.reporter.Success("Source offsets stable — no unrouted producers detected")
 	return nil
 }
 
 // detectUnroutedProducers takes two source offset snapshots separated by the
 // given duration. If any partition's offset increases between snapshots, a
 // producer is writing directly to the source cluster, bypassing the fenced
-// gateway. Mirrors migration.MigrationActions.detectUnroutedProducers
-// verbatim — duplicated, not shared (see the tbm package doc comment in
-// state.go).
+// gateway.
 func (a *TBMActions) detectUnroutedProducers(ctx context.Context, topics []string, duration time.Duration) error {
-	slog.Debug("taking first source offset snapshot", "topicCount", len(topics))
-	snapshot1, err := a.sourceOffset.GetMany(ctx, topics)
-	if err != nil {
-		return fmt.Errorf("failed to get source offsets: %w", err)
-	}
-
-	a.reporter.detail("Monitoring source offsets for %s...", duration)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-time.After(duration):
-	}
-
-	slog.Debug("taking second source offset snapshot")
-	snapshot2, err := a.sourceOffset.GetMany(ctx, topics)
-	if err != nil {
-		return fmt.Errorf("failed to get source offsets: %w", err)
-	}
-
-	var violations []string
-	for _, topic := range topics {
-		for p, o2 := range snapshot2[topic] {
-			// A partition absent from the first snapshot (e.g. created during
-			// the window) starts at offset 0, so any data on it was written
-			// after fencing — the zero-value baseline flags it.
-			o1 := snapshot1[topic][p]
-			if o2 > o1 {
-				delta := o2 - o1
-				rate := float64(delta) / duration.Seconds()
-				violations = append(violations, fmt.Sprintf(
-					"topic %s partition %d: offset %d → %d (+%d, ~%.0f msg/s)",
-					topic, p, o1, o2, delta, rate))
-			}
-		}
-	}
-
-	if len(violations) > 0 {
-		sort.Strings(violations)
-		return fmt.Errorf("%w:\n  %s\n\nThese producers are bypassing the gateway and writing directly to the source cluster.\nReconfigure them to produce through the migration gateway, then re-run 'kcp migration execute' to resume",
-			ErrUnroutedProducers, strings.Join(violations, "\n  "))
-	}
-
-	return nil
+	return offset.DetectUnroutedProducers(ctx, a.sourceOffset, a.reporter, topics, duration)
 }
 
 // Promote runs the promote transition: polls source/destination offsets for
@@ -494,7 +409,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 			for topic := range awaitingStop {
 				status := statusByTopic[topic]
 				if status == clusterlink.MirrorStatusStopped {
-					a.reporter.success("%s stopped", topic)
+					a.reporter.Success("%s stopped", topic)
 					slog.Debug("mirror topic promotion confirmed stopped", "topic", topic)
 					delete(awaitingStop, topic)
 					delete(remaining, topic)
@@ -515,7 +430,7 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 		// In batch mode, don't start a new batch until the current one has
 		// fully drained to STOPPED — this makes each batch synchronous.
 		if a.promoteBatchSize > 0 && len(awaitingStop) > 0 {
-			a.reporter.detail("Waiting for current batch of %d topic(s) to reach STOPPED...", len(awaitingStop))
+			a.reporter.Detail("Waiting for current batch of %d topic(s) to reach STOPPED...", len(awaitingStop))
 			slog.Debug("batch in flight, waiting for STOPPED before next batch",
 				"awaitingStop", len(awaitingStop), "pollInterval", a.promotePollInterval)
 			select {
@@ -566,11 +481,11 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 
 		if len(topicsToPromote) == 0 {
 			if len(awaitingStop) > 0 {
-				a.reporter.detail("Waiting for %d promoted topic(s) to reach STOPPED...", len(awaitingStop))
+				a.reporter.Detail("Waiting for %d promoted topic(s) to reach STOPPED...", len(awaitingStop))
 				slog.Debug("waiting for accepted promotions to reach STOPPED",
 					"awaitingStop", len(awaitingStop), "pollInterval", a.promotePollInterval)
 			} else {
-				a.reporter.detail("Waiting for lag to reach zero (%d topics remaining)...", len(remaining))
+				a.reporter.Detail("Waiting for lag to reach zero (%d topics remaining)...", len(remaining))
 				slog.Debug("no topics at zero lag yet, waiting",
 					"remaining", len(remaining), "pollInterval", a.promotePollInterval)
 			}
@@ -582,12 +497,12 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 			}
 		}
 
-		a.reporter.success("%s confirmed at zero lag", color.WhiteString("%d/%d topics", len(topicsToPromote), len(remaining)))
+		a.reporter.Success("%s confirmed at zero lag", color.WhiteString("%d/%d topics", len(topicsToPromote), len(remaining)))
 		for _, topic := range topicsToPromote {
 			a.reporter.line(fmt.Sprintf("   %s %s  %s %s",
 				color.GreenString("↳"), color.WhiteString(topic), color.CyanString("lag:"), color.GreenString("0")))
 		}
-		a.reporter.detail("Promoting %d mirror topics...", len(topicsToPromote))
+		a.reporter.Detail("Promoting %d mirror topics...", len(topicsToPromote))
 		slog.Debug("promoting mirror topics", "topicCount", len(topicsToPromote), "topics", topicsToPromote)
 
 		promoteResponse, err := a.clusterLinkService.PromoteMirrorTopics(ctx, clusterLinkConfig, topicsToPromote)
@@ -640,7 +555,7 @@ func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConf
 	// for the full explanation. config.SwitchoverYAML is then "", which
 	// deriveSwitchedCRYAML cannot parse.
 	if len(config.Topics) == 0 {
-		a.reporter.success("No topics to switch")
+		a.reporter.Success("No topics to switch")
 		return nil
 	}
 
@@ -657,7 +572,7 @@ func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConf
 	if err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}
-	a.reporter.success("Switchover gateway CR applied")
+	a.reporter.Success("Switchover gateway CR applied")
 
 	if err := a.waitForGatewayAccepted(ctx, config, "switchover"); err != nil {
 		return err
@@ -666,6 +581,6 @@ func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConf
 		return err
 	}
 
-	a.reporter.success("Gateway switchover complete")
+	a.reporter.Success("Gateway switchover complete")
 	return nil
 }

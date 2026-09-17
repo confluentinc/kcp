@@ -71,9 +71,8 @@ func NewMigrationExecuteCmd() *cobra.Command {
 // newMigrationExecuteCmd builds the command with the TBM branch's live
 // dependencies injected, so this package's own tests can pass stubs for a
 // dynamic-mode run without dialing Kafka, Kubernetes, or a cluster-link REST
-// endpoint. A static-mode (AAO) run has no equivalent injection point — see
-// this plan's Global Constraints on the deliberately asymmetric test posture
-// between the two branches.
+// endpoint. A static-mode (AAO) run has no equivalent injection point — the
+// test posture between the two branches is deliberately asymmetric.
 func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway gatewayServiceFunc, buildTBMClusterLink clusterLinkServiceFunc) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "execute",
@@ -151,6 +150,10 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 // before.
 func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath string) migration.MigrationConfig {
 	entry := g.Spec.TopicGroup[0] // manifest validation guarantees exactly one entry
+	var topicPatterns []string
+	if entry.TopicPatterns != nil {
+		topicPatterns = *entry.TopicPatterns
+	}
 	return migration.MigrationConfig{
 		MigrationId:             id,
 		SourceBootstrap:         strings.Join(g.Spec.Source.BootstrapServers, ","),
@@ -163,6 +166,7 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 		ClusterLinkName:         g.Spec.ClusterLink.Name,
 		Route:                   entry.Route,
 		TargetDomain:            entry.TargetStreamingDomain,
+		TopicPatterns:           topicPatterns,
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
 		GatewayConfigPort:       g.Spec.DefaultPolicies.GatewayConfigPort,
@@ -173,6 +177,18 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	g, err := manifest.LoadGatewayMigrationFile(manifestFile)
 	if err != nil {
 		return err
+	}
+
+	// Command-line overrides replace the manifest's per-policy defaults for this
+	// run, then the effective block is re-validated: an override can carry a
+	// value the manifest itself never did (e.g. a sub-10s detect duration).
+	// Applied unconditionally, before the --dry-run branch below, so a dry run
+	// rejects an invalid override exactly as a real run would (e.g. --dry-run
+	// --lag-threshold=-1 must fail the same way --lag-threshold=-1 alone does),
+	// rather than silently accepting it because nothing downstream reads it.
+	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
+	if errs := g.Spec.DefaultPolicies.Validate(); len(errs) > 0 {
+		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
 	}
 
 	// --dry-run stops here: the reconcile step is self-contained (it opens its
@@ -191,14 +207,6 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		}
 		cmd.Printf("✅ dry-run complete: reconcile plan produced for %s (no state changes, no actions executed)\n", g.Metadata.Name)
 		return nil
-	}
-
-	// Command-line overrides replace the manifest's per-policy defaults for this
-	// run, then the effective block is re-validated: an override can carry a
-	// value the manifest itself never did (e.g. a sub-10s detect duration).
-	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
-	if errs := g.Spec.DefaultPolicies.Validate(); len(errs) > 0 {
-		return manifest.JoinProblems("the effective migration policy (manifest defaults with command-line overrides applied)", errs)
 	}
 
 	// metadata.name already uniquely identifies the migration and doubles as
@@ -495,6 +503,17 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 			added, removed := diffCounts(*topics, config.Topics)
 			if added > 0 || removed > 0 {
 				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topics: %d added, %d removed", added, removed))
+			}
+		}
+		// TopicPatterns is compared against its own declared snapshot, not
+		// against config.Topics (the resolved set) — Topics and TopicPatterns
+		// are mutually exclusive on the manifest, so exactly one of these two
+		// blocks ever fires. An edited pattern must count as drift even if it
+		// happens to expand to the same topics today.
+		if patterns := entry.TopicPatterns; patterns != nil {
+			added, removed := diffCounts(*patterns, config.TopicPatterns)
+			if added > 0 || removed > 0 {
+				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topicPatterns: %d added, %d removed", added, removed))
 			}
 		}
 	}

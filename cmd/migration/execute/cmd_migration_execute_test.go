@@ -124,6 +124,7 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 		ClusterRestEndpoint: "https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443",
 		ClusterLinkName:     "msk-to-cc",
 		Topics:              []string{"t1.order", "t2.inventory"},
+		TopicPatterns:       []string{".*"}, // matches the canonical manifest's default topicPatterns
 		Route:               "migration-route",
 		TargetDomain:        "confluent-cloud",
 		CurrentState:        migration.StateInitialized,
@@ -295,6 +296,26 @@ func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
 	assert.Contains(t, joined, "1 removed")
 }
 
+// TestDrift_DetectsChangedTopicPatterns is a regression test: detectDrift
+// used to skip topicPatterns entirely (entry.Topics is nil for a
+// pattern-selected topic group, so the whole topic-drift block was
+// unreachable), silently proceeding against a stale resolved-topic snapshot
+// after an operator edited the patterns. The declared pattern list is now
+// compared against its own snapshot, independent of Topics.
+func TestDrift_DetectsChangedTopicPatterns(t *testing.T) {
+	f := newFixture(t, func(doc string) string {
+		return strings.Replace(doc, "        - '.*'\n", "        - 'bar.*'\n", 1)
+	})
+	f.writeState(t, func(c *migration.MigrationConfig) {
+		c.TopicPatterns = []string{"foo.*"}
+	})
+	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
+	require.NotEmpty(t, drift)
+	joined := strings.Join(drift, " ")
+	assert.Contains(t, joined, "spec.topicGroup")
+	assert.Contains(t, joined, "topicPatterns: 1 added, 1 removed")
+}
+
 // TestDrift_NeverNamesTopics — counts only. Dumping a topic list into a
 // terminal error is the one thing this project's error copy must not do.
 func TestDrift_NeverNamesTopics(t *testing.T) {
@@ -380,6 +401,7 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		"ClusterRestEndpoint":     true,
 		"ClusterLinkName":         true,
 		"Topics":                  true,
+		"TopicPatterns":           true,
 		"PauseConsumerOffsetSync": true,
 		"K8sNamespace":            true,
 		"InitialCrName":           true,
@@ -478,10 +500,10 @@ func TestExecute_DriftRefusalNeverNamesTopics(t *testing.T) {
 // --- auto-create on first execute ---
 
 // TestExecute_NoExistingStateFile_AutoCreatesEntryFromManifest proves a
-// missing entry registers instead of erroring. The run then fails at the
-// reconcile step (no reachable cluster in this test process, same manifest
-// TestExecute_ResumeFromInitialized_NeverCallsReconcile already relies on
-// failing against) — what this test cares about is that the entry landed on
+// missing entry registers instead of erroring. The run then fails deep
+// inside migplan.Reconcile's live gateway pull (no reachable cluster in this
+// test process, same technique TestExecute_ResumeFromUninitialized_CallsReconcile
+// already uses) — what this test cares about is that the entry landed on
 // disk before that failure, not the failure itself.
 func TestExecute_NoExistingStateFile_AutoCreatesEntryFromManifest(t *testing.T) {
 	f := newFixture(t, nil)
@@ -965,32 +987,29 @@ func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 
 // --- StateUninitialized resume triggers a live migplan.Reconcile ---
 //
-// Offset connections now dial BEFORE the state-gated Reconcile call, so both
-// states below fail at that same early dial step against the manifest's
-// unreachable brokers unless the dial is made to succeed. The two tests
-// distinguish "reached Reconcile" from "never called it" by whether the
-// error carries Reconcile's "failed to produce the reconcile plan" wrap.
+// Neither test can reach MigrationExecutor.Run() successfully — there is no
+// live Kubernetes cluster or Kafka broker in this test process, matching
+// every other test in this file that drives the full runExecute surface (see
+// e.g. TestExecute_ErrorsWhenMigrationNotInStateFile,
+// TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit). What distinguishes
+// the two cases is WHERE the run fails: migplan.Reconcile is called directly
+// in runMigrationExecute (no injectable gateway source at that call site — see
+// cmd_migration_execute.go), so a migration still at StateUninitialized fails
+// fast inside Reconcile's own live gateway pull, surfacing runMigrationExecute's
+// "failed to produce the reconcile plan" wrap. A migration already past
+// StateUninitialized skips that call entirely and fails later, deeper in
+// MigrationExecutor.Run() (e.g. connecting to the source Kafka cluster) — an
+// error that does not carry the reconcile-plan wrap at all.
 
 // TestExecute_ResumeFromUninitialized_CallsReconcile proves a migration still
 // at StateUninitialized (a deferred --skip-validate init completing here)
-// reaches migplan.Reconcile: a local mock broker lets both offset dials
-// succeed, so the run reaches Reconcile's live gateway pull, which fails
-// deterministically against the fixture's nonexistent kubeconfig path.
+// reaches migplan.Reconcile: the fixture's kubeconfig path does not exist, so
+// Reconcile's live gateway pull fails immediately and deterministically,
+// surfacing through runMigrationExecute's own wrap.
 func TestExecute_ResumeFromUninitialized_CallsReconcile(t *testing.T) {
-	broker, _ := testsupport.MockSaramaClient(t)
-
-	f := newFixtureCreds(t, credOverrides{
-		source:    "unauthenticated_plaintext: {}\n",
-		destKafka: "unauthenticated_plaintext: {}\n",
-	}, func(doc string) string {
-		doc = strings.Replace(doc, "b-1.msk.us-east-1.amazonaws.com:9096", broker.Addr(), 1)
-		doc = strings.Replace(doc, "pkc-xxxxx.us-east-1.aws.confluent.cloud:9092", broker.Addr(), 1)
-		return doc
-	})
+	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.CurrentState = migration.StateUninitialized
-		c.SourceBootstrap = broker.Addr()
-		c.ClusterBootstrap = broker.Addr()
 	})
 
 	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
@@ -1000,10 +1019,10 @@ func TestExecute_ResumeFromUninitialized_CallsReconcile(t *testing.T) {
 }
 
 // TestExecute_ResumeFromInitialized_NeverCallsReconcile confirms a migration
-// already past StateUninitialized never triggers a live migplan.Reconcile
-// call. No mock broker is needed: the run fails at the offset dial itself,
-// and the error carrying no reconcile-plan wrap is the proof Reconcile was
-// skipped rather than merely tolerant of failure.
+// already past StateUninitialized never triggers a live migplan.Reconcile call
+// — the state-gated cost this task is specifically designed to avoid. The run
+// still fails (no live cluster to execute against), but not via Reconcile's
+// wrap: proof the call was skipped rather than merely tolerant of failure.
 func TestExecute_ResumeFromInitialized_NeverCallsReconcile(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
@@ -1037,6 +1056,7 @@ func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
 	assert.Equal(t, migration.StateUninitialized, cfg.CurrentState)
 	assert.Equal(t, "migration-route", cfg.Route)
 	assert.Equal(t, "confluent-cloud", cfg.TargetDomain)
+	assert.Equal(t, []string{".*"}, cfg.TopicPatterns, "declared topicPatterns must be snapshotted at registration for later drift checks")
 	assert.False(t, cfg.PauseConsumerOffsetSync)
 	assert.Empty(t, cfg.Topics, "topics require a live migplan.Reconcile — not set here")
 	assert.Empty(t, cfg.FenceYAML)
@@ -1081,6 +1101,21 @@ func TestExecute_DryRun_DoesNotRequireMigrationStateFileFlag(t *testing.T) {
 
 	_, statErr := os.Stat(filepath.Join(dir, "msk-prod-to-cc-batch-1-state.json"))
 	assert.True(t, os.IsNotExist(statErr), "dry-run must not create <metadata.name>-state.json in the CWD even when --migration-state-file is omitted")
+}
+
+// TestExecute_DryRun_ValidatesPolicyOverrides is a regression test: --dry-run
+// used to return before command-line policy overrides were applied and
+// validated, so an invalid override (e.g. a negative lag threshold, rejected
+// on a real run) silently passed under --dry-run instead. The override must
+// now be rejected before reconcile is ever attempted.
+func TestExecute_DryRun_ValidatesPolicyOverrides(t *testing.T) {
+	f := newFixture(t, nil)
+
+	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile, "--dry-run", "--lag-threshold=-1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "lagThreshold: must not be negative")
+	assert.NotContains(t, err.Error(), "failed to produce the reconcile plan",
+		"an invalid override must be rejected before reconcile is attempted")
 }
 
 func TestExecute_DryRun_ExistingEntryIsNotDriftChecked(t *testing.T) {

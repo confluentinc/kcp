@@ -66,6 +66,14 @@ func fail(name, detail string) PreconditionResult {
 	return PreconditionResult{Name: name, OK: false, Detail: detail}
 }
 
+// skip reports a check that could not be run at all (OK: true — advisory,
+// never a refusal reason) rather than one that ran and passed. See
+// PreconditionResult.Skipped's doc comment for why this must render
+// differently from a real pass.
+func skip(name, detail string) PreconditionResult {
+	return PreconditionResult{Name: name, OK: true, Skipped: true, Detail: detail}
+}
+
 // CheckPreconditions runs the dynamic-route run-level checks. ok is true
 // only if every check passed; on success view carries the resolved domains.
 func CheckPreconditions(in ReconcileInput, gw *GatewayConfig, offsetSyncEnabled bool, ids ClusterIDs) ([]PreconditionResult, RouteView, bool) {

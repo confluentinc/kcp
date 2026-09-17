@@ -4,9 +4,9 @@ import "github.com/goccy/go-yaml"
 
 // staticFenceScope and staticFenceErrorCode are the fence parameters this
 // migration injects — the same values gateway.FenceRoutes hardcodes today
-// (see internal/services/gateway/fence.go). Duplicated here per the migplan
-// static-route-strategy design doc's decision 13 (no new dependency from
-// reconcile on internal/services/gateway), not imported.
+// (see internal/services/gateway/fence.go). Duplicated here rather than
+// imported, to avoid a new dependency from reconcile on
+// internal/services/gateway.
 const (
 	staticFenceScope     = "ALL"
 	staticFenceErrorCode = "BROKER_NOT_AVAILABLE"
@@ -16,8 +16,7 @@ const (
 // route-agnostic fragment — {fence: {scope, errorCode}} — mirroring
 // RulesTree.Serialize's shape (a wrapped value, not a whole CR). Splicing
 // this onto the named route's fence key in a whole CR, and applying the
-// result, is deferred to later FSM-integration work — not done here. See
-// the migplan static-route-strategy design doc, decision 11.
+// result, is deferred to later FSM-integration work — not done here.
 func BuildFenceFragment() ([]byte, error) {
 	return yaml.Marshal(map[string]any{"fence": map[string]any{
 		"scope":     staticFenceScope,
