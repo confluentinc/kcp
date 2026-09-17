@@ -570,7 +570,7 @@ func TestExecute_ReadsPolicyFromTheManifestOnEveryRun(t *testing.T) {
 	})
 	g := loadGateway(t, f.manifestPath)
 	cfg := persistedConfig(t, f)
-	opts, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	assert.EqualValues(t, 42, opts.LagThreshold)
@@ -623,7 +623,7 @@ func TestExecute_PolicyOverrideReachesExecutorOpts(t *testing.T) {
 	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
 	require.Empty(t, g.Spec.DefaultPolicies.Validate())
 
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 	assert.EqualValues(t, 99, opts.LagThreshold)
 	assert.EqualValues(t, 60, opts.MigrationConfig.DetectUnroutedProducersDuration.Seconds())
@@ -648,7 +648,7 @@ func TestExecute_RecordsLastRunPolicies(t *testing.T) {
 	applyPolicyOverrides(cmd, &g.Spec.DefaultPolicies)
 	require.Empty(t, g.Spec.DefaultPolicies.Validate())
 
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	rec := opts.MigrationConfig.LastRunPolicies
@@ -771,7 +771,7 @@ func TestExecute_MapsSourceAuthOntoExecutorOpts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			f := newFixtureCreds(t, credOverrides{source: tc.block}, nil)
 			g := loadGateway(t, f.manifestPath)
-			opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+			opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 			require.NoError(t, err)
 			tc.assert(t, opts)
 		})
@@ -788,7 +788,7 @@ func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 		link:      "api_key: CC_KEY\napi_secret: CC_SECRET\ninsecure_skip_verify: true\n",
 	}, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
 	assert.True(t, opts.DestKafkaInsecureSkipTLSVerify)
@@ -804,7 +804,7 @@ func TestExecute_InsecureSkipIsPerLegFile(t *testing.T) {
 func TestExecute_DestinationKafkaUsesItsClusterCredentials(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 	assert.Equal(t, types.AuthTypeSASLPlain, opts.DestAuthType)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
@@ -823,7 +823,7 @@ func TestExecute_DestSASLPlainDefaultsToTLS(t *testing.T) {
 		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n",
 	}, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
 	assert.True(t, opts.DestAuthMethod.SASLPlain.UseTLS, "no ca_cert/tls set must still default to SASL_SSL, not a silent downgrade to SASL_PLAINTEXT")
@@ -840,7 +840,7 @@ func TestExecute_DestSASLPlainCACertIsNotOverridden(t *testing.T) {
 		destKafka: "sasl_plain:\n  username: CC_KEY\n  password: CC_SECRET\n  ca_cert: " + ca + "\n",
 	}, nil)
 	g := loadGateway(t, f.manifestPath)
-	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(g, persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
 	assert.Equal(t, ca, opts.DestAuthMethod.SASLPlain.CACert)
@@ -887,7 +887,7 @@ func TestExecute_NeverPersistsCredentials(t *testing.T) {
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
 	cfg := persistedConfig(t, f)
-	_, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile, nil)
+	_, err := buildExecutorOpts(g, cfg, *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	state := migration.NewMigrationState()
@@ -914,7 +914,7 @@ func TestExecute_SourceInsecureSkipDoesNotReachTheDestination(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify, "the source asked for it")
@@ -929,7 +929,7 @@ func TestExecute_DestinationInsecureSkipDoesNotReachTheSource(t *testing.T) {
 	f := newFixtureCreds(t, credOverrides{
 		destKafka: "insecure_skip_tls_verify: true\n" + defaultDestKafkaCred,
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	assert.False(t, opts.SourceInsecureSkipTLSVerify)
@@ -945,7 +945,7 @@ func TestExecute_LinkCredentialsGovernTheRestLeg(t *testing.T) {
 		source: "insecure_skip_tls_verify: true\n" + defaultSourceCred,
 		link:   "api_key: K\napi_secret: S\n",
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	assert.True(t, opts.SourceInsecureSkipTLSVerify)
@@ -964,7 +964,7 @@ func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheLinkOne(t *testing.
 	f := newFixtureCreds(t, credOverrides{
 		link: "api_key: REST_ONLY_KEY\napi_secret: REST_ONLY_SECRET\n",
 	}, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain, "the Kafka leg uses spec.target.kafka.clusterCredentials")
@@ -978,7 +978,7 @@ func TestExecute_DestinationKafkaUsesTheKafkaCredentialNotTheLinkOne(t *testing.
 // from spec.clusterLink.linkCredentials, never derived from the Kafka leg.
 func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 	f := newFixture(t, nil)
-	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile, nil)
+	opts, err := buildExecutorOpts(loadGateway(t, f.manifestPath), persistedConfig(t, f), *migration.NewMigrationState(), f.stateFile)
 	require.NoError(t, err)
 	require.NotNil(t, opts.DestAuthMethod.SASLPlain)
 	assert.Equal(t, "CC_KEY", opts.DestAuthMethod.SASLPlain.Username)

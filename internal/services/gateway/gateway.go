@@ -112,14 +112,24 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
 	}
 
+	return getGatewayYAML(ctx, dynamicClient, namespace, gatewayName)
+}
+
+// getGatewayYAML is the inner orchestration used by GetGatewayYAML. Split from
+// the method so unit tests can inject a fake dynamic client.
+func getGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string) ([]byte, error) {
 	gatewayGVR := schema.GroupVersionResource{
 		Group:    GatewayGroup,
 		Version:  GatewayVersion,
 		Resource: GatewayResourcePlural,
 	}
 
+	// Time the network Get() leg only — this is the first k8s call in an
+	// execute-tbm run and, unlike its Apply* siblings, was previously unaccounted.
+	start := time.Now()
 	gateway, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
 		Get(ctx, gatewayName, metav1.GetOptions{})
+	ms := time.Since(start).Milliseconds()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Gateway: %w", err)
 	}
@@ -129,7 +139,7 @@ func (s *K8sService) GetGatewayYAML(ctx context.Context, namespace, gatewayName 
 		return nil, fmt.Errorf("failed to marshal to YAML: %w", err)
 	}
 
-	slog.Debug("fetched gateway CR", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlBytes))
+	slog.Debug("fetched gateway CR", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlBytes), "ms", ms)
 	return yamlBytes, nil
 }
 
