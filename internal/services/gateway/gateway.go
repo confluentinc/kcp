@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -62,6 +63,8 @@ type Service interface {
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error)
 	ApplyGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error)
+	PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error)
+	PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
@@ -276,6 +279,104 @@ func applyGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, 
 	slog.Debug("applied gateway configId", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
 
 	return confirmStoredConfigID(applied, gatewayName, configID)
+}
+
+// PatchGatewayRoute applies a single route mutation to the gateway CR as an RFC
+// 6902 JSON Patch — touching only the one route field (or, for unfence, the one
+// route element) rp describes, plus spec.configId when configID is non-empty.
+// Unlike a server-side apply it takes no field ownership and prunes nothing.
+//
+// The live CR is read first to resolve rp.RouteName to its spec.routes index; a
+// test op in the patch guards that index against a concurrent reorder. The
+// returned string is the configId the API server stored (empty when none sent).
+func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to build config: %w", err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+	return patchGatewayRoute(ctx, dynamicClient, namespace, gatewayName, rp, configID)
+}
+
+// patchGatewayRoute is the inner orchestration used by PatchGatewayRoute.
+// Split from the method so unit tests can inject a fake dynamic client.
+func patchGatewayRoute(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
+	gatewayGVR := schema.GroupVersionResource{Group: GatewayGroup, Version: GatewayVersion, Resource: GatewayResourcePlural}
+
+	live, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to read gateway before patch: %w", err)
+	}
+	routes, found, err := unstructured.NestedSlice(live.Object, "spec", "routes")
+	if err != nil {
+		return "", fmt.Errorf("failed to read spec.routes on gateway %q: %w", gatewayName, err)
+	}
+	if !found {
+		return "", fmt.Errorf("gateway %q has no spec.routes", gatewayName)
+	}
+
+	ops, err := buildRoutePatchOps(routes, rp, configID)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(ops)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal gateway JSON patch: %w", err)
+	}
+
+	slog.Debug("🔍 patching gateway CR (JSON patch)", "namespace", namespace, "gateway", gatewayName, "route", rp.RouteName, "field", rp.Field, "configId", configID)
+	start := time.Now()
+	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to patch gateway route: %w", err)
+	}
+	slog.Debug("patched gateway CR", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
+
+	if configID == "" {
+		return "", nil
+	}
+	return confirmStoredConfigID(patched, gatewayName, configID)
+}
+
+// PatchGatewayConfigID stamps spec.configId alone on the gateway as a JSON Patch
+// for the hot-reload capability check. Returns the stored configId.
+func (s *K8sService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error) {
+	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
+	if err != nil {
+		return "", fmt.Errorf("failed to build config: %w", err)
+	}
+	dynamicClient, err := dynamic.NewForConfig(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create dynamic client: %w", err)
+	}
+	return patchGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID)
+}
+
+// patchGatewayConfigID is the inner orchestration used by PatchGatewayConfigID.
+// Split from the method so unit tests can inject a fake dynamic client.
+func patchGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName, configID string) (string, error) {
+	gatewayGVR := schema.GroupVersionResource{Group: GatewayGroup, Version: GatewayVersion, Resource: GatewayResourcePlural}
+
+	op, err := configIDOp(configID)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal([]jsonPatchOp{op})
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal gateway configId patch: %w", err)
+	}
+
+	slog.Debug("🔍 patching gateway configId (JSON patch)", "namespace", namespace, "gateway", gatewayName, "configId", configID)
+	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to patch gateway configId: %w", err)
+	}
+	return confirmStoredConfigID(patched, gatewayName, configID)
 }
 
 // confirmStoredConfigID reads spec.configId back from a server-side apply

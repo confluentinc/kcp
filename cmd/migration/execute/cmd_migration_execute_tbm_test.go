@@ -182,6 +182,14 @@ func (stubGatewayServiceImpl) ApplyGatewayConfigID(context.Context, string, stri
 	return "", nil
 }
 
+func (stubGatewayServiceImpl) PatchGatewayRoute(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+	return "", nil
+}
+
+func (stubGatewayServiceImpl) PatchGatewayConfigID(context.Context, string, string, string) (string, error) {
+	return "", nil
+}
+
 func (stubGatewayServiceImpl) WaitForGatewayAccepted(context.Context, string, string, time.Duration, time.Duration) error {
 	return nil
 }

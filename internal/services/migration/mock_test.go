@@ -18,6 +18,8 @@ type mockGatewayService struct {
 	checkPermissionsFn       func(ctx context.Context, verb, resource, group, namespace string) (bool, error)
 	applyGatewayYAMLFn       func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error)
 	applyGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
+	patchGatewayRouteFn      func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error)
+	patchGatewayConfigIDFn   func(ctx context.Context, namespace, name, configID string) (string, error)
 	waitForGatewayAcceptedFn func(ctx context.Context, namespace, name string, pollInterval, timeout time.Duration) error
 	getGatewayPodUIDsFn      func(ctx context.Context, namespace, name string) (map[k8stypes.UID]struct{}, error)
 	getDeploymentGenFn       func(ctx context.Context, namespace, name string) (int64, error)
@@ -61,6 +63,20 @@ func (m *mockGatewayService) ApplyGatewayYAML(ctx context.Context, namespace, na
 		return m.applyGatewayYAMLFn(ctx, namespace, name, yaml, configID)
 	}
 	return "", fmt.Errorf("mockGatewayService.ApplyGatewayYAML not configured")
+}
+
+func (m *mockGatewayService) PatchGatewayRoute(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
+	if m.patchGatewayRouteFn != nil {
+		return m.patchGatewayRouteFn(ctx, namespace, name, rp, configID)
+	}
+	return "", fmt.Errorf("mockGatewayService.PatchGatewayRoute not configured")
+}
+
+func (m *mockGatewayService) PatchGatewayConfigID(ctx context.Context, namespace, name, configID string) (string, error) {
+	if m.patchGatewayConfigIDFn != nil {
+		return m.patchGatewayConfigIDFn(ctx, namespace, name, configID)
+	}
+	return "", fmt.Errorf("mockGatewayService.PatchGatewayConfigID not configured")
 }
 
 func (m *mockGatewayService) ApplyGatewayConfigID(ctx context.Context, namespace, name, configID string) (string, error) {
