@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 
+	"github.com/IBM/sarama"
 	kafkatypes "github.com/aws/aws-sdk-go-v2/service/kafka/types"
 	"github.com/confluentinc/kcp/internal/client"
 	"github.com/confluentinc/kcp/internal/manifest"
@@ -13,6 +14,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 	"github.com/confluentinc/kcp/internal/types"
+	"golang.org/x/sync/errgroup"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -62,6 +64,9 @@ type reconcileOptions struct {
 	gateway GatewayConfigSource    // nil ⇒ pull the live CR from spec.gateway
 	secrets SecretExistenceChecker // nil ⇒ built from the manifest's spec.gateway.namespace + kubeconfig
 	out     io.Writer              // nil ⇒ os.Stdout
+
+	srcClient sarama.Client // non-nil ⇒ back the source topic lister off it, see WithSharedClients
+	tgtClient sarama.Client // same, for the target
 }
 
 // Option customises Reconcile. Production and the state machine pass none.
@@ -85,6 +90,17 @@ func WithSecretExistenceChecker(s SecretExistenceChecker) Option {
 // capture, quiet, or relocate it.
 func WithOutput(w io.Writer) Option {
 	return func(o *reconcileOptions) { o.out = w }
+}
+
+// WithSharedClients backs the source and target topic listers off Kafka
+// connections the caller has already dialed and owns, so Reconcile does not
+// dial the same clusters a second time. A nil client falls back to dialing
+// that side fresh from the manifest. Reconcile never closes a shared client.
+func WithSharedClients(src, tgt sarama.Client) Option {
+	return func(o *reconcileOptions) {
+		o.srcClient = src
+		o.tgtClient = tgt
+	}
 }
 
 // Reconcile is the single in-code entry point: given the parsed manifest, it
@@ -123,16 +139,36 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 		return nil, err
 	}
 
-	src, srcCloser, err := buildSourceTopicLister(g)
-	if err != nil {
+	// Independent clusters, so resolve both topic listers concurrently.
+	var src, tgt TopicLister
+	var srcCloser, tgtCloser io.Closer
+	var eg errgroup.Group
+	eg.Go(func() error {
+		l, c, err := sourceTopicLister(g, o.srcClient)
+		if err != nil {
+			return err
+		}
+		src, srcCloser = l, c
+		return nil
+	})
+	eg.Go(func() error {
+		l, c, err := targetTopicLister(g, o.tgtClient)
+		if err != nil {
+			return err
+		}
+		tgt, tgtCloser = l, c
+		return nil
+	})
+	if err := eg.Wait(); err != nil {
+		if srcCloser != nil {
+			_ = srcCloser.Close()
+		}
+		if tgtCloser != nil {
+			_ = tgtCloser.Close()
+		}
 		return nil, err
 	}
 	defer func() { _ = srcCloser.Close() }()
-
-	tgt, tgtCloser, err := buildTargetTopicLister(g)
-	if err != nil {
-		return nil, err
-	}
 	defer func() { _ = tgtCloser.Close() }()
 
 	secrets := o.secrets
@@ -281,6 +317,36 @@ func buildLinkStatusProvider(g *manifest.GatewayMigration) (LinkStatusProvider, 
 		Topics:       []string{}, // empty ⇒ all mirrors
 	}
 	return NewClusterLinkStatus(svc, cfg), nil
+}
+
+// resolveTopicLister backs the lister off sharedClient when non-nil, else
+// dials fresh via buildFresh.
+func resolveTopicLister(sharedClient sarama.Client, buildFresh func() (TopicLister, io.Closer, error)) (TopicLister, io.Closer, error) {
+	if sharedClient != nil {
+		return topicListerFromClient(sharedClient)
+	}
+	return buildFresh()
+}
+
+// sourceTopicLister resolves the source-cluster topic lister for a reconcile run.
+func sourceTopicLister(g *manifest.GatewayMigration, sharedClient sarama.Client) (TopicLister, io.Closer, error) {
+	return resolveTopicLister(sharedClient, func() (TopicLister, io.Closer, error) { return buildSourceTopicLister(g) })
+}
+
+// targetTopicLister mirrors sourceTopicLister for the destination cluster.
+func targetTopicLister(g *manifest.GatewayMigration, sharedClient sarama.Client) (TopicLister, io.Closer, error) {
+	return resolveTopicLister(sharedClient, func() (TopicLister, io.Closer, error) { return buildTargetTopicLister(g) })
+}
+
+// topicListerFromClient wraps an already-dialed client as a topic lister. The
+// returned io.Closer is the from-client admin, whose Close is a no-op — the
+// caller that dialed the client remains responsible for closing it.
+func topicListerFromClient(c sarama.Client) (TopicLister, io.Closer, error) {
+	admin, err := client.NewKafkaAdminFromClient(c)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reusing shared Kafka client for topic listing: %w", err)
+	}
+	return NewKafkaTopicLister(admin), admin, nil
 }
 
 // buildSourceTopicLister builds the source-cluster topic lister from the manifest

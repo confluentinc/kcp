@@ -322,6 +322,10 @@ type KafkaAdminClient struct {
 	saramaConfig    *sarama.Config
 	resourceAcls    map[string]sarama.ResourceAcls
 	brokerAddresses []string
+
+	// client is the shared sarama.Client for a from-client admin, nil for a
+	// natively dialed one. Doubles as the ownership flag Close() checks.
+	client sarama.Client
 }
 
 /*
@@ -440,9 +444,12 @@ func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, err
 	}
 
 	var clusterID string
-	// Get cluster ID by connecting to a broker and requesting metadata
 	if len(brokers) > 0 {
-		clusterID, err = k.getClusterIDFromBroker(brokers[0])
+		if k.client != nil {
+			clusterID, err = k.clusterIDFromClient()
+		} else {
+			clusterID, err = k.getClusterIDFromBroker(brokers[0])
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -455,28 +462,38 @@ func (k *KafkaAdminClient) GetClusterKafkaMetadata() (*ClusterKafkaMetadata, err
 	}, nil
 }
 
-// getClusterIDFromBroker establishes a connection to a specific broker and retrieves the cluster ID
-func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string, error) {
-	// Create a new broker connection
-	brokerConn := sarama.NewBroker(broker.Addr())
-	err := brokerConn.Open(k.saramaConfig)
+// clusterIDFromClient reads the cluster id over the shared client's
+// already-open controller connection, avoiding a fresh dial.
+func (k *KafkaAdminClient) clusterIDFromClient() (string, error) {
+	controller, err := k.client.Controller()
 	if err != nil {
-		return "", fmt.Errorf("failed to open broker connection: %v", err)
+		return "", fmt.Errorf("failed to get controller for cluster id: %w", err)
+	}
+	return clusterIDFromBrokerConn(controller)
+}
+
+// getClusterIDFromBroker opens a fresh connection to a specific broker and
+// retrieves the cluster ID. Used by natively dialed admins, which hold no
+// reusable client connection.
+func (k *KafkaAdminClient) getClusterIDFromBroker(broker *sarama.Broker) (string, error) {
+	brokerConn := sarama.NewBroker(broker.Addr())
+	if err := brokerConn.Open(k.saramaConfig); err != nil {
+		return "", fmt.Errorf("failed to open broker connection: %w", err)
 	}
 	defer func() { _ = brokerConn.Close() }()
+	return clusterIDFromBrokerConn(brokerConn)
+}
 
-	// Request metadata from the broker
-	metadataReq := &sarama.MetadataRequest{Version: 7}
-	metadata, err := brokerConn.GetMetadata(metadataReq)
-
+// clusterIDFromBrokerConn requests metadata over an already-open broker
+// connection and returns the cluster id it reports.
+func clusterIDFromBrokerConn(broker *sarama.Broker) (string, error) {
+	metadata, err := broker.GetMetadata(&sarama.MetadataRequest{Version: 7})
 	if err != nil {
-		return "", fmt.Errorf("failed to get metadata: %v", err)
+		return "", fmt.Errorf("failed to get metadata: %w", err)
 	}
-
 	if metadata.ClusterID == nil {
 		return "", fmt.Errorf("cluster ID not available in metadata")
 	}
-
 	return *metadata.ClusterID, nil
 }
 
@@ -501,6 +518,12 @@ func (k *KafkaAdminClient) ListAcls() ([]sarama.ResourceAcls, error) {
 }
 
 func (k *KafkaAdminClient) Close() error {
+	// A from-client admin does not own the underlying sarama.Client (its
+	// lifetime belongs to whoever dialed it — e.g. the offset providers), so
+	// closing here would pull the connection out from under that owner.
+	if k.client != nil {
+		return nil
+	}
 	return k.admin.Close()
 }
 
@@ -510,9 +533,11 @@ func (k *KafkaAdminClient) Close() error {
 // It returns the resolved AdminConfig alongside the *sarama.Config so callers can
 // still report authType in their own error messages.
 //
-// Shared by NewKafkaClient (pinned at sarama.V2_6_0_0, for offset fetching and the
-// rest of scanning) and NewConsumerGroupClient (pinned at sarama.V3_8_0_0, the
-// version KIP-848 ListGroups v5 requires) so the auth switch is defined once.
+// Shared by NewKafkaClient (pinned at sarama.V3_6_0_0, matching the "3.6.0"
+// NewKafkaAdmin callers pin so a from-client admin built off this client
+// observes the same wire version a natively dialed admin would) and
+// NewConsumerGroupClient (pinned at sarama.V3_8_0_0, the version KIP-848
+// ListGroups v5 requires) so the auth switch is defined once.
 func buildKafkaClientConfig(region string, version sarama.KafkaVersion, opts ...AdminOption) (*sarama.Config, AdminConfig, error) {
 	config := AdminConfig{
 		authType: types.AuthTypeIAM,
@@ -557,7 +582,7 @@ func buildKafkaClientConfig(region string, version sarama.KafkaVersion, opts ...
 // NewKafkaClient creates a sarama.Client (not a ClusterAdmin) for offset fetching.
 // Uses the same auth configuration options as NewKafkaAdmin.
 func NewKafkaClient(brokerAddresses []string, region string, opts ...AdminOption) (sarama.Client, error) {
-	saramaConfig, config, err := buildKafkaClientConfig(region, sarama.V2_6_0_0, opts...)
+	saramaConfig, config, err := buildKafkaClientConfig(region, sarama.V3_6_0_0, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -630,5 +655,26 @@ func NewKafkaAdmin(brokerAddresses []string, clientBrokerEncryptionInTransit kaf
 		saramaConfig:    saramaConfig,
 		resourceAcls:    make(map[string]sarama.ResourceAcls),
 		brokerAddresses: brokerAddresses,
+	}, nil
+}
+
+// NewKafkaAdminFromClient wraps an already-dialed sarama.Client as a KafkaAdmin,
+// reusing its open broker connections instead of dialing the cluster again.
+// The returned admin does NOT own the client: Close() is a no-op, and the
+// caller that dialed c stays responsible for closing it.
+//
+// saramaConfig is copied from c, not aliased, so a later mutation on either
+// side can't rewrite the other's live config.
+func NewKafkaAdminFromClient(c sarama.Client) (KafkaAdmin, error) {
+	admin, err := sarama.NewClusterAdminFromClient(c)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create admin from existing client: %w", err)
+	}
+	saramaConfig := *c.Config()
+	return &KafkaAdminClient{
+		admin:        admin,
+		saramaConfig: &saramaConfig,
+		resourceAcls: make(map[string]sarama.ResourceAcls),
+		client:       c,
 	}, nil
 }
