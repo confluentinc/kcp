@@ -81,7 +81,7 @@ For Apache Kafka metrics collection (Jolokia and Prometheus backends), see `docs
 
 ### Internal services
 
-Business logic in `internal/services/` organized by domain (AWS services, Kafka, schema registry, HCL/Terraform, cluster link, gateway, persistence, report, markdown). Each subdirectory is self-explanatory.
+Business logic in `internal/services/` organized by domain (AWS services, Kafka, schema registry, HCL/Terraform, cluster link, gateway, persistence, report, markdown, migration, migplan, offset). Each subdirectory is self-explanatory — see Migration execution below for how `migration`, `migration/tbm`, and `migplan` relate.
 
 ### Frontend
 
@@ -98,6 +98,29 @@ Configured via `kcp create-asset migration-infra --type N`:
 - **Type 5** — Private source with jump cluster (IAM) — MSK only.
 
 Types 1–4 support both MSK and Apache Kafka; Type 4 is MSK-only.
+
+### Migration execution
+
+`kcp migration execute` runs the full cutover as one finite state machine per
+migration — registering on first run (no separate `init` step) and resuming
+from the last completed state on every later run; `--dry-run` runs only the
+feasibility check and exits. The bound route resolves once, at registration,
+to one of two strategies (`MigrationConfig.Mode`, never re-derived on resume):
+
+- **Static (AAO)** — all topics cut over together. `internal/services/migration`.
+- **Topic-based (TBM)** — topics cut over incrementally, promoting mirror
+  topics at zero lag. `internal/services/migration/tbm`.
+
+Both call `internal/services/migplan` at registration — a live I/O layer
+handing plain data to a pure core (`migplan/reconcile`) that decides
+feasibility and produces the fence/switchover artifacts. A refusal is data
+(`Result.Refused`), not an error.
+
+`migration` and `migration/tbm` are separate FSM implementations by design
+(no orchestration code shared), but DO share lower-level mechanics — gateway
+CR apply/verify (`gateway.TransitionVerifier`) and offset sweeps
+(`internal/services/offset`) — so don't assume near-identical logic there is
+accidental duplication before checking.
 
 ## Implementation patterns
 
