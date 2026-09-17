@@ -19,11 +19,11 @@ import (
 
 // CustomResourceDefinition coordinates, used to inspect what the *installed*
 // CFK operator's Gateway CRD declares. The CRD is the only authority on this:
-// spec.configId landed in CFK v3.3.x, and applying an undeclared field is not a
-// no-op — server-side apply rejects it outright (it does not prune; pruning
-// happens on create/update, not apply). So the CRD must be read before kcp
-// writes a configId, or `kcp migration execute` breaks on every cluster running
-// an older operator.
+// spec.configId landed in CFK v3.3.x, and writing an undeclared field is not a
+// no-op — kcp adds it with a JSON Patch (`add /spec/configId`), and the API
+// server rejects an add to a field the CRD does not declare. So the CRD must be
+// read before kcp writes a configId, or `kcp migration execute` breaks on every
+// cluster running an older operator.
 //
 // Reading it needs cluster-scoped RBAC, which a namespace-scoped installation of
 // kcp may not have. That is why this read is reached only when hot-reload is
@@ -211,8 +211,8 @@ type Capability struct {
 
 // InjectsConfigID reports whether kcp may write spec.configId on this cluster.
 //
-// This is the guard that keeps kcp working against pre-hot-reload clusters:
-// server-side apply hard-fails on an undeclared spec.configId, so injecting it
+// This is the guard that keeps kcp working against pre-hot-reload clusters: a
+// JSON Patch adding an undeclared spec.configId hard-fails, so injecting it
 // unconditionally would break every migration against an older CFK operator.
 func (c Capability) InjectsConfigID() bool {
 	return c.Mode == VerifyPerPodConfigID
