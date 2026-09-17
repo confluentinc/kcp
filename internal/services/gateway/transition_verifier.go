@@ -118,6 +118,49 @@ func (v *TransitionVerifier) ApplyConfigIDOnly(ctx context.Context, namespace, c
 	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
 }
 
+// PatchCR patches a single route mutation onto the gateway CR, attaching a
+// fresh config revision id when the cluster supports one (a fresh id guarantees
+// the spec changes so metadata.generation always advances — same rationale as
+// the former ApplyCR).
+func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName string, rp RoutePatch, step string) (ApplyResult, error) {
+	var configID string
+	if v.Capability.InjectsConfigID() {
+		var err error
+		configID, err = NewConfigID()
+		if err != nil {
+			return ApplyResult{}, err
+		}
+	}
+
+	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
+
+	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
+		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
+
+	storedConfigID, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+}
+
+// PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
+// without touching anything else. Used only by VerifyHotReloadCapability.
+func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, crName, step string) (ApplyResult, error) {
+	configID, err := NewConfigID()
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
+	slog.Debug("patching gateway configId only", "step", step, "gateway", crName,
+		"configId", configID, "baselineDeploymentGeneration", baseline)
+	storedConfigID, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID)
+	if err != nil {
+		return ApplyResult{}, err
+	}
+	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
+}
+
 // WaitForAccepted blocks until the Confluent operator has accepted the
 // gateway CR just applied, and must be called after every apply and before
 // the Deployment-based readiness/pod waits.
