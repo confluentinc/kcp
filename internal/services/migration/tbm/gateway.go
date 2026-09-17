@@ -154,8 +154,8 @@ func (a *TBMActions) resolveGatewayCapability(ctx context.Context, config *migra
 // verifyHotReloadCapability proves the gateway really does apply config
 // revisions, before fencing touches any traffic. See
 // gateway.TransitionVerifier.VerifyHotReloadCapability's doc comment for why
-// this matters and why a dedicated field manager makes it safe to call at
-// any point, including a resume.
+// this matters and why patching only spec.configId — touching no other
+// field — makes it safe to call at any point, including a resume.
 func (a *TBMActions) verifyHotReloadCapability(ctx context.Context, config *migration.MigrationConfig) error {
 	return a.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, config.GatewayConfigPort)
 }

@@ -18,9 +18,10 @@ import (
 )
 
 // testInitialCR is a minimal live-read gateway CR with a route named
-// migration-route, so FenceGateway's fence-fragment splice and SwitchGateway's
-// streamingDomain-fragment splice (see deriveFencedCRYAML/deriveSwitchedCRYAML)
-// can derive a fenced/switched CR from it in unit tests.
+// migration-route, so both capability detection's fence/switch CR splice
+// (deriveFencedCRYAML/deriveSwitchedCRYAML) and the write path's RoutePatch
+// derivation (deriveFenceRoutePatch/deriveSwitchRoutePatch) can derive a
+// fenced/switched result from it in unit tests.
 const testInitialCR = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 metadata:

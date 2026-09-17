@@ -32,10 +32,10 @@ const (
 	GatewayKind           = "Gateway"
 )
 
-// ErrApplyUnverified marks a server-side apply the API server accepted and
+// ErrApplyUnverified marks a JSON Patch the API server accepted and
 // persisted, whose stored spec.configId kcp could not then confirm. Unlike an
-// error from the Apply call itself, the CR reached the cluster: a caller that
-// fails here must treat the apply as landed, not as a no-op.
+// error from the Patch call itself, the CR reached the cluster: a caller that
+// fails here must treat the patch as landed, not as a no-op.
 var ErrApplyUnverified = errors.New("gateway CR applied but the stored configId could not be confirmed")
 
 // Service defines gateway operations
@@ -276,7 +276,7 @@ func confirmStoredConfigID(applied *unstructured.Unstructured, gatewayName, conf
 		// spec.configId fails outright when the CRD doesn't declare the field,
 		// so a successful patch that still lost the field points at something
 		// else in the request path (a mutating webhook, a conflicting controller).
-		return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", ErrApplyUnverified, gatewayName)
+		return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp patched", ErrApplyUnverified, gatewayName)
 	}
 
 	return stored, nil

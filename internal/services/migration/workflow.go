@@ -227,8 +227,8 @@ func (s *MigrationActions) verifyGatewayTransition(ctx context.Context, config *
 // VerifyHotReloadCapability proves the gateway really does apply config
 // revisions, before any traffic-affecting change is made. See
 // gateway.TransitionVerifier.VerifyHotReloadCapability's doc comment for why
-// this matters and why a dedicated field manager makes it safe to call at
-// any point, including a resume.
+// this matters and why patching only spec.configId — touching no other
+// field — makes it safe to call at any point, including a resume.
 func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config *MigrationConfig) error {
 	return s.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config))
 }
@@ -518,11 +518,11 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	applied, err := s.patchGatewayRoute(ctx, config, fenceRP, "fence")
 	if err != nil {
 		if errors.Is(err, gateway.ErrApplyUnverified) {
-			// The server-side apply itself succeeded and the fenced spec is live
-			// in the cluster; only kcp's own read-back of the stored configId
-			// failed. That is exactly the state confirmFence's failures leave
-			// behind, so — unlike an apply that never reached the cluster — it
-			// earns the same restore.
+			// The patch itself succeeded and the fenced spec is live in the
+			// cluster; only kcp's own read-back of the stored configId was
+			// unconfirmed. That is exactly the state confirmFence's failures
+			// leave behind, so — unlike a patch that never reached the cluster —
+			// it earns the same restore.
 			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", ErrFenceUnconfirmed, err)
 		}
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
