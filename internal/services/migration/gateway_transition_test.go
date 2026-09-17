@@ -24,7 +24,7 @@ func hotReloadCapableGateway(applied *[]string) *mockGatewayService {
 				HotReloadDeclaredIn: []string{"the live gateway CR"},
 			}, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, configID string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			*applied = append(*applied, configID)
 			return configID, nil
 		},
@@ -169,7 +169,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 	t.Run("an apply failure is not an unconfirmed fence", func(t *testing.T) {
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("k8s API unavailable")
 		}
 
@@ -190,7 +190,7 @@ func TestFenceGateway_UnconfirmedFenceIsMarked(t *testing.T) {
 		// failure" above, despite both surfacing from the same call.
 		var applied []string
 		gw := hotReloadCapableGateway(&applied)
-		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", gateway.ErrApplyUnverified, "gw-1")
 		}
 
@@ -346,7 +346,7 @@ func TestVerifyHotReloadCapability(t *testing.T) {
 			t.Fatal("must not read the live CR — the check no longer re-applies it")
 			return nil, nil
 		}
-		gw.applyGatewayYAMLFn = func(context.Context, string, string, []byte, string) (string, error) {
+		gw.patchGatewayRouteFn = func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
 			t.Fatal("must not apply a full CR — only ApplyGatewayConfigID")
 			return "", nil
 		}

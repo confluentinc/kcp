@@ -12,7 +12,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
-	"github.com/goccy/go-yaml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -816,14 +815,13 @@ func TestWorkflow_PromoteTopics_NilOffsetServices(t *testing.T) {
 
 // TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR is the behavioural
 // heart of the inline-fence change: FenceGateway no longer applies a
-// snapshotted fenced CR file — it derives the fenced CR at cutover from
-// config.GatewayYAML by splicing config.FenceYAML onto config.Route. The
-// applied bytes must carry that fence.
+// snapshotted fenced CR file — it derives a RoutePatch at cutover from
+// config.FenceYAML for config.Route. The patch must carry that fence.
 func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
-	var applied []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte, configID string) (string, error) {
-			applied = yaml
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
 			return configID, nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
@@ -834,16 +832,11 @@ func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML}
 
 	require.NoError(t, wf.FenceGateway(context.Background(), config))
-	require.NotNil(t, applied, "FenceGateway must apply a CR")
 
-	// Re-parse the applied bytes and confirm the fence landed on the named route.
-	var obj map[string]any
-	require.NoError(t, yaml.Unmarshal(applied, &obj))
-	routes := obj["spec"].(map[string]any)["routes"].([]any)
-	route := routes[0].(map[string]any)
-	assert.Equal(t, "migration-route", route["name"])
-	fence, ok := route["fence"].(map[string]any)
-	require.True(t, ok, "the named route must carry a fence block")
+	assert.Equal(t, "migration-route", gotRP.RouteName)
+	assert.Equal(t, "fence", gotRP.Field)
+	fence, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "fence patch value must be a map")
 	assert.Equal(t, "ALL", fence["scope"])
 	assert.Equal(t, "BROKER_NOT_AVAILABLE", fence["errorCode"])
 }
@@ -851,9 +844,9 @@ func TestWorkflow_FenceGateway_AppliesFenceInjectedIntoInitialCR(t *testing.T) {
 func TestWorkflow_FenceGateway_HappyPath(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return "", nil
+			return configID, nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _ time.Duration, _ time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "wait")
@@ -889,8 +882,8 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 			acceptedCalled = true
 			return nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
-			return "", nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitReadyCalled = true
@@ -920,7 +913,9 @@ func TestWorkflow_FenceGateway_DetectionDisabled_UsesReadyWaitNotUIDDiffing(t *t
 func TestWorkflow_FenceGateway_OperatorRejection_DoesNotProceed(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
@@ -948,9 +943,9 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 			callOrder = append(callOrder, "getUIDs")
 			return oldUIDs, nil
 		},
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return "", nil
+			return configID, nil
 		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "reconcile")
@@ -987,7 +982,7 @@ func TestWorkflow_FenceGateway_DetectionEnabled_WaitsForOldPodsGone(t *testing.T
 
 func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, _ string) (string, error) {
 			return "", fmt.Errorf("k8s 403")
 		},
 	}
@@ -1003,8 +998,8 @@ func TestWorkflow_FenceGateway_ApplyFailsReturnsWrappedError(t *testing.T) {
 
 func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
-			return "", nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("rollout-timeout exceeded: %w", context.DeadlineExceeded)
@@ -1022,8 +1017,8 @@ func TestWorkflow_FenceGateway_WaitTimeoutPropagatesDeadlineExceeded(t *testing.
 
 func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
-			return "", nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
 		waitForGatewayReadyFn: func(ctx context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			<-ctx.Done()
@@ -1047,7 +1042,9 @@ func TestWorkflow_FenceGateway_WaitContextCancelledPropagates(t *testing.T) {
 func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			observedTimeout = timeout
 			return nil
@@ -1066,7 +1063,9 @@ func TestWorkflow_FenceGateway_PassesRolloutTimeoutToService(t *testing.T) {
 func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, timeout time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			observedTimeout = timeout
 			return nil
@@ -1083,12 +1082,12 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 
 func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	var callOrder []string
-	var appliedYAML []byte
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte, _ string) (string, error) {
-			appliedYAML = yaml
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
 			callOrder = append(callOrder, "apply")
-			return "", nil
+			return configID, nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			callOrder = append(callOrder, "wait")
@@ -1101,13 +1100,19 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply (derived switched CR) must precede wait")
-	assert.Contains(t, string(appliedYAML), "confluent-cloud", "the applied CR must carry the target streaming domain")
+	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply (derived switch route patch) must precede wait")
+	assert.Equal(t, "migration-route", gotRP.RouteName)
+	assert.Equal(t, "streamingDomain", gotRP.Field)
+	domain, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "streamingDomain patch value must be a map")
+	assert.Equal(t, "confluent-cloud", domain["name"], "the patch must carry the target streaming domain")
 }
 
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("kube unreachable")
 		},
@@ -1149,7 +1154,9 @@ func rejectionError(gatewayName string) *gateway.GatewayRejectedError {
 func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
@@ -1177,9 +1184,9 @@ func TestWorkflow_SwitchGateway_OperatorRejection_FailsWithOperatorMessage(t *te
 func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return "", nil
+			return configID, nil
 		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
@@ -1201,7 +1208,9 @@ func TestWorkflow_SwitchGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) 
 // failures distinguishable from operator rejections.
 func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return fmt.Errorf("kube unreachable")
 		},
@@ -1222,7 +1231,9 @@ func TestWorkflow_SwitchGateway_NonRejectionWaitError_IsWrapped(t *testing.T) {
 func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.T) {
 	var observedTimeout time.Duration
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _ time.Duration, timeout time.Duration) error {
 			observedTimeout = timeout
 			return nil
@@ -1242,7 +1253,9 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 	waitReadyCalled := false
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
+		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			return rejectionError("gw-1")
 		},
@@ -1252,7 +1265,7 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: "apiVersion: v1\nkind: Gateway\n"}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route"}
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.Error(t, err)
@@ -1265,9 +1278,9 @@ func TestWorkflow_UnfenceGateway_OperatorRejection_Fails(t *testing.T) {
 func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T) {
 	var callOrder []string
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			callOrder = append(callOrder, "apply")
-			return "", nil
+			return configID, nil
 		},
 		waitForGatewayAcceptedFn: func(_ context.Context, _, _ string, _, _ time.Duration) error {
 			callOrder = append(callOrder, "accepted")
@@ -1279,7 +1292,7 @@ func TestWorkflow_UnfenceGateway_WaitsForAcceptanceBeforeReadiness(t *testing.T)
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: "apiVersion: v1\nkind: Gateway\n"}
+	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR, Route: "migration-route"}
 
 	require.NoError(t, wf.unfenceGateway(context.Background(), config))
 	assert.Equal(t, []string{"apply", "accepted", "ready"}, callOrder)
@@ -1316,9 +1329,9 @@ func TestWorkflow_VerifyFence_IncreasingOffsets_ReturnsError(t *testing.T) {
 	// (see TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack).
 	var applyCalled bool
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			applyCalled = true
-			return "", nil
+			return configID, nil
 		},
 	}
 	cl := &mockClusterLinkService{}
@@ -1484,17 +1497,17 @@ func TestWorkflow_PromoteTopics_IgnoresDetectionConfig(t *testing.T) {
 	assert.True(t, promoted["topic-1"])
 }
 
-// TestWorkflow_UnfenceGateway_AppliesGatewayYAMLVerbatim proves unfenceGateway
-// no longer strips server-managed metadata itself: config.GatewayYAML is
-// already cleaned once, centrally, by migplan (see
-// migplan/gatewayfile.go's cleanGatewayDoc, captured at init), so unfence just
-// re-applies it as-is.
-func TestWorkflow_UnfenceGateway_AppliesGatewayYAMLVerbatim(t *testing.T) {
-	var appliedYAML []byte
+// TestWorkflow_UnfenceGateway_PatchesRouteVerbatim proves unfenceGateway
+// restores config.Route to exactly the state captured in config.GatewayYAML —
+// a whole-route replace (Field == "") straight off the migplan-captured CR,
+// with no re-cleaning of its own (migplan already cleaned server-managed
+// metadata once, centrally — see migplan/gatewayfile.go's cleanGatewayDoc).
+func TestWorkflow_UnfenceGateway_PatchesRouteVerbatim(t *testing.T) {
+	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yaml []byte, _ string) (string, error) {
-			appliedYAML = yaml
-			return "", nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+			gotRP = rp
+			return configID, nil
 		},
 	}
 	cl := &mockClusterLinkService{}
@@ -1506,27 +1519,33 @@ metadata:
   name: my-gw
   namespace: confluent
 spec:
-  streamingDomains:
-  - name: source-kafka-cluster
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
 `
 	config := &MigrationConfig{
 		InitialCrName: "my-gw",
 		K8sNamespace:  "confluent",
 		GatewayYAML:   cleanedGatewayYAML,
+		Route:         "migration-route",
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	require.NotNil(t, appliedYAML, "ApplyGatewayYAML should have been called")
-	assert.Equal(t, cleanedGatewayYAML, string(appliedYAML), "unfenceGateway must apply config.GatewayYAML verbatim")
+	assert.Equal(t, "migration-route", gotRP.RouteName)
+	assert.Equal(t, "", gotRP.Field, "unfence must whole-route replace, not set a single field")
+	route, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "unfence patch value must be the route object")
+	assert.Equal(t, "migration-route", route["name"])
+	assert.Equal(t, "gateway:9595", route["endpoint"])
 }
 
 func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 	var applyCalled, waitCalled bool
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
 			applyCalled = true
-			return "", nil
+			return configID, nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, namespace, name string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			waitCalled = true
@@ -1542,7 +1561,8 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 	config := &MigrationConfig{
 		InitialCrName: "my-gw",
 		K8sNamespace:  "confluent",
-		GatewayYAML:   "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: confluent\n",
+		GatewayYAML:   testInitialCR,
+		Route:         "migration-route",
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
@@ -1552,8 +1572,8 @@ func TestWorkflow_UnfenceGateway_WaitsForGatewayReadiness(t *testing.T) {
 
 func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, _ []byte, _ string) (string, error) {
-			return "", nil
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			return configID, nil
 		},
 		waitForGatewayReadyFn: func(_ context.Context, _, _ string, _ int64, _, _ time.Duration, _ func(gateway.GatewayReadinessProgress)) error {
 			return fmt.Errorf("gateway pods did not converge")
@@ -1565,7 +1585,8 @@ func TestWorkflow_UnfenceGateway_ReadinessFailure_ReturnsError(t *testing.T) {
 	config := &MigrationConfig{
 		InitialCrName: "my-gw",
 		K8sNamespace:  "confluent",
-		GatewayYAML:   "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gw\n  namespace: confluent\n",
+		GatewayYAML:   testInitialCR,
+		Route:         "migration-route",
 	}
 
 	err := wf.unfenceGateway(context.Background(), config)
