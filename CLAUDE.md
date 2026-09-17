@@ -105,11 +105,19 @@ Types 1–4 support both MSK and Apache Kafka; Type 4 is MSK-only.
 migration — registering on first run (no separate `init` step) and resuming
 from the last completed state on every later run; `--dry-run` runs only the
 feasibility check and exits. The bound route resolves once, at registration,
-to one of two strategies (`MigrationConfig.Mode`, never re-derived on resume):
+to one of two strategies — named **AAO** and **TBM** throughout the codebase
+(comments, package/test names), and tied 1:1 to the Gateway CRD's own route
+mode (`RouteConfig.Mode`, persisted as `MigrationConfig.Mode`, never
+re-derived on resume):
 
-- **Static (AAO)** — all topics cut over together. `internal/services/migration`.
-- **Topic-based (TBM)** — topics cut over incrementally, promoting mirror
-  topics at zero lag. `internal/services/migration/tbm`.
+- **AAO** (All-At-Once, `mode: static`) — all topics cut over together.
+  `internal/services/migration`.
+- **TBM** (Topic-Based Migration, `mode: dynamic`) — topics cut over
+  incrementally, promoting mirror topics at zero lag.
+  `internal/services/migration/tbm`.
+
+A static route can only run AAO; a dynamic route only TBM — the mode isn't
+just a label, it's what migplan/reconcile dispatches on.
 
 Both call `internal/services/migplan` at registration — a live I/O layer
 handing plain data to a pure core (`migplan/reconcile`) that decides
