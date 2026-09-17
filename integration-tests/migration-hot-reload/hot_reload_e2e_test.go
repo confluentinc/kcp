@@ -262,3 +262,37 @@ func TestStaleConfigIDIsNotAcceptedAsSuccess(t *testing.T) {
 	})
 	require.Error(t, err, "waiting for a superseded configId must not report success")
 }
+
+// TestFenceAndSwitchoverAreVerifiedPerPod walks the transitions a migration
+// actually performs, in order — fence, switchover, rollback — as the targeted
+// route patches the migration workflow now issues rather than the full-CR
+// applies the SSA path used. Each transition mints a fresh configId that must be
+// confirmed on every pod, and none may roll: all three are in-place route edits,
+// so an unmoved Deployment generation and unchanged pods are required
+// (assertNoPodRoll). This is the patch-path restoration of the per-pod
+// fence/switchover/rollback coverage dropped when the SSA write path was removed.
+func TestFenceAndSwitchoverAreVerifiedPerPod(t *testing.T) {
+	ctx := context.Background()
+	e := newEnv(t)
+
+	seen := map[string]bool{}
+	for _, step := range []struct {
+		name string
+		rp   gateway.RoutePatch
+	}{
+		{"fence", fenceRoutePatch(t)},
+		{"switchover", switchoverRoutePatch(t)},
+		{"rollback", unfenceRoutePatch(t)},
+	} {
+		t.Run(step.name, func(t *testing.T) {
+			before := e.fingerprint(t, ctx)
+
+			configID := e.patchRouteAndConverge(t, ctx, step.rp)
+			require.False(t, seen[configID], "each transition must carry a distinct configId")
+			seen[configID] = true
+
+			// Every transition here is an in-place route edit, so none may roll.
+			assertNoPodRoll(t, before, e.fingerprint(t, ctx))
+		})
+	}
+}

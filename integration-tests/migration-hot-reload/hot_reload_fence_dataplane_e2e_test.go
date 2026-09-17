@@ -208,8 +208,9 @@ const fenceRouteName = "migration-route"
 // patchRouteAndConverge patches rp under a fresh configId and blocks until
 // every pod reports it, mirroring what FenceGateway/unfenceGateway do at each
 // transition (internal/services/migration/workflow.go) — a targeted
-// RoutePatch rather than a full-CR apply.
-func (e *env) patchRouteAndConverge(t *testing.T, ctx context.Context, rp gateway.RoutePatch) {
+// RoutePatch rather than a full-CR apply. It returns the configId it minted so
+// callers can assert each transition carries a distinct one.
+func (e *env) patchRouteAndConverge(t *testing.T, ctx context.Context, rp gateway.RoutePatch) string {
 	t.Helper()
 
 	configID, err := gateway.NewConfigID()
@@ -224,33 +225,57 @@ func (e *env) patchRouteAndConverge(t *testing.T, ctx context.Context, rp gatewa
 		PollInterval:     pollInterval,
 		HotReloadTimeout: convergeTimeout,
 	}))
+	return configID
 }
 
-// applyFenceAndConverge patches the route's fence field from the rendered
-// fenced CR's own route (rather than applying that CR wholesale), mirroring
-// FenceGateway's deriveFenceRoutePatch (Field: "fence"), and blocks until
-// every pod reports the new configId.
-func (e *env) applyFenceAndConverge(t *testing.T, ctx context.Context) {
+// fenceRoutePatch derives the fence transition's RoutePatch from the rendered
+// fenced CR's own route, mirroring FenceGateway's deriveFenceRoutePatch
+// (Field: "fence") — a single-field edit rather than a full-CR apply.
+func fenceRoutePatch(t *testing.T) gateway.RoutePatch {
 	t.Helper()
-
 	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_FENCED_CR"), fenceRouteName)
 	require.NoError(t, err)
 	fenceValue, ok := route["fence"]
 	require.True(t, ok, "the rendered fenced CR's route must declare a fence block")
+	return gateway.RoutePatch{RouteName: fenceRouteName, Field: "fence", Value: fenceValue}
+}
 
-	e.patchRouteAndConverge(t, ctx, gateway.RoutePatch{RouteName: fenceRouteName, Field: "fence", Value: fenceValue})
+// switchoverRoutePatch derives the switchover transition's RoutePatch from the
+// rendered switchover CR's route, mirroring AAO's deriveSwitchRoutePatch
+// (Field: "streamingDomain"). Both streaming domains are declared in every
+// transition, so flipping the route's streamingDomain is an in-place route edit
+// CFK hot-reloads rather than a roll.
+func switchoverRoutePatch(t *testing.T) gateway.RoutePatch {
+	t.Helper()
+	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_SWITCHOVER_CR"), fenceRouteName)
+	require.NoError(t, err)
+	streamingDomain, ok := route["streamingDomain"]
+	require.True(t, ok, "the rendered switchover CR's route must declare a streamingDomain")
+	return gateway.RoutePatch{RouteName: fenceRouteName, Field: "streamingDomain", Value: streamingDomain}
+}
+
+// unfenceRoutePatch derives the rollback transition's RoutePatch: a whole-route
+// replace restoring the route to its captured initial state, mirroring
+// unfenceGateway's deriveUnfenceRoutePatch (Field: "").
+func unfenceRoutePatch(t *testing.T) gateway.RoutePatch {
+	t.Helper()
+	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_INITIAL_CR"), fenceRouteName)
+	require.NoError(t, err)
+	return gateway.RoutePatch{RouteName: fenceRouteName, Value: route}
+}
+
+// applyFenceAndConverge patches the route's fence field and blocks until every
+// pod reports the new configId.
+func (e *env) applyFenceAndConverge(t *testing.T, ctx context.Context) {
+	t.Helper()
+	e.patchRouteAndConverge(t, ctx, fenceRoutePatch(t))
 }
 
 // applyUnfenceAndConverge restores the route to its unfenced, captured state
-// via a whole-route replace, mirroring unfenceGateway's deriveUnfenceRoutePatch
-// (Field: ""), and blocks until every pod reports the new configId.
+// via a whole-route replace and blocks until every pod reports the new configId.
 func (e *env) applyUnfenceAndConverge(t *testing.T, ctx context.Context) {
 	t.Helper()
-
-	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_INITIAL_CR"), fenceRouteName)
-	require.NoError(t, err)
-
-	e.patchRouteAndConverge(t, ctx, gateway.RoutePatch{RouteName: fenceRouteName, Value: route})
+	e.patchRouteAndConverge(t, ctx, unfenceRoutePatch(t))
 }
 
 // fenceObservation is one measured fence transition.

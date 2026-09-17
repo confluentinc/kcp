@@ -192,7 +192,7 @@ func TestTBMActions_Fence_RolloutPath_AppliesAndConfirms(t *testing.T) {
 	assert.Equal(t, "rules", gotRP.Field)
 }
 
-func TestTBMActions_Fence_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
+func TestTBMActions_Fence_PatchesRulesFieldWithFencingBlock(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
@@ -309,7 +309,7 @@ func TestTBMActions_Fence_NoTopicsSkipsFencing(t *testing.T) {
 // consumer normalizes afterward. Runs both blocked: true and blocked: false
 // to prove this is a verbatim pass-through, not a preservation of one
 // specific value.
-func TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim(t *testing.T) {
+func TestTBMActions_Fence_PatchesFenceYAMLFencingEntryVerbatim(t *testing.T) {
 	for _, blocked := range []bool{true, false} {
 		t.Run(fmt.Sprintf("blocked=%v", blocked), func(t *testing.T) {
 			var gotRP gateway.RoutePatch
@@ -330,7 +330,7 @@ func TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim(t *testing.T) {
 			fencing := rules["fencing"].([]any)
 			require.Len(t, fencing, 1)
 			entry := fencing[0].(map[string]any)
-			assert.Equal(t, blocked, entry["blocked"], "Fence must apply the fencing entry's blocked value verbatim, never patch it")
+			assert.Equal(t, blocked, entry["blocked"], "Fence must carry the fencing entry's blocked value verbatim, never alter it")
 		})
 	}
 }
@@ -372,7 +372,7 @@ func TestTBMActions_Switch_RolloutPath_AppliesAndConfirms(t *testing.T) {
 	assert.Equal(t, "rules", gotRP.Field)
 }
 
-func TestTBMActions_Switch_ReplacesNamedRouteRulesInAppliedCR(t *testing.T) {
+func TestTBMActions_Switch_PatchesRulesFieldWithRoutingConditions(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
@@ -497,7 +497,7 @@ func TestTBMActions_Switch_GatewayRejectedErrorPropagates(t *testing.T) {
 // (already fixed at the source, in migplan's PrependFence — see
 // TestTBMActions_Fence_AppliesFenceYAMLFencingEntryVerbatim for the
 // equivalent proof on the fence side).
-func TestTBMActions_Switch_AppliesSwitchoverYAMLVerbatim(t *testing.T) {
+func TestTBMActions_Switch_PatchesSwitchoverYAMLVerbatim(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
@@ -564,7 +564,7 @@ func TestTBMActions_Switch_ResolvesCapabilityFreshWhenFenceNeverRanThisProcess(t
 	assert.Equal(t, 1, detectCalls, "Switch alone (Fence never ran this process) must still resolve capability")
 }
 
-func TestTBMActions_UnfenceGateway_AppliesGatewayYAMLSnapshotVerbatim(t *testing.T) {
+func TestTBMActions_UnfenceGateway_PatchesRouteToCapturedSnapshotVerbatim(t *testing.T) {
 	var gotRP gateway.RoutePatch
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
