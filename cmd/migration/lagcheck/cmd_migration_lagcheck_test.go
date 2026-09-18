@@ -185,9 +185,17 @@ func TestLagCheck_BuildsConfigFromManifest(t *testing.T) {
 // mirror.
 func TestLagCheck_AlwaysWatchesEveryMirrorTopic(t *testing.T) {
 	g := loadLagGateway(t, writeLagManifest(t, func(doc string) string {
-		return strings.Replace(doc,
-			"    - topicPatterns:\n        - '.*'\n", "    - topics:\n        - t1.order\n", 1)
+		replaced := strings.Replace(doc,
+			"      - topicPatterns:\n          - '.*'\n", "      - topics:\n          - t1.order\n", 1)
+		require.NotEqual(t, doc, replaced, "fixture drift: the topicPatterns block was not found to replace")
+		return replaced
 	}))
+	// Confirm the manifest actually carries an explicit selection, so this test
+	// exercises "explicit topics are ignored" rather than passing vacuously
+	// because the match-all pattern was left in place.
+	require.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
+	assert.Equal(t, []string{"t1.order"}, *g.Spec.Route.TopicGroup[0].Topics)
+
 	cfg, _, err := buildLagCheckConfig(g)
 	require.NoError(t, err)
 	assert.Empty(t, cfg.Topics, "the topicGroup selection must not narrow the lag view")
