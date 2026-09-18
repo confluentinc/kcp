@@ -103,6 +103,21 @@ func TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll(t *testing.T) {
 	assert.Equal(t, []string{"e2e-test-topic-baseline"}, *entry.Topics)
 }
 
+// TestRenderGatewayMigration_EmptyFenceRoutesDoesNotPanic is a regression test:
+// spec.route.name and spec.route.targetStreamingDomain read FenceRoutes[0]
+// directly, and an unguarded `index .FenceRoutes 0` turns an empty slice into a
+// template execution error instead of the tolerant empty output the old
+// `range`-based rendering gave every field. No scenario populates an empty
+// FenceRoutes today, but the render must degrade gracefully rather than fail
+// with an opaque "index out of range" if one ever does.
+func TestRenderGatewayMigration_EmptyFenceRoutesDoesNotPanic(t *testing.T) {
+	opts := baselineOpts()
+	opts.FenceRoutes = nil
+
+	_, err := renderGatewayMigration(opts)
+	require.NoError(t, err, "an empty FenceRoutes must not fail template rendering")
+}
+
 // TestRenderGatewayMigration_TopologyMatchesOpts guards against a transposition
 // in the template — two fields of the same YAML type swapped still parses,
 // validates and resolves, so nothing above would catch it.

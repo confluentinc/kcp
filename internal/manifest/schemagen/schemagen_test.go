@@ -230,6 +230,8 @@ func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
 	gatewayProps := props(t, spec["gateway"].(map[string]any))
 	require.Contains(t, gatewayProps["cr-name"].(map[string]any)["description"], "name")
 
+	require.NotEmpty(t, spec["route"].(map[string]any)["description"],
+		"spec.route itself must carry a description, not just its sub-fields")
 	route := props(t, spec["route"].(map[string]any))
 	require.NotEmpty(t, route["name"].(map[string]any)["description"])
 	require.NotEmpty(t, route["targetStreamingDomain"].(map[string]any)["description"])

@@ -47,7 +47,9 @@ spec:
     kubeconfig: {{ .KubePath | yamlQuote }}
     cr-name: {{ .GatewayName | yamlQuote }}
   route:
-    name: {{ (index .FenceRoutes 0).Name | yamlQuote }}
+{{- with .FenceRoutes }}
+    name: {{ (index . 0).Name | yamlQuote }}
+{{- end }}
     topicGroup:
 {{- range .FenceRoutes }}
 {{- if .Topics }}
@@ -68,7 +70,9 @@ spec:
         - {{ ".*" | yamlQuote }}
 {{- end }}
 {{- end }}
-    targetStreamingDomain: {{ (index .FenceRoutes 0).SwitchoverDomainName | yamlQuote }}
+{{- with .FenceRoutes }}
+    targetStreamingDomain: {{ (index . 0).SwitchoverDomainName | yamlQuote }}
+{{- end }}
 {{- if .Policy.Any }}
 
   # Read FRESH by execute on every run and never snapshotted, which is what lets a
