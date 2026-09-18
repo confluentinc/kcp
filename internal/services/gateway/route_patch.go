@@ -19,6 +19,9 @@ func FragmentValue(fragment []byte, key string) (any, error) {
 	if !ok {
 		return nil, fmt.Errorf("gateway fragment has no top-level %s key", key)
 	}
+	if v == nil {
+		return nil, fmt.Errorf("gateway fragment's top-level %s key is null", key)
+	}
 	return v, nil
 }
 

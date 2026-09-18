@@ -156,11 +156,21 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 // PatchGatewayRoute applies a single route mutation to the gateway CR as an RFC
 // 6902 JSON Patch — touching only the one route field (or, for unfence, the one
 // route element) rp describes, plus spec.configId when configID is non-empty.
-// Unlike a server-side apply it takes no field ownership and prunes nothing.
+// Unlike a server-side apply it takes no field ownership, so it never prunes a
+// field through ownership tracking the way SSA can. The unfence whole-route
+// replace is a separate matter: it supplants the entire route element with the
+// snapshot captured at Initialize, so it does discard any field added to that
+// route after the snapshot was taken — that's the point of unfence (restore the
+// pristine route), not a pruning side effect.
 //
 // The live CR is read first to resolve rp.RouteName to its spec.routes index; a
-// test op in the patch guards that index against a concurrent reorder. The
-// returned string is the configId the API server stored (empty when none sent).
+// test op in the patch guards that index against a concurrent reorder, and a
+// second test op guards the current value of whatever the mutation is about to
+// overwrite (see buildRoutePatchOps). Missing spec.routes on the live CR is a
+// hard failure here — a deliberate departure from the old server-side-apply
+// write, which would have self-healed by re-applying the full captured CR; a
+// narrow JSON Patch has nothing to fall back to. The returned string is the
+// configId the API server stored (empty when none sent).
 func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {

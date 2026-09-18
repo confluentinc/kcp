@@ -42,28 +42,33 @@ func deriveSwitchedCRYAML(config *migration.MigrationConfig) ([]byte, error) {
 	return gateway.ReplaceRouteRulesObj(base, config.Route, []byte(config.SwitchoverYAML))
 }
 
-// deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
-// rules fragment onto config.Route. Consumed by Fence's write path;
-// resolveGatewayCapability's probe still uses deriveFencedCRYAML/full CR
-// bytes since capability detection needs a complete CR to apply, not a route
-// patch.
-func deriveFenceRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
-	v, err := gateway.FragmentValue([]byte(config.FenceYAML), "rules")
+// deriveRulesRoutePatch builds the RoutePatch that grafts yamlSrc's rules
+// fragment onto config.Route. TBM's fence and switch write paths both patch
+// the same "rules" field — they differ only in which captured YAML the
+// fragment comes from — unlike AAO's fence/switch pair, which patch distinct
+// fields ("fence" vs "streamingDomain").
+func deriveRulesRoutePatch(config *migration.MigrationConfig, yamlSrc string) (gateway.RoutePatch, error) {
+	v, err := gateway.FragmentValue([]byte(yamlSrc), "rules")
 	if err != nil {
 		return gateway.RoutePatch{}, err
 	}
 	return gateway.RoutePatch{RouteName: config.Route, Field: "rules", Value: v}, nil
 }
 
+// deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
+// rules fragment onto config.Route. Consumed by Fence's write path;
+// resolveGatewayCapability's probe still uses deriveFencedCRYAML/full CR
+// bytes since capability detection needs a complete CR to apply, not a route
+// patch.
+func deriveFenceRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
+	return deriveRulesRoutePatch(config, config.FenceYAML)
+}
+
 // deriveSwitchRoutePatch builds the RoutePatch that grafts
 // config.SwitchoverYAML's rules fragment onto config.Route. Consumed by
 // Switch's write path.
 func deriveSwitchRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
-	v, err := gateway.FragmentValue([]byte(config.SwitchoverYAML), "rules")
-	if err != nil {
-		return gateway.RoutePatch{}, err
-	}
-	return gateway.RoutePatch{RouteName: config.Route, Field: "rules", Value: v}, nil
+	return deriveRulesRoutePatch(config, config.SwitchoverYAML)
 }
 
 // deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to

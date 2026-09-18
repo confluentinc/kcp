@@ -15,6 +15,10 @@ func TestFragmentValue(t *testing.T) {
 	_, err = FragmentValue([]byte("streamingDomain: cp-b\n"), "fence")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no top-level fence key")
+
+	_, err = FragmentValue([]byte("fence: null\n"), "fence")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "fence key is null")
 }
 
 func TestRouteObject(t *testing.T) {

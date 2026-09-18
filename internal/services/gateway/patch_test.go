@@ -96,6 +96,25 @@ func TestPatchGatewayRoute(t *testing.T) {
 		}
 	})
 
+	t.Run("fails loudly when the live CR has no spec.routes", func(t *testing.T) {
+		// Deliberate departure from the old server-side-apply write, which
+		// would have self-healed by re-applying the full captured CR — a
+		// narrow JSON Patch has nothing to fall back to, so this must fail
+		// rather than silently no-op.
+		noRoutes := &unstructured.Unstructured{Object: map[string]any{
+			"apiVersion": "platform.confluent.io/v1beta1",
+			"kind":       "Gateway",
+			"metadata":   map[string]any{"name": gw, "namespace": ns},
+			"spec":       map[string]any{},
+		}}
+		cs := newFakeDynamicClient(noRoutes)
+
+		_, err := patchGatewayRoute(context.Background(), cs, ns, gw,
+			RoutePatch{RouteName: route, Field: "streamingDomain", Value: "cp-b"}, "")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "has no spec.routes")
+	})
+
 	t.Run("surfaces ErrApplyUnverified when the server stores a different configId", func(t *testing.T) {
 		cs := newFakeDynamicClient(seededGateway(ns, gw, route))
 		// The route mutation succeeds but the CR comes back carrying a configId
