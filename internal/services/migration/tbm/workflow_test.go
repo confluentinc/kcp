@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/stretchr/testify/assert"
@@ -67,7 +68,7 @@ func zeroLagBatch(topics []string, off int64) map[string]map[int32]int64 {
 
 func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	cl := &mockClusterLinkService{
 		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {

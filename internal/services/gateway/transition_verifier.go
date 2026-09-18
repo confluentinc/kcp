@@ -69,13 +69,11 @@ func (v *TransitionVerifier) DeploymentBaseline(ctx context.Context, namespace, 
 	return baseline
 }
 
-// ApplyCR applies a gateway CR, attaching a fresh config revision id when the
-// cluster supports one. A fresh id on every apply guarantees the spec
-// changes, so metadata.generation always advances — closing the no-op blind
-// spot where an apply that changed nothing leaves observedGeneration already
-// satisfied and every downstream wait reports success for a transition that
-// never happened.
-func (v *TransitionVerifier) ApplyCR(ctx context.Context, namespace, crName string, yamlData []byte, step string) (ApplyResult, error) {
+// PatchCR patches a single route mutation onto the gateway CR, attaching a
+// fresh config revision id when the cluster supports one (a fresh id guarantees
+// the spec changes so metadata.generation always advances — same rationale as
+// the whole-CR server-side apply this replaced).
+func (v *TransitionVerifier) PatchCR(ctx context.Context, namespace, crName string, rp RoutePatch, step string) (ApplyResult, error) {
 	var configID string
 	if v.Capability.InjectsConfigID() {
 		var err error
@@ -87,31 +85,27 @@ func (v *TransitionVerifier) ApplyCR(ctx context.Context, namespace, crName stri
 
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
 
-	slog.Debug("applying gateway CR", "step", step, "gateway", crName,
-		"configId", configID, "baselineDeploymentGeneration", baseline)
+	slog.Debug("patching gateway CR", "step", step, "gateway", crName,
+		"route", rp.RouteName, "field", rp.Field, "configId", configID, "baselineDeploymentGeneration", baseline)
 
-	storedConfigID, err := v.Service.ApplyGatewayYAML(ctx, namespace, crName, yamlData, configID)
+	storedConfigID, err := v.Service.PatchGatewayRoute(ctx, namespace, crName, rp, configID)
 	if err != nil {
 		return ApplyResult{}, err
 	}
 	return ApplyResult{ConfigID: storedConfigID, BaselineDeploymentGeneration: baseline}, nil
 }
 
-// ApplyConfigIDOnly stamps a fresh configId on the gateway without applying —
-// or owning — anything else. Used only by VerifyHotReloadCapability; every
-// other caller needs the CR's actual spec change and uses ApplyCR.
-func (v *TransitionVerifier) ApplyConfigIDOnly(ctx context.Context, namespace, crName, step string) (ApplyResult, error) {
+// PatchConfigIDOnly stamps a fresh configId on the gateway via JSON Patch
+// without touching anything else. Used only by VerifyHotReloadCapability.
+func (v *TransitionVerifier) PatchConfigIDOnly(ctx context.Context, namespace, crName, step string) (ApplyResult, error) {
 	configID, err := NewConfigID()
 	if err != nil {
 		return ApplyResult{}, err
 	}
-
 	baseline := v.DeploymentBaseline(ctx, namespace, crName, step)
-
-	slog.Debug("applying gateway configId only", "step", step, "gateway", crName,
+	slog.Debug("patching gateway configId only", "step", step, "gateway", crName,
 		"configId", configID, "baselineDeploymentGeneration", baseline)
-
-	storedConfigID, err := v.Service.ApplyGatewayConfigID(ctx, namespace, crName, configID)
+	storedConfigID, err := v.Service.PatchGatewayConfigID(ctx, namespace, crName, configID)
 	if err != nil {
 		return ApplyResult{}, err
 	}
@@ -253,8 +247,8 @@ func (v *TransitionVerifier) printGatewayReadinessProgress(p GatewayReadinessPro
 // /config keeps serving the previous revision. Detecting that after fencing
 // would mean discovering it with traffic already blocked.
 //
-// The check applies spec.configId alone, under its own field manager
-// (Service.ApplyGatewayConfigID) rather than re-applying the live spec under
+// The check applies spec.configId alone, as a JSON Patch
+// (Service.PatchGatewayConfigID) rather than re-applying the live spec under
 // the caller's usual manager. That used to be the design — re-apply the live
 // CR verbatim plus a fresh configId — and it was safe to run at any point in
 // a migration for the same reason it was dangerous: server-side apply shares
@@ -265,9 +259,9 @@ func (v *TransitionVerifier) printGatewayReadinessProgress(p GatewayReadinessPro
 // repeat, e.g. spec.hotReload when the fenced CR relies on inheriting it —
 // then became a narrowing apply under that same manager, and server-side
 // apply prunes a field an earlier apply from the same manager declared once
-// a later one omits it. A dedicated, disjoint field manager that owns
-// nothing but spec.configId can't create that hazard, which is what makes
-// this safe to run at any point in a migration, including a resume.
+// a later one omits it. A JSON Patch naming only spec.configId declares no
+// manager and no spec, so it can't create that hazard either, which is what
+// makes this safe to run at any point in a migration, including a resume.
 func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, namespace, crName string, port int) error {
 	if !v.Capability.InjectsConfigID() {
 		return nil
@@ -275,7 +269,7 @@ func (v *TransitionVerifier) VerifyHotReloadCapability(ctx context.Context, name
 
 	v.Reporter.Detail("Checking the gateway applies config revisions in place...")
 
-	applied, err := v.ApplyConfigIDOnly(ctx, namespace, crName, "hot-reload check")
+	applied, err := v.PatchConfigIDOnly(ctx, namespace, crName, "hot-reload check")
 	if err != nil {
 		return fmt.Errorf("failed to apply the gateway hot-reload check: %w", err)
 	}

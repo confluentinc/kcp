@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -136,7 +137,7 @@ func TestRunReport_ResumeRecordsSkippedStages(t *testing.T) {
 // A failure is a result, not an absence of one.
 func TestRunReport_FailedRunIsRecorded(t *testing.T) {
 	overrides := orchestratorOverrides{
-		applyGatewayYAMLFn: func(ctx context.Context, namespace, name string, yaml []byte, configID string) (string, error) {
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
 			return "", fmt.Errorf("apply gateway failed: forbidden")
 		},
 	}
