@@ -41,11 +41,11 @@ type GatewaySpec struct {
 	Target      GatewayTarget      `yaml:"target" json:"target"`
 	ClusterLink GatewayClusterLink `yaml:"clusterLink" json:"clusterLink"`
 	Gateway     Gateway            `yaml:"gateway" json:"gateway"`
-	// Route names the dynamic route on the live Gateway CR to fence/switch,
-	// pairs it with the target streaming domain it switches to, and carries the
-	// topic selection (literal names and/or anchored regex patterns) that
-	// migrates. The bootstrap server id and the migration mode are not carried
-	// here: both are read from the live CR at init.
+	// Route names the route on the live Gateway CR to fence/switch, pairs it
+	// with the target streaming domain it switches to, and carries the topic
+	// selection (literal names and/or anchored regex patterns) that migrates.
+	// The bootstrap server id and the migration mode are not carried here: both
+	// are read from the live CR at init.
 	Route Route `yaml:"route" json:"route"`
 	// DefaultPolicies is read fresh on every execute and never snapshotted, which
 	// is what lets a caller vary execute-time policy between init and execute.
@@ -85,10 +85,10 @@ type GatewayClusterLink struct {
 	PauseConsumerOffsetSync bool           `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
 }
 
-// Route names the dynamic route on the live Gateway CR to fence/switch, the
-// target streaming domain it switches to, and the topic selection that
-// migrates. The field set is identical for the static (all-at-once) and
-// dynamic (topic-based) modes.
+// Route names the route on the live Gateway CR to fence/switch, the target
+// streaming domain it switches to, and the topic selection that migrates. The
+// field set is identical for the static (all-at-once) and dynamic
+// (topic-based) modes.
 //
 // There is no bootstrapServerId or mode field: both are read from the live CR
 // at init.
