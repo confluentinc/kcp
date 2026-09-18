@@ -80,9 +80,8 @@ spec:
     # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
     cr-name: gateway-initial # a Kubernetes object NAME, read live
 
-  # topicGroup pairs the topic selection with the route it migrates and the
-  # streaming domain that route switches to. Exactly one entry today — one
-  # route, one migration per file.
+  # route names the route to fence/switch, the streaming domain it switches to,
+  # and the topic selection that migrates.
   #
   # kcp reads the live initial CR, injects fence: {scope: ALL, errorCode:
   # BROKER_NOT_AVAILABLE} onto the named route, and applies the patched CR —
@@ -96,7 +95,12 @@ spec:
   #
   # The route's migration MODE (all-at-once vs topic-based) is read from the
   # live CR's route binding, not declared here.
-  topicGroup:
+  route:
+    name: migration-route # a pre-existing route in the initial CR
+
+    # topicGroup pairs the topic selection(s) that migrate on this route.
+    # Exactly one entry today — one route, one migration per file.
+    #
     # topics is a flat list of LITERAL topic names, exact-matched against the
     # link's active mirror topics — not globs. topicPatterns is a list of
     # anchored full-match regular expressions (RE2). At least one of the two is
@@ -105,13 +109,14 @@ spec:
     #
     # Note the selection has NO effect on `lag-check`, which always watches
     # every mirror.
-    - topics: ['t1.order', 't1.inventory', 't2.order']
-      # topicPatterns: ['orders\..*']
-      route: migration-route # a pre-existing route in the initial CR
-      # The target streaming domain — declared in the initial CR's
-      # spec.streamingDomains. The bootstrap server id kcp binds the route to is
-      # DERIVED from that declaration in the live CR at init, not written here.
-      targetStreamingDomain: confluent-cloud
+    topicGroup:
+      - topics: ['t1.order', 't1.inventory', 't2.order']
+        # topicPatterns: ['orders\..*']
+
+    # The target streaming domain — declared in the initial CR's
+    # spec.streamingDomains. The bootstrap server id kcp binds the route to is
+    # DERIVED from that declaration in the live CR at init, not written here.
+    targetStreamingDomain: confluent-cloud
 
   # OPTIONAL, and read FRESH on every execute — never frozen at init. That is what
   # lets policy be varied between init and execute. Each value is a DEFAULT:

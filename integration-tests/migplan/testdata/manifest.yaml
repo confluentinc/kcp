@@ -1,6 +1,6 @@
 # GatewayMigration manifest for the migplan command-level e2e (the plaintext
 # docker env). It stands in for the operator's declared migration intent: the
-# connection topology plus spec.topicGroup (which topics move, on which route, to
+# connection topology plus spec.route (which topics move, on which route, to
 # which target domain). Plaintext everywhere; the credentials files are siblings
 # of this manifest. The unauthenticated cp-server REST ignores the bogus `basic`
 # linkCredentials block (the schema has no unauthenticated-REST form).
@@ -10,13 +10,14 @@ metadata:
   name: migplan-e2e
 spec:
   # The topic-based reconcile selector — read by `kcp migration reconcile`.
-  topicGroup:
-    - topics:
-        - team-a.orders
-        - team-a.payments
-        - billing-v2
-      route: migration-route
-      targetStreamingDomain: cc
+  route:
+    name: migration-route
+    topicGroup:
+      - topics:
+          - team-a.orders
+          - team-a.payments
+          - billing-v2
+    targetStreamingDomain: cc
 
   source:
     type: apache-kafka
@@ -42,7 +43,7 @@ spec:
   # Not read by `migration reconcile` (it uses --gateway-config), but the manifest
   # still validates the gateway section. Minimal satisfying values: the reshaped
   # schema carries only namespace + cr-name (the CR object name, read live); the
-  # route and target domain live in spec.topicGroup above.
+  # route and target domain live in spec.route above.
   gateway:
     namespace: confluent
     cr-name: migplan-e2e

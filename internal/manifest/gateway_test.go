@@ -15,15 +15,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// topicGroupBlock is the topicGroup stanza in the canonical doc; tests replace
-// it to vary spec.topicGroup.
-const topicGroupBlock = `  topicGroup:
-    - topics:
-        - t1.order
-        - t1.inventory
-      route: migration-route
-      targetStreamingDomain: confluent-cloud
+// topicGroupEntryBlock is the topicGroup stanza within spec.route; tests
+// replace it to vary spec.route.topicGroup while keeping route.name and
+// route.targetStreamingDomain fixed.
+const topicGroupEntryBlock = `    topicGroup:
+      - topics:
+          - t1.order
+          - t1.inventory
 `
+
+// routeBlock is the spec.route stanza in the canonical doc; tests replace it
+// wholesale to vary spec.route.
+const routeBlock = "  route:\n    name: migration-route\n" + topicGroupEntryBlock + "    targetStreamingDomain: confluent-cloud\n"
 
 // validGatewayDoc is the canonical manifest from the design §4, minus the
 // optional blocks. Every credentials slot is a file path; validation does no
@@ -55,7 +58,7 @@ spec:
   gateway:
     namespace: confluent
     cr-name: gateway-initial
-` + topicGroupBlock
+` + routeBlock
 
 // Default credential-file bodies for the canonical document.
 const (
@@ -120,11 +123,11 @@ func TestGateway_ParsesEveryField(t *testing.T) {
 	assert.Equal(t, "./dest-kafka-creds.yaml", g.Spec.Target.Kafka.ClusterCredentials.Path)
 	assert.Equal(t, "confluent", g.Spec.Gateway.Namespace)
 	assert.Equal(t, "gateway-initial", g.Spec.Gateway.CrName)
-	require.Len(t, g.Spec.TopicGroup, 1)
-	assert.Equal(t, "migration-route", g.Spec.TopicGroup[0].Route)
-	assert.Equal(t, "confluent-cloud", g.Spec.TopicGroup[0].TargetStreamingDomain)
-	require.NotNil(t, g.Spec.TopicGroup[0].Topics)
-	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.TopicGroup[0].Topics)
+	assert.Equal(t, "migration-route", g.Spec.Route.Name)
+	assert.Equal(t, "confluent-cloud", g.Spec.Route.TargetStreamingDomain)
+	require.Len(t, g.Spec.Route.TopicGroup, 1)
+	require.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
+	assert.Equal(t, []string{"t1.order", "t1.inventory"}, *g.Spec.Route.TopicGroup[0].Topics)
 }
 
 func TestGateway_RejectsUnknownFields(t *testing.T) {
@@ -428,17 +431,17 @@ func TestGateway_RejectsRetiredKeys(t *testing.T) {
 // rejected. (>1 entry is future multi-route work, not this piece.)
 func TestGateway_RequiresExactlyOneTopicGroupEntry(t *testing.T) {
 	t.Run("omitted", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, "", 1))
-		requireErrContains(t, g.Validate(), "spec.topicGroup")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "", 1))
+		requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 	})
 	t.Run("empty list", func(t *testing.T) {
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, "  topicGroup: []\n", 1))
-		requireErrContains(t, g.Validate(), "spec.topicGroup")
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, "    topicGroup: []\n", 1))
+		requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 	})
 	t.Run("more than one", func(t *testing.T) {
-		second := "    - topics:\n        - t2.orders\n      route: second-route\n      targetStreamingDomain: confluent-cloud\n"
-		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, topicGroupBlock+second, 1))
-		requireErrContains(t, g.Validate(), "spec.topicGroup")
+		second := "      - topics:\n          - t2.orders\n"
+		g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, topicGroupEntryBlock+second, 1))
+		requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 	})
 }
 
@@ -446,8 +449,8 @@ func TestGateway_RequiresExactlyOneTopicGroupEntry(t *testing.T) {
 // fail at fence time; catch it at parse.
 func TestGateway_RejectsBlankRoute(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
-		"      route: migration-route\n", "      route: \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+		"    name: migration-route\n", "    name: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.route.name")
 }
 
 // TestGateway_RejectsBlankTargetStreamingDomain — an empty target domain name
@@ -455,32 +458,32 @@ func TestGateway_RejectsBlankRoute(t *testing.T) {
 // parse.
 func TestGateway_RejectsBlankTargetStreamingDomain(t *testing.T) {
 	g := parseGateway(t, strings.Replace(validGatewayDoc,
-		"      targetStreamingDomain: confluent-cloud\n", "      targetStreamingDomain: \"\"\n", 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+		"    targetStreamingDomain: confluent-cloud\n", "    targetStreamingDomain: \"\"\n", 1))
+	requireErrContains(t, g.Validate(), "spec.route.targetStreamingDomain")
 }
 
 // TestGateway_RejectsEntryWithNeitherTopicsNorPatterns requires at least one of
 // topics/topicPatterns is required on every entry (both modes). Both absent is
 // a structural error, no mode knowledge needed.
 func TestGateway_RejectsEntryWithNeitherTopicsNorPatterns(t *testing.T) {
-	block := "  topicGroup:\n    - route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - {}\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 }
 
 // TestGateway_TopicsPresentButEmptyIsRejected — an explicitly empty topics list
 // means the opposite of "all topics" and is rejected, matching the old
 // spec.topics semantics.
 func TestGateway_TopicsPresentButEmptyIsRejected(t *testing.T) {
-	block := "  topicGroup:\n    - topics: []\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topics: []\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 }
 
 func TestGateway_RejectsBlankTopicName(t *testing.T) {
-	block := "  topicGroup:\n    - topics:\n        - t1.order\n        - '  '\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topics:\n          - t1.order\n          - '  '\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 }
 
 // TestGateway_TopicsOnlyValidates — topics set, topicPatterns omitted, is the
@@ -488,40 +491,40 @@ func TestGateway_RejectsBlankTopicName(t *testing.T) {
 func TestGateway_TopicsOnlyValidates(t *testing.T) {
 	g := parseGateway(t, validGatewayDoc)
 	require.Empty(t, g.Validate())
-	require.NotNil(t, g.Spec.TopicGroup[0].Topics)
-	assert.Nil(t, g.Spec.TopicGroup[0].TopicPatterns)
+	require.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
+	assert.Nil(t, g.Spec.Route.TopicGroup[0].TopicPatterns)
 }
 
 // TestGateway_TopicPatternsOnlyValidates — topicPatterns set, topics omitted,
 // satisfies the at-least-one rule on its own.
 func TestGateway_TopicPatternsOnlyValidates(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	block := "    topicGroup:\n      - topicPatterns:\n          - 'orders\\..*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
-	require.NotNil(t, g.Spec.TopicGroup[0].TopicPatterns)
-	assert.Nil(t, g.Spec.TopicGroup[0].Topics)
+	require.NotNil(t, g.Spec.Route.TopicGroup[0].TopicPatterns)
+	assert.Nil(t, g.Spec.Route.TopicGroup[0].Topics)
 }
 
 // TestGateway_TopicPatternsPresentButEmptyIsRejected mirrors the topics case.
 func TestGateway_TopicPatternsPresentButEmptyIsRejected(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns: []\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns: []\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 }
 
 func TestGateway_RejectsBlankTopicPattern(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - 'orders\\..*'\n        - '  '\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns:\n          - 'orders\\..*'\n          - '  '\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 }
 
 // TestGateway_RejectsInvalidTopicPatternRegex — each pattern must compile
 // as an anchored RE2 full-match, a cheap guard mirroring the Gateway's
 // parse-time rejection. A bare `*` has nothing to repeat and fails to compile.
 func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - '*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns:\n          - '*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 }
 
 // TestGateway_RejectsAnchorEscapingPattern rejects a
@@ -530,9 +533,9 @@ func TestGateway_RejectsInvalidTopicPatternRegex(t *testing.T) {
 // promotes a top-level alternation, escaping the intended full-match anchor. The
 // pattern is validated on its own terms first, so a malformed one is rejected.
 func TestGateway_RejectsAnchorEscapingPattern(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - 'foo)|(evil'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
-	requireErrContains(t, g.Validate(), "spec.topicGroup")
+	block := "    topicGroup:\n      - topicPatterns:\n          - 'foo)|(evil'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
+	requireErrContains(t, g.Validate(), "spec.route.topicGroup")
 }
 
 // TestAnchoredPattern_IsAFullMatch pins the anchoring: a compiled topicPattern
@@ -553,19 +556,19 @@ func TestAnchoredPattern_IsAFullMatch(t *testing.T) {
 // TestGateway_MatchAllTopicPatternCompiles — the "all topics" token is `.*`
 // which must compile cleanly (a bare `*` would not).
 func TestGateway_MatchAllTopicPatternCompiles(t *testing.T) {
-	block := "  topicGroup:\n    - topicPatterns:\n        - '.*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	block := "    topicGroup:\n      - topicPatterns:\n          - '.*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
 }
 
 // TestGateway_BothTopicsAndPatternsIsAllowed — both set is a combined set,
 // not a structural error, on either mode.
 func TestGateway_BothTopicsAndPatternsIsAllowed(t *testing.T) {
-	block := "  topicGroup:\n    - topics:\n        - t1.order\n      topicPatterns:\n        - 'orders\\..*'\n      route: migration-route\n      targetStreamingDomain: confluent-cloud\n"
-	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupBlock, block, 1))
+	block := "    topicGroup:\n      - topics:\n          - t1.order\n        topicPatterns:\n          - 'orders\\..*'\n"
+	g := parseGateway(t, strings.Replace(validGatewayDoc, topicGroupEntryBlock, block, 1))
 	require.Empty(t, g.Validate())
-	assert.NotNil(t, g.Spec.TopicGroup[0].Topics)
-	assert.NotNil(t, g.Spec.TopicGroup[0].TopicPatterns)
+	assert.NotNil(t, g.Spec.Route.TopicGroup[0].Topics)
+	assert.NotNil(t, g.Spec.Route.TopicGroup[0].TopicPatterns)
 }
 
 // TestGateway_KubeconfigTildeIsExpanded — the one place in the repo where a
