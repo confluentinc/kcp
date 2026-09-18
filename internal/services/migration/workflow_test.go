@@ -1103,10 +1103,49 @@ func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{"apply", "wait"}, callOrder, "apply (derived switch route patch) must precede wait")
 	assert.Equal(t, "migration-route", gotRP.RouteName)
-	assert.Equal(t, "streamingDomain", gotRP.Field)
-	domain, ok := gotRP.Value.(map[string]any)
-	require.True(t, ok, "streamingDomain patch value must be a map")
+	assert.Equal(t, "", gotRP.Field, "switch must whole-route replace so the fence is dropped, not overwrite a single field")
+	route, ok := gotRP.Value.(map[string]any)
+	require.True(t, ok, "switch patch value must be the route object")
+	domain, ok := route["streamingDomain"].(map[string]any)
+	require.True(t, ok, "the switched route must carry a streamingDomain")
 	assert.Equal(t, "confluent-cloud", domain["name"], "the patch must carry the target streaming domain")
+}
+
+// TestDeriveSwitchRoutePatch_WholeRouteReplaceDropsFence proves the switch is a
+// whole-route replace onto the captured (unfenced) route with streamingDomain
+// flipped to the target — not a single-field write. A field-only streamingDomain
+// patch would flip the domain but leave the fence FenceGateway added earlier in
+// place, completing a migration whose gateway is still fenced (the regression the
+// e2e "Gateway CR must not have fence config" assertions caught). Mirrors
+// deriveUnfenceRoutePatch, which replaces the whole route for the same reason.
+func TestDeriveSwitchRoutePatch_WholeRouteReplaceDropsFence(t *testing.T) {
+	// A captured route carrying the source domain, so the test proves the domain
+	// is overwritten as well as that no fence survives.
+	const capturedCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gw-1
+spec:
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
+      streamingDomain:
+        name: source-kafka-cluster
+`
+	config := &MigrationConfig{GatewayYAML: capturedCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
+
+	rp, err := deriveSwitchRoutePatch(config)
+	require.NoError(t, err)
+
+	assert.Equal(t, "migration-route", rp.RouteName)
+	assert.Equal(t, "", rp.Field, "switch must whole-route replace so the fence key is dropped")
+	route, ok := rp.Value.(map[string]any)
+	require.True(t, ok, "switch patch value must be the route object")
+	_, hasFence := route["fence"]
+	assert.False(t, hasFence, "the switched route must not carry a fence key")
+	domain, ok := route["streamingDomain"].(map[string]any)
+	require.True(t, ok, "the switched route must carry a streamingDomain")
+	assert.Equal(t, "confluent-cloud", domain["name"], "the source domain must be overwritten with the target")
 }
 
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {

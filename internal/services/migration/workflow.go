@@ -645,15 +645,27 @@ func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) 
 	return gateway.RoutePatch{RouteName: config.Route, Field: "fence", Value: v}, nil
 }
 
-// deriveSwitchRoutePatch builds the RoutePatch that grafts
-// config.SwitchoverYAML's streamingDomain fragment onto config.Route.
-// Consumed by SwitchGateway's write path.
+// deriveSwitchRoutePatch builds the RoutePatch SwitchGateway applies: a
+// whole-route replace (Field == "") of config.Route with its captured
+// (unfenced) shape from config.GatewayYAML, streamingDomain flipped to
+// config.SwitchoverYAML's target. It is a whole-route replace, not a
+// single-key streamingDomain write, for the same reason as
+// deriveUnfenceRoutePatch — the switch happens from the fenced state and must
+// drop the fence key, and a field-level "add" can only overwrite a key, never
+// remove one. Grafting onto the captured route (which carries the pre-staged
+// redundant auth for the target domain, proved at init) yields unfenced +
+// target-domain + target-auth in one patch.
 func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
-	v, err := gateway.FragmentValue([]byte(config.SwitchoverYAML), "streamingDomain")
+	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
 	if err != nil {
 		return gateway.RoutePatch{}, err
 	}
-	return gateway.RoutePatch{RouteName: config.Route, Field: "streamingDomain", Value: v}, nil
+	domain, err := gateway.FragmentValue([]byte(config.SwitchoverYAML), "streamingDomain")
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	route["streamingDomain"] = domain
+	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
 }
 
 // deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to
@@ -1030,17 +1042,18 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 	}
 }
 
-// SwitchGateway derives the switch RoutePatch from config.SwitchoverYAML's
-// streamingDomain fragment for config.Route (see deriveSwitchRoutePatch) —
-// patches it in, confirms the operator accepted the new spec, then waits for
-// it to report the gateway as Ready. The wait uses the same
-// no-deadline-by-default behavior as FenceGateway.
+// SwitchGateway derives the switch RoutePatch for config.Route (a whole-route
+// replace of the captured route with the target streamingDomain — see
+// deriveSwitchRoutePatch) — patches it in, confirms the operator accepted the
+// new spec, then waits for it to report the gateway as Ready. The wait uses the
+// same no-deadline-by-default behavior as FenceGateway.
 //
-// Because the initial CR is unfenced and its routes already carry pre-staged
+// Because the captured route is unfenced and already carries pre-staged
 // ("redundant") auth for the target domain (proved by migplan.Reconcile's
-// redundant-auth check at init), this one patch yields unfenced +
-// target-domain + target-auth with no secret or auth change at cutover —
-// there is no separately-authored switchover CR to apply.
+// redundant-auth check at init), this one whole-route replace yields unfenced +
+// target-domain + target-auth with no secret or auth change at cutover — it
+// both drops the fence and flips the domain, and there is no separately-authored
+// switchover CR to apply.
 //
 // The acceptance check is what stops this reporting a completed migration for a
 // switchover the operator refused — the failure mode described on

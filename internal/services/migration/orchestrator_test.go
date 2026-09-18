@@ -1373,11 +1373,12 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			overrides: orchestratorOverrides{
 				// Fence and switchover both apply; only the switchover patch fails,
 				// leaving the FSM at promoted (switch failures do not roll back).
-				// The switch patch is the only one that sets the route's
-				// streamingDomain field, so that field is the discriminator (the
-				// fence patch sets the fence field instead, never streamingDomain).
+				// The switch patch is a whole-route replace (Field == ""), while the
+				// fence patch sets the fence field; because switch failures do not
+				// roll back, no unfence (also a whole-route replace) runs here, so
+				// Field == "" uniquely identifies the switch patch.
 				patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
-					if rp.Field == "streamingDomain" {
+					if rp.Field == "" {
 						return "", fmt.Errorf("switchover apply failed")
 					}
 					return "", nil
