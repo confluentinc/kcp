@@ -47,28 +47,27 @@ transition. A pod restart here is a failure, not an expected mechanism.
 ## Hot-reload discrepancies between the live CR and the migration's CRs
 
 `hot_reload_divergent_cr_e2e_test.go` covers kcp's refusal to change the
-gateway's hot-reload setting on the operator's behalf. Both directions are
-tested — a planned CR that would enable it on a gateway without it, and one that
-would disable it on a gateway running it — plus the rule that the fenced and
-switchover CRs must agree on whether they mention `spec.hotReload` at all.
+gateway's hot-reload setting on the operator's behalf, purely through
+`DetectCapability`'s read-only capability check — neither test in this file
+applies a CR or mutates the live gateway, so both survived kcp's move off
+full-CR SSA apply onto targeted JSON patches untouched.
 
-Two of the facts these rest on belong to CFK and to server-side apply rather
-than to kcp, so they are measured here rather than assumed:
+Two scenarios are covered: a planned CR pair that would disable hot-reload on
+a gateway currently running it (`TestPlannedCRThatWouldDisableHotReloadIsRefused`),
+and a planned CR pair that disagrees on whether it mentions `spec.hotReload` at
+all — the fenced CR declares it, the switchover CR silently omits it
+(`TestPlannedCRsMustAgreeOnMentioningHotReload`).
 
-- **A hot reload moves no Deployment generation**, so the rollout wait a
-  mis-detected migration would fall back on returns success having observed
-  nothing. The test applies the divergent CR after asserting the refusal and
-  logs how long that false success takes (~10s, the roll-confirmation window).
-- **Omitting `spec.hotReload` deletes it** once an earlier apply from kcp's field
-  manager declared it. `omitting_the_field_after_declaring_it_deletes_it` proves
-  this directly. If server-side apply ever stops behaving this way, the presence
-  rule can be relaxed — that test is where the claim is pinned.
-
-Tests that change the gateway's setting restore the initial CR on cleanup, and
-`applyAndSettle` waits for pods to be genuinely steady rather than trusting the
-readiness wait: toggling `spec.hotReload` rewrites the pod template, and CFK can
-take longer than the 10s confirmation window to write the Deployment, so the roll
-may not have started when kcp's wait returns.
+The mirror-image scenario (a planned CR that would *enable* hot-reload on a
+gateway not currently running it) and the server-side-apply field-ownership
+mechanism that motivated refusing a silently-omitted field were also covered
+here previously, but both required actually applying a CR — respectively,
+toggling the live gateway's setting via a real apply, and value-changing /
+omitting applies to prove field-manager ownership transfer and pruning —
+mechanics specific to full-CR SSA apply that production no longer performs.
+They were removed when kcp moved its own writes onto targeted JSON patches; a
+targeted `RoutePatch` has no whole-object merge or field-manager ownership
+semantics left to test.
 
 ## The source broker, and what it buys
 

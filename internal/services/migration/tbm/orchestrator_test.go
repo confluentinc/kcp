@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
+	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
 	"github.com/stretchr/testify/assert"
@@ -26,7 +27,7 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 	state := migration.NewMigrationState()
 	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(context.Context, string, string, []byte, string) (string, error) { return "", nil },
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
 	// Configured (not the bare zero-value mock) because realisticReconcileResult
 	// (used by several tests below) sets Topics: []string{"t1.order"}, which a
@@ -168,12 +169,12 @@ func TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced(t
 
 func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackToInitialized(t *testing.T) {
 	var applyCount int
-	var lastAppliedYAML []byte
+	var lastRP gateway.RoutePatch
 	var call int32
 	gw := &mockGatewayService{
-		applyGatewayYAMLFn: func(_ context.Context, _, _ string, yamlData []byte, configID string) (string, error) {
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
 			applyCount++
-			lastAppliedYAML = yamlData
+			lastRP = rp
 			return "", nil
 		},
 	}
@@ -216,13 +217,8 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	// it (see realisticReconcileResult's FenceYAML). So the unfenced route's
 	// rules must still have routing (never removed) and must NOT have
 	// fencing (the thing the rollback undoes) — not "no rules at all".
-	var applied map[string]interface{}
-	require.NoError(t, yamlUnmarshalForTest(t, lastAppliedYAML, &applied))
-	spec, ok := applied["spec"].(map[string]interface{})
-	require.True(t, ok)
-	routes, ok := spec["routes"].([]interface{})
-	require.True(t, ok)
-	route, ok := routes[0].(map[string]interface{})
+	assert.Equal(t, "", lastRP.Field, "the unfence rollback must whole-route replace, not set a single field")
+	route, ok := lastRP.Value.(map[string]interface{})
 	require.True(t, ok)
 	rules, ok := route["rules"].(map[string]interface{})
 	require.True(t, ok, "the unfenced route must still carry its original rules.routing block")

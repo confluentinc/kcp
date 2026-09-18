@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,27 +32,10 @@ const (
 	GatewayKind           = "Gateway"
 )
 
-// Field managers. kcp uses two, deliberately kept disjoint:
-//
-//   - migrationFieldManager owns the fence, switchover and unfence CRs — the
-//     specs that actually change what the gateway does.
-//   - hotReloadCheckFieldManager owns nothing but spec.configId on the
-//     hot-reload capability check. Giving it its own manager, rather than
-//     reusing migrationFieldManager, is load-bearing: server-side apply prunes
-//     a field an earlier apply from the same manager declared once a later one
-//     omits it, so a probe that shared the migration manager and applied more
-//     than configId would make the *next* migration apply — potentially the
-//     fence, with traffic about to be blocked — a narrowing apply that could
-//     prune whatever the probe declared and the fenced CR does not repeat.
-const (
-	migrationFieldManager      = "kcp-migration"
-	hotReloadCheckFieldManager = "kcp-hot-reload-check"
-)
-
-// ErrApplyUnverified marks a server-side apply the API server accepted and
+// ErrApplyUnverified marks a JSON Patch the API server accepted and
 // persisted, whose stored spec.configId kcp could not then confirm. Unlike an
-// error from the Apply call itself, the CR reached the cluster: a caller that
-// fails here must treat the apply as landed, not as a no-op.
+// error from the Patch call itself, the CR reached the cluster: a caller that
+// fails here must treat the patch as landed, not as a no-op.
 var ErrApplyUnverified = errors.New("gateway CR applied but the stored configId could not be confirmed")
 
 // Service defines gateway operations
@@ -60,8 +44,8 @@ type Service interface {
 	DetectCapability(ctx context.Context, namespace, gatewayName string, port int, fencedYAML, switchoverYAML []byte) (Capability, error)
 	WaitForGatewayConfigID(ctx context.Context, namespace, gatewayName string, opts ConfigWaitOptions) error
 	CheckPermissions(ctx context.Context, verb, resource, group, namespace string) (bool, error)
-	ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error)
-	ApplyGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error)
+	PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error)
+	PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error)
 	WaitForGatewayAccepted(ctx context.Context, namespace, gatewayName string, pollInterval, timeout time.Duration) error
 	GetGatewayPodUIDs(ctx context.Context, namespace, gatewayName string) (map[types.UID]struct{}, error)
 	GetGatewayDeploymentGeneration(ctx context.Context, namespace, gatewayName string) (int64, error)
@@ -169,120 +153,119 @@ func (s *K8sService) CheckPermissions(ctx context.Context, verb, resource, group
 	return response.Status.Allowed, nil
 }
 
-// ApplyGatewayYAML applies a complete gateway CR YAML to the cluster using
-// server-side apply.
+// PatchGatewayRoute applies a single route mutation to the gateway CR as an RFC
+// 6902 JSON Patch — touching only the one route field (or, for unfence, the one
+// route element) rp describes, plus spec.configId when configID is non-empty.
+// Unlike a server-side apply it takes no field ownership, so it never prunes a
+// field through ownership tracking the way SSA can. The unfence whole-route
+// replace is a separate matter: it supplants the entire route element with the
+// snapshot captured at Initialize, so it does discard any field added to that
+// route after the snapshot was taken — that's the point of unfence (restore the
+// pristine route), not a pruning side effect.
 //
-// configID, when non-empty, is written to spec.configId so the transition can be
-// verified per-pod via GET /config. Pass an empty string on clusters whose CRD
-// does not declare the field — see Capability.InjectsConfigID. The returned
-// string is the configId the API server actually stored (empty when none was
-// injected).
-func (s *K8sService) ApplyGatewayYAML(ctx context.Context, namespace, gatewayName string, yamlData []byte, configID string) (string, error) {
+// The live CR is read first to resolve rp.RouteName to its spec.routes index; a
+// test op in the patch guards that index against a concurrent reorder, and a
+// second test op guards the current value of whatever the mutation is about to
+// overwrite (see buildRoutePatchOps). Missing spec.routes on the live CR is a
+// hard failure here — a deliberate departure from the old server-side-apply
+// write, which would have self-healed by re-applying the full captured CR; a
+// narrow JSON Patch has nothing to fall back to. The returned string is the
+// configId the API server stored (empty when none sent).
+func (s *K8sService) PatchGatewayRoute(ctx context.Context, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to build config: %w", err)
 	}
-
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return "", fmt.Errorf("failed to create dynamic client: %w", err)
 	}
-
-	return applyGatewayYAML(ctx, dynamicClient, namespace, gatewayName, yamlData, configID)
+	return patchGatewayRoute(ctx, dynamicClient, namespace, gatewayName, rp, configID)
 }
 
-// applyGatewayYAML is the inner orchestration used by ApplyGatewayYAML. Split
-// from the method so unit tests can inject a fake dynamic client.
-func applyGatewayYAML(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, yamlData []byte, configID string) (string, error) {
-	gatewayGVR := schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
+// patchGatewayRoute is the inner orchestration used by PatchGatewayRoute.
+// Split from the method so unit tests can inject a fake dynamic client.
+func patchGatewayRoute(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName string, rp RoutePatch, configID string) (string, error) {
+	gatewayGVR := schema.GroupVersionResource{Group: GatewayGroup, Version: GatewayVersion, Resource: GatewayResourcePlural}
+
+	live, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).Get(ctx, gatewayName, metav1.GetOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to read gateway before patch: %w", err)
+	}
+	routes, found, err := unstructured.NestedSlice(live.Object, "spec", "routes")
+	if err != nil {
+		return "", fmt.Errorf("failed to read spec.routes on gateway %q: %w", gatewayName, err)
+	}
+	if !found {
+		return "", fmt.Errorf("gateway %q has no spec.routes", gatewayName)
 	}
 
-	obj, err := prepareGatewayApply(yamlData, namespace, gatewayName, configID)
+	ops, err := buildRoutePatchOps(routes, rp, configID)
 	if err != nil {
 		return "", err
 	}
-
-	slog.Debug("🔍 applying gateway CR (server-side apply)", "namespace", namespace, "gateway", gatewayName, "bytes", len(yamlData), "configId", configID)
-	start := time.Now()
-	applied, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
-		Apply(ctx, gatewayName, obj, metav1.ApplyOptions{
-			FieldManager: migrationFieldManager,
-			Force:        true,
-		})
+	data, err := json.Marshal(ops)
 	if err != nil {
-		return "", fmt.Errorf("failed to apply gateway YAML: %w", err)
+		return "", fmt.Errorf("failed to marshal gateway JSON patch: %w", err)
 	}
 
-	slog.Debug("applied gateway CR", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
+	slog.Debug("🔍 patching gateway CR (JSON patch)", "namespace", namespace, "gateway", gatewayName, "route", rp.RouteName, "field", rp.Field, "configId", configID)
+	start := time.Now()
+	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to patch gateway route: %w", err)
+	}
+	slog.Debug("patched gateway CR", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
 
 	if configID == "" {
 		return "", nil
 	}
-
-	return confirmStoredConfigID(applied, gatewayName, configID)
+	return confirmStoredConfigID(patched, gatewayName, configID)
 }
 
-// ApplyGatewayConfigID applies spec.configId alone — nothing else on the
-// gateway — under hotReloadCheckFieldManager. Used by the hot-reload
-// capability check, which must prove the gateway applies config revisions
-// without ever taking ownership of a field a later fence, switchover or
-// unfence apply (all under migrationFieldManager) would need to prune.
-//
-// The returned string is the configId the API server actually stored.
-func (s *K8sService) ApplyGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error) {
+// PatchGatewayConfigID stamps spec.configId alone on the gateway as a JSON Patch
+// for the hot-reload capability check. Returns the stored configId.
+func (s *K8sService) PatchGatewayConfigID(ctx context.Context, namespace, gatewayName, configID string) (string, error) {
 	config, err := clientcmd.BuildConfigFromFlags("", s.kubeConfigPath)
 	if err != nil {
 		return "", fmt.Errorf("failed to build config: %w", err)
 	}
-
 	dynamicClient, err := dynamic.NewForConfig(config)
 	if err != nil {
 		return "", fmt.Errorf("failed to create dynamic client: %w", err)
 	}
-
-	return applyGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID)
+	return patchGatewayConfigID(ctx, dynamicClient, namespace, gatewayName, configID)
 }
 
-// applyGatewayConfigID is the inner orchestration used by
-// ApplyGatewayConfigID. Split from the method so unit tests can inject a fake
-// dynamic client.
-func applyGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName, configID string) (string, error) {
-	gatewayGVR := schema.GroupVersionResource{
-		Group:    GatewayGroup,
-		Version:  GatewayVersion,
-		Resource: GatewayResourcePlural,
-	}
+// patchGatewayConfigID is the inner orchestration used by PatchGatewayConfigID.
+// Split from the method so unit tests can inject a fake dynamic client.
+func patchGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, namespace, gatewayName, configID string) (string, error) {
+	gatewayGVR := schema.GroupVersionResource{Group: GatewayGroup, Version: GatewayVersion, Resource: GatewayResourcePlural}
 
-	obj, err := prepareConfigIDOnlyApply(namespace, gatewayName, configID)
+	op, err := configIDOp(configID)
 	if err != nil {
 		return "", err
 	}
-
-	slog.Debug("🔍 applying gateway configId (server-side apply, hot-reload check field manager)",
-		"namespace", namespace, "gateway", gatewayName, "configId", configID)
-	start := time.Now()
-	applied, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
-		Apply(ctx, gatewayName, obj, metav1.ApplyOptions{
-			FieldManager: hotReloadCheckFieldManager,
-			Force:        true,
-		})
+	data, err := json.Marshal([]jsonPatchOp{op})
 	if err != nil {
-		return "", fmt.Errorf("failed to apply gateway configId: %w", err)
+		return "", fmt.Errorf("failed to marshal gateway configId patch: %w", err)
 	}
 
-	slog.Debug("applied gateway configId", "namespace", namespace, "gateway", gatewayName, "ms", time.Since(start).Milliseconds())
-
-	return confirmStoredConfigID(applied, gatewayName, configID)
+	slog.Debug("🔍 patching gateway configId (JSON patch)", "namespace", namespace, "gateway", gatewayName, "configId", configID)
+	patched, err := dynamicClient.Resource(gatewayGVR).Namespace(namespace).
+		Patch(ctx, gatewayName, types.JSONPatchType, data, metav1.PatchOptions{})
+	if err != nil {
+		return "", fmt.Errorf("failed to patch gateway configId: %w", err)
+	}
+	return confirmStoredConfigID(patched, gatewayName, configID)
 }
 
-// confirmStoredConfigID reads spec.configId back from a server-side apply
-// response and confirms the server kept the exact value kcp sent.
+// confirmStoredConfigID reads spec.configId back from a JSON Patch response
+// and confirms the server kept the exact value kcp sent.
 //
 // Every failure here is wrapped in ErrApplyUnverified: by this point the
-// apply itself already succeeded, so the CR is live in the cluster whether or
+// patch itself already succeeded, so the CR is live in the cluster whether or
 // not the confirmation below passes — callers must not treat a failure here
 // as if nothing had reached the cluster (see gateway.FenceGateway's use of
 // this same wrap).
@@ -292,18 +275,18 @@ func applyGatewayConfigID(ctx context.Context, dynamicClient dynamic.Interface, 
 // with the cause rather than later with a bare timeout.
 func confirmStoredConfigID(applied *unstructured.Unstructured, gatewayName, configID string) (string, error) {
 	if applied == nil {
-		return "", fmt.Errorf("%w: gateway %q apply returned no object; cannot confirm the applied configId", ErrApplyUnverified, gatewayName)
+		return "", fmt.Errorf("%w: gateway %q patch returned no object; cannot confirm the applied configId", ErrApplyUnverified, gatewayName)
 	}
 	stored, found, err := unstructured.NestedString(applied.Object, "spec", gatewayConfigIDField)
 	if err != nil {
 		return "", fmt.Errorf("%w: failed to read back spec.configId on gateway %q: %w", ErrApplyUnverified, gatewayName, err)
 	}
 	if !found || stored != configID {
-		// Not "the CRD may not declare it" — server-side apply rejects an
-		// undeclared field outright rather than silently pruning it (see G1),
-		// so an accepted apply that still lost the field points at something
-		// else in the request path (a mutating webhook, a conflicting manager).
-		return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp applied", ErrApplyUnverified, gatewayName)
+		// Not "the CRD may not declare it" — a JSON Patch `add`/`replace` on
+		// spec.configId fails outright when the CRD doesn't declare the field,
+		// so a successful patch that still lost the field points at something
+		// else in the request path (a mutating webhook, a conflicting controller).
+		return "", fmt.Errorf("%w: gateway %q's stored spec.configId does not match what kcp patched", ErrApplyUnverified, gatewayName)
 	}
 
 	return stored, nil

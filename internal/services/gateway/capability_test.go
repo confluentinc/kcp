@@ -445,7 +445,7 @@ func TestDetectCapabilityRejectsHotReloadDiscrepancies(t *testing.T) {
 
 		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
 			plannedCRYAML(t, boolPtr(true)), plannedCRYAML(t, nil))
-		require.Error(t, err, "applying this CR would turn hot-reload on, which the operator did not ask for")
+		require.Error(t, err, "a planned CR declaring hot-reload on while the gateway never set it is intent kcp cannot honour")
 
 		assert.Contains(t, err.Error(), "fenced", "the operator has to know which file to fix")
 		assert.Contains(t, err.Error(), "spec.hotReload.enabled")
@@ -456,7 +456,7 @@ func TestDetectCapabilityRejectsHotReloadDiscrepancies(t *testing.T) {
 
 		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
 			plannedCRYAML(t, boolPtr(false)), plannedCRYAML(t, boolPtr(false)))
-		require.Error(t, err, "applying this CR would start rolling pods that were not rolling before")
+		require.Error(t, err, "a planned CR declaring hot-reload off while the gateway runs it is intent kcp cannot honour")
 
 		assert.Contains(t, err.Error(), "fenced")
 	})
@@ -489,52 +489,6 @@ func TestDetectCapabilityRejectsHotReloadDiscrepancies(t *testing.T) {
 
 		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
 			plannedCRYAML(t, boolPtr(false)), plannedCRYAML(t, boolPtr(false)))
-		require.NoError(t, err)
-
-		assert.Equal(t, VerifyRollout, got.Mode)
-	})
-
-	// Measured against a real CFK cluster, not inferred: once an apply from kcp's
-	// field manager declares spec.hotReload, a later apply from the same manager
-	// that OMITS it deletes the field. So "absent inherits" stops being true after
-	// kcp has declared it once — a fenced CR that declares hot-reload followed by a
-	// switchover CR that does not would silently disable hot-reload at switchover,
-	// mid-migration, which is exactly the behaviour change kcp must not make.
-	//
-	// Enforced symmetrically rather than only in the harmful order. The safe
-	// direction (fenced omits, switchover declares) is safe only because of the
-	// order the applies happen in, and a rule that depends on that is a rule that
-	// rots; an operator who mentions the field in one file has no reason to omit it
-	// from the other.
-	t.Run("planned CRs must agree on whether they mention hot-reload at all", func(t *testing.T) {
-		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
-
-		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
-			plannedCRYAML(t, boolPtr(true)), plannedCRYAML(t, nil))
-		require.Error(t, err, "the switchover apply would prune the field the fence apply declared")
-
-		assert.Contains(t, err.Error(), "switchover")
-		assert.Contains(t, err.Error(), "spec.hotReload")
-	})
-
-	t.Run("mentioning hot-reload in the switchover CR alone is refused too", func(t *testing.T) {
-		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(true)))
-
-		_, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
-			plannedCRYAML(t, nil), plannedCRYAML(t, boolPtr(true)))
-		require.Error(t, err)
-
-		assert.Contains(t, err.Error(), "fenced")
-	})
-
-	// With hot-reload off there is nothing a prune could take away: absent and
-	// false are the same behaviour, so deleting an explicit false changes nothing
-	// and the files are free to disagree about mentioning it.
-	t.Run("presence may differ freely when the gateway has hot-reload off", func(t *testing.T) {
-		cs := newFakeDynamicClientWithCRD(capableCRD(), newGatewayCRWithHotReload(gw, ns, boolPtr(false)))
-
-		got, err := detectCapability(context.Background(), cs, servingPods(ns, gw, 1), probeStub(ProbeApplied), ns, gw,
-			plannedCRYAML(t, boolPtr(false)), plannedCRYAML(t, nil))
 		require.NoError(t, err)
 
 		assert.Equal(t, VerifyRollout, got.Mode)
