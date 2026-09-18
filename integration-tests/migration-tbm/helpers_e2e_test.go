@@ -336,7 +336,7 @@ func (h *tbmHarness) Decide(t *testing.T, g *manifest.GatewayMigration) *migplan
 // migration route. Source/target/cluster-link reads are still live.
 func (h *tbmHarness) DecideHermetic(t *testing.T, g *manifest.GatewayMigration, gatewayFile string) *migplan.Result {
 	t.Helper()
-	route := g.Spec.TopicGroup[0].Route
+	route := g.Spec.Route.Name
 	res, err := migplan.Reconcile(h.ctx, g,
 		migplan.WithGatewaySource(migplan.NewGatewayFile(gatewayFile, route)),
 		migplan.WithOutput(io.Discard),
@@ -521,8 +521,8 @@ func (h *tbmHarness) manifestForTopics(t *testing.T, baseName string, topics []s
 	t.Helper()
 	g := h.loadManifest(t, baseName)
 	list := append([]string(nil), topics...)
-	g.Spec.TopicGroup[0].Topics = &list
-	g.Spec.TopicGroup[0].TopicPatterns = nil
+	g.Spec.Route.TopicGroup[0].Topics = &list
+	g.Spec.Route.TopicGroup[0].TopicPatterns = nil
 	return g
 }
 

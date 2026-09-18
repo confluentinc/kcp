@@ -75,21 +75,23 @@ func renderCredentialFiles(opts manifestOpts) (credentialFiles, error) {
 	}, nil
 }
 
-// fenceRouteOpts is one spec.topicGroup[] entry: a route to fence, paired with
-// the target streaming domain it switches to at cutover. There is no separate
-// switchover CR file — kcp derives the switch from the live initial CR plus this
-// target. The bootstrap server id is NOT set here: kcp derives it from the
-// target domain's declaration in the live CR at init.
+// fenceRouteOpts carries spec.route: Name and SwitchoverDomainName (taken from
+// its first element only — the manifest allows exactly one route) name the
+// route to fence and the target streaming domain it switches to at cutover.
+// There is no separate switchover CR file — kcp derives the switch from the
+// live initial CR plus this target. The bootstrap server id is NOT set here:
+// kcp derives it from the target domain's declaration in the live CR at init.
 //
-// Topics names this entry's own topic(s) explicitly. Every real e2e scenario
-// sets it (from envConfig.TopicNames) — a match-all topicPatterns is only
-// still correct in the single-scenario case, since this suite's ten scenarios
-// share one source/destination Kafka pair: resolving ".*" against the full
-// source topic list (spec.topicGroup's real semantics — see the AAO-migplan
-// integration design doc's Decision 3) pulls in every OTHER scenario's own
-// topics too, tripping an all-or-nothing refusal. Found live, the hard way.
-// Empty falls back to the old match-all rendering, so callers that don't care
-// (unit tests asserting the fixture's default shape) are unaffected.
+// Topics names this entry's own spec.route.topicGroup[] topic(s) explicitly.
+// Every real e2e scenario sets it (from envConfig.TopicNames) — a match-all
+// topicPatterns is only still correct in the single-scenario case, since this
+// suite's ten scenarios share one source/destination Kafka pair: resolving
+// ".*" against the full source topic list (spec.route.topicGroup's real
+// semantics — see the AAO-migplan integration design doc's Decision 3) pulls
+// in every OTHER scenario's own topics too, tripping an all-or-nothing
+// refusal. Found live, the hard way. Empty falls back to the old match-all
+// rendering, so callers that don't care (unit tests asserting the fixture's
+// default shape) are unaffected.
 type fenceRouteOpts struct {
 	Name                 string
 	SwitchoverDomainName string

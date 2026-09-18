@@ -230,7 +230,11 @@ func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
 	gatewayProps := props(t, spec["gateway"].(map[string]any))
 	require.Contains(t, gatewayProps["cr-name"].(map[string]any)["description"], "name")
 
-	topicGroup := spec["topicGroup"].(map[string]any)
+	route := props(t, spec["route"].(map[string]any))
+	require.NotEmpty(t, route["name"].(map[string]any)["description"])
+	require.NotEmpty(t, route["targetStreamingDomain"].(map[string]any)["description"])
+
+	topicGroup := route["topicGroup"].(map[string]any)
 	require.Contains(t, topicGroup["description"], "fence")
 
 	item := props(t, topicGroup["items"].(map[string]any))
@@ -238,8 +242,6 @@ func TestGenerateGateway_PortsRetiredFlagGuidance(t *testing.T) {
 	require.NotContains(t, item["topics"].(map[string]any)["description"], "lag-check",
 		"topic selection has no effect on lag-check; the description must not imply otherwise")
 	require.Contains(t, item["topicPatterns"].(map[string]any)["description"], "regular expression")
-	require.NotEmpty(t, item["route"].(map[string]any)["description"])
-	require.NotEmpty(t, item["targetStreamingDomain"].(map[string]any)["description"])
 }
 
 func TestGenerateGateway_RequiredSets(t *testing.T) {
@@ -252,7 +254,7 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 		return r
 	}
 	require.ElementsMatch(t, []any{"apiVersion", "kind", "metadata", "spec"}, requiredOf(doc))
-	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway", "topicGroup"}, requiredOf(p["spec"].(map[string]any)))
+	require.ElementsMatch(t, []any{"source", "target", "clusterLink", "gateway", "route"}, requiredOf(p["spec"].(map[string]any)))
 	require.ElementsMatch(t, []any{"type", "clusterId", "kafka"}, requiredOf(spec["target"].(map[string]any)))
 	// kafka's reflected required set is only restEndpoint, but Validate() also
 	// requires bootstrapServers and clusterCredentials — the schema must match so a
@@ -266,15 +268,16 @@ func TestGenerateGateway_RequiredSets(t *testing.T) {
 	// stale key must be flagged by the editor, not offered as legal.
 	gwProps := props(t, spec["gateway"].(map[string]any))
 	require.NotContains(t, gwProps, "crs", "the crs block is retired — see cr-name")
-	require.NotContains(t, gwProps, "routes", "routes are retired — see topicGroup")
-	require.NotContains(t, spec, "topics", "spec.topics is retired — see topicGroup")
-	// Each topicGroup entry pairs a route with its target streaming domain. The
-	// bootstrap server id is derived from the live CR and mode from the CR
-	// so neither is a required manifest field.
-	item := spec["topicGroup"].(map[string]any)["items"].(map[string]any)
-	require.ElementsMatch(t, []any{"route", "targetStreamingDomain"}, item["required"])
+	require.NotContains(t, gwProps, "routes", "routes are retired — see spec.route")
+	require.NotContains(t, spec, "topics", "spec.topics is retired — see spec.route.topicGroup")
+	// spec.route names the route and its target streaming domain; the bootstrap
+	// server id is derived from the live CR and mode from the CR, so neither is
+	// a required manifest field.
+	route := props(t, spec["route"].(map[string]any))
+	require.ElementsMatch(t, []any{"name", "topicGroup", "targetStreamingDomain"}, requiredOf(spec["route"].(map[string]any)))
 	// At least one of topics/topicPatterns, hand-patched as an anyOf since
 	// the constraint isn't expressible on the struct.
+	item := route["topicGroup"].(map[string]any)["items"].(map[string]any)
 	anyOf, ok := item["anyOf"].([]any)
 	require.True(t, ok, "the topicGroup item must carry an anyOf for the at-least-one topics/topicPatterns rule")
 	require.Len(t, anyOf, 2)
