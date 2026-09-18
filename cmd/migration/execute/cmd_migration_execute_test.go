@@ -48,11 +48,12 @@ spec:
   gateway:
     namespace: confluent
     cr-name: gateway-initial
-  topicGroup:
-    - topicPatterns:
-        - '.*'
-      route: migration-route
-      targetStreamingDomain: confluent-cloud
+  route:
+    name: migration-route
+    topicGroup:
+      - topicPatterns:
+          - '.*'
+    targetStreamingDomain: confluent-cloud
 `
 
 // Default credentials-file bodies for the canonical fixture. Values match the
@@ -138,12 +139,12 @@ func (f fixture) writeState(t *testing.T, edit func(*migration.MigrationConfig))
 // explicitTopics swaps the canonical manifest's match-all topicPatterns for a
 // literal topics list, so a drift test can compare an explicit selection.
 func explicitTopics(names ...string) func(string) string {
-	block := "    - topics:\n"
+	block := "      - topics:\n"
 	for _, n := range names {
-		block += "        - " + n + "\n"
+		block += "          - " + n + "\n"
 	}
 	return func(doc string) string {
-		return strings.Replace(doc, "    - topicPatterns:\n        - '.*'\n", block, 1)
+		return strings.Replace(doc, "      - topicPatterns:\n          - '.*'\n", block, 1)
 	}
 }
 
@@ -291,7 +292,7 @@ func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	joined := strings.Join(drift, " ")
-	assert.Contains(t, joined, "spec.topicGroup")
+	assert.Contains(t, joined, "spec.route")
 	assert.Contains(t, joined, "1 added")
 	assert.Contains(t, joined, "1 removed")
 }
@@ -304,7 +305,7 @@ func TestDrift_DetectsChangedExplicitTopics(t *testing.T) {
 // compared against its own snapshot, independent of Topics.
 func TestDrift_DetectsChangedTopicPatterns(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "        - '.*'\n", "        - 'bar.*'\n", 1)
+		return strings.Replace(doc, "          - '.*'\n", "          - 'bar.*'\n", 1)
 	})
 	f.writeState(t, func(c *migration.MigrationConfig) {
 		c.TopicPatterns = []string{"foo.*"}
@@ -312,7 +313,7 @@ func TestDrift_DetectsChangedTopicPatterns(t *testing.T) {
 	drift := detectDrift(loadGateway(t, f.manifestPath), persistedConfig(t, f))
 	require.NotEmpty(t, drift)
 	joined := strings.Join(drift, " ")
-	assert.Contains(t, joined, "spec.topicGroup")
+	assert.Contains(t, joined, "spec.route")
 	assert.Contains(t, joined, "topicPatterns: 1 added, 1 removed")
 }
 

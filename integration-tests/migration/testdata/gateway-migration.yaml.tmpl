@@ -46,7 +46,9 @@ spec:
     namespace: {{ .Namespace | yamlQuote }}
     kubeconfig: {{ .KubePath | yamlQuote }}
     cr-name: {{ .GatewayName | yamlQuote }}
-  topicGroup:
+  route:
+    name: {{ (index .FenceRoutes 0).Name | yamlQuote }}
+    topicGroup:
 {{- range .FenceRoutes }}
 {{- if .Topics }}
       # Explicit topics, scoped to this scenario's own — this suite's
@@ -65,9 +67,8 @@ spec:
     - topicPatterns:
         - {{ ".*" | yamlQuote }}
 {{- end }}
-      route: {{ .Name | yamlQuote }}
-      targetStreamingDomain: {{ .SwitchoverDomainName | yamlQuote }}
 {{- end }}
+    targetStreamingDomain: {{ (index .FenceRoutes 0).SwitchoverDomainName | yamlQuote }}
 {{- if .Policy.Any }}
 
   # Read FRESH by execute on every run and never snapshotted, which is what lets a

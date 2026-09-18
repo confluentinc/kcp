@@ -47,11 +47,12 @@ spec:
   gateway:
     namespace: confluent
     cr-name: gateway-initial
-  topicGroup:
-    - topicPatterns:
-        - '.*'
-      route: migration-route
-      targetStreamingDomain: confluent-cloud
+  route:
+    name: migration-route
+    topicGroup:
+      - topicPatterns:
+          - '.*'
+    targetStreamingDomain: confluent-cloud
 `
 
 // Default credential-file bodies for the canonical lag-check manifest. The

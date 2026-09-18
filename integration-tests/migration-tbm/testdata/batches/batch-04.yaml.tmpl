@@ -30,18 +30,19 @@ spec:
   gateway:
     namespace: "__NAMESPACE__"
     cr-name: "__GATEWAY_NAME__"
-  topicGroup:
-    - topics:
-        - "tbm-topic-034"
-        - "tbm-topic-035"
-        - "tbm-topic-036"
-        - "tbm-topic-037"
-        - "tbm-topic-038"
-        - "tbm-topic-039"
-        - "tbm-topic-040"
-        - "tbm-topic-041"
-        - "tbm-topic-042"
-        - "tbm-topic-043"
-        - "tbm-topic-044"
-      route: "__ROUTE_NAME__"
-      targetStreamingDomain: "__DEST_DOMAIN__"
+  route:
+    name: "__ROUTE_NAME__"
+    topicGroup:
+      - topics:
+          - "tbm-topic-034"
+          - "tbm-topic-035"
+          - "tbm-topic-036"
+          - "tbm-topic-037"
+          - "tbm-topic-038"
+          - "tbm-topic-039"
+          - "tbm-topic-040"
+          - "tbm-topic-041"
+          - "tbm-topic-042"
+          - "tbm-topic-043"
+          - "tbm-topic-044"
+    targetStreamingDomain: "__DEST_DOMAIN__"
