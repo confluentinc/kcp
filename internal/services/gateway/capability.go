@@ -129,49 +129,6 @@ func joinPhrases(phrases []string) string {
 	}
 }
 
-// checkHotReloadPresenceAgrees refuses a set of planned CRs where some mention
-// spec.hotReload and others do not, while the gateway has hot-reload on.
-//
-// This exists because "an absent declaration inherits" stops being true once kcp
-// has declared the field itself. Measured against a real CFK cluster: an apply
-// from kcp's field manager that declares spec.hotReload takes ownership of it, and
-// a later apply from the same manager that omits it *deletes* the field. So a
-// fenced CR declaring hot-reload followed by a switchover CR that omits it turns
-// hot-reload off at switchover — mid-migration, with traffic already fenced.
-//
-// Only the enabled case is checked. With hot-reload off there is nothing harmful
-// to prune: absent and false are the same behaviour, so deleting an explicit false
-// changes nothing.
-//
-// Checked symmetrically even though only one order is harmful. The safe order is
-// safe only because of when the applies happen, and a rule resting on that decays
-// the first time the sequence changes — while an operator who mentions the field
-// in one file has no reason to omit it from the other.
-func checkHotReloadPresenceAgrees(gatewayName string, liveHotReload bool, declarations map[string]hotReloadDeclaration) error {
-	if !liveHotReload {
-		return nil
-	}
-
-	var declaring, silent []string
-	for _, role := range []string{roleFenced, roleSwitchover} {
-		if declarations[role].present {
-			declaring = append(declaring, fmt.Sprintf("the %s gateway CR", role))
-			continue
-		}
-		silent = append(silent, fmt.Sprintf("the %s gateway CR", role))
-	}
-	if len(declaring) == 0 || len(silent) == 0 {
-		return nil
-	}
-
-	return fmt.Errorf("cannot start a migration that would change gateway %q's hot-reload behaviour: %s "+
-		"declares spec.hotReload while %s omits it, and the gateway has hot-reload enabled. kcp applies these CRs in "+
-		"turn, and server-side apply deletes a field an earlier apply from the same field manager declared once a later "+
-		"one leaves it out — so hot-reload would be switched off part-way through the migration. To proceed, either "+
-		"declare spec.hotReload.enabled: true in both, or omit it from both so each inherits the gateway's setting",
-		gatewayName, joinPhrases(declaring), joinPhrases(silent))
-}
-
 // Capability records what the live cluster supports, and therefore how kcp will
 // verify each Gateway state transition.
 type Capability struct {
@@ -296,17 +253,17 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clie
 		return Capability{}, fmt.Errorf("failed to get gateway %q for capability detection: %w", gatewayName, err)
 	}
 
-	// The live gateway decides the mode, and the CRs kcp is about to apply are held
-	// to it. They are not a second opinion to be merged in: kcp applies them, so a
-	// declaration that disagrees is a behaviour change kcp would be making to the
-	// operator's running gateway. Refuse it and say which file, rather than picking.
+	// The live gateway alone decides the mode. kcp does not apply the planned CRs
+	// wholesale — it patches only route fields and never writes spec.hotReload — so
+	// their hot-reload declarations cannot change the running gateway. They are read
+	// here only to catch a declaration that disagrees with the live gateway: intent
+	// kcp cannot honour, refused by naming the file rather than silently ignored.
 	liveHotReload := hotReloadEnabledInCR(gw)
 
 	var sources []string
 	if liveHotReload {
 		sources = append(sources, "the live gateway CR")
 	}
-	declarations := map[string]hotReloadDeclaration{}
 	for _, planned := range []plannedGatewayCR{{roleFenced, fencedYAML}, {roleSwitchover, switchoverYAML}} {
 		declared, err := hotReloadDeclaredInYAML(planned)
 		if err != nil {
@@ -315,14 +272,9 @@ func detectCapability(ctx context.Context, dynamicClient dynamic.Interface, clie
 		if declared.present && declared.enabled != liveHotReload {
 			return Capability{}, hotReloadDiscrepancyError(gatewayName, planned.role, liveHotReload, declared.enabled)
 		}
-		declarations[planned.role] = declared
 		if declared.present && declared.enabled {
 			sources = append(sources, fmt.Sprintf("the %s gateway CR", planned.role))
 		}
-	}
-
-	if err := checkHotReloadPresenceAgrees(gatewayName, liveHotReload, declarations); err != nil {
-		return Capability{}, err
 	}
 
 	detected := Capability{
@@ -501,11 +453,11 @@ type plannedGatewayCR struct {
 
 // hotReloadDeclaration is what a planned CR says about spec.hotReload.enabled.
 //
-// Absence is tracked separately from the value because the two mean different
-// things to server-side apply. A CR that omits the field does not clear it: SSA
-// leaves fields the applier does not own alone, so the gateway keeps whatever it
-// was running. That makes an absent declaration a no-op, and a no-op is always
-// allowed. Every example under docs/assets/gateway-switchover is this shape.
+// Absence is tracked separately from the value so the discrepancy check fires
+// only on a CR that actually declares one. kcp never writes spec.hotReload, so a
+// CR that omits the field is a no-op — the gateway keeps running unchanged — and
+// is always allowed. Every example under docs/assets/gateway-switchover is this
+// shape.
 type hotReloadDeclaration struct {
 	present bool
 	enabled bool
@@ -542,26 +494,21 @@ func hotReloadDeclaredInYAML(planned plannedGatewayCR) (hotReloadDeclaration, er
 	return hotReloadDeclaration{present: true, enabled: enabled}, nil
 }
 
-// hotReloadDiscrepancyError is the refusal for a planned CR that would change the
-// gateway's hot-reload behaviour.
+// hotReloadDiscrepancyError is the refusal for a planned CR whose spec.hotReload
+// declaration disagrees with the live gateway.
 //
-// kcp will not make that change on the operator's behalf in either direction.
-// Enabling it converts every later transition to an in-place apply on a gateway
-// that was rolling pods; disabling it starts rolling pods on a gateway that was
-// not. Both are changes to how a running service handles traffic, decided by a
-// file kcp happens to be applying — so kcp stops and explains instead of picking.
+// kcp patches only route fields and never writes spec.hotReload, so it cannot
+// change the gateway's hot-reload behaviour in either direction — a planned CR
+// declaring a different value than the live gateway is intent kcp would silently
+// drop. Rather than run a migration that quietly ignores what the operator wrote,
+// kcp stops and names the file to align.
 func hotReloadDiscrepancyError(gatewayName, role string, live, planned bool) error {
-	consequence := "start rolling the gateway pods on every transition"
-	if planned {
-		consequence = "stop CFK rolling the pods and have it apply every later change in place"
-	}
-
-	return fmt.Errorf("cannot start a migration that would change gateway %q's hot-reload behaviour: "+
-		"the %s gateway CR declares spec.hotReload.enabled: %t while the gateway has it %t. Applying that CR would %s, "+
-		"which kcp will not do on your behalf. To proceed, either omit spec.hotReload from the %s gateway CR so it "+
-		"inherits the gateway's setting, make it declare %t to match, or set spec.hotReload.enabled: %t on the gateway "+
-		"itself first",
-		gatewayName, role, planned, live, consequence, role, live, planned)
+	return fmt.Errorf("cannot start a migration whose %s gateway CR disagrees with gateway %q on hot-reload: "+
+		"the CR declares spec.hotReload.enabled: %t while the gateway has it %t. kcp patches only route fields and "+
+		"never writes spec.hotReload, so it cannot honour that declaration. To proceed, either omit spec.hotReload "+
+		"from the %s gateway CR so it inherits the gateway's setting, make it declare %t to match, or set "+
+		"spec.hotReload.enabled: %t on the gateway itself first",
+		role, gatewayName, planned, live, role, live, planned)
 }
 
 // hotReloadEnabledInCR reports whether the live Gateway CR declares

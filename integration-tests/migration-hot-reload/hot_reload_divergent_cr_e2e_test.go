@@ -1,24 +1,18 @@
 //go:build e2e
 
-// Hot-reload discrepancies between the live Gateway CR and the CRs a migration is
-// about to apply.
+// Hot-reload discrepancy between the live Gateway CR and a planned migration CR.
 //
-// kcp applies the operator's fenced and switchover files, so those files can change
-// how the running gateway behaves: one that enables hot-reload converts every later
-// transition to an in-place apply, one that disables it starts rolling pods that
-// were not rolling before. kcp makes neither change on the operator's behalf — it
-// refuses and names the file.
+// kcp patches only route fields and never writes spec.hotReload, so it cannot
+// change the gateway's hot-reload behaviour. A planned fenced/switchover CR whose
+// spec.hotReload declaration disagrees with the live gateway is therefore intent
+// kcp would silently drop — so DetectCapability refuses it and names the file
+// rather than run a migration that ignores what the operator wrote.
 //
-// Both tests here exercise that refusal purely through DetectCapability's read-only
-// check — neither applies a CR or mutates the live gateway, so both survive
-// the SSA-apply removal untouched. Two siblings that DID exercise the refusal via a
-// real apply, and a pair that proved the server-side-apply field-ownership mechanism
-// the refusal exists to avoid (a narrowing apply from kcp's own field manager
-// pruning a field an earlier apply from that manager declared, and an omission of an
-// already-solely-owned field being rejected by the CRD outright), were removed when
-// kcp moved off full-CR SSA apply onto targeted JSON patches — a targeted RoutePatch
-// has no whole-object merge or field-manager ownership semantics, so that mechanism
-// no longer exists in production to test.
+// The test here exercises that refusal purely through DetectCapability's read-only
+// check — it neither applies a CR nor mutates the live gateway. The presence-
+// agreement sibling (one file mentions spec.hotReload, the other omits it) was
+// removed with the check itself: under targeted JSON patches an omitted field is a
+// no-op, so a mismatch in mere presence changes nothing and is no longer refused.
 package hotreload
 
 import (
@@ -41,23 +35,6 @@ func withHotReload(t *testing.T, crYAML []byte, enabled bool) []byte {
 	spec, ok := obj["spec"].(map[string]any)
 	require.True(t, ok, "the CR must have a spec to edit")
 	spec["hotReload"] = map[string]any{"enabled": enabled}
-
-	out, err := yaml.Marshal(obj)
-	require.NoError(t, err)
-	return out
-}
-
-// withoutHotReload returns crYAML with the spec.hotReload block removed, which is
-// the shape of every example under docs/assets/gateway-switchover.
-func withoutHotReload(t *testing.T, crYAML []byte) []byte {
-	t.Helper()
-
-	var obj map[string]any
-	require.NoError(t, yaml.Unmarshal(crYAML, &obj))
-
-	spec, ok := obj["spec"].(map[string]any)
-	require.True(t, ok, "the CR must have a spec to edit")
-	delete(spec, "hotReload")
 
 	out, err := yaml.Marshal(obj)
 	require.NoError(t, err)
@@ -96,9 +73,9 @@ func (e *env) liveHotReload(t *testing.T, ctx context.Context) bool {
 }
 
 // TestPlannedCRThatWouldDisableHotReloadIsRefused covers the direction that matters
-// just as much as turning hot-reload on: the operator's gateway would start rolling
-// pods on every transition because of a file kcp applied. Detection must refuse
-// rather than adopt it.
+// just as much as turning hot-reload on: a planned CR declares hot-reload off while
+// the live gateway runs it. kcp cannot honour that — it never writes spec.hotReload
+// — so detection must refuse and name the file rather than silently ignore it.
 func TestPlannedCRThatWouldDisableHotReloadIsRefused(t *testing.T) {
 	ctx := context.Background()
 	e := newEnv(t)
@@ -110,35 +87,9 @@ func TestPlannedCRThatWouldDisableHotReloadIsRefused(t *testing.T) {
 
 	_, err := e.svc.DetectCapability(ctx, e.namespace, e.gateway,
 		gateway.DefaultGatewayConfigPort, fenced, switchover)
-	require.Error(t, err, "kcp must not turn hot-reload off for a gateway that is running it")
+	require.Error(t, err, "a planned CR declaring hot-reload off while the gateway runs it must be refused, not ignored")
 
 	assert.Contains(t, err.Error(), "fenced")
 	assert.Contains(t, err.Error(), "spec.hotReload.enabled")
 	t.Logf("refused with: %v", err)
-}
-
-// TestPlannedCRsMustAgreeOnMentioningHotReload covers the fenced and switchover
-// files disagreeing on whether they mention spec.hotReload at all: the fenced CR
-// declares it, the switchover CR silently omits it. kcp must refuse the pair rather
-// than let a later apply of the switchover CR interact with whatever the fence apply
-// left declared.
-func TestPlannedCRsMustAgreeOnMentioningHotReload(t *testing.T) {
-	ctx := context.Background()
-	e := newEnv(t)
-
-	require.True(t, e.liveHotReload(t, ctx), "the rig's gateway must be running hot-reload")
-
-	fenced := mustReadFile(t, "KCP_HR_FENCED_CR")
-	switchoverSilent := withoutHotReload(t, mustReadFile(t, "KCP_HR_SWITCHOVER_CR"))
-	require.True(t, declaresHotReload(t, fenced))
-	require.False(t, declaresHotReload(t, switchoverSilent))
-
-	t.Run("kcp refuses the mismatched pair", func(t *testing.T) {
-		_, err := e.svc.DetectCapability(ctx, e.namespace, e.gateway,
-			gateway.DefaultGatewayConfigPort, fenced, switchoverSilent)
-		require.Error(t, err, "the switchover apply would delete the field the fence apply declared")
-
-		assert.Contains(t, err.Error(), "switchover")
-		t.Logf("refused with: %v", err)
-	})
 }
