@@ -27,7 +27,7 @@ const defaultKafkaVersion = "3.6.0"
 // plan Refused is true, the three outputs are empty, and Reasons explains why.
 // A returned error is an I/O failure, NOT a refusal — a refusal is data.
 type Result struct {
-	Route          string   // the gateway route the fence/switchover rules apply to (spec.topicGroup.route)
+	Route          string   // the gateway route the fence/switchover rules apply to (spec.route.name)
 	Topics         []string // the promote list to feed to cluster-link promotion
 	FenceYAML      string   // the whole rules: block, fenced
 	SwitchoverYAML string   // the whole rules: block, switched over
@@ -88,7 +88,7 @@ func WithOutput(w io.Writer) Option {
 }
 
 // Reconcile is the single in-code entry point: given the parsed manifest, it
-// derives the selector from spec.topicGroup, pulls the live Gateway CR named in
+// derives the selector from spec.route, pulls the live Gateway CR named in
 // spec.gateway, reads live source/target/link state, runs the engine, renders
 // the plan report, and returns the Result. It opens the cluster connections and
 // closes them before returning. err is an I/O failure only; a refusal is
@@ -156,10 +156,9 @@ func Reconcile(ctx context.Context, g *manifest.GatewayMigration, opts ...Option
 	if out == nil {
 		out = os.Stdout
 	}
-	tg := g.Spec.TopicGroup[0]
 	RenderReport(out, res.Report, RenderView{
-		Route:        tg.Route,
-		TargetDomain: tg.TargetStreamingDomain,
+		Route:        g.Spec.Route.Name,
+		TargetDomain: g.Spec.Route.TargetStreamingDomain,
 		ArtifactNote: "plan ready",
 	})
 	return res, nil
@@ -222,13 +221,14 @@ func buildSecretExistenceChecker(g *manifest.GatewayMigration) (SecretExistenceC
 	return NewK8sSecretChecker(clientset, g.Spec.Gateway.Namespace), nil
 }
 
-// buildReconcileInput maps the manifest's spec.topicGroup onto the engine-owned
-// ReconcileInput. The reconcile engine handles one route per run, so exactly one
-// topicGroup entry is required.
+// buildReconcileInput maps the manifest's spec.route onto the engine-owned
+// ReconcileInput. The reconcile engine handles one route per run, so exactly
+// one topicGroup entry is required.
 func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput, error) {
-	tgs := g.Spec.TopicGroup
+	r := g.Spec.Route
+	tgs := r.TopicGroup
 	if len(tgs) != 1 {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup: exactly one entry is required, got %d", len(tgs))
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.topicGroup: exactly one entry is required, got %d", len(tgs))
 	}
 	tg := tgs[0]
 
@@ -240,19 +240,19 @@ func buildReconcileInput(g *manifest.GatewayMigration) (reconcile.ReconcileInput
 		patterns = *tg.TopicPatterns
 	}
 	if len(topics) == 0 && len(patterns) == 0 {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0]: at least one of topics / topicPatterns is required")
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.topicGroup[0]: at least one of topics / topicPatterns is required")
 	}
-	if tg.Route == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0].route: required")
+	if r.Name == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.name: required")
 	}
-	if tg.TargetStreamingDomain == "" {
-		return reconcile.ReconcileInput{}, fmt.Errorf("spec.topicGroup[0].targetStreamingDomain: required")
+	if r.TargetStreamingDomain == "" {
+		return reconcile.ReconcileInput{}, fmt.Errorf("spec.route.targetStreamingDomain: required")
 	}
 	return reconcile.ReconcileInput{
 		Topics:          topics,
 		TopicPatterns:   patterns,
-		Route:           tg.Route,
-		TargetDomain:    tg.TargetStreamingDomain,
+		Route:           r.Name,
+		TargetDomain:    r.TargetStreamingDomain,
 		TargetClusterID: g.Spec.Target.ClusterID,
 	}, nil
 }

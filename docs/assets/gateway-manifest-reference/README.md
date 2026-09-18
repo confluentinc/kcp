@@ -35,7 +35,7 @@ spec:
   target: { ... } # required — cluster being migrated to
   clusterLink: { ... } # required — an ALREADY-EXISTING cluster link
   gateway: { ... } # required — namespace, kubeconfig, initial gateway CR name
-  topicGroup: [...] # required — one entry: the topics, route, and target domain
+  route: { ... } # required — the route name, topic selection, and target domain
   defaultPolicies: { ... } # optional — execute-time policy defaults
 ```
 
@@ -44,7 +44,7 @@ spec:
 written into the state file as the migration's identity (pre-manifest,
 uuid-keyed migrations keep working, addressed instead with `--migration-id`).
 `spec.source`, `spec.target`, `spec.clusterLink`, `spec.gateway`, and
-`spec.topicGroup` are always required; `spec.defaultPolicies` is optional.
+`spec.route` are always required; `spec.defaultPolicies` is optional.
 
 Every credentials field is a **path to a credentials file** — the manifest never
 holds secret material inline, and there is no `${ENV_VAR}` substitution: a
@@ -126,7 +126,7 @@ required** and never derived from the Kafka leg — its top-level shape is one o
 
 There is no `crs.fenced` or `crs.switchover` file: kcp derives both the fenced
 CR and the switched CR from the live initial CR at cutover — a fence block
-injected onto the route named in `spec.topicGroup`, and that route's
+injected onto the route named in `spec.route`, and that route's
 `streamingDomain` flipped to its declared target. The old `crs.initial` nesting
 is flattened to a single `cr-name`, and the retired `crs`/`routes` keys are
 removed from the schema entirely: a stale manifest that still uses them fails
@@ -138,18 +138,23 @@ the strict decode with an unknown-field error.
 | `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
 | `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on first migration registration (the first `execute` run), not a file path. |
 
-## `spec.topicGroup`
+## `spec.route`
 
-Required — a list validated to **exactly one** entry today (one route, one
-migration per file). Each entry pairs a topic selection with the route it
-migrates and the target streaming domain that route switches to.
+Required. Names the route to fence and switch over, the target streaming
+domain it switches to, and the topic selection(s) that migrate.
 
-| Field                   | Type       | Required | Notes                                                                                                                                                    |
-| ----------------------- | ---------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `topics`                | `[]string` | see note | A flat list of **literal** topic names, exact-matched against the link's active mirror topics — **not** globs.                                            |
-| `topicPatterns`         | `[]string` | see note | A list of **anchored full-match** regular expressions (RE2). `['.*']` selects every active mirror topic.                                                  |
-| `route`                 | string     | yes      | A `spec.routes[].name` in the initial CR to fence and switch over. Must be non-blank and exist in the CR.                                                 |
-| `targetStreamingDomain` | string     | yes      | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`.                          |
+| Field                   | Type       | Required | Notes                                                                                                                              |
+| ----------------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                  | string     | yes      | A `spec.routes[].name` in the initial CR to fence and switch over. Must be non-blank and exist in the CR.                            |
+| `topicGroup`            | list       | yes      | A list validated to **exactly one** entry today (one route, one migration per file). See below.                                     |
+| `targetStreamingDomain` | string     | yes      | The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's `spec.streamingDomains`.    |
+
+### `spec.route.topicGroup`
+
+| Field           | Type       | Required | Notes                                                                                                            |
+| --------------- | ---------- | -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `topics`        | `[]string` | see note | A flat list of **literal** topic names, exact-matched against the link's active mirror topics — **not** globs.    |
+| `topicPatterns` | `[]string` | see note | A list of **anchored full-match** regular expressions (RE2). `['.*']` selects every active mirror topic.          |
 
 **At least one of `topics` / `topicPatterns` is required.** If `topics` is set
 it is authoritative — `topicPatterns` is ignored. There is no
@@ -294,8 +299,8 @@ Key rules, beyond required/optional per field above:
   must be a non-blank file path; an inline mapping is rejected at parse.
 - `spec.gateway.namespace` and `cr-name` must not be blank; the retired
   `crs`/`routes` keys must not be set at all (they fail the strict decode).
-- `spec.topicGroup` must have exactly one entry, with a non-blank `route` and
-  `targetStreamingDomain`.
+- `spec.route.name` and `spec.route.targetStreamingDomain` must not be blank;
+  `spec.route.topicGroup` must have exactly one entry.
 - Each entry must set at least one of `topics` / `topicPatterns` (both is
   allowed). Neither present is rejected. `topics`/`topicPatterns`, if present,
   must be non-empty with no blank entries; each `topicPatterns` entry must
@@ -328,11 +333,11 @@ Key rules, beyond required/optional per field above:
 | `spec.gateway.namespace`                                  | string         | yes                                                    | —                                            | —                                                            |
 | `spec.gateway.kubeconfig`                                 | string         | no                                                     | —                                            | `~/` expanded                                                |
 | `spec.gateway.cr-name`                                    | string         | yes                                                    | —                                            | K8s object name                                              |
-| `spec.topicGroup`                                         | list           | yes                                                    | —                                            | exactly one entry                                           |
-| `spec.topicGroup[].topics`                                | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, literal names                         |
-| `spec.topicGroup[].topicPatterns`                         | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, anchored RE2 patterns (`['.*']` = all) |
-| `spec.topicGroup[].route`                                 | string         | yes                                                    | —                                            | must exist in the initial CR                                 |
-| `spec.topicGroup[].targetStreamingDomain`                 | string         | yes                                                    | —                                            | must be declared in the initial CR's `spec.streamingDomains` |
+| `spec.route.name`                                         | string         | yes                                                    | —                                            | must exist in the initial CR                                 |
+| `spec.route.topicGroup`                                   | list           | yes                                                    | —                                            | exactly one entry                                           |
+| `spec.route.topicGroup[].topics`                          | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, literal names                         |
+| `spec.route.topicGroup[].topicPatterns`                   | `[]string`     | at least one of topics/topicPatterns                   | —                                            | non-empty if present, anchored RE2 patterns (`['.*']` = all) |
+| `spec.route.targetStreamingDomain`                        | string         | yes                                                    | —                                            | must be declared in the initial CR's `spec.streamingDomains` |
 | `spec.defaultPolicies.lagThreshold`                       | int            | no                                                     | `0`                                          | `>= 0`                                                       |
 | `spec.defaultPolicies.promoteBatchSize`                   | int            | no                                                     | `0`                                          | `>= 0`                                                       |
 | `spec.defaultPolicies.rolloutTimeout`                     | duration       | no                                                     | `0`                                          | `>= 0`                                                       |

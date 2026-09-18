@@ -37,8 +37,9 @@ spec:
   gateway:
     namespace: "__NAMESPACE__"
     cr-name: "__GATEWAY_NAME__"
-  topicGroup:
-    - topics:
-        - "tbm-topic-046"
-      route: "unrecognized-mode-route"
-      targetStreamingDomain: "__DEST_DOMAIN__"
+  route:
+    name: "unrecognized-mode-route"
+    topicGroup:
+      - topics:
+          - "tbm-topic-046"
+    targetStreamingDomain: "__DEST_DOMAIN__"

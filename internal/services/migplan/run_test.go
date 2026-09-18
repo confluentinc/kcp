@@ -7,20 +7,18 @@ import (
 	"github.com/confluentinc/kcp/internal/services/migplan/reconcile"
 )
 
-func gm(tgs []manifest.TopicGroupEntry) *manifest.GatewayMigration {
+func gm(name, target string, tgs []manifest.TopicGroupEntry) *manifest.GatewayMigration {
 	g := &manifest.GatewayMigration{}
-	g.Spec.TopicGroup = tgs
+	g.Spec.Route = manifest.Route{Name: name, TopicGroup: tgs, TargetStreamingDomain: target}
 	return g
 }
 
 func strs(s ...string) *[]string { return &s }
 
 func TestBuildReconcileInput(t *testing.T) {
-	in, err := buildReconcileInput(gm([]manifest.TopicGroupEntry{{
-		Topics:                strs("a", "b"),
-		TopicPatterns:         strs("team-.*"),
-		Route:                 "migration-route",
-		TargetStreamingDomain: "cc",
+	in, err := buildReconcileInput(gm("migration-route", "cc", []manifest.TopicGroupEntry{{
+		Topics:        strs("a", "b"),
+		TopicPatterns: strs("team-.*"),
 	}}))
 	if err != nil {
 		t.Fatal(err)
@@ -35,21 +33,23 @@ func TestBuildReconcileInput(t *testing.T) {
 
 func TestBuildReconcileInputValidation(t *testing.T) {
 	cases := []struct {
-		name string
-		tgs  []manifest.TopicGroupEntry
+		name   string
+		route  string
+		target string
+		tgs    []manifest.TopicGroupEntry
 	}{
-		{"zero topicGroups", nil},
-		{"more than one topicGroup", []manifest.TopicGroupEntry{
-			{Topics: strs("a"), Route: "r", TargetStreamingDomain: "cc"},
-			{Topics: strs("b"), Route: "r", TargetStreamingDomain: "cc"},
+		{"zero topicGroups", "r", "cc", nil},
+		{"more than one topicGroup", "r", "cc", []manifest.TopicGroupEntry{
+			{Topics: strs("a")},
+			{Topics: strs("b")},
 		}},
-		{"missing route", []manifest.TopicGroupEntry{{Topics: strs("a"), TargetStreamingDomain: "cc"}}},
-		{"missing targetStreamingDomain", []manifest.TopicGroupEntry{{Topics: strs("a"), Route: "r"}}},
-		{"no topics or patterns", []manifest.TopicGroupEntry{{Route: "r", TargetStreamingDomain: "cc"}}},
+		{"missing route", "", "cc", []manifest.TopicGroupEntry{{Topics: strs("a")}}},
+		{"missing targetStreamingDomain", "r", "", []manifest.TopicGroupEntry{{Topics: strs("a")}}},
+		{"no topics or patterns", "r", "cc", []manifest.TopicGroupEntry{{}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if _, err := buildReconcileInput(gm(c.tgs)); err == nil {
+			if _, err := buildReconcileInput(gm(c.route, c.target, c.tgs)); err == nil {
 				t.Errorf("%s must error", c.name)
 			}
 		})

@@ -108,13 +108,14 @@ func GenerateGateway() ([]byte, error) {
 	// gone from the struct, so reflection no longer emits it.
 	gateway.Required = []string{"namespace", "cr-name"}
 
-	// spec.topicGroup: each entry pairs a topic selection with its route and
-	// target streaming domain. The item's required set (route,
-	// targetStreamingDomain) reflects from the non-omitempty struct tags; the "at
-	// least one of topics/topicPatterns" rule is not expressible on the struct, so
-	// hand-patch it as an anyOf on the item.
-	topicGroup := spec.Properties["topicGroup"]
+	// spec.route names the route to fence/switch, the target streaming domain
+	// it switches to, and carries the topic selection(s) that migrate.
+	route := spec.Properties["route"]
+	topicGroup := route.Properties["topicGroup"]
 	tgItem := topicGroup.Items
+	// The item's required set is empty by reflection (both fields are
+	// omitempty); the "at least one of topics/topicPatterns" rule is not
+	// expressible on the struct, so hand-patch it as an anyOf on the item.
 	tgItem.AnyOf = []*jsonschema.Schema{
 		{Required: []string{"topics"}},
 		{Required: []string{"topicPatterns"}},
@@ -156,11 +157,12 @@ func GenerateGateway() ([]byte, error) {
 
 		gateway.Properties["cr-name"]: "NAME of the initial gateway custom resource in Kubernetes. Read live from the cluster at init — this is an object name, not a file path.",
 
-		topicGroup:                                 "Pairs the topic selection with the route it migrates and the streaming domain that route switches to. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here.",
-		tgItem.Properties["topics"]:                "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. At least one of topics or topicPatterns is required. If topics is set, it is authoritative and topicPatterns is ignored.",
-		tgItem.Properties["topicPatterns"]:         "Topic selection as a list of anchored full-match regular expressions (RE2). Use ['.*'] to cut over every active mirror topic. At least one of topics or topicPatterns is required. Only consulted when topics is absent; only the match-all pattern is currently supported (union with topics is not yet implemented).",
-		tgItem.Properties["route"]:                 "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced.",
-		tgItem.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init.",
+		route:                              "Names the route on the live Gateway CR to fence/switch, the target streaming domain it switches to, and the topic selection(s) that migrate. The field set is identical for the static (all-at-once) and dynamic (topic-based) modes.",
+		route.Properties["name"]:           "The spec.routes[].name of the route to fence and switch over. Must exist in the initial CR and must not already be fenced.",
+		topicGroup:                         "The topic selection(s) that migrate on this route. Exactly one entry today — one route, one migration per file. kcp reads the live initial CR, injects fence: {scope: ALL, errorCode: BROKER_NOT_AVAILABLE} onto the route, and applies the patched CR — there is no separate fenced-CR file. At cutover it derives the switch the same way, flipping the route's streamingDomain to its target. The route's migration mode (all-at-once vs topic-based) is read from the live CR's route binding, not declared here.",
+		tgItem.Properties["topics"]:        "Topics to cut over, as a flat list of LITERAL names exact-matched against the cluster link's active mirror topics — not globs. At least one of topics or topicPatterns is required. If topics is set, it is authoritative and topicPatterns is ignored.",
+		tgItem.Properties["topicPatterns"]: "Topic selection as a list of anchored full-match regular expressions (RE2). Use ['.*'] to cut over every active mirror topic. At least one of topics or topicPatterns is required. Only consulted when topics is absent; only the match-all pattern is currently supported (union with topics is not yet implemented).",
+		route.Properties["targetStreamingDomain"]: "Name of a streaming domain already declared in the initial CR's spec.streamingDomains. kcp derives the bootstrap server id to bind the route to from that declaration in the live CR — it is not written here. Safe with no secret or auth change at cutover only because the route's security.cluster already carries pre-staged (\"redundant\") auth for this domain, which kcp proves at init.",
 
 		policy.Properties["lagThreshold"]:                    "Total topic replication lag threshold (sum of all partition lags) before proceeding with the migration.",
 		policy.Properties["promoteBatchSize"]:                "Maximum number of mirror topics to promote per batch. 0 (the default) promotes all topics at once. When set (>0), each batch is promoted and confirmed STOPPED before the next batch is submitted.",
