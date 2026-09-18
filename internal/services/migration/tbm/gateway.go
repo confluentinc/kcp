@@ -42,6 +42,41 @@ func deriveSwitchedCRYAML(config *migration.MigrationConfig) ([]byte, error) {
 	return gateway.ReplaceRouteRulesObj(base, config.Route, []byte(config.SwitchoverYAML))
 }
 
+// deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
+// rules fragment onto config.Route. Consumed by Fence's write path;
+// resolveGatewayCapability's probe still uses deriveFencedCRYAML/full CR
+// bytes since capability detection needs a complete CR to apply, not a route
+// patch.
+func deriveFenceRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
+	v, err := gateway.FragmentValue([]byte(config.FenceYAML), "rules")
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	return gateway.RoutePatch{RouteName: config.Route, Field: "rules", Value: v}, nil
+}
+
+// deriveSwitchRoutePatch builds the RoutePatch that grafts
+// config.SwitchoverYAML's rules fragment onto config.Route. Consumed by
+// Switch's write path.
+func deriveSwitchRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
+	v, err := gateway.FragmentValue([]byte(config.SwitchoverYAML), "rules")
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	return gateway.RoutePatch{RouteName: config.Route, Field: "rules", Value: v}, nil
+}
+
+// deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to
+// its captured state in config.GatewayYAML — a whole-route replace (Field ==
+// "") rather than a single-key mutation.
+func deriveUnfenceRoutePatch(config *migration.MigrationConfig) (gateway.RoutePatch, error) {
+	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+}
+
 // verifier builds the shared gateway apply/wait/verify mechanism, seeded
 // with this run's current capability and timeouts. migration's own Actions
 // type builds the identical thing (see migration.MigrationActions.verifier)
@@ -119,17 +154,17 @@ func (a *TBMActions) resolveGatewayCapability(ctx context.Context, config *migra
 // verifyHotReloadCapability proves the gateway really does apply config
 // revisions, before fencing touches any traffic. See
 // gateway.TransitionVerifier.VerifyHotReloadCapability's doc comment for why
-// this matters and why a dedicated field manager makes it safe to call at
-// any point, including a resume.
+// this matters and why patching only spec.configId — touching no other
+// field — makes it safe to call at any point, including a resume.
 func (a *TBMActions) verifyHotReloadCapability(ctx context.Context, config *migration.MigrationConfig) error {
 	return a.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, config.GatewayConfigPort)
 }
 
-// applyGatewayCR applies a gateway CR, attaching a fresh config revision id
-// when the cluster supports one. See gateway.TransitionVerifier.ApplyCR for
-// why a fresh id is attached on every apply.
-func (a *TBMActions) applyGatewayCR(ctx context.Context, config *migration.MigrationConfig, yamlData []byte, step string) (gateway.ApplyResult, error) {
-	return a.verifier().ApplyCR(ctx, config.K8sNamespace, config.InitialCrName, yamlData, step)
+// patchGatewayRoute patches one route mutation onto the gateway CR, attaching
+// a fresh config revision id when the cluster supports one. See
+// gateway.TransitionVerifier.PatchCR.
+func (a *TBMActions) patchGatewayRoute(ctx context.Context, config *migration.MigrationConfig, rp gateway.RoutePatch, step string) (gateway.ApplyResult, error) {
+	return a.verifier().PatchCR(ctx, config.K8sNamespace, config.InitialCrName, rp, step)
 }
 
 // waitForGatewayAccepted blocks until the Confluent operator has accepted

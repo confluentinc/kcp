@@ -366,23 +366,32 @@ func (h *tbmHarness) ApplySwitchover(t *testing.T, res *migplan.Result) string {
 	return h.applyRules(t, "switchover", res.SwitchoverYAML)
 }
 
-// applyRules is the shared apply mechanic: read the live CR, wholesale-replace the
-// migration route's `rules` subtree with the engine's artifact (the artifact is
-// cumulative — it already preserves prior edits — so a whole-subtree replace is
-// correct), apply with a fresh configId, then confirm the configId on every pod
-// and assert no pod rolled.
+// applyRules is the shared apply mechanic: extract the engine's `{rules: ...}`
+// artifact's inner value and patch it onto the migration route's `rules`
+// field (the artifact is cumulative — it already preserves prior edits — so a
+// whole-field replace is correct), mirroring the TBM workflow's own
+// deriveFenceRoutePatch/deriveSwitchRoutePatch (Field: "rules") rather than
+// applying a full CR. Then confirm the configId on every pod and assert no
+// pod rolled.
 func (h *tbmHarness) applyRules(t *testing.T, label, rulesYAML string) string {
 	t.Helper()
 	require.NotEmpty(t, rulesYAML, "%s: engine produced an empty rules artifact", label)
 
 	before := h.e.fingerprint(t, h.ctx)
-	spliced := spliceRouteRules(t, h.e.readCR(t, h.ctx), h.e.route, rulesYAML)
+
+	rp := gateway.RoutePatch{RouteName: h.e.route, Field: "rules"}
+	var err error
+	rp.Value, err = gateway.FragmentValue([]byte(rulesYAML), "rules")
+	require.NoError(t, err, "%s: extract rules fragment", label)
+	rules, ok := rp.Value.(map[string]any)
+	require.True(t, ok, "%s: rules fragment value must be a map", label)
+	ensureFencingBlocked(rules)
 
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
 
-	stored, err := h.e.svc.ApplyGatewayYAML(h.ctx, h.e.namespace, h.e.gateway, spliced, configID)
-	require.NoError(t, err, "%s: ApplyGatewayYAML", label)
+	stored, err := h.e.svc.PatchGatewayRoute(h.ctx, h.e.namespace, h.e.gateway, rp, configID)
+	require.NoError(t, err, "%s: PatchGatewayRoute", label)
 	require.Equal(t, configID, stored, "the API server must persist the configId kcp sent")
 
 	require.NoError(t, h.e.svc.WaitForGatewayAccepted(h.ctx, h.e.namespace, h.e.gateway, pollInterval, convergeTimeout))
@@ -418,46 +427,6 @@ func ensureFencingBlocked(rules map[string]any) {
 			entry["blocked"] = true
 		}
 	}
-}
-
-// spliceRouteRules replaces the named route's `rules` subtree in a parsed gateway
-// CR with the inner value of a `rules:`-wrapped engine artifact, then re-marshals.
-// It inverts findRoute (internal/services/migplan/gatewayfile.go), which reads the
-// same spec.routes[].rules path, so the write the engine will read back is
-// consistent with the read that produced the artifact.
-func spliceRouteRules(t *testing.T, baseCR []byte, routeName, rulesYAML string) []byte {
-	t.Helper()
-
-	var cr map[string]any
-	require.NoError(t, yaml.Unmarshal(baseCR, &cr))
-
-	var wrap map[string]any
-	require.NoError(t, yaml.Unmarshal([]byte(rulesYAML), &wrap))
-	rules, ok := wrap["rules"].(map[string]any)
-	require.True(t, ok, "rules artifact must be wrapped under a top-level rules: key")
-	ensureFencingBlocked(rules)
-
-	spec, ok := cr["spec"].(map[string]any)
-	require.True(t, ok, "live gateway CR has no spec")
-	routes, ok := spec["routes"].([]any)
-	require.True(t, ok, "live gateway CR has no spec.routes")
-
-	found := false
-	for _, r := range routes {
-		route, ok := r.(map[string]any)
-		if !ok {
-			continue
-		}
-		if name, _ := route["name"].(string); name == routeName {
-			route["rules"] = rules
-			found = true
-		}
-	}
-	require.True(t, found, "route %q not found in the live gateway CR", routeName)
-
-	out, err := yaml.Marshal(cr)
-	require.NoError(t, err)
-	return out
 }
 
 // PromoteMirrors stops+promotes the cluster-link mirrors for topics via the
