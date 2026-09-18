@@ -241,20 +241,21 @@ func formatLag64(n int64) string {
 
 // Fence runs the fence transition: resolves how gateway transitions will be
 // verified on the live cluster, proves hot-reload actually works if the
-// gateway claims to support it, derives the fenced CR by replacing
-// config.Route's rules with config.FenceYAML, applies it, and confirms it
-// landed. Unlike migration.FenceGateway there is no pod-UID capture (that
-// strengthening is deferred, unlike verify_fence's rogue/unrouted-producer
-// detection, which is real — see VerifyFence). A failure here has no
-// compensating rollback of its own (abort_fence only fires from
-// verify_fence's ErrUnroutedProducers) — it just returns an error, leaving
-// the FSM at lags_ok; re-running execute-tbm retries fencing.
+// gateway claims to support it, derives the fence RoutePatch by grafting
+// config.FenceYAML's rules fragment onto config.Route (see
+// deriveFenceRoutePatch), patches it in, and confirms it landed. Unlike
+// migration.FenceGateway there is no pod-UID capture (that strengthening is
+// deferred, unlike verify_fence's rogue/unrouted-producer detection, which
+// is real — see VerifyFence). A failure here has no compensating rollback of
+// its own (abort_fence only fires from verify_fence's ErrUnroutedProducers)
+// — it just returns an error, leaving the FSM at lags_ok; re-running
+// execute-tbm retries fencing.
 func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
 	// config.Topics is empty whenever migplan.Reconcile's Result was a
 	// legitimate "nothing to migrate" outcome (Refused: false, Artifacts nil —
 	// see reconcile.go: Refused() is checked first, then len(migratable)==0 is
 	// a separate, distinct success path for an already-migrated/steady-state
-	// batch). config.FenceYAML is then "", which deriveFencedCRYAML cannot
+	// batch). config.FenceYAML is then "", which deriveFenceRoutePatch cannot
 	// parse. Mirrors WaitForLags's identical guard.
 	if len(config.Topics) == 0 {
 		a.reporter.Success("No topics to fence")
@@ -265,12 +266,12 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
 	}
 
-	fencedCrYAML, err := deriveFencedCRYAML(config)
+	fenceRP, err := deriveFenceRoutePatch(config)
 	if err != nil {
-		return fmt.Errorf("failed to build fenced gateway CR: %w", err)
+		return fmt.Errorf("failed to build fence route patch: %w", err)
 	}
 
-	applied, err := a.applyGatewayCR(ctx, config, fencedCrYAML, "fence")
+	applied, err := a.patchGatewayRoute(ctx, config, fenceRP, "fence")
 	if err != nil {
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
 	}
@@ -287,14 +288,10 @@ func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfi
 	return nil
 }
 
-// unfenceGateway reapplies the cleaned GatewayYAML snapshot captured once at
-// Initialize, verbatim — no rules graft. That snapshot IS this batch's
-// pre-fence state (see deriveFencedCRYAML: the same snapshot is what Fence
-// grafts config.FenceYAML onto), so reapplying it unmodified is the exact
-// inverse of Fence, the same way migration.MigrationActions.unfenceGateway
-// reapplies cleanInitialCR(config.InitialCrYAML) verbatim with no separate
-// "derive unfenced CR" function. Called only by onAbortFence, on a verify_fence
-// detection.
+// unfenceGateway patches config.Route back to its captured state in the
+// gateway CR snapshot migplan captured (config.GatewayYAML) — a whole-route
+// replace, the exact inverse of Fence's rules graft (deriveUnfenceRoutePatch).
+// Called only by onAbortFence, on a verify_fence detection.
 //
 // Calls ensureGatewayCapability first, exactly like Fence does: a process
 // that resumes directly at verify_fence (Fence already completed in an
@@ -307,10 +304,12 @@ func (a *TBMActions) unfenceGateway(ctx context.Context, config *migration.Migra
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
 	}
 
-	// config.GatewayYAML is already clean (migplan strips server-managed
-	// metadata once, centrally — see migplan/gatewayfile.go's cleanGatewayDoc),
-	// so this can be applied directly with no parse/re-marshal round trip.
-	applied, err := a.applyGatewayCR(ctx, config, []byte(config.GatewayYAML), "unfence")
+	unfenceRP, err := deriveUnfenceRoutePatch(config)
+	if err != nil {
+		return fmt.Errorf("failed to build unfence route patch: %w", err)
+	}
+
+	applied, err := a.patchGatewayRoute(ctx, config, unfenceRP, "unfence")
 	if err != nil {
 		return fmt.Errorf("failed to apply cleaned gateway CR: %w", err)
 	}
@@ -538,22 +537,22 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 	}
 }
 
-// Switch runs the switch transition: applies config.SwitchoverYAML — the
-// migplan engine's own pre-computed artifact, captured at initialize exactly
-// like FenceYAML — to config.Route's rules subtree, replacing it wholesale,
-// then confirms the transition landed. Unlike migration.SwitchGateway, there
-// is no field-flip to derive here: migplan already renders a full switchover
-// rules block ahead of time (see deriveSwitchedCRYAML's own doc comment),
-// because TBM's dynamic routes need a whole-subtree rules replacement, not a
-// single streamingDomain flip on a static route. There is no pod-UID
-// capture or compensating rollback on failure — a failure here just returns
-// an error and leaves the FSM at promoted; re-running execute-tbm retries
-// switching.
+// Switch runs the switch transition: derives the switch RoutePatch from
+// config.SwitchoverYAML's rules fragment (see deriveSwitchRoutePatch) —
+// the migplan engine's own pre-computed artifact, captured at initialize
+// exactly like FenceYAML — patches it onto config.Route's rules subtree,
+// replacing it wholesale, then confirms the transition landed. Unlike
+// migration.SwitchGateway, there is no field-flip to derive here: migplan
+// already renders a full switchover rules block ahead of time, because TBM's
+// dynamic routes need a whole-subtree rules replacement, not a single
+// streamingDomain flip on a static route. There is no pod-UID capture or
+// compensating rollback on failure — a failure here just returns an error
+// and leaves the FSM at promoted; re-running execute-tbm retries switching.
 func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
 	// config.Topics is empty whenever migplan.Reconcile's Result was a
 	// legitimate "nothing to migrate" outcome — see Fence's identical guard
 	// for the full explanation. config.SwitchoverYAML is then "", which
-	// deriveSwitchedCRYAML cannot parse.
+	// deriveSwitchRoutePatch cannot parse.
 	if len(config.Topics) == 0 {
 		a.reporter.Success("No topics to switch")
 		return nil
@@ -563,12 +562,12 @@ func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConf
 		return fmt.Errorf("failed to resolve gateway capability: %w", err)
 	}
 
-	switchedCrYAML, err := deriveSwitchedCRYAML(config)
+	switchRP, err := deriveSwitchRoutePatch(config)
 	if err != nil {
-		return fmt.Errorf("failed to build switched gateway CR: %w", err)
+		return fmt.Errorf("failed to build switch route patch: %w", err)
 	}
 
-	applied, err := a.applyGatewayCR(ctx, config, switchedCrYAML, "switchover")
+	applied, err := a.patchGatewayRoute(ctx, config, switchRP, "switchover")
 	if err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}

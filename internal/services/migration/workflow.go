@@ -195,11 +195,11 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 	return nil
 }
 
-// applyGatewayCR applies a gateway CR, attaching a fresh config revision id when
-// the cluster supports one. See gateway.TransitionVerifier.ApplyCR for why a
-// fresh id is attached on every apply.
-func (s *MigrationActions) applyGatewayCR(ctx context.Context, config *MigrationConfig, yamlData []byte, step string) (gateway.ApplyResult, error) {
-	return s.verifier().ApplyCR(ctx, config.K8sNamespace, config.InitialCrName, yamlData, step)
+// patchGatewayRoute patches one route mutation onto the gateway CR, attaching a
+// fresh config revision id when the cluster supports one. See
+// gateway.TransitionVerifier.PatchCR.
+func (s *MigrationActions) patchGatewayRoute(ctx context.Context, config *MigrationConfig, rp gateway.RoutePatch, step string) (gateway.ApplyResult, error) {
+	return s.verifier().PatchCR(ctx, config.K8sNamespace, config.InitialCrName, rp, step)
 }
 
 // waitForGatewayConfigApplied blocks until every ready gateway pod reports the
@@ -227,8 +227,8 @@ func (s *MigrationActions) verifyGatewayTransition(ctx context.Context, config *
 // VerifyHotReloadCapability proves the gateway really does apply config
 // revisions, before any traffic-affecting change is made. See
 // gateway.TransitionVerifier.VerifyHotReloadCapability's doc comment for why
-// this matters and why a dedicated field manager makes it safe to call at
-// any point, including a resume.
+// this matters and why patching only spec.configId — touching no other
+// field — makes it safe to call at any point, including a resume.
 func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config *MigrationConfig) error {
 	return s.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config))
 }
@@ -470,7 +470,7 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
 	// Capability must be resolved before capturePods below reads it (and
-	// before deriveFencedCRYAML, which needs config.FenceYAML — already set
+	// before deriveFenceRoutePatch, which needs config.FenceYAML — already set
 	// by Initialize earlier in this same run). A no-op on any run past the
 	// first gateway-touching step in this process.
 	if err := s.ensureGatewayCapability(ctx, config); err != nil {
@@ -507,23 +507,22 @@ func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationCo
 		}
 	}
 
-	// Derive the fenced CR from the same metadata-stripped gateway CR snapshot
-	// that unfence re-applies: fence = GatewayYAML + fence fragment spliced onto
-	// Route, so fence and its removal are exact inverses. There is no
-	// separately-snapshotted fenced CR.
-	fencedCrYAML, err := deriveFencedCRYAML(config)
+	// Derive the fence RoutePatch from config.FenceYAML's fence fragment onto
+	// config.Route; unfence's whole-route replace (deriveUnfenceRoutePatch) is
+	// its exact inverse, restoring the route to its captured state.
+	fenceRP, err := deriveFenceRoutePatch(config)
 	if err != nil {
-		return fmt.Errorf("failed to build fenced gateway CR: %w", err)
+		return fmt.Errorf("failed to build fence route patch: %w", err)
 	}
 
-	applied, err := s.applyGatewayCR(ctx, config, fencedCrYAML, "fence")
+	applied, err := s.patchGatewayRoute(ctx, config, fenceRP, "fence")
 	if err != nil {
 		if errors.Is(err, gateway.ErrApplyUnverified) {
-			// The server-side apply itself succeeded and the fenced spec is live
-			// in the cluster; only kcp's own read-back of the stored configId
-			// failed. That is exactly the state confirmFence's failures leave
-			// behind, so — unlike an apply that never reached the cluster — it
-			// earns the same restore.
+			// The patch itself succeeded and the fenced spec is live in the
+			// cluster; only kcp's own read-back of the stored configId was
+			// unconfirmed. That is exactly the state confirmFence's failures
+			// leave behind, so — unlike a patch that never reached the cluster —
+			// it earns the same restore.
 			return fmt.Errorf("%w: failed to apply fenced gateway CR: %w", ErrFenceUnconfirmed, err)
 		}
 		return fmt.Errorf("failed to apply fenced gateway CR: %w", err)
@@ -634,19 +633,70 @@ func deriveSwitchedCRYAML(config *MigrationConfig) ([]byte, error) {
 	return gateway.ReplaceRouteStreamingDomainObj(base, config.Route, []byte(config.SwitchoverYAML))
 }
 
-// unfenceGateway reapplies the gateway CR snapshot migplan captured
-// (config.GatewayYAML) to restore normal traffic, then waits for the operator
-// to report the gateway Ready at the restored spec — the same convergence
-// check FenceGateway uses. Without the wait we would report traffic restored
-// while pods are still cycling, and miss rollout failures entirely.
-// GatewayYAML is already cleaned of server-managed metadata (see
-// migplan/gatewayfile.go's cleanGatewayDoc), so it can be applied verbatim.
+// deriveFenceRoutePatch builds the RoutePatch that grafts config.FenceYAML's
+// fence fragment onto config.Route. Consumed by FenceGateway's write path;
+// ResolveGatewayCapability's probe still uses deriveFencedCRYAML/full CR bytes
+// since capability detection needs a complete CR to apply, not a route patch.
+func deriveFenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
+	v, err := gateway.FragmentValue([]byte(config.FenceYAML), "fence")
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	return gateway.RoutePatch{RouteName: config.Route, Field: "fence", Value: v}, nil
+}
+
+// deriveSwitchRoutePatch builds the RoutePatch SwitchGateway applies: a
+// whole-route replace (Field == "") of config.Route with its captured
+// (unfenced) shape from config.GatewayYAML, streamingDomain flipped to
+// config.SwitchoverYAML's target. It is a whole-route replace, not a
+// single-key streamingDomain write, for the same reason as
+// deriveUnfenceRoutePatch — the switch happens from the fenced state and must
+// drop the fence key, and a field-level "add" can only overwrite a key, never
+// remove one. Grafting onto the captured route (which carries the pre-staged
+// redundant auth for the target domain, proved at init) yields unfenced +
+// target-domain + target-auth in one patch.
+func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
+	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	domain, err := gateway.FragmentValue([]byte(config.SwitchoverYAML), "streamingDomain")
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	route["streamingDomain"] = domain
+	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+}
+
+// deriveUnfenceRoutePatch builds the RoutePatch that restores config.Route to
+// its captured state in config.GatewayYAML — a whole-route replace (Field ==
+// "") rather than a single-key mutation, since unfence removes the fence key
+// entirely instead of overwriting it.
+func deriveUnfenceRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error) {
+	route, err := gateway.RouteObject([]byte(config.GatewayYAML), config.Route)
+	if err != nil {
+		return gateway.RoutePatch{}, err
+	}
+	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
+}
+
+// unfenceGateway patches config.Route back to its captured state in the
+// gateway CR snapshot migplan captured (config.GatewayYAML) to restore normal
+// traffic, then waits for the operator to report the gateway Ready at the
+// restored spec — the same convergence check FenceGateway uses. Without the
+// wait we would report traffic restored while pods are still cycling, and
+// miss rollout failures entirely.
 func (s *MigrationActions) unfenceGateway(ctx context.Context, config *MigrationConfig) error {
-	// The rollback apply gets a fresh configId too. Without one it would carry
+	// The rollback patch gets a fresh configId too. Without one it would carry
 	// whatever revision the initial CR was captured with, and the verification
 	// below would match against a value the pods already report — passing
 	// instantly while the gateway is still fenced.
-	applied, err := s.applyGatewayCR(ctx, config, []byte(config.GatewayYAML), "unfence")
+	unfenceRP, err := deriveUnfenceRoutePatch(config)
+	if err != nil {
+		return fmt.Errorf("failed to build unfence route patch: %w", err)
+	}
+
+	applied, err := s.patchGatewayRoute(ctx, config, unfenceRP, "unfence")
 	if err != nil {
 		return fmt.Errorf("failed to apply initial gateway CR: %w", err)
 	}
@@ -992,18 +1042,18 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 	}
 }
 
-// SwitchGateway derives the switched gateway CR from the gateway CR snapshot
-// migplan captured (config.GatewayYAML) with config.SwitchoverYAML spliced
-// onto config.Route (see deriveSwitchedCRYAML) — applies it, confirms the
-// operator accepted the new spec, then waits for it to report the gateway as
-// Ready. The wait uses the same no-deadline-by-default behavior as
-// FenceGateway.
+// SwitchGateway derives the switch RoutePatch for config.Route (a whole-route
+// replace of the captured route with the target streamingDomain — see
+// deriveSwitchRoutePatch) — patches it in, confirms the operator accepted the
+// new spec, then waits for it to report the gateway as Ready. The wait uses the
+// same no-deadline-by-default behavior as FenceGateway.
 //
-// Because the initial CR is unfenced and its routes already carry pre-staged
+// Because the captured route is unfenced and already carries pre-staged
 // ("redundant") auth for the target domain (proved by migplan.Reconcile's
-// redundant-auth check at init), this one apply yields unfenced +
-// target-domain + target-auth with no secret or auth change at cutover —
-// there is no separately-authored switchover CR to apply.
+// redundant-auth check at init), this one whole-route replace yields unfenced +
+// target-domain + target-auth with no secret or auth change at cutover — it
+// both drops the fence and flips the domain, and there is no separately-authored
+// switchover CR to apply.
 //
 // The acceptance check is what stops this reporting a completed migration for a
 // switchover the operator refused — the failure mode described on
@@ -1020,12 +1070,12 @@ func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationC
 		return err
 	}
 
-	switchedCrYAML, err := deriveSwitchedCRYAML(config)
+	switchRP, err := deriveSwitchRoutePatch(config)
 	if err != nil {
-		return fmt.Errorf("failed to build switched gateway CR: %w", err)
+		return fmt.Errorf("failed to build switch route patch: %w", err)
 	}
 
-	applied, err := s.applyGatewayCR(ctx, config, switchedCrYAML, "switchover")
+	applied, err := s.patchGatewayRoute(ctx, config, switchRP, "switchover")
 	if err != nil {
 		return fmt.Errorf("failed to apply switchover gateway CR: %w", err)
 	}

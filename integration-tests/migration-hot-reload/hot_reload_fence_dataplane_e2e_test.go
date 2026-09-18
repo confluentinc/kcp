@@ -201,15 +201,22 @@ func logEndOffset(t *testing.T, ctx context.Context, svc *offset.Service, topic 
 	return total
 }
 
-// applyAndConverge applies a CR under a fresh configId and blocks until every
-// pod reports it, mirroring what the migration workflow does at each transition.
-func (e *env) applyAndConverge(t *testing.T, ctx context.Context, crYAML []byte) {
+// fenceRouteName is the route these transitions patch — fixed by the base
+// template (manifests/templates/gateway-base.yaml), not derived per run.
+const fenceRouteName = "migration-route"
+
+// patchRouteAndConverge patches rp under a fresh configId and blocks until
+// every pod reports it, mirroring what FenceGateway/unfenceGateway do at each
+// transition (internal/services/migration/workflow.go) — a targeted
+// RoutePatch rather than a full-CR apply. It returns the configId it minted so
+// callers can assert each transition carries a distinct one.
+func (e *env) patchRouteAndConverge(t *testing.T, ctx context.Context, rp gateway.RoutePatch) string {
 	t.Helper()
 
 	configID, err := gateway.NewConfigID()
 	require.NoError(t, err)
 
-	_, err = e.svc.ApplyGatewayYAML(ctx, e.namespace, e.gateway, crYAML, configID)
+	_, err = e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, rp, configID)
 	require.NoError(t, err)
 	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, pollInterval, convergeTimeout))
 	require.NoError(t, e.svc.WaitForGatewayConfigID(ctx, e.namespace, e.gateway, gateway.ConfigWaitOptions{
@@ -218,6 +225,57 @@ func (e *env) applyAndConverge(t *testing.T, ctx context.Context, crYAML []byte)
 		PollInterval:     pollInterval,
 		HotReloadTimeout: convergeTimeout,
 	}))
+	return configID
+}
+
+// fenceRoutePatch derives the fence transition's RoutePatch from the rendered
+// fenced CR's own route, mirroring FenceGateway's deriveFenceRoutePatch
+// (Field: "fence") — a single-field edit rather than a full-CR apply.
+func fenceRoutePatch(t *testing.T) gateway.RoutePatch {
+	t.Helper()
+	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_FENCED_CR"), fenceRouteName)
+	require.NoError(t, err)
+	fenceValue, ok := route["fence"]
+	require.True(t, ok, "the rendered fenced CR's route must declare a fence block")
+	return gateway.RoutePatch{RouteName: fenceRouteName, Field: "fence", Value: fenceValue}
+}
+
+// switchoverRoutePatch derives the switchover transition's RoutePatch from the
+// rendered switchover CR's route, mirroring AAO's deriveSwitchRoutePatch
+// (Field: "streamingDomain"). Both streaming domains are declared in every
+// transition, so flipping the route's streamingDomain is an in-place route edit
+// CFK hot-reloads rather than a roll.
+func switchoverRoutePatch(t *testing.T) gateway.RoutePatch {
+	t.Helper()
+	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_SWITCHOVER_CR"), fenceRouteName)
+	require.NoError(t, err)
+	streamingDomain, ok := route["streamingDomain"]
+	require.True(t, ok, "the rendered switchover CR's route must declare a streamingDomain")
+	return gateway.RoutePatch{RouteName: fenceRouteName, Field: "streamingDomain", Value: streamingDomain}
+}
+
+// unfenceRoutePatch derives the rollback transition's RoutePatch: a whole-route
+// replace restoring the route to its captured initial state, mirroring
+// unfenceGateway's deriveUnfenceRoutePatch (Field: "").
+func unfenceRoutePatch(t *testing.T) gateway.RoutePatch {
+	t.Helper()
+	route, err := gateway.RouteObject(mustReadFile(t, "KCP_HR_INITIAL_CR"), fenceRouteName)
+	require.NoError(t, err)
+	return gateway.RoutePatch{RouteName: fenceRouteName, Value: route}
+}
+
+// applyFenceAndConverge patches the route's fence field and blocks until every
+// pod reports the new configId.
+func (e *env) applyFenceAndConverge(t *testing.T, ctx context.Context) {
+	t.Helper()
+	e.patchRouteAndConverge(t, ctx, fenceRoutePatch(t))
+}
+
+// applyUnfenceAndConverge restores the route to its unfenced, captured state
+// via a whole-route replace and blocks until every pod reports the new configId.
+func (e *env) applyUnfenceAndConverge(t *testing.T, ctx context.Context) {
+	t.Helper()
+	e.patchRouteAndConverge(t, ctx, unfenceRoutePatch(t))
 }
 
 // fenceObservation is one measured fence transition.
@@ -259,7 +317,7 @@ func (e *env) observeFence(t *testing.T, ctx context.Context, d dataPlane, offse
 		"the source log end offset did not move while writes were being acknowledged; "+
 			"the producer may be reaching a different cluster than the one being sampled")
 
-	e.applyAndConverge(t, ctx, mustReadFile(t, "KCP_HR_FENCED_CR"))
+	e.applyFenceAndConverge(t, ctx)
 
 	converged := time.Now()
 	_, acksAtConverge, failuresAtConverge := probe.snapshot()
@@ -293,9 +351,9 @@ func TestFenceStopsSourceWritesOnceConfigIDConverges(t *testing.T) {
 	// Start unfenced whatever the previous test left behind, and hand the
 	// cluster back unfenced so the ordering of this file against the others
 	// cannot matter.
-	e.applyAndConverge(t, ctx, mustReadFile(t, "KCP_HR_INITIAL_CR"))
+	e.applyUnfenceAndConverge(t, ctx)
 	t.Cleanup(func() {
-		e.applyAndConverge(t, context.Background(), mustReadFile(t, "KCP_HR_INITIAL_CR"))
+		e.applyUnfenceAndConverge(t, context.Background())
 	})
 
 	offsets := newSourceOffsets(t, d.sourceBootstrap)
@@ -346,12 +404,12 @@ func TestSettleWindowSweep(t *testing.T) {
 	offsets := newSourceOffsets(t, d.sourceBootstrap)
 
 	t.Cleanup(func() {
-		e.applyAndConverge(t, context.Background(), mustReadFile(t, "KCP_HR_INITIAL_CR"))
+		e.applyUnfenceAndConverge(t, context.Background())
 	})
 
 	worst := time.Duration(-1 << 62)
 	for i := range iterations {
-		e.applyAndConverge(t, ctx, mustReadFile(t, "KCP_HR_INITIAL_CR"))
+		e.applyUnfenceAndConverge(t, ctx)
 
 		obs := e.observeFence(t, ctx, d, offsets)
 		if obs.settle() > worst {
