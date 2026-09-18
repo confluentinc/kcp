@@ -148,7 +148,7 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 // runs once the FSM actually reaches the initialize transition, exactly as
 // before.
 func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath string) migration.MigrationConfig {
-	entry := g.Spec.TopicGroup[0] // manifest validation guarantees exactly one entry
+	entry := g.Spec.Route.TopicGroup[0] // manifest validation guarantees exactly one entry
 	var topicPatterns []string
 	if entry.TopicPatterns != nil {
 		topicPatterns = *entry.TopicPatterns
@@ -163,8 +163,8 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 		ClusterId:               g.Spec.Target.ClusterID,
 		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
 		ClusterLinkName:         g.Spec.ClusterLink.Name,
-		Route:                   entry.Route,
-		TargetDomain:            entry.TargetStreamingDomain,
+		Route:                   g.Spec.Route.Name,
+		TargetDomain:            g.Spec.Route.TargetStreamingDomain,
 		TopicPatterns:           topicPatterns,
 		CurrentState:            migration.StateUninitialized,
 		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
@@ -456,18 +456,18 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 		drift = append(drift, fmt.Sprintf("spec.gateway (%s)", strings.Join(gatewayChanges, ", ")))
 	}
 
-	// The route/topic topology now lives in spec.topicGroup, but the snapshot
+	// The route/topic topology now lives in spec.route, but the snapshot
 	// still holds it split across Route/TargetDomain/Topics — comparisons are
 	// unchanged in spirit, only the manifest-side projection moves.
 	var topicGroupChanges []string
-	if len(g.Spec.TopicGroup) > 0 {
-		entry := g.Spec.TopicGroup[0]
-		if entry.Route != config.Route {
-			topicGroupChanges = append(topicGroupChanges, "route")
-		}
-		if entry.TargetStreamingDomain != config.TargetDomain {
-			topicGroupChanges = append(topicGroupChanges, "target domain")
-		}
+	if g.Spec.Route.Name != config.Route {
+		topicGroupChanges = append(topicGroupChanges, "route")
+	}
+	if g.Spec.Route.TargetStreamingDomain != config.TargetDomain {
+		topicGroupChanges = append(topicGroupChanges, "target domain")
+	}
+	if len(g.Spec.Route.TopicGroup) > 0 {
+		entry := g.Spec.Route.TopicGroup[0]
 		// A match-all topicGroup selection now resolves via migplan's Explode
 		// against source topics, exactly like an explicit list — no special
 		// "whatever the cluster link mirrors" case remains, so drift compares
@@ -492,7 +492,7 @@ func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig
 		}
 	}
 	if len(topicGroupChanges) > 0 {
-		drift = append(drift, fmt.Sprintf("spec.topicGroup (%s)", strings.Join(topicGroupChanges, ", ")))
+		drift = append(drift, fmt.Sprintf("spec.route (%s)", strings.Join(topicGroupChanges, ", ")))
 	}
 
 	return drift
