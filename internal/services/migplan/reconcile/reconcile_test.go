@@ -30,6 +30,159 @@ func fencingSection(t *testing.T, raw []byte) string {
 	return string(b)
 }
 
+// assertSetEqual compares two string slices for equality ignoring order.
+func assertSetEqual(t *testing.T, label string, got, want []string) {
+	t.Helper()
+	gotSet := toSet(got)
+	wantSet := toSet(want)
+	if len(gotSet) != len(wantSet) {
+		t.Fatalf("%s = %v, want %v", label, got, want)
+	}
+	for w := range wantSet {
+		if _, ok := gotSet[w]; !ok {
+			t.Fatalf("%s = %v, want %v", label, got, want)
+		}
+	}
+}
+
+// rulesFencingTopics/rulesSwitchTopics flatten every entry under
+// rules.fencing[].topics / rules.routing.conditions[].topics respectively,
+// across all entries in the serialized artifact (not just the prepended
+// batch entry), since a batch may share the block with operator entries.
+func rulesFencingTopics(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal rules block: %v", err)
+	}
+	rules, ok := doc["rules"].(map[string]any)
+	if !ok {
+		t.Fatalf("serialized artifact must have a top-level rules: key, got: %s", raw)
+	}
+	fencing, _ := rules["fencing"].([]any)
+	var out []string
+	for _, e := range fencing {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		topics, _ := entry["topics"].([]any)
+		for _, top := range topics {
+			if s, ok := top.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+func rulesSwitchTopics(t *testing.T, raw []byte) []string {
+	t.Helper()
+	var doc map[string]any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("unmarshal rules block: %v", err)
+	}
+	rules, ok := doc["rules"].(map[string]any)
+	if !ok {
+		t.Fatalf("serialized artifact must have a top-level rules: key, got: %s", raw)
+	}
+	routing, _ := rules["routing"].(map[string]any)
+	conditions, _ := routing["conditions"].([]any)
+	var out []string
+	for _, e := range conditions {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			continue
+		}
+		topics, _ := entry["topics"].([]any)
+		for _, top := range topics {
+			if s, ok := top.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
+}
+
+// assertRulesFenceTopics asserts the serialized fence rules block's
+// rules.fencing[].topics entries (across all entries) equal want, ignoring order.
+func assertRulesFenceTopics(t *testing.T, raw []byte, want []string) {
+	t.Helper()
+	assertSetEqual(t, "fence topics", rulesFencingTopics(t, raw), want)
+}
+
+// assertRulesSwitchTopics asserts the serialized switchover rules block's
+// rules.routing.conditions[].topics entries (across all entries) equal want,
+// ignoring order.
+func assertRulesSwitchTopics(t *testing.T, raw []byte, want []string) {
+	t.Helper()
+	assertSetEqual(t, "switch topics", rulesSwitchTopics(t, raw), want)
+}
+
+// TestReconcileDynamic_ResumeMixedBatch: a batch where t1 is already promoted
+// (STOPPED, still routed ->source) and only needs switching, t2 is mid-promote
+// (PENDING_STOPPED) and must await STOPPED then switch, and t3 is fresh
+// (ACTIVE) and needs the full promote+switch. Must NOT refuse; must plan to
+// promote only t2+t3 (t1 is already STOPPED), and switch/fence all three.
+func TestReconcileDynamic_ResumeMixedBatch(t *testing.T) {
+	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	if plan.Report.Refused() {
+		t.Fatalf("resume plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	// fence/switchover rules must name all three (t1 via SwitchOnly, t2 Await, t3 Migratable)
+	assertRulesFenceTopics(t, plan.Artifacts.FenceRules, []string{"t1", "t2", "t3"})
+	assertRulesSwitchTopics(t, plan.Artifacts.SwitchoverRules, []string{"t1", "t2", "t3"})
+
+	if len(plan.Report.SwitchOnly) != 1 || plan.Report.SwitchOnly[0].Topic != "t1" {
+		t.Fatalf("expected t1 classified SwitchOnly, got %+v", plan.Report.SwitchOnly)
+	}
+	if len(plan.Report.AwaitStopped) != 1 || plan.Report.AwaitStopped[0].Topic != "t2" {
+		t.Fatalf("expected t2 classified AwaitStopped, got %+v", plan.Report.AwaitStopped)
+	}
+	if len(plan.Report.Migratable) != 1 || plan.Report.Migratable[0].Topic != "t3" {
+		t.Fatalf("expected t3 classified Migratable, got %+v", plan.Report.Migratable)
+	}
+}
+
+// TestReconcileStatic_ResumeMixedBatch is the static-route counterpart:
+// Topics == {t2,t3} (promote input), and the static fence/switchover
+// fragments are still produced (whole-route, unchanged shape) even though
+// the batch is a resume mix.
+func TestReconcileStatic_ResumeMixedBatch(t *testing.T) {
+	gw := staticGateway() // route bound to msk (source), not yet switched -> RoutesToTarget=false
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ClusterIDs{}, nil, "")
+
+	if plan.Report.Refused() {
+		t.Fatalf("resume plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	if !strings.Contains(string(plan.Artifacts.FenceRules), "fence:") {
+		t.Fatalf("FenceRules = %q, want a fence fragment", plan.Artifacts.FenceRules)
+	}
+	if !strings.Contains(string(plan.Artifacts.SwitchoverRules), "streamingDomain:") {
+		t.Fatalf("SwitchoverRules = %q, want a streamingDomain fragment", plan.Artifacts.SwitchoverRules)
+	}
+}
+
 func TestReconcileHappyPath(t *testing.T) {
 	gw := dynGateway()
 	gw.Route.Rules = map[string]any{

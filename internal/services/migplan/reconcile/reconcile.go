@@ -39,7 +39,6 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 
 	// Classify each resolved topic against source/target presence, mirror state
 	// and current routing.
-	var migratable []string
 	for _, topic := range batch {
 		_, onSource := srcSet[topic]
 		_, onTarget := tgtSet[topic]
@@ -51,7 +50,10 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		switch tv.Verdict {
 		case Migratable:
 			report.Migratable = append(report.Migratable, tv)
-			migratable = append(migratable, topic)
+		case SwitchOnly:
+			report.SwitchOnly = append(report.SwitchOnly, tv)
+		case AwaitStopped:
+			report.AwaitStopped = append(report.AwaitStopped, tv)
 		case Unchanged:
 			report.Unchanged = append(report.Unchanged, tv)
 		default:
@@ -59,36 +61,46 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		}
 	}
 
+	// Topic sets for the resume plan:
+	//   promote  = topics that still need to reach STOPPED (Active + Pending)
+	//   inflight = every topic to route to target this run (Active + Pending + already-Stopped)
+	// Unchanged topics are already switched and appear in neither.
+	promote := topicsOf(report.Migratable, report.AwaitStopped)
+	inflight := topicsOf(report.Migratable, report.AwaitStopped, report.SwitchOnly)
+
 	// Warn when a topic we are about to migrate already appears in an
 	// operator-authored exact-name routing condition: our prepended entry will
 	// shadow theirs. Advisory only — we never remove the operator's condition.
-	report.Warnings = append(report.Warnings, shadowWarnings(migratable, view.Conditions)...)
+	report.Warnings = append(report.Warnings, shadowWarnings(inflight, view.Conditions)...)
 
 	// Refusal gate: any failed precondition or fail-fast topic means we emit no
 	// artifacts at all (all-or-nothing).
 	if report.Refused() {
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
-	if len(migratable) == 0 {
+	if len(inflight) == 0 {
 		return &Plan{Report: report, Mode: "dynamic"} // nothing to do; artifacts nil (no-op)
 	}
 
 	// Build both artifacts from one pristine copy of the operator's rules, so the
-	// fence and switchover derive independently from the same baseline.
+	// fence and switchover derive independently from the same baseline. Both
+	// derive from the whole in-flight batch (Migratable + AwaitStopped +
+	// SwitchOnly) — including already-promoted SwitchOnly topics, since they
+	// still need fencing ahead of their switchover and still need to switch.
 	base, _ := ParseRules(gw.Route.Rules)
 	fence, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("fence rules clone", err.Error()))
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
-	fence.PrependFence(migratable)
+	fence.PrependFence(inflight)
 
 	switchover, err := base.Clone()
 	if err != nil {
 		report.Preconditions = append(report.Preconditions, fail("switchover rules clone", err.Error()))
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
-	switchover.PrependCondition(migratable, view.TargetDomain)
+	switchover.PrependCondition(inflight, view.TargetDomain)
 
 	fenceBytes, err := fence.Serialize()
 	if err != nil {
@@ -108,9 +120,9 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
 
-	promote := append([]string(nil), migratable...)
-	sort.Strings(promote)
-	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{Topics: promote, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
+	promoteSorted := append([]string(nil), promote...)
+	sort.Strings(promoteSorted)
+	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{Topics: promoteSorted, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
 }
 
 // reconcileStatic is the static-route reconciliation strategy. It reuses
@@ -144,7 +156,6 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 	srcSet := toSet(sourceTopics)
 	tgtSet := toSet(targetTopics)
 
-	var migratable []string
 	for _, topic := range batch {
 		_, onSource := srcSet[topic]
 		_, onTarget := tgtSet[topic]
@@ -154,7 +165,10 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		switch tv.Verdict {
 		case Migratable:
 			report.Migratable = append(report.Migratable, tv)
-			migratable = append(migratable, topic)
+		case SwitchOnly:
+			report.SwitchOnly = append(report.SwitchOnly, tv)
+		case AwaitStopped:
+			report.AwaitStopped = append(report.AwaitStopped, tv)
 		case Unchanged:
 			report.Unchanged = append(report.Unchanged, tv)
 		default:
@@ -162,10 +176,17 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		}
 	}
 
+	// promote = topics still needing STOPPED (Active+Pending); inflight = the
+	// whole in-flight batch incl. already-promoted SwitchOnly topics. The
+	// static fence/switchover fragments are whole-route (no topic list), so
+	// only the refusal/no-op gate and the promote set change here.
+	promote := topicsOf(report.Migratable, report.AwaitStopped)
+	inflight := topicsOf(report.Migratable, report.AwaitStopped, report.SwitchOnly)
+
 	if report.Refused() {
 		return &Plan{Report: report, Mode: "static"}
 	}
-	if len(migratable) == 0 {
+	if len(inflight) == 0 {
 		return &Plan{Report: report, Mode: "static"}
 	}
 
@@ -180,9 +201,9 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 		return &Plan{Report: report, Mode: "static"}
 	}
 
-	promote := append([]string(nil), migratable...)
-	sort.Strings(promote)
-	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{Topics: promote, FenceRules: fenceFragment, SwitchoverRules: switchoverFragment}}
+	promoteSorted := append([]string(nil), promote...)
+	sort.Strings(promoteSorted)
+	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{Topics: promoteSorted, FenceRules: fenceFragment, SwitchoverRules: switchoverFragment}}
 }
 
 // Reconcile is the single entry point for both route-mode strategies. It
@@ -200,6 +221,18 @@ func Reconcile(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetTopics 
 		return reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ids, missingSecrets, secretCheckSkipped)
 	}
 	return reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, offsetSyncEnabled, ids)
+}
+
+// topicsOf flattens the Topic field of one or more verdict buckets into a single
+// slice, preserving classification order across buckets.
+func topicsOf(groups ...[]TopicVerdict) []string {
+	var out []string
+	for _, g := range groups {
+		for _, tv := range g {
+			out = append(out, tv.Topic)
+		}
+	}
+	return out
 }
 
 func toSet(ss []string) map[string]struct{} {

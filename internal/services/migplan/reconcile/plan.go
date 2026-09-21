@@ -82,6 +82,8 @@ type Report struct {
 	Preconditions []PreconditionResult
 	Migratable    []TopicVerdict
 	Unchanged     []TopicVerdict
+	SwitchOnly    []TopicVerdict // resume: already promoted, needs switching only
+	AwaitStopped  []TopicVerdict // resume: promotion in flight, await STOPPED then switch
 	FailFast      []TopicVerdict
 	Warnings      []string
 }
