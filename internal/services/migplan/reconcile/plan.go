@@ -8,6 +8,8 @@ const (
 	Migratable Verdict = iota
 	Unchanged
 	FailFast
+	SwitchOnly   // resume: already promoted (STOPPED) but not yet switched → switch only
+	AwaitStopped // resume: promotion in flight (PENDING_STOPPED) → await STOPPED, then switch
 )
 
 func (v Verdict) String() string {
@@ -18,6 +20,10 @@ func (v Verdict) String() string {
 		return "unchanged"
 	case FailFast:
 		return "fail-fast"
+	case SwitchOnly:
+		return "switch-only"
+	case AwaitStopped:
+		return "await-stopped"
 	default:
 		return "unknown"
 	}

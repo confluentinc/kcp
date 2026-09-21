@@ -3,10 +3,16 @@ package reconcile
 import "testing"
 
 func TestVerdictString(t *testing.T) {
-	cases := map[Verdict]string{Migratable: "migratable", Unchanged: "unchanged", FailFast: "fail-fast"}
+	cases := map[Verdict]string{
+		Migratable:   "migratable",
+		Unchanged:    "unchanged",
+		FailFast:     "fail-fast",
+		SwitchOnly:   "switch-only",
+		AwaitStopped: "await-stopped",
+	}
 	for v, want := range cases {
 		if got := v.String(); got != want {
-			t.Fatalf("Verdict(%d).String() = %q, want %q", v, got, want)
+			t.Fatalf("Verdict(%d).String() = %q, want %q", int(v), got, want)
 		}
 	}
 }
