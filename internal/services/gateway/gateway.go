@@ -398,6 +398,9 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 
 	noDeadline := timeout <= 0
 	deadline := time.Now().Add(timeout)
+	// waitStartedAt anchors the lastTransitionTime staleness fallback in
+	// findGatewayRejection — see conditionPredatesGeneration.
+	waitStartedAt := time.Now()
 
 	// A failing condition only aborts once it has held for the settle window.
 	// firstFailureAt marks the start of the current unbroken run of failure
@@ -426,13 +429,14 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 		if err != nil {
 			return fmt.Errorf("failed to read gateway status.observedGeneration: %w", err)
 		}
-		if found && observed >= generation {
-			slog.Debug("gateway accepted by operator", "gateway", gatewayName, "generation", generation, "observedGeneration", observed)
-			return nil
-		}
 
-		// Not accepted yet — is the operator telling us why it never will be?
-		rejection, err := findGatewayRejection(gw, gatewayName, generation, observed)
+		// Checked before the observedGeneration acceptance test below, on
+		// every poll, regardless of whether observed already caught up:
+		// observedGeneration alone cannot distinguish the operator accepting
+		// this generation from it refusing this generation while a stale
+		// condition from an earlier, resolved generation just happens to sit
+		// on the CR (cfet1 #6205997094).
+		rejection, err := findGatewayRejection(gw, gatewayName, generation, observed, waitStartedAt)
 		if err != nil {
 			return err
 		}
@@ -457,6 +461,10 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 			}
 			firstFailureAt = time.Time{}
 			pending = nil
+			if found && observed >= generation {
+				slog.Debug("gateway accepted by operator", "gateway", gatewayName, "generation", generation, "observedGeneration", observed)
+				return nil
+			}
 		}
 
 		slog.Debug("waiting for gateway reconcile", "gateway", gatewayName, "generation", generation, "observedGeneration", observed, "statusPresent", found)
@@ -481,7 +489,12 @@ func waitForGatewayAccepted(ctx context.Context, dynamicClient dynamic.Interface
 // reporting that the operator refused the spec, returning nil when none is
 // present. Only status=="False" conditions with a fatal reason qualify — a
 // False condition with an unrecognised reason is normal mid-reconcile noise.
-func findGatewayRejection(gw *unstructured.Unstructured, gatewayName string, generation, observed int64) (*GatewayRejectedError, error) {
+//
+// A fatal condition demonstrably left over from an earlier generation (see
+// conditionPredatesGeneration) is skipped rather than reported: CFK does not
+// always clear a resolved condition once its generation moves on, so a stale
+// one must not block a later, unrelated apply from being accepted.
+func findGatewayRejection(gw *unstructured.Unstructured, gatewayName string, generation, observed int64, waitStartedAt time.Time) (*GatewayRejectedError, error) {
 	conditions, found, err := unstructured.NestedSlice(gw.Object, "status", "conditions")
 	if err != nil {
 		return nil, fmt.Errorf("failed to read gateway status.conditions: %w", err)
@@ -503,6 +516,9 @@ func findGatewayRejection(gw *unstructured.Unstructured, gatewayName string, gen
 		if !isFatalGatewayConditionReason(reason) {
 			continue
 		}
+		if conditionPredatesGeneration(condition, generation, waitStartedAt) {
+			continue
+		}
 		message, _ := condition["message"].(string)
 		conditionType, _ := condition["type"].(string)
 		return &GatewayRejectedError{
@@ -515,6 +531,37 @@ func findGatewayRejection(gw *unstructured.Unstructured, gatewayName string, gen
 		}, nil
 	}
 	return nil, nil
+}
+
+// conditionPredatesGeneration reports whether a fatal condition demonstrably
+// belongs to an earlier generation than the one kcp just applied, using
+// whichever evidence the condition carries, in order:
+//
+//  1. the condition's own observedGeneration (the standard Kubernetes
+//     Condition field, set by the controller to record which generation it
+//     was reconciling when it produced this condition): less than the
+//     current generation means the condition predates this apply.
+//  2. lacking that, the condition's lastTransitionTime against
+//     waitStartedAt (the moment kcp started waiting on this apply, captured
+//     immediately after issuing it): before it means the condition
+//     transitioned before this attempt began.
+//
+// A condition carrying neither piece of evidence is NOT considered stale —
+// this is the accept gate's only defence against a fatal condition genuinely
+// tied to the generation kcp just applied, so the safe default when there is
+// no evidence either way is to keep treating it as current (cfet1
+// #6205997094: observedGeneration catching up is not proof the CR was
+// accepted).
+func conditionPredatesGeneration(condition map[string]any, generation int64, waitStartedAt time.Time) bool {
+	if condGen, found, err := unstructured.NestedInt64(condition, "observedGeneration"); err == nil && found {
+		return condGen < generation
+	}
+	if raw, ok := condition["lastTransitionTime"].(string); ok {
+		if t, err := time.Parse(time.RFC3339, raw); err == nil {
+			return t.Before(waitStartedAt)
+		}
+	}
+	return false
 }
 
 // GetGatewayPodUIDs returns a set of UIDs for the current gateway pods.
