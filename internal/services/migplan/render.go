@@ -165,9 +165,11 @@ func warningsForTopic(topic string, warnings []string) []string {
 // unattachedWarnings returns warnings that reference none of the listed topics,
 // so nothing is silently dropped when a warning can't be attached to a line.
 func unattachedWarnings(r reconcile.Report) []string {
-	listed := make([]reconcile.TopicVerdict, 0, len(r.FailFast)+len(r.Migratable)+len(r.Unchanged))
+	listed := make([]reconcile.TopicVerdict, 0, len(r.FailFast)+len(r.Migratable)+len(r.SwitchOnly)+len(r.AwaitStopped)+len(r.Unchanged))
 	listed = append(listed, r.FailFast...)
 	listed = append(listed, r.Migratable...)
+	listed = append(listed, r.SwitchOnly...)
+	listed = append(listed, r.AwaitStopped...)
 	listed = append(listed, r.Unchanged...)
 	var out []string
 	for _, wn := range r.Warnings {

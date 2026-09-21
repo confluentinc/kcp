@@ -129,6 +129,31 @@ func TestRenderReport_ResumeBuckets(t *testing.T) {
 	}
 }
 
+// TestRenderReport_SwitchOnlyWarningNotDoublePrinted proves a shadow warning
+// attached to a SwitchOnly topic (mirroring how reconcile.go's
+// shadowWarnings(inflight, ...) attaches warnings to SwitchOnly/AwaitStopped
+// topics too, since inflight includes them) renders exactly once — on the
+// topic's own line — and is not also re-printed as a trailing "unattached"
+// warning.
+func TestRenderReport_SwitchOnlyWarningNotDoublePrinted(t *testing.T) {
+	color.NoColor = true
+	warning := `existing condition for "t1" (-> msk) is now shadowed`
+	r := reconcile.Report{
+		SwitchOnly: []reconcile.TopicVerdict{{Topic: "t1", Verdict: reconcile.SwitchOnly}},
+		Warnings:   []string{warning},
+	}
+	var buf bytes.Buffer
+	RenderReport(&buf, r, RenderView{})
+	out := buf.String()
+
+	if !strings.Contains(out, warning) {
+		t.Fatalf("output missing warning %q:\n%s", warning, out)
+	}
+	if n := strings.Count(out, warning); n != 1 {
+		t.Errorf("warning %q must appear exactly once (attached to its SwitchOnly topic line), got %d occurrences:\n%s", warning, n, out)
+	}
+}
+
 // TestRenderReportSuccessAndVerbose: all ready ⇒ success footer with the artifact
 // note; --verbose adds the per-topic facts sub-line.
 func TestRenderReportSuccessAndVerbose(t *testing.T) {
