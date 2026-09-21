@@ -136,7 +136,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	switch {
 	case r.Refused():
 		outcome = red.Sprint("(refused — no artifacts)")
-	case nMig == 0:
+	case nMig == 0 && len(r.SwitchOnly) == 0 && len(r.AwaitStopped) == 0:
 		outcome = faint.Sprint("(nothing to do)")
 	default:
 		note := v.ArtifactNote
