@@ -73,6 +73,11 @@ while [ $t -le $NOW ]; do
   # Gauge metrics: point-in-time values
   generate_metric_line "kafka_server_replicamanager_partitioncount" "$t" "50" >> "$METRICS_FILE"
 
+  # Flattened GlobalPartitionCount series (no `name` label) — proves an
+  # overridden GlobalPartitionCount is collected even though the default series
+  # needs the {name="GlobalPartitionCount"} discriminator this one lacks.
+  generate_metric_line "kafka_controller_kafkacontroller_globalpartitioncount" "$t" "77" >> "$METRICS_FILE"
+
   conns=$(( 5 + traffic_mult * 5 + variance % 10 ))
   generate_metric_line "kafka_server_socketservermetrics_connection_count" "$t" "$conns" >> "$METRICS_FILE"
 
