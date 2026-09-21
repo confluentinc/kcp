@@ -46,7 +46,11 @@ spec:
     namespace: {{ .Namespace | yamlQuote }}
     kubeconfig: {{ .KubePath | yamlQuote }}
     cr-name: {{ .GatewayName | yamlQuote }}
-  topicGroup:
+  route:
+{{- with .FenceRoutes }}
+    name: {{ (index . 0).Name | yamlQuote }}
+{{- end }}
+    topicGroup:
 {{- range .FenceRoutes }}
 {{- if .Topics }}
       # Explicit topics, scoped to this scenario's own — this suite's
@@ -65,8 +69,9 @@ spec:
     - topicPatterns:
         - {{ ".*" | yamlQuote }}
 {{- end }}
-      route: {{ .Name | yamlQuote }}
-      targetStreamingDomain: {{ .SwitchoverDomainName | yamlQuote }}
+{{- end }}
+{{- with .FenceRoutes }}
+    targetStreamingDomain: {{ (index . 0).SwitchoverDomainName | yamlQuote }}
 {{- end }}
 {{- if .Policy.Any }}
 

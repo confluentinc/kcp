@@ -82,7 +82,7 @@ func TestRenderGatewayMigration_ParsesValidatesAndResolves(t *testing.T) {
 // TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll is a regression
 // test for a real bug found via live e2e testing: this suite's ten scenarios
 // share one source/destination Kafka pair, so a match-all topicPatterns
-// resolves (per spec.topicGroup's real semantics) against every OTHER
+// resolves (per spec.route.topicGroup's real semantics) against every OTHER
 // scenario's topics too — not just this one's — tripping an all-or-nothing
 // refusal. A fenceRouteOpts entry with Topics set must render an explicit
 // topics: list instead, scoped to only the given names.
@@ -96,11 +96,26 @@ func TestRenderGatewayMigration_ExplicitTopicsOverrideMatchAll(t *testing.T) {
 	g, err := manifest.ParseGatewayMigration([]byte(rendered))
 	require.NoError(t, err)
 
-	require.Len(t, g.Spec.TopicGroup, 1)
-	entry := g.Spec.TopicGroup[0]
+	require.Len(t, g.Spec.Route.TopicGroup, 1)
+	entry := g.Spec.Route.TopicGroup[0]
 	assert.Nil(t, entry.TopicPatterns, "an explicit topics list must not also carry a match-all pattern")
 	require.NotNil(t, entry.Topics)
 	assert.Equal(t, []string{"e2e-test-topic-baseline"}, *entry.Topics)
+}
+
+// TestRenderGatewayMigration_EmptyFenceRoutesDoesNotPanic is a regression test:
+// spec.route.name and spec.route.targetStreamingDomain read FenceRoutes[0]
+// directly, and an unguarded `index .FenceRoutes 0` turns an empty slice into a
+// template execution error instead of the tolerant empty output the old
+// `range`-based rendering gave every field. No scenario populates an empty
+// FenceRoutes today, but the render must degrade gracefully rather than fail
+// with an opaque "index out of range" if one ever does.
+func TestRenderGatewayMigration_EmptyFenceRoutesDoesNotPanic(t *testing.T) {
+	opts := baselineOpts()
+	opts.FenceRoutes = nil
+
+	_, err := renderGatewayMigration(opts)
+	require.NoError(t, err, "an empty FenceRoutes must not fail template rendering")
 }
 
 // TestRenderGatewayMigration_TopologyMatchesOpts guards against a transposition
@@ -129,11 +144,11 @@ func TestRenderGatewayMigration_TopologyMatchesOpts(t *testing.T) {
 	assert.Equal(t, opts.Namespace, g.Spec.Gateway.Namespace)
 	assert.Equal(t, opts.KubePath, g.Spec.Gateway.Kubeconfig)
 	assert.Equal(t, opts.GatewayName, g.Spec.Gateway.CrName)
-	require.Len(t, g.Spec.TopicGroup, len(opts.FenceRoutes))
-	for i, want := range opts.FenceRoutes {
-		got := g.Spec.TopicGroup[i]
-		assert.Equal(t, want.Name, got.Route)
-		assert.Equal(t, want.SwitchoverDomainName, got.TargetStreamingDomain)
+	assert.Equal(t, opts.FenceRoutes[0].Name, g.Spec.Route.Name)
+	assert.Equal(t, opts.FenceRoutes[0].SwitchoverDomainName, g.Spec.Route.TargetStreamingDomain)
+	require.Len(t, g.Spec.Route.TopicGroup, len(opts.FenceRoutes))
+	for i := range opts.FenceRoutes {
+		got := g.Spec.Route.TopicGroup[i]
 		// The id is derived from the live CR at init, not carried in the
 		// manifest, and a match-all pattern selects every active mirror topic.
 		require.NotNil(t, got.TopicPatterns)

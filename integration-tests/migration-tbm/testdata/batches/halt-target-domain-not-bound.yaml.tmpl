@@ -30,8 +30,9 @@ spec:
   gateway:
     namespace: "__NAMESPACE__"
     cr-name: "__GATEWAY_NAME__"
-  topicGroup:
-    - topics:
-        - "tbm-topic-048"
-      route: "__ROUTE_NAME__"
-      targetStreamingDomain: "phantom-domain"
+  route:
+    name: "__ROUTE_NAME__"
+    topicGroup:
+      - topics:
+          - "tbm-topic-048"
+    targetStreamingDomain: "phantom-domain"

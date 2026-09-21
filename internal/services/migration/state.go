@@ -97,7 +97,7 @@ type MigrationConfig struct {
 	ClusterLinkName     string   `json:"cluster_link_name"`
 	Topics              []string `json:"topics"`
 
-	// TopicPatterns is the declared spec.topicGroup[0].topicPatterns snapshot,
+	// TopicPatterns is the declared spec.route.topicGroup[0].topicPatterns snapshot,
 	// captured at registration alongside Route/TargetDomain — nil when the
 	// manifest instead used an explicit topics list. Unlike Topics (the
 	// resolved topic set, populated once reconcile runs), this is the raw
@@ -168,12 +168,12 @@ type MigrationConfig struct {
 	// this port, so kcp dials pod IPs on it directly.
 	GatewayConfigPort int `json:"gateway_config_port"`
 
-	// Route is the single spec.topicGroup[0].route this migration fences and
+	// Route is the single spec.route.name this migration fences and
 	// switches — captured once at init, mirroring TBMConfig.Route. AAO, like
 	// TBM, only ever operates on one route per migration.
 	Route string `json:"route"`
 
-	// TargetDomain is spec.topicGroup[0].targetStreamingDomain, captured
+	// TargetDomain is spec.route.targetStreamingDomain, captured
 	// directly from the manifest (not from migplan.Result, which does not
 	// carry it) specifically so detectDrift can still catch a manifest edit
 	// to the target domain between init and execute.
