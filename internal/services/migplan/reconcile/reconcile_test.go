@@ -155,6 +155,33 @@ func TestReconcileDynamic_ResumeMixedBatch(t *testing.T) {
 	}
 }
 
+// TestReconcileDynamic_AllSwitchOnly is the headline resume case: every topic
+// in the batch is already promoted (STOPPED) and awaiting only the switch —
+// promote (Migratable ∪ AwaitStopped) is empty, but the batch is not a no-op:
+// it still must fence + switch both topics.
+func TestReconcileDynamic_AllSwitchOnly(t *testing.T) {
+	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
+	in := ReconcileInput{Topics: []string{"t1", "t2"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2"}
+	targetTopics := []string{"t1", "t2"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorStopped}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	if plan.Report.Refused() {
+		t.Fatalf("all-SwitchOnly plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want an actionable switch-only plan")
+	}
+	if len(plan.Artifacts.Topics) != 0 {
+		t.Fatalf("promote list = %v, want empty (nothing left to promote)", plan.Artifacts.Topics)
+	}
+	assertSetEqual(t, "switch-only", topicsOf(plan.Report.SwitchOnly), []string{"t1", "t2"})
+	assertRulesFenceTopics(t, plan.Artifacts.FenceRules, []string{"t1", "t2"})
+	assertRulesSwitchTopics(t, plan.Artifacts.SwitchoverRules, []string{"t1", "t2"})
+}
+
 // TestReconcileStatic_ResumeMixedBatch is the static-route counterpart:
 // Topics == {t2,t3} (promote input), and the static fence/switchover
 // fragments are still produced (whole-route, unchanged shape) even though
