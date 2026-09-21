@@ -682,18 +682,81 @@ func TestWaitForGatewayAccepted_TimeoutShorterThanSettleWindow_ReportsRejection(
 	assert.Equal(t, "ApplyFailed", rejected.Reason)
 }
 
-// TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil ensures
-// acceptance is checked first: once observedGeneration catches up, a lingering
-// failure condition is the operator's business, not a reason to abort.
-func TestWaitForGatewayAccepted_AcceptedDespiteFailedCondition_ReturnsNil(t *testing.T) {
+// TestWaitForGatewayAccepted_FailedConditionWithNoStalenessEvidence_IsRejected
+// covers a fatal condition carrying neither its own observedGeneration nor a
+// parseable lastTransitionTime: with no evidence it predates the current
+// generation, it must be treated as current rather than waved through. A
+// false rejection costs an investigation; a false acceptance costs a
+// migration reported as succeeded over a CR the operator actually refused
+// (cfet1 #6205997094).
+func TestWaitForGatewayAccepted_FailedConditionWithNoStalenessEvidence_IsRejected(t *testing.T) {
 	shortenRejectionSettleWindow(t, time.Millisecond)
 	ns, gw := "test-ns", "test-gw"
 	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 4, 4, true,
-		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "stale from a previous generation"),
+		withGatewayCondition(clusterReadyCondition, "False", "ApplyFailed", "no generation or timestamp evidence"),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.Error(t, err)
+	var rejected *GatewayRejectedError
+	assert.ErrorAs(t, err, &rejected)
+}
+
+// TestWaitForGatewayAccepted_StaleConditionByObservedGeneration_ReturnsNil
+// reproduces the live incident written up at cfet1 #6205997094: a
+// cluster-ready/ApplyFailed condition raised during an earlier generation's
+// reconcile (a deploy-time jaas-secret race) never gets cleared by CFK once
+// it resolves. The condition's own observedGeneration shows it belongs to
+// generation 9, but the CR is now at generation 11 with observedGeneration
+// caught up — kcp must accept the CR rather than trip over the stale,
+// long-resolved failure.
+func TestWaitForGatewayAccepted_StaleConditionByObservedGeneration_ReturnsNil(t *testing.T) {
+	shortenRejectionSettleWindow(t, time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 11, 11, true,
+		withGatewayConditionAt(clusterReadyCondition, "False", "ApplyFailed",
+			"missing jaas configuration in CR", 9, time.Now().Add(-2*time.Hour)),
 	))
 
 	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
 	require.NoError(t, err)
+}
+
+// TestWaitForGatewayAccepted_StaleConditionByLastTransitionTime_ReturnsNil
+// covers the same staleness as above when the condition carries no
+// observedGeneration of its own — CFK's fallback to lastTransitionTime,
+// predating when kcp started waiting on this apply.
+func TestWaitForGatewayAccepted_StaleConditionByLastTransitionTime_ReturnsNil(t *testing.T) {
+	shortenRejectionSettleWindow(t, time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 11, 11, true,
+		withGatewayConditionAtTime(clusterReadyCondition, "False", "ApplyFailed",
+			"missing jaas configuration in CR", time.Now().Add(-2*time.Hour)),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.NoError(t, err)
+}
+
+// TestWaitForGatewayAccepted_FreshFailureConditionAtCurrentGeneration_ReturnsRejection
+// is the false-success regression this incident actually warns about: the
+// operator can advance observedGeneration to the generation kcp just patched
+// while still reporting that same generation's spec as fatally rejected.
+// Trusting observedGeneration alone would report the CR accepted; tying the
+// condition to the generation it belongs to must not let that happen.
+func TestWaitForGatewayAccepted_FreshFailureConditionAtCurrentGeneration_ReturnsRejection(t *testing.T) {
+	shortenRejectionSettleWindow(t, 5*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 5, 5, true,
+		withGatewayConditionAt(clusterReadyCondition, "False", "ApplyFailed",
+			"secretRef kcp-perf-plain-jaas not found", 5, time.Now()),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.Error(t, err)
+	var rejected *GatewayRejectedError
+	require.ErrorAs(t, err, &rejected, "observedGeneration catching up must not excuse a condition tied to that same generation")
+	assert.Equal(t, "ApplyFailed", rejected.Reason)
 }
 
 func TestIsFatalGatewayConditionReason(t *testing.T) {
@@ -808,6 +871,41 @@ func withGatewayCondition(condType, status, reason, message string) gatewayCROpt
 			"status":  status,
 			"reason":  reason,
 			"message": message,
+		})
+		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
+	}
+}
+
+// withGatewayConditionAt appends a status condition carrying its own
+// observedGeneration, mirroring the standard Kubernetes Condition shape CFK
+// uses to record which generation's reconcile produced the condition.
+func withGatewayConditionAt(condType, status, reason, message string, observedGeneration int64, lastTransitionTime time.Time) gatewayCROption {
+	return func(obj *unstructured.Unstructured) {
+		existing, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+		existing = append(existing, map[string]any{
+			"type":               condType,
+			"status":             status,
+			"reason":             reason,
+			"message":            message,
+			"observedGeneration": observedGeneration,
+			"lastTransitionTime": lastTransitionTime.Format(time.RFC3339),
+		})
+		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
+	}
+}
+
+// withGatewayConditionAtTime appends a status condition carrying only a
+// lastTransitionTime (no observedGeneration) — the fallback staleness signal
+// for a condition CFK does not tag with its own generation.
+func withGatewayConditionAtTime(condType, status, reason, message string, lastTransitionTime time.Time) gatewayCROption {
+	return func(obj *unstructured.Unstructured) {
+		existing, _, _ := unstructured.NestedSlice(obj.Object, "status", "conditions")
+		existing = append(existing, map[string]any{
+			"type":               condType,
+			"status":             status,
+			"reason":             reason,
+			"message":            message,
+			"lastTransitionTime": lastTransitionTime.Format(time.RFC3339),
 		})
 		_ = unstructured.SetNestedSlice(obj.Object, existing, "status", "conditions")
 	}
