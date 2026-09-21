@@ -60,7 +60,7 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	}
 
 	// A failed gate stops the run before any topic is evaluated.
-	topicsEvaluated := len(r.Migratable)+len(r.Unchanged)+len(r.FailFast) > 0
+	topicsEvaluated := len(r.Migratable)+len(r.SwitchOnly)+len(r.AwaitStopped)+len(r.Unchanged)+len(r.FailFast) > 0
 	if failedGates > 0 && !topicsEvaluated {
 		_, _ = fmt.Fprintln(w)
 		_, _ = fmt.Fprintln(w, red.Sprintf("Refused at route checks — %d failed. No topics evaluated, no artifacts.", failedGates))
@@ -68,12 +68,12 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	}
 
 	// Topics — blocked first (what Omar must fix), then ready, then unchanged.
-	total := len(r.FailFast) + len(r.Migratable) + len(r.Unchanged)
+	total := len(r.FailFast) + len(r.Migratable) + len(r.SwitchOnly) + len(r.AwaitStopped) + len(r.Unchanged)
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintf(w, "Topics · %d requested\n", total)
 
 	width := 0
-	for _, group := range [][]reconcile.TopicVerdict{r.FailFast, r.Migratable, r.Unchanged} {
+	for _, group := range [][]reconcile.TopicVerdict{r.FailFast, r.Migratable, r.SwitchOnly, r.AwaitStopped, r.Unchanged} {
 		for _, tv := range group {
 			if len(tv.Topic) > width {
 				width = len(tv.Topic)
@@ -103,6 +103,12 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	for _, tv := range r.Migratable {
 		renderTopic("+", green, "ready", tv, false)
 	}
+	for _, tv := range r.SwitchOnly {
+		renderTopic("→", green, "switch (resume)", tv, false)
+	}
+	for _, tv := range r.AwaitStopped {
+		renderTopic("~", yellow, "awaiting promotion", tv, false)
+	}
 	for _, tv := range r.Unchanged {
 		renderTopic("=", faint, "unchanged", tv, false)
 	}
@@ -117,6 +123,12 @@ func RenderReport(w io.Writer, r reconcile.Report, v RenderView) {
 	parts := []string{fmt.Sprintf("%d to migrate", nMig)}
 	if nBlk > 0 {
 		parts = append(parts, fmt.Sprintf("%d blocked", nBlk))
+	}
+	if n := len(r.SwitchOnly); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d to switch", n))
+	}
+	if n := len(r.AwaitStopped); n > 0 {
+		parts = append(parts, fmt.Sprintf("%d awaiting promotion", n))
 	}
 	parts = append(parts, fmt.Sprintf("%d unchanged", nUnch))
 

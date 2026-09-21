@@ -110,6 +110,25 @@ func TestRenderReportSkippedPrecondition(t *testing.T) {
 	}
 }
 
+// TestRenderReport_ResumeBuckets proves the resume verdicts (SwitchOnly,
+// AwaitStopped) render with their own glyph/status word and are counted in
+// the footer.
+func TestRenderReport_ResumeBuckets(t *testing.T) {
+	color.NoColor = true
+	r := reconcile.Report{
+		SwitchOnly:   []reconcile.TopicVerdict{{Topic: "t1", Verdict: reconcile.SwitchOnly}},
+		AwaitStopped: []reconcile.TopicVerdict{{Topic: "t2", Verdict: reconcile.AwaitStopped}},
+	}
+	var b strings.Builder
+	RenderReport(&b, r, RenderView{})
+	out := b.String()
+	for _, want := range []string{"t1", "t2", "switch", "awaiting"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 // TestRenderReportSuccessAndVerbose: all ready ⇒ success footer with the artifact
 // note; --verbose adds the per-topic facts sub-line.
 func TestRenderReportSuccessAndVerbose(t *testing.T) {
