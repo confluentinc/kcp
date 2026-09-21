@@ -29,7 +29,8 @@ const (
 	MirrorNone    MirrorState = iota // topic is not a mirror on the link
 	MirrorActive                     // ACTIVE — mirroring
 	MirrorStopped                    // STOPPED — promoted
-	MirrorBad                        // any other/transient status (PENDING, FAILED, …)
+	MirrorBad                        // genuine failure / unexpected status (FAILED, PAUSED, …) — refuse
+	MirrorPending                    // PENDING_STOPPED — promotion in flight toward STOPPED; await
 )
 
 func (m MirrorState) String() string {
@@ -42,6 +43,8 @@ func (m MirrorState) String() string {
 		return "stopped"
 	case MirrorBad:
 		return "bad"
+	case MirrorPending:
+		return "pending"
 	default:
 		return "unknown"
 	}
