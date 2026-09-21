@@ -533,6 +533,16 @@ func findGatewayRejection(gw *unstructured.Unstructured, gatewayName string, gen
 	return nil, nil
 }
 
+// gatewayClockSkewTolerance guards the lastTransitionTime staleness fallback
+// (conditionPredatesGeneration) against clock skew between the
+// apiserver/controller clock that stamps a condition and kcp's own local
+// clock, plus ordinary scheduling jitter between the patch landing and this
+// wait's first poll. Without it, a condition genuinely tied to the current
+// generation but stamped a fraction of a second before waitStartedAt would
+// be misread as stale and skipped — reintroducing the false-acceptance risk
+// this staleness check exists to close. var so tests can shorten it.
+var gatewayClockSkewTolerance = 30 * time.Second
+
 // conditionPredatesGeneration reports whether a fatal condition demonstrably
 // belongs to an earlier generation than the one kcp just applied, using
 // whichever evidence the condition carries, in order:
@@ -543,22 +553,24 @@ func findGatewayRejection(gw *unstructured.Unstructured, gatewayName string, gen
 //     current generation means the condition predates this apply.
 //  2. lacking that, the condition's lastTransitionTime against
 //     waitStartedAt (the moment kcp started waiting on this apply, captured
-//     immediately after issuing it): before it means the condition
-//     transitioned before this attempt began.
+//     immediately after issuing it): more than gatewayClockSkewTolerance
+//     before it means the condition transitioned before this attempt began,
+//     with enough margin that clock skew or scheduling jitter can't account
+//     for the gap.
 //
-// A condition carrying neither piece of evidence is NOT considered stale —
-// this is the accept gate's only defence against a fatal condition genuinely
-// tied to the generation kcp just applied, so the safe default when there is
-// no evidence either way is to keep treating it as current (cfet1
-// #6205997094: observedGeneration catching up is not proof the CR was
-// accepted).
+// A condition carrying neither piece of evidence, or a lastTransitionTime
+// within the tolerance of waitStartedAt, is NOT considered stale — this is
+// the accept gate's only defence against a fatal condition genuinely tied to
+// the generation kcp just applied, so the safe default when the evidence is
+// missing or ambiguous is to keep treating it as current (cfet1 #6205997094:
+// observedGeneration catching up is not proof the CR was accepted).
 func conditionPredatesGeneration(condition map[string]any, generation int64, waitStartedAt time.Time) bool {
 	if condGen, found, err := unstructured.NestedInt64(condition, "observedGeneration"); err == nil && found {
 		return condGen < generation
 	}
 	if raw, ok := condition["lastTransitionTime"].(string); ok {
 		if t, err := time.Parse(time.RFC3339, raw); err == nil {
-			return t.Before(waitStartedAt)
+			return t.Before(waitStartedAt.Add(-gatewayClockSkewTolerance))
 		}
 	}
 	return false

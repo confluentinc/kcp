@@ -738,6 +738,29 @@ func TestWaitForGatewayAccepted_StaleConditionByLastTransitionTime_ReturnsNil(t 
 	require.NoError(t, err)
 }
 
+// TestWaitForGatewayAccepted_LastTransitionTimeWithinClockSkew_TreatedAsCurrent
+// guards the lastTransitionTime fallback against clock skew between the
+// apiserver/controller clock that stamps the condition and kcp's own local
+// clock: a lastTransitionTime only fractionally before waitStartedAt is
+// exactly what ordinary skew (or plain scheduling jitter between the patch
+// landing and this wait's first poll) produces for a condition that is
+// genuinely tied to the current generation. Without a tolerance window, a
+// slightly-behind local clock would misclassify it as stale and skip it —
+// reintroducing the false-acceptance risk this fix exists to close.
+func TestWaitForGatewayAccepted_LastTransitionTimeWithinClockSkew_TreatedAsCurrent(t *testing.T) {
+	shortenRejectionSettleWindow(t, 5*time.Millisecond)
+	ns, gw := "test-ns", "test-gw"
+	cs := newFakeDynamicClient(newGatewayCR(gw, ns, 5, 5, true,
+		withGatewayConditionAtTime(clusterReadyCondition, "False", "ApplyFailed",
+			"secretRef kcp-perf-plain-jaas not found", time.Now().Add(-1*time.Second)),
+	))
+
+	err := waitForGatewayAccepted(context.Background(), cs, ns, gw, 5*time.Millisecond, time.Second)
+	require.Error(t, err)
+	var rejected *GatewayRejectedError
+	require.ErrorAs(t, err, &rejected, "a lastTransitionTime only fractionally earlier than waitStartedAt must not be read as stale")
+}
+
 // TestWaitForGatewayAccepted_FreshFailureConditionAtCurrentGeneration_ReturnsRejection
 // is the false-success regression this incident actually warns about: the
 // operator can advance observedGeneration to the generation kcp just patched
