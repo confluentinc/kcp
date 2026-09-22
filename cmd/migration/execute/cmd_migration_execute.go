@@ -154,21 +154,22 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 		topicPatterns = *entry.TopicPatterns
 	}
 	return migration.MigrationConfig{
-		MigrationId:             id,
-		SourceBootstrap:         strings.Join(g.Spec.Source.BootstrapServers, ","),
-		ClusterBootstrap:        strings.Join(g.Spec.Target.Kafka.BootstrapServers, ","),
-		K8sNamespace:            g.Spec.Gateway.Namespace,
-		InitialCrName:           g.Spec.Gateway.CrName,
-		KubeConfigPath:          kubeConfigPath,
-		ClusterId:               g.Spec.Target.ClusterID,
-		ClusterRestEndpoint:     g.Spec.Target.Kafka.RestEndpoint,
-		ClusterLinkName:         g.Spec.ClusterLink.Name,
-		Route:                   g.Spec.Route.Name,
-		TargetDomain:            g.Spec.Route.TargetStreamingDomain,
-		TopicPatterns:           topicPatterns,
-		CurrentState:            migration.StateUninitialized,
-		PauseConsumerOffsetSync: g.Spec.ClusterLink.PauseConsumerOffsetSync,
-		GatewayConfigPort:       g.Spec.DefaultPolicies.GatewayConfigPort,
+		MigrationId:                id,
+		SourceBootstrap:            strings.Join(g.Spec.Source.BootstrapServers, ","),
+		ClusterBootstrap:           strings.Join(g.Spec.Target.Kafka.BootstrapServers, ","),
+		K8sNamespace:               g.Spec.Gateway.Namespace,
+		InitialCrName:              g.Spec.Gateway.CrName,
+		KubeConfigPath:             kubeConfigPath,
+		ClusterId:                  g.Spec.Target.ClusterID,
+		ClusterRestEndpoint:        g.Spec.Target.Kafka.RestEndpoint,
+		ClusterLinkName:            g.Spec.ClusterLink.Name,
+		Route:                      g.Spec.Route.Name,
+		TargetDomain:               g.Spec.Route.TargetStreamingDomain,
+		TopicPatterns:              topicPatterns,
+		CurrentState:               migration.StateUninitialized,
+		PauseConsumerOffsetSync:    g.Spec.ClusterLink.PauseConsumerOffsetSync,
+		ConsumerOffsetSyncBaseline: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline,
+		GatewayConfigPort:          g.Spec.DefaultPolicies.GatewayConfigPort,
 	}
 }
 

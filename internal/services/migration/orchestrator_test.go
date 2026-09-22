@@ -755,15 +755,17 @@ func TestOrchestrator_Execute_PauseOffsetSync_FiresAfterFenceBeforeDetection(t *
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped,
-		"the flipped marker must be persisted (restore is owed by the post-execute bookend)")
 }
 
 func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 	// AE3: a pause failure must not hold clients fenced. The abort_fence
 	// rollback unfences the gateway (with readiness wait) and lands at
-	// initialized; the original pause error still surfaces. Nothing was
-	// flipped, so the rollback's sync restore is a no-op.
+	// initialized; the original pause error still surfaces. The rollback's
+	// sync restore is now unconditional on PauseConsumerOffsetSync (idempotent
+	// apply, not gated on whether the pause actually landed), so it still
+	// attempts its own AlterConfigs even though the pause never flipped
+	// anything — the mock's unconditional AlterConfigs failure makes that
+	// attempt fail too, soft-failing without changing the surfaced error.
 	//
 	// This test is also the reentrancy pin: the rollback must fire from
 	// handleStepFailure after the pause step's Event call returned — a
@@ -804,14 +806,13 @@ func TestOrchestrator_Execute_PauseError_RollsBackToInitialized(t *testing.T) {
 		"pause failure must roll back to initialized, not hold clients fenced")
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateInitialized, persisted.CurrentState)
-	assert.False(t, persisted.PauseConsumerOffsetSyncFlipped)
 
 	assert.Equal(t, int64(2), atomic.LoadInt64(&applyCalls),
 		"fence apply then unfence apply")
 	assert.Equal(t, int64(2), atomic.LoadInt64(&waitCalls),
 		"gateway readiness awaited for both the fence and the unfence")
-	assert.Equal(t, int64(1), atomic.LoadInt64(&alterCalls),
-		"only the failed disable attempt — no restore call when nothing was flipped")
+	assert.Equal(t, int64(2), atomic.LoadInt64(&alterCalls),
+		"the failed disable attempt, plus the rollback's unconditional idempotent restore attempt")
 }
 
 // TestOrchestrator_Execute_UnconfirmedFence_RestoresInitialCR covers the state
@@ -1166,79 +1167,20 @@ func TestOrchestrator_Execute_RogueAfterPause_RestoresSyncConfig(t *testing.T) {
 		"restore must never start before gateway readiness confirms")
 }
 
-func TestOrchestrator_Execute_RollbackRestoreFails_StillLandsInitialized(t *testing.T) {
-	// The restore half of the rollback is soft-fail: unfencing succeeded, so
-	// clients are safe; a failed restore lands at initialized anyway with the
-	// flipped marker kept and loud rollback-context guidance (not the
-	// post-switchover wording).
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
-	config.PauseConsumerOffsetSync = true
-	config.DetectUnroutedProducersDuration = time.Millisecond
-	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
-
-	var listCalls int64
-	orch.actions.clusterLinkService = &mockClusterLinkService{
-		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
-			if atomic.AddInt64(&listCalls, 1) == 1 {
-				return map[string]string{"consumer.offset.sync.enable": "true"}, nil
-			}
-			return nil, fmt.Errorf("network error during restore")
-		},
-		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
-			return nil
-		},
-	}
-
-	var sourceCalls int64
-	orch.actions.sourceOffset = &mockOffsetProvider{
-		getFn: func(topic string) (map[int32]int64, error) {
-			n := atomic.AddInt64(&sourceCalls, 1)
-			return map[int32]int64{0: 100 + n*10}, nil
-		},
-	}
-
-	stderr := captureStderr(t, func() {
-		err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-		require.Error(t, err)
-		assert.ErrorIs(t, err, ErrUnroutedProducers)
-	})
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateInitialized, persisted.CurrentState,
-		"a failed restore must not cancel the completed unfence")
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped,
-		"the flipped marker stays set — a restore is still owed")
-
-	assert.Contains(t, stderr, "unfenced", "guidance must carry the rollback context")
-	assert.Contains(t, stderr, config.ClusterLinkName)
-	assert.NotContains(t, stderr, "Migration completed",
-		"the post-switchover wording is wrong for a rollback")
-}
-
+// TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized
+// replaces the former pair of ListConfigs-fail / AlterConfigs-fail rollback
+// tests: restore no longer calls ListConfigs at all (it is a single
+// idempotent AlterConfigs SET), so the only way it can fail now is the SET
+// itself failing. The restore half is still soft-fail — the unfence already
+// completed, so the run lands at initialized regardless, with loud
+// rollback-context remediation (not the post-switchover wording).
 func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t *testing.T) {
-	// Companion to the ListConfigs-fail case above: here the restore's diff read
-	// succeeds but the AlterConfigs that re-enables sync fails. The restore half
-	// is still soft-fail — the unfence already completed, so the run lands at
-	// initialized with the flipped marker kept (a restore is still owed) and the
-	// rollback-context remediation names the still-owed keys.
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateLagsOk, nil)
 	config.PauseConsumerOffsetSync = true
 	config.DetectUnroutedProducersDuration = time.Millisecond
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
-	config.ClusterLinkConfigs = map[string]string{"consumer.offset.sync.enable": "true"}
 
-	var listCalls int64
 	orch.actions.clusterLinkService = &mockClusterLinkService{
-		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
-			if atomic.AddInt64(&listCalls, 1) == 1 {
-				// Drift check before the pause disable: sync still enabled.
-				return map[string]string{"consumer.offset.sync.enable": "true"}, nil
-			}
-			// Restore diff after the disable: sync is paused, so the restore
-			// wants to set it back to true.
-			return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-		},
 		alterConfigsFn: func(ctx context.Context, cfg clusterlink.Config, alts []clusterlink.ConfigAlteration) error {
 			// The pause disable (=false) succeeds; the restore re-enable (=true) fails.
 			for _, a := range alts {
@@ -1267,26 +1209,25 @@ func TestOrchestrator_Execute_RollbackRestoreAlterFails_StillLandsInitialized(t 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateInitialized, persisted.CurrentState,
 		"a failed restore alter must not cancel the completed unfence")
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped,
-		"the flipped marker stays set — a restore is still owed")
 
 	assert.Contains(t, stderr, "unfenced", "guidance must carry the rollback context")
-	assert.Contains(t, stderr, "Still owed", "a failed restore alter must name the owed keys")
+	assert.Contains(t, stderr, "re-apply manually", "a failed restore alter must point at manual remediation")
 	assert.Contains(t, stderr, config.ClusterLinkName)
 	assert.NotContains(t, stderr, "Migration completed",
 		"the post-switchover wording is wrong for a rollback")
 }
 
-// TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance joins the two halves
-// that are otherwise only tested apart: WHERE a failed Execute leaves the FSM
-// (config.CurrentState — the value the executor forwards) and WHAT
-// WarnIfPausedOnExecuteFailure emits for that state. It drives a real failed
-// Execute into each urgent fenced-family landing an operator can actually reach
-// with the pause already flipped, then feeds the resulting config+error to the
-// guidance exactly as cmd/migration/execute does. Guards against a landing-state
-// change that would silently mis-shape the operator guidance while both isolated
-// unit tests still pass.
-func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
+// TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState
+// replaces the former EmitsStateMatchedGuidance, which pinned per-state
+// guidance copy (WarnIfPausedOnExecuteFailure branching on config.CurrentState
+// and the state-file PauseConsumerOffsetSyncFlipped marker). Both are gone:
+// the guidance is now a single generic reminder gated only on
+// config.PauseConsumerOffsetSync. This drives a real failed Execute into
+// several different landing states an operator can actually reach with the
+// pause opt-in set, then feeds the resulting config+error to the guidance
+// exactly as cmd/migration/execute does, and asserts the SAME generic copy
+// appears no matter which state the FSM rested in.
+func TestOrchestrator_ExecuteFailure_EmitsGuidanceRegardlessOfLandedState(t *testing.T) {
 	validCR := "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
 	// enableTrue is the drift-check/happy list response used by every case.
@@ -1298,12 +1239,10 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 	}
 
 	tests := []struct {
-		name            string
-		overrides       orchestratorOverrides
-		configure       func(orch *MigrationOrchestrator, config *MigrationConfig)
-		wantState       string
-		wantContains    []string
-		wantNotContains []string
+		name      string
+		overrides orchestratorOverrides
+		configure func(orch *MigrationOrchestrator, config *MigrationConfig)
+		wantState string
 	}{
 		{
 			name: "offset_sync_paused: rogue detected then unfence fails",
@@ -1339,9 +1278,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 					},
 				}
 			},
-			wantState:       StateOffsetSyncPaused,
-			wantContains:    []string{"still fenced", "blocked", "kcp migration execute", "test-link", "consumer.offset.sync.enable"},
-			wantNotContains: []string{"restore will run after a successful switchover", "rollback failed"},
+			wantState: StateOffsetSyncPaused,
 		},
 		{
 			name:      "fence_verified: promote fails after a successful pause+verify",
@@ -1363,9 +1300,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 					},
 				}
 			},
-			wantState:       StateFenceVerified,
-			wantContains:    []string{"still fenced", "blocked", "re-apply the initial gateway CR", "test-link"},
-			wantNotContains: []string{"restore will run after a successful switchover", "complete the switchover", "Do not re-apply"},
+			wantState: StateFenceVerified,
 		},
 		{
 			name: "promoted: switchover fails after a successful promote",
@@ -1396,9 +1331,7 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 					alterConfigsFn:        alterOK,
 				}
 			},
-			wantState:       StatePromoted,
-			wantContains:    []string{"still fenced", "blocked", "complete the switchover", "Do not re-apply the initial gateway CR"},
-			wantNotContains: []string{"restore will run after a successful switchover"},
+			wantState: StatePromoted,
 		},
 	}
 
@@ -1410,26 +1343,22 @@ func TestOrchestrator_ExecuteFailure_EmitsStateMatchedGuidance(t *testing.T) {
 			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 			require.Error(t, err)
 
-			// The FSM rests in the expected urgent state, in memory (the value
+			// The FSM rests in the expected landed state, in memory (the value
 			// the executor forwards to the guidance) and on disk.
 			assert.Equal(t, tc.wantState, config.CurrentState, "in-memory landed state")
 			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 			assert.Equal(t, tc.wantState, persisted.CurrentState, "persisted landed state")
-			require.True(t, config.PauseConsumerOffsetSyncFlipped,
-				"the urgent guidance only fires when the pause was flipped")
 
 			// Feed the landed config + error to the guidance exactly as the
-			// executor does (cmd/migration/execute/migration_executor.go), and
-			// assert the emitted copy matches the landed state.
+			// executor does (cmd/migration/execute/migration_executor.go). The
+			// copy is the same generic reminder regardless of which state the
+			// FSM landed in.
 			out := captureStderr(t, func() {
 				WarnIfPausedOnExecuteFailure(config, err)
 			})
-			for _, want := range tc.wantContains {
-				assert.Contains(t, out, want, "guidance for %s must mention %q", tc.wantState, want)
-			}
-			for _, notWant := range tc.wantNotContains {
-				assert.NotContains(t, out, notWant, "guidance for %s must not mention %q", tc.wantState, notWant)
-			}
+			assert.Contains(t, out, "test-link", "guidance for %s must name the cluster link", tc.wantState)
+			assert.Contains(t, out, "consumer.offset.sync.enable", "guidance for %s must name the key", tc.wantState)
+			assert.Contains(t, out, "declared baseline", "guidance for %s must point at the declared baseline", tc.wantState)
 		})
 	}
 }
@@ -1466,15 +1395,18 @@ func TestOrchestrator_Execute_NoOptIn_NeverTouchesClusterLinkConfig(t *testing.T
 	assert.False(t, persisted.PauseConsumerOffsetSyncFlipped)
 }
 
-func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *testing.T) {
-	// AE7 pin: an in-flight state file from a release where the pause ran
-	// pre-FSM (flipped marker set, state fenced) resumes without a second
-	// pause: the stage passes through on the marker and promotion proceeds.
+// TestOrchestrator_Execute_ResumeAtFenced_ReappliesPauseIdempotently replaces
+// the former AE7 marker-skip pin. The pause bookend is no longer gated on a
+// PauseConsumerOffsetSyncFlipped marker — it is a plan-driven idempotent
+// apply, so a resume from fenced simply re-applies the same AlterConfigs SET
+// (a no-op against a real cluster link) rather than reading a marker to
+// decide whether to skip. It never calls ListConfigs, on the first pass or a
+// resume.
+func TestOrchestrator_Execute_ResumeAtFenced_ReappliesPauseIdempotently(t *testing.T) {
 	var alterCalls, listCalls int64
 
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenced, nil)
 	config.PauseConsumerOffsetSync = true
-	config.PauseConsumerOffsetSyncFlipped = true
 
 	originalCL := orch.actions.clusterLinkService
 	orch.actions.clusterLinkService = &mockClusterLinkService{
@@ -1495,11 +1427,10 @@ func TestOrchestrator_Execute_LegacyFlippedAtFenced_SkipsPauseAndProceeds(t *tes
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.NoError(t, err)
 
-	assert.Equal(t, int64(0), atomic.LoadInt64(&alterCalls), "no second pause")
-	assert.Equal(t, int64(0), atomic.LoadInt64(&listCalls), "no drift re-check on the already-flipped path")
+	assert.Equal(t, int64(1), atomic.LoadInt64(&alterCalls), "the idempotent pause SET is re-applied on resume")
+	assert.Equal(t, int64(0), atomic.LoadInt64(&listCalls), "never reads the live link to decide")
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
-	assert.True(t, persisted.PauseConsumerOffsetSyncFlipped, "marker stays set until the restore bookend clears it")
 }
 
 // captureStdout mirrors captureStderr (offset_sync_bookend_test.go) for the

@@ -427,6 +427,13 @@ func TestMigrationConfig_EveryFieldClassifiedForDrift(t *testing.T) {
 		// runtime data populated by init from the live cluster link, not part
 		// of the operator's declared spec
 		"ClusterLinkConfigs": true,
+		// manifest-declared restore target for the offset-sync bookend,
+		// captured once at registration like PauseConsumerOffsetSync — not yet
+		// drift-checked (scope-limited to wiring the field on in this task);
+		// Task 2 drops the state file dependency entirely, at which point this
+		// is re-read fresh from the manifest every run rather than compared
+		// against a persisted snapshot
+		"ConsumerOffsetSyncBaseline": true,
 		// derived artifacts migplan produced at init, not part of the
 		// operator's declared spec — only the fence/switchover fragments'
 		// SOURCE fields (Route, TargetDomain) are drift-checked; the rendered
@@ -1062,6 +1069,7 @@ func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
 	assert.Equal(t, "confluent-cloud", cfg.TargetDomain)
 	assert.Equal(t, []string{".*"}, cfg.TopicPatterns, "declared topicPatterns must be snapshotted at registration for later drift checks")
 	assert.False(t, cfg.PauseConsumerOffsetSync)
+	assert.Empty(t, cfg.ConsumerOffsetSyncBaseline, "fixture manifest declares no baseline")
 	assert.Empty(t, cfg.Topics, "topics require a live migplan.Reconcile — not set here")
 	assert.Empty(t, cfg.FenceYAML)
 	assert.Empty(t, cfg.Mode)

@@ -105,6 +105,15 @@ type MigrationConfig struct {
 	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
 	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
 
+	// ConsumerOffsetSyncBaseline is the declared pre-migration state of
+	// consumer.offset.sync.enable on the cluster link (manifest
+	// spec.clusterLink.consumerOffsetSyncBaseline: "enabled" or "disabled"),
+	// captured once at registration from the manifest projection — never from
+	// the live cluster link. The pause/restore bookends apply this value as an
+	// idempotent AlterConfigs SET rather than diffing against a live snapshot,
+	// so neither depends on data read back from the cluster link.
+	ConsumerOffsetSyncBaseline string `json:"consumer_offset_sync_baseline,omitempty"`
+
 	// DetectUnroutedProducersDuration is the monitoring window for the post-fence
 	// safety check that verifies source offsets are not still increasing before
 	// promoting mirror topics. A value of 0 skips the check. An increasing offset

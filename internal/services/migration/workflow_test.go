@@ -61,11 +61,7 @@ func testReconcileResult() *migplan.Result {
 
 func TestWorkflow_Initialize_Success(t *testing.T) {
 	gw := &mockGatewayService{}
-	cl := &mockClusterLinkService{
-		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-			return map[string]string{"bootstrap.servers": "broker:9092"}, nil
-		},
-	}
+	cl := &mockClusterLinkService{}
 
 	wf := NewMigrationActions(gw, cl)
 	config := &MigrationConfig{
@@ -86,7 +82,6 @@ func TestWorkflow_Initialize_Success(t *testing.T) {
 	assert.Equal(t, testFenceYAML, config.FenceYAML)
 	assert.Equal(t, testSwitchoverYAML, config.SwitchoverYAML)
 	assert.Len(t, config.Topics, 3)
-	assert.Equal(t, "broker:9092", config.ClusterLinkConfigs["bootstrap.servers"])
 }
 
 // TestWorkflow_Initialize_RefusedResult proves Initialize refuses outright
@@ -104,25 +99,6 @@ func TestWorkflow_Initialize_RefusedResult(t *testing.T) {
 	assert.Contains(t, err.Error(), "reconcile plan refused")
 	assert.Contains(t, err.Error(), "topic t1: blocked by X")
 	assert.Contains(t, err.Error(), "precondition Y: failed")
-}
-
-// TestWorkflow_Initialize_ClusterLinkConfigsListError proves a cluster-link
-// ListConfigs failure still propagates: the call remains load-bearing for the
-// PauseConsumerOffsetSync precondition and the offset-sync restore bookend's
-// diff baseline, even though migplan.Reconcile now owns topic
-// classification/validation.
-func TestWorkflow_Initialize_ClusterLinkConfigsListError(t *testing.T) {
-	cl := &mockClusterLinkService{
-		listConfigsFn: func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-			return nil, fmt.Errorf("cluster link unreachable")
-		},
-	}
-	wf := NewMigrationActions(&mockGatewayService{}, cl)
-	config := &MigrationConfig{K8sNamespace: "ns", InitialCrName: "my-gw"}
-
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to list cluster link configs")
 }
 
 // TestActions_Initialize_ThreadsReconcileResult proves the migplan.Result the
@@ -157,30 +133,6 @@ func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	assert.Equal(t, res.Mode, config.Mode)
 }
 
-// TestActions_Initialize_WorkflowErrorDoesNotMutateTopicsOrRoute proves an
-// AAO-specific precondition failure (here, the cluster-link ListConfigs call
-// the PauseConsumerOffsetSync precondition depends on) surfaces as an error
-// without partially mutating config.
-func TestActions_Initialize_WorkflowErrorDoesNotMutateTopicsOrRoute(t *testing.T) {
-	gw := &mockGatewayService{
-		getGatewayYAMLFn: func(ctx context.Context, namespace, name string) ([]byte, error) {
-			return []byte(testInitialCR), nil
-		},
-	}
-	cl := &mockClusterLinkService{
-		listConfigsFn: func(ctx context.Context, cfg clusterlink.Config) (map[string]string, error) {
-			return nil, fmt.Errorf("k8s connection refused")
-		},
-	}
-	actions := NewMigrationActions(gw, cl)
-
-	config := &MigrationConfig{MigrationId: "test-migration-1", CurrentState: StateUninitialized}
-	res := testReconcileResult()
-
-	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
-	require.Error(t, err)
-}
-
 // TestActions_Initialize_RefusedPlanFailsWithReasons proves a refused
 // reconcile plan is turned into a failed call, never silently accepted.
 func TestActions_Initialize_RefusedPlanFailsWithReasons(t *testing.T) {
@@ -194,137 +146,13 @@ func TestActions_Initialize_RefusedPlanFailsWithReasons(t *testing.T) {
 	assert.Empty(t, config.Route, "a refused plan must not mutate config")
 }
 
-// ===========================================================================
-// PauseConsumerOffsetSync precondition tests (U2)
-// ===========================================================================
-
-// makeOffsetSyncWorkflow builds a workflow with mocks that satisfy Initialize
-// up to the cluster-link config check. listConfigsFn is the seam under test.
-func makeOffsetSyncWorkflow(t *testing.T, listConfigsFn func(_ context.Context, _ clusterlink.Config) (map[string]string, error)) *MigrationActions {
-	t.Helper()
-	gw := &mockGatewayService{}
-	cl := &mockClusterLinkService{listConfigsFn: listConfigsFn}
-	return NewMigrationActions(gw, cl)
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_Pass(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "true"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-pause",
-		PauseConsumerOffsetSync: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
-	require.NoError(t, err)
-	assert.True(t, config.PauseConsumerOffsetSync, "intent should be retained on config")
-	assert.False(t, config.PauseConsumerOffsetSyncFlipped, "flipped marker must remain false at init time")
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnFalse(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-falsey",
-		PauseConsumerOffsetSync: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "link-falsey")
-	assert.Contains(t, err.Error(), "consumer.offset.sync.enable")
-	assert.Contains(t, err.Error(), `"false"`)
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_RefusesOnAbsentKey(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"other.key": "value"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-absent",
-		PauseConsumerOffsetSync: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "link-absent")
-	assert.Contains(t, err.Error(), "no consumer.offset.sync.enable config key", "error must distinguish absent key from false value")
-}
-
-func TestWorkflow_Initialize_PauseOffsetSync_FlagOff_IgnoresConfigValue(t *testing.T) {
-	// Cluster link reports enable=false. Without the flag, init must succeed
-	// regardless — the precondition only applies when the operator opted in.
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:         "link-offset-disabled",
-		PauseConsumerOffsetSync: false,
-	}
-
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
-	require.NoError(t, err, "flag off must not assert offset-sync state")
-}
-
-// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition
-// covers the --skip-validate + --pause-consumer-offset-sync flow where:
-//  1. init runs with --skip-validate so the precondition was NOT checked at init time
-//  2. first execute calls DisableOffsetSync which sets enable=false and marker=true
-//  3. FSM transitions out of StateUninitialized, calling Initialize
-//
-// At step 3 the live config is "false" (kcp just set it) and the marker is
-// true, meaning kcp is the reason the value drifted. Initialize must NOT
-// refuse — that would wedge the migration mid-flight.
-func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_SkipsPrecondition(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	config := &MigrationConfig{
-		ClusterLinkName:                "link-mid-flight",
-		PauseConsumerOffsetSync:        true,
-		PauseConsumerOffsetSyncFlipped: true,
-	}
-
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
-	require.NoError(t, err, "Initialize must not refuse when kcp already flipped the config (Flipped=true)")
-}
-
-// TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot
-// pins the defensive guard against the snapshot-clobbering bug. If Initialize
-// is ever called after DisableOffsetSync has run (i.e. Flipped=true), the live
-// configs reflect the post-disable state. Writing them to ClusterLinkConfigs
-// would clobber the pre-disable snapshot that RestoreOffsetSync needs to diff
-// against. The guard must keep the existing snapshot in that case.
-//
-// Today the CLI blocks the ordering hazard via mutual exclusion of
-// --skip-validate and --pause-consumer-offset-sync, but this test pins the
-// in-code defense in case a future caller reintroduces the ordering.
-func TestWorkflow_Initialize_PauseOffsetSync_AlreadyFlipped_PreservesSnapshot(t *testing.T) {
-	wf := makeOffsetSyncWorkflow(t, func(_ context.Context, _ clusterlink.Config) (map[string]string, error) {
-		// Post-disable live state — toggle false, filters cleared.
-		return map[string]string{"consumer.offset.sync.enable": "false"}, nil
-	})
-	preDisableSnapshot := map[string]string{
-		"consumer.offset.sync.enable":   "true",
-		"consumer.offset.group.filters": `{"groups":["app-*"]}`,
-	}
-	config := &MigrationConfig{
-		ClusterLinkName:                "link-mid-flight",
-		PauseConsumerOffsetSync:        true,
-		PauseConsumerOffsetSyncFlipped: true,
-		ClusterLinkConfigs:             preDisableSnapshot,
-	}
-
-	err := wf.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"}, testReconcileResult())
-	require.NoError(t, err)
-
-	assert.Equal(t, "true", config.ClusterLinkConfigs["consumer.offset.sync.enable"],
-		"pre-disable toggle value must survive Initialize when Flipped=true")
-	assert.Equal(t, `{"groups":["app-*"]}`, config.ClusterLinkConfigs["consumer.offset.group.filters"],
-		"pre-disable filters value must survive Initialize when Flipped=true")
-}
+// Note: the former "PauseConsumerOffsetSync precondition tests (U2)" suite
+// pinned Initialize's live-cluster-link precondition (refuse-if-not-enabled)
+// and its ClusterLinkConfigs pre-disable snapshot capture. Both are removed —
+// Initialize no longer calls ListConfigs at all, and PauseOffsetSync/
+// restoreOffsetSync are now manifest+plan-driven idempotent applies that never
+// read the live cluster link to decide anything (see offset_sync_bookend_test.go
+// for their coverage).
 
 // ===========================================================================
 // CheckLags tests

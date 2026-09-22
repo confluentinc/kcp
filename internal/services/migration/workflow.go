@@ -256,12 +256,16 @@ func (s *MigrationActions) SetPromoteBatchSize(n int) {
 	s.promoteBatchSize = n
 }
 
-// Initialize captures the migplan-derived artifacts onto config and runs the
-// AAO-specific preconditions migplan does not cover: gateway capability
-// resolution and the PauseConsumerOffsetSync live precondition. Mirrors
+// Initialize captures the migplan-derived artifacts onto config. Mirrors
 // TBMActions.Initialize's shape (check res.Refused, copy fields) — everything
 // migplan.Reconcile already validated (staged-auth/secret existence,
 // cluster-link topic classification) is NOT re-checked here.
+//
+// This no longer resolves an AAO-specific PauseConsumerOffsetSync precondition
+// against the live cluster link: the pause/restore bookends are now plan- and
+// manifest-driven idempotent applies (see PauseOffsetSync, restoreOffsetSync)
+// that never read the live link to decide anything, so there is nothing left
+// here to validate or snapshot against it.
 func (s *MigrationActions) Initialize(
 	ctx context.Context,
 	config *MigrationConfig,
@@ -288,48 +292,6 @@ func (s *MigrationActions) Initialize(
 	// process — ensureGatewayCapability resolves it lazily, once, from
 	// whichever of FenceGateway/SwitchGateway runs first later in this same
 	// Execute() call.
-
-	clusterLinkConfig := clusterlink.Config{
-		RestEndpoint: config.ClusterRestEndpoint,
-		ClusterID:    config.ClusterId,
-		LinkName:     config.ClusterLinkName,
-		Auth:         restAuth,
-		Topics:       config.Topics,
-	}
-
-	// Get cluster link configs — still needed for the PauseConsumerOffsetSync
-	// precondition below and for the offset-sync restore bookend's diff
-	// baseline. Topic classification/validation is no longer done here —
-	// migplan.Reconcile's Classify already proved config.Topics feasible.
-	configs, err := s.clusterLinkService.ListConfigs(ctx, clusterLinkConfig)
-	if err != nil {
-		return fmt.Errorf("failed to list cluster link configs: %w", err)
-	}
-
-	// If the operator opted into pausing consumer offset sync during execute,
-	// validate the precondition: the cluster link must currently have
-	// consumer.offset.sync.enable=true. Refuse fail-fast if the key is missing
-	// or set to anything other than "true".
-	//
-	// Skip the check when PauseConsumerOffsetSyncFlipped is already true: kcp
-	// itself set the value to "false" via DisableOffsetSync, so seeing "false"
-	// here is the expected mid-flight state, not drift.
-	if config.PauseConsumerOffsetSync && !config.PauseConsumerOffsetSyncFlipped {
-		observed, present := configs[offsetSyncEnableKey]
-		switch {
-		case !present:
-			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s config key (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, "true")
-		case observed != "true":
-			return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has %s=%q (expected %q)", config.ClusterLinkName, offsetSyncEnableKey, observed, "true")
-		}
-		s.reporter.Success("Cluster link %s=true (pause-on-execute intent recorded)", offsetSyncEnableKey)
-	}
-
-	// Defensive guard: never overwrite the pre-disable snapshot once the
-	// bookend has flipped consumer.offset.sync.enable=false.
-	if !config.PauseConsumerOffsetSyncFlipped {
-		config.ClusterLinkConfigs = configs
-	}
 
 	slog.Debug("migration initialized successfully")
 	return nil
@@ -736,10 +698,13 @@ func (s *MigrationActions) detectUnroutedProducers(ctx context.Context, topics [
 }
 
 // PauseOffsetSync runs the pause_offset_sync stage: with the operator's
-// --pause-consumer-offset-sync opt-in it pauses cluster-link consumer offset
-// sync immediately after fencing; otherwise it passes through so the FSM
-// still records offset_sync_paused. The already-flipped guard makes resumes
-// (and legacy state files whose pause ran pre-FSM) idempotent.
+// --pause-consumer-offset-sync opt-in, and only when this run has an actual
+// cutover in flight (config.FenceYAML set by the plan), it applies an
+// idempotent AlterConfigs SET disabling cluster-link consumer offset sync;
+// otherwise it passes through so the FSM still records offset_sync_paused.
+// Plan- and manifest-driven only: it never reads the live cluster link to
+// decide anything, so re-running it (a resume, a retry) simply re-applies the
+// same SET — safe whether or not a prior attempt already landed it.
 func (s *MigrationActions) PauseOffsetSync(
 	ctx context.Context,
 	config *MigrationConfig,
@@ -751,31 +716,18 @@ func (s *MigrationActions) PauseOffsetSync(
 		s.reporter.Detail("Offset-sync pause not requested — skipping")
 		return nil
 	}
-	if config.PauseConsumerOffsetSyncFlipped {
-		slog.Info("⏭️ consumer.offset.sync.enable already flipped, skipping pause", "migrationId", config.MigrationId)
-		s.reporter.Detail("consumer.offset.sync already paused — skipping")
+	// Plan-driven: only pause when there is an active cutover this run
+	// (reconcile emitted fence work). Read the plan (FenceYAML), never the
+	// live link.
+	if config.FenceYAML == "" {
+		slog.Debug("⏭️ no cutover in flight, skipping offset-sync pause")
+		s.reporter.Detail("No cutover in flight — offset-sync pause skipped")
 		return nil
 	}
 
 	clCfg := BuildClusterLinkConfig(config, restAuth)
 
 	s.reporter.section("⏸  Pausing consumer.offset.sync on cluster link...")
-
-	// Per-call deadlines derived from the parent ctx so signal cancellation
-	// still propagates, but a hung REST endpoint cannot block indefinitely.
-	listCtx, listCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	currentConfigs, err := s.clusterLinkService.ListConfigs(listCtx, clCfg)
-	listCancel()
-	if err != nil {
-		return fmt.Errorf("failed to query cluster link %q for drift detection: %w", config.ClusterLinkName, err)
-	}
-	observed, present := currentConfigs[offsetSyncEnableKey]
-	switch {
-	case !present:
-		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: cluster link %q has no %s key — cannot verify the pre-pause state", config.ClusterLinkName, offsetSyncEnableKey)
-	case observed != "true":
-		return fmt.Errorf("spec.clusterLink.pauseConsumerOffsetSync refused: %s on cluster link %q is not enabled — either a previous kcp run was interrupted mid-pause before recording it, or the config was changed externally; inspect the cluster link and the migration state file before re-running", offsetSyncEnableKey, config.ClusterLinkName)
-	}
 
 	// Optional drain window (--consumer-offset-sync-drain-duration): hold here
 	// with sync still enabled before disabling it. The fence has frozen the
@@ -785,8 +737,8 @@ func (s *MigrationActions) PauseOffsetSync(
 	// would otherwise be reprocessed after switchover. Best-effort: offset sync
 	// is asynchronous, so this reduces but does not guarantee zero duplicates. A
 	// ctx cancellation here leaves sync still enabled (nothing flipped) and
-	// cancels the transition, matching the drift-refusal path above. 0 (the
-	// default) skips the wait entirely — the prior immediate-disable behaviour.
+	// cancels the transition. 0 (the default) skips the wait entirely — the
+	// prior immediate-disable behaviour.
 	if drain := config.ConsumerOffsetSyncDrainDuration; drain > 0 {
 		s.reporter.Detail("Draining consumer offset sync for %s before pausing...", drain)
 		slog.Debug("draining consumer offset sync before disable", "duration", drain, "clusterLinkName", config.ClusterLinkName)
@@ -797,21 +749,14 @@ func (s *MigrationActions) PauseOffsetSync(
 		}
 	}
 
+	// Idempotent: re-applying enable=false on a resume or retry is a no-op
+	// AlterConfigs against the cluster link.
 	alterCtx, alterCancel := context.WithTimeout(ctx, bookendCallTimeout)
-	err = s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
+	defer alterCancel()
+	if err := s.clusterLinkService.AlterConfigs(alterCtx, clCfg, []clusterlink.ConfigAlteration{
 		{Name: offsetSyncEnableKey, Value: "false", Operation: clusterlink.OperationSet},
-	})
-	alterCancel()
-	if err != nil {
+	}); err != nil {
 		return fmt.Errorf("failed to disable %s on cluster link %q: %w", offsetSyncEnableKey, config.ClusterLinkName, err)
-	}
-
-	// Inline persist: the marker's crash window (AlterConfigs done, marker not
-	// yet on disk) stays as small as the pre-FSM bookend kept it — the FSM's
-	// own post-transition persist would widen it.
-	config.PauseConsumerOffsetSyncFlipped = true
-	if err := persist(); err != nil {
-		return fmt.Errorf("disabled %s on cluster link %q but failed to persist marker: %w (recovery: re-enable on the cluster link or correct the migration state file before re-running)", offsetSyncEnableKey, config.ClusterLinkName, err)
 	}
 
 	s.reporter.Success("%s set to false on cluster link %s", offsetSyncEnableKey, config.ClusterLinkName)
