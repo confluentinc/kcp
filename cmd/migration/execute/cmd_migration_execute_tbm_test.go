@@ -423,15 +423,21 @@ func TestExecute_DynamicMode_InitializePersistsMode_ResumeDispatchesToTBM(t *tes
 
 	// Run 2: driven via runTBMBranch directly (the CLI now calls the
 	// unstubbable live Reconcile on every invocation — see this file's header
-	// comment) reading only the file run 1 wrote. With the fix (Mode
-	// "dynamic" persisted), tbm.NewTBMOrchestrator sees no pending work and
-	// returns cleanly WITHOUT dialing anything. Without the fix (Mode left
-	// ""), runMigrationExecute's mode switch would have fallen through to the
-	// AAO branch on a real run — this seam still proves Mode was persisted
-	// correctly by run 1, which is what determines that dispatch.
+	// comment) reading only the file run 1 wrote. tbm.NewTBMOrchestrator now
+	// always starts its FSM at StateUninitialized (start-from-zero, this
+	// task) regardless of the persisted CurrentState, so run 2 walks the
+	// whole canonical workflow again — re-applying every artifact
+	// idempotently — rather than short-circuiting on HasPendingWork (that
+	// check no longer gates runTBMBranch). What this seam still proves is the
+	// ORIGINAL regression: run 2 dispatches through runTBMBranch/
+	// tbm.NewTBMOrchestrator at all — reading Mode "dynamic" persisted by run
+	// 1 — rather than falling through to the AAO branch on a real run, which
+	// would fail immediately against the fixture's unreachable clusters
+	// instead of completing.
 	out, err := runTBMBranchWithFixture(t, f, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
 	require.NoError(t, err, "run 2 must route to the TBM branch on the persisted Mode, not the AAO branch")
-	assert.Contains(t, out, "already complete")
+	assert.Contains(t, out, "Migration completed",
+		"a from-zero run 2 re-walks and completes the workflow again, rather than short-circuiting as already complete")
 }
 
 // --- Test 2: --promote-batch-size reaches TBMActions.SetPromoteBatchSize ---

@@ -55,6 +55,40 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 	return orchestrator, config, stateFile
 }
 
+// newTestOrchestratorAtFSMState builds an orchestrator exactly like
+// newTestOrchestrator, then positions its FSM directly at fsmState via
+// fsm.SetState — a test-only bypass (no callbacks fire). NewTBMOrchestrator
+// itself always starts the FSM at StateUninitialized now, regardless of
+// config.CurrentState (start-from-zero — see orchestrator.go); this is for
+// tests that check behavior AT a given FSM position (e.g. HasPendingWork's
+// own predicate logic) without walking every earlier step to get there, and
+// must NOT be used for a test that exercises Execute itself — Execute's own
+// from-zero contract is what newTestOrchestrator (unmodified) plus a real
+// walk pins.
+func newTestOrchestratorAtFSMState(t *testing.T, fsmState string) (*TBMOrchestrator, *migration.MigrationConfig, string) {
+	t.Helper()
+	orchestrator, config, stateFile := newTestOrchestrator(t, fsmState)
+	orchestrator.fsm.SetState(fsmState)
+	return orchestrator, config, stateFile
+}
+
+// TestNewTBMOrchestrator_AlwaysStartsUninitialized pins the start-from-zero
+// contract at its source: construction must ignore config.CurrentState
+// entirely, even when it holds a fully-completed migration's persisted
+// value. There is no resume position — reconcile (run every invocation, see
+// cmd/migration/execute) and idempotent applies determine what happens on
+// top of an FSM that always begins at StateUninitialized.
+func TestNewTBMOrchestrator_AlwaysStartsUninitialized(t *testing.T) {
+	cfg := &migration.MigrationConfig{CurrentState: StateSwitched, MigrationId: "m1"}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
+	o := NewTBMOrchestrator(cfg, actions, migration.NewMigrationState(), filepath.Join(t.TempDir(), "s.json"))
+	if got := o.fsm.Current(); got != StateUninitialized {
+		t.Fatalf("TBM FSM start state = %q, want %q", got, StateUninitialized)
+	}
+	assert.True(t, o.HasPendingWork(),
+		"immediately after construction the FSM can always take its first step (initialize)")
+}
+
 func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 	orchestrator, config, stateFile := newTestOrchestrator(t, StateUninitialized)
 
@@ -70,19 +104,35 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
 }
 
-func TestTBMOrchestrator_Execute_ResumesFromPartialState(t *testing.T) {
-	// Resuming at fenced is bootstrap-demoted to initialized (see
-	// TestTBMOrchestrator_Bootstrap_ExpiresFencePostureOnResume), so this walk
-	// re-runs WaitForLags and Fence for real — harmlessly, since config.Topics
-	// is empty here and both have their own no-topics guard making them a
-	// no-op success.
+// TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState replaces
+// the old ResumesFromPartialState test, which pinned the REMOVED contract:
+// construction read config.CurrentState (here, fenced) to decide where the
+// FSM started, bootstrap-demoted via the also-removed expire_fence edge. The
+// FSM now always starts at StateUninitialized regardless of
+// config.CurrentState (see TestNewTBMOrchestrator_AlwaysStartsUninitialized),
+// so a stale persisted "fenced" here changes nothing: Execute walks the whole
+// canonical workflow from Initialize, harmlessly re-running WaitForLags and
+// Fence for real — config.Topics is empty (an empty *migplan.Result is
+// passed), and both have their own no-topics guard making them a no-op
+// success.
+func TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState(t *testing.T) {
 	orchestrator, config, _ := newTestOrchestrator(t, StateFenced)
 
 	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}, 10, 0, clusterlink.BasicAuth{}))
 
-	assert.Equal(t, StateSwitched, config.CurrentState)
+	assert.Equal(t, StateSwitched, config.CurrentState,
+		"a from-zero walk must reach switched regardless of the stale persisted state")
 }
 
+// TestTBMOrchestrator_HasPendingWork pins the HasPendingWork predicate's own
+// logic — true for every state short of switched, false once switched —
+// independent of how the FSM reached that state. It is exercised at each FSM
+// position directly via newTestOrchestratorAtFSMState (a test-only bypass),
+// since NewTBMOrchestrator's construction no longer positions the FSM from
+// config.CurrentState at all (start-from-zero). Unlike AAO
+// (cmd/migration/execute/migration_executor.go dropped its HasPendingWork
+// short-circuit in 2c), TBM's own executor (tbm_executor.go) no longer uses
+// it either as of this change — it is exercised here for its own sake.
 func TestTBMOrchestrator_HasPendingWork(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -95,7 +145,7 @@ func TestTBMOrchestrator_HasPendingWork(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			orchestrator, _, _ := newTestOrchestrator(t, tt.state)
+			orchestrator, _, _ := newTestOrchestratorAtFSMState(t, tt.state)
 			assert.Equal(t, tt.want, orchestrator.HasPendingWork())
 		})
 	}
@@ -243,20 +293,14 @@ func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {
 	assert.Equal(t, StateSwitched, config.CurrentState)
 }
 
-func TestTBMOrchestrator_Bootstrap_ExpiresFenceVerificationOnResume(t *testing.T) {
-	config := &migration.MigrationConfig{MigrationId: "t1", CurrentState: StateFenceVerified, K8sNamespace: "confluent", InitialCrName: "gw"}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	state := migration.NewMigrationState()
-	NewTBMOrchestrator(config, actions, state, filepath.Join(t.TempDir(), "s.json"))
-
-	assert.Equal(t, StateFenced, config.CurrentState, "fence_verified is a point-in-time attestation and must not survive a restart")
-}
-
-func TestTBMOrchestrator_Bootstrap_ExpiresFencePostureOnResume(t *testing.T) {
-	config := &migration.MigrationConfig{MigrationId: "t1", CurrentState: StateFenced, K8sNamespace: "confluent", InitialCrName: "gw"}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	state := migration.NewMigrationState()
-	NewTBMOrchestrator(config, actions, state, filepath.Join(t.TempDir(), "s.json"))
-
-	assert.Equal(t, StateInitialized, config.CurrentState, "a resume at fenced must demote to initialized so it re-checks lag for real (not just lags_ok) before re-asserting a fence posture that may not still hold")
-}
+// TestTBMOrchestrator_Bootstrap_ExpiresFenceVerificationOnResume and
+// TestTBMOrchestrator_Bootstrap_ExpiresFencePostureOnResume previously pinned
+// construction-time bootstrap demotions (expire_verification, expire_fence)
+// that derived a safe resume point from config.CurrentState. That mechanism
+// no longer exists — construction always starts the FSM at StateUninitialized
+// (see TestNewTBMOrchestrator_AlwaysStartsUninitialized) — so these are
+// deleted; their intent (a resume never trusts a stale fence/verification
+// posture) is now covered, more strongly, by every from-zero Execute test in
+// this file (e.g. TestTBMOrchestrator_Execute_FromZero_
+// IgnoresPersistedCurrentState), which never special-cases a stale posture
+// at all because the run never trusted it to begin with.

@@ -112,7 +112,7 @@ func NewTBMOrchestrator(
 		reporter:       newReporter(),
 	}
 
-	events := make(fsm.Events, 0, len(canonicalWorkflow)+3)
+	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
 	for _, step := range canonicalWorkflow {
 		events = append(events, fsm.EventDesc{
 			Name: step.Event,
@@ -125,19 +125,21 @@ func NewTBMOrchestrator(
 		Src:  []string{StateFenced},
 		Dst:  StateInitialized,
 	})
-	events = append(events, fsm.EventDesc{
-		Name: EventExpireVerification,
-		Src:  []string{StateFenceVerified},
-		Dst:  StateFenced,
-	})
-	events = append(events, fsm.EventDesc{
-		Name: EventExpireFence,
-		Src:  []string{StateFenced},
-		Dst:  StateInitialized,
-	})
 
+	// The FSM always starts at uninitialized, regardless of config.CurrentState
+	// (the persisted, possibly stale, mirror of a prior run's position — see
+	// tbm_executor.go's runTBMBranch, which zeroes it before calling here).
+	// There is no resume position: the command layer calls migplan.Reconcile
+	// live on every invocation and hands its fresh *migplan.Result to
+	// Execute, which walks canonicalWorkflow from the top and re-applies each
+	// step's artifact idempotently (Task 1's FenceYAML/SwitchoverYAML no-op
+	// guards make an already-complete migration a side-effect-free
+	// walk-through). This is why the old expire_* demotions — which used to
+	// re-derive a safe resume point from a point-in-time fence/verification
+	// fact after a restart — no longer exist: there is nothing to demote from
+	// when every run starts at zero.
 	orchestrator.fsm = fsm.NewFSM(
-		config.CurrentState,
+		StateUninitialized,
 		events,
 		fsm.Callbacks{
 			"before_event":               orchestrator.beforeEventCallback,
@@ -154,36 +156,12 @@ func NewTBMOrchestrator(
 		},
 	)
 
-	// Key both demotions off the state the config was loaded in, captured
-	// once here — not off orchestrator.fsm.Is after the fact. The two are
-	// independent, single-level demotions (fence_verified -> fenced,
-	// fenced -> initialized), not a cascade: re-checking fsm.Is(StateFenced)
-	// after the first demotion has already landed the FSM on fenced would
-	// fire the second unconditionally on every fence_verified resume too,
-	// demoting all the way to initialized instead of stopping at fenced.
-	bootstrapState := config.CurrentState
-
-	// fence_verified is a point-in-time attestation and never survives a
-	// restart — see EventExpireVerification.
-	if bootstrapState == StateFenceVerified {
-		if err := orchestrator.fsm.Event(context.Background(), EventExpireVerification); err != nil {
-			slog.Error("❌ failed to expire tbm fence verification at bootstrap", "error", err)
-		}
-	}
-	// The fence posture is a point-in-time fact for the same reason — see
-	// EventExpireFence.
-	if bootstrapState == StateFenced {
-		if err := orchestrator.fsm.Event(context.Background(), EventExpireFence); err != nil {
-			slog.Error("❌ failed to expire tbm fence posture at bootstrap", "error", err)
-		}
-	}
-
 	return orchestrator
 }
 
-// Execute runs the full TBM workflow from the current state, skipping any
-// already-completed steps so a re-run resumes. res is the reconcile plan the
-// caller already computed live for this manifest; onInitialize consumes it.
+// Execute runs the full TBM workflow, always from StateUninitialized (see
+// NewTBMOrchestrator). res is the reconcile plan the caller already computed
+// live for this manifest, on every invocation; onInitialize consumes it.
 // lagThreshold is the total replication lag tolerated before wait_for_lags
 // proceeds; onWaitForLags consumes it. detectUnroutedProducersDuration is the
 // monitoring window verify_fence uses to detect a producer bypassing the
@@ -305,11 +283,12 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 
 // onAbortFence runs the abort_fence rollback: it unfences the gateway to
 // restore traffic to its pre-migration state. If unfencing fails, cancel the
-// rollback so the FSM stays at fenced — the bootstrap expire_fence demotion
-// re-asserts the fenced CR on the next run before anything trusts it. Mirrors
-// migration.onAbortFence, minus the reason branch (TBM's abort_fence has only
-// one source state, fenced — every rollback is an unrouted-producer
-// detection) and the sync-config restore (TBM has no pause_offset_sync stage).
+// rollback so the FSM stays at fenced — the next run's from-zero walk
+// re-applies the fence step (a no-op rollout if the gateway never diverged)
+// before anything downstream trusts it. Mirrors migration.onAbortFence,
+// minus the reason branch (TBM's abort_fence has only one source state,
+// fenced — every rollback is an unrouted-producer detection) and the
+// sync-config restore (TBM has no pause_offset_sync stage).
 func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	o.reporter.warn("Unrouted producers detected — removing fence to restore traffic")
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
