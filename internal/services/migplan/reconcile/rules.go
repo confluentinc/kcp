@@ -132,19 +132,92 @@ func asAnySlice(ss []string) []any {
 // rules.fencing[].blocked, and a batch fence entry always means "block these
 // topics," so every consumer applying FenceYAML/SwitchoverYAML to a live
 // Gateway CR can do so unmodified.
+//
+// Idempotent: any pre-existing entry kcp itself would have authored for this
+// exact topic set (a blocked:true fence over the same names) is dropped
+// before the fresh one is prepended, so reconciling an already-fenced route
+// on a resume does not accumulate duplicate fences. Operator entries — a
+// different topic set, or blocked absent/false — never match and are
+// preserved in order.
 func (rt *RulesTree) PrependFence(topics []string) {
 	entry := map[string]any{"topics": asAnySlice(topics), "blocked": true}
 	existing, _ := sliceField(rt.root, "fencing")
-	rt.root["fencing"] = append([]any{entry}, existing...)
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpFenceFor(e, topics) {
+			continue // drop our own prior identical fence to prevent doubling
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = append([]any{entry}, kept...)
+}
+
+// isKcpFenceFor reports whether e is a fence entry kcp itself would author for
+// exactly this topic set: blocked==true and the same topics as a set. Operator
+// entries never match, so they are preserved by PrependFence's dedupe.
+func isKcpFenceFor(e any, topics []string) bool {
+	m, ok := e.(map[string]any)
+	if !ok {
+		return false
+	}
+	if b, _ := m["blocked"].(bool); !b {
+		return false
+	}
+	return sameStringSet(stringList(m, "topics"), topics)
+}
+
+// sameStringSet reports whether a and b contain the same elements irrespective
+// of order (topic lists carry no duplicates, so multiplicity is not compared).
+func sameStringSet(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	seen := make(map[string]struct{}, len(a))
+	for _, s := range a {
+		seen[s] = struct{}{}
+	}
+	for _, s := range b {
+		if _, ok := seen[s]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // PrependCondition adds an exact-name routing condition at the head of
 // rules.routing.conditions, preserving the operator's existing conditions.
+//
+// Idempotent: a pre-existing condition kcp itself would author for this exact
+// topic set AND target domain is dropped before the fresh one is prepended,
+// so a resume does not accumulate duplicate switchover conditions. A
+// condition for the same topics to a DIFFERENT domain is an operator's and is
+// preserved.
 func (rt *RulesTree) PrependCondition(topics []string, domain string) {
 	routing := rt.ensureRouting()
 	entry := map[string]any{"topics": asAnySlice(topics), "streamingDomain": domain}
 	existing, _ := sliceField(routing, "conditions")
-	routing["conditions"] = append([]any{entry}, existing...)
+	kept := make([]any, 0, len(existing))
+	for _, c := range existing {
+		if isKcpConditionFor(c, topics, domain) {
+			continue // drop our own prior identical condition to prevent doubling
+		}
+		kept = append(kept, c)
+	}
+	routing["conditions"] = append([]any{entry}, kept...)
+}
+
+// isKcpConditionFor reports whether c is a routing condition kcp itself would
+// author for exactly this topic set and target domain. A condition to a
+// different domain, or over a different topic set, never matches.
+func isKcpConditionFor(c any, topics []string, domain string) bool {
+	m, ok := c.(map[string]any)
+	if !ok {
+		return false
+	}
+	if stringField(m, "streamingDomain") != domain {
+		return false
+	}
+	return sameStringSet(stringList(m, "topics"), topics)
 }
 
 // Serialize renders the artifact as the whole hot-reloadable `rules` subtree,
