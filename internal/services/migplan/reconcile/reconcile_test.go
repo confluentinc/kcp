@@ -155,6 +155,51 @@ func TestReconcileDynamic_ResumeMixedBatch(t *testing.T) {
 	}
 }
 
+// TestReconcileDynamic_ResumeAlreadyFencedNoDouble: a resume where the live
+// route is ALREADY fenced for the batch (a prior run fenced it, then the
+// process died before switchover). Reconciling again must NOT double the
+// rules.fencing entry — exactly one fence for the batch. This is an
+// end-to-end regression guard for the Task 1/2 idempotent-prepend fix; it
+// should PASS on first run (the fix already landed).
+func TestReconcileDynamic_ResumeAlreadyFencedNoDouble(t *testing.T) {
+	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
+	// Pre-seed kcp's prior fence for exactly this batch, as a live route would
+	// present it on resume (fenced but not yet switched).
+	gw.Route.Rules["fencing"] = []any{map[string]any{"topics": []any{"t1", "t2", "t3"}, "blocked": true}}
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	if plan.Report.Refused() {
+		t.Fatalf("resume-into-fenced plan refused, want a plan: %+v", plan.Report)
+	}
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+	// The produced fence rules must carry exactly ONE fencing entry for the batch.
+	var parsed map[string]any
+	if err := yaml.Unmarshal(plan.Artifacts.FenceRules, &parsed); err != nil {
+		t.Fatalf("parsing FenceRules: %v", err)
+	}
+	rules, _ := parsed["rules"].(map[string]any)
+	fencing, _ := rules["fencing"].([]any)
+	blockedForBatch := 0
+	for _, e := range fencing {
+		m, _ := e.(map[string]any)
+		if b, _ := m["blocked"].(bool); b {
+			blockedForBatch++
+		}
+	}
+	if blockedForBatch != 1 {
+		t.Fatalf("blocked fence entries = %d, want 1 (no doubling on resume): %s", blockedForBatch, plan.Artifacts.FenceRules)
+	}
+	// And it still names the whole batch.
+	assertSetEqual(t, "fence topics", rulesFencingTopics(t, plan.Artifacts.FenceRules), []string{"t1", "t2", "t3"})
+}
+
 // TestReconcileDynamic_AllSwitchOnly is the headline resume case: every topic
 // in the batch is already promoted (STOPPED) and awaiting only the switch —
 // promote (Migratable ∪ AwaitStopped) is empty, but the batch is not a no-op:
