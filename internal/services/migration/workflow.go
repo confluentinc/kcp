@@ -469,6 +469,14 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
+	// Plan-driven no-op: reconcile emitted no migratable topics, so there is
+	// nothing to fence this run. Read the plan (config.Topics), never the
+	// live cluster — the reconcile engine already decided.
+	if len(config.Topics) == 0 {
+		s.reporter.Detail("No topics to migrate — nothing to fence")
+		return nil
+	}
+
 	// Capability must be resolved before capturePods below reads it (and
 	// before deriveFenceRoutePatch, which needs config.FenceYAML — already set
 	// by Initialize earlier in this same run). A no-op on any run past the
@@ -849,6 +857,14 @@ func (s *MigrationActions) VerifyFence(ctx context.Context, config *MigrationCon
 
 // PromoteTopics polls offsets and promotes mirror topics that reach zero lag
 func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationConfig, restAuth clusterlink.Authenticator) error {
+	// Plan-driven no-op: reconcile emitted no migratable topics, so there is
+	// nothing to promote this run. Read the plan (config.Topics), never the
+	// live cluster — the reconcile engine already decided.
+	if len(config.Topics) == 0 {
+		s.reporter.Detail("No topics to migrate — nothing to promote")
+		return nil
+	}
+
 	if s.sourceOffset == nil || s.destinationOffset == nil {
 		return fmt.Errorf("source and destination offset services are required")
 	}
@@ -1061,6 +1077,14 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 // e2e test infrastructure.
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
+
+	// Plan-driven no-op: reconcile emitted no migratable topics, so there is
+	// nothing to switch this run. Read the plan (config.Topics), never the
+	// live cluster — the reconcile engine already decided.
+	if len(config.Topics) == 0 {
+		s.reporter.Detail("No topics to migrate — nothing to switch")
+		return nil
+	}
 
 	// A no-op if FenceGateway already resolved capability earlier in this
 	// process (the normal case); only load-bearing for a resume that jumps
