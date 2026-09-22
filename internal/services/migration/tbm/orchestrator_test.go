@@ -106,22 +106,52 @@ func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
 
 // TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState replaces
 // the old ResumesFromPartialState test, which pinned the REMOVED contract:
-// construction read config.CurrentState (here, fenced) to decide where the
-// FSM started, bootstrap-demoted via the also-removed expire_fence edge. The
-// FSM now always starts at StateUninitialized regardless of
-// config.CurrentState (see TestNewTBMOrchestrator_AlwaysStartsUninitialized),
-// so a stale persisted "fenced" here changes nothing: Execute walks the whole
-// canonical workflow from Initialize, harmlessly re-running WaitForLags and
-// Fence for real — config.Topics is empty (an empty *migplan.Result is
-// passed), and both have their own no-topics guard making them a no-op
-// success.
+// construction read config.CurrentState to decide where the FSM started,
+// bootstrap-demoted via the also-removed expire_fence edge. The FSM now
+// always starts at StateUninitialized regardless of config.CurrentState (see
+// TestNewTBMOrchestrator_AlwaysStartsUninitialized), so a stale persisted
+// value here changes nothing: Execute walks the whole canonical workflow
+// from Initialize every time.
+//
+// Loops every TBM state as the stale persisted CurrentState — there is no
+// StateOffsetSyncPaused equivalent to skip, since TBM has no offset-sync
+// stage, so this covers all of them — mirroring AAO's own parity test
+// (TestOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState in
+// internal/services/migration/orchestrator_test.go). Like that test, this
+// asserts not just the terminal state but a concrete side effect: the fence
+// CR is actually (re-)applied, first, on every from-zero walk, regardless of
+// what the stale persisted state claims — proving the run never trusts a
+// persisted fenced posture, not merely that it happens to land at switched.
 func TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState(t *testing.T) {
-	orchestrator, config, _ := newTestOrchestrator(t, StateFenced)
+	for _, staleState := range []string{StateUninitialized, StateInitialized, StateLagsOk, StateFenced, StateFenceVerified, StatePromoted, StateSwitched} {
+		t.Run("stale_"+staleState, func(t *testing.T) {
+			orchestrator, config, stateFile := newTestOrchestrator(t, staleState)
 
-	require.NoError(t, orchestrator.Execute(context.Background(), &migplan.Result{}, 10, 0, clusterlink.BasicAuth{}))
+			var appliedPatches []gateway.RoutePatch
+			orchestrator.actions.gatewayService.(*mockGatewayService).patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
+				appliedPatches = append(appliedPatches, rp)
+				return configID, nil
+			}
 
-	assert.Equal(t, StateSwitched, config.CurrentState,
-		"a from-zero walk must reach switched regardless of the stale persisted state")
+			require.NoError(t, orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{}))
+
+			assert.Equal(t, StateSwitched, config.CurrentState,
+				"a from-zero walk must reach switched regardless of the stale persisted state")
+
+			loaded, err := migration.NewMigrationStateFromFile(stateFile)
+			require.NoError(t, err)
+			persisted, err := loaded.GetMigrationById("test-tbm-1")
+			require.NoError(t, err)
+			assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+			require.NotEmpty(t, appliedPatches, "a from-zero walk must (re-)apply the fence CR")
+			rules, ok := appliedPatches[0].Value.(map[string]interface{})
+			require.True(t, ok, "the first gateway patch's value must be the rules fragment map")
+			_, hasFencing := rules["fencing"]
+			assert.True(t, hasFencing,
+				"the first gateway patch of a from-zero walk is always the fence — the run never trusts a persisted fenced posture")
+		})
+	}
 }
 
 // TestTBMOrchestrator_HasPendingWork pins the HasPendingWork predicate's own
@@ -304,3 +334,523 @@ func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {
 // this file (e.g. TestTBMOrchestrator_Execute_FromZero_
 // IgnoresPersistedCurrentState), which never special-cases a stale posture
 // at all because the run never trusted it to begin with.
+
+// ----- TBM kill-point matrix (Layer 1) -----
+//
+// The tests below cover every in-scope TBM row of the kill-point test matrix
+// (Plan 2d, kill-point-test-matrix §2): construct, via the fakes plus a
+// constructed *migplan.Result, the exact live state a kill at that row's
+// point would leave, drive one from-zero Execute, and assert convergence to
+// switched plus a second Execute (fed the Result a real migplan.Reconcile
+// would return once nothing is left, killPointDoneResult) is a pure no-op —
+// zero additional gateway patches, zero additional PromoteMirrorTopics
+// calls. Mirrors internal/services/migration/orchestrator_test.go's AAO
+// kill-point matrix section exactly in shape; TBM has no offset-sync, so
+// there is no A-S1p equivalent to skip — only Layer-2 kill-injection is
+// deferred (TestTBM_Layer2_KillInjection).
+//
+// No live-observation is added anywhere: every row is expressed as fake
+// behaviour plus a constructed Result, and the FSM only ever consumes
+// config.Topics/FenceYAML/SwitchoverYAML — set once by Initialize from that
+// Result — never anything read live from the cluster to decide what to skip
+// (see workflow.go's Initialize and the plan-driven no-op guards on
+// Fence/Promote/Switch).
+
+// killPointFenceYAML and killPointSwitchoverYAML are TBM kill-point matrix
+// fixtures covering two topics (t1.order, t2.payment) — mutually consistent
+// with testGatewayYAML (same route, same rules shape as
+// realisticReconcileResult in gateway_test.go), used by every TestTBM_<row>
+// test below. The mocked gateway never parses their topic lists — only that
+// "rules" is non-empty and carries the expected top-level key ("fencing" /
+// "conditions") matters to any assertion.
+const killPointFenceYAML = `rules:
+  routing:
+    coordination:
+      group: source
+    default: source
+  fencing:
+    - topics: ["t1.order", "t2.payment"]
+      blocked: true
+`
+
+const killPointSwitchoverYAML = `rules:
+  routing:
+    coordination:
+      group: source
+    default: source
+    conditions:
+      - topics: ["t1.order", "t2.payment"]
+        streamingDomain: target
+`
+
+// killPointFullResult builds the migplan.Result for a fully migratable plan
+// covering topics — the Result every "everything still to do" row below
+// drives its first Execute call with.
+func killPointFullResult(topics []string) *migplan.Result {
+	return &migplan.Result{
+		Route:          "migration-route",
+		Topics:         topics,
+		FenceYAML:      killPointFenceYAML,
+		SwitchoverYAML: killPointSwitchoverYAML,
+		GatewayYAML:    testGatewayYAML,
+		Mode:           "dynamic",
+	}
+}
+
+// killPointDoneResult builds the migplan.Result a real migplan.Reconcile
+// returns once nothing at all remains for this batch: no per-topic promote
+// work (Topics) and no gateway-level work either (FenceYAML/SwitchoverYAML
+// empty too) — mirrors reconcileDynamic's own "nothing inflight" outcome.
+// This is the constructed Result every row's second ("must now be a no-op")
+// Execute call below is driven with.
+func killPointDoneResult() *migplan.Result {
+	return &migplan.Result{
+		Route:       "migration-route",
+		Topics:      []string{},
+		GatewayYAML: testGatewayYAML,
+		Mode:        "dynamic",
+		// FenceYAML/SwitchoverYAML deliberately left "" — nothing in flight.
+	}
+}
+
+// newTBMKillPointOrchestrator is the shared builder behind every
+// TestTBM_<row> test — TBM's counterpart to
+// internal/services/migration/orchestrator_test.go's
+// newAAOKillPointOrchestrator. It lets a row seed which of allMirrorTopics'
+// mirrors are ALREADY STOPPED before Execute ever runs — modelling exactly
+// the live state a kill at a mid/late-promote point would leave — and
+// records every gateway-route patch (in call order, as the full RoutePatch
+// so a row can inspect its rules fragment) and every PromoteMirrorTopics
+// call (topic list, in call order), so each row can assert on them directly,
+// including that a second Execute adds none.
+//
+// initialCurrentState is written onto config.CurrentState purely as
+// documentation of the persisted position a kill at this row's point would
+// leave — construction ignores it (start-from-zero: see
+// TestNewTBMOrchestrator_AlwaysStartsUninitialized and
+// TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState above),
+// so it has no effect on how Execute below behaves; it is here only so each
+// row's harness call reads as "the state a kill would leave," matching the
+// matrix.
+//
+// readyProgress, when non-empty, replaces the default (immediately
+// succeeding, no-progress-reported) WaitForGatewayReady fake with one that
+// reports each entry via onProgress, in order, before returning nil — the
+// harness's fake pod-waiter for the *u rows (T-S1u/T-S4u), exactly mirroring
+// newAAOKillPointOrchestrator's identical mechanism (see its doc comment for
+// why this is the simplest fake that both lets the wait return and still
+// proves the step observed an unconverged state before succeeding). Both
+// Fence's and Switch's confirm step share this one mock (the default
+// capability here is VerifyRollout with no configId, so VerifyTransition
+// always falls back to WaitForGatewayReady), so a non-empty readyProgress is
+// replayed on every call reaching it, fence's and switch's alike.
+func newTBMKillPointOrchestrator(
+	t *testing.T,
+	initialCurrentState string,
+	allMirrorTopics []string,
+	initiallyStopped []string,
+	readyProgress []gateway.GatewayReadinessProgress,
+) (orch *TBMOrchestrator, config *migration.MigrationConfig, stateFilePath string, patchCalls *[]gateway.RoutePatch, promoteCalls *[][]string, readyEventsOut *[]gateway.GatewayReadinessProgress) {
+	t.Helper()
+
+	config = &migration.MigrationConfig{
+		MigrationId:   "test-tbm-killpoint",
+		CurrentState:  initialCurrentState,
+		K8sNamespace:  "confluent",
+		InitialCrName: "gateway-initial",
+	}
+
+	promotedTopics := make(map[string]bool, len(initiallyStopped))
+	for _, topic := range initiallyStopped {
+		promotedTopics[topic] = true
+	}
+
+	var patches []gateway.RoutePatch
+	var promotes [][]string
+	var readyEvents []gateway.GatewayReadinessProgress
+
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, configID string) (string, error) {
+			patches = append(patches, rp)
+			return configID, nil
+		},
+		waitForGatewayReadyFn: func(ctx context.Context, namespace, name string, baselineGeneration int64, pollInterval, timeout time.Duration, onProgress func(gateway.GatewayReadinessProgress)) error {
+			for _, p := range readyProgress {
+				readyEvents = append(readyEvents, p)
+				onProgress(p)
+			}
+			return nil
+		},
+	}
+
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			out := make([]clusterlink.MirrorTopic, len(allMirrorTopics))
+			for i, name := range allMirrorTopics {
+				status := clusterlink.MirrorStatusActive
+				if promotedTopics[name] {
+					status = clusterlink.MirrorStatusStopped
+				}
+				out[i] = clusterlink.MirrorTopic{MirrorTopicName: name, MirrorStatus: status}
+			}
+			return out, nil
+		},
+		promoteMirrorTopicsFn: func(ctx context.Context, cfg clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			promotes = append(promotes, append([]string(nil), topicNames...))
+			for _, name := range topicNames {
+				promotedTopics[name] = true
+			}
+			data := make([]struct {
+				MirrorTopicName string `json:"mirror_topic_name"`
+				ErrorMessage    string `json:"error_message,omitempty"`
+				ErrorCode       int    `json:"error_code,omitempty"`
+			}, len(topicNames))
+			for i, name := range topicNames {
+				data[i].MirrorTopicName = name
+			}
+			return &clusterlink.PromoteMirrorTopicsResponse{Data: data}, nil
+		},
+	}
+
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions.promotePollInterval = time.Millisecond
+
+	stateFilePath = filepath.Join(t.TempDir(), "tbm-state.json")
+	migrationState := migration.NewMigrationState()
+
+	orch = NewTBMOrchestrator(config, actions, migrationState, stateFilePath)
+
+	return orch, config, stateFilePath, &patches, &promotes, &readyEvents
+}
+
+// loadPersistedTBMMigration loads and returns the persisted migration record
+// for migrationId from stateFilePath, failing the test on any error.
+func loadPersistedTBMMigration(t *testing.T, stateFilePath, migrationId string) *migration.MigrationConfig {
+	t.Helper()
+	loaded, err := migration.NewMigrationStateFromFile(stateFilePath)
+	require.NoError(t, err)
+	persisted, err := loaded.GetMigrationById(migrationId)
+	require.NoError(t, err)
+	return persisted
+}
+
+// TestTBM_S0_FreshFullRun covers matrix row T-S0: a pristine batch, never
+// fenced, mirrors ACTIVE, every topic migratable. A from-zero walk must
+// fence, promote both topics, and switch — and a second run, once reconcile
+// reports nothing left, must be a pure no-op.
+func TestTBM_S0_FreshFullRun(t *testing.T) {
+	topics := []string{"t1.order", "t2.payment"}
+	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateUninitialized, topics, nil, nil)
+
+	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	assert.Len(t, *patchCalls, 2, "one fence apply and one switch apply")
+	require.Len(t, *promoteCalls, 1, "both zero-lag topics promoted in one batch")
+	assert.ElementsMatch(t, topics, (*promoteCalls)[0])
+
+	// A second run: a fresh reconcile now reports nothing left at all. The
+	// from-zero walk still visits every step, but every step's plan-driven
+	// no-op guard must fire — zero new mutations.
+	patchesBefore := len(*patchCalls)
+	promotesBefore := len(*promoteCalls)
+
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+
+	assert.Len(t, *patchCalls, patchesBefore, "a completed batch's re-run must apply no gateway patches")
+	assert.Len(t, *promoteCalls, promotesBefore, "a completed batch's re-run must issue no promote calls")
+}
+
+// TestTBM_S1_AlreadyFencedNoReapply covers matrix row T-S1: the persisted
+// CurrentState a kill right after fencing would leave, mirrors still ACTIVE
+// (nothing was promoted by the prior, killed run). Construction ignores the
+// stale state (see newTBMKillPointOrchestrator's doc comment), so the FSM
+// still walks the whole workflow — there is no live read that could tell
+// this run "the route is already fenced" apart from a fresh one, so Fence's
+// apply is unconditionally re-issued every run. What this pins is that
+// re-issuing that apply is safe: exactly one fence patch, never doubled
+// (Task 2a's dynamic PrependFence idempotency), and promotion/switch proceed
+// normally — landing at the same converged, idempotent-on-a-second-run place
+// as a fresh batch.
+func TestTBM_S1_AlreadyFencedNoReapply(t *testing.T) {
+	topics := []string{"t1.order", "t2.payment"}
+	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateFenced, topics, nil, nil)
+
+	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	assert.Len(t, *patchCalls, 2,
+		"one fence re-apply plus one switch apply — never doubled by resuming into a state that already says fenced")
+	require.Len(t, *promoteCalls, 1)
+	assert.ElementsMatch(t, topics, (*promoteCalls)[0])
+
+	patchesBefore := len(*patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Len(t, *patchCalls, patchesBefore)
+	assert.Len(t, *promoteCalls, promotesBefore)
+}
+
+// TestTBM_S1u_WaitsForConvergence covers matrix row T-S1u: fenced, but the
+// serving pods have not yet converged on the fenced config. There is no
+// separate "poll until ready" loop in this test harness to hook — that loop
+// lives entirely inside the production K8sService the gateway mock replaces
+// — so "waits for convergence, then proceeds" is modelled as the mocked
+// WaitForGatewayReady call itself reporting one not-yet-converged progress
+// tick before its own converged return (see newTBMKillPointOrchestrator's
+// doc comment on readyProgress). This is the simplest fake that both lets
+// the wait return and still proves the step observed an unconverged state —
+// not reported done while unconverged — before succeeding.
+func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
+	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
+	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+	topics := []string{"t1.order", "t2.payment"}
+
+	orch, config, stateFilePath, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
+		t, StateFenced, topics, nil, []gateway.GatewayReadinessProgress{notReady, converged})
+
+	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err, "the fence step must succeed once convergence is reported, not error out on the interim tick")
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
+	first := (*readyEvents)[0]
+	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
+	last := (*readyEvents)[len(*readyEvents)-1]
+	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+
+	assert.Len(t, *patchCalls, 2)
+	require.Len(t, *promoteCalls, 1)
+
+	patchesBefore := len(*patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Len(t, *patchCalls, patchesBefore)
+	assert.Len(t, *promoteCalls, promotesBefore)
+}
+
+// TestTBM_S2_MidPromoteMix covers matrix row T-S2: a kill mid-promotion,
+// where t1.order has already reached STOPPED and t2.payment is still ACTIVE.
+// A real migplan.Reconcile excludes t1.order from the promote set entirely —
+// the filtering is reconcile's job, done once, live — so the constructed
+// Result here lists only t2.payment, exactly as the matrix row specifies
+// ("result Topics = the not-yet-STOPPED only"). This must drive Promote to
+// promote t2.payment alone, never re-issuing PromoteMirrorTopics for the
+// already-STOPPED t1.order.
+func TestTBM_S2_MidPromoteMix(t *testing.T) {
+	allTopics := []string{"t1.order", "t2.payment"}
+	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+		t, StatePromoted, allTopics, []string{"t1.order"}, nil)
+
+	midResult := &migplan.Result{
+		Route:          "migration-route",
+		Topics:         []string{"t2.payment"},
+		FenceYAML:      killPointFenceYAML,
+		SwitchoverYAML: killPointSwitchoverYAML,
+		GatewayYAML:    testGatewayYAML,
+		Mode:           "dynamic",
+	}
+
+	err := orch.Execute(context.Background(), midResult, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	require.Len(t, *promoteCalls, 1, "exactly one promote batch")
+	assert.Equal(t, []string{"t2.payment"}, (*promoteCalls)[0],
+		"only the not-yet-stopped topic is promoted — t1.order (already STOPPED) is never re-promoted")
+	assert.Len(t, *patchCalls, 2, "fence + switch, gated by the still-nonempty (single-topic) plan")
+
+	patchesBefore := len(*patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Len(t, *patchCalls, patchesBefore)
+	assert.Len(t, *promoteCalls, promotesBefore)
+}
+
+// TestTBM_S3_PromotedNotSwitched covers matrix row T-S3 — the bug-fix
+// regression row: every mirror already STOPPED (nothing left to promote) but
+// the switch not yet applied. A real migplan.Reconcile for this state
+// returns Topics=[] but non-empty FenceYAML/SwitchoverYAML (reconcile's
+// promote set excludes already-stopped topics, but its inflight set — which
+// gates whether artifacts are built at all — still includes them, since the
+// switch is still owed). Before Task 1's fix, Fence and Switch both no-op'd
+// on the same len(config.Topics)==0 check Promote correctly uses, so they
+// would have BOTH incorrectly no-op'd too, never applying the still-owed
+// switch — a real correctness bug (a kill right after the last topic's
+// promote completes would report the batch falsely complete without ever
+// switching the gateway). This test pins the fix: Promote makes no call at
+// all, but Switch still applies and the run still converges.
+func TestTBM_S3_PromotedNotSwitched(t *testing.T) {
+	allTopics := []string{"t1.order", "t2.payment"}
+	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+		t, StatePromoted, allTopics, allTopics, nil)
+
+	allPromotedResult := &migplan.Result{
+		Route:          "migration-route",
+		Topics:         []string{},
+		FenceYAML:      killPointFenceYAML,
+		SwitchoverYAML: killPointSwitchoverYAML,
+		GatewayYAML:    testGatewayYAML,
+		Mode:           "dynamic",
+	}
+
+	err := orch.Execute(context.Background(), allPromotedResult, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	assert.Empty(t, *promoteCalls, "nothing left to promote — Promote must make no call at all")
+	assert.Len(t, *patchCalls, 2,
+		"fence + switch must both still apply — a non-empty artifact is owed regardless of the empty promote set")
+
+	patchesBefore := len(*patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Len(t, *patchCalls, patchesBefore)
+	assert.Len(t, *promoteCalls, promotesBefore)
+}
+
+// TestTBM_S4u_SwitchWaitsForConvergence covers matrix row T-S4u: the switch
+// CR landed but the serving pods have not yet converged on it. Like T-S3,
+// this needs Topics=[] (nothing left to promote) with a non-empty
+// SwitchoverYAML for the switch to actually run — feasible only after the
+// per-artifact no-op fix pinned by TestTBM_S3_PromotedNotSwitched. The
+// convergence wait is faked the same way as TestTBM_S1u_WaitsForConvergence:
+// the mocked WaitForGatewayReady call itself reports a not-yet-converged
+// progress tick before its own converged return.
+func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
+	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
+	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+	allTopics := []string{"t1.order", "t2.payment"}
+
+	orch, config, stateFilePath, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
+		t, StateSwitched, allTopics, allTopics, []gateway.GatewayReadinessProgress{notReady, converged})
+
+	allPromotedResult := &migplan.Result{
+		Route:          "migration-route",
+		Topics:         []string{},
+		FenceYAML:      killPointFenceYAML,
+		SwitchoverYAML: killPointSwitchoverYAML,
+		GatewayYAML:    testGatewayYAML,
+		Mode:           "dynamic",
+	}
+
+	err := orch.Execute(context.Background(), allPromotedResult, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err, "the switch step must succeed once convergence is reported, not error out on the interim tick")
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
+	first := (*readyEvents)[0]
+	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
+	last := (*readyEvents)[len(*readyEvents)-1]
+	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+
+	assert.Empty(t, *promoteCalls)
+	assert.Len(t, *patchCalls, 2)
+
+	patchesBefore := len(*patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Len(t, *patchCalls, patchesBefore)
+	assert.Len(t, *promoteCalls, promotesBefore)
+}
+
+// TestTBM_S4_DoneIsNoop covers matrix row T-S4 — the important one: it pins
+// the deleted HasPendingWork short-circuit's replacement. Live state: fully
+// switched already, batch fence gone, every mirror STOPPED. A real
+// migplan.Reconcile classifies the batch Unchanged and returns a Result with
+// no artifacts at all (killPointDoneResult): Topics, FenceYAML and
+// SwitchoverYAML all empty. Every one of Fence/Promote/Switch's plan-driven
+// no-op guards must fire — zero patches, zero promotes — and the FSM still
+// walks through every step to switched rather than needing any special-cased
+// short-circuit to get there.
+func TestTBM_S4_DoneIsNoop(t *testing.T) {
+	allTopics := []string{"t1.order", "t2.payment"}
+	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+		t, StateSwitched, allTopics, allTopics, nil)
+
+	err := orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	assert.Empty(t, *patchCalls, "zero gateway patches — fence and switch must both no-op")
+	assert.Empty(t, *promoteCalls, "zero promote calls")
+
+	// A second Execute is byte-for-byte identical: still zero mutations.
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	assert.Empty(t, *patchCalls)
+	assert.Empty(t, *promoteCalls)
+}
+
+// TestTBM_M_MultiBatchComposite covers matrix row T-M: a multi-batch
+// composite where t0.legacy is a wholly separate, already-fully-migrated
+// batch — Unchanged by reconcile (it never appears in Topics/FenceYAML/
+// SwitchoverYAML at all, unlike T-S2's t1.order, which is still part of the
+// same inflight plan), its mirror STOPPED from the very start of this run —
+// while t1.order/t2.payment are a second, still-migratable batch in the same
+// Result. This must converge the active batch to switched while never
+// touching t0.legacy (no PromoteMirrorTopics call ever names it) and never
+// doubling the fence/switch patch count for having two batches present.
+func TestTBM_M_MultiBatchComposite(t *testing.T) {
+	allTopics := []string{"t0.legacy", "t1.order", "t2.payment"}
+	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+		t, StateUninitialized, allTopics, []string{"t0.legacy"}, nil)
+
+	activeTopics := []string{"t1.order", "t2.payment"}
+	res := killPointFullResult(activeTopics)
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	assert.Len(t, *patchCalls, 2, "one fence, one switch — never doubled for having two batches present")
+	require.Len(t, *promoteCalls, 1, "the active batch promotes together, in one call")
+	assert.ElementsMatch(t, activeTopics, (*promoteCalls)[0])
+	for _, call := range *promoteCalls {
+		assert.NotContains(t, call, "t0.legacy", "the completed batch's topic must never be re-promoted")
+	}
+
+	patchesBefore := len(*patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Len(t, *patchCalls, patchesBefore)
+	assert.Len(t, *promoteCalls, promotesBefore)
+}
+
+// TestTBM_Layer2_KillInjection would cover Layer 2 of the matrix — proving a
+// real kill at point P (via a failure-injection harness) actually leaves
+// live state S, rather than constructing S directly via fakes as every
+// Layer-1 row above does. Deferred: the failure-injection harness itself is
+// a later build-order plan; this task does Layer 1 only.
+func TestTBM_Layer2_KillInjection(t *testing.T) {
+	t.Skip("failure-injection harness is a later build-order plan")
+}
