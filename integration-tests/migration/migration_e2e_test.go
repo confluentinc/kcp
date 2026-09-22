@@ -892,6 +892,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 	manifestPath := manifestPathFor(cfg)
 	opts := manifestOptsFor(cfg)
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 
 	// Make sure no leftover producer is running from a prior test.
 	stopProducer(t, cfg)
@@ -1042,6 +1043,7 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 	manifestPath := manifestPathFor(cfg)
 	opts := manifestOptsFor(cfg)
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 	opts.Policy.ConsumerOffsetSyncDrain = drain
 
 	// No leftover producer from a prior test.
@@ -1149,6 +1151,7 @@ func TestMigrationE2E_PauseOffsetSync_ExecuteRefuses(t *testing.T) {
 	manifestPath := manifestPathFor(cfg)
 	opts := manifestOptsFor(cfg)
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 
 	writeManifestToPod(t, cfg, manifestPath, opts)
 
@@ -1187,6 +1190,7 @@ func TestMigrationE2E_PauseOffsetSync_RestoresFilters(t *testing.T) {
 	manifestPath := manifestPathFor(cfg)
 	opts := manifestOptsFor(cfg)
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 	stopProducer(t, cfg)
 
 	const filtersKey = "consumer.offset.group.filters"
@@ -1495,6 +1499,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 	manifestPath := manifestPathFor(cfg)
 	opts := manifestOptsFor(cfg)
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 	opts.Policy.DetectUnroutedProducers = 10 * time.Second
 	stopProducer(t, cfg)
 
@@ -1668,6 +1673,7 @@ func TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence(t *testing.T) {
 	manifestPath := manifestPathFor(cfg)
 	opts := manifestOptsFor(cfg)
 	opts.PauseConsumerOffsetSync = true
+	opts.ConsumerOffsetSyncBaseline = "enabled"
 	opts.Policy.DetectUnroutedProducers = 10 * time.Second
 	stopProducer(t, cfg)
 

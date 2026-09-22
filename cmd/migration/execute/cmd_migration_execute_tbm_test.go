@@ -496,16 +496,17 @@ func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
 		"TBM has no offset-sync-pause stage, so this field stays zero")
 }
 
-// --- Test 4: pauseConsumerOffsetSync on a dynamic route warns, never refuses ---
+// --- Test 4: pauseConsumerOffsetSync on a dynamic route only refuses on a fresh run ---
 
 // TestExecute_DynamicMode_PauseOffsetSyncSet_ProceedsWithoutRefusing confirms
-// the "proceeds" half of Decision 6: a dynamic-mode migration whose manifest
-// carries spec.clusterLink.pauseConsumerOffsetSync: true is NOT refused — it
-// completes the run. (The warning that accompanies it fires only on the
-// StateUninitialized reconcile path, which needs live infrastructure this
-// process does not have; the warning decision itself is unit-tested below in
-// TestPauseOffsetSyncRefusedForDynamic.) The config must carry the same flag as
-// the manifest, or detectDrift would refuse first for an unrelated reason.
+// the refusal is scoped to registration: a FRESH dynamic-mode run whose
+// manifest carries spec.clusterLink.pauseConsumerOffsetSync: true is refused
+// (pinned below in TestPauseOffsetSyncRefusedForDynamic, which exercises the
+// StateUninitialized reconcile path). This test instead seeds state already at
+// StatePromoted, i.e. a RESUME of a migration that registered before the flag
+// was set — that path never re-enters the refusal branch, so the run proceeds
+// to completion. The config must carry the same flag as the manifest, or
+// detectDrift would refuse first for an unrelated reason.
 func TestExecute_DynamicMode_PauseOffsetSyncSet_ProceedsWithoutRefusing(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return strings.Replace(doc, "    name: msk-to-cc\n", "    name: msk-to-cc\n    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", 1)

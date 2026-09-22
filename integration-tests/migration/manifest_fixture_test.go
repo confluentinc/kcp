@@ -37,8 +37,9 @@ type manifestOpts struct {
 	DestKafkaCredPath string
 	LinkCredPath      string
 
-	PauseConsumerOffsetSync bool
-	Policy                  policyOpts
+	PauseConsumerOffsetSync    bool
+	ConsumerOffsetSyncBaseline string
+	Policy                     policyOpts
 }
 
 // credentialFiles are the three credentials files the manifest references.
