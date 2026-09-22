@@ -469,11 +469,17 @@ func (s *MigrationActions) waitForGatewayAccepted(ctx context.Context, config *M
 func (s *MigrationActions) FenceGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("fencing gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
-	// Plan-driven no-op: reconcile emitted no migratable topics, so there is
-	// nothing to fence this run. Read the plan (config.Topics), never the
-	// live cluster — the reconcile engine already decided.
-	if len(config.Topics) == 0 {
-		s.reporter.Detail("No topics to migrate — nothing to fence")
+	// Plan-driven no-op: reconcile emitted no fence artifact, so there is
+	// nothing to fence this run. Read the plan (config.FenceYAML), never the
+	// live cluster — the reconcile engine already decided. This is
+	// deliberately NOT keyed on config.Topics: fence is a whole-route action
+	// independent of per-topic promote status, and reconcile can return an
+	// empty promote set (nothing left to promote) while still owing a fence —
+	// e.g. every topic already promoted to STOPPED but the switch not yet
+	// applied (matrix row A-S3). Gating on Topics there would silently skip
+	// the still-owed fence/switch.
+	if config.FenceYAML == "" {
+		s.reporter.Detail("No fence artifact in plan — nothing to fence")
 		return nil
 	}
 
@@ -1078,11 +1084,15 @@ func (s *MigrationActions) PromoteTopics(ctx context.Context, config *MigrationC
 func (s *MigrationActions) SwitchGateway(ctx context.Context, config *MigrationConfig) error {
 	slog.Debug("switching gateway", "gateway", config.InitialCrName, "namespace", config.K8sNamespace)
 
-	// Plan-driven no-op: reconcile emitted no migratable topics, so there is
-	// nothing to switch this run. Read the plan (config.Topics), never the
-	// live cluster — the reconcile engine already decided.
-	if len(config.Topics) == 0 {
-		s.reporter.Detail("No topics to migrate — nothing to switch")
+	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
+	// nothing to switch this run. Read the plan (config.SwitchoverYAML),
+	// never the live cluster — the reconcile engine already decided. Not
+	// keyed on config.Topics for the same reason as FenceGateway's guard
+	// (see its comment): switch is a whole-route action independent of
+	// per-topic promote status, and an empty promote set does not mean the
+	// switch itself is done.
+	if config.SwitchoverYAML == "" {
+		s.reporter.Detail("No switchover artifact in plan — nothing to switch")
 		return nil
 	}
 

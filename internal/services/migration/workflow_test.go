@@ -1108,12 +1108,15 @@ func TestWorkflow_FenceGateway_DefaultRolloutTimeoutIsZero(t *testing.T) {
 	assert.Equal(t, time.Duration(0), observedTimeout, "default rolloutTimeout should be 0 (no deadline)")
 }
 
-// TestWorkflow_FenceGateway_NoTopicsIsNoop asserts the plan-driven no-op
-// guard: when reconcile emitted no migratable topics, FenceGateway returns
-// nil immediately and never touches the gateway (no capability resolution,
-// no patch, no wait). config carries no GatewayYAML/FenceYAML/SwitchoverYAML
-// either — proving the guard fires before anything that would need them.
-func TestWorkflow_FenceGateway_NoTopicsIsNoop(t *testing.T) {
+// TestWorkflow_FenceGateway_NoFenceYAMLIsNoop asserts the plan-driven no-op
+// guard: when reconcile emitted no fence artifact, FenceGateway returns nil
+// immediately and never touches the gateway (no capability resolution, no
+// patch, no wait). config carries no GatewayYAML/SwitchoverYAML either —
+// proving the guard fires before anything that would need them. Fence's
+// no-op signal is FenceYAML, deliberately NOT config.Topics — see
+// TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences below
+// for why a shared Topics-based guard would be wrong.
+func TestWorkflow_FenceGateway_NoFenceYAMLIsNoop(t *testing.T) {
 	var applyCalls int64
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
@@ -1122,11 +1125,40 @@ func TestWorkflow_FenceGateway_NoTopicsIsNoop(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{Topics: nil}
+	config := &MigrationConfig{Topics: []string{"topic-a"}, FenceYAML: ""}
 
 	err := wf.FenceGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), atomic.LoadInt64(&applyCalls), "no topics to fence: gateway must not be touched")
+	assert.Equal(t, int64(0), atomic.LoadInt64(&applyCalls), "no fence artifact in plan: gateway must not be touched")
+}
+
+// TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences pins the
+// matrix row A-S3 shape at the unit level: reconcile can return an empty
+// promote set (config.Topics == nil — every topic already promoted to
+// STOPPED) while a fence artifact is still present, because fence is a
+// whole-route action independent of per-topic promote status. Gating on
+// Topics here would silently skip a still-owed fence (and, on a real
+// cluster, the switch right after it) — this is the production bug this
+// guard rework fixes.
+func TestWorkflow_FenceGateway_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
+	var applyCalls int64
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return configID, nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{
+		K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR,
+		Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML,
+		Topics: nil,
+	}
+
+	err := wf.FenceGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"a non-empty fence artifact must still be applied even when there is nothing left to promote")
 }
 
 func TestWorkflow_SwitchGateway_HappyPath(t *testing.T) {
@@ -1335,10 +1367,13 @@ func TestWorkflow_SwitchGateway_PassesRolloutTimeoutToAcceptanceWait(t *testing.
 	assert.Equal(t, 15*time.Minute, observedTimeout)
 }
 
-// TestWorkflow_SwitchGateway_NoTopicsIsNoop asserts the plan-driven no-op
-// guard: when reconcile emitted no migratable topics, SwitchGateway returns
-// nil immediately and never touches the gateway.
-func TestWorkflow_SwitchGateway_NoTopicsIsNoop(t *testing.T) {
+// TestWorkflow_SwitchGateway_NoSwitchoverYAMLIsNoop asserts the plan-driven
+// no-op guard: when reconcile emitted no switchover artifact, SwitchGateway
+// returns nil immediately and never touches the gateway. Switch's no-op
+// signal is SwitchoverYAML, deliberately NOT config.Topics — see
+// TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches
+// below for why a shared Topics-based guard would be wrong.
+func TestWorkflow_SwitchGateway_NoSwitchoverYAMLIsNoop(t *testing.T) {
 	var applyCalls int64
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
@@ -1347,11 +1382,41 @@ func TestWorkflow_SwitchGateway_NoTopicsIsNoop(t *testing.T) {
 		},
 	}
 	wf := NewMigrationActions(gw, &mockClusterLinkService{})
-	config := &MigrationConfig{Topics: nil}
+	config := &MigrationConfig{Topics: []string{"topic-a"}, SwitchoverYAML: ""}
 
 	err := wf.SwitchGateway(context.Background(), config)
 	require.NoError(t, err)
-	assert.Equal(t, int64(0), atomic.LoadInt64(&applyCalls), "no topics to switch: gateway must not be touched")
+	assert.Equal(t, int64(0), atomic.LoadInt64(&applyCalls), "no switchover artifact in plan: gateway must not be touched")
+}
+
+// TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches
+// pins the matrix row A-S3 shape at the unit level: reconcile can return an
+// empty promote set (config.Topics == nil — every topic already promoted to
+// STOPPED) while a switchover artifact is still present and owed, because
+// switch is a whole-route action independent of per-topic promote status.
+// Gating on Topics here is the exact production bug this guard rework
+// fixes: a kill right after the last topic's promote completes would
+// otherwise report the migration complete without ever switching the
+// gateway.
+func TestWorkflow_SwitchGateway_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
+	var applyCalls int64
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {
+			atomic.AddInt64(&applyCalls, 1)
+			return configID, nil
+		},
+	}
+	wf := NewMigrationActions(gw, &mockClusterLinkService{})
+	config := &MigrationConfig{
+		K8sNamespace: "ns", InitialCrName: "gw-1", GatewayYAML: testInitialCR,
+		Route: "migration-route", Mode: "static", FenceYAML: testFenceYAML, SwitchoverYAML: testSwitchoverYAML,
+		Topics: nil,
+	}
+
+	err := wf.SwitchGateway(context.Background(), config)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
+		"a non-empty switchover artifact must still be applied even when there is nothing left to promote")
 }
 
 // TestWorkflow_UnfenceGateway_OperatorRejection_Fails covers the rollback path:

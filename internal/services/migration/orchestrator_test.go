@@ -2062,44 +2062,102 @@ func TestAAO_S2_MidPromoteMix(t *testing.T) {
 	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
-// TestAAO_S3_PromotedNotSwitched would cover matrix row A-S3 (all topics
-// promoted to STOPPED, route still pointed at source, switch not yet
-// applied) but is blocked by a production-code gap discovered while writing
-// this suite — see the Skip reason for the full detail. Left in as a named,
-// visible gap rather than a silently missing row.
+// TestAAO_S3_PromotedNotSwitched covers matrix row A-S3: every mirror
+// already STOPPED (nothing left to promote) but the switch not yet applied.
+// A real migplan.Reconcile for this state returns Topics=[] but non-empty
+// FenceYAML/SwitchoverYAML (see internal/services/migplan/reconcile/
+// reconcile.go's reconcileStatic: its 'promote' set excludes SwitchOnly
+// topics, but its 'inflight' set — which gates whether Artifacts are built
+// at all — includes them). This was previously infeasible: FenceGateway and
+// SwitchGateway both no-op'd on the same len(config.Topics)==0 check
+// PromoteTopics correctly uses, so they would have BOTH incorrectly no-op'd
+// too, never applying the still-owed switch — a real correctness bug (a
+// kill right after the last topic's promote completes would report the
+// migration falsely complete without ever switching the gateway). Fixed by
+// giving Fence/Switch their own per-artifact no-op signal
+// (config.FenceYAML/config.SwitchoverYAML) instead of sharing Promote's
+// Topics-based one — see workflow.go's FenceGateway/SwitchGateway guard
+// comments. This test pins that fix: promote makes no call at all, but
+// switch still applies and the run still converges.
 func TestAAO_S3_PromotedNotSwitched(t *testing.T) {
-	t.Skip("production gap, not a test-fake limitation: a real migplan.Reconcile " +
-		"for this state (every mirror STOPPED, still needing the gateway-level " +
-		"switch) returns Topics=[] but non-empty FenceYAML/SwitchoverYAML — see " +
-		"internal/services/migplan/reconcile/reconcile.go's reconcileStatic: its " +
-		"'promote' set (-> Result.Topics) excludes SwitchOnly topics, but its " +
-		"'inflight' set (which gates whether Artifacts are built at all) includes " +
-		"them, so FenceRules/SwitchoverRules are still populated even when Topics " +
-		"is empty. But FenceGateway and SwitchGateway (workflow.go ~L475, ~L1084) " +
-		"both no-op on the exact same len(config.Topics)==0 check PromoteTopics " +
-		"correctly uses — so with that Result they would BOTH incorrectly no-op " +
-		"too, never applying the still-owed switch. Constructing a Result with a " +
-		"non-empty Topics instead would dodge that guard but make PromoteTopics " +
-		"re-promote the already-STOPPED topics, contradicting TestAAO_S2's 'no " +
-		"re-promote of STOPPED'. Neither construction lets this row pass without " +
-		"either faking around the guard or asserting an incorrect no-op as " +
-		"correct, so this is left skipped for the controller to decide: it looks " +
-		"like a real correctness bug — a kill right after the last topic's " +
-		"promote completes would report the migration falsely complete without " +
-		"ever switching the gateway.")
+	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(
+		t, StatePromoted, []string{"topic-a", "topic-b"}, nil)
+
+	allPromotedResult := &migplan.Result{
+		Route:          "migration-route",
+		Topics:         []string{},
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+	}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, allPromotedResult)
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	assert.Empty(t, *promoteCalls, "nothing left to promote — PromoteTopics must make no call at all")
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls),
+		"fence + switch must both still apply — a non-empty artifact is owed regardless of the empty promote set")
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls))
+	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
-// TestAAO_S4u_SwitchWaitsForConvergence would cover matrix row A-S4u (switch
-// applied, pods not yet converged) but is blocked by the same production
-// gap as TestAAO_S3_PromotedNotSwitched.
+// TestAAO_S4u_SwitchWaitsForConvergence covers matrix row A-S4u: the switch
+// CR landed but the serving pods have not yet converged on it. Like A-S3,
+// this needs Topics=[] (nothing left to promote) with a non-empty
+// SwitchoverYAML for the switch to actually run — now feasible after the
+// per-artifact no-op fix (see TestAAO_S3_PromotedNotSwitched). The
+// convergence wait is faked the same way as TestAAO_S1u_
+// WaitsForConvergence: the mocked WaitForGatewayReady call itself reports a
+// not-yet-converged progress tick before its own converged return, since
+// there is no separate "poll until ready" loop in this harness to hook (see
+// newAAOKillPointOrchestrator's doc comment on readyProgress).
 func TestAAO_S4u_SwitchWaitsForConvergence(t *testing.T) {
-	t.Skip("blocked by the same production gap as TestAAO_S3_PromotedNotSwitched: " +
-		"exercising the switch step's own convergence wait requires the switch to " +
-		"actually run, which — for 'all promoted, switch applied but pods not yet " +
-		"converged' — needs a Result with Topics=[] (nothing left to promote); " +
-		"SwitchGateway's len(config.Topics)==0 no-op guard (workflow.go ~L1084) " +
-		"fires first and the wait is never reached. See TestAAO_S3_" +
-		"PromotedNotSwitched's skip reason for the full detail.")
+	notReady := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 0}
+	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
+
+	orch, config, stateFilePath, patchCalls, promoteCalls, readyEvents := newAAOKillPointOrchestrator(
+		t, StateSwitched, []string{"topic-a", "topic-b"}, []gateway.GatewayReadinessProgress{notReady, converged})
+
+	allPromotedResult := &migplan.Result{
+		Route:          "migration-route",
+		Topics:         []string{},
+		FenceYAML:      testFenceYAML,
+		SwitchoverYAML: testSwitchoverYAML,
+		GatewayYAML:    testInitialCR,
+		Mode:           "static",
+	}
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, allPromotedResult)
+	require.NoError(t, err, "the switch step must succeed once convergence is reported, not error out on the interim tick")
+	assert.Equal(t, StateSwitched, config.CurrentState)
+	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
+	assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
+	first := (*readyEvents)[0]
+	assert.NotEqual(t, first.InitialPodCount, first.PodsReady,
+		"the first reported tick must be the not-yet-converged one — the step must not appear done while unconverged")
+	last := (*readyEvents)[len(*readyEvents)-1]
+	assert.Equal(t, last.InitialPodCount, last.PodsReady, "the wait must end at convergence")
+
+	assert.Empty(t, *promoteCalls)
+	assert.Equal(t, int64(2), atomic.LoadInt64(patchCalls))
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls))
+	assert.Equal(t, promotesBefore, len(*promoteCalls))
 }
 
 // TestAAO_S4_DoneIsNoop covers matrix row A-S4 — the important one: it pins
