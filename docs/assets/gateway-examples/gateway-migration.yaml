@@ -74,6 +74,11 @@ spec:
     # Disable the link's consumer.offset.sync.enable during apply and restore it
     # after switchover. Requires the link to currently have it enabled.
     pauseConsumerOffsetSync: true
+    # The state consumer.offset.sync.enable was in BEFORE this migration started
+    # ("enabled" or "disabled"). Required when pauseConsumerOffsetSync is set,
+    # since a resumed run cannot observe the pre-migration value itself; kcp
+    # restores sync to this value once the migration completes or fails.
+    consumerOffsetSyncBaseline: enabled
 
   gateway:
     namespace: confluent

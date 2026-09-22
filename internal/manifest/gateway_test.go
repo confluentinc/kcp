@@ -390,6 +390,47 @@ func TestGateway_PauseConsumerOffsetSyncDefaultsFalse(t *testing.T) {
 	assert.False(t, g.Spec.ClusterLink.PauseConsumerOffsetSync)
 }
 
+// TestValidate_ConsumerOffsetSyncBaseline — spec.clusterLink.consumerOffsetSyncBaseline
+// is required (enabled|disabled) when pauseConsumerOffsetSync is set (a resumed
+// run cannot observe the pre-migration value), and, if set at all, must be one
+// of those two values regardless of pause.
+func TestValidate_ConsumerOffsetSyncBaseline(t *testing.T) {
+	cases := []struct {
+		name       string
+		pause      bool
+		baseline   string
+		wantErrHas string // "" = expect NO error about the baseline field
+	}{
+		{"pause+enabled ok", true, OffsetSyncBaselineEnabled, ""},
+		{"pause+disabled ok", true, OffsetSyncBaselineDisabled, ""},
+		{"pause+missing baseline errors", true, "", "consumerOffsetSyncBaseline"},
+		{"pause+invalid baseline errors", true, "on", "consumerOffsetSyncBaseline"},
+		{"no pause, baseline omitted ok", false, "", ""},
+		{"no pause, invalid baseline still errors", false, "yes", "consumerOffsetSyncBaseline"},
+		{"no pause, valid baseline ok", false, OffsetSyncBaselineEnabled, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			g := parseGateway(t, validGatewayDoc)
+			g.Spec.ClusterLink.PauseConsumerOffsetSync = c.pause
+			g.Spec.ClusterLink.ConsumerOffsetSyncBaseline = c.baseline
+			errs := g.Validate()
+
+			var joined []string
+			for _, e := range errs {
+				joined = append(joined, e.Error())
+			}
+			got := strings.Join(joined, "; ")
+
+			if c.wantErrHas == "" {
+				assert.NotContains(t, got, "consumerOffsetSyncBaseline", "unexpected baseline error: %s", got)
+			} else {
+				requireErrContains(t, errs, c.wantErrHas)
+			}
+		})
+	}
+}
+
 func TestGateway_RequiresGatewayNamespace(t *testing.T) {
 	g := parseGateway(t, withField(t, "    namespace: confluent", "    namespace: \"\""))
 	requireErrContains(t, g.Validate(), "spec.gateway.namespace")

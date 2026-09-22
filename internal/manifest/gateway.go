@@ -70,6 +70,14 @@ type GatewayTarget struct {
 	Kafka     *TargetKafka `yaml:"kafka" json:"kafka"`
 }
 
+// Offset-sync baseline values: the operator-declared state of the cluster
+// link's consumer.offset.sync.enable BEFORE the migration started. Required
+// when pauseConsumerOffsetSync is set; a later run restores sync to this value.
+const (
+	OffsetSyncBaselineEnabled  = "enabled"
+	OffsetSyncBaselineDisabled = "disabled"
+)
+
 type GatewayClusterLink struct {
 	// Name identifies an ALREADY EXISTING cluster link; this kind never creates one.
 	Name string `yaml:"name" json:"name"`
@@ -83,6 +91,12 @@ type GatewayClusterLink struct {
 	// from the Kafka leg.
 	LinkCredentials         CredentialsRef `yaml:"linkCredentials" json:"linkCredentials"`
 	PauseConsumerOffsetSync bool           `yaml:"pauseConsumerOffsetSync,omitempty" json:"pauseConsumerOffsetSync,omitempty"`
+	// ConsumerOffsetSyncBaseline is the state consumer.offset.sync.enable was in
+	// before the migration started ("enabled" or "disabled"). Required when
+	// PauseConsumerOffsetSync is set: because a resumed run cannot observe the
+	// pre-migration value (a fenced link with sync disabled is ambiguous), the
+	// operator declares it here and kcp restores sync to it at the end.
+	ConsumerOffsetSyncBaseline string `yaml:"consumerOffsetSyncBaseline,omitempty" json:"consumerOffsetSyncBaseline,omitempty"`
 }
 
 // Route names the route on the live Gateway CR to fence/switch, the target
@@ -282,6 +296,19 @@ func (g *GatewayMigration) Validate() []error {
 	}
 	if blankRef(g.Spec.ClusterLink.LinkCredentials) {
 		add("spec.clusterLink.linkCredentials: must not be empty")
+	}
+
+	// consumerOffsetSyncBaseline: required (enabled|disabled) when pausing;
+	// if set at all it must be a valid value.
+	switch b := g.Spec.ClusterLink.ConsumerOffsetSyncBaseline; {
+	case b == "":
+		if g.Spec.ClusterLink.PauseConsumerOffsetSync {
+			add("spec.clusterLink.consumerOffsetSyncBaseline: required when pauseConsumerOffsetSync is set; must be %q or %q",
+				OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled)
+		}
+	case b != OffsetSyncBaselineEnabled && b != OffsetSyncBaselineDisabled:
+		add("spec.clusterLink.consumerOffsetSyncBaseline: must be %q or %q (got %q)",
+			OffsetSyncBaselineEnabled, OffsetSyncBaselineDisabled, b)
 	}
 
 	// --- gateway ---
