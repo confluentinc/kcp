@@ -45,6 +45,10 @@ func hotReloadConfig() *MigrationConfig {
 		Mode:           "static",
 		FenceYAML:      testFenceYAML,
 		SwitchoverYAML: testSwitchoverYAML,
+		// Non-empty so FenceGateway/SwitchGateway's plan-driven no-op guard
+		// (len(config.Topics) == 0) does not short-circuit these tests before
+		// they reach the hot-reload/configId behaviour under test.
+		Topics: []string{"topic-a", "topic-b", "topic-c"},
 	}
 }
 
