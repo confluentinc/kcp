@@ -598,24 +598,24 @@ func TestExecute_DynamicModeEntry_DriftRefusesUnconditionally(t *testing.T) {
 		"a refused run must not advance the migration")
 }
 
-// --- warning decision (the half of Decision 6 the command path cannot reach) ---
+// --- refusal decision (the half of Decision 6 the command path cannot reach) ---
 
-// TestPauseOffsetSyncIgnoredForDynamic pins the exact warn-not-refuse decision
+// TestPauseOffsetSyncRefusedForDynamic pins the exact refusal decision
 // runMigrationExecute makes on the StateUninitialized reconcile path: a
-// pauseConsumerOffsetSync manifest is a no-op warning for a dynamic route and
-// silent for a static one (which honors the field). That branch is unreachable
-// through the command in-process (it needs a live migplan.Reconcile), so the
-// decision is factored into pauseOffsetSyncIgnoredForDynamic and asserted
-// directly here.
-func TestPauseOffsetSyncIgnoredForDynamic(t *testing.T) {
+// pauseConsumerOffsetSync manifest is refused for a dynamic route and
+// permitted for a static one (which honors the field). That branch is
+// unreachable through the command in-process (it needs a live
+// migplan.Reconcile), so the decision is factored into
+// pauseOffsetSyncRefusedForDynamic and asserted directly here.
+func TestPauseOffsetSyncRefusedForDynamic(t *testing.T) {
 	set := &manifest.GatewayMigration{}
 	set.Spec.ClusterLink.PauseConsumerOffsetSync = true
 	unset := &manifest.GatewayMigration{}
 
-	assert.True(t, pauseOffsetSyncIgnoredForDynamic("dynamic", set),
-		"a dynamic route with pauseConsumerOffsetSync set must warn (the field is ignored)")
-	assert.False(t, pauseOffsetSyncIgnoredForDynamic("dynamic", unset),
-		"nothing to warn about when the field is unset")
-	assert.False(t, pauseOffsetSyncIgnoredForDynamic("static", set),
-		"a static route honors pauseConsumerOffsetSync — no warning")
+	assert.True(t, pauseOffsetSyncRefusedForDynamic("dynamic", set),
+		"a dynamic route with pauseConsumerOffsetSync set must be refused")
+	assert.False(t, pauseOffsetSyncRefusedForDynamic("dynamic", unset),
+		"nothing to refuse when the field is unset")
+	assert.False(t, pauseOffsetSyncRefusedForDynamic("static", set),
+		"a static route honors pauseConsumerOffsetSync — no refusal")
 }

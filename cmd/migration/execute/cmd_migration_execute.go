@@ -279,12 +279,13 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		mode = reconcileResult.Mode
 
 		// Pause-offset-sync has no effect for a topic-based (dynamic)
-		// migration — TBM's FSM has no offset_sync_paused state at all. Warn
-		// rather than refuse: the field may be set on a manifest template
-		// shared with static routes for an unrelated reason.
-		if pauseOffsetSyncIgnoredForDynamic(mode, g) {
-			slog.Warn("⚠️ spec.clusterLink.pauseConsumerOffsetSync has no effect for topic-based migrations; ignoring",
-				"migration_id", id)
+		// migration — TBM's FSM has no offset_sync_paused state at all. A
+		// dynamic route requires consumer offset sync to be disabled, so
+		// pausing it is contradictory; refuse rather than silently ignore.
+		if pauseOffsetSyncRefusedForDynamic(mode, g) {
+			return fmt.Errorf(
+				"spec.clusterLink.pauseConsumerOffsetSync is not supported for a topic-based (dynamic) route %q: a dynamic route requires consumer offset sync to be disabled, so there is nothing to pause — remove pauseConsumerOffsetSync (and consumerOffsetSyncBaseline) from the manifest",
+				g.Spec.Route.Name)
 		}
 	}
 
@@ -325,15 +326,15 @@ func effectivePolicyLogArgs(migrationID, state string, p manifest.DefaultPolicie
 	}
 }
 
-// pauseOffsetSyncIgnoredForDynamic reports whether spec.clusterLink.
+// pauseOffsetSyncRefusedForDynamic reports whether spec.clusterLink.
 // pauseConsumerOffsetSync is set on a manifest that resolved to a topic-based
 // (dynamic) migration, where the field has no effect — TBM's FSM has no
-// offset_sync_paused state. It is the guard for the warn-not-refuse decision
+// offset_sync_paused state. It is the guard for the refusal
 // runMigrationExecute makes on the StateUninitialized reconcile path; a static
 // route honors the field, so this is false for one. Factored out so the
 // decision can be unit-tested without a live migplan.Reconcile — the only path
-// that reaches the warning through the command.
-func pauseOffsetSyncIgnoredForDynamic(mode string, g *manifest.GatewayMigration) bool {
+// that reaches the refusal through the command.
+func pauseOffsetSyncRefusedForDynamic(mode string, g *manifest.GatewayMigration) bool {
 	return mode == "dynamic" && g.Spec.ClusterLink.PauseConsumerOffsetSync
 }
 
