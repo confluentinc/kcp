@@ -504,11 +504,11 @@ func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
 // completes the run. (The warning that accompanies it fires only on the
 // StateUninitialized reconcile path, which needs live infrastructure this
 // process does not have; the warning decision itself is unit-tested below in
-// TestPauseOffsetSyncIgnoredForDynamic.) The config must carry the same flag as
+// TestPauseOffsetSyncRefusedForDynamic.) The config must carry the same flag as
 // the manifest, or detectDrift would refuse first for an unrelated reason.
 func TestExecute_DynamicMode_PauseOffsetSyncSet_ProceedsWithoutRefusing(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
-		return strings.Replace(doc, "    name: msk-to-cc\n", "    name: msk-to-cc\n    pauseConsumerOffsetSync: true\n", 1)
+		return strings.Replace(doc, "    name: msk-to-cc\n", "    name: msk-to-cc\n    pauseConsumerOffsetSync: true\n    consumerOffsetSyncBaseline: enabled\n", 1)
 	})
 	f.writeDynamicState(t, migration.StatePromoted, func(c *migration.MigrationConfig) {
 		c.PauseConsumerOffsetSync = true
