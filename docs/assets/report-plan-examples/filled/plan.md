@@ -130,10 +130,10 @@ kcp create-asset migrate-schemas \
   --cc-sr-rest-endpoint <cc-sr-rest-endpoint>
 ```
 
-**Step 6: run the cutover.** With the link live and the mirror caught up, cut your clients over with `kcp migration` ([docs](https://confluentinc.github.io/kcp/latest/command-reference/migration/)). Cluster Linking syncs your consumer offsets across as it mirrors, so your consumers resume where they left off on Confluent Cloud — no timestamp interceptor needed. Run it in three stages:
+**Step 6: run the cutover.** With the link live and the mirror caught up, cut your clients over with `kcp migration` ([docs](https://confluentinc.github.io/kcp/latest/command-reference/migration/)). Cluster Linking can carry your consumer offsets across as it mirrors — no timestamp interceptor needed — but offset sync is off by default, so enable `consumer.offset.sync.enable` on the cluster link before you cut over. Run it in three stages:
 
 1. `kcp migration init` — set up the cutover.
-2. `kcp migration lagcheck` — confirm the mirror has caught up to the source (lag is zero).
+2. `kcp migration lag-check` — confirm the mirror has caught up to the source (lag is zero).
 3. `kcp migration execute` — promote the mirror topics and move your clients to Confluent Cloud.
 
 What changes for each client app at cutover: point it at the new Confluent Cloud **bootstrap endpoint**; switch its security config to **API keys (SASL/PLAIN)** with the new Confluent Cloud credentials; and, for any app that uses Schema Registry, point it at the new Confluent Cloud **Schema Registry URL**.
@@ -185,7 +185,7 @@ What changes for each client app at cutover: point it at the new Confluent Cloud
 
 #### Why these recommendations
 
-- **Cluster type**: Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option for it. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license. Zones: Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.
+- **Cluster type**: Based on your scan (workload fits Standard) and your answer (private networking not required), a Standard cluster holds your workload and is the simplest fully managed option to run day-to-day. Moving existing data into a Standard cluster runs on self-managed Confluent Replicator (a Confluent Platform Enterprise license); an Enterprise cluster would migrate over managed Cluster Linking instead — no self-managed worker, no license. Zones: Spread across 3 Availability Zones, with a published uptime SLA up to 99.99% for this cluster type once you provision 2 or more eCKU (elastic Confluent Unit for Kafka). See the cluster-type docs for the SLA terms.
 - **Sizing**: Based on your scan (400 partitions), we size from your partition count (the only signal we have); measured ingress/egress can raise this. This tier scales with your workload, so there is no capacity for you to pick.
   - **Heads up:** Sizing is a lower bound; see the note at the top of the plan.
 - **Networking**: Based on your answer (private networking not required), a public endpoint is the simplest way in. Moving to private networking later means moving to a different cluster type.
@@ -205,7 +205,7 @@ What changes for each client app at cutover: point it at the new Confluent Cloud
 
 #### Why these recommendations
 
-- **Data migration**: Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one. [Talk to a person](#talk-to-a-person) if you'd like a hand.
+- **Data migration**: Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). [Talk to a person](#talk-to-a-person) if you'd like a hand.
 - **Schema**: Based on your answer (AWS Glue Schema Registry, migrate your schemas), Glue schemas use a different wire format and cannot be linked, so we bulk re-register them instead. This does not preserve schema IDs, so plan a phased client cutover.
 - **Connectors**: Based on your answer (no MSK Connect or self-managed Connect), there is no connector work in this plan.
 - **Topics**: Based on your answer (topic settings match the defaults), your topics carry over as they are.
@@ -225,7 +225,7 @@ What changes for each client app at cutover: point it at the new Confluent Cloud
 
 #### Why these recommendations
 
-- **Data migration**: Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one. [Talk to a person](#talk-to-a-person) if you'd like a hand.
+- **Data migration**: Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a Standard cluster. We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). [Talk to a person](#talk-to-a-person) if you'd like a hand.
 - **Schema**: Based on your answer (AWS Glue Schema Registry, migrate your schemas), Glue schemas use a different wire format and cannot be linked, so we bulk re-register them instead. This does not preserve schema IDs, so plan a phased client cutover.
 - **Connectors**: Based on your answer (no MSK Connect or self-managed Connect), there is no connector work in this plan.
 - **Topics**: Based on your answer (topic settings match the defaults), your topics carry over as they are.
@@ -262,7 +262,7 @@ kcp create-asset migrate-schemas \
 
 **Step 4: copy your data with Confluent Replicator.** Run Confluent Replicator on a Kafka Connect worker in your own account to copy data from your source into the new cluster ([docs](https://docs.confluent.io/cloud/current/get-started/tutorials/copy-data-cloud.html)). It reads your source with your existing credentials and writes into Confluent Cloud with the target credentials (the client authentication) you set up in Step 1, and it needs a Confluent Platform Enterprise license.
 
-**Step 5: cut over.** Once Replicator has caught up, move your clients to Confluent Cloud. Consumer offsets don't carry over on their own: translate them with the Confluent timestamp interceptor, added to every consumer before you start (Java clients only) ([docs](https://docs.confluent.io/cloud/current/get-started/tutorials/copy-data-cloud.html)).
+**Step 5: cut over.** Once Replicator has caught up, move your clients to Confluent Cloud. Consumer offsets don't carry over on their own: translate them with the Confluent timestamp interceptor, added to every consumer before you start (Java clients only) ([docs](https://docs.confluent.io/cloud/current/get-started/tutorials/copy-data-cloud.html)). Non-Java consumers have no automatic offset-translation path here — they resume according to each consumer's `auto.offset.reset` (reprocessing from earliest, or skipping to latest), so plan their cutover accordingly.
 
 What changes for each client app at cutover: point it at the new Confluent Cloud **bootstrap endpoint**; switch its security config to **API keys (SASL/PLAIN)** with the new Confluent Cloud credentials; and, for any app that uses Schema Registry, point it at the new Confluent Cloud **Schema Registry URL**.
 

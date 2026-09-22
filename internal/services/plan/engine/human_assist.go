@@ -155,13 +155,13 @@ func humanAssistDecision(p Profile, ctx haCtx) HumanAssistResult {
 		}
 	}
 
-	// Declared past the Enterprise ceiling (Band 2 only). The banner names the
-	// tier, never a specific ceiling; the internal record keeps the figures.
+	// Declared a workload that benefits from custom sizing (Band 2 only). The banner
+	// keeps it general (no tier, no specific ceiling); the internal record keeps the figures.
 	if exceedsEnterpriseLimits(p) && ctx.Band > sharedTierMaxBand && ctx.Band < bandXL {
 		add("exceeds_enterprise_limits",
-			specialistWhy("your answer that your workload goes past what our Enterprise clusters hold",
-				"we'd plan a Dedicated cluster with you rather than size it automatically."),
-			"Declared past the Enterprise ceiling ("+joinComma(enterpriseLimits())+"). Route to Dedicated: sizing needs a human.")
+			specialistWhy("your workload being at a scale that benefits from custom sizing",
+				"we'd plan the right cluster with you rather than size it automatically."),
+			"Declared a workload beyond the standard sizing bands ("+joinComma(enterpriseLimits())+"). Route to a specialist: sizing needs a human.")
 	}
 
 	// Compound topology — only on the private path, where we ask.

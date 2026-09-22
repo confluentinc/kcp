@@ -296,7 +296,7 @@ func clusterType(p Profile, sizing SizingResult, tc string, extraForced *forcedD
 			}
 		}
 	default:
-		tierReason = basis(ans("private networking not required"), srcOr(p.PartitionsAnswered, "workload fits "+string(tier))) + "a " + string(tier) + " cluster holds your workload and is the simplest fully managed option for it."
+		tierReason = basis(ans("private networking not required"), srcOr(p.PartitionsAnswered, "workload fits "+string(tier))) + "a " + string(tier) + " cluster holds your workload and is the simplest fully managed option to run day-to-day."
 		// A Standard target quietly implies the data-movement mechanism: Cluster Linking
 		// needs Enterprise/Dedicated, so moving existing data runs on self-managed
 		// Replicator. Point at that here so the two recommendations aren't read in
