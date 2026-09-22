@@ -4,7 +4,6 @@ package migration_tbm_e2e
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -67,24 +66,17 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 			batchTopics := append([]string(nil), res.Topics...)
 
 			manifestPath := h.e.manifestPath(name + ".yaml")
-			stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
-			out, err := runKCP(t, manifestPath, stateFile)
+			out, err := runKCP(t, manifestPath)
 			require.NoErrorf(t, err, "execute must exit 0 for %s:\n%s", name, out)
 			require.NotContains(t, out, "panic", "execute must not panic")
 
-			data, readErr := os.ReadFile(stateFile)
-			require.NoError(t, readErr, "execute must write --migration-state-file")
-			var parsed struct {
-				Migrations []struct {
-					MigrationId  string `json:"migration_id"`
-					CurrentState string `json:"current_state"`
-				} `json:"migrations"`
-			}
-			require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
-			require.Lenf(t, parsed.Migrations, 1, "state file must record exactly one migration for %s", name)
-			require.Equal(t, "switched", parsed.Migrations[0].CurrentState,
-				"the real FSM must walk every transition through to switched for "+name)
-
+			// The real FSM must walk every transition through to switched for
+			// name — there is no state file any more (Plan 2e) to read
+			// CurrentState back from, so this is now proven the same way the
+			// rest of this test already does: the mirrors below reach STOPPED
+			// and the live route below is switched to the target domain,
+			// which cannot happen unless promote and switch both actually ran.
+			//
 			// A full batch run always reaches switched in one synchronous
 			// execute call, and switch legitimately clears the fence
 			// switchover applies (migplan derives SwitchoverYAML from the
@@ -187,7 +179,6 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	require.NoError(t, err)
 	manifestPath := filepath.Join(t.TempDir(), "unrouted-producer.yaml")
 	require.NoError(t, os.WriteFile(manifestPath, manifestBytes, 0o600))
-	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 
 	rogueCtx, stopRogue := context.WithCancel(context.Background())
 	rogueDone := startRogueProducer(t, rogueCtx, h.e.sourceBootstrap, topic)
@@ -199,25 +190,20 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	// handleStepFailure returns the original step error even after a
 	// successful rollback (orchestrator.go:224-240), so execute exits
 	// non-zero here — this is expected, not a test failure.
-	out, err := runKCP(t, manifestPath, stateFile)
+	out, err := runKCP(t, manifestPath)
 	require.Errorf(t, err, "execute must exit non-zero on unrouted-producer detection:\n%s", out)
 	require.NotContains(t, out, "panic", "execute must not panic")
 	require.Contains(t, out, "Unrouted producers detected", "execute's narrative must show detection fired")
 	require.Contains(t, out, "Gateway unfenced", "execute's narrative must show the rollback completed")
 
-	data, readErr := os.ReadFile(stateFile)
-	require.NoError(t, readErr, "execute must write --migration-state-file even on a rolled-back run")
-	var parsed struct {
-		Migrations []struct {
-			MigrationId  string `json:"migration_id"`
-			CurrentState string `json:"current_state"`
-		} `json:"migrations"`
-	}
-	require.NoError(t, json.Unmarshal(data, &parsed), "the TBM state file must be valid JSON")
-	require.Lenf(t, parsed.Migrations, 1, "state file must record exactly one migration")
-	require.Equal(t, "initialized", parsed.Migrations[0].CurrentState,
-		"abort_fence must roll the FSM back to initialized (not lags_ok), so a resume re-checks lag for real before re-fencing")
-
+	// There is no state file any more (Plan 2e) to read the rolled-back FSM's
+	// CurrentState back from — and no persisted resume position for that
+	// assertion to matter to any more, either: every run starts from zero and
+	// reconciles live, so there is nothing left to "resume re-checks lag
+	// for real before re-fencing" against. What the abort_fence rollback must
+	// still guarantee observably is that neither promote nor switch ever ran,
+	// which the two checks below already prove directly against the live
+	// cluster.
 	require.Falsef(t, routeSwitchedToTargetForAll(t, h, []string{topic}),
 		"a rolled-back batch must never reach switch — %s must not be routed to the target domain", topic)
 
