@@ -259,34 +259,30 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	// values are also snapshotted into the state file as LastRunPolicies.
 	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, config.CurrentState, g.Spec.DefaultPolicies)...)
 
-	// migplan.Reconcile is called here — not by either FSM's Initialize itself
-	// — ONLY when resuming a migration still at StateUninitialized. Every other
-	// starting state skips this: the mode was already resolved and persisted by
-	// a prior run's Initialize step (see config.Mode, driftExempt because it
-	// "reflects the cluster's shape" — resolved once, live, and never
-	// re-derived on resume for either mode), so a live Reconcile call here
-	// would be pure waste.
-	var reconcileResult *migplan.Result
-	mode := config.Mode
-	if config.CurrentState == migration.StateUninitialized {
-		reconcileResult, err = migplan.Reconcile(cmd.Context(), g)
-		if err != nil {
-			return fmt.Errorf("failed to produce the reconcile plan: %w", err)
-		}
-		if reconcileResult.Refused {
-			return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(reconcileResult.Reasons, "\n"))
-		}
-		mode = reconcileResult.Mode
+	// migplan.Reconcile now runs on EVERY invocation — not only when resuming a
+	// migration still at StateUninitialized. reconcile is the single component
+	// that observes live state and decides what remains outstanding; the AAO
+	// FSM always starts at uninitialized (internal/services/migration) and
+	// simply applies this run's fresh result idempotently. The route's mode
+	// comes from this run's reconcile result every time now, not only at
+	// first-registration (TBM resume still ignores a fresh result until Plan 2d).
+	reconcileResult, err := migplan.Reconcile(cmd.Context(), g)
+	if err != nil {
+		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
+	}
+	if reconcileResult.Refused {
+		return fmt.Errorf("reconcile plan refused:\n%s", strings.Join(reconcileResult.Reasons, "\n"))
+	}
+	mode := reconcileResult.Mode
 
-		// Pause-offset-sync has no effect for a topic-based (dynamic)
-		// migration — TBM's FSM has no offset_sync_paused state at all. A
-		// dynamic route requires consumer offset sync to be disabled, so
-		// pausing it is contradictory; refuse rather than silently ignore.
-		if pauseOffsetSyncRefusedForDynamic(mode, g) {
-			return fmt.Errorf(
-				"spec.clusterLink.pauseConsumerOffsetSync is not supported for a topic-based (dynamic) route %q: a dynamic route requires consumer offset sync to be disabled, so there is nothing to pause — remove pauseConsumerOffsetSync (and consumerOffsetSyncBaseline) from the manifest",
-				g.Spec.Route.Name)
-		}
+	// Pause-offset-sync has no effect for a topic-based (dynamic)
+	// migration — TBM's FSM has no offset_sync_paused state at all. A
+	// dynamic route requires consumer offset sync to be disabled, so
+	// pausing it is contradictory; refuse rather than silently ignore.
+	if pauseOffsetSyncRefusedForDynamic(mode, g) {
+		return fmt.Errorf(
+			"spec.clusterLink.pauseConsumerOffsetSync is not supported for a topic-based (dynamic) route %q: a dynamic route requires consumer offset sync to be disabled, so there is nothing to pause — remove pauseConsumerOffsetSync (and consumerOffsetSyncBaseline) from the manifest",
+			g.Spec.Route.Name)
 	}
 
 	switch mode {

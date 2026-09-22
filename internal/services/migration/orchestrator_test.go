@@ -31,10 +31,42 @@ type orchestratorOverrides struct {
 	promoteMirrorTopicsFn    func(ctx context.Context, config clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error)
 }
 
-// newHappyPathOrchestrator builds an orchestrator where every workflow step succeeds.
-// The returned config starts at the given initialState.
-// Optional overrides allow customizing mock behavior before construction.
+// newHappyPathOrchestrator builds an orchestrator where every workflow step
+// succeeds, then positions its FSM directly at initialState via fsm.SetState
+// — a test-only bypass (no callbacks fire) so a test that exercises a single
+// step deep in the workflow does not have to first walk every earlier one to
+// get there. NewMigrationOrchestrator itself always starts the FSM at
+// StateUninitialized now, regardless of config.CurrentState (start-from-zero
+// — see orchestrator.go); this positioning is unrelated to that and never
+// happens in production. config.CurrentState is also set to initialState, so
+// the two agree exactly as they would have under the old resume model.
+//
+// Tests asserting the start-from-zero contract itself must NOT use this —
+// see newOrchestratorWithStaleCurrentState.
 func newHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig, string) {
+	t.Helper()
+	orch, config, stateFilePath := buildHappyPathOrchestrator(t, initialState, topics, overrides...)
+	if initialState != StateUninitialized {
+		orch.fsm.SetState(initialState)
+	}
+	return orch, config, stateFilePath
+}
+
+// newOrchestratorWithStaleCurrentState builds an orchestrator exactly like
+// newHappyPathOrchestrator, but does NOT position the FSM to staleState —
+// the FSM is left at its true construction-time start, StateUninitialized.
+// config.CurrentState is still set to staleState, simulating a stale value
+// loaded from a prior run's state file. Use this for tests asserting the
+// start-from-zero contract: construction ignores config.CurrentState, and a
+// full Execute walks the whole workflow regardless of what it says.
+func newOrchestratorWithStaleCurrentState(t *testing.T, staleState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig, string) {
+	t.Helper()
+	return buildHappyPathOrchestrator(t, staleState, topics, overrides...)
+}
+
+// buildHappyPathOrchestrator is the shared construction logic behind
+// newHappyPathOrchestrator and newOrchestratorWithStaleCurrentState.
+func buildHappyPathOrchestrator(t *testing.T, initialState string, topics []string, overrides ...orchestratorOverrides) (*MigrationOrchestrator, *MigrationConfig, string) {
 	t.Helper()
 
 	if len(topics) == 0 {
@@ -221,6 +253,22 @@ func uninitializedReconcileResult(topics []string) *migplan.Result {
 
 // --- FSM transition tests ---
 
+// TestNewMigrationOrchestrator_AlwaysStartsUninitialized pins the
+// start-from-zero contract at its source: construction must ignore
+// config.CurrentState entirely, even when it holds a fully-completed
+// migration's persisted value. There is no resume position — reconcile
+// (run every invocation, see cmd/migration/execute) and idempotent applies
+// determine what happens on top of an FSM that always begins at
+// StateUninitialized.
+func TestNewMigrationOrchestrator_AlwaysStartsUninitialized(t *testing.T) {
+	orch, _, _ := newOrchestratorWithStaleCurrentState(t, StateSwitched, nil)
+
+	assert.Equal(t, StateUninitialized, orch.fsm.Current(),
+		"the FSM must always start at uninitialized, regardless of a stale persisted CurrentState")
+	assert.True(t, orch.HasPendingWork(),
+		"immediately after construction the FSM can always take its first step (initialize)")
+}
+
 func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateUninitialized, nil)
 
@@ -233,31 +281,79 @@ func TestOrchestrator_Execute_FullWorkflow(t *testing.T) {
 	assert.Equal(t, StateSwitched, persisted.CurrentState)
 }
 
-func TestOrchestrator_Execute_ResumesFromState(t *testing.T) {
-	for _, startState := range []string{StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted} {
-		t.Run("from_"+startState, func(t *testing.T) {
-			orch, config, stateFilePath := newHappyPathOrchestrator(t, startState, nil)
+// TestOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState replaces the
+// old resume-from-CurrentState suite (formerly ResumesFromState,
+// Bootstrap_DemotesFenceVerified, Bootstrap_DemotesFencedFamily,
+// ExpireVerificationIsAnFSMEdge, ResumeFromOffsetSyncPaused_RerunsDetection,
+// ResumeFromFencedFamily_ReassertsFence, and ResumeFromFenceVerified_
+// RerunsDetection) — those all pinned the REMOVED contract: construction read
+// config.CurrentState to decide where the FSM started, with expire_* edges
+// re-deriving a safe resume point from a point-in-time fact (fence_verified,
+// fenced) at bootstrap. NewMigrationOrchestrator no longer reads
+// config.CurrentState at all (see TestNewMigrationOrchestrator_
+// AlwaysStartsUninitialized): every run starts fully at StateUninitialized
+// and walks the whole canonical workflow, driven by THIS run's fresh
+// migplan.Reconcile result — which is why a rogue producer or a gateway that
+// drifted out of its fenced posture is always caught: the run never trusts a
+// persisted position to begin with, regardless of what it says.
+func TestOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState(t *testing.T) {
+	for _, staleState := range []string{StateUninitialized, StateInitialized, StateLagsOk, StateFenced, StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched} {
+		t.Run("stale_"+staleState, func(t *testing.T) {
+			var mu sync.Mutex
+			var appliedPatches []gateway.RoutePatch
+			var sourceGetCalls int64
 
-			// Every one of these starting states is already past
-			// StateUninitialized, so onInitialize never fires and a nil res is
-			// correct — mirrors cmd/migration/execute's own state gate on when
-			// migplan.Reconcile is computed.
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+			overrides := orchestratorOverrides{
+				patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+					mu.Lock()
+					appliedPatches = append(appliedPatches, rp)
+					mu.Unlock()
+					return "", nil
+				},
+			}
+
+			// staleState simulates config.CurrentState as loaded from a prior
+			// run's state file — construction ignores it, and the FSM is never
+			// repositioned to it (contrast newHappyPathOrchestrator, used by
+			// every other test in this file to jump to a single step under
+			// test — a test-only convenience unrelated to this contract).
+			orch, config, stateFilePath := newOrchestratorWithStaleCurrentState(t, staleState, nil, overrides)
+
+			zeroLagOffsets := map[int32]int64{0: 100, 1: 200}
+			orch.actions.sourceOffset = &mockOffsetProvider{
+				getFn: func(topic string) (map[int32]int64, error) {
+					atomic.AddInt64(&sourceGetCalls, 1)
+					return zeroLagOffsets, nil
+				},
+			}
+
+			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 			require.NoError(t, err)
 
-			assert.Equal(t, StateSwitched, config.CurrentState)
-
+			assert.Equal(t, StateSwitched, config.CurrentState,
+				"a from-zero walk must reach switched regardless of the stale persisted state")
 			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 			assert.Equal(t, StateSwitched, persisted.CurrentState)
+
+			mu.Lock()
+			require.NotEmpty(t, appliedPatches, "a from-zero walk must (re-)apply the fence CR")
+			assert.Equal(t, "fence", appliedPatches[0].Field,
+				"the first gateway patch of a from-zero walk is always the fence — the run never trusts a persisted fenced posture")
+			mu.Unlock()
+
+			assert.GreaterOrEqual(t, atomic.LoadInt64(&sourceGetCalls), int64(2),
+				"the lag check and fence verification both sample source offsets fresh on every run")
 		})
 	}
 }
 
-// TestHasPendingWork pins the predicate cmd/migration/execute uses to decide
-// whether to touch the gateway at all before Execute runs — see
-// migration_executor.go. It must agree with what Execute would actually do:
-// true for every state Execute walks at least one step for, false only once
-// there is nothing left.
+// TestHasPendingWork pins the HasPendingWork predicate's own logic — true
+// for every state short of switched, false once switched — independent of
+// how the FSM reached that state. It is no longer wired into any AAO
+// decision (cmd/migration/execute/migration_executor.go dropped the
+// short-circuit that used it — reconcile now runs, and decides what's
+// outstanding, every invocation); TBM has its own separate implementation
+// and still uses this predicate shape (tbm_executor.go).
 func TestHasPendingWork(t *testing.T) {
 	t.Run("true for a fresh migration", func(t *testing.T) {
 		orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
@@ -504,52 +600,16 @@ func TestOrchestrator_Execute_VerifyFencePersistedBeforePromote(t *testing.T) {
 		"successful fence verification should be persisted even when promotion later fails")
 }
 
-func TestOrchestrator_Bootstrap_DemotesFenceVerified(t *testing.T) {
-	// fence_verified is a point-in-time attestation and never survives a
-	// restart: construction demotes it to fenced (expire_verification) so
-	// detection re-runs, and the fence demotion then carries it to lags_ok so
-	// the resume re-asserts the fenced CR before re-verifying.
-	_, config, _ := newHappyPathOrchestrator(t, StateFenceVerified, nil)
-
-	assert.Equal(t, StateLagsOk, config.CurrentState,
-		"bootstrap should demote a persisted fence_verified through fenced to lags_ok")
-}
-
-func TestOrchestrator_Bootstrap_DemotesFencedFamily(t *testing.T) {
-	// Whether the live gateway still holds the fenced CR is also a
-	// point-in-time fact: a crash or a partially-completed abort_fence
-	// rollback can leave the gateway unfenced while the state file still says
-	// fenced or offset_sync_paused. Construction demotes both to lags_ok so
-	// the resume re-applies the fenced CR (a no-op rollout when the gateway
-	// never diverged) instead of promoting behind a fence that may not exist.
-	for _, state := range []string{StateFenced, StateOffsetSyncPaused} {
-		t.Run(state, func(t *testing.T) {
-			_, config, _ := newHappyPathOrchestrator(t, state, nil)
-			assert.Equal(t, StateLagsOk, config.CurrentState,
-				"bootstrap should demote a persisted %s to lags_ok", state)
-		})
-	}
-}
-
-func TestOrchestrator_ExpireVerificationIsAnFSMEdge(t *testing.T) {
-	// The bootstrap demotions must be modelled as FSM transitions
-	// (expire_verification: fence_verified → fenced; expire_fence:
-	// {fenced, offset_sync_paused} → lags_ok), not config mutations the
-	// machine never sees — so they fire through the FSM callbacks and appear
-	// in fsm.Visualize output alongside abort_fence.
-	orch, _, _ := newHappyPathOrchestrator(t, StateUninitialized, nil)
-
-	viz := fsm.Visualize(orch.fsm)
-	assert.Contains(t, viz,
-		`"fence_verified" -> "fenced" [ label = "expire_verification" ];`,
-		"expire_verification should be a visible edge in the state machine")
-	assert.Contains(t, viz,
-		`"fenced" -> "lags_ok" [ label = "expire_fence" ];`,
-		"expire_fence should be a visible edge from fenced")
-	assert.Contains(t, viz,
-		`"offset_sync_paused" -> "lags_ok" [ label = "expire_fence" ];`,
-		"expire_fence should be a visible edge from offset_sync_paused")
-}
+// TestOrchestrator_Bootstrap_DemotesFenceVerified,
+// TestOrchestrator_Bootstrap_DemotesFencedFamily, and
+// TestOrchestrator_ExpireVerificationIsAnFSMEdge previously pinned
+// construction-time bootstrap demotions (expire_verification,
+// expire_fence) that derived a safe resume point from config.CurrentState.
+// That mechanism no longer exists — construction always starts the FSM at
+// StateUninitialized (see TestNewMigrationOrchestrator_
+// AlwaysStartsUninitialized) — so these are deleted; their intent (a resume
+// never trusts a stale fence/verification posture) is now covered, more
+// strongly, by TestOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState.
 
 func TestOrchestrator_PauseStageIsAnFSMEdge(t *testing.T) {
 	// The offset-sync pause is a first-class stage between fenced and
@@ -569,74 +629,13 @@ func TestOrchestrator_PauseStageIsAnFSMEdge(t *testing.T) {
 		"abort_fence should cover offset_sync_paused, where rogue detection now fails")
 }
 
-func TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection(t *testing.T) {
-	// A resume from offset_sync_paused must re-run fence verification before
-	// promoting. The bootstrap fence demotion sends it back through the fence
-	// step first; verification then follows as the forward walk's next
-	// attestation, so the rogue-producer check never survives a restart.
-	var getCalls int64
-
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateOffsetSyncPaused, nil)
-	config.DetectUnroutedProducersDuration = time.Millisecond
-
-	zeroLagOffsets := map[int32]int64{0: 100, 1: 200}
-	orch.actions.sourceOffset = &mockOffsetProvider{
-		getFn: func(topic string) (map[int32]int64, error) {
-			atomic.AddInt64(&getCalls, 1)
-			return zeroLagOffsets, nil
-		},
-	}
-
-	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-	require.NoError(t, err)
-
-	assert.GreaterOrEqual(t, atomic.LoadInt64(&getCalls), int64(2),
-		"resume from offset_sync_paused should take both detection snapshots before promoting")
-
-	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
-}
-
-func TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence(t *testing.T) {
-	// The divergence this pins closed: a previous run's rollback applied the
-	// initial (unfenced) CR but died before the rolled-back state reached disk
-	// (or its readiness wait failed after the apply landed). The state file
-	// says fenced/offset_sync_paused while the live gateway is unfenced —
-	// without a re-fence the resume would sample a quiet source through
-	// verify_fence and promote behind a fence that does not exist.
-	for _, state := range []string{StateFenced, StateOffsetSyncPaused} {
-		t.Run(state, func(t *testing.T) {
-			var mu sync.Mutex
-			var appliedPatches []gateway.RoutePatch
-			overrides := orchestratorOverrides{
-				patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
-					mu.Lock()
-					appliedPatches = append(appliedPatches, rp)
-					mu.Unlock()
-					return "", nil
-				},
-			}
-
-			orch, config, stateFilePath := newHappyPathOrchestrator(t, state, nil, overrides)
-
-			err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
-			require.NoError(t, err)
-
-			mu.Lock()
-			defer mu.Unlock()
-			require.NotEmpty(t, appliedPatches, "the resume must apply gateway CRs")
-			// The re-asserted fence is derived from the initial CR (fence injected
-			// onto the named route), not a snapshotted fenced-CR blob.
-			assert.Equal(t, "fence", appliedPatches[0].Field,
-				"resume must re-apply the fenced CR before verifying or promoting behind it")
-			assert.Equal(t, "migration-route", appliedPatches[0].RouteName,
-				"the re-asserted fence must target the migration route")
-
-			persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
-			assert.Equal(t, StateSwitched, persisted.CurrentState)
-		})
-	}
-}
+// TestOrchestrator_Execute_ResumeFromOffsetSyncPaused_RerunsDetection and
+// TestOrchestrator_Execute_ResumeFromFencedFamily_ReassertsFence previously
+// exercised the removed bootstrap expire_* demotions through a full Execute
+// run. Deleted — TestOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState
+// covers the same intent (detection and the fence never survive a stale
+// persisted position) via the new from-zero contract, for every starting
+// state in one pass.
 
 func TestOrchestrator_Execute_RollbackPersistFails_SurfacesBothErrors(t *testing.T) {
 	// The rollback completed (gateway unfenced) but persisting initialized
@@ -1588,18 +1587,26 @@ func TestOrchestrator_Execute_UnknownState_Fails(t *testing.T) {
 		"the unknown state must be left untouched for the operator to inspect")
 }
 
-func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing.T) {
-	// A rogue producer may appear between the run that verified the fence and
-	// a later resume (e.g. promote failed, operator re-runs hours later).
-	// fence_verified must not survive the restart: detection re-runs, catches
-	// the rogue producer, and the abort_fence rollback fires.
+// TestOrchestrator_Execute_FromZero_DetectsRogueProducerRegardlessOfPersistedCurrentState
+// replaces TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection,
+// which pinned the removed bootstrap demotion (fence_verified is a
+// point-in-time attestation that "expired" at construction, forcing a
+// re-verify). That mechanism no longer exists: a from-zero run doesn't need
+// to specially expire a stale attestation, because it never trusted
+// config.CurrentState (here simulating a persisted fence_verified) to begin
+// with — detection is simply part of the walk this run takes, every time.
+func TestOrchestrator_Execute_FromZero_DetectsRogueProducerRegardlessOfPersistedCurrentState(t *testing.T) {
 	var sourceCallCount int64
 
-	orch, config, stateFilePath := newHappyPathOrchestrator(t, StateFenceVerified, nil)
+	orch, config, stateFilePath := newOrchestratorWithStaleCurrentState(t, StateFenceVerified, nil)
 	config.DetectUnroutedProducersDuration = time.Millisecond
 	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
-	// Rogue producer: source offsets keep increasing on every call
+	// Rogue producer: source offsets keep increasing on every call. A large
+	// lag threshold keeps the from-zero walk's own WaitForLags step (which a
+	// resume from fence_verified never used to reach) from spinning forever
+	// on the same drift — detection below is threshold-independent, so the
+	// rogue producer is still caught.
 	orch.actions.sourceOffset = &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
 			n := atomic.AddInt64(&sourceCallCount, 1)
@@ -1607,19 +1614,17 @@ func TestOrchestrator_Execute_ResumeFromFenceVerified_RerunsDetection(t *testing
 		},
 	}
 
-	// Deadline bounds the failure mode where detection is skipped and promote
-	// polls forever on never-zero lag; the happy path finishes in milliseconds.
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	err := orch.Execute(ctx, 1_000_000, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(nil))
 	require.Error(t, err,
-		"resume from fence_verified must re-run detection and catch the rogue producer")
+		"a from-zero run must still detect a rogue producer live at the moment it runs")
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
 
 	persisted := loadPersistedMigration(t, stateFilePath, config.MigrationId)
 	assert.Equal(t, StateInitialized, persisted.CurrentState,
-		"detection on resume should roll back to initialized via abort_fence")
+		"detection rolls back to initialized via abort_fence, same as any other run")
 }
 
 func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {

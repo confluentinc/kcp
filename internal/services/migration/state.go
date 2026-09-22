@@ -56,21 +56,6 @@ const (
 	// the gateway and restores any paused sync config (see onAbortFence in
 	// orchestrator.go).
 	EventAbortFence = "abort_fence"
-	// EventExpireVerification demotes fence_verified to fenced at FSM
-	// bootstrap: the verification is a point-in-time attestation and never
-	// survives a restart, so a resume re-runs the verify_fence detection
-	// window. Fired only by NewMigrationOrchestrator; it has no action.
-	EventExpireVerification = "expire_verification"
-	// EventExpireFence demotes fenced and offset_sync_paused to lags_ok at FSM
-	// bootstrap: whether the live gateway still holds the fenced CR is equally
-	// a point-in-time fact. A crash or a partially-completed abort_fence
-	// rollback (initial CR applied, process gone before the rolled-back state
-	// reached disk) leaves the gateway unfenced while the state file still
-	// records a fenced-family state. Demoting makes the resume re-apply the
-	// fenced CR — a no-op rollout when the gateway never diverged — instead of
-	// verifying and promoting behind a fence that may not exist. Fired only by
-	// NewMigrationOrchestrator; it has no action.
-	EventExpireFence = "expire_fence"
 )
 
 // ----- migration configuration -----

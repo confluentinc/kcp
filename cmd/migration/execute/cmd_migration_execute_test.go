@@ -986,21 +986,21 @@ func TestExecute_RestCredentialsComeFromLinkCredentials(t *testing.T) {
 	assert.Equal(t, "CC_KEY", opts.RestCreds.APIKey)
 }
 
-// --- StateUninitialized resume triggers a live migplan.Reconcile ---
+// --- Reconcile now runs on every invocation, not only from StateUninitialized ---
 //
 // Neither test can reach MigrationExecutor.Run() successfully — there is no
 // live Kubernetes cluster or Kafka broker in this test process, matching
 // every other test in this file that drives the full runExecute surface (see
 // e.g. TestExecute_ErrorsWhenMigrationNotInStateFile,
-// TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit). What distinguishes
-// the two cases is WHERE the run fails: migplan.Reconcile is called directly
-// in runMigrationExecute (no injectable gateway source at that call site — see
-// cmd_migration_execute.go), so a migration still at StateUninitialized fails
-// fast inside Reconcile's own live gateway pull, surfacing runMigrationExecute's
-// "failed to produce the reconcile plan" wrap. A migration already past
-// StateUninitialized skips that call entirely and fails later, deeper in
-// MigrationExecutor.Run() (e.g. connecting to the source Kafka cluster) — an
-// error that does not carry the reconcile-plan wrap at all.
+// TestExecute_DriftBeforeThePointOfNoReturnSaysReRunInit). Both tests below
+// fail identically, via migplan.Reconcile's own live gateway pull (no
+// injectable gateway source at that call site — see cmd_migration_execute.go),
+// surfacing runMigrationExecute's "failed to produce the reconcile plan"
+// wrap — proof reconcile runs every time, regardless of the persisted
+// CurrentState it was loaded with. (Before Plan 2c, a migration already past
+// StateUninitialized skipped that call and failed later instead, deeper in
+// MigrationExecutor.Run(), with no reconcile-plan wrap at all — the resume
+// gate this task removed.)
 
 // TestExecute_ResumeFromUninitialized_CallsReconcile proves a migration still
 // at StateUninitialized (a deferred --skip-validate init completing here)
@@ -1019,21 +1019,24 @@ func TestExecute_ResumeFromUninitialized_CallsReconcile(t *testing.T) {
 		"resuming from StateUninitialized must call migplan.Reconcile")
 }
 
-// TestExecute_ResumeFromInitialized_NeverCallsReconcile confirms a migration
-// already past StateUninitialized never triggers a live migplan.Reconcile call
-// — the state-gated cost this task is specifically designed to avoid. The run
-// still fails (no live cluster to execute against), but not via Reconcile's
-// wrap: proof the call was skipped rather than merely tolerant of failure.
-func TestExecute_ResumeFromInitialized_NeverCallsReconcile(t *testing.T) {
+// TestExecute_ResumeFromSwitched_AlsoCallsReconcile replaces
+// TestExecute_ResumeFromInitialized_NeverCallsReconcile, which pinned the
+// removed StateUninitialized gate: reconcile is the single component that
+// observes live state and decides what's outstanding, so it now runs on
+// EVERY invocation — including a resume of a migration already switched
+// (formerly the "already complete" HasPendingWork short-circuit, also
+// removed). Reaching Reconcile's own wrap here, exactly like the
+// StateUninitialized case above, is proof the call was never skipped.
+func TestExecute_ResumeFromSwitched_AlsoCallsReconcile(t *testing.T) {
 	f := newFixture(t, nil)
 	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.CurrentState = migration.StateInitialized
+		c.CurrentState = migration.StateSwitched
 	})
 
 	_, err := runExecute(t, "--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
 	require.Error(t, err)
-	assert.NotContains(t, err.Error(), "reconcile plan",
-		"a migration already past StateUninitialized must not call migplan.Reconcile")
+	assert.Contains(t, err.Error(), "failed to produce the reconcile plan",
+		"a resumed run — even one already switched — must still call migplan.Reconcile")
 }
 
 // --- helper functions for auto-create and unconditional drift ---

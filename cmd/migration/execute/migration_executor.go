@@ -78,10 +78,10 @@ type MigrationExecutorOpts struct {
 	// JSON. Empty (the default) disables the report.
 	RunReportPath string
 	// ReconcileResult is the migplan.Result the command layer computed live,
-	// via migplan.Reconcile, ONLY when resuming a migration still at
-	// StateUninitialized (a deferred --skip-validate init completing here —
-	// see cmd_migration_execute.go). nil on every ordinary invocation, in
-	// which case Execute never reaches onInitialize and this is never read.
+	// via migplan.Reconcile, on THIS invocation (see cmd_migration_execute.go)
+	// — non-nil on every ordinary run now, not only a deferred init: the AAO
+	// FSM always starts at uninitialized (start-from-zero) and onInitialize
+	// consumes this fresh result every time.
 	ReconcileResult *migplan.Result
 }
 
@@ -132,25 +132,22 @@ func (m *MigrationExecutor) Run() error {
 		config.GatewayConfigPort = m.opts.GatewayConfigPort
 	}
 
+	// The FSM always starts at uninitialized now (start-from-zero); make the
+	// config field that mirrors FSM state agree, so nothing reads the stale
+	// value the still-loaded state file carried. NOT a resume position —
+	// reconcile (run every invocation) + idempotent applies determine what
+	// happens. The file is still loaded (offset-sync marker) and written; its
+	// removal is Plan 2e.
+	config.CurrentState = migration.StateUninitialized
+
 	// The orchestrator is the single writer for migration state. Build it up
-	// front — both so its PersistState can back the offset-sync bookends, and
-	// so its FSM tells us whether there is any step left to run before
-	// anything below touches the gateway. A migration that already switched
-	// over must stay a side-effect-free no-op on re-run: without this check
-	// every re-run wrote a fresh spec.configId to the production gateway and
-	// waited on it, real cluster effects for a command that had nothing left
-	// to do.
+	// front so its PersistState can back the offset-sync bookends.
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
 		actions,
 		&m.opts.MigrationState,
 		m.opts.MigrationStateFile,
 	)
-
-	if !orchestrator.HasPendingWork() {
-		fmt.Printf("✅ Migration already complete: %s\n", config.MigrationId)
-		return nil
-	}
 
 	// Gateway capability is NOT resolved here. It used to be: a blanket
 	// pre-Execute check, safe only because a separate `init` process had
