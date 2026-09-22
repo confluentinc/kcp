@@ -251,13 +251,17 @@ func formatLag64(n int64) string {
 // — it just returns an error, leaving the FSM at lags_ok; re-running
 // execute-tbm retries fencing.
 func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
-	// config.Topics is empty whenever migplan.Reconcile's Result was a
-	// legitimate "nothing to migrate" outcome (Refused: false, Artifacts nil —
-	// see reconcile.go: Refused() is checked first, then len(migratable)==0 is
-	// a separate, distinct success path for an already-migrated/steady-state
-	// batch). config.FenceYAML is then "", which deriveFenceRoutePatch cannot
-	// parse. Mirrors WaitForLags's identical guard.
-	if len(config.Topics) == 0 {
+	// Plan-driven no-op: reconcile emitted no fence artifact, so there is
+	// nothing to fence this run. Read the plan (config.FenceYAML), never the
+	// live cluster — the reconcile engine already decided. Deliberately NOT
+	// keyed on config.Topics: Topics is the promote set (Migratable +
+	// AwaitStopped), which reconcile can legitimately return empty while a
+	// fence is still owed for an all-promoted batch still awaiting switchover
+	// (config.FenceYAML non-empty, migplan/reconcile.go's reconcileDynamic
+	// builds FenceYAML/SwitchoverYAML together, both non-empty iff inflight is
+	// non-empty). Gating on Topics there would silently skip the still-owed
+	// fence.
+	if config.FenceYAML == "" {
 		a.reporter.Success("No topics to fence")
 		return nil
 	}
@@ -549,11 +553,13 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 // compensating rollback on failure — a failure here just returns an error
 // and leaves the FSM at promoted; re-running execute-tbm retries switching.
 func (a *TBMActions) Switch(ctx context.Context, config *migration.MigrationConfig) error {
-	// config.Topics is empty whenever migplan.Reconcile's Result was a
-	// legitimate "nothing to migrate" outcome — see Fence's identical guard
-	// for the full explanation. config.SwitchoverYAML is then "", which
-	// deriveSwitchRoutePatch cannot parse.
-	if len(config.Topics) == 0 {
+	// Plan-driven no-op: reconcile emitted no switchover artifact, so there is
+	// nothing to switch this run. Read the plan (config.SwitchoverYAML), never
+	// the live cluster. Deliberately NOT keyed on config.Topics — see Fence's
+	// identical guard for the full explanation: Topics is the promote set and
+	// can be empty (all-promoted batch) while a switch is still owed
+	// (config.SwitchoverYAML non-empty).
+	if config.SwitchoverYAML == "" {
 		a.reporter.Success("No topics to switch")
 		return nil
 	}

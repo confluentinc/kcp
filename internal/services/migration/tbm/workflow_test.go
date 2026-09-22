@@ -633,3 +633,98 @@ func TestTBMActions_VerifyFence_ContextCancelledDuringWindow_ReturnsCtxErr(t *te
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.Less(t, elapsed, 1*time.Second, "expected cancellation to exit well before the 20s monitoring window")
 }
+
+// ===========================================================================
+// Fence/Switch no-op guard tests — prove the guard is keyed on the plan's
+// own artifact (config.FenceYAML / config.SwitchoverYAML), never on
+// config.Topics (the promote set). The bug this covers: an all-promoted
+// batch has an empty promote set (Topics) but still owes a fence/switch
+// (FenceYAML/SwitchoverYAML non-empty) — gating on Topics would wrongly
+// no-op it and report the batch complete without cutting over.
+// ===========================================================================
+
+// TestTBM_Fence_NoFenceYAMLIsNoop proves an empty FenceYAML artifact
+// short-circuits Fence even when Topics is non-empty — the guard reads the
+// plan's artifact, not the promote set.
+func TestTBM_Fence_NoFenceYAMLIsNoop(t *testing.T) {
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			t.Fatal("DetectCapability must not be called when FenceYAML is empty")
+			return gateway.Capability{}, nil
+		},
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			t.Fatal("PatchGatewayRoute must not be called when FenceYAML is empty")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.FenceYAML = ""                // artifact empty
+	config.Topics = []string{"t1.order"} // promote set still non-empty
+
+	err := actions.Fence(context.Background(), config)
+	require.NoError(t, err, "Fence with empty FenceYAML must no-op, not error")
+}
+
+// TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences is the bug case:
+// Topics empty (nothing left to promote — an all-promoted batch) but
+// FenceYAML still set (a fence is still owed ahead of switchover). Fence
+// must still apply exactly one patch, not no-op.
+func TestTBM_Fence_NonEmptyFenceYAMLButNoTopics_StillFences(t *testing.T) {
+	var applyCalls int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			applyCalls++
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.Topics = nil // no topics left to promote
+
+	err := actions.Fence(context.Background(), config)
+	require.NoError(t, err, "Fence with FenceYAML set + no Topics must still fence")
+	assert.Equal(t, 1, applyCalls, "expected exactly one gateway patch")
+}
+
+// TestTBM_Switch_NoSwitchoverYAMLIsNoop proves an empty SwitchoverYAML
+// artifact short-circuits Switch even when Topics is non-empty.
+func TestTBM_Switch_NoSwitchoverYAMLIsNoop(t *testing.T) {
+	gw := &mockGatewayService{
+		detectCapabilityFn: func(context.Context, string, string, int, []byte, []byte) (gateway.Capability, error) {
+			t.Fatal("DetectCapability must not be called when SwitchoverYAML is empty")
+			return gateway.Capability{}, nil
+		},
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			t.Fatal("PatchGatewayRoute must not be called when SwitchoverYAML is empty")
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.SwitchoverYAML = ""           // artifact empty
+	config.Topics = []string{"t1.order"} // promote set still non-empty
+
+	err := actions.Switch(context.Background(), config)
+	require.NoError(t, err, "Switch with empty SwitchoverYAML must no-op, not error")
+}
+
+// TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches is the bug
+// case: Topics empty (all-promoted batch) but SwitchoverYAML still set (the
+// switch is still owed). Switch must still apply exactly one patch.
+func TestTBM_Switch_NonEmptySwitchoverYAMLButNoTopics_StillSwitches(t *testing.T) {
+	var applyCalls int
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) {
+			applyCalls++
+			return "", nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, &mockClusterLinkService{})
+	config := testTBMConfig()
+	config.Topics = nil // no topics left to promote
+
+	err := actions.Switch(context.Background(), config)
+	require.NoError(t, err, "Switch with SwitchoverYAML set + no Topics must still switch")
+	assert.Equal(t, 1, applyCalls, "expected exactly one gateway patch")
+}
