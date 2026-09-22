@@ -9,6 +9,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/looplab/fsm"
 )
@@ -204,6 +205,12 @@ func (o *MigrationOrchestrator) CurrentState() string {
 // invocation — not only the first — and is now non-nil on every call;
 // onInitialize consumes it directly.
 func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator, res *migplan.Result) error {
+	// Own a cancellable child context so the test-only kill-point seam can
+	// interrupt the run after a chosen checkpoint via a real cancellation
+	// (inert unless killpoint.EnvVar is set — never fires in production).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	params := ExecutionParams{
 		LagThreshold:    lagThreshold,
 		RestAuth:        restAuth,
@@ -234,6 +241,16 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 		}
 		o.runReport.StageEnded(o.fsm.Current())
 		o.reporter.stepDone()
+
+		// Test-only interruption seam: if configured to stop after this
+		// checkpoint, cancel the run now (real context cancellation, the same
+		// path a Ctrl-C takes) so the live resume suite is left with a genuine
+		// partial world after this step's mutation. No-op in production.
+		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
+			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
+			cancel()
+			return ctx.Err()
+		}
 	}
 
 	o.reporter.complete("✅ Migration complete!")

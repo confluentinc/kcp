@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/looplab/fsm"
 )
@@ -161,6 +162,12 @@ func NewTBMOrchestrator(
 // authenticates the destination cluster-link REST surface; onPromote
 // consumes it.
 func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagThreshold int64, detectUnroutedProducersDuration time.Duration, restAuth clusterlink.Authenticator) error {
+	// Own a cancellable child context so the test-only kill-point seam can
+	// interrupt the run after a chosen checkpoint via a real cancellation
+	// (inert unless killpoint.EnvVar is set — never fires in production).
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
 	for _, step := range canonicalWorkflow {
@@ -177,6 +184,15 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 			return o.handleStepFailure(ctx, step, err)
 		}
 		o.reporter.stepDone()
+
+		// Test-only interruption seam: cancel the run after the configured
+		// checkpoint (real context cancellation, the Ctrl-C path) so the live
+		// resume suite is left with a genuine partial world. No-op in production.
+		if killpoint.ShouldCancelAfter(o.fsm.Current()) {
+			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterState", o.fsm.Current())
+			cancel()
+			return ctx.Err()
+		}
 	}
 
 	o.reporter.complete("✅ TBM migration complete!")

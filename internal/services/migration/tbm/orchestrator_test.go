@@ -10,6 +10,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -399,6 +400,24 @@ func TestTBM_S0_FreshFullRun(t *testing.T) {
 
 	assert.Len(t, *patchCalls, patchesBefore, "a completed batch's re-run must apply no gateway patches")
 	assert.Len(t, *promoteCalls, promotesBefore, "a completed batch's re-run must issue no promote calls")
+}
+
+// The kill-point seam interrupts a TBM run right after the named checkpoint
+// state via a real context cancellation, mirroring the AAO seam. A run that
+// would reach StateSwitched must instead stop at StateFenced with a
+// cancellation error, having fenced but neither promoted nor switched.
+func TestTBMOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
+	t.Setenv(killpoint.EnvVar, StateFenced)
+	topics := []string{"t1.order", "t2.payment"}
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateUninitialized, topics, nil, nil)
+
+	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+
+	require.Error(t, err, "execute must exit non-zero when the kill-point env var fires")
+	assert.ErrorIs(t, err, context.Canceled, "the interruption must surface as a context cancellation")
+	assert.Equal(t, StateFenced, orch.fsm.Current(), "the run must stop right after the fenced checkpoint")
+	assert.Len(t, *patchCalls, 1, "only the fence apply happened — the switch must not run")
+	assert.Empty(t, *promoteCalls, "no promote occurred — interrupted before the promote stage")
 }
 
 // TestTBM_S1_AlreadyFencedNoReapply covers matrix row T-S1: the persisted

@@ -15,6 +15,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/looplab/fsm"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1565,6 +1566,25 @@ func TestAAO_S0_FreshFullRun(t *testing.T) {
 		"a completed migration's re-run must apply no gateway patches")
 	assert.Equal(t, promotesBefore, len(*promoteCalls),
 		"a completed migration's re-run must issue no promote calls")
+}
+
+// The test-only kill-point seam (killpoint.EnvVar) must interrupt a run right
+// after the named checkpoint state, simulating an abrupt kcp exit (Ctrl-C) via
+// a real context cancellation. A run that would otherwise reach StateSwitched
+// must instead stop at StateFenced with a cancellation error, having applied
+// the fence but neither promoted nor switched. This is the mechanism the live
+// resume suite drives to leave a real partial world, then re-run to completion.
+func TestOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
+	t.Setenv(killpoint.EnvVar, StateFenced)
+	orch, _, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, StateUninitialized, nil, nil)
+
+	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
+
+	require.Error(t, err, "execute must exit non-zero when the kill-point env var fires")
+	assert.ErrorIs(t, err, context.Canceled, "the interruption must surface as a context cancellation")
+	assert.Equal(t, StateFenced, orch.fsm.Current(), "the run must stop right after the fenced checkpoint")
+	assert.Equal(t, int64(1), atomic.LoadInt64(patchCalls), "only the fence apply happened — the switch must not run")
+	assert.Empty(t, *promoteCalls, "no promote occurred — interrupted before the promote stage")
 }
 
 // TestAAO_S1_AlreadyFencedNoReapply covers matrix row A-S1: the persisted
