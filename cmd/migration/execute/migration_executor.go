@@ -18,8 +18,6 @@ import (
 )
 
 type MigrationExecutorOpts struct {
-	MigrationStateFile string
-	MigrationState     migration.MigrationState
 	MigrationConfig    migration.MigrationConfig
 	LagThreshold       int64
 	ClusterBootstrap   string
@@ -132,21 +130,12 @@ func (m *MigrationExecutor) Run() error {
 		config.GatewayConfigPort = m.opts.GatewayConfigPort
 	}
 
-	// The FSM always starts at uninitialized now (start-from-zero); make the
-	// config field that mirrors FSM state agree, so nothing reads the stale
-	// value the still-loaded state file carried. NOT a resume position —
-	// reconcile (run every invocation) + idempotent applies determine what
-	// happens. The file is still loaded (offset-sync marker) and written; its
-	// removal is Plan 2e.
-	config.CurrentState = migration.StateUninitialized
-
-	// The orchestrator is the single writer for migration state. Build it up
-	// front so its PersistState can back the offset-sync bookends.
+	// The FSM always starts at uninitialized (start-from-zero) — there is no
+	// resume position: reconcile (run every invocation) + idempotent applies
+	// determine what happens.
 	orchestrator := migration.NewMigrationOrchestrator(
 		&config,
 		actions,
-		&m.opts.MigrationState,
-		m.opts.MigrationStateFile,
 	)
 
 	// Gateway capability is NOT resolved here. It used to be: a blanket
@@ -167,11 +156,11 @@ func (m *MigrationExecutor) Run() error {
 		config.MigrationId,
 		len(config.Topics),
 		m.opts.LagThreshold,
-		config.CurrentState,
+		orchestrator.CurrentState(),
 	)
 	orchestrator.SetRunReportRecorder(runReport)
 	var execErr error
-	defer func() { runReport.Finish(config.CurrentState, execErr) }()
+	defer func() { runReport.Finish(orchestrator.CurrentState(), execErr) }()
 
 	// The cluster-link REST API authenticates with the REST credentials, which
 	// may name a broader principal than the destination KAFKA credentials — the
@@ -190,7 +179,7 @@ func (m *MigrationExecutor) Run() error {
 
 	// Post-execute bookend: restore consumer.offset.sync.enable. Soft-fail
 	// so a restore error does not roll back a successful switchover.
-	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config, orchestrator.PersistState)
+	migration.RestoreOffsetSync(ctx, clusterLinkService, clusterLinkConfig, &config)
 
 	fmt.Printf("✅ Migration completed: %s\n", config.MigrationId)
 	return nil

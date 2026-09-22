@@ -112,28 +112,22 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 
 // MigrationOrchestrator manages the FSM lifecycle and coordinates workflow execution
 type MigrationOrchestrator struct {
-	config         *MigrationConfig
-	fsm            *fsm.FSM
-	actions        *MigrationActions
-	migrationState *MigrationState
-	stateFilePath  string
-	reporter       *reporter          // user-facing terminal output
-	runReport      *RunReportRecorder // per-stage timings; nil when not requested
+	config    *MigrationConfig
+	fsm       *fsm.FSM
+	actions   *MigrationActions
+	reporter  *reporter          // user-facing terminal output
+	runReport *RunReportRecorder // per-stage timings; nil when not requested
 }
 
 // NewMigrationOrchestrator creates a new migration orchestrator with injected dependencies
 func NewMigrationOrchestrator(
 	config *MigrationConfig,
 	actions *MigrationActions,
-	migrationState *MigrationState,
-	stateFilePath string,
 ) *MigrationOrchestrator {
 	orchestrator := &MigrationOrchestrator{
-		config:         config,
-		actions:        actions,
-		migrationState: migrationState,
-		stateFilePath:  stateFilePath,
-		reporter:       newReporter(),
+		config:   config,
+		actions:  actions,
+		reporter: newReporter(),
 	}
 
 	// Build FSM events from canonical workflow
@@ -154,10 +148,8 @@ func NewMigrationOrchestrator(
 		Dst:  StateInitialized,
 	})
 
-	// The FSM always starts at uninitialized, regardless of config.CurrentState
-	// (the persisted, possibly stale, mirror of a prior run's position — see
-	// migration_executor.go's Run, which zeroes it before calling here). There
-	// is no resume position: the command layer calls migplan.Reconcile live on
+	// The FSM always starts at uninitialized on construction — there is no
+	// resume position: the command layer calls migplan.Reconcile live on
 	// every invocation and hands its fresh *migplan.Result to Execute, which
 	// walks canonicalWorkflow from the top and re-applies each step's artifact
 	// idempotently (Task 1's len(config.Topics)==0 no-op guards make an
@@ -200,20 +192,18 @@ func (o *MigrationOrchestrator) SetRunReportRecorder(r *RunReportRecorder) {
 	o.runReport = r
 }
 
+// CurrentState returns the FSM's current state — the single source of truth
+// for where this run's machine sits, now that no config field mirrors it.
+func (o *MigrationOrchestrator) CurrentState() string {
+	return o.fsm.Current()
+}
+
 // Execute runs the full migration workflow, always from StateUninitialized
 // (see NewMigrationOrchestrator). res is the migplan.Result the command layer
 // (cmd/migration/execute) computes live via migplan.Reconcile on every
 // invocation — not only the first — and is now non-nil on every call;
 // onInitialize consumes it directly.
 func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64, restAuth clusterlink.Authenticator, res *migplan.Result) error {
-	// An unknown persisted state (corrupted file, or one written by a newer
-	// kcp) makes every canTransition check below return false, so the loop
-	// would skip every step and falsely report the migration complete. Refuse
-	// loudly instead.
-	if !isKnownState(o.config.CurrentState) {
-		return fmt.Errorf("unrecognized migration state %q in state file — refusing to execute (corrupted file, or written by a newer kcp version?)", o.config.CurrentState)
-	}
-
 	params := ExecutionParams{
 		LagThreshold:    lagThreshold,
 		RestAuth:        restAuth,
@@ -242,10 +232,7 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err, params)
 		}
-		o.runReport.StageEnded(o.config.CurrentState)
-		if err := o.PersistState(); err != nil {
-			return fmt.Errorf("failed during %s: %w", step.Description, err)
-		}
+		o.runReport.StageEnded(o.fsm.Current())
 		o.reporter.stepDone()
 	}
 
@@ -266,18 +253,13 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 //
 // The rollback event is fired here — never from inside a callback, where
 // looplab's non-reentrant eventMu would deadlock. The sync-config restore also
-// runs here, after the completed transition has been persisted, rather than in
-// onAbortFence: a before_-callback runs ahead of the transition, so a persist
-// from inside it would snapshot the cleared marker against the pre-rollback
-// state — a crash in that window would leave a state file claiming the fence
-// is up when it is not.
+// runs here, after the completed transition, rather than in onAbortFence: a
+// before_-callback runs ahead of the transition, and client traffic (the
+// unfence) must land before config tidiness is attempted.
 //
 // A cancelled abort_fence (e.g. the unfence itself failed) is logged, not
 // returned: the originating step error is what surfaces, and the FSM correctly
-// stays at the rollback's source. A persist failure after a COMPLETED rollback
-// is different — the gateway is unfenced but the state file still says
-// otherwise — so it is appended to the returned error rather than swallowed;
-// the step error keeps its %w classification either way.
+// stays at the rollback's source.
 func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error, params ExecutionParams) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
@@ -304,19 +286,9 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		return stepFailure
 	}
 
-	persistErr := o.PersistState()
-	if persistErr != nil {
-		slog.Error("❌ failed to persist state after abort_fence transition", "error", persistErr)
-	}
+	// Restore the paused sync config now that the rollback landed.
+	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth)
 
-	// Restore the paused sync config even when the persist failed: cluster
-	// reality outranks state-file tidiness, and the restore's own persist (via
-	// the same path) keeps the marker honest when it can.
-	o.actions.restoreOffsetSyncAfterRollback(o.config, params.RestAuth, o.PersistState)
-
-	if persistErr != nil {
-		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, persistErr)
-	}
 	return stepFailure
 }
 
@@ -383,23 +355,11 @@ func (o *MigrationOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.
 // migration's diagnostic backbone: every committed state change — forward step
 // or abort_fence rollback — lands here as a single Info line, so kcp.log
 // carries the full state timeline of a run. Deep FSM mechanics stay on the
-// before/enter/leave Debug callbacks.
+// before/enter/leave Debug callbacks. The FSM's own state (o.fsm.Current(),
+// which e.Dst mirrors) is authoritative in-process — there is no config field
+// to keep in sync.
 func (o *MigrationOrchestrator) afterEventCallback(ctx context.Context, e *fsm.Event) {
-	o.config.CurrentState = e.Dst
 	slog.Info("migration state advanced", "event", e.Event, "from", e.Src, "to", e.Dst, "migration_id", o.config.MigrationId)
-}
-
-// PersistState saves the current migration config to the state file. It is the
-// single writer for migration state: the orchestrator calls it after each
-// successful FSM transition, and the offset-sync bookends (which run outside the
-// FSM) are handed this method so they persist through the same path rather than
-// duplicating the write.
-func (o *MigrationOrchestrator) PersistState() error {
-	if err := o.saveState(); err != nil {
-		return fmt.Errorf("failed to persist state after transition to %s: %w", o.config.CurrentState, err)
-	}
-	slog.Debug("persisted migration state", "migration_id", o.config.MigrationId, "state", o.config.CurrentState, "path", o.stateFilePath)
-	return nil
 }
 
 // enterStateCallback is called when entering any state
@@ -441,7 +401,7 @@ func (o *MigrationOrchestrator) onFence(ctx context.Context, e *fsm.Event) {
 // way — promotion's path runs through offset_sync_paused unconditionally.
 func (o *MigrationOrchestrator) onPauseOffsetSync(ctx context.Context, e *fsm.Event) {
 	p := execParamsFromEvent(e)
-	if err := o.actions.PauseOffsetSync(ctx, o.config, p.RestAuth, o.PersistState); err != nil {
+	if err := o.actions.PauseOffsetSync(ctx, o.config, p.RestAuth); err != nil {
 		e.Cancel(err)
 	}
 }
@@ -501,41 +461,7 @@ func (o *MigrationOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 	}
 }
 
-// saveState persists the current migration config to the state file
-func (o *MigrationOrchestrator) saveState() error {
-	o.migrationState.UpsertMigration(*o.config)
-
-	if err := o.migrationState.WriteToFile(o.stateFilePath); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
-	}
-
-	return nil
-}
-
 // canTransition checks if the given event can be triggered from the current state
 func (o *MigrationOrchestrator) canTransition(event string) bool {
 	return o.fsm.Can(event)
-}
-
-// HasPendingWork reports whether any canonical workflow step remains to run.
-// False means Execute would walk the whole loop without firing a single
-// event — the same per-step canTransition check it already uses, applied
-// once up front so a caller can skip cluster work entirely (gateway
-// capability resolution, the hot-reload check) on an already-completed
-// migration instead of doing it and then discovering the FSM had nothing
-// left to do.
-//
-// An unrecognized state is reported as pending rather than resolved here: the
-// caller is expected to still reach Execute, which refuses that case loudly
-// (see isKnownState) instead of it being silently read as "nothing to do".
-func (o *MigrationOrchestrator) HasPendingWork() bool {
-	if !isKnownState(o.config.CurrentState) {
-		return true
-	}
-	for _, step := range canonicalWorkflow {
-		if o.canTransition(step.Event) {
-			return true
-		}
-	}
-	return false
 }

@@ -148,7 +148,6 @@ spec:
 func testTBMConfig() *migration.MigrationConfig {
 	return &migration.MigrationConfig{
 		MigrationId:    "tbm-1",
-		CurrentState:   StateLagsOk,
 		K8sNamespace:   "confluent",
 		InitialCrName:  "gateway-initial",
 		Route:          "migration-route",

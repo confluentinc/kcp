@@ -23,7 +23,6 @@ import (
 type callRecorder struct {
 	listConfigs  int
 	alterConfigs []clusterlink.ConfigAlteration
-	persist      int
 }
 
 // newFakeClusterLink builds a mockClusterLinkService that records every
@@ -60,13 +59,6 @@ func newFailingAlterClusterLink(alterErr error) (*mockClusterLinkService, *callR
 		},
 	}
 	return mock, rec
-}
-
-func makePersist(rec *callRecorder, persistErr error) func() error {
-	return func() error {
-		rec.persist++
-		return persistErr
-	}
 }
 
 func (rec *callRecorder) assertNoCalls(t *testing.T) {
@@ -110,7 +102,7 @@ func TestRestoreOffsetSync_SetsToBaseline(t *testing.T) {
 				ConsumerOffsetSyncBaseline: tc.baseline,
 			}
 
-			RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg, makePersist(rec, nil))
+			RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
 			rec.assertAltered(t, offsetSyncEnableKey, tc.want)
 			rec.assertNoListConfigs(t)
 		})
@@ -123,7 +115,7 @@ func TestRestoreOffsetSync_UnsetBaselineDefaultsToEnabled(t *testing.T) {
 	cl, rec := newFakeClusterLink()
 	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true}
 
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg, makePersist(rec, nil))
+	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
 	rec.assertAltered(t, offsetSyncEnableKey, "true")
 }
 
@@ -131,9 +123,8 @@ func TestRestoreOffsetSync_NoPauseIsNoop(t *testing.T) {
 	cl, rec := newFakeClusterLink()
 	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false}
 
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg, makePersist(rec, nil))
+	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
 	rec.assertNoCalls(t)
-	assert.Equal(t, 0, rec.persist)
 }
 
 func TestRestoreOffsetSync_IdempotentRegardlessOfWhetherPauseLanded(t *testing.T) {
@@ -148,8 +139,8 @@ func TestRestoreOffsetSync_IdempotentRegardlessOfWhetherPauseLanded(t *testing.T
 		ConsumerOffsetSyncBaseline: manifest.OffsetSyncBaselineEnabled,
 	}
 
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg, makePersist(rec, nil))
-	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg, makePersist(rec, nil))
+	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
+	RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
 	require.Len(t, rec.alterConfigs, 2, "each call re-applies the same idempotent SET")
 	assert.Equal(t, "true", rec.alterConfigs[0].Value)
 	assert.Equal(t, "true", rec.alterConfigs[1].Value)
@@ -188,7 +179,7 @@ func TestRestoreOffsetSync_AlterFails_SoftFailNoError(t *testing.T) {
 	}
 
 	out := captureStderr(t, func() {
-		RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg, makePersist(rec, nil))
+		RestoreOffsetSync(context.Background(), cl, BuildClusterLinkConfig(cfg, nil), cfg)
 	})
 
 	require.Len(t, rec.alterConfigs, 1, "the AlterConfigs attempt happened")
@@ -220,7 +211,7 @@ func TestRestoreOffsetSync_ParentCtxCancelled_StillRestores(t *testing.T) {
 	parentCtx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	RestoreOffsetSync(parentCtx, mock, clusterlink.Config{}, cfg, makePersist(rec, nil))
+	RestoreOffsetSync(parentCtx, mock, clusterlink.Config{}, cfg)
 
 	require.Len(t, rec.alterConfigs, 1, "AlterConfigs must be called even when parent ctx is cancelled")
 	assert.NoError(t, ctxErrAtCall, "AlterConfigs must receive a non-cancelled ctx at the moment of call (soft-fail intent)")
@@ -242,28 +233,23 @@ func TestWarnIfPaused_NotRequested_NoOutput(t *testing.T) {
 	assert.Empty(t, out, "no guidance when the operator never opted into pausing")
 }
 
-func TestWarnIfPaused_Requested_WarnsRegardlessOfState(t *testing.T) {
-	for _, state := range []string{
-		StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
-		StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched,
-	} {
-		t.Run(state, func(t *testing.T) {
-			cfg := &MigrationConfig{
-				ClusterLinkName:         "link-1",
-				CurrentState:            state,
-				PauseConsumerOffsetSync: true,
-			}
-
-			out := captureStderr(t, func() {
-				WarnIfPausedOnExecuteFailure(cfg, fmt.Errorf("some failure"))
-			})
-
-			assert.Contains(t, out, "link-1")
-			assert.Contains(t, out, offsetSyncEnableKey)
-			assert.Contains(t, out, "declared baseline")
-			assert.Contains(t, out, "kcp migration execute")
-		})
+func TestWarnIfPaused_Requested_Warns(t *testing.T) {
+	// There is no persisted state to vary over any more (no MigrationConfig
+	// field mirrors the FSM's position) — the guidance is a single generic
+	// reminder gated only on the manifest-declared PauseConsumerOffsetSync.
+	cfg := &MigrationConfig{
+		ClusterLinkName:         "link-1",
+		PauseConsumerOffsetSync: true,
 	}
+
+	out := captureStderr(t, func() {
+		WarnIfPausedOnExecuteFailure(cfg, fmt.Errorf("some failure"))
+	})
+
+	assert.Contains(t, out, "link-1")
+	assert.Contains(t, out, offsetSyncEnableKey)
+	assert.Contains(t, out, "declared baseline")
+	assert.Contains(t, out, "kcp migration execute")
 }
 
 // ---------------------------------------------------------------------------
@@ -305,7 +291,7 @@ func TestPauseOffsetSync_NotRequestedIsNoop(t *testing.T) {
 	cl, rec := newFakeClusterLink()
 	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: false, FenceYAML: testFenceYAML}
 
-	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
+	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 	require.NoError(t, err)
 	rec.assertNoCalls(t)
 }
@@ -316,7 +302,7 @@ func TestPauseOffsetSync_NoInFlightIsNoop(t *testing.T) {
 	cl, rec := newFakeClusterLink()
 	cfg := &MigrationConfig{ClusterLinkName: "link-1", PauseConsumerOffsetSync: true, FenceYAML: ""}
 
-	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
+	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 	require.NoError(t, err)
 	rec.assertNoCalls(t)
 }
@@ -329,7 +315,7 @@ func TestPauseOffsetSync_DisablesWhenInFlight(t *testing.T) {
 		FenceYAML:               testFenceYAML,
 	}
 
-	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
+	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 	require.NoError(t, err)
 	rec.assertAltered(t, offsetSyncEnableKey, "false")
 	rec.assertNoListConfigs(t)
@@ -346,22 +332,22 @@ func TestPauseOffsetSync_IdempotentOnResume(t *testing.T) {
 		FenceYAML:               testFenceYAML,
 	}
 
-	require.NoError(t, pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil)))
-	require.NoError(t, pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil)))
+	require.NoError(t, pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}))
+	require.NoError(t, pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}))
 	require.Len(t, rec.alterConfigs, 2, "each call re-applies the same idempotent SET")
 	assert.Equal(t, "false", rec.alterConfigs[0].Value)
 	assert.Equal(t, "false", rec.alterConfigs[1].Value)
 }
 
 func TestPauseOffsetSync_AlterFails_Surfaces(t *testing.T) {
-	cl, rec := newFailingAlterClusterLink(fmt.Errorf("500 internal"))
+	cl, _ := newFailingAlterClusterLink(fmt.Errorf("500 internal"))
 	cfg := &MigrationConfig{
 		ClusterLinkName:         "link-1",
 		PauseConsumerOffsetSync: true,
 		FenceYAML:               testFenceYAML,
 	}
 
-	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
+	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to disable")
 }
@@ -384,7 +370,7 @@ func TestPauseOffsetSync_Drain_WaitsBeforeDisabling(t *testing.T) {
 	}
 
 	start := time.Now()
-	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
+	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 	elapsed := time.Since(start)
 
 	require.NoError(t, err)
@@ -404,7 +390,7 @@ func TestPauseOffsetSync_Drain_ContextCancelledLeavesSyncEnabled(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel before the drain begins
 
-	err := pauseActions(cl).PauseOffsetSync(ctx, cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
+	err := pauseActions(cl).PauseOffsetSync(ctx, cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Len(t, rec.alterConfigs, 0, "sync must NOT be disabled when the drain is cancelled")
@@ -419,7 +405,7 @@ func TestPauseOffsetSync_Drain_ZeroDisablesImmediately(t *testing.T) {
 		ConsumerOffsetSyncDrainDuration: 0, // no drain — prior behaviour
 	}
 
-	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"}, makePersist(rec, nil))
+	err := pauseActions(cl).PauseOffsetSync(context.Background(), cfg, clusterlink.BasicAuth{Username: "k", Password: "s"})
 
 	require.NoError(t, err)
 	rec.assertAltered(t, offsetSyncEnableKey, "false")

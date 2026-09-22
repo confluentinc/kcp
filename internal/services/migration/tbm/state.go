@@ -24,18 +24,6 @@ const (
 	StateSwitched      = "switched"
 )
 
-// isKnownState reports whether s is a state value this binary understands.
-// Execute refuses unknown values so a corrupted state file — or one written
-// by a newer kcp — fails loudly instead of skipping every workflow step.
-func isKnownState(s string) bool {
-	switch s {
-	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
-		StateFenceVerified, StatePromoted, StateSwitched:
-		return true
-	}
-	return false
-}
-
 const (
 	EventInitialize  = "initialize"
 	EventWaitForLags = "wait_for_lags"

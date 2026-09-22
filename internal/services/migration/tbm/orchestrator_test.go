@@ -2,7 +2,6 @@ package tbm
 
 import (
 	"context"
-	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,17 +14,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *migration.MigrationConfig, string) {
+func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *migration.MigrationConfig) {
 	t.Helper()
 
 	config := &migration.MigrationConfig{
 		MigrationId:   "test-tbm-1",
-		CurrentState:  initialState,
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
 	}
-	state := migration.NewMigrationState()
-	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
 	}
@@ -51,147 +47,20 @@ func newTestOrchestrator(t *testing.T, initialState string) (*TBMOrchestrator, *
 	}
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
 	actions.promotePollInterval = time.Millisecond
-	orchestrator := NewTBMOrchestrator(config, actions, state, stateFile)
-	return orchestrator, config, stateFile
-}
-
-// newTestOrchestratorAtFSMState builds an orchestrator exactly like
-// newTestOrchestrator, then positions its FSM directly at fsmState via
-// fsm.SetState — a test-only bypass (no callbacks fire). NewTBMOrchestrator
-// itself always starts the FSM at StateUninitialized now, regardless of
-// config.CurrentState (start-from-zero — see orchestrator.go); this is for
-// tests that check behavior AT a given FSM position (e.g. HasPendingWork's
-// own predicate logic) without walking every earlier step to get there, and
-// must NOT be used for a test that exercises Execute itself — Execute's own
-// from-zero contract is what newTestOrchestrator (unmodified) plus a real
-// walk pins.
-func newTestOrchestratorAtFSMState(t *testing.T, fsmState string) (*TBMOrchestrator, *migration.MigrationConfig, string) {
-	t.Helper()
-	orchestrator, config, stateFile := newTestOrchestrator(t, fsmState)
-	orchestrator.fsm.SetState(fsmState)
-	return orchestrator, config, stateFile
-}
-
-// TestNewTBMOrchestrator_AlwaysStartsUninitialized pins the start-from-zero
-// contract at its source: construction must ignore config.CurrentState
-// entirely, even when it holds a fully-completed migration's persisted
-// value. There is no resume position — reconcile (run every invocation, see
-// cmd/migration/execute) and idempotent applies determine what happens on
-// top of an FSM that always begins at StateUninitialized.
-func TestNewTBMOrchestrator_AlwaysStartsUninitialized(t *testing.T) {
-	cfg := &migration.MigrationConfig{CurrentState: StateSwitched, MigrationId: "m1"}
-	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	o := NewTBMOrchestrator(cfg, actions, migration.NewMigrationState(), filepath.Join(t.TempDir(), "s.json"))
-	if got := o.fsm.Current(); got != StateUninitialized {
-		t.Fatalf("TBM FSM start state = %q, want %q", got, StateUninitialized)
-	}
-	assert.True(t, o.HasPendingWork(),
-		"immediately after construction the FSM can always take its first step (initialize)")
+	orchestrator := NewTBMOrchestrator(config, actions)
+	return orchestrator, config
 }
 
 func TestTBMOrchestrator_Execute_WalksEveryStepFromUninitialized(t *testing.T) {
-	orchestrator, config, stateFile := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, _ := newTestOrchestrator(t, StateUninitialized)
 
 	require.NoError(t, orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{}))
 
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	assert.False(t, orchestrator.HasPendingWork())
-
-	loaded, err := migration.NewMigrationStateFromFile(stateFile)
-	require.NoError(t, err)
-	persisted, err := loaded.GetMigrationById("test-tbm-1")
-	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
-}
-
-// TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState replaces
-// the old ResumesFromPartialState test, which pinned the REMOVED contract:
-// construction read config.CurrentState to decide where the FSM started,
-// bootstrap-demoted via the also-removed expire_fence edge. The FSM now
-// always starts at StateUninitialized regardless of config.CurrentState (see
-// TestNewTBMOrchestrator_AlwaysStartsUninitialized), so a stale persisted
-// value here changes nothing: Execute walks the whole canonical workflow
-// from Initialize every time.
-//
-// Loops every TBM state as the stale persisted CurrentState — there is no
-// StateOffsetSyncPaused equivalent to skip, since TBM has no offset-sync
-// stage, so this covers all of them — mirroring AAO's own parity test
-// (TestOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState in
-// internal/services/migration/orchestrator_test.go). Like that test, this
-// asserts not just the terminal state but a concrete side effect: the fence
-// CR is actually (re-)applied, first, on every from-zero walk, regardless of
-// what the stale persisted state claims — proving the run never trusts a
-// persisted fenced posture, not merely that it happens to land at switched.
-func TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState(t *testing.T) {
-	for _, staleState := range []string{StateUninitialized, StateInitialized, StateLagsOk, StateFenced, StateFenceVerified, StatePromoted, StateSwitched} {
-		t.Run("stale_"+staleState, func(t *testing.T) {
-			orchestrator, config, stateFile := newTestOrchestrator(t, staleState)
-
-			var appliedPatches []gateway.RoutePatch
-			orchestrator.actions.gatewayService.(*mockGatewayService).patchGatewayRouteFn = func(_ context.Context, _, _ string, rp gateway.RoutePatch, configID string) (string, error) {
-				appliedPatches = append(appliedPatches, rp)
-				return configID, nil
-			}
-
-			require.NoError(t, orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{}))
-
-			assert.Equal(t, StateSwitched, config.CurrentState,
-				"a from-zero walk must reach switched regardless of the stale persisted state")
-
-			loaded, err := migration.NewMigrationStateFromFile(stateFile)
-			require.NoError(t, err)
-			persisted, err := loaded.GetMigrationById("test-tbm-1")
-			require.NoError(t, err)
-			assert.Equal(t, StateSwitched, persisted.CurrentState)
-
-			require.NotEmpty(t, appliedPatches, "a from-zero walk must (re-)apply the fence CR")
-			rules, ok := appliedPatches[0].Value.(map[string]interface{})
-			require.True(t, ok, "the first gateway patch's value must be the rules fragment map")
-			_, hasFencing := rules["fencing"]
-			assert.True(t, hasFencing,
-				"the first gateway patch of a from-zero walk is always the fence — the run never trusts a persisted fenced posture")
-		})
-	}
-}
-
-// TestTBMOrchestrator_HasPendingWork pins the HasPendingWork predicate's own
-// logic — true for every state short of switched, false once switched —
-// independent of how the FSM reached that state. It is exercised at each FSM
-// position directly via newTestOrchestratorAtFSMState (a test-only bypass),
-// since NewTBMOrchestrator's construction no longer positions the FSM from
-// config.CurrentState at all (start-from-zero). Unlike AAO
-// (cmd/migration/execute/migration_executor.go dropped its HasPendingWork
-// short-circuit in 2c), TBM's own executor (tbm_executor.go) no longer uses
-// it either as of this change — it is exercised here for its own sake.
-func TestTBMOrchestrator_HasPendingWork(t *testing.T) {
-	tests := []struct {
-		name  string
-		state string
-		want  bool
-	}{
-		{"uninitialized has work", StateUninitialized, true},
-		{"switched has no work", StateSwitched, false},
-		{"unknown state reports pending", "some-future-state", true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			orchestrator, _, _ := newTestOrchestratorAtFSMState(t, tt.state)
-			assert.Equal(t, tt.want, orchestrator.HasPendingWork())
-		})
-	}
-}
-
-func TestTBMOrchestrator_Execute_RefusesUnknownState(t *testing.T) {
-	orchestrator, _, _ := newTestOrchestrator(t, "some-future-state")
-
-	err := orchestrator.Execute(context.Background(), &migplan.Result{}, 10, 0, clusterlink.BasicAuth{})
-
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unrecognized")
+	assert.Equal(t, StateSwitched, orchestrator.fsm.Current())
 }
 
 func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *testing.T) {
-	orchestrator, config, _ := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, _ := newTestOrchestrator(t, StateUninitialized)
 	// Force the fence step to block on ctx: a real gateway wait that never
 	// resolves on its own, cancellable only by ctx, is what proves the walk
 	// stops mid-step rather than after the whole Execute call completes.
@@ -206,11 +75,11 @@ func TestTBMOrchestrator_Execute_CtxCancellationStopsAtLastCompletedStep(t *test
 	err := orchestrator.Execute(ctx, realisticReconcileResult(), 10, 0, clusterlink.BasicAuth{})
 
 	require.Error(t, err)
-	assert.NotEqual(t, StateSwitched, config.CurrentState)
+	assert.NotEqual(t, StateSwitched, orchestrator.fsm.Current())
 }
 
 func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing.T) {
-	orchestrator, config, stateFile := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, config := newTestOrchestrator(t, StateUninitialized)
 
 	res := realisticReconcileResult()
 
@@ -222,19 +91,10 @@ func TestTBMOrchestrator_Execute_InitializeCapturesReconcileArtifacts(t *testing
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
 	assert.Equal(t, res.Route, config.Route)
 
-	loaded, err := migration.NewMigrationStateFromFile(stateFile)
-	require.NoError(t, err)
-	persisted, err := loaded.GetMigrationById("test-tbm-1")
-	require.NoError(t, err)
-	assert.Equal(t, res.Topics, persisted.Topics)
-	assert.Equal(t, res.FenceYAML, persisted.FenceYAML)
-	assert.Equal(t, res.SwitchoverYAML, persisted.SwitchoverYAML)
-	assert.Equal(t, res.GatewayYAML, persisted.GatewayYAML)
-	assert.Equal(t, res.Route, persisted.Route)
 }
 
 func TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced(t *testing.T) {
-	orchestrator, config, _ := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, config := newTestOrchestrator(t, StateUninitialized)
 
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag", "gateway rejected the fence spec"}}
 
@@ -243,7 +103,7 @@ func TestTBMOrchestrator_Execute_RefusedReconcilePlanFailsAndConfigNotAdvanced(t
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "topic t1.order has replication lag")
 	assert.Contains(t, err.Error(), "gateway rejected the fence spec")
-	assert.Equal(t, StateUninitialized, config.CurrentState)
+	assert.Equal(t, StateUninitialized, orchestrator.fsm.Current())
 	assert.Empty(t, config.Topics)
 }
 
@@ -276,20 +136,17 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	}
 	config := &migration.MigrationConfig{
 		MigrationId:   "test-tbm-rollback",
-		CurrentState:  StateUninitialized,
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
 	}
-	state := migration.NewMigrationState()
-	stateFile := filepath.Join(t.TempDir(), "tbm-state.json")
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
-	orchestrator := NewTBMOrchestrator(config, actions, state, stateFile)
+	orchestrator := NewTBMOrchestrator(config, actions)
 
 	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
-	assert.Equal(t, StateInitialized, config.CurrentState, "a detected rollback must leave the batch at initialized, so a resume re-checks lag for real before re-fencing")
+	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(), "a detected rollback must leave the batch at initialized, so a resume re-checks lag for real before re-fencing")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence rollback's unfence applies once more")
 
 	// testGatewayYAML's migration-route already carries a rules.routing block
@@ -307,20 +164,15 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	_, hasRouting := rules["routing"]
 	assert.True(t, hasRouting, "the unfenced route must still have the routing block testGatewayYAML always had")
 
-	loaded, err := migration.NewMigrationStateFromFile(stateFile)
-	require.NoError(t, err)
-	persisted, err := loaded.GetMigrationById("test-tbm-rollback")
-	require.NoError(t, err)
-	assert.Equal(t, StateInitialized, persisted.CurrentState, "the rolled-back state must be persisted")
 }
 
 func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {
-	orchestrator, config, _ := newTestOrchestrator(t, StateUninitialized)
+	orchestrator, _ := newTestOrchestrator(t, StateUninitialized)
 
 	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
 
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
+	assert.Equal(t, StateSwitched, orchestrator.fsm.Current())
 }
 
 // TestTBMOrchestrator_Bootstrap_ExpiresFenceVerificationOnResume and
@@ -450,12 +302,11 @@ func newTBMKillPointOrchestrator(
 	allMirrorTopics []string,
 	initiallyStopped []string,
 	readyProgress []gateway.GatewayReadinessProgress,
-) (orch *TBMOrchestrator, config *migration.MigrationConfig, stateFilePath string, patchCalls *[]gateway.RoutePatch, promoteCalls *[][]string, readyEventsOut *[]gateway.GatewayReadinessProgress) {
+) (orch *TBMOrchestrator, config *migration.MigrationConfig, patchCalls *[]gateway.RoutePatch, promoteCalls *[][]string, readyEventsOut *[]gateway.GatewayReadinessProgress) {
 	t.Helper()
 
 	config = &migration.MigrationConfig{
 		MigrationId:   "test-tbm-killpoint",
-		CurrentState:  initialCurrentState,
 		K8sNamespace:  "confluent",
 		InitialCrName: "gateway-initial",
 	}
@@ -515,23 +366,9 @@ func newTBMKillPointOrchestrator(
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
 	actions.promotePollInterval = time.Millisecond
 
-	stateFilePath = filepath.Join(t.TempDir(), "tbm-state.json")
-	migrationState := migration.NewMigrationState()
+	orch = NewTBMOrchestrator(config, actions)
 
-	orch = NewTBMOrchestrator(config, actions, migrationState, stateFilePath)
-
-	return orch, config, stateFilePath, &patches, &promotes, &readyEvents
-}
-
-// loadPersistedTBMMigration loads and returns the persisted migration record
-// for migrationId from stateFilePath, failing the test on any error.
-func loadPersistedTBMMigration(t *testing.T, stateFilePath, migrationId string) *migration.MigrationConfig {
-	t.Helper()
-	loaded, err := migration.NewMigrationStateFromFile(stateFilePath)
-	require.NoError(t, err)
-	persisted, err := loaded.GetMigrationById(migrationId)
-	require.NoError(t, err)
-	return persisted
+	return orch, config, &patches, &promotes, &readyEvents
 }
 
 // TestTBM_S0_FreshFullRun covers matrix row T-S0: a pristine batch, never
@@ -540,13 +377,11 @@ func loadPersistedTBMMigration(t *testing.T, stateFilePath, migrationId string) 
 // reports nothing left, must be a pure no-op.
 func TestTBM_S0_FreshFullRun(t *testing.T) {
 	topics := []string{"t1.order", "t2.payment"}
-	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateUninitialized, topics, nil, nil)
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateUninitialized, topics, nil, nil)
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	assert.Len(t, *patchCalls, 2, "one fence apply and one switch apply")
 	require.Len(t, *promoteCalls, 1, "both zero-lag topics promoted in one batch")
@@ -560,7 +395,7 @@ func TestTBM_S0_FreshFullRun(t *testing.T) {
 
 	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	assert.Len(t, *patchCalls, patchesBefore, "a completed batch's re-run must apply no gateway patches")
 	assert.Len(t, *promoteCalls, promotesBefore, "a completed batch's re-run must issue no promote calls")
@@ -579,13 +414,11 @@ func TestTBM_S0_FreshFullRun(t *testing.T) {
 // as a fresh batch.
 func TestTBM_S1_AlreadyFencedNoReapply(t *testing.T) {
 	topics := []string{"t1.order", "t2.payment"}
-	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateFenced, topics, nil, nil)
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateFenced, topics, nil, nil)
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	assert.Len(t, *patchCalls, 2,
 		"one fence re-apply plus one switch apply — never doubled by resuming into a state that already says fenced")
@@ -615,14 +448,12 @@ func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
 	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
 	topics := []string{"t1.order", "t2.payment"}
 
-	orch, config, stateFilePath, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
+	orch, _, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
 		t, StateFenced, topics, nil, []gateway.GatewayReadinessProgress{notReady, converged})
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err, "the fence step must succeed once convergence is reported, not error out on the interim tick")
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
 	first := (*readyEvents)[0]
@@ -652,7 +483,7 @@ func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
 // already-STOPPED t1.order.
 func TestTBM_S2_MidPromoteMix(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
-	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, StatePromoted, allTopics, []string{"t1.order"}, nil)
 
 	midResult := &migplan.Result{
@@ -666,9 +497,7 @@ func TestTBM_S2_MidPromoteMix(t *testing.T) {
 
 	err := orch.Execute(context.Background(), midResult, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	require.Len(t, *promoteCalls, 1, "exactly one promote batch")
 	assert.Equal(t, []string{"t2.payment"}, (*promoteCalls)[0],
@@ -698,7 +527,7 @@ func TestTBM_S2_MidPromoteMix(t *testing.T) {
 // all, but Switch still applies and the run still converges.
 func TestTBM_S3_PromotedNotSwitched(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
-	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, StatePromoted, allTopics, allTopics, nil)
 
 	allPromotedResult := &migplan.Result{
@@ -712,9 +541,7 @@ func TestTBM_S3_PromotedNotSwitched(t *testing.T) {
 
 	err := orch.Execute(context.Background(), allPromotedResult, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	assert.Empty(t, *promoteCalls, "nothing left to promote — Promote must make no call at all")
 	assert.Len(t, *patchCalls, 2,
@@ -741,7 +568,7 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
 	allTopics := []string{"t1.order", "t2.payment"}
 
-	orch, config, stateFilePath, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
+	orch, _, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
 		t, StateSwitched, allTopics, allTopics, []gateway.GatewayReadinessProgress{notReady, converged})
 
 	allPromotedResult := &migplan.Result{
@@ -755,9 +582,7 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 
 	err := orch.Execute(context.Background(), allPromotedResult, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err, "the switch step must succeed once convergence is reported, not error out on the interim tick")
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	require.NotEmpty(t, *readyEvents, "the fence/switch convergence wait must have been exercised")
 	first := (*readyEvents)[0]
@@ -788,14 +613,12 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 // short-circuit to get there.
 func TestTBM_S4_DoneIsNoop(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
-	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, StateSwitched, allTopics, allTopics, nil)
 
 	err := orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	assert.Empty(t, *patchCalls, "zero gateway patches — fence and switch must both no-op")
 	assert.Empty(t, *promoteCalls, "zero promote calls")
@@ -803,7 +626,7 @@ func TestTBM_S4_DoneIsNoop(t *testing.T) {
 	// A second Execute is byte-for-byte identical: still zero mutations.
 	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 	assert.Empty(t, *patchCalls)
 	assert.Empty(t, *promoteCalls)
 }
@@ -819,7 +642,7 @@ func TestTBM_S4_DoneIsNoop(t *testing.T) {
 // doubling the fence/switch patch count for having two batches present.
 func TestTBM_M_MultiBatchComposite(t *testing.T) {
 	allTopics := []string{"t0.legacy", "t1.order", "t2.payment"}
-	orch, config, stateFilePath, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, StateUninitialized, allTopics, []string{"t0.legacy"}, nil)
 
 	activeTopics := []string{"t1.order", "t2.payment"}
@@ -827,9 +650,7 @@ func TestTBM_M_MultiBatchComposite(t *testing.T) {
 
 	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, config.CurrentState)
-	persisted := loadPersistedTBMMigration(t, stateFilePath, config.MigrationId)
-	assert.Equal(t, StateSwitched, persisted.CurrentState)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
 
 	assert.Len(t, *patchCalls, 2, "one fence, one switch — never doubled for having two batches present")
 	require.Len(t, *promoteCalls, 1, "the active batch promotes together, in one call")

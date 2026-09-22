@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -18,10 +17,9 @@ import (
 )
 
 var (
-	manifestFile       string
-	migrationStateFile string
-	migrationId        string
-	dryRun             bool
+	manifestFile string
+	migrationId  string
+	dryRun       bool
 	// Per-policy overrides. Each mirrors a field in spec.defaultPolicies and,
 	// when the flag (or its bound env var) is explicitly set, replaces the
 	// manifest's default for this one run. "Explicitly set" is read from
@@ -43,21 +41,18 @@ var (
 
 const executeLong = `Execute a migration: run the cutover described by a GatewayMigration manifest.
 
-On first run, the migration is registered in the state file from the manifest; topology
-is snapshotted at registration and remains immutable. On subsequent runs, the command
-resumes from the last completed FSM step. Policy defaults and credentials are read FRESH
-from the manifest on every run, so they can be varied between runs or overridden with flags.
+There is no migration state file: every run reads the manifest and the live cluster
+state fresh, via migplan.Reconcile, and the FSM always starts at uninitialized. Each
+step's action is idempotent, so a migration already partway through cutover walks
+forward re-applying already-completed steps as no-ops and picking up wherever the live
+state says work remains. Policy defaults and credentials are read FRESH from the
+manifest on every run, so they can be varied between runs or overridden with flags.
 
 Each spec.defaultPolicies value can also be overridden for a single run with its flag
 (e.g. --detect-unrouted-producers-duration), without editing the manifest.
 
-If the manifest's topology has changed since registration, execute stops immediately and
-refuses to proceed, at any FSM state — topology cannot be changed once registered. To
-migrate with different topology, use a new metadata.name to create a fresh registration
-in the same state file.
-
-If a run is interrupted at any step, re-running 'kcp migration execute' resumes from the
-last completed step.`
+If a run is interrupted at any step, simply re-run 'kcp migration execute' — it resumes
+from the live state, not from any persisted position.`
 
 // NewMigrationExecuteCmd builds the `execute` command bound to real, live
 // dependencies for a dynamic-mode (TBM) run. A static-mode (AAO) run never
@@ -77,7 +72,7 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 		Use:   "execute",
 		Short: "Execute a migration (run the cutover)",
 		Long:  executeLong,
-		Example: `  # Run (or resume) the cutover — defaults to <metadata.name>-state.json
+		Example: `  # Run (or resume) the cutover
   kcp migration execute --migration-yaml gateway-migration.yaml
 
   # Override a policy default for this run only
@@ -94,9 +89,8 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().StringVar(&migrationStateFile, "migration-state-file", "", "The path to the migration state file. If it doesn't exist, it will be created. If it exists, the new migration will be appended. Defaults to \"<metadata.name>-state.json\" in the current directory when omitted.")
 	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; touch no migration state file and run no FSM transition.")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; run no FSM transition.")
 
 	// Per-policy overrides. Each replaces the matching spec.defaultPolicies value
 	// for this run only; omit the flag to use the manifest's default. Only a flag
@@ -166,7 +160,6 @@ func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath 
 		Route:                      g.Spec.Route.Name,
 		TargetDomain:               g.Spec.Route.TargetStreamingDomain,
 		TopicPatterns:              topicPatterns,
-		CurrentState:               migration.StateUninitialized,
 		PauseConsumerOffsetSync:    g.Spec.ClusterLink.PauseConsumerOffsetSync,
 		ConsumerOffsetSyncBaseline: g.Spec.ClusterLink.ConsumerOffsetSyncBaseline,
 		GatewayConfigPort:          g.Spec.DefaultPolicies.GatewayConfigPort,
@@ -194,9 +187,8 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	// --dry-run stops here: the reconcile step is self-contained (it opens its
 	// own live Gateway CR + source/target/cluster-link reads directly from the
 	// manifest) and renders its own report to the command's writer. Nothing
-	// past this point — the migration state file, config resolution, drift
-	// checking, any FSM transition — runs under --dry-run. Mirrors
-	// execute-tbm's identical --dry-run branch.
+	// past this point — config resolution, any FSM transition — runs under
+	// --dry-run. Mirrors execute-tbm's identical --dry-run branch.
 	if dryRun {
 		res, err := migplan.Reconcile(cmd.Context(), g, migplan.WithOutput(cmd.OutOrStdout()))
 		if err != nil {
@@ -210,55 +202,27 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	}
 
 	// metadata.name already uniquely identifies the migration and doubles as
-	// migration_id on the persisted MigrationConfig, so a separate mandatory
-	// path is not required for a fresh or resumed run — mirrors execute-tbm's
-	// own default before this command absorbed it.
-	if migrationStateFile == "" {
-		migrationStateFile = g.Metadata.Name + "-state.json"
-	}
-
-	var state *migration.MigrationState
-	if _, statErr := os.Stat(migrationStateFile); statErr == nil {
-		state, err = migration.NewMigrationStateFromFile(migrationStateFile)
-		if err != nil {
-			return fmt.Errorf("failed to load migration state file %q: %w", migrationStateFile, err)
-		}
-	} else if os.IsNotExist(statErr) {
-		state = migration.NewMigrationState()
-	} else {
-		return fmt.Errorf("failed to check migration state file %q: %w", migrationStateFile, statErr)
-	}
-
+	// migration_id — a separate mandatory path is not required for a fresh or
+	// resumed run — mirrors execute-tbm's own default before this command
+	// absorbed it.
 	id := resolveMigrationID(g, migrationId)
 
-	// A migration seen for the first time is registered here, from pure
-	// manifest projections — mirroring execute-tbm's resolveTBMConfig create-
-	// if-missing pattern. An existing entry is drift-checked against the
-	// current manifest instead; a freshly created one is, by construction,
-	// identical to the manifest it was just built from, so drift-checking it
-	// immediately would be checking a config against the exact data it was
-	// derived from a moment ago.
-	config, lookupErr := state.GetMigrationById(id)
-	if lookupErr != nil {
-		kubeConfigPathResolved, kerr := resolveKubeConfigPath(g)
-		if kerr != nil {
-			return kerr
-		}
-		fresh := buildFreshMigrationConfig(g, id, kubeConfigPathResolved)
-		config = &fresh
-		state.UpsertMigration(*config)
-		if err := state.WriteToFile(migrationStateFile); err != nil {
-			return fmt.Errorf("failed to write migration state file: %w", err)
-		}
-	} else if err := checkSpecDrift(g, config); err != nil {
-		return err
+	// There is no migration state file: every run builds a fresh
+	// MigrationConfig straight from the manifest — pure manifest
+	// projections, no live call, no registration, no drift check. Live
+	// reconcile (below) is what observes actual cluster state and decides
+	// what remains outstanding.
+	kubeConfigPathResolved, kerr := resolveKubeConfigPath(g)
+	if kerr != nil {
+		return kerr
 	}
+	config := buildFreshMigrationConfig(g, id, kubeConfigPathResolved)
 
 	// Record what this run will execute with — the effective policy (manifest
 	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
 	// this is the durable audit trail of the knobs a given execute used; the same
-	// values are also snapshotted into the state file as LastRunPolicies.
-	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, config.CurrentState, g.Spec.DefaultPolicies)...)
+	// values are also snapshotted into LastRunPolicies for the run report.
+	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, migration.StateUninitialized, g.Spec.DefaultPolicies)...)
 
 	// migplan.Reconcile now runs on EVERY invocation — not only when resuming a
 	// migration still at StateUninitialized. reconcile is the single component
@@ -288,12 +252,12 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 
 	switch mode {
 	case "dynamic":
-		return runTBMBranch(cmd, g, config, *state, migrationStateFile, reconcileResult, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
+		return runTBMBranch(cmd, g, &config, reconcileResult, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
 	default:
 		// "static", and any value not yet recognized as dynamic — matches
 		// today's behavior for every migration this codebase has ever
 		// registered, none of which were dynamic-mode before this plan.
-		opts, err := buildExecutorOpts(g, config, *state, migrationStateFile, reconcileResult)
+		opts, err := buildExecutorOpts(g, &config, reconcileResult)
 		if err != nil {
 			return err
 		}
@@ -373,149 +337,10 @@ func applyPolicyOverrides(cmd *cobra.Command, p *manifest.DefaultPolicies) {
 	}
 }
 
-// checkSpecDrift compares the manifest against the topology snapshot taken
-// when this migration was registered. Any difference refuses the run
-// outright, at any state, with no override: a migration's topology must not
-// change once registered. This is deliberately unconditional — there is no
-// longer a separate re-registration step a pre-cutover drift could be
-// steered through, matching execute-tbm's own manifest-drift refusal, which
-// has never had one either.
-func checkSpecDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig) error {
-	drift := detectDrift(g, config)
-	if len(drift) == 0 {
-		return nil
-	}
-
-	// Per-item detail goes to the log for support; the terminal gets section
-	// names and counts only, never a topic list.
-	slog.Debug("manifest differs from the registered migration's topology",
-		"migration_id", config.MigrationId, "state", config.CurrentState, "sections", strings.Join(drift, "; "))
-
-	return fmt.Errorf( //nolint:staticcheck // multi-line operator guidance
-		"the migration manifest has changed since %q was registered (%s).\n"+
-			"A migration's topology must not change once registered. Use a new metadata.name for a new migration, "+
-			"or revert this file to match the registered topology.",
-		config.MigrationId, strings.Join(drift, ", "))
-}
-
-// detectDrift returns the changed sections, described by field path and count.
-//
-// It compares only the topology fields. Credentials are out of scope
-// automatically — they are never persisted. Policy is out of scope by omission,
-// not by absence: two policy fields (the detect-unrouted and offset-sync-drain
-// durations) DO reach the state file via MigrationConfig, but detectDrift never
-// reads them back, because policy is re-read fresh from the manifest every run
-// so the snapshot's copy is never authoritative. Two fields are additionally
-// excluded on purpose: the kubeconfig path, because execute is resume-safe and
-// may legitimately run from a different machine or pod; and anything
-// credential-bearing, because credentials are never persisted.
-func detectDrift(g *manifest.GatewayMigration, config *migration.MigrationConfig) []string {
-	var drift []string
-
-	if strings.Join(g.Spec.Source.BootstrapServers, ",") != config.SourceBootstrap {
-		drift = append(drift, "spec.source (bootstrapServers)")
-	}
-
-	var targetChanges []string
-	if k := g.Spec.Target.Kafka; k != nil {
-		if strings.Join(k.BootstrapServers, ",") != config.ClusterBootstrap {
-			targetChanges = append(targetChanges, "kafka.bootstrapServers")
-		}
-		if k.RestEndpoint != config.ClusterRestEndpoint {
-			targetChanges = append(targetChanges, "kafka.restEndpoint")
-		}
-	}
-	if g.Spec.Target.ClusterID != config.ClusterId {
-		targetChanges = append(targetChanges, "clusterId")
-	}
-	if len(targetChanges) > 0 {
-		drift = append(drift, fmt.Sprintf("spec.target (%s)", strings.Join(targetChanges, ", ")))
-	}
-
-	var linkChanges []string
-	if g.Spec.ClusterLink.Name != config.ClusterLinkName {
-		linkChanges = append(linkChanges, "name")
-	}
-	if g.Spec.ClusterLink.PauseConsumerOffsetSync != config.PauseConsumerOffsetSync {
-		linkChanges = append(linkChanges, "pauseConsumerOffsetSync")
-	}
-	if len(linkChanges) > 0 {
-		drift = append(drift, fmt.Sprintf("spec.clusterLink (%s)", strings.Join(linkChanges, ", ")))
-	}
-
-	var gatewayChanges []string
-	if g.Spec.Gateway.Namespace != config.K8sNamespace {
-		gatewayChanges = append(gatewayChanges, "namespace")
-	}
-	if g.Spec.Gateway.CrName != config.InitialCrName {
-		gatewayChanges = append(gatewayChanges, "cr-name")
-	}
-	if len(gatewayChanges) > 0 {
-		drift = append(drift, fmt.Sprintf("spec.gateway (%s)", strings.Join(gatewayChanges, ", ")))
-	}
-
-	// The route/topic topology now lives in spec.route, but the snapshot
-	// still holds it split across Route/TargetDomain/Topics — comparisons are
-	// unchanged in spirit, only the manifest-side projection moves.
-	var topicGroupChanges []string
-	if g.Spec.Route.Name != config.Route {
-		topicGroupChanges = append(topicGroupChanges, "route")
-	}
-	if g.Spec.Route.TargetStreamingDomain != config.TargetDomain {
-		topicGroupChanges = append(topicGroupChanges, "target domain")
-	}
-	if len(g.Spec.Route.TopicGroup) > 0 {
-		entry := g.Spec.Route.TopicGroup[0]
-		// A match-all topicGroup selection now resolves via migplan's Explode
-		// against source topics, exactly like an explicit list — no special
-		// "whatever the cluster link mirrors" case remains, so drift compares
-		// the manifest's declared topics against the snapshot the same way for
-		// both topics and topicPatterns entries.
-		if topics := entry.Topics; topics != nil {
-			added, removed := diffCounts(*topics, config.Topics)
-			if added > 0 || removed > 0 {
-				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topics: %d added, %d removed", added, removed))
-			}
-		}
-		// TopicPatterns is compared against its own declared snapshot, not
-		// against config.Topics (the resolved set) — Topics and TopicPatterns
-		// are mutually exclusive on the manifest, so exactly one of these two
-		// blocks ever fires. An edited pattern must count as drift even if it
-		// happens to expand to the same topics today.
-		if patterns := entry.TopicPatterns; patterns != nil {
-			added, removed := diffCounts(*patterns, config.TopicPatterns)
-			if added > 0 || removed > 0 {
-				topicGroupChanges = append(topicGroupChanges, fmt.Sprintf("topicPatterns: %d added, %d removed", added, removed))
-			}
-		}
-	}
-	if len(topicGroupChanges) > 0 {
-		drift = append(drift, fmt.Sprintf("spec.route (%s)", strings.Join(topicGroupChanges, ", ")))
-	}
-
-	return drift
-}
-
-// diffCounts returns how many entries want adds and drops relative to have.
-// Counts only — never the names.
-func diffCounts(want, have []string) (added, removed int) {
-	for _, w := range want {
-		if !slices.Contains(have, w) {
-			added++
-		}
-	}
-	for _, h := range have {
-		if !slices.Contains(want, h) {
-			removed++
-		}
-	}
-	return added, removed
-}
-
 // buildExecutorOpts resolves every credential leg and the execute-time policy
 // from the manifest. The manifest is a second deserializer into the same
 // struct the flags filled, so nothing downstream changes shape.
-func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, state migration.MigrationState, stateFile string, reconcileResult *migplan.Result) (MigrationExecutorOpts, error) {
+func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.MigrationConfig, reconcileResult *migplan.Result) (MigrationExecutorOpts, error) {
 	srcCreds, errs := g.SourceCredentials()
 	if len(errs) > 0 {
 		return MigrationExecutorOpts{}, manifest.JoinProblems("spec.source.credentials", errs)
@@ -554,18 +379,15 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		sp.UseTLS = true
 	}
 
-	// Policy is re-read fresh from the manifest on every run and overwrites
-	// whatever the config held, so the snapshot's copy is never authoritative.
-	// These two DO reach the state file (MigrationConfig carries json tags for
-	// both); the rest of policy was already purely execute-time.
+	// Policy is re-read fresh from the manifest on every run, so these two
+	// runtime fields (which the workflow reads back during execute) always
+	// carry this run's effective value rather than any stale copy.
 	config.DetectUnroutedProducersDuration = g.Spec.DefaultPolicies.DetectUnroutedProducersDuration
 	config.ConsumerOffsetSyncDrainDuration = g.Spec.DefaultPolicies.ConsumerOffsetSyncDrainDuration
 
 	// Record the full effective policy (manifest defaults with this run's
-	// overrides applied) as an observational snapshot that saveState persists.
-	// Unlike the two duration fields above — runtime plumbing the workflow reads
-	// back — this block exists purely for the operator and support, is never read
-	// by kcp, and is therefore exempt from drift detection.
+	// overrides applied) as an observational snapshot for the operator and
+	// support — never read back by kcp.
 	config.LastRunPolicies = &migration.LastRunPolicies{
 		LagThreshold:                    g.Spec.DefaultPolicies.LagThreshold,
 		PromoteBatchSize:                g.Spec.DefaultPolicies.PromoteBatchSize,
@@ -577,16 +399,14 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 	}
 
 	opts := MigrationExecutorOpts{
-		MigrationStateFile: stateFile,
-		MigrationState:     state,
-		MigrationConfig:    *config,
-		LagThreshold:       int64(g.Spec.DefaultPolicies.LagThreshold),
-		ClusterBootstrap:   config.ClusterBootstrap,
-		SourceBootstrap:    config.SourceBootstrap,
-		RolloutTimeout:     g.Spec.DefaultPolicies.RolloutTimeout,
-		HotReloadTimeout:   g.Spec.DefaultPolicies.HotReloadTimeout,
-		GatewayConfigPort:  g.Spec.DefaultPolicies.GatewayConfigPort,
-		PromoteBatchSize:   g.Spec.DefaultPolicies.PromoteBatchSize,
+		MigrationConfig:   *config,
+		LagThreshold:      int64(g.Spec.DefaultPolicies.LagThreshold),
+		ClusterBootstrap:  config.ClusterBootstrap,
+		SourceBootstrap:   config.SourceBootstrap,
+		RolloutTimeout:    g.Spec.DefaultPolicies.RolloutTimeout,
+		HotReloadTimeout:  g.Spec.DefaultPolicies.HotReloadTimeout,
+		GatewayConfigPort: g.Spec.DefaultPolicies.GatewayConfigPort,
+		PromoteBatchSize:  g.Spec.DefaultPolicies.PromoteBatchSize,
 
 		// nil except when resuming a migration still at StateUninitialized —
 		// see runMigrationExecute's conditional migplan.Reconcile call.

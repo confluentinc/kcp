@@ -89,7 +89,6 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
 	actions.promotePollInterval = time.Millisecond
 	config := testTBMConfig()
-	config.CurrentState = StateUninitialized
 	ctx := context.Background()
 
 	// Initialize captures the reconcile plan's artifacts (FenceYAML,
@@ -106,7 +105,7 @@ func TestTBMActions_EachMethodSucceeds(t *testing.T) {
 
 func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
+	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
 	res := &migplan.Result{
 		Route:          "migration-route",
 		Topics:         []string{"t1.order"},
@@ -132,7 +131,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 
 func TestTBMActions_Initialize_RefusedPlanFailsWithReasonsAndDoesNotMutateConfig(t *testing.T) {
 	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, &mockClusterLinkService{})
-	config := &migration.MigrationConfig{MigrationId: "tbm-1", CurrentState: StateUninitialized}
+	config := &migration.MigrationConfig{MigrationId: "tbm-1"}
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
 	err := actions.Initialize(context.Background(), config, res)
@@ -300,7 +299,6 @@ func TestTBMActions_WaitForLags_SweepFailureCounterResetsOnSuccess(t *testing.T)
 func promoteTestConfig(topics []string) *migration.MigrationConfig {
 	return &migration.MigrationConfig{
 		MigrationId:         "tbm-promote-1",
-		CurrentState:        StateFenceVerified,
 		Topics:              topics,
 		ClusterId:           "lkc-123",
 		ClusterRestEndpoint: "https://cluster.example.com",

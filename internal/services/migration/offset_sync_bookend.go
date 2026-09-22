@@ -30,9 +30,8 @@ func RestoreOffsetSync(
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
 	config *MigrationConfig,
-	persist func() error,
 ) {
-	restoreOffsetSync(cl, clCfg, config, persist, "Migration completed but")
+	restoreOffsetSync(cl, clCfg, config, "Migration completed but")
 }
 
 // restoreOffsetSync is the shared restore engine behind the post-switchover
@@ -54,7 +53,6 @@ func restoreOffsetSync(
 	cl clusterlink.Service,
 	clCfg clusterlink.Config,
 	config *MigrationConfig,
-	persist func() error,
 	situation string,
 ) {
 	if !config.PauseConsumerOffsetSync {
@@ -90,13 +88,12 @@ func restoreOffsetSync(
 // WarnIfPausedOnExecuteFailure prints a stderr remediation message when
 // orchestrator.Execute returns an error and the operator opted into
 // offset-sync pausing (config.PauseConsumerOffsetSync). It deliberately does
-// NOT shape its wording from config.CurrentState or the state-file
-// PauseConsumerOffsetSyncFlipped marker — the pause/restore bookends are now
-// idempotent applies with no state-file-derived signal to branch on, and both
-// fields are removed once the state file itself goes (Task 2) — so the
-// guidance is a single generic reminder gated only on the manifest-declared
-// intent: verify the cluster link matches the declared baseline before
-// resuming normal operation.
+// NOT shape its wording from a state-file-derived signal — there is no
+// migration state file, no CurrentState, and no flipped marker — the
+// pause/restore bookends are idempotent applies with nothing to branch on, so
+// the guidance is a single generic reminder gated only on the
+// manifest-declared intent: verify the cluster link matches the declared
+// baseline before resuming normal operation.
 //
 // Soft-fail: never returns an error — this is best-effort messaging on top of
 // the underlying execute error.

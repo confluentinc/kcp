@@ -709,7 +709,6 @@ func (s *MigrationActions) PauseOffsetSync(
 	ctx context.Context,
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
-	persist func() error,
 ) error {
 	if !config.PauseConsumerOffsetSync {
 		slog.Debug("⏭️ consumer offset sync pause not requested, skipping")
@@ -763,19 +762,19 @@ func (s *MigrationActions) PauseOffsetSync(
 	return nil
 }
 
-// restoreOffsetSyncAfterRollback restores the consumer.offset.* config the
-// pause flipped, as the second half of the abort_fence rollback. Soft-fail:
-// the unfence already succeeded and a restore error must not undo it — the
-// flipped marker stays set so the restore remains owed. No-op when nothing
-// was flipped (e.g. the pause failed before its AlterConfigs, or a drift
-// refusal), which also keeps externally-set config untouched.
+// restoreOffsetSyncAfterRollback restores the consumer.offset.* config, as
+// the second half of the abort_fence rollback. Soft-fail: the unfence already
+// succeeded and a restore error must not undo it. Manifest- and plan-driven
+// only (see restoreOffsetSync): it is unconditional on
+// config.PauseConsumerOffsetSync, never on whether a prior pause actually
+// landed, so it is safe to call even when the pause failed before its own
+// AlterConfigs.
 func (s *MigrationActions) restoreOffsetSyncAfterRollback(
 	config *MigrationConfig,
 	restAuth clusterlink.Authenticator,
-	persist func() error,
 ) {
 	clCfg := BuildClusterLinkConfig(config, restAuth)
-	restoreOffsetSync(s.clusterLinkService, clCfg, config, persist, "Gateway unfenced but")
+	restoreOffsetSync(s.clusterLinkService, clCfg, config, "Gateway unfenced but")
 }
 
 // VerifyFence verifies the fence held: source offsets must be stable, because

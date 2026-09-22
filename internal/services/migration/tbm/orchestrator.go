@@ -89,27 +89,21 @@ func execParamsFromEvent(e *fsm.Event) ExecutionParams {
 // TBMOrchestrator manages the FSM lifecycle and coordinates workflow
 // execution. Mirrors migration.MigrationOrchestrator.
 type TBMOrchestrator struct {
-	config         *migration.MigrationConfig
-	fsm            *fsm.FSM
-	actions        *TBMActions
-	migrationState *migration.MigrationState
-	stateFilePath  string
-	reporter       *reporter
+	config   *migration.MigrationConfig
+	fsm      *fsm.FSM
+	actions  *TBMActions
+	reporter *reporter
 }
 
 // NewTBMOrchestrator creates a new TBM orchestrator with injected dependencies.
 func NewTBMOrchestrator(
 	config *migration.MigrationConfig,
 	actions *TBMActions,
-	migrationState *migration.MigrationState,
-	stateFilePath string,
 ) *TBMOrchestrator {
 	orchestrator := &TBMOrchestrator{
-		config:         config,
-		actions:        actions,
-		migrationState: migrationState,
-		stateFilePath:  stateFilePath,
-		reporter:       newReporter(),
+		config:   config,
+		actions:  actions,
+		reporter: newReporter(),
 	}
 
 	events := make(fsm.Events, 0, len(canonicalWorkflow)+1)
@@ -126,18 +120,16 @@ func NewTBMOrchestrator(
 		Dst:  StateInitialized,
 	})
 
-	// The FSM always starts at uninitialized, regardless of config.CurrentState
-	// (the persisted, possibly stale, mirror of a prior run's position — see
-	// tbm_executor.go's runTBMBranch, which zeroes it before calling here).
-	// There is no resume position: the command layer calls migplan.Reconcile
-	// live on every invocation and hands its fresh *migplan.Result to
-	// Execute, which walks canonicalWorkflow from the top and re-applies each
-	// step's artifact idempotently (Task 1's FenceYAML/SwitchoverYAML no-op
-	// guards make an already-complete migration a side-effect-free
-	// walk-through). This is why the old expire_* demotions — which used to
-	// re-derive a safe resume point from a point-in-time fence/verification
-	// fact after a restart — no longer exist: there is nothing to demote from
-	// when every run starts at zero.
+	// The FSM always starts at uninitialized on construction. There is no
+	// resume position: the command layer calls migplan.Reconcile live on
+	// every invocation and hands its fresh *migplan.Result to Execute, which
+	// walks canonicalWorkflow from the top and re-applies each step's
+	// artifact idempotently (Task 1's FenceYAML/SwitchoverYAML no-op guards
+	// make an already-complete migration a side-effect-free walk-through).
+	// This is why the old expire_* demotions — which used to re-derive a safe
+	// resume point from a point-in-time fence/verification fact after a
+	// restart — no longer exist: there is nothing to demote from when every
+	// run starts at zero.
 	orchestrator.fsm = fsm.NewFSM(
 		StateUninitialized,
 		events,
@@ -169,10 +161,6 @@ func NewTBMOrchestrator(
 // authenticates the destination cluster-link REST surface; onPromote
 // consumes it.
 func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagThreshold int64, detectUnroutedProducersDuration time.Duration, restAuth clusterlink.Authenticator) error {
-	if !isKnownState(o.config.CurrentState) {
-		return fmt.Errorf("unrecognized tbm migration state %q in state file — refusing to execute (corrupted file, or written by a newer kcp version?)", o.config.CurrentState)
-	}
-
 	params := ExecutionParams{ReconcileResult: res, LagThreshold: lagThreshold, DetectUnroutedProducersDuration: detectUnroutedProducersDuration, RestAuth: restAuth}
 
 	for _, step := range canonicalWorkflow {
@@ -187,9 +175,6 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 		slog.Debug("executing tbm step", "step", step.Description)
 		if err := o.fsm.Event(ctx, step.Event, params); err != nil {
 			return o.handleStepFailure(ctx, step, err)
-		}
-		if err := o.PersistState(); err != nil {
-			return fmt.Errorf("failed during %s: %w", step.Description, err)
 		}
 		o.reporter.stepDone()
 	}
@@ -216,9 +201,6 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 		return stepFailure
 	}
 
-	if err := o.PersistState(); err != nil {
-		return fmt.Errorf("%w; additionally, the rollback completed — the gateway was unfenced — but persisting the rolled-back state failed: %w; the state file may still show the pre-rollback state, and re-running execute will re-assert the fence and resume from it", stepFailure, err)
-	}
 	return stepFailure
 }
 
@@ -226,10 +208,11 @@ func (o *TBMOrchestrator) beforeEventCallback(ctx context.Context, e *fsm.Event)
 	slog.Debug("TBM FSM: before event", "event", e.Event, "src", e.Src, "dst", e.Dst)
 }
 
-// afterEventCallback advances CurrentState and logs every committed
-// transition as a single Info line, mirroring migration.afterEventCallback.
+// afterEventCallback logs every committed transition as a single Info line,
+// mirroring migration.afterEventCallback. The FSM's own state (o.fsm.Current(),
+// which e.Dst mirrors) is authoritative in-process — there is no config field
+// to keep in sync.
 func (o *TBMOrchestrator) afterEventCallback(ctx context.Context, e *fsm.Event) {
-	o.config.CurrentState = e.Dst
 	slog.Info("tbm migration state advanced", "event", e.Event, "from", e.Src, "to", e.Dst, "migration_id", o.config.MigrationId)
 }
 
@@ -299,36 +282,6 @@ func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	o.reporter.Success("Gateway unfenced — traffic restored to pre-fence state")
 }
 
-// PersistState saves the current TBM config to the state file.
-func (o *TBMOrchestrator) PersistState() error {
-	if err := o.saveState(); err != nil {
-		return fmt.Errorf("failed to persist state after transition to %s: %w", o.config.CurrentState, err)
-	}
-	slog.Debug("persisted tbm state", "migration_id", o.config.MigrationId, "state", o.config.CurrentState, "path", o.stateFilePath)
-	return nil
-}
-
-func (o *TBMOrchestrator) saveState() error {
-	o.migrationState.UpsertMigration(*o.config)
-	if err := o.migrationState.WriteToFile(o.stateFilePath); err != nil {
-		return fmt.Errorf("failed to save state: %w", err)
-	}
-	return nil
-}
-
 func (o *TBMOrchestrator) canTransition(event string) bool {
 	return o.fsm.Can(event)
-}
-
-// HasPendingWork reports whether any canonical workflow step remains to run.
-func (o *TBMOrchestrator) HasPendingWork() bool {
-	if !isKnownState(o.config.CurrentState) {
-		return true
-	}
-	for _, step := range canonicalWorkflow {
-		if o.canTransition(step.Event) {
-			return true
-		}
-	}
-	return false
 }

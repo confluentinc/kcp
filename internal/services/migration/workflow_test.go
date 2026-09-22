@@ -119,7 +119,7 @@ func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	}
 	actions := NewMigrationActions(gw, cl)
 
-	config := &MigrationConfig{MigrationId: "test-migration-1", CurrentState: StateUninitialized}
+	config := &MigrationConfig{MigrationId: "test-migration-1"}
 	res := testReconcileResult()
 
 	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
@@ -137,7 +137,7 @@ func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 // reconcile plan is turned into a failed call, never silently accepted.
 func TestActions_Initialize_RefusedPlanFailsWithReasons(t *testing.T) {
 	actions := NewMigrationActions(&mockGatewayService{}, &mockClusterLinkService{})
-	config := &MigrationConfig{MigrationId: "test-migration-1", CurrentState: StateUninitialized}
+	config := &MigrationConfig{MigrationId: "test-migration-1"}
 	res := &migplan.Result{Refused: true, Reasons: []string{"topic t1.order has replication lag"}}
 
 	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)

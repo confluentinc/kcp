@@ -13,7 +13,6 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
-	"github.com/confluentinc/kcp/internal/services/migration/tbm"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
@@ -30,33 +29,23 @@ import (
 // inherits it for reconcile). A real migplan.Reconcile builds LIVE source/target
 // Kafka listers and a LIVE Gateway CR pull unconditionally (see
 // internal/services/migplan/run.go), so it cannot succeed — nor resolve a
-// Mode — inside this test process, exactly as
-// TestExecute_ResumeFromUninitialized_CallsReconcile already demonstrates for
-// the static path (it asserts Reconcile is *called* and *fails*).
-//
-// migplan.Reconcile now runs on EVERY invocation (Plan 2c's AAO
-// reconcile-every-run flip; see cmd_migration_execute.go), including a
-// RESUME — there is no longer a StateUninitialized gate that skips it. A
-// dynamic-mode resume can therefore no longer be driven through the full CLI
-// surface at all: Reconcile always fails first, against this process's
-// unreachable fixture endpoints, before the mode dispatch is ever reached.
-// Tests that need to observe TBM dispatch/execution behavior on a resume
-// call runTBMBranch directly instead (runTBMBranchWithFixture below),
-// standing in for the live Reconcile call with a *migplan.Result built from
-// exactly what a prior Initialize would already have persisted onto
-// config — the same seam TestExecute_DynamicMode_InitializePersistsMode_
-// ResumeDispatchesToTBM's "run 1" already used for the orchestrator
-// directly. Only tests whose assertions hold regardless of WHERE the run
-// fails (e.g. the negative control below, and drift refusal, which precedes
-// reconcile) still go through the full CLI via runExecuteWithTBMDeps.
+// Mode — inside this test process. There is also no migration state file any
+// more (Plan 2e): every run builds its MigrationConfig fresh from the manifest
+// and drives the FSM from StateUninitialized on a *migplan.Result the command
+// layer's live Reconcile call would have produced. Tests here that need to
+// observe TBM dispatch/execution behavior call runTBMBranch directly
+// (runTBMBranchWithConfig below), standing in for that live Reconcile call
+// with a hand-built *migplan.Result and MigrationConfig — the same seam shape
+// runMigrationExecute itself uses, just fed by hand instead of a live pull.
+// Only tests whose assertions hold regardless of WHERE the run fails (e.g. the
+// negative control in cmd_migration_execute_test.go's
+// TestExecute_AlwaysCallsReconcile) still go through the full CLI.
 
 // dynamicRouteGatewayYAML is a minimal dynamic-route Gateway CR fixture,
 // mirroring internal/services/migration/tbm's own test fixture of the same
-// shape (and the deleted execute-tbm command test's copy) — kept as a separate
-// copy since this package cannot import an internal package's test-only file.
-// A dynamic route carries a `rules:` block (routing/coordination), the shape
-// migplan resolves to Mode:"dynamic"; a static route would instead carry a
-// fence/streamingDomain block.
+// shape. A dynamic route carries a `rules:` block (routing/coordination), the
+// shape migplan resolves to Mode:"dynamic"; a static route would instead carry
+// a fence/streamingDomain block.
 const dynamicRouteGatewayYAML = `apiVersion: platform.confluent.io/v1beta1
 kind: Gateway
 metadata:
@@ -86,70 +75,64 @@ spec:
 `
 
 // dynamicFenceYAML / dynamicSwitchoverYAML are the mutually-consistent rules:
-// fragments a prior Initialize would have captured onto the config from
-// migplan.Reconcile's Result, so the now-real fence/switch transitions can graft
-// them onto dynamicRouteGatewayYAML's migration-route and succeed against the
-// stub gateway. Copied from the deleted execute-tbm test's realisticReconcileResult.
+// fragments a live migplan.Reconcile would produce, so the fence/switch
+// transitions can graft them onto dynamicRouteGatewayYAML's migration-route
+// and succeed against the stub gateway.
 const (
 	dynamicFenceYAML      = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n  fencing:\n    - topics: [\"t1.order\"]\n"
 	dynamicSwitchoverYAML = "rules:\n  routing:\n    coordination:\n      group: source\n    default: source\n    conditions:\n      - topics: [\"t1.order\"]\n        streamingDomain: target\n"
 )
 
-// writeDynamicState persists a config for a migration a prior run already
-// registered and initialized as dynamic-mode: CurrentState is a resumable state
-// past StateUninitialized (so the dispatcher skips reconcile and routes on
-// config.Mode), Mode is "dynamic", and the fence/switch artifacts are populated
-// exactly as tbm.TBMActions.Initialize would have left them. edit runs last, so
-// a test can vary a single field. The base config still matches the unmutated
-// manifest (writeState builds it from there), so detectDrift stays clean.
-func (f fixture) writeDynamicState(t *testing.T, currentState string, edit func(*migration.MigrationConfig)) {
+// dynamicConfig builds the MigrationConfig a dynamic-mode run drives — the
+// same pure manifest projection buildFreshMigrationConfig produces for f's
+// manifest, plus Mode and the fence/switchover/gateway artifacts a live
+// migplan.Reconcile would have produced for this fixture. There is no
+// migration state file to read any of this from any more (Plan 2e), so a test
+// that needs to drive runTBMBranch directly builds the config and its
+// matching *migplan.Result (dynamicResult) by hand. edit runs last, so a test
+// can vary a single field.
+func dynamicConfig(t *testing.T, f fixture, edit func(*migration.MigrationConfig)) *migration.MigrationConfig {
 	t.Helper()
-	f.writeState(t, func(c *migration.MigrationConfig) {
-		c.CurrentState = currentState
-		c.Mode = "dynamic"
-		c.Topics = []string{"t1.order"}
-		c.GatewayYAML = dynamicRouteGatewayYAML
-		c.FenceYAML = dynamicFenceYAML
-		c.SwitchoverYAML = dynamicSwitchoverYAML
-		if edit != nil {
-			edit(c)
-		}
-	})
+	g := loadGateway(t, f.manifestPath)
+	kubeConfigPath, err := resolveKubeConfigPath(g)
+	require.NoError(t, err)
+	cfg := buildFreshMigrationConfig(g, "msk-prod-to-cc-batch-1", kubeConfigPath)
+	cfg.Mode = "dynamic"
+	cfg.Topics = []string{"t1.order"}
+	cfg.GatewayYAML = dynamicRouteGatewayYAML
+	cfg.FenceYAML = dynamicFenceYAML
+	cfg.SwitchoverYAML = dynamicSwitchoverYAML
+	if edit != nil {
+		edit(&cfg)
+	}
+	return &cfg
 }
 
-// runExecuteWithTBMDeps builds the command with the three TBM service builders
-// injected (mirroring this file's runExecute, which uses the production
-// builders) and runs it. Only the TBM branch's downstream services are stubbed;
-// migplan.Reconcile keeps its zero-DI posture, so a dynamic dispatch here must
-// come from a persisted config.Mode, never a stubbed reconcile.
-func runExecuteWithTBMDeps(t *testing.T, buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc, args ...string) (string, error) {
-	t.Helper()
-	cmd := newMigrationExecuteCmd(buildOffsets, buildGateway, buildClusterLink)
-	var out bytes.Buffer
-	cmd.SetOut(&out)
-	cmd.SetErr(&out)
-	cmd.SetArgs(args)
-	err := cmd.Execute()
-	return out.String(), err
+// dynamicResult builds the *migplan.Result matching config exactly — the
+// stand-in for what a live migplan.Reconcile would have returned for it.
+func dynamicResult(config *migration.MigrationConfig) *migplan.Result {
+	return &migplan.Result{
+		Route:          "migration-route",
+		Topics:         config.Topics,
+		FenceYAML:      config.FenceYAML,
+		SwitchoverYAML: config.SwitchoverYAML,
+		GatewayYAML:    config.GatewayYAML,
+		Mode:           config.Mode,
+	}
 }
 
-// runTBMBranchWithFixture drives runTBMBranch directly against the state
-// file f already wrote, standing in for the live migplan.Reconcile call
-// runMigrationExecute now makes on EVERY invocation ahead of the mode
-// dispatch (Plan 2c) — a call that cannot succeed in this process (see this
-// file's header comment). The stand-in *migplan.Result mirrors exactly what
-// a real Reconcile would have produced for this fixture: the same
-// Topics/Fence/Switchover/Gateway YAML and Mode writeDynamicState already
-// persisted onto config, so handing it back through the real dispatch is a
-// no-op on the artifacts — this still exercises the SAME
-// TBMOrchestrator.Execute call runTBMBranch makes in production, just
-// reached via a reconcile-free front door. editGateway, when non-nil, mutates
-// the loaded manifest before dispatch — the substitute for a CLI flag
-// override (applyPolicyOverrides needs real cobra flag parsing, which this
-// seam skips; setting the manifest field directly is equivalent for what
-// these tests observe).
-func runTBMBranchWithFixture(
-	t *testing.T, f fixture,
+// runTBMBranchWithConfig drives runTBMBranch directly against config and its
+// matching dynamicResult, standing in for the live migplan.Reconcile call
+// runMigrationExecute now makes on every invocation ahead of the mode dispatch
+// — a call that cannot succeed in this process (see this file's header
+// comment). This still exercises the SAME TBMOrchestrator.Execute call
+// runTBMBranch makes in production, just reached via a reconcile-free front
+// door. editGateway, when non-nil, mutates the loaded manifest before
+// dispatch — the substitute for a CLI flag override (applyPolicyOverrides
+// needs real cobra flag parsing, which this seam skips; setting the manifest
+// field directly is equivalent for what these tests observe).
+func runTBMBranchWithConfig(
+	t *testing.T, f fixture, config *migration.MigrationConfig,
 	editGateway func(*manifest.GatewayMigration),
 	buildOffsets offsetProvidersFunc, buildGateway gatewayServiceFunc, buildClusterLink clusterLinkServiceFunc,
 ) (string, error) {
@@ -159,25 +142,13 @@ func runTBMBranchWithFixture(
 		editGateway(g)
 	}
 
-	state, err := migration.NewMigrationStateFromFile(f.stateFile)
-	require.NoError(t, err)
-	config, err := state.GetMigrationById(resolveMigrationID(g, ""))
-	require.NoError(t, err)
-
-	res := &migplan.Result{
-		Route:          config.Route,
-		Topics:         config.Topics,
-		FenceYAML:      config.FenceYAML,
-		SwitchoverYAML: config.SwitchoverYAML,
-		GatewayYAML:    config.GatewayYAML,
-		Mode:           config.Mode,
-	}
+	res := dynamicResult(config)
 
 	var out bytes.Buffer
 	cmd := &cobra.Command{}
 	cmd.SetOut(&out)
 
-	err = runTBMBranch(cmd, g, config, *state, f.stateFile, res, buildOffsets, buildGateway, buildClusterLink)
+	err := runTBMBranch(cmd, g, config, res, buildOffsets, buildGateway, buildClusterLink)
 	return out.String(), err
 }
 
@@ -321,123 +292,19 @@ func promoteAll(topicNames []string) *clusterlink.PromoteMirrorTopicsResponse {
 // --- Test 1: dynamic dispatch drives the TBM orchestrator to switched ---
 
 // TestExecute_DynamicMode_DispatchesToTBMOrchestrator proves a dynamic-mode
-// resume routes through tbm.TBMOrchestrator and walks its FSM to
-// tbm.StateSwitched. Reaching switched is the discriminator: the AAO branch
-// dials the real source/destination Kafka clusters before it ever builds an
+// run routes through tbm.TBMOrchestrator and walks its FSM all the way to
+// switched, printing the same "Migration completed" banner the AAO branch
+// prints. Reaching that point is the discriminator: the AAO branch dials the
+// real source/destination Kafka clusters before it ever builds an
 // orchestrator, so against the fixture's placeholder endpoints it could not
-// reach switched — only the stubbed dynamic branch can. Starting from
-// StateInitialized exercises the full remaining walk (wait_for_lags → fence →
-// verify_fence → promote → switch).
+// get there — only the stubbed dynamic branch can.
 func TestExecute_DynamicMode_DispatchesToTBMOrchestrator(t *testing.T) {
 	f := newFixture(t, nil)
-	f.writeDynamicState(t, migration.StateInitialized, nil)
+	config := dynamicConfig(t, f, nil)
 
-	out, err := runTBMBranchWithFixture(t, f, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
+	out, err := runTBMBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Migration completed")
-
-	cfg := persistedConfig(t, f)
-	assert.Equal(t, migration.StateSwitched, cfg.CurrentState,
-		"a dynamic-mode resume must walk the TBM FSM all the way to switched")
-}
-
-// TestExecute_StaticModeSetup_DoesNotReachSwitchedWithTBMStubs is the negative
-// control for Test 1, run through the full CLI (unlike Test 1, which now calls
-// runTBMBranch directly — see this file's header comment). Since reconcile now
-// runs on EVERY invocation ahead of the mode dispatch, this run fails at
-// Reconcile before mode is ever read — the SAME failure a dynamic-mode run
-// through the CLI would hit too (there is no live cluster in this process).
-// Asserting the failure surfaces via Reconcile's own wrap (rather than some
-// other, mode-dependent path deeper in the command) is what this test can
-// still meaningfully pin post-Plan-2c.
-func TestExecute_StaticModeSetup_DoesNotReachSwitchedWithTBMStubs(t *testing.T) {
-	f := newFixture(t, nil)
-	f.writeDynamicState(t, migration.StateInitialized, func(c *migration.MigrationConfig) {
-		c.Mode = "static"
-	})
-
-	_, err := runExecuteWithTBMDeps(t, stubOffsetProviders, stubGatewayService, stubClusterLinkService,
-		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to produce the reconcile plan",
-		"every CLI run now fails at Reconcile first, regardless of mode")
-
-	cfg := persistedConfig(t, f)
-	assert.NotEqual(t, migration.StateSwitched, cfg.CurrentState,
-		"the static branch must not use the TBM stubs, so it cannot reach switched here")
-}
-
-// TestExecute_DynamicMode_InitializePersistsMode_ResumeDispatchesToTBM is the
-// two-invocation regression guard for the plan defect where TBMActions.Initialize
-// never wrote config.Mode: a dynamic migration interrupted after Initialize
-// persisted Mode:"" and the NEXT run's dispatch (mode := config.Mode) fell
-// through to the static/AAO branch, silently driving the wrong executor. Unlike
-// this file's other tests it does NOT pre-set Mode on a fixture — run 1 registers
-// a fresh migration and completes a REAL TBMActions.Initialize, which must
-// persist Mode itself; run 2 reads only what run 1 wrote.
-//
-// Run 1 is driven through the orchestrator directly (with the TBM services
-// stubbed) rather than the command, because the command's live migplan.Reconcile
-// cannot run in this process — it dials real Kafka and the live Gateway CR. That
-// call is exactly what runTBMBranch makes in production once reconcile has
-// produced the Result; here we supply that Result directly, standing in for the
-// live reconcile. Nothing pre-sets config.Mode; TBMActions.Initialize must.
-func TestExecute_DynamicMode_InitializePersistsMode_ResumeDispatchesToTBM(t *testing.T) {
-	f := newFixture(t, nil)
-
-	// Run 1: a fresh, unregistered dynamic migration, built exactly as the
-	// command registers a new one (buildFreshMigrationConfig → StateUninitialized,
-	// Mode unset). Drive its real Initialize to completion via the orchestrator.
-	const id = "msk-prod-to-cc-batch-1"
-	g := loadGateway(t, f.manifestPath)
-	kubePath, err := resolveKubeConfigPath(g)
-	require.NoError(t, err)
-	fresh := buildFreshMigrationConfig(g, id, kubePath)
-	require.Empty(t, fresh.Mode, "sanity: a freshly-registered migration carries no Mode")
-	require.Equal(t, migration.StateUninitialized, fresh.CurrentState)
-
-	state := migration.NewMigrationState()
-	state.UpsertMigration(fresh)
-	require.NoError(t, state.WriteToFile(f.stateFile))
-
-	restCreds, err := g.RestCredentials()
-	require.NoError(t, err)
-	actions := tbm.NewTBMActions(zeroLagOffsetProvider{}, zeroLagOffsetProvider{}, stubGatewayServiceImpl{}, stubClusterLinkServiceImpl{})
-	orchestrator := tbm.NewTBMOrchestrator(&fresh, actions, state, f.stateFile)
-	res := &migplan.Result{
-		Route:          "migration-route",
-		Topics:         []string{"t1.order"},
-		FenceYAML:      dynamicFenceYAML,
-		SwitchoverYAML: dynamicSwitchoverYAML,
-		GatewayYAML:    dynamicRouteGatewayYAML,
-		Mode:           "dynamic",
-	}
-	require.NoError(t, orchestrator.Execute(context.Background(), res, 0, 0, restCreds.Authenticator()))
-
-	// Direct regression proof: Initialize itself persisted Mode. Without the fix
-	// this reads "" and the assertion fails here.
-	cfgAfterRun1 := persistedConfig(t, f)
-	require.Equal(t, "dynamic", cfgAfterRun1.Mode,
-		"TBMActions.Initialize must persist config.Mode to the state file")
-	require.Equal(t, migration.StateSwitched, cfgAfterRun1.CurrentState)
-
-	// Run 2: driven via runTBMBranch directly (the CLI now calls the
-	// unstubbable live Reconcile on every invocation — see this file's header
-	// comment) reading only the file run 1 wrote. tbm.NewTBMOrchestrator now
-	// always starts its FSM at StateUninitialized (start-from-zero, this
-	// task) regardless of the persisted CurrentState, so run 2 walks the
-	// whole canonical workflow again — re-applying every artifact
-	// idempotently — rather than short-circuiting on HasPendingWork (that
-	// check no longer gates runTBMBranch). What this seam still proves is the
-	// ORIGINAL regression: run 2 dispatches through runTBMBranch/
-	// tbm.NewTBMOrchestrator at all — reading Mode "dynamic" persisted by run
-	// 1 — rather than falling through to the AAO branch on a real run, which
-	// would fail immediately against the fixture's unreachable clusters
-	// instead of completing.
-	out, err := runTBMBranchWithFixture(t, f, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
-	require.NoError(t, err, "run 2 must route to the TBM branch on the persisted Mode, not the AAO branch")
-	assert.Contains(t, out, "Migration completed",
-		"a from-zero run 2 re-walks and completes the workflow again, rather than short-circuiting as already complete")
 }
 
 // --- Test 2: --promote-batch-size reaches TBMActions.SetPromoteBatchSize ---
@@ -476,42 +343,34 @@ func (r *recordingClusterLinkService) maxBatch() int {
 // TBMActions.SetPromoteBatchSize for a dynamic-mode run. Two topics are staged
 // at zero lag; the recorded per-call batch sizes discriminate a capped run
 // (batch size 1 → each PromoteMirrorTopics call submits exactly one topic) from
-// an uncapped one (both promoted in a single call). Resuming at StateLagsOk
-// walks fence → verify_fence → promote → switch, exercising the real promote
-// batching.
+// an uncapped one (both promoted in a single call).
 func TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions(t *testing.T) {
 	topics := []string{"t1.order", "t2.inventory"}
 
 	t.Run("flag caps the batch", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.writeDynamicState(t, migration.StateLagsOk, func(c *migration.MigrationConfig) {
-			c.Topics = topics
-		})
+		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
 		// The CLI's --promote-batch-size relies on real cobra flag parsing
-		// (applyPolicyOverrides), which runTBMBranchWithFixture's reconcile-free
+		// (applyPolicyOverrides), which runTBMBranchWithConfig's reconcile-free
 		// seam skips (see its doc comment) — setting the manifest's
 		// spec.defaultPolicies field directly is equivalent for what this test
 		// observes: runTBMBranch always reads the effective policy from there.
 		editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.PromoteBatchSize = 1 }
-		_, err := runTBMBranchWithFixture(t, f, editGateway, stubOffsetProviders, stubGatewayService,
+		_, err := runTBMBranchWithConfig(t, f, config, editGateway, stubOffsetProviders, stubGatewayService,
 			func(*manifest.GatewayMigration) (clusterlink.Service, error) { return rec, nil })
 		require.NoError(t, err)
-		assert.Equal(t, migration.StateSwitched, persistedConfig(t, f).CurrentState)
 		assert.Equal(t, 1, rec.maxBatch(),
 			"--promote-batch-size 1 must cap every promote batch at one topic")
 	})
 
 	t.Run("unlimited promotes all at once (control)", func(t *testing.T) {
 		f := newFixture(t, nil)
-		f.writeDynamicState(t, migration.StateLagsOk, func(c *migration.MigrationConfig) {
-			c.Topics = topics
-		})
+		config := dynamicConfig(t, f, func(c *migration.MigrationConfig) { c.Topics = topics })
 		rec := &recordingClusterLinkService{}
-		_, err := runTBMBranchWithFixture(t, f, nil, stubOffsetProviders, stubGatewayService,
+		_, err := runTBMBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService,
 			func(*manifest.GatewayMigration) (clusterlink.Service, error) { return rec, nil })
 		require.NoError(t, err)
-		assert.Equal(t, migration.StateSwitched, persistedConfig(t, f).CurrentState)
 		assert.Equal(t, len(topics), rec.maxBatch(),
 			"with no batch cap both topics promote in a single call — proving the flag, not chance, produced the capped run above")
 	})
@@ -524,10 +383,7 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions(t *testing.T) {
 // fields (read from the effective policy — the manifest's spec.defaultPolicies,
 // no flags here — the same source TBMActions reads, so this also pins the
 // AAO-parity policy plumbing), while ConsumerOffsetSyncDrainDuration stays zero
-// because TBM has no offset-sync-pause stage to record a value for. Resuming at
-// StatePromoted leaves only the switch step, so the record lands without paying
-// promote's poll waits, and without executing the (recorded) unrouted-producer
-// window.
+// because TBM has no offset-sync-pause stage to record a value for.
 func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
 	f := newFixture(t, func(doc string) string {
 		return doc + "  defaultPolicies:\n" +
@@ -538,14 +394,12 @@ func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
 			"    hotReloadTimeout: 45s\n" +
 			"    gatewayConfigPort: 9090\n"
 	})
-	f.writeDynamicState(t, migration.StatePromoted, nil)
+	config := dynamicConfig(t, f, nil)
 
-	_, err := runTBMBranchWithFixture(t, f, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
+	_, err := runTBMBranchWithConfig(t, f, config, nil, stubOffsetProviders, stubGatewayService, stubClusterLinkService)
 	require.NoError(t, err)
 
-	cfg := persistedConfig(t, f)
-	require.Equal(t, migration.StateSwitched, cfg.CurrentState)
-	rec := cfg.LastRunPolicies
+	rec := config.LastRunPolicies
 	require.NotNil(t, rec, "a dynamic-mode run must record the effective policy")
 	assert.Equal(t, 42, rec.LagThreshold)
 	assert.Equal(t, 7, rec.PromoteBatchSize, "the manifest default reaches the record with no flag set — AAO-parity policy plumbing")
@@ -556,23 +410,6 @@ func TestExecute_DynamicMode_RecordsLastRunPolicies(t *testing.T) {
 	assert.Equal(t, time.Duration(0), rec.ConsumerOffsetSyncDrainDuration,
 		"TBM has no offset-sync-pause stage, so this field stays zero")
 }
-
-// --- Test 4: pauseConsumerOffsetSync on a dynamic route only refuses on a fresh run ---
-
-// TestExecute_DynamicMode_PauseOffsetSyncSet_ProceedsWithoutRefusing formerly
-// confirmed the refusal was scoped to registration — the pauseOffsetSync
-// refusal check sat inside the StateUninitialized-gated block, so a RESUME
-// never re-entered it. Plan 2c removed that gate entirely (reconcile, and
-// everything that used to ride along with it, now runs on EVERY invocation
-// — see cmd_migration_execute.go): the refusal check is reached on every
-// run now, not only registration, so this test's premise is gone. It cannot
-// be replaced with an equivalent command-layer test either — the refusal
-// check is reached only after a live migplan.Reconcile call that cannot
-// succeed in this process (no injectable seam; see this file's header
-// comment), on every run, so there is no way to drive a "resume" past
-// Reconcile to observe the refusal decision at this layer. The refusal
-// DECISION itself remains fully covered, unconditionally, by
-// TestPauseOffsetSyncRefusedForDynamic below.
 
 // --- Test 5: --gateway-config-port reaches the TBM capability probe ---
 
@@ -603,65 +440,33 @@ func (r *recordingGatewayService) port() int {
 // TestExecute_DynamicMode_GatewayConfigPortOverrideReachesTBM confirms Decision
 // 7 end-to-end through the command: --gateway-config-port reaches
 // config.GatewayConfigPort before tbm's capability probe (DetectCapability)
-// runs. Resuming at StatePromoted leaves only the switch step, which calls
-// ensureGatewayCapability → DetectCapability with config.GatewayConfigPort.
+// runs.
 func TestExecute_DynamicMode_GatewayConfigPortOverrideReachesTBM(t *testing.T) {
 	f := newFixture(t, nil)
-	f.writeDynamicState(t, migration.StatePromoted, nil)
+	config := dynamicConfig(t, f, nil)
 
 	rec := &recordingGatewayService{}
 	// The CLI's --gateway-config-port relies on real cobra flag parsing
-	// (applyPolicyOverrides), which runTBMBranchWithFixture's reconcile-free
+	// (applyPolicyOverrides), which runTBMBranchWithConfig's reconcile-free
 	// seam skips — setting the manifest field directly is equivalent for
 	// what this test observes: runTBMBranch reads GatewayConfigPort straight
 	// from g.Spec.DefaultPolicies.
 	editGateway := func(g *manifest.GatewayMigration) { g.Spec.DefaultPolicies.GatewayConfigPort = 9999 }
-	_, err := runTBMBranchWithFixture(t, f, editGateway, stubOffsetProviders,
+	_, err := runTBMBranchWithConfig(t, f, config, editGateway, stubOffsetProviders,
 		func(*manifest.GatewayMigration) (gateway.Service, error) { return rec, nil },
 		stubClusterLinkService)
 	require.NoError(t, err)
 	assert.Equal(t, 9999, rec.port(),
 		"--gateway-config-port must reach config.GatewayConfigPort before the TBM capability probe")
-	assert.Equal(t, 9999, persistedConfig(t, f).GatewayConfigPort)
+	assert.Equal(t, 9999, config.GatewayConfigPort)
 }
 
-// --- Test 6: a dynamic-mode entry drift-checks via the shared mechanism ---
-
-// TestExecute_DynamicModeEntry_DriftRefusesUnconditionally confirms pre-flight
-// finding #1: a dynamic-mode entry drift-checks via the SAME
-// detectDrift/checkSpecDrift the static path uses (both run before the mode
-// dispatch), with no separate mechanism. A manifest whose cluster-link name no
-// longer matches the registered dynamic migration is refused with the same
-// message TestExecute_DriftRefusesUnconditionallyAtEveryState asserts for static
-// entries — and the injected TBM stubs are never reached, since the refusal
-// precedes dispatch.
-func TestExecute_DynamicModeEntry_DriftRefusesUnconditionally(t *testing.T) {
-	f := newFixture(t, nil)
-	f.writeDynamicState(t, migration.StateInitialized, func(c *migration.MigrationConfig) {
-		c.ClusterLinkName = "changed-link"
-	})
-
-	unreachable := func(*manifest.GatewayMigration) (offset.Provider, offset.Provider, func() error, error) {
-		t.Fatal("drift must refuse before any TBM service is built")
-		return nil, nil, nil, nil
-	}
-	_, err := runExecuteWithTBMDeps(t, unreachable, stubGatewayService, stubClusterLinkService,
-		"--migration-yaml", f.manifestPath, "--migration-state-file", f.stateFile)
-	require.Error(t, err, "a dynamic-mode entry must refuse on drift, unconditionally")
-	assert.Contains(t, err.Error(), "changed since")
-	assert.Contains(t, err.Error(), "new metadata.name")
-
-	assert.Equal(t, migration.StateInitialized, persistedConfig(t, f).CurrentState,
-		"a refused run must not advance the migration")
-}
-
-// --- refusal decision (the half of Decision 6 the command path cannot reach) ---
+// --- refusal decision (pauseConsumerOffsetSync on a dynamic route) ---
 
 // TestPauseOffsetSyncRefusedForDynamic pins the exact refusal decision
-// runMigrationExecute makes on the StateUninitialized reconcile path: a
-// pauseConsumerOffsetSync manifest is refused for a dynamic route and
-// permitted for a static one (which honors the field). That branch is
-// unreachable through the command in-process (it needs a live
+// runMigrationExecute makes: a pauseConsumerOffsetSync manifest is refused for
+// a dynamic route and permitted for a static one (which honors the field).
+// That branch is unreachable through the command in-process (it needs a live
 // migplan.Reconcile), so the decision is factored into
 // pauseOffsetSyncRefusedForDynamic and asserted directly here.
 func TestPauseOffsetSyncRefusedForDynamic(t *testing.T) {

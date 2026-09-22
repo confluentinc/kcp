@@ -32,8 +32,6 @@ func runTBMBranch(
 	cmd *cobra.Command,
 	g *manifest.GatewayMigration,
 	config *migration.MigrationConfig,
-	state migration.MigrationState,
-	stateFile string,
 	reconcileResult *migplan.Result,
 	buildOffsets offsetProvidersFunc,
 	buildGateway gatewayServiceFunc,
@@ -74,15 +72,10 @@ func runTBMBranch(
 		config.GatewayConfigPort = g.Spec.DefaultPolicies.GatewayConfigPort
 	}
 
-	// The FSM always starts at uninitialized now (start-from-zero); make the
-	// config field that mirrors FSM state agree, so nothing reads the stale
-	// value the still-loaded state file carried. NOT a resume position —
-	// reconcile (run every invocation) + idempotent applies determine what
-	// happens. The file is still loaded (offset-sync marker) and written; its
-	// removal is Plan 2e.
-	config.CurrentState = migration.StateUninitialized
-
-	orchestrator := tbm.NewTBMOrchestrator(config, actions, &state, stateFile)
+	// The FSM always starts at uninitialized (start-from-zero) — there is no
+	// resume position: reconcile (run every invocation) + idempotent applies
+	// determine what happens.
+	orchestrator := tbm.NewTBMOrchestrator(config, actions)
 
 	// Record the effective policy this run used — TBM adopts the same audit
 	// snapshot AAO already has (Decision 4). ConsumerOffsetSyncDrainDuration

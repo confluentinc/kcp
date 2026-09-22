@@ -1,14 +1,7 @@
 package migration
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"time"
-
-	"github.com/confluentinc/kcp/internal/atomicwrite"
-	"github.com/confluentinc/kcp/internal/build_info"
-	"github.com/confluentinc/kcp/internal/types"
 )
 
 // ----- migration FSM state and events -----
@@ -24,18 +17,6 @@ const (
 	StatePromoted         = "promoted"
 	StateSwitched         = "switched"
 )
-
-// isKnownState reports whether s is a state value this binary understands.
-// Execute refuses unknown values so a corrupted state file — or one written
-// by a newer kcp — fails loudly instead of skipping every workflow step.
-func isKnownState(s string) bool {
-	switch s {
-	case StateUninitialized, StateInitialized, StateLagsOk, StateFenced,
-		StateOffsetSyncPaused, StateFenceVerified, StatePromoted, StateSwitched:
-		return true
-	}
-	return false
-}
 
 // FSM Event constants
 const (
@@ -60,14 +41,12 @@ const (
 
 // ----- migration configuration -----
 
-// MigrationConfig holds all domain configuration for a migration
-// This is pure data with no behavior - just fields that get serialized
-//
-// Every field added here must be classified for drift detection — see
-// TestMigrationConfig_EveryFieldClassifiedForDrift in cmd/migration/execute.
+// MigrationConfig holds all domain configuration for a migration.
+// This is pure data with no behavior - just fields that get serialized (for
+// the run report) or passed to a live call - there is no migration state
+// file, so this struct is built fresh from the manifest on every run.
 type MigrationConfig struct {
-	MigrationId  string `json:"migration_id"`
-	CurrentState string `json:"current_state"`
+	MigrationId string `json:"migration_id"`
 
 	// Gateway configuration
 	KubeConfigPath string `json:"kube_config_path"`
@@ -82,28 +61,16 @@ type MigrationConfig struct {
 	ClusterLinkName     string   `json:"cluster_link_name"`
 	Topics              []string `json:"topics"`
 
-	// TopicPatterns is the declared spec.route.topicGroup[0].topicPatterns snapshot,
-	// captured at registration alongside Route/TargetDomain — nil when the
-	// manifest instead used an explicit topics list. Unlike Topics (the
-	// resolved topic set, populated once reconcile runs), this is the raw
-	// declared patterns themselves, compared as-is on every resume so an
-	// edited pattern is caught as drift even if it happens to expand to the
-	// same topics today.
+	// TopicPatterns is the declared spec.route.topicGroup[0].topicPatterns,
+	// read fresh from the manifest each run alongside Route/TargetDomain —
+	// nil when the manifest instead used an explicit topics list. Unlike
+	// Topics (the resolved topic set, populated once reconcile runs), this is
+	// the raw declared patterns themselves.
 	TopicPatterns []string `json:"topic_patterns,omitempty"`
-
-	// ClusterLinkConfigs is a snapshot of the cluster link's consumer.offset.*
-	// configs taken at init, before the pause-offset-sync bookend disables
-	// consumer.offset.sync.enable — the diff baseline RestoreOffsetSync
-	// compares the live post-disable state against to decide what to restore.
-	// Runtime data populated by init, not part of the operator's declared spec.
-	ClusterLinkConfigs map[string]string `json:"cluster_link_configs"`
 
 	// Operator intent: pause cluster-link consumer offset sync for the duration of execute.
 	// PauseConsumerOffsetSync records the operator's choice at init time.
-	// PauseConsumerOffsetSyncFlipped is set when kcp has executed the disable AlterConfigs and
-	// not yet restored — supports drift detection, idempotent resume, and remediation messaging.
-	PauseConsumerOffsetSync        bool `json:"pause_consumer_offset_sync"`
-	PauseConsumerOffsetSyncFlipped bool `json:"pause_consumer_offset_sync_flipped"`
+	PauseConsumerOffsetSync bool `json:"pause_consumer_offset_sync"`
 
 	// ConsumerOffsetSyncBaseline is the declared pre-migration state of
 	// consumer.offset.sync.enable on the cluster link (manifest
@@ -167,10 +134,8 @@ type MigrationConfig struct {
 	// TBM, only ever operates on one route per migration.
 	Route string `json:"route"`
 
-	// TargetDomain is spec.route.targetStreamingDomain, captured
-	// directly from the manifest (not from migplan.Result, which does not
-	// carry it) specifically so detectDrift can still catch a manifest edit
-	// to the target domain between init and execute.
+	// TargetDomain is spec.route.targetStreamingDomain, read directly from
+	// the manifest (not from migplan.Result, which does not carry it).
 	TargetDomain string `json:"target_domain"`
 
 	// FenceYAML and SwitchoverYAML are the small, route-agnostic fragments
@@ -187,13 +152,11 @@ type MigrationConfig struct {
 	// Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
 	Mode string `json:"mode"`
 
-	// LastRunPolicies records the effective execute-time policy the most recent
-	// `kcp migration execute` ran with — the manifest's spec.defaultPolicies with
-	// any per-run flag overrides applied. It is observational: written for the
-	// operator and support, never read back by kcp. Policy is re-read fresh from
-	// the manifest every run, so this snapshot is deliberately excluded from drift
-	// detection. A pointer with omitempty so a freshly-initialised migration does
-	// not carry an empty block until the first execute has actually run.
+	// LastRunPolicies records the effective execute-time policy this run used —
+	// the manifest's spec.defaultPolicies with any per-run flag overrides
+	// applied. It is observational: written for the operator and support (the
+	// run report), never read back by kcp. A pointer with omitempty so it is
+	// absent until an execute has actually populated it.
 	LastRunPolicies *LastRunPolicies `json:"last_run_policies,omitempty"`
 }
 
@@ -212,81 +175,4 @@ type LastRunPolicies struct {
 	HotReloadTimeout time.Duration `json:"hot_reload_timeout"`
 	// GatewayConfigPort mirrors manifest.DefaultPolicies.GatewayConfigPort.
 	GatewayConfigPort int `json:"gateway_config_port"`
-}
-
-// ----- migration state file -----
-
-// MigrationState represents the migration state file structure
-// This is a dedicated state file for migration commands (init, execute, list)
-type MigrationState struct {
-	Migrations   []MigrationConfig  `json:"migrations"`
-	KcpBuildInfo types.KcpBuildInfo `json:"kcp_build_info"`
-	Timestamp    time.Time          `json:"timestamp"`
-}
-
-// NewMigrationState creates a new empty MigrationState with metadata
-func NewMigrationState() *MigrationState {
-	return &MigrationState{
-		Migrations: []MigrationConfig{},
-		KcpBuildInfo: types.KcpBuildInfo{
-			Version: build_info.Version,
-			Commit:  build_info.Commit,
-			Date:    build_info.Date,
-		},
-		Timestamp: time.Now(),
-	}
-}
-
-// NewMigrationStateFromFile loads a MigrationState from a JSON file
-func NewMigrationStateFromFile(filePath string) (*MigrationState, error) {
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read migration state file: %w", err)
-	}
-
-	var state MigrationState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal migration state: %w", err)
-	}
-
-	return &state, nil
-}
-
-// WriteToFile saves the MigrationState to a JSON file using atomic write
-func (ms *MigrationState) WriteToFile(filePath string) error {
-	// Update timestamp
-	ms.Timestamp = time.Now()
-
-	// Marshal to JSON with indentation
-	data, err := json.MarshalIndent(ms, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal migration state: %w", err)
-	}
-
-	// The migration state holds sensitive metadata, so it must never be
-	// group/world readable, even briefly or under an unusual umask — hence 0600
-	// through the atomic writer.
-	return atomicwrite.WriteFile(filePath, data, 0600)
-}
-
-// UpsertMigration adds a new migration or updates an existing one by ID
-func (ms *MigrationState) UpsertMigration(config MigrationConfig) {
-	for i, existing := range ms.Migrations {
-		if existing.MigrationId == config.MigrationId {
-			ms.Migrations[i] = config
-			return
-		}
-	}
-	ms.Migrations = append(ms.Migrations, config)
-}
-
-// GetMigrationById retrieves a migration by its ID
-func (ms *MigrationState) GetMigrationById(migrationId string) (*MigrationConfig, error) {
-	for _, config := range ms.Migrations {
-		if config.MigrationId == migrationId {
-			c := config
-			return &c, nil
-		}
-	}
-	return nil, fmt.Errorf("migration not found: %s", migrationId)
 }
