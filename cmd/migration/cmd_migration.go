@@ -3,7 +3,6 @@ package migration
 import (
 	"github.com/confluentinc/kcp/cmd/migration/execute"
 	"github.com/confluentinc/kcp/cmd/migration/lagcheck"
-	"github.com/confluentinc/kcp/cmd/migration/list"
 	"github.com/confluentinc/kcp/cmd/migration/reconcile"
 
 	"github.com/spf13/cobra"
@@ -40,7 +39,6 @@ Supporting documentation:
 	migrationCmd.AddCommand(
 		execute.NewMigrationExecuteCmd(),
 		lagcheck.NewMigrationLagCheckCmd(),
-		list.NewMigrationListCmd(),
 		reconcile.NewMigrationReconcileCmd(),
 	)
 
