@@ -121,6 +121,16 @@ func TestGenerateGateway_Enums(t *testing.T) {
 	require.Equal(t, []any{"confluent-cloud", "confluent-platform"}, tgtType["enum"])
 }
 
+// TestGenerateGateway_OffsetSyncBaselineEnum guards that
+// spec.clusterLink.consumerOffsetSyncBaseline is constrained to the two values
+// Validate() accepts, so an editor/CI lint catches a typo before init does.
+func TestGenerateGateway_OffsetSyncBaselineEnum(t *testing.T) {
+	spec := props(t, props(t, gatewayMap(t))["spec"].(map[string]any))
+	clusterLink := props(t, spec["clusterLink"].(map[string]any))
+	baseline := clusterLink["consumerOffsetSyncBaseline"].(map[string]any)
+	require.Equal(t, []any{"enabled", "disabled"}, baseline["enum"])
+}
+
 // TestGenerateGateway_DurationsAreStringsNotIntegers: jsonschema-go reflects
 // time.Duration as an integer, but goccy parses "10m" — without the override
 // the yaml-language-server header would flag the documented example as invalid.
