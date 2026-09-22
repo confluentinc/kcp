@@ -1815,3 +1815,63 @@ func TestAAO_S1p_OffsetSyncPaused(t *testing.T) {
 func TestAAO_Layer2_KillInjection(t *testing.T) {
 	t.Skip("failure-injection harness is a later build-order plan")
 }
+
+// --- Plan 2e, Task 3: no state file, still idempotent ---
+
+// TestOrchestrator_Execute_NoStateFileWritten is the finale for Plan 2e: it
+// drives a full from-zero AAO run, and its idempotent second run once
+// reconcile reports nothing left, in a real temporary working directory —
+// mirroring TestAAO_S0_FreshFullRun's exact harness (newAAOKillPointOrchestrator)
+// and Result fixtures (aaoFullResult/aaoDoneResult) rather than inventing a
+// new one — and asserts that neither run ever creates a <name>-state.json,
+// or any other file, on disk. Tasks 1-2 already deleted every line of code
+// that used to write one (MigrationState, PersistState, CurrentState,
+// ClusterLinkConfigs, PauseConsumerOffsetSyncFlipped); this test guards the
+// resulting property directly — in the directory a real `kcp migration
+// execute` invocation would run in — rather than trusting that the absence
+// of code implies the absence of files. The idempotency half is already
+// covered thoroughly by the kill-point matrix above; asserting it again here
+// (zero additional patches/promotes on the second run) just confirms the
+// no-file guarantee holds across the same two-run shape those tests use.
+func TestOrchestrator_Execute_NoStateFileWritten(t *testing.T) {
+	dir := t.TempDir()
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() { _ = os.Chdir(cwd) })
+
+	orch, _, patchCalls, promoteCalls, _ := newAAOKillPointOrchestrator(t, StateUninitialized, nil, nil)
+
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoFullResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
+	assertNoFilesWritten(t, dir)
+
+	patchesBefore := atomic.LoadInt64(patchCalls)
+	promotesBefore := len(*promoteCalls)
+
+	// Second, idempotent run: a fresh reconcile now reports nothing left at
+	// all (aaoDoneResult). No new gateway patch or promote call is issued —
+	// same contract TestAAO_S0_FreshFullRun pins — and still no file appears.
+	err = orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, aaoDoneResult())
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, orch.fsm.Current())
+	assert.Equal(t, patchesBefore, atomic.LoadInt64(patchCalls),
+		"a completed migration's re-run must apply no gateway patches")
+	assert.Equal(t, promotesBefore, len(*promoteCalls),
+		"a completed migration's re-run must issue no promote calls")
+
+	assertNoFilesWritten(t, dir)
+}
+
+// assertNoFilesWritten fails if dir contains anything at all. In particular
+// this catches a "*-state.json" migration state file — the artifact Plan 2e
+// deleted entirely — reappearing by regression, but it deliberately checks
+// for ANY file: there is no longer any legitimate reason for a migration
+// execute run to write anything to its working directory.
+func assertNoFilesWritten(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "no file should be written to the working directory: %v", entries)
+}
