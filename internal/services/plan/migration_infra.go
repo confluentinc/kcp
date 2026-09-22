@@ -149,10 +149,19 @@ func migrationInfraCommand(cp ClusterPlan, stateFilePath string) string {
 	// as-is (see the per-type MarkFlagRequired switch in the migration-infra command).
 	flags := []string{
 		"--type " + itoa(mi.Type),
-		sourceTypeFlag(stateFilePath),
+		sourceTypeFlag(cp, stateFilePath),
 		"--state-file " + state,
 		"--cluster-id " + clusterID,
 		"--cc-type " + mi.CCType,
+	}
+	// Apache Kafka (OSK/CP) sources: the CLI requires the source's AWS VPC and region
+	// for every type — unlike MSK, which back-fills both from scanned state, there is
+	// no such backfill for apache-kafka, so the command must carry them to run as-is.
+	if cp.SourcePlatform != "" {
+		flags = append(flags,
+			"--vpc-id <your-source-vpc-id>",
+			"--region <your-source-aws-region>",
+		)
 	}
 	if tier := targetClusterTypeFlag(cp); tier != "" {
 		flags = append(flags, "--target-cluster-type "+tier)
@@ -205,7 +214,7 @@ func migrateTopicsCommand(cp ClusterPlan, mode, stateFilePath string) string {
 	}
 	flags := []string{
 		"--mode " + mode,
-		sourceTypeFlag(stateFilePath),
+		sourceTypeFlag(cp, stateFilePath),
 		"--state-file " + state,
 		"--cluster-id " + clusterID,
 		"--cc-type " + cp.MigrationInfra.CCType,
@@ -297,7 +306,7 @@ func migrateConnectorsCommands(cp ClusterPlan, src ConnectorSource, stateFilePat
 	}
 	if src.SelfManaged {
 		// self-managed carries the source type (msk in a scan-based run); msk-connect does not.
-		smFlags := append([]string{sourceTypeFlag(stateFilePath)}, ccFlags...)
+		smFlags := append([]string{sourceTypeFlag(cp, stateFilePath)}, ccFlags...)
 		cmds = append(cmds, "kcp create-asset migrate-connectors self-managed \\\n  "+strings.Join(smFlags, " \\\n  "))
 	}
 	return cmds
@@ -316,11 +325,14 @@ func targetClusterTypeFlag(cp ClusterPlan) string {
 	return ""
 }
 
-// sourceTypeFlag renders the `--source-type` flag for a create-asset command. In a
-// scan-based run (a state file is present) the source is known to be MSK. In a
-// scanless questionnaire run the source is only inferred, so emit a placeholder the
-// reader fills in rather than asserting `msk`.
-func sourceTypeFlag(stateFilePath string) string {
+// sourceTypeFlag renders the `--source-type` flag for a create-asset command. A
+// non-MSK source is known to be Apache Kafka (Confluent Platform scans as
+// apache-kafka too), so the flag is resolved. For MSK: a scan-based run is known
+// to be `msk`; a scanless run emits a placeholder the reader fills in.
+func sourceTypeFlag(cp ClusterPlan, stateFilePath string) string {
+	if cp.SourcePlatform != "" {
+		return "--source-type apache-kafka"
+	}
 	if stateFilePath == "" {
 		return "--source-type <msk|apache-kafka>"
 	}

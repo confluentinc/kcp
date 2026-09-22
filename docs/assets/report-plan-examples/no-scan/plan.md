@@ -4,7 +4,7 @@ Source: Questionnaire (no scan file) · Generated <example> · kcp 0.0.0-localde
 
 ## Summary
 
-**1 cluster** across **1 region**. Each cluster gets one migration plan, split into an infrastructure half and an application half. Where a cluster runs multiple apps with different needs, the application half is per app.
+**1 cluster**. Each cluster gets one migration plan, split into an infrastructure half and an application half. Where a cluster runs multiple apps with different needs, the application half is per app.
 
 | Migration plan | Region | Infrastructure plan | Application plan |
 | --- | --- | --- | --- |

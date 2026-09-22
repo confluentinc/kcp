@@ -152,11 +152,20 @@ func sourceAuthHandling(method string, p Profile, via string) CredHandling {
 	case "SASL/SCRAM":
 		return CredHandling{Method: method, Note: "No change. Cluster Linking uses your SCRAM credentials as-is."}
 	case authMTLS:
-		return CredHandling{Method: method, Note: "No change. Cluster Linking uses your mTLS certificates as-is."}
+		// The migration link signs in over SASL/SCRAM (kcp's migration-infra has no mTLS
+		// link type), so an mTLS-only source adds a SASL/SCRAM listener for the link to
+		// use — this must agree with the migration-link step, not claim "no change".
+		return CredHandling{Method: method, Note: "The migration link signs in over SASL/SCRAM, so if your source is mTLS-only, add a SASL/SCRAM listener and create a SCRAM user for the link, in place before you apply the migration-link step above. Your application clients keep their mTLS certificates unchanged, and the listener is only for the migration — you can remove it after cutover."}
 	case "API keys (SASL/PLAIN)":
-		return CredHandling{Method: method, Note: "No change. Cluster Linking uses your SASL/PLAIN credentials as-is."}
+		// kcp's generated link authenticates with SASL/SCRAM (ScramLoginModule), not PLAIN,
+		// so a SASL/PLAIN-only source adds a SASL/SCRAM listener for the link — same as mTLS.
+		// This must agree with the migration-link step, not claim "no change".
+		return CredHandling{Method: method, Note: "The migration link signs in over SASL/SCRAM, so if your source is SASL/PLAIN-only, add a SASL/SCRAM listener and create a SCRAM user for the link, in place before you apply the migration-link step above. Your application clients keep their SASL/PLAIN credentials unchanged, and the listener is only for the migration — you can remove it after cutover."}
 	case "None / plaintext":
-		return CredHandling{Method: method, Note: "Nothing to prepare on your source — the cluster link reads it over plaintext with no credentials — but your unauthenticated clients will need a supported auth method on Confluent Cloud after cutover, which has no unauthenticated equivalent."}
+		// Confluent Cloud Cluster Linking has no unauthenticated path, so an unauthenticated
+		// source adds a SASL/SCRAM listener for the link (same as mTLS/PLAIN); separately, its
+		// clients must adopt an auth method on Confluent Cloud after cutover.
+		return CredHandling{Method: method, Note: "The migration link signs in over SASL/SCRAM — Confluent Cloud Cluster Linking has no unauthenticated path — so add a SASL/SCRAM listener and create a SCRAM user on your source for the link, in place before you apply the migration-link step above; you can remove that listener after cutover. Separately, your unauthenticated clients need a supported auth method on Confluent Cloud after cutover, which has no unauthenticated equivalent."}
 	case authAWSIAM:
 		if p.isServerless() {
 			return CredHandling{Method: method, Note: "AWS IAM credentials cannot cross a cluster link, which is why this plan runs a jump cluster." + iamMap}

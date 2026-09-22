@@ -29,14 +29,24 @@ type ConnectorsResult struct {
 	Source  string         `json:"source,omitempty"`
 }
 
+// connectorKinds names the connector runtimes a source can carry, for the
+// "no …" / "whether this cluster runs …" copy. MSK adds MSK Connect; every source
+// can run self-managed Connect.
+func connectorKinds(p Profile) string {
+	if p.isMSK() {
+		return "MSK Connect or self-managed Connect"
+	}
+	return "self-managed Connect"
+}
+
 func connectorsDecision(p Profile) ConnectorsResult {
 	present := deref(p.MSKConnectPresent) == "Yes" || deref(p.SelfManagedConnectors) == "Yes"
 	asked := p.MSKConnectPresent != nil || p.SelfManagedConnectors != nil
 	if !present {
 		if asked {
-			return ConnectorsResult{Value: "None to move", Kind: ConnectorsKindNone, Reason: basis(srcOr(p.ConnectorsAnswered, "no MSK Connect or self-managed Connect")) + "there is no connector work in this plan."}
+			return ConnectorsResult{Value: "None to move", Kind: ConnectorsKindNone, Reason: basis(srcOr(p.ConnectorsAnswered, "no "+connectorKinds(p))) + "there is no connector work in this plan."}
 		}
-		return ConnectorsResult{Value: "Not assessed", Kind: ConnectorsKindNotAssessed, Reason: "We don't yet know whether this cluster runs MSK Connect or self-managed Connect. The scan didn't capture it, so tell us and we'll fold it in. Connectors do not travel with your topics, so this is worth settling before you cut over.", Action: strptr("Tell us about your connectors")}
+		return ConnectorsResult{Value: "Not assessed", Kind: ConnectorsKindNotAssessed, Reason: "We don't yet know whether this cluster runs " + connectorKinds(p) + ". The scan didn't capture it, so tell us and we'll fold it in. Connectors do not travel with your topics, so this is worth settling before you cut over.", Action: strptr("Tell us about your connectors")}
 	}
 	// Connector destination defaults to Confluent-managed when the customer hasn't
 	// chosen one (the connector_destination question's built-in default), so the
@@ -73,6 +83,9 @@ func connectorsDecision(p Profile) ConnectorsResult {
 		reason += " You run both MSK Connect and your own self-managed connectors today, and each is recreated as a Confluent-managed connector."
 	case mskConnect:
 		reason += " You are on MSK Connect today, so each connector is recreated as a Confluent-managed connector."
+	}
+	if p.isCP() && kind == ConnectorsKindManaged {
+		reason += " Your Confluent Platform connectors are Confluent connectors, so most have a Confluent Cloud fully-managed equivalent to move to."
 	}
 	if defaulted {
 		reason += " Confluent-managed is the default here; you can choose to keep them self-managed and run your own Connect cluster instead."
@@ -160,7 +173,7 @@ func historicalDataDecision(p Profile) HistoricalResult {
 		// Known-small (measured, or known non-tiered/short-retention): the little
 		// history there is comes across automatically, nothing separate to size.
 		if measured {
-			return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(sc("about "+humanGB(*p.RetainedDataGB)+" retained")) + "that's small enough to come across with your data migration, so there's no separate historical backfill to plan whichever cutover you choose."}
+			return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(sc("about "+humanGB(*p.RetainedDataGB)+" retained")) + "your retained data is small enough to come across with your data migration, so there's no separate historical backfill to plan whichever cutover you choose."}
 		}
 		if p.StorageMode != nil || p.LongRetention != nil {
 			return HistoricalResult{Value: "No separate backfill to plan", Reason: basis(srcOr(p.TieredAnswered, "no tiered or long-retention history")) + "the small local window comes across with your data migration, so there's no separate backfill to plan. Run `kcp scan metrics` to size the retained data if you want to confirm."}

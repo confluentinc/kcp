@@ -17,9 +17,9 @@
 //
 //	type PlanResult struct { JSON, Markdown, PlanInputs []byte }
 //
-// EXPERIMENTAL: signatures and payload shapes may change while
-// `plan_schema_version` is `"1-experimental"`. Pin to a specific kcp
-// version in your go.mod and bump deliberately. Function names and
-// argument shapes are expected to remain stable; the JSON / YAML
-// payload schema is the surface intended to evolve.
+// Stability: the Go API (function names and argument shapes) is stable.
+// The JSON / YAML payload schema is versioned by `plan_schema_version`
+// (currently `"3"`) and may still evolve, but only through a deliberate
+// version bump. Pin a specific kcp version in your go.mod and adopt a new
+// schema version when you're ready.
 package lib

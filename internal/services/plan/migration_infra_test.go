@@ -68,6 +68,30 @@ func TestMigrationInfraFor(t *testing.T) {
 	}
 }
 
+// An Apache Kafka (OSK/CP) source must print --vpc-id and --region: the CLI marks
+// both required for --source-type apache-kafka (unlike MSK, which back-fills them
+// from scanned state), so without them the command the plan prints fails PreRunE.
+// MSK must NOT carry them (it derives both from state; MSK output stays as-is).
+func TestMigrationInfraCommand_OSKRequiresVpcAndRegion(t *testing.T) {
+	scram := engine.Profile{SourceAuthTypes: []string{engineAuthSCRAM}}
+
+	osk := ClusterPlan{ClusterID: "orders", SourcePlatform: "Apache Kafka",
+		MigrationInfra: migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	oskCmd := migrationInfraCommand(osk, "kcp-state.json")
+	for _, want := range []string{"--source-type apache-kafka", "--vpc-id", "--region"} {
+		if !strings.Contains(oskCmd, want) {
+			t.Errorf("OSK command missing %q:\n%s", want, oskCmd)
+		}
+	}
+
+	msk := ClusterPlan{ClusterID: "orders", Arn: "arn:aws:kafka:...:cluster/orders/abc",
+		MigrationInfra: migrationInfraFor(scram, enterprisePlan()), Plan: enterprisePlan()}
+	mskCmd := migrationInfraCommand(msk, "kcp-state.json")
+	if strings.Contains(mskCmd, "--vpc-id") || strings.Contains(mskCmd, "--region") {
+		t.Errorf("MSK command must not carry --vpc-id/--region (derived from state):\n%s", mskCmd)
+	}
+}
+
 // migrate-topics: mirror mode must carry --cluster-link-name and --mode mirror;
 // new mode must carry --mode new and must NOT carry --cluster-link-name (the CLI
 // rejects it). Both need the required cluster/target flags.
