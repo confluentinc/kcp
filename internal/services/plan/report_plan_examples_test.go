@@ -61,32 +61,41 @@ func normalizeJSON(js string) string {
 func TestReportPlanExamples_UpToDate(t *testing.T) {
 	update := os.Getenv("UPDATE_EXAMPLES") == "1"
 
-	// Load the committed scan fixture once, exactly as the CLI does.
-	scanBytes, err := os.ReadFile(filepath.Join(examplesRoot, "demo-scan.json"))
-	if err != nil {
-		t.Fatalf("read demo-scan.json fixture: %v", err)
+	// loadScan processes a committed scan fixture exactly as the CLI does.
+	loadScan := func(t *testing.T, file string) report.ProcessedState {
+		t.Helper()
+		scanBytes, err := os.ReadFile(filepath.Join(examplesRoot, file))
+		if err != nil {
+			t.Fatalf("read %s fixture: %v", file, err)
+		}
+		state, err := types.NewStateFromBytes(scanBytes)
+		if err != nil {
+			t.Fatalf("load %s fixture: %v", file, err)
+		}
+		return report.NewReportService().ProcessState(*state)
 	}
-	state, err := types.NewStateFromBytes(scanBytes)
-	if err != nil {
-		t.Fatalf("load demo-scan.json fixture: %v", err)
-	}
-	scanned := report.NewReportService().ProcessState(*state)
 
 	modes := []struct {
 		name       string // subdirectory under examplesRoot
 		scanless   bool   // no --state-file: pure questionnaire
+		scanFile   string // committed scan fixture (ignored when scanless); "" defaults to demo-scan.json
 		inputsPath string // committed answered inputs, or "" for a first run
 	}{
 		{name: "filled", inputsPath: filepath.Join(examplesRoot, "filled-inputs.yaml")},
 		{name: "first-run"},
 		{name: "no-scan", scanless: true},
+		{name: "osk-scan", scanFile: "demo-osk-scan.json"},
 	}
 
 	for _, m := range modes {
 		t.Run(m.name, func(t *testing.T) {
 			// Mirror cmd/report/plan.runReportPlan's construction of the plan.
-			processed := scanned
-			stateArg := stateArgName
+			scanFile := m.scanFile
+			if scanFile == "" {
+				scanFile = stateArgName
+			}
+			processed := loadScan(t, scanFile)
+			stateArg := scanFile
 			if m.scanless {
 				processed = ScanlessState()
 				stateArg = ""

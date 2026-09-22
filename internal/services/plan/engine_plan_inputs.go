@@ -41,10 +41,19 @@ func scanFactsOf(p engine.Profile) []Fact {
 	}
 	auth := "not detected"
 	if len(p.SourceAuthTypes) > 0 {
-		auth = strings.Join(p.SourceAuthTypes, ", ")
+		labels := make([]string, len(p.SourceAuthTypes))
+		for i, a := range p.SourceAuthTypes {
+			// "API keys (SASL/PLAIN)" is the shared engine value for a source SASL/PLAIN
+			// method and target API keys; on the source side show it as plain SASL/PLAIN.
+			if a == engineAuthSASLPlain {
+				a = "SASL/PLAIN"
+			}
+			labels[i] = a
+		}
+		auth = strings.Join(labels, ", ")
 	}
 	facts := []Fact{
-		{"msk_cluster_type", p.MSKClusterType},
+		{"source_cluster_type", p.MSKClusterType},
 		{"kafka_version", p.KafkaVersion},
 		{"source_auth_types", auth},
 		{"partitions", partitions},

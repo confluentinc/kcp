@@ -13,8 +13,10 @@ import (
 )
 
 // enginePlanSchemaVersion identifies the new engine-driven plan JSON shape,
-// separate from the legacy Plan's "1".
-const enginePlanSchemaVersion = "2"
+// separate from the legacy Plan's "1". Bumped 2->3 when the scan_facts key
+// `msk_cluster_type` was renamed to `source_cluster_type` (source-neutral) and
+// the source-side SASL/PLAIN value was de-aliased from "API keys (SASL/PLAIN)".
+const enginePlanSchemaVersion = "3"
 
 // AppPlan is one declared application's migration plan: the app-scoped answers
 // plus a full engine verdict set. Its infra verdicts (cluster type / networking /
@@ -53,10 +55,14 @@ func connectorSourceFromProfile(p engine.Profile) *ConnectorSource {
 // verdicts, and one migration plan per application. With no declared apps the
 // single implicit app is the cluster's own Plan (Apps is empty).
 type ClusterPlan struct {
-	ClusterID       string              `json:"cluster_id"`
-	Arn             string              `json:"arn,omitempty"`
-	Key             string              `json:"key"` // plan-inputs.yaml key: name, or name@region on collision
-	Region          string              `json:"region"`
+	ClusterID string `json:"cluster_id"`
+	Arn       string `json:"arn,omitempty"`
+	Key       string `json:"key"` // plan-inputs.yaml key: name, or name@region on collision
+	Region    string `json:"region"`
+	// SourcePlatform names a non-MSK source's platform ("Apache Kafka" | "Confluent
+	// Platform") for the cluster header. Empty (omitted) for an MSK source, so MSK
+	// plan.json is byte-for-byte unchanged; the header then falls back to its MSK copy.
+	SourcePlatform  string              `json:"source_platform,omitempty"`
 	MigrationInfra  MigrationInfra      `json:"migration_infra"`
 	IsServerless    bool                `json:"is_serverless"`
 	TopicCount      int                 `json:"topic_count"`
@@ -80,6 +86,11 @@ type ClusterPlan struct {
 	// scan-only and stays empty in questionnaire mode, so the renderer reads this.
 	// Not serialized (unexported) — plan.json's source_auths contract is unchanged.
 	effectiveSourceAuths []string
+
+	// targetCloud is the effective target cloud ("AWS"|"Azure"|"GCP"|""), for
+	// render-side cloud vocabulary (VPC vs VNet) and on-prem hybrid-connectivity copy.
+	// Not serialized (unexported) — plan.json is unchanged.
+	targetCloud string
 }
 
 // SchemaSourceRef carries the source Schema Registry identifiers the
@@ -230,7 +241,7 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 
 	ep := &EnginePlan{
 		Header: PlanHeader{
-			Source:            "Amazon MSK",
+			Source:            headerSource(state),
 			StateFilePath:     stateFilePath,
 			KCPVersion:        build_info.Version,
 			GeneratedAt:       now().UTC(),
@@ -293,10 +304,13 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		clusterContingent, clusterInert := computeContingent(c, in, srKind, scanless, clusterPlanResult, clusterQuestions)
 		downgradeInert(clusterQuestions, clusterInert)
 		cp := ClusterPlan{
-			ClusterID:      c.Name,
-			Arn:            c.Arn,
-			Key:            key,
-			Region:         c.Region,
+			ClusterID: c.Name,
+			Arn:       c.Arn,
+			Key:       key,
+			Region:    c.Region,
+			// Non-MSK only: names the platform for the cluster header. Empty for MSK so
+			// its plan.json stays unchanged.
+			SourcePlatform: nonMSKPlatform(profile),
 			MigrationInfra: migrationInfraFor(profile, clusterPlanResult),
 			// Reflect the effective profile, not the raw scan: a source_cluster_type
 			// override (e.g. no-scan mode, or correcting a mis-scan) can make the plan
@@ -315,6 +329,7 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 			ConnectorSource: connectorSourceFromProfile(profile),
 		}
 		cp.effectiveSourceAuths = engineAuthToKCP(profile.SourceAuthTypes)
+		cp.targetCloud = profile.TargetCloud
 		cp.State = clusterState(cp)
 		// Per-half states, mirroring the plan.md summary columns so a consumer can
 		// reproduce the Infrastructure/Application badges from plan.json.
@@ -348,13 +363,18 @@ func BuildEnginePlan(state report.ProcessedState, declared DeclaredInputs, state
 		}
 		ep.Clusters = append(ep.Clusters, cp)
 	}
-	// report plan is MSK-only today; flag any Apache Kafka (OSK) clusters it skips
-	// rather than silently dropping them (they'd otherwise vanish with no trace).
-	if n := oskClusterCount(state); n > 0 {
-		ep.Warnings = append(ep.Warnings, fmt.Sprintf("report plan does not yet support Apache Kafka sources; %d cluster(s) skipped", n))
-	}
 	ep.Summary = summarize(ep)
 	return ep
+}
+
+// nonMSKPlatform returns the source platform display name for a non-MSK profile
+// (Apache Kafka / Confluent Platform), or "" for MSK — so the field is set only for
+// OSK/CP clusters and omits from MSK plan.json.
+func nonMSKPlatform(p engine.Profile) string {
+	if engine.IsMSK(p) {
+		return ""
+	}
+	return p.SourcePlatform
 }
 
 // summarize rolls the per-cluster plans up into the fleet summary.

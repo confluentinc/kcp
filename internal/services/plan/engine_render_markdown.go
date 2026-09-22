@@ -62,7 +62,13 @@ func RenderEnginePlanMarkdown(ep *EnginePlan) string {
 	if scanless {
 		// A questionnaire-only plan is a valid mode; frame the scan as an upgrade for
 		// sharper sizing and ready-to-run commands, not a prerequisite you skipped.
-		md.AddAlert(markdown.AlertNote, "This plan was generated from your answers alone (no scan), which is a complete way to plan. For sharper sizing and ready-to-run commands, run `kcp discover` (MSK) or `kcp scan` to produce a state file, then re-run this with `--state-file <file>`.")
+		// `kcp discover` is MSK-only, so a non-MSK plan leads with `kcp scan`; an MSK
+		// plan keeps discover-first (its wording is unchanged).
+		scanTool := "run `kcp discover` (MSK) or `kcp scan`"
+		if anyNonMSKSource(ep) {
+			scanTool = "run `kcp scan` (or `kcp discover` for MSK)"
+		}
+		md.AddAlert(markdown.AlertNote, "This plan was generated from your answers alone (no scan), which is a complete way to plan. For sharper sizing and ready-to-run commands, "+scanTool+" to produce a state file, then re-run this with `--state-file <file>`.")
 	}
 	// When the whole fleet lacks throughput metrics, the sizing lower-bound caveat
 	// is stated once at the top (in renderSummary), so per-cluster it shortens to a
@@ -84,8 +90,13 @@ func RenderEnginePlanMarkdown(ep *EnginePlan) string {
 func renderSummary(md *markdown.Markdown, ep *EnginePlan) {
 	s := ep.Summary
 	md.AddHeading("Summary", 2)
-	lead := fmt.Sprintf("**%d cluster%s** across **%d region%s**. Each cluster gets one migration plan, split into an infrastructure half and an application half. Where a cluster runs multiple apps with different needs, the application half is per app.",
-		s.Clusters, plural(s.Clusters), s.Regions, plural(s.Regions))
+	// Only name a region count when there is one (MSK scans have regions; OSK/CP and
+	// scanless plans have none, where "across 0 regions" reads oddly).
+	scope := fmt.Sprintf("**%d cluster%s**", s.Clusters, plural(s.Clusters))
+	if s.Regions > 0 {
+		scope += fmt.Sprintf(" across **%d region%s**", s.Regions, plural(s.Regions))
+	}
+	lead := scope + ". Each cluster gets one migration plan, split into an infrastructure half and an application half. Where a cluster runs multiple apps with different needs, the application half is per app."
 	if s.NeedsSpecialist > 0 {
 		lead += fmt.Sprintf(" %d routed to a specialist.", s.NeedsSpecialist)
 	}
@@ -496,7 +507,15 @@ func renderCluster(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, 
 			}
 			auths = strings.Join(friendly, ", ")
 		}
-		src := "**Source:** MSK " + kind
+		// A non-MSK (Apache Kafka / Confluent Platform) source has no Provisioned vs
+		// Serverless axis and no broker-node count in the scan, so its header names the
+		// platform alone; MSK keeps its exact "MSK <kind>" wording.
+		var src string
+		if cp.SourcePlatform != "" {
+			src = "**Source:** " + cp.SourcePlatform
+		} else {
+			src = "**Source:** MSK " + kind
+		}
 		// Only show counts the scan actually captured — "0 topics · 0 brokers" reads
 		// as broken when the scan simply didn't collect them.
 		if cp.TopicCount > 0 {
@@ -612,6 +631,8 @@ func friendlyAuthLabel(token string) string {
 		return "AWS IAM"
 	case SourceAuthSCRAM:
 		return "SASL/SCRAM"
+	case SourceAuthSASLPlain:
+		return "SASL/PLAIN"
 	case SourceAuthMTLS:
 		return "mTLS"
 	case SourceAuthUnauth:
@@ -773,7 +794,14 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 	// placeholders (source type, cluster ID) rather than values wired to a real
 	// cluster. Say so up front so a reader doesn't run them as-is.
 	if stateFilePath == "" {
-		md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID and source type — to run against your cluster: run `kcp discover` (MSK) or `kcp scan` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type <msk|apache-kafka>` and the cluster ID are placeholders to fill in.")
+		// `kcp discover` is MSK-only. For a non-MSK source the source type is already
+		// known (apache-kafka), so lead with `kcp scan` and name the resolved type; MSK
+		// keeps the original discover-first wording and the msk|apache-kafka placeholder.
+		if cp.SourcePlatform != "" {
+			md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID — to run against your cluster: run `kcp scan` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type apache-kafka` is set for your source and the cluster ID is a placeholder to fill in.")
+		} else {
+			md.AddAlert(markdown.AlertNote, "The `kcp create-asset …` commands below are a reference. They need a scanned `kcp-state.json` — with your real cluster ID and source type — to run against your cluster: run `kcp discover` (MSK) or `kcp scan` first, then re-run this with `--state-file`, or hand this plan to your specialist. Until then, `--source-type <msk|apache-kafka>` and the cluster ID are placeholders to fill in.")
+		}
 	}
 
 	n := 0
@@ -817,7 +845,7 @@ func renderMigrationInfra(md *markdown.Markdown, cp ClusterPlan, stateFilePath s
 		topicsStep(md, cp, stateFilePath, migrateTopicsModeNew, step)
 		perAppDataOps(md, cp, stateFilePath, step)
 		md.AddParagraph(step("copy your data with Confluent Replicator.") + " Run Confluent Replicator on a Kafka Connect worker in your own account to copy data from your source into the new cluster ([docs](" + docReplicator + ")). It reads your source with your existing credentials and writes into Confluent Cloud with the target credentials (the client authentication) you set up in Step 1, and it needs a Confluent Platform Enterprise license.")
-		md.AddParagraph(step("cut over.") + " Once Replicator has caught up, move your clients to Confluent Cloud. Consumer offsets don't carry over on their own: translate them with the Confluent timestamp interceptor, added to every consumer before you start (Java clients only) ([docs](" + docReplicator + ")).")
+		md.AddParagraph(step("cut over.") + " Once Replicator has caught up, move your clients to Confluent Cloud. Consumer offsets don't carry over on their own: translate them with the Confluent timestamp interceptor, added to every consumer before you start (Java clients only) ([docs](" + docReplicator + ")). Non-Java consumers have no automatic offset-translation path here — they resume according to each consumer's `auto.offset.reset` (reprocessing from earliest, or skipping to latest), so plan their cutover accordingly.")
 		clientCutoverChanges(md, cp)
 		md.AddParagraph("**Backing out:** your source keeps taking writes and serving your applications until you move the clients, so nothing is committed before cutover. To roll back, leave your clients pointed at the still-running source (or point them back to it) instead of completing the move.")
 		pendingDataOpsNote(md, cp)
@@ -937,10 +965,10 @@ func sourceAuthUnauthOnly(cp ClusterPlan) bool {
 // its backing-out note, used by both the auto-mapped and the specialist-wired
 // cluster-link paths so they read identically.
 func clusterLinkCutoverStep(md *markdown.Markdown, cp ClusterPlan, step func(string) string) {
-	md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut your clients over with `kcp migration` ([docs](" + docMigration + ")). Cluster Linking syncs your consumer offsets across as it mirrors, so your consumers resume where they left off on Confluent Cloud — no timestamp interceptor needed. Run it in three stages:")
+	md.AddParagraph(step("run the cutover.") + " With the link live and the mirror caught up, cut your clients over with `kcp migration` ([docs](" + docMigration + ")). Cluster Linking can carry your consumer offsets across as it mirrors — no timestamp interceptor needed — but offset sync is off by default, so enable `consumer.offset.sync.enable` on the cluster link before you cut over. Run it in three stages:")
 	md.AddOrderedList([]string{
 		"`kcp migration init` — set up the cutover.",
-		"`kcp migration lagcheck` — confirm the mirror has caught up to the source (lag is zero).",
+		"`kcp migration lag-check` — confirm the mirror has caught up to the source (lag is zero).",
 		"`kcp migration execute` — promote the mirror topics and move your clients to Confluent Cloud.",
 	})
 	clientCutoverChanges(md, cp)
@@ -956,7 +984,18 @@ func clientCutoverChanges(md *markdown.Markdown, cp ClusterPlan) {
 	if auth == "" {
 		auth = "the plan's chosen client authentication"
 	}
-	md.AddParagraph("What changes for each client app at cutover: point it at the new Confluent Cloud **bootstrap endpoint**; switch its security config to **" + auth + "** with the new Confluent Cloud credentials; and, for any app that uses Schema Registry, point it at the new Confluent Cloud **Schema Registry URL**.")
+	// Preserved auth (mTLS carried over as-is) keeps the client's existing
+	// credentials — it must not tell the reader to switch to "new" credentials.
+	credsClause := "with the new Confluent Cloud credentials"
+	if strings.Contains(auth, "preserved") {
+		credsClause = "keeping the credentials it already uses"
+	}
+	change := "What changes for each client app at cutover: point it at the new Confluent Cloud **bootstrap endpoint**; switch its security config to **" + auth + "** " + credsClause
+	// A schemaless plan has no Schema Registry to repoint, so omit that clause.
+	if cp.Plan.Schema.Kind != engine.SchemaKindSchemaless {
+		change += "; and, for any app that uses Schema Registry, point it at the new Confluent Cloud **Schema Registry URL**"
+	}
+	md.AddParagraph(change + ".")
 }
 
 // mechanismSettled reports whether the migration mechanism (start fresh /
@@ -974,6 +1013,32 @@ func mechanismSettled(cp ClusterPlan) bool {
 	return true
 }
 
+// anyNonMSKSource reports whether any cluster is a non-MSK source (Apache Kafka /
+// Confluent Platform), for source-aware fleet-level copy. `kcp discover` is MSK-only,
+// so a plan with a non-MSK source leads with `kcp scan`.
+func anyNonMSKSource(ep *EnginePlan) bool {
+	for i := range ep.Clusters {
+		if ep.Clusters[i].SourcePlatform != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// privateNetworkNoun is the cloud-correct word for the customer's private network,
+// for prose about subnet CIDRs. AWS (and the empty/MSK default) = "VPC" so MSK copy
+// is unchanged; Azure = "VNet"; GCP = "VPC network".
+func privateNetworkNoun(targetCloud string) string {
+	switch targetCloud {
+	case "Azure":
+		return "VNet"
+	case "GCP":
+		return "VPC network"
+	default:
+		return "VPC"
+	}
+}
+
 // targetClusterStep provisions the target cluster: a target-infra command for
 // Enterprise/Dedicated, or Console guidance for Standard/Basic (which target-infra
 // does not create).
@@ -987,7 +1052,7 @@ func targetClusterStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath stri
 	}
 	md.AddParagraph(step("create the target cluster.") + " Provision " + article(ct) + " **" + ct + "** cluster in Confluent Cloud. `kcp create-asset target-infra` ([docs](" + docTargetInfra + ")) generates the environment, the cluster, and its private networking, or set it up in the [Confluent Cloud Console](" + docCreateCluster + "):")
 	md.AddCodeBlock(targetInfraCommand(cp, stateFilePath), "bash")
-	note := "Note the new cluster's **environment ID**, **cluster ID**, **bootstrap endpoint**, and **REST endpoint** for the later steps. `--needs-private-link` (with your VPC subnet CIDRs) provisions the private networking."
+	note := "Note the new cluster's **environment ID**, **cluster ID**, **bootstrap endpoint**, and **REST endpoint** for the later steps. `--needs-private-link` (with your " + privateNetworkNoun(cp.targetCloud) + " subnet CIDRs) provisions the private networking."
 	// Only mention the migration link's Egress PrivateLink Endpoint when a Cluster
 	// Linking link step actually follows and the plan carries that egress endpoint;
 	// on Replicator/start-fresh paths there is no link step to forward-reference.
@@ -1010,9 +1075,21 @@ func linkStep(md *markdown.Markdown, cp ClusterPlan, stateFilePath string, step 
 	mi := cp.MigrationInfra
 	md.AddParagraph(step("build the migration link.") + fmt.Sprintf(" Your data migration runs over the recommended link (**%s**, [`--type %d`](%s)). %s Fill in the placeholders (the cluster you created plus a link name), then `terraform apply`:", mi.Label, mi.Type, docMigrationInfra, firstSentence(mi.Rationale)))
 	md.AddCodeBlock(migrationInfraCommand(cp, stateFilePath), "bash")
+	// The example link name stays MSK-flavored for MSK sources (SourcePlatform is
+	// empty there) and generic for Apache Kafka / Confluent Platform sources.
+	linkNameExample := "msk-to-cc"
+	if cp.SourcePlatform != "" {
+		linkNameExample = "kafka-to-cc"
+	}
 	placeholders := []string{
-		"`<your-link-name>`: a name you choose for the cluster link, for example `msk-to-cc`.",
+		"`<your-link-name>`: a name you choose for the cluster link, for example `" + linkNameExample + "`.",
 		"`<cc-env-id>`, `<cc-cluster-id>`, `<cc-rest-endpoint>`: from the cluster you created.",
+	}
+	// Apache Kafka (OSK/CP) migration-infra provisions the outbound link from an AWS
+	// VPC, so the command carries --vpc-id/--region and assumes an AWS-resident source.
+	// Document the flags and caveat the AWS assumption for on-prem / other-cloud sources.
+	if cp.SourcePlatform != "" {
+		placeholders = append(placeholders, "`<your-source-vpc-id>`, `<your-source-aws-region>`: the AWS VPC and region where your source's brokers run — kcp's Apache Kafka migration-infra provisions the outbound link from an AWS VPC, so it assumes your source is AWS-resident. If your source is on-premises or in another cloud, set up the outbound link with a specialist ([Talk to a person](#talk-to-a-person)).")
 	}
 	if mi.JumpCluster {
 		placeholders = append(placeholders, "the jump-cluster inputs (`<cc-bootstrap-endpoint>`, `<your-vpce-id>`, and the subnet CIDRs): your cluster's bootstrap endpoint, an existing PrivateLink endpoint, and VPC subnets for the jump cluster ([docs]("+docMigrationInfra+")).")
