@@ -659,3 +659,36 @@ func TestReconcileDynamicStillReturnsMode(t *testing.T) {
 		t.Fatalf("Mode = %q, want dynamic", p.Mode)
 	}
 }
+
+// A resumed batch must carry the AwaitStopped subset (mirrors mid-promotion,
+// PENDING_STOPPED) SEPARATELY from the promote set. Both stay in Topics (they
+// must reach STOPPED before the switch), but the FSM needs to know which were
+// already promoted so it WAITS for them to reach STOPPED instead of re-issuing
+// a promote on an already-promoting mirror. Regression guard for the
+// resume-from-PENDING_STOPPED bug (re-promote → fatal error, or the topic
+// never confirmed → hang).
+func TestReconcileStatic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
+	gw := staticGateway()
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileStatic(in, gw, sourceTopics, targetTopics, mirrors, ClusterIDs{}, nil, "")
+
+	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
+}
+
+func TestReconcileDynamic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
+	gw := dynGateway()
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorStopped, "t2": MirrorPending, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+
+	assertSetEqual(t, "promote", plan.Artifacts.Topics, []string{"t2", "t3"})
+	assertSetEqual(t, "awaitStopped", plan.Artifacts.AwaitStopped, []string{"t2"})
+}

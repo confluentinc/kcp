@@ -109,6 +109,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 	res := &migplan.Result{
 		Route:          "migration-route",
 		Topics:         []string{"t1.order"},
+		AwaitStopped:   []string{"t1.order"},
 		FenceYAML:      "rules:\n  fenced: true\n",
 		SwitchoverYAML: "rules:\n  switched: true\n",
 		GatewayYAML:    "apiVersion: v1\nkind: Gateway\n",
@@ -119,6 +120,7 @@ func TestTBMActions_Initialize_CopiesReconcileArtifactsOntoConfig(t *testing.T) 
 
 	assert.Equal(t, res.Route, config.Route)
 	assert.Equal(t, res.Topics, config.Topics)
+	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
 	assert.Equal(t, res.GatewayYAML, config.GatewayYAML)
@@ -387,6 +389,49 @@ func TestTBMActions_Promote_WaitsForPendingStoppedUntilStopped(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&listCalls), int64(3),
 		"expected Promote to poll mirror status until STOPPED was observed")
+}
+
+// Resume-from-PENDING_STOPPED (TBM): a topic reconcile classified AwaitStopped
+// is already mid-promotion, so Promote must WAIT for it to reach STOPPED and
+// never re-issue a promote on it. Mirrors the AAO guard.
+func TestTBMActions_Promote_AwaitStoppedTopicsAreWaitedNotRepromoted(t *testing.T) {
+	var promoted []string // Promote is synchronous — no locking needed
+	var listCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			promoted = append(promoted, topicNames...)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			status := "PENDING_STOPPED"
+			if atomic.AddInt64(&listCalls, 1) >= 3 {
+				status = clusterlink.MirrorStatusStopped
+			}
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "await-me", MirrorStatus: status},
+				{MirrorTopicName: "migrate-me", MirrorStatus: status},
+			}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"await-me", "migrate-me"})
+	config.AwaitStopped = []string{"await-me"}
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.NoError(t, err)
+	assert.NotContains(t, promoted, "await-me",
+		"an AwaitStopped topic (already promoting on resume) must be waited on, never re-promoted")
+	assert.Contains(t, promoted, "migrate-me",
+		"the genuinely migratable topic must still be promoted")
 }
 
 func TestTBMActions_Promote_BatchSize_ProcessesSequentially(t *testing.T) {

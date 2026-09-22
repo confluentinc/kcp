@@ -29,6 +29,7 @@ const defaultKafkaVersion = "3.6.0"
 type Result struct {
 	Route          string   // the gateway route the fence/switchover rules apply to (spec.route.name)
 	Topics         []string // the promote list to feed to cluster-link promotion
+	AwaitStopped   []string // subset of Topics already mid-promotion (PENDING_STOPPED); the FSM waits for these, never re-promotes them
 	FenceYAML      string   // the whole rules: block, fenced
 	SwitchoverYAML string   // the whole rules: block, switched over
 	Refused        bool     // true ⇔ infeasible; the three above are empty
@@ -168,6 +169,7 @@ func newResult(plan *reconcile.Plan) *Result {
 	r := &Result{Refused: plan.Report.Refused(), GatewayYAML: plan.GatewayYAML, Report: plan.Report, Mode: plan.Mode}
 	if plan.Artifacts != nil {
 		r.Topics = plan.Artifacts.Topics
+		r.AwaitStopped = plan.Artifacts.AwaitStopped
 		r.FenceYAML = string(plan.Artifacts.FenceRules)
 		r.SwitchoverYAML = string(plan.Artifacts.SwitchoverRules)
 	}

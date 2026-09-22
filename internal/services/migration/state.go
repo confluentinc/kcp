@@ -61,6 +61,14 @@ type MigrationConfig struct {
 	ClusterLinkName     string   `json:"cluster_link_name"`
 	Topics              []string `json:"topics"`
 
+	// AwaitStopped is the subset of Topics that reconcile found already
+	// mid-promotion (PENDING_STOPPED) on this run — resume-derived, so it is
+	// (re)populated fresh from the reconcile Result every run. The promote
+	// stage seeds these straight into its awaiting-STOPPED set: it waits for
+	// them to reach STOPPED and never re-issues a promote on an already-
+	// promoting mirror. Empty on a first run (nothing promoted yet).
+	AwaitStopped []string `json:"await_stopped,omitempty"`
+
 	// TopicPatterns is the declared spec.route.topicGroup[0].topicPatterns,
 	// read fresh from the manifest each run alongside Route/TargetDomain —
 	// nil when the manifest instead used an explicit topics list. Unlike

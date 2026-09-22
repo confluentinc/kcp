@@ -62,6 +62,7 @@ func TestNewResult(t *testing.T) {
 		Report: reconcile.Report{Migratable: []reconcile.TopicVerdict{{Topic: "a"}}},
 		Artifacts: &reconcile.Artifacts{
 			Topics:          []string{"a", "b"},
+			AwaitStopped:    []string{"b"},
 			FenceRules:      []byte("fence-yaml"),
 			SwitchoverRules: []byte("switch-yaml"),
 		},
@@ -79,6 +80,9 @@ func TestNewResult(t *testing.T) {
 	}
 	if len(ok.Topics) != 2 || len(ok.Reasons) != 0 {
 		t.Errorf("topics=%v reasons=%v", ok.Topics, ok.Reasons)
+	}
+	if len(ok.AwaitStopped) != 1 || ok.AwaitStopped[0] != "b" {
+		t.Errorf("AwaitStopped = %v, want [b] (the resume await subset must map onto the Result)", ok.AwaitStopped)
 	}
 	if ok.Mode != "static" {
 		t.Errorf("Mode = %q, want static (must mirror plan.Mode)", ok.Mode)

@@ -121,6 +121,7 @@ func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 
 	config := &MigrationConfig{MigrationId: "test-migration-1"}
 	res := testReconcileResult()
+	res.AwaitStopped = []string{"await-me"}
 
 	err := actions.Initialize(context.Background(), config, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, res)
 	require.NoError(t, err)
@@ -130,6 +131,7 @@ func TestActions_Initialize_ThreadsReconcileResult(t *testing.T) {
 	assert.Equal(t, res.FenceYAML, config.FenceYAML)
 	assert.Equal(t, res.SwitchoverYAML, config.SwitchoverYAML)
 	assert.Equal(t, res.Topics, config.Topics)
+	assert.Equal(t, res.AwaitStopped, config.AwaitStopped)
 	assert.Equal(t, res.Mode, config.Mode)
 }
 
@@ -491,6 +493,65 @@ func TestWorkflow_PromoteTopics_WaitsForStoppedStatus(t *testing.T) {
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, atomic.LoadInt64(&listCalls), int64(3),
 		"expected PromoteTopics to poll mirror status until STOPPED was observed")
+}
+
+// Resume-from-PENDING_STOPPED: a topic reconcile classified AwaitStopped is
+// already mid-promotion, so the promote stage must WAIT for it to reach STOPPED
+// and never re-issue a promote on it (a re-promote of an already-promoting
+// mirror is rejected by CC → the loop would retry 3x then fail). Only the
+// genuinely migratable topic gets a promote request. Regression guard for the
+// resume-from-PENDING_STOPPED bug.
+func TestWorkflow_PromoteTopics_AwaitStoppedTopicsAreWaitedNotRepromoted(t *testing.T) {
+	gw := &mockGatewayService{}
+
+	var promoted []string // PromoteTopics is synchronous — no locking needed
+	var listCalls int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, topicNames []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			promoted = append(promoted, topicNames...)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, name := range topicNames {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: name, ErrorCode: 0})
+			}
+			return resp, nil
+		},
+		// Both mirrors PENDING_STOPPED for the first two polls, then STOPPED.
+		listMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			status := "PENDING_STOPPED"
+			if atomic.AddInt64(&listCalls, 1) >= 3 {
+				status = "STOPPED"
+			}
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "await-me", MirrorStatus: status},
+				{MirrorTopicName: "migrate-me", MirrorStatus: status},
+			}, nil
+		},
+	}
+
+	offsetProvider := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) { return map[int32]int64{0: 100}, nil },
+	}
+
+	wf := NewMigrationActionsWithOffsets(gw, cl, offsetProvider, offsetProvider)
+	wf.promotePollInterval = time.Millisecond
+	config := &MigrationConfig{
+		Topics:              []string{"await-me", "migrate-me"},
+		AwaitStopped:        []string{"await-me"},
+		ClusterRestEndpoint: "https://cluster",
+		ClusterId:           "lkc-123",
+		ClusterLinkName:     "link-1",
+	}
+
+	err := wf.PromoteTopics(context.Background(), config, clusterlink.BasicAuth{Username: "key", Password: "secret"})
+	require.NoError(t, err)
+	assert.NotContains(t, promoted, "await-me",
+		"an AwaitStopped topic (already promoting on resume) must be waited on, never re-promoted")
+	assert.Contains(t, promoted, "migrate-me",
+		"the genuinely migratable topic must still be promoted")
 }
 
 // TestWorkflow_PromoteTopics_BatchSizeProcessesSequentially verifies that when

@@ -115,6 +115,7 @@ func (a *TBMActions) Initialize(ctx context.Context, config *migration.Migration
 	}
 
 	config.Topics = res.Topics
+	config.AwaitStopped = res.AwaitStopped
 	config.FenceYAML = res.FenceYAML
 	config.SwitchoverYAML = res.SwitchoverYAML
 	config.GatewayYAML = res.GatewayYAML
@@ -387,6 +388,17 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 	awaitingStop := make(map[string]bool)
 	for _, topic := range config.Topics {
 		remaining[topic] = true
+	}
+	// Resume seeding: topics reconcile classified AwaitStopped are already
+	// mid-promotion (PENDING_STOPPED) from an earlier run. Seed them into
+	// awaitingStop so the first pass confirms them via ListMirrorTopics and
+	// waits for STOPPED, rather than re-issuing a promote on an already-
+	// promoting mirror (which CC rejects → 3 retries → fatal). They still count
+	// toward remaining, so the switch stays blocked until they reach STOPPED.
+	for _, topic := range config.AwaitStopped {
+		if remaining[topic] {
+			awaitingStop[topic] = true
+		}
 	}
 	sweepFailures := 0
 

@@ -122,7 +122,9 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 
 	promoteSorted := append([]string(nil), promote...)
 	sort.Strings(promoteSorted)
-	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{Topics: promoteSorted, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
+	awaitStoppedSorted := topicsOf(report.AwaitStopped)
+	sort.Strings(awaitStoppedSorted)
+	return &Plan{Report: report, Mode: "dynamic", Artifacts: &Artifacts{Topics: promoteSorted, AwaitStopped: awaitStoppedSorted, FenceRules: fenceBytes, SwitchoverRules: switchBytes}}
 }
 
 // reconcileStatic is the static-route reconciliation strategy. It reuses
@@ -203,7 +205,9 @@ func reconcileStatic(in ReconcileInput, gw *GatewayConfig, sourceTopics, targetT
 
 	promoteSorted := append([]string(nil), promote...)
 	sort.Strings(promoteSorted)
-	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{Topics: promoteSorted, FenceRules: fenceFragment, SwitchoverRules: switchoverFragment}}
+	awaitStoppedSorted := topicsOf(report.AwaitStopped)
+	sort.Strings(awaitStoppedSorted)
+	return &Plan{Report: report, Mode: "static", Artifacts: &Artifacts{Topics: promoteSorted, AwaitStopped: awaitStoppedSorted, FenceRules: fenceFragment, SwitchoverRules: switchoverFragment}}
 }
 
 // Reconcile is the single entry point for both route-mode strategies. It
