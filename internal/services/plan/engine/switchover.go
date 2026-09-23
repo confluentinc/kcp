@@ -100,10 +100,19 @@ type SwitchoverResult struct {
 	Source                   string         `json:"source,omitempty"`
 }
 
-func replicatorPlan(why string, mustMoveData bool) SwitchoverResult {
+func replicatorPlan(p Profile, why string, mustMoveData bool) SwitchoverResult {
+	// Replicator is a Confluent Platform Enterprise component. A source already on
+	// Confluent Platform Enterprise already runs it, so we don't tell them to acquire
+	// something they have; every other source gets the standard "get a license" line.
+	// No inline "contact us" here — the data-migration Why appends a single
+	// "[Talk to a person]" CTA (withTechAssistCTA), so a second one would be redundant.
+	licenseLine := " It needs a license (Confluent Platform Enterprise)."
+	if p.isCP() {
+		licenseLine = " It needs a Confluent Platform Enterprise license: if you already run Confluent Platform Enterprise you have Replicator."
+	}
 	r := SwitchoverResult{
 		Value: "Confluent Replicator", MM2: false, Replicator: true,
-		Reason: why + " We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration. It needs a license (Confluent Platform Enterprise). Contact us and we'll help you get one.",
+		Reason: why + " We recommend Confluent Replicator to move your existing data. You run the Connect worker yourself for the migration." + licenseLine,
 		How:    "Confluent Replicator is a Confluent tool that runs on Kafka Connect and copies topics between clusters.",
 		Pros: []string{
 			"Works where Cluster Linking cannot reach your source",
@@ -112,7 +121,7 @@ func replicatorPlan(why string, mustMoveData bool) SwitchoverResult {
 		Cons: []string{
 			"Part of Confluent Platform Enterprise, so it needs a license",
 			"You run and operate the Connect worker for the length of the migration",
-			"Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only",
+			"Consumer offsets do not carry over on their own. Translating them needs the Confluent timestamp interceptor added to every consumer before you start, and it is supported on Java clients only — non-Java consumers have no automatic offset-translation path and resume per auto.offset.reset (reprocess or skip)",
 		},
 		TechAssist: true,
 		Action:     strptr("Set up Confluent Replicator"),
@@ -185,7 +194,11 @@ func kcpResource(p Profile, tier Tier) *KCPResource {
 	}
 	r := &KCPResource{URL: "https://confluentinc.github.io/kcp/latest/command-reference/create-asset/migration-infra/"}
 	if mtlsNeeded(p) {
-		r.Caveat = "KCP's migration-infra links over SASL/SCRAM. If your MSK source is mTLS-only, add a SASL/SCRAM listener for the link first. Your clients can keep mTLS."
+		source := "source"
+		if p.isMSK() {
+			source = "MSK source"
+		}
+		r.Caveat = "KCP's migration-infra links over SASL/SCRAM. If your " + source + " is mTLS-only, add a SASL/SCRAM listener for the link first. Your clients can keep mTLS."
 	}
 	return r
 }
@@ -216,23 +229,23 @@ func switchoverDecision(p Profile, sizing SizingResult, tier Tier) SwitchoverRes
 		mustMoveData := p.NeedsDataMigration == "Yes"
 		switch m.Why {
 		case "gov":
-			return replicatorPlan("Confluent Cloud for Government does not offer Cluster Linking, so we move your existing data with Confluent Replicator instead.", mustMoveData)
+			return replicatorPlan(p, "Confluent Cloud for Government does not offer Cluster Linking, so we move your existing data with Confluent Replicator instead.", mustMoveData)
 		case "serverless-tier":
 			t := "Standard"
 			if tier != "" {
 				t = string(tier)
 			}
-			return replicatorPlan(basis(srcOr(p.SourceClusterTypeAnswered, "source is Serverless"))+"Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a "+t+" cluster.", mustMoveData)
+			return replicatorPlan(p, basis(srcOr(p.SourceClusterTypeAnswered, "source is Serverless"))+"Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a "+t+" cluster.", mustMoveData)
 		case "tier":
-			return replicatorPlan("Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a "+string(tier)+" cluster.", mustMoveData)
+			return replicatorPlan(p, "Cluster Linking needs an Enterprise or Dedicated destination, so it is not available into a "+string(tier)+" cluster.", mustMoveData)
 		case "ibp":
-			return replicatorPlan(basis(srcOr(p.KafkaVersionAnswered, "inter-broker protocol below 2.8"))+"Cluster Linking is not available even though your Kafka version qualifies.", mustMoveData)
+			return replicatorPlan(p, basis(srcOr(p.KafkaVersionAnswered, "inter-broker protocol below 2.8"))+"Cluster Linking is not available even though your Kafka version qualifies.", mustMoveData)
 		default:
 			kafkaFinding := "source below the Cluster Linking floor"
 			if p.KafkaVersion != "" {
 				kafkaFinding = "Kafka " + p.KafkaVersion
 			}
-			return replicatorPlan(basis(srcOr(p.KafkaVersionAnswered, kafkaFinding))+"your source is below the Cluster Linking floor: Kafka 2.4, Confluent Platform 5.4, inter-broker protocol (IBP) 2.8.", mustMoveData)
+			return replicatorPlan(p, basis(srcOr(p.KafkaVersionAnswered, kafkaFinding))+"your source is below the Cluster Linking floor: Kafka 2.4, Confluent Platform 5.4, inter-broker protocol (IBP) 2.8.", mustMoveData)
 		}
 	}
 

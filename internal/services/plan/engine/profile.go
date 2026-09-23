@@ -15,11 +15,18 @@ package engine
 // today it carries what sizingBand reads.
 type Profile struct {
 	// Source cluster.
-	SourcePlatform     string // e.g. "Amazon MSK"
-	MSKClusterType     string // "Provisioned" | "Serverless" | ""
-	SourcePublicAccess string // "Yes" (source exposes public broker endpoints) | "No" | "" (unknown; treated as private)
+	SourceType         SourceType // MSK (default when "") | ApacheKafka | ConfluentPlatform
+	SourcePlatform     string     // e.g. "Amazon MSK", "Apache Kafka", "Confluent Platform"
+	MSKClusterType     string     // "Provisioned" | "Serverless" | "" (MSK only)
+	SourcePublicAccess string     // "Yes" (source exposes public broker endpoints) | "No" | "" (unknown; treated as private)
 	SourceCloud        string
 	TargetCloud        string // "AWS" | "Azure" | "GCP" | ""; MSK defaults to AWS
+
+	// Scanless is true for a questionnaire-only run (no --state-file). It lets the
+	// source-selection question render even before a source platform is chosen, so a
+	// scanless user can pick Apache Kafka / Confluent Platform (a scan run knows the
+	// source already). Same scanless signal the *Answered flags below are built from.
+	Scanless bool
 
 	// Sizing — raw numbers (preferred; kcp fills these from scanned metrics and
 	// topic counts) OR banded labels (a declared/plan-inputs answer).
@@ -133,9 +140,32 @@ type Profile struct {
 // read cleanly (fp := f(42)).
 func f(v float64) *float64 { return &v }
 
+// isMSK reports whether the source is Amazon MSK. The zero-value SourceType is
+// treated as MSK so a profile that never sets the axis behaves as it always did.
+func (p Profile) isMSK() bool {
+	return p.SourceType == "" || p.SourceType == SourceMSK
+}
+
+// isOSKorCP reports whether the source is self-managed Apache Kafka or Confluent
+// Platform. These share every behaviour and every verdict; only display copy
+// differs (Apache Kafka vs Confluent Platform, plus the two CP-only notes gated
+// by isCP).
+func (p Profile) isOSKorCP() bool {
+	return p.SourceType == SourceApacheKafka || p.SourceType == SourceConfluentPlatform
+}
+
+// isCP reports whether the source is a self-managed Confluent Platform cluster.
+// CP behaves like Apache Kafka for every verdict; this only gates copy that is
+// specifically true of Confluent Platform (it already ships Replicator and
+// Confluent connectors).
+func (p Profile) isCP() bool {
+	return p.SourceType == SourceConfluentPlatform
+}
+
 // isServerless reports whether the source is MSK Serverless. Serverless is
 // IAM-only and capped below Band 1 on every published quota, which the sizing
-// and auth logic special-case.
+// and auth logic special-case. Serverless exists only on MSK, so this implies
+// isMSK — a non-MSK source is never Serverless whatever its cluster-type field.
 func (p Profile) isServerless() bool {
-	return p.MSKClusterType == MSKServerless
+	return p.isMSK() && p.MSKClusterType == MSKServerless
 }
