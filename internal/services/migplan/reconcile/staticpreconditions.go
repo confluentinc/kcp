@@ -84,11 +84,13 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		routesToTarget = stringField(sd, "name") == in.TargetDomain
 	}
 	view.RoutesToTarget = routesToTarget
-	if routesToTarget {
-		res = append(res, fail("route is not already bound to the target domain", fmt.Sprintf("route %q is already bound to streaming domain %q — the switch would be a no-op", in.Route, in.TargetDomain)))
-	} else {
-		res = append(res, pass("route is not already bound to the target domain"))
-	}
+	// An already-bound route (routesToTarget) is NOT a precondition failure: it is
+	// a valid done-state the classifier lands as Unchanged, so a completed static
+	// migration re-reconciles to a clean no-op rather than a refusal. (Reverses
+	// the original decision-8 "refuse when already bound" stance, after the live
+	// static resume suite showed it broke re-run idempotency and kill-after-switch
+	// resume.) An already-bound route whose mirror is NOT stopped still fails via
+	// Classify's FailFast ("routes to target but its mirror is not yet promoted").
 
 	staged, hasStaged := stagedAuthFor(rc.Raw, in.TargetDomain)
 	switch {

@@ -23,11 +23,13 @@ func TestStaticPreconditionsRoutesToTargetWhenAlreadyBound(t *testing.T) {
 	route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
 	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"}
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
-	// Already bound to the target — this specific precondition ("not already
-	// bound") must now fail even though RoutesToTarget itself is correctly true.
+	// Already bound to the target is NOT a precondition failure any more: it is a
+	// valid done-state (the classifier lands the topics Unchanged), so a completed
+	// static migration re-reconciles to a clean no-op instead of a refusal.
+	// Preconditions pass and RoutesToTarget is correctly true.
 	res, view, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
-	if ok {
-		t.Fatalf("expected refusal (already bound to target), got pass: %+v", res)
+	if !ok {
+		t.Fatalf("an already-bound route must NOT fail preconditions (it is a valid done-state), got: %+v", res)
 	}
 	if !view.RoutesToTarget {
 		t.Error("RoutesToTarget must be true: route is now bound to cc")

@@ -582,34 +582,27 @@ func TestReconcileStaticTopicPatterns(t *testing.T) {
 }
 
 func TestReconcileStaticNoopWhenAlreadySwitched(t *testing.T) {
-	// DEVIATION FROM BRIEF (documented in task-6-report.md): the brief's
-	// original version of this test asserted `!p.Report.Refused()`, expecting
-	// the run to reach per-topic classification and land Unchanged. But
-	// CheckStaticPreconditions (Task 4, already committed, out of this
-	// task's scope) has its own locked-in, separately-tested behavior
-	// (TestStaticPreconditionsRoutesToTargetWhenAlreadyBound in
-	// staticpreconditions_test.go) that fails the "route is not already
-	// bound to the target domain" precondition whenever routesToTarget is
-	// true — which this scenario's setup requires, since Classify's
-	// Unchanged verdict itself needs routesToTarget==true. So a re-run
-	// against an already-switched static route can never reach
-	// classification: it is refused at the precondition gate instead, with
-	// no artifacts either way. reconcileStatic deliberately adds no logic to
-	// suppress that refusal (see reconcileStatic's doc comment / design doc
-	// decision 8: "no new refusal logic is needed"), so this test asserts
-	// the real, correct outcome — refused, no artifacts — rather than the
-	// brief's original (unreachable) expectation.
+	// Idempotency: a re-run against an already-switched static route (route bound
+	// to the target, mirrors STOPPED) must be a clean NO-OP — matching dynamic's
+	// Unchanged behavior — not a refusal. This reverses the original decision-8
+	// "refuse when already bound" stance after the live static resume suite showed
+	// it broke re-run idempotency (a completed migration refused instead of
+	// no-op'ing) and the kill-after-switch resume. The already-bound route is a
+	// valid done-state the classifier lands as Unchanged; there is nothing to do.
 	gw := staticGateway()
 	route := gw.RawObj["spec"].(map[string]any)["routes"].([]any)[0].(map[string]any)
 	route["streamingDomain"] = map[string]any{"name": "cc", "bootstrapServerId": "cc-bootstrap"} // already switched
 	in := ReconcileInput{Topics: []string{"team-a.orders"}, Route: "migration-route", TargetDomain: "cc"}
 	p := Reconcile(in, gw, []string{"team-a.orders"}, []string{"team-a.orders"},
 		map[string]MirrorState{"team-a.orders": MirrorStopped}, false, ClusterIDs{}, nil, "")
-	if !p.Report.Refused() {
-		t.Fatalf("a re-run against an already-switched static route is refused at the precondition gate (see comment above), got: %+v", p.Report)
+	if p.Report.Refused() {
+		t.Fatalf("a re-run against an already-switched static route must be a clean no-op, not refused: %+v", p.Report)
 	}
 	if p.Artifacts != nil {
-		t.Fatal("a refused re-run must produce no artifacts")
+		t.Fatal("a completed (already-switched) migration must produce no artifacts — nothing to do")
+	}
+	if len(p.Report.Unchanged) != 1 || p.Report.Unchanged[0].Topic != "team-a.orders" {
+		t.Fatalf("the already-switched topic must classify Unchanged, got %+v", p.Report.Unchanged)
 	}
 }
 
