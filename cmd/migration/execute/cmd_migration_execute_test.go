@@ -671,6 +671,7 @@ func TestBuildFreshMigrationConfig_PopulatesManifestFields(t *testing.T) {
 }
 
 func TestResolveKubeConfigPath_DefaultsToHomeDir(t *testing.T) {
+	t.Setenv("KUBERNETES_SERVICE_HOST", "") // not in a pod → developer default
 	f := newFixture(t, nil)
 	g := loadGateway(t, f.manifestPath)
 
@@ -680,6 +681,20 @@ func TestResolveKubeConfigPath_DefaultsToHomeDir(t *testing.T) {
 	home, err := os.UserHomeDir()
 	require.NoError(t, err)
 	assert.Equal(t, filepath.Join(home, ".kube", "config"), kubeConfigPath)
+}
+
+func TestResolveKubeConfigPath_InClusterWhenInPod(t *testing.T) {
+	// Running inside a pod (KUBERNETES_SERVICE_HOST set) with an unset manifest
+	// kubeconfig must resolve to in-cluster config (empty path → client-go
+	// in-cluster), matching TBM — not the developer's ~/.kube/config, which does
+	// not exist in a pod.
+	t.Setenv("KUBERNETES_SERVICE_HOST", "10.96.0.1")
+	f := newFixture(t, nil)
+	g := loadGateway(t, f.manifestPath)
+
+	kubeConfigPath, err := resolveKubeConfigPath(g)
+	require.NoError(t, err)
+	assert.Equal(t, "", kubeConfigPath, "an unset kubeconfig in a pod must resolve to in-cluster (empty path)")
 }
 
 // --- --dry-run ---

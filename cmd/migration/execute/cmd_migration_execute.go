@@ -127,6 +127,13 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 	if p != "" {
 		return p, nil
 	}
+	// Unset: prefer in-cluster config when running inside a pod (an empty path
+	// makes client-go use the in-cluster service account), else fall back to the
+	// developer's ~/.kube/config. Without this the static/AAO path could not run
+	// in-cluster the way the dynamic/TBM path already does.
+	if os.Getenv("KUBERNETES_SERVICE_HOST") != "" {
+		return "", nil
+	}
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("failed to get user home directory: %w", err)
