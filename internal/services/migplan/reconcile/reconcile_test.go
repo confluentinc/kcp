@@ -667,6 +667,41 @@ func TestReconcileDynamicStillReturnsMode(t *testing.T) {
 // a promote on an already-promoting mirror. Regression guard for the
 // resume-from-PENDING_STOPPED bug (re-promote → fatal error, or the topic
 // never confirmed → hang).
+// On resume the live route already carries kcp's fence (from the interrupted
+// run). The SWITCHOVER artifact must NOT carry that fence forward — the switched
+// state is unfenced for our topics — so a resumed migration reaches the SAME
+// clean end-state as an uninterrupted one. Operator-authored fences are a
+// separate concern and must survive (covered elsewhere). Regression guard for a
+// bug caught by the live resume suite 2026-09-23: reconcile built the switchover
+// from the fenced live base and left kcp's fence on the switched route.
+func TestReconcileDynamic_ResumeSwitchoverDropsKcpFence(t *testing.T) {
+	gw := dynGateway()
+	// kcp's prior fence for exactly this batch, as a live route presents it on
+	// resume (fenced but not yet switched).
+	gw.Route.Rules["fencing"] = []any{map[string]any{"topics": []any{"t1", "t2", "t3"}, "blocked": true}}
+	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}
+	sourceTopics := []string{"t1", "t2", "t3"}
+	targetTopics := []string{"t1", "t2", "t3"}
+	mirrors := map[string]MirrorState{"t1": MirrorActive, "t2": MirrorActive, "t3": MirrorActive}
+
+	plan := reconcileDynamic(in, gw, sourceTopics, targetTopics, mirrors, false, ClusterIDs{})
+	if plan.Artifacts == nil {
+		t.Fatal("Artifacts nil, want a resume plan")
+	}
+
+	var parsed map[string]any
+	if err := yaml.Unmarshal(plan.Artifacts.SwitchoverRules, &parsed); err != nil {
+		t.Fatalf("parsing SwitchoverRules: %v", err)
+	}
+	rules, _ := parsed["rules"].(map[string]any)
+	fencing, _ := rules["fencing"].([]any)
+	for _, e := range fencing {
+		if isKcpFenceFor(e, []string{"t1", "t2", "t3"}) {
+			t.Fatalf("switchover must drop kcp's own fence on switch, but it is still present:\n%s", plan.Artifacts.SwitchoverRules)
+		}
+	}
+}
+
 func TestReconcileStatic_ResumeCarriesAwaitStoppedSeparately(t *testing.T) {
 	gw := staticGateway()
 	in := ReconcileInput{Topics: []string{"t1", "t2", "t3"}, Route: "migration-route", TargetDomain: "cc"}

@@ -100,6 +100,11 @@ func reconcileDynamic(in ReconcileInput, gw *GatewayConfig, sourceTopics, target
 		report.Preconditions = append(report.Preconditions, fail("switchover rules clone", err.Error()))
 		return &Plan{Report: report, Mode: "dynamic"}
 	}
+	// The switched state is unfenced for our topics: on a resume the base was
+	// pulled already-fenced, so drop kcp's own fence before routing to target
+	// (operator fences are preserved). Without this a resumed migration leaves a
+	// stale kcp fence on the switched route.
+	switchover.DropFence(inflight)
 	switchover.PrependCondition(inflight, view.TargetDomain)
 
 	fenceBytes, err := fence.Serialize()

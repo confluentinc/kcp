@@ -106,6 +106,42 @@ func TestPrependFencePreservesOperatorEntries(t *testing.T) {
 	}
 }
 
+func TestDropFenceRemovesKcpEntryPreservesOperator(t *testing.T) {
+	rt := mustTree(t) // 2 operator fences
+	rt.PrependFence([]string{"orders"})
+	before := len(fencingEntries(t, rt)) // 2 operator + 1 kcp
+
+	rt.DropFence([]string{"orders"})
+
+	fe := fencingEntries(t, rt)
+	if len(fe) != before-1 {
+		t.Fatalf("after DropFence: %d entries, want %d (kcp's dropped, operators kept): %+v", len(fe), before-1, fe)
+	}
+	for _, e := range fe {
+		if isKcpFenceFor(e, []string{"orders"}) {
+			t.Fatalf("kcp's {orders} fence must be dropped, still present: %+v", e)
+		}
+	}
+	foundOperator := false
+	for _, e := range fe {
+		if e["trafficType"] == "TRANSACTION" {
+			foundOperator = true
+		}
+	}
+	if !foundOperator {
+		t.Fatalf("operator TRANSACTION fence must survive DropFence: %+v", fe)
+	}
+}
+
+func TestDropFenceAbsentKcpEntryIsNoop(t *testing.T) {
+	rt := mustTree(t) // operator fences only, no kcp fence
+	before := len(fencingEntries(t, rt))
+	rt.DropFence([]string{"orders"})
+	if got := len(fencingEntries(t, rt)); got != before {
+		t.Fatalf("DropFence with no matching kcp fence must be a no-op: %d != %d", got, before)
+	}
+}
+
 func conditionEntries(t *testing.T, rt *RulesTree) []map[string]any {
 	t.Helper()
 	routing, _ := mapField(rt.root, "routing")

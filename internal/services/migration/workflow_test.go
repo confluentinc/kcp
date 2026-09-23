@@ -1117,6 +1117,41 @@ spec:
 	assert.Equal(t, "confluent-cloud", domain["name"], "the source domain must be overwritten with the target")
 }
 
+// On resume the captured CR is already fenced (the prior interrupted run fenced
+// it and reconcile re-pulls it live), so the switch must EXPLICITLY drop the
+// fence key — it cannot rely on the captured route being unfenced. Mirrors the
+// dynamic/TBM DropFence fix. Regression guard for the stale-fence-on-resume bug
+// caught by the live resume suite 2026-09-23.
+func TestDeriveSwitchRoutePatch_DropsFenceFromAlreadyFencedCapture(t *testing.T) {
+	const fencedCR = `apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  name: gw-1
+spec:
+  routes:
+    - name: migration-route
+      endpoint: gateway:9595
+      fence:
+        topics:
+          - topic-a
+          - topic-b
+      streamingDomain:
+        name: source-kafka-cluster
+`
+	config := &MigrationConfig{GatewayYAML: fencedCR, Route: "migration-route", SwitchoverYAML: testSwitchoverYAML}
+
+	rp, err := deriveSwitchRoutePatch(config)
+	require.NoError(t, err)
+
+	route, ok := rp.Value.(map[string]any)
+	require.True(t, ok, "switch patch value must be the route object")
+	_, hasFence := route["fence"]
+	assert.False(t, hasFence, "switch must drop the fence even when the captured route was already fenced (resume)")
+	domain, ok := route["streamingDomain"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "confluent-cloud", domain["name"], "the source domain must still be overwritten with the target")
+}
+
 func TestWorkflow_SwitchGateway_WaitErrorIsWrapped(t *testing.T) {
 	gw := &mockGatewayService{
 		patchGatewayRouteFn: func(_ context.Context, _, _ string, _ gateway.RoutePatch, configID string) (string, error) {

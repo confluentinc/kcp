@@ -642,6 +642,12 @@ func deriveSwitchRoutePatch(config *MigrationConfig) (gateway.RoutePatch, error)
 		return gateway.RoutePatch{}, err
 	}
 	route["streamingDomain"] = domain
+	// The switched state is unfenced: drop any fence the captured route carries.
+	// On a first run the captured route is pristine (no-op); on a resume it is
+	// already fenced (the prior run fenced it, reconcile re-pulled it live), and
+	// the whole-route replace would otherwise leave that fence on the switched
+	// route — a completed migration whose gateway is still fenced.
+	delete(route, "fence")
 	return gateway.RoutePatch{RouteName: config.Route, Value: route}, nil
 }
 

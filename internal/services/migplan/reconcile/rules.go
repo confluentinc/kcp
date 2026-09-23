@@ -152,6 +152,27 @@ func (rt *RulesTree) PrependFence(topics []string) {
 	rt.root["fencing"] = append([]any{entry}, kept...)
 }
 
+// DropFence removes kcp's own fence entry for exactly this topic set, leaving
+// operator-authored fences untouched. The switchover artifact uses it so the
+// switched state is unfenced for our topics: on a resume the base rules already
+// carry kcp's fence (from the interrupted run), which must not persist onto the
+// switched route. A no-op when kcp's fence is absent (e.g. a first run built
+// from a pristine base).
+func (rt *RulesTree) DropFence(topics []string) {
+	existing, ok := sliceField(rt.root, "fencing")
+	if !ok {
+		return
+	}
+	kept := make([]any, 0, len(existing))
+	for _, e := range existing {
+		if isKcpFenceFor(e, topics) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	rt.root["fencing"] = kept
+}
+
 // isKcpFenceFor reports whether e is a fence entry kcp itself would author for
 // exactly this topic set: blocked==true and the same topics as a set. Operator
 // entries never match, so they are preserved by PrependFence's dedupe.
