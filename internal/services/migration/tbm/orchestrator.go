@@ -199,18 +199,31 @@ func (o *TBMOrchestrator) Execute(ctx context.Context, res *migplan.Result, lagT
 	return nil
 }
 
-// handleStepFailure maps a failed workflow step to its compensating rollback,
-// if any: only a verify_fence failure classified as ErrUnroutedProducers
-// triggers abort_fence; every other step failure just returns the wrapped
-// error and leaves the FSM at its last good state. Mirrors
-// migration.handleStepFailure, minus the ErrFenceUnconfirmed and
-// pause_offset_sync branches TBM has no equivalent of.
+// handleStepFailure maps a failed workflow step to its compensating rollback.
+// It rolls back for ANY halting error while the fence is up and nothing is
+// promoted yet — the only state abort_fence can legally leave (fenced). Promote
+// is the point of no return: once mirrors are promoted, unfencing would strand
+// them (producers routed back to source while the target mirrors are frozen
+// STOPPED), so we never abort past it — the FSM structurally has no abort_fence
+// edge from fence_verified onward. A cancelled context (Ctrl-C / kill /
+// deadline) cannot perform the unfence IO, so we leave the fenced world for the
+// idempotent resume. Mirrors migration.handleStepFailure, minus the
+// ErrFenceUnconfirmed and pause_offset_sync branches TBM has no equivalent of.
 func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 
-	if !errors.Is(stepErr, ErrUnroutedProducers) {
+	willRollback := o.fsm.Can(EventAbortFence) && ctx.Err() == nil
+	if !willRollback {
 		return stepFailure
 	}
+
+	// Announce the rollback with the real reason here; onAbortFence owns only the
+	// unfence itself.
+	reason := step.Description + " failed"
+	if errors.Is(stepErr, ErrUnroutedProducers) {
+		reason = "unrouted producers detected"
+	}
+	o.reporter.warn("%s — removing fence to restore traffic", reason)
 
 	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
 		slog.Error("❌ failed to roll back to initialized", "error", err)
@@ -289,7 +302,10 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 // fenced — every rollback is an unrouted-producer detection) and the
 // sync-config restore (TBM has no pause_offset_sync stage).
 func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
-	o.reporter.warn("Unrouted producers detected — removing fence to restore traffic")
+	// The rollback reason is announced by handleStepFailure (which holds the
+	// failing step and error); this callback owns only the unfence. abort_fence
+	// now fires for any halting pre-promote error, so the reason is no longer a
+	// fixed rogue-producer message.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))

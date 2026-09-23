@@ -2,6 +2,7 @@ package tbm
 
 import (
 	"context"
+	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -174,6 +175,80 @@ func TestTBMOrchestrator_Execute_StableOffsets_NoRollback(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, StateSwitched, orchestrator.fsm.Current())
+}
+
+func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *testing.T) {
+	// Any halting error in the fence-up, pre-promote window — here a transient
+	// offset-fetch failure during verify (NOT a rogue-producer detection) — must
+	// abort the fence and roll back to initialized. Nothing is promoted yet and
+	// KCP is alive, so the safe move is to unfence and let the operator re-run.
+	var applyCount int
+	var lastRP gateway.RoutePatch
+	var call int32
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			applyCount++
+			lastRP = rp
+			return "", nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	// call 1 = wait_for_lags sweep, 2 = verify baseline, 3 = verify post-window.
+	// Fail the post-window snapshot: a fetch error, not a rogue detection.
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt32(&call, 1) >= 3 {
+				return nil, fmt.Errorf("connection reset by peer")
+			}
+			return map[int32]int64{0: 1000}, nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-verify-fetch-error", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
+	orchestrator := NewTBMOrchestrator(config, actions)
+
+	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, ErrUnroutedProducers, "a fetch failure is not a rogue-producer detection")
+	assert.Contains(t, err.Error(), "connection reset by peer")
+	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(),
+		"a halting error while fenced and pre-promote must abort_fence back to initialized")
+	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence unfence applies once more")
+	assert.Equal(t, "", lastRP.Field, "the unfence must be a whole-route replace")
+}
+
+func TestTBMOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) {
+	// A context cancellation (Ctrl-C / kill) can't do the unfence IO, so it must
+	// NOT attempt abort_fence — it leaves the fenced partial world for the
+	// idempotent resume. Guards the ctx.Err()==nil half of the decision.
+	var applyCount int
+	var call int32
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(_ context.Context, _, _ string, rp gateway.RoutePatch, _ string) (string, error) {
+			applyCount++
+			return "", nil
+		},
+	}
+	cl := &mockClusterLinkService{}
+	ctx, cancel := context.WithCancel(context.Background())
+	sourceOffset := &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt32(&call, 1) >= 3 {
+				cancel() // simulate Ctrl-C mid-verify
+				return nil, context.Canceled
+			}
+			return map[int32]int64{0: 1000}, nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-ctx-cancel", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
+	orchestrator := NewTBMOrchestrator(config, actions)
+
+	err := orchestrator.Execute(ctx, realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
+	require.Error(t, err)
+	assert.Equal(t, StateFenced, orchestrator.fsm.Current(),
+		"a cancelled context must leave the fenced world for resume — no abort_fence")
+	assert.Equal(t, 1, applyCount, "only the fence applies; no unfence on a dead context")
 }
 
 // TestTBMOrchestrator_Bootstrap_ExpiresFenceVerificationOnResume and

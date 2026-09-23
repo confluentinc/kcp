@@ -288,15 +288,28 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 		return o.restoreAfterUnconfirmedFence(ctx, stepFailure)
 	}
 
-	// A compensating rollback fires only for a pause_offset_sync failure or a
-	// verify_fence unrouted-producers detection; every other step failure just
-	// leaves the FSM at its last good state. Record which branch was taken — the
-	// propagated error names the failing step, but not the rollback decision.
-	willRollback := step.Event == EventPauseOffsetSync || errors.Is(stepErr, ErrUnroutedProducers)
+	// Roll back for ANY halting error while the fence is up and nothing is
+	// promoted yet — exactly the states abort_fence can legally leave (fenced,
+	// offset_sync_paused). Promote is the point of no return: once mirrors are
+	// promoted, unfencing would strand them (producers routed back to source
+	// while the target mirrors are frozen STOPPED), so we never abort past it —
+	// the FSM structurally has no abort_fence edge from fence_verified onward. A
+	// cancelled context (Ctrl-C / kill / deadline) cannot perform the unfence IO,
+	// so we leave the fenced world for the idempotent resume rather than attempt
+	// a doomed rollback. Record which branch was taken.
+	willRollback := o.fsm.Can(EventAbortFence) && ctx.Err() == nil
 	slog.Debug("handling migration step failure", "step", step.Event, "will_rollback", willRollback)
 	if !willRollback {
 		return stepFailure
 	}
+
+	// Announce the rollback with the real reason here — handleStepFailure holds
+	// the failing step and error; onAbortFence owns only the unfence itself.
+	reason := step.Description + " failed"
+	if errors.Is(stepErr, ErrUnroutedProducers) {
+		reason = "unrouted producers detected"
+	}
+	o.reporter.warn("%s — removing fence to restore traffic", reason)
 
 	if err := o.fsm.Event(ctx, EventAbortFence); err != nil {
 		slog.Error("❌ failed to roll back to initialized", "error", err)
@@ -456,13 +469,11 @@ func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 // client traffic beats config tidiness, and a restore error must not undo a
 // completed unfence.
 func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
-	// The reason is unambiguous from the source state: only the pause step
-	// fails at fenced, and only rogue detection fails at offset_sync_paused.
-	reason := "Pausing consumer offset sync failed"
-	if e.Src == StateOffsetSyncPaused {
-		reason = "Unrouted producers detected"
-	}
-	o.reporter.warn("%s — removing fence to restore traffic", reason)
+	// The rollback reason is announced by handleStepFailure (which holds the
+	// failing step and error); this callback owns only the unfence and its
+	// success line. abort_fence now fires for any halting pre-promote error, not
+	// just the two the source state used to imply, so the reason is no longer
+	// inferable here.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))

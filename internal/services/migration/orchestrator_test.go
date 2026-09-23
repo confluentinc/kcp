@@ -1261,23 +1261,30 @@ func TestOrchestrator_RollbackOutput_NamesKeysNotValues(t *testing.T) {
 		"credentials must never appear in rollback output")
 }
 
-func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
-	// A transient offset-fetch failure during the detection window is not a
-	// detection: it must propagate without ErrUnroutedProducers so the
-	// orchestrator neither unfences the gateway nor rolls the FSM back.
-	// Re-running execute resumes from offset_sync_paused and retries verification.
-	var applyCalls int64
+func TestOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *testing.T) {
+	// Any halting runtime error in the fence-up, pre-promote window — here a
+	// transient offset-fetch failure during verify (NOT a rogue-producer
+	// detection) — must abort the fence and roll the FSM back to initialized.
+	// Nothing is promoted yet and KCP is alive, so the safe, client-unblocking
+	// move is to unfence and let the operator re-run idempotently.
+	var mu sync.Mutex
+	var appliedPatches []gateway.RoutePatch
 	overrides := orchestratorOverrides{
 		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
-			atomic.AddInt64(&applyCalls, 1)
+			mu.Lock()
+			appliedPatches = append(appliedPatches, rp)
+			mu.Unlock()
 			return "", nil
 		},
 	}
 
 	orch, config := newHappyPathOrchestrator(t, StateLagsOk, []string{"topic-a"}, overrides)
 	config.DetectUnroutedProducersDuration = time.Millisecond
+	// unfenceGateway parses GatewayYAML to build the whole-route restore patch.
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
 
-	// First snapshot succeeds; the second fails mid-window.
+	// First snapshot succeeds; the second fails mid-window — a fetch error, not a
+	// rogue-producer detection.
 	var getCalls int64
 	orch.actions.sourceOffset = &mockOffsetProvider{
 		getFn: func(topic string) (map[int32]int64, error) {
@@ -1291,14 +1298,68 @@ func TestOrchestrator_Execute_VerifyFetchError_NoRollback(t *testing.T) {
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
-		"a fetch failure must not be classified as a detection")
+		"a fetch failure must not be classified as a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
 
-	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(),
-		"state must stay at offset_sync_paused — no abort_fence rollback on a fetch error")
+	assert.Equal(t, StateInitialized, orch.fsm.Current(),
+		"a halting error while fenced and pre-promote must abort_fence back to initialized")
 
-	assert.Equal(t, int64(1), atomic.LoadInt64(&applyCalls),
-		"only the fence CR apply should occur; the gateway must not be unfenced")
+	mu.Lock()
+	unfenced := false
+	for _, rp := range appliedPatches {
+		if rp.Field == "" { // whole-route replace == the unfence, distinct from field-set fence patches
+			unfenced = true
+		}
+	}
+	mu.Unlock()
+	assert.True(t, unfenced, "the gateway must be unfenced after a pre-promote halt")
+}
+
+func TestOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) {
+	// When the halt is a context cancellation (Ctrl-C / kill / deadline), KCP
+	// cannot perform the unfence IO, so it must NOT attempt abort_fence — it
+	// leaves the fenced partial world for the idempotent resume. This guards the
+	// ctx.Err()==nil half of the rollback decision: without it, a broadened
+	// rollback would try to unfence on a dead context.
+	var mu sync.Mutex
+	var appliedPatches []gateway.RoutePatch
+	overrides := orchestratorOverrides{
+		patchGatewayRouteFn: func(ctx context.Context, namespace, name string, rp gateway.RoutePatch, _ string) (string, error) {
+			mu.Lock()
+			appliedPatches = append(appliedPatches, rp)
+			mu.Unlock()
+			return "", nil
+		},
+	}
+
+	orch, config := newHappyPathOrchestrator(t, StateLagsOk, []string{"topic-a"}, overrides)
+	config.DetectUnroutedProducersDuration = time.Millisecond
+	config.GatewayYAML = "apiVersion: platform.confluent.io/v1beta1\nkind: Gateway\nmetadata:\n  name: my-gateway\n  namespace: confluent\nspec:\n  routes:\n    - name: migration-route\n      endpoint: gateway:9595\n"
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var getCalls int64
+	orch.actions.sourceOffset = &mockOffsetProvider{
+		getFn: func(topic string) (map[int32]int64, error) {
+			if atomic.AddInt64(&getCalls, 1) == 1 {
+				return map[int32]int64{0: 100}, nil
+			}
+			cancel() // simulate Ctrl-C mid-verify
+			return nil, context.Canceled
+		},
+	}
+
+	err := orch.Execute(ctx, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
+	require.Error(t, err)
+
+	assert.Equal(t, StateOffsetSyncPaused, orch.fsm.Current(),
+		"a cancelled context must leave the fenced world for resume — no abort_fence")
+
+	mu.Lock()
+	for _, rp := range appliedPatches {
+		assert.NotEqual(t, "", rp.Field,
+			"the gateway must NOT be unfenced when the context is cancelled (no IO on a dead ctx)")
+	}
+	mu.Unlock()
 }
 
 func TestOrchestrator_Execute_PromoteError(t *testing.T) {
