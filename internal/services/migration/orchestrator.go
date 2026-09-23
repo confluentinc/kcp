@@ -450,12 +450,10 @@ func (o *MigrationOrchestrator) onPromote(ctx context.Context, e *fsm.Event) {
 // the apply itself failed, and when the apply landed but readiness never
 // confirmed, the next run's from-zero walk re-applies the fence step (a no-op
 // rollout if the gateway never diverged) before anything downstream trusts it.
-// The sync-config restore is
-// deliberately NOT here — it persists state, and a before_-callback runs ahead
-// of the transition, so handleStepFailure runs it after the completed
-// transition has been persisted. It stays ordered after readiness confirms:
-// client traffic beats config tidiness, and a restore error must not undo a
-// completed unfence.
+// The sync-config restore is deliberately NOT here — a before_-callback runs
+// ahead of the transition, so handleStepFailure runs it after the transition
+// completes. It stays ordered after readiness confirms: client traffic beats
+// config tidiness, and a restore error must not undo a completed unfence.
 func (o *MigrationOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
 	// The rollback reason is announced by handleStepFailure (which holds the
 	// failing step and error); this callback owns only the unfence and its

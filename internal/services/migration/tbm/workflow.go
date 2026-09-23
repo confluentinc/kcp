@@ -42,8 +42,8 @@ type TBMActions struct {
 	gatewayCapability gateway.Capability
 	// capabilityResolved is true once gatewayCapability has actually been
 	// resolved against the live cluster this process — see
-	// ensureGatewayCapability in gateway.go. Deliberately NOT persisted to
-	// TBMConfig/the state file: a new process always starts false and
+	// ensureGatewayCapability in gateway.go. Deliberately NOT persisted:
+	// a new process always starts false and
 	// re-resolves fresh the first time Fence or Switch needs it, which is
 	// exactly the correctness property this field exists to provide (a run
 	// resuming directly at switch, with fence already done in an earlier

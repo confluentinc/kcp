@@ -65,7 +65,7 @@ type MigrationExecutorOpts struct {
 	// signal to wait on.
 	HotReloadTimeout time.Duration
 	// GatewayConfigPort is the port serving the gateway's /config endpoint.
-	// 0 means use the persisted value, falling back to the gateway default.
+	// 0 means use the configured value, falling back to the gateway default.
 	GatewayConfigPort int
 	// PromoteBatchSize caps how many mirror topics are promoted per batch. A
 	// value of 0 means unlimited (all at once); >0 processes topics in
@@ -138,13 +138,10 @@ func (m *MigrationExecutor) Run() error {
 		actions,
 	)
 
-	// Gateway capability is NOT resolved here. It used to be: a blanket
-	// pre-Execute check, safe only because a separate `init` process had
-	// already populated config.FenceYAML/SwitchoverYAML on disk before this
-	// process ever ran. Now that execute can register a migration for the
-	// first time in this very process, that data may not exist yet at this
-	// point — deriving a fence/switchover CR from it would fail. Capability
-	// instead resolves lazily, at most once per process, from whichever of
+	// Gateway capability is NOT resolved here: config.FenceYAML/SwitchoverYAML
+	// aren't populated until Execute reaches the fence/switch step, so a blanket
+	// pre-Execute check would have nothing to derive a CR from. Capability
+	// resolves lazily instead, at most once per process, from whichever of
 	// FenceGateway/SwitchGateway orchestrator.Execute reaches first (mirrors
 	// tbm.TBMActions.ensureGatewayCapability).
 

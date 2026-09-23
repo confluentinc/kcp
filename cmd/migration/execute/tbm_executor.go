@@ -64,8 +64,8 @@ func runTBMBranch(
 	// tests batched promotion; execute-tbm never exposed it.
 	actions.SetPromoteBatchSize(g.Spec.DefaultPolicies.PromoteBatchSize)
 
-	// An explicit gateway-config-port (flag or manifest) overrides whatever the
-	// migration was registered with — mirrors MigrationExecutor.Run's own guard.
+	// An explicit gateway-config-port (flag or manifest) overrides the value
+	// already on config — mirrors MigrationExecutor.Run's own guard.
 	if g.Spec.DefaultPolicies.GatewayConfigPort > 0 {
 		config.GatewayConfigPort = g.Spec.DefaultPolicies.GatewayConfigPort
 	}

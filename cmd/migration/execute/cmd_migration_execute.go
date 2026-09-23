@@ -100,7 +100,7 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 	cmd.Flags().DurationVar(&detectUnroutedProducersDurationOverride, "detect-unrouted-producers-duration", 0, "Override spec.defaultPolicies.detectUnroutedProducersDuration: window to monitor source offsets after fencing for producers bypassing the gateway. 0 skips the check; minimum 10s when set.")
 	cmd.Flags().DurationVar(&consumerOffsetSyncDrainDurationOverride, "consumer-offset-sync-drain-duration", 0, "Override spec.defaultPolicies.consumerOffsetSyncDrainDuration: wait after fencing before disabling the link's consumer offset sync. Has no effect unless pauseConsumerOffsetSync is set. 0 means no wait.")
 	cmd.Flags().DurationVar(&hotReloadTimeoutOverride, "hot-reload-timeout", 0, "Override spec.defaultPolicies.hotReloadTimeout: max wait for every gateway pod to report the new config revision when the gateway supports hot-reload. Unlike --rollout-timeout this is never unbounded: a hot-reload moves no Kubernetes signal, so 0 uses the built-in 90s budget rather than waiting forever.")
-	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 uses the persisted value, falling back to the gateway default (9180).")
+	cmd.Flags().IntVar(&gatewayConfigPortOverride, "gateway-config-port", 0, "Override spec.defaultPolicies.gatewayConfigPort: port serving the gateway's /config endpoint, polled per pod to confirm a config revision was applied. 0 uses the configured value, falling back to the gateway default (9180).")
 
 	// Hidden pending schema validation by the migration performance rig, its
 	// first consumer; intended to become user-facing, since the natural audience
@@ -253,9 +253,8 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	case "dynamic":
 		return runTBMBranch(cmd, g, &config, reconcileResult, buildTBMOffsets, buildTBMGateway, buildTBMClusterLink)
 	default:
-		// "static", and any value not yet recognized as dynamic — matches
-		// today's behavior for every migration this codebase has ever
-		// registered, none of which were dynamic-mode before this plan.
+		// "static", and any value not yet recognized as dynamic — the static
+		// AAO path is the safe default.
 		opts, err := buildExecutorOpts(g, &config, reconcileResult)
 		if err != nil {
 			return err

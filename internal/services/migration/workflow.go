@@ -234,8 +234,8 @@ func (s *MigrationActions) VerifyHotReloadCapability(ctx context.Context, config
 	return s.verifier().VerifyHotReloadCapability(ctx, config.K8sNamespace, config.InitialCrName, gatewayConfigPort(config))
 }
 
-// gatewayConfigPort returns the port to poll GET /config on, tolerating a
-// migration state file written before the field existed.
+// gatewayConfigPort returns the port to poll GET /config on, defaulting an
+// unset (0) GatewayConfigPort to the gateway default.
 func gatewayConfigPort(config *MigrationConfig) int {
 	if config.GatewayConfigPort <= 0 {
 		return gateway.DefaultGatewayConfigPort
@@ -584,8 +584,8 @@ func parseGatewayYAML(gatewayYAML string) (map[string]interface{}, error) {
 // source, so they can never drift from each other.
 //
 // AAO's execute path is static-route-only by construction: a dynamic-resolved
-// route is refused before any MigrationConfig is ever persisted (see
-// MigrationConfig.Mode's own doc comment), so FenceYAML here is always the
+// route is refused up front at reconcile (see MigrationConfig.Mode's own doc
+// comment), so FenceYAML here is always the
 // static {fence: {...}} fragment gateway.ReplaceRouteFenceObj expects.
 func deriveFencedCRYAML(config *MigrationConfig) ([]byte, error) {
 	base, err := parseGatewayYAML(config.GatewayYAML)
