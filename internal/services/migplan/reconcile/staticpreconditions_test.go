@@ -37,22 +37,23 @@ func TestStaticPreconditionsRoutesToTargetWhenAlreadyBound(t *testing.T) {
 }
 
 func TestStaticPreconditionsAlreadyFenced(t *testing.T) {
+	// A route already carrying a fence is a valid RESUME state — the interrupted
+	// run fenced it — not a precondition failure. This matches dynamic's
+	// fence-blind idempotency (no already-fenced refusal; the fence step re-applies
+	// idempotently on resume). Reverses the original fail-closed stance, which
+	// made static resume-after-fence impossible.
 	gw := staticGateway()
 	gw.Route.Raw["fence"] = map[string]any{"scope": "ALL", "errorCode": "BROKER_NOT_AVAILABLE"}
 	in := ReconcileInput{Route: "migration-route", TargetDomain: "cc"}
 
 	res, _, ok := CheckStaticPreconditions(in, gw, nil, "", ClusterIDs{})
-	if ok {
-		t.Fatalf("expected refusal (route already fenced), got pass: %+v", res)
+	if !ok {
+		t.Fatalf("an already-fenced route must NOT fail preconditions (it is a valid resume state), got: %+v", res)
 	}
-	found := false
 	for _, r := range res {
-		if r.Name == "route is not already fenced" && !r.OK {
-			found = true
+		if r.Name == "route is not already fenced" {
+			t.Errorf("the already-fenced precondition should be gone (resume-blind), still present: %+v", r)
 		}
-	}
-	if !found {
-		t.Errorf("expected a failed \"route is not already fenced\" precondition, got %+v", res)
 	}
 }
 

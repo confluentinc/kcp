@@ -44,24 +44,13 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		res = append(res, fail("route is static", fmt.Sprintf("route %q is %q; the static (all-at-once) strategy requires a static route", rc.Name, rc.Mode)))
 	}
 
-	// A nulled `fence` (fence: null) counts as unfenced, matching the pre-migplan
-	// FenceRoutesObj safeguard this replaces: fencing an already-fenced route
-	// means either this batch was already fenced by a prior run, or something
-	// upstream lost track of state. Checked here, in the plan, rather than at
-	// apply time (gateway.ReplaceRouteFenceObj), so a caller can trust a
-	// non-refused Result was never going to double-fence — no separate
-	// apply-time check is needed.
-	//
-	// This reads rc.Raw, i.e. whatever gw.Route was resolved from — a fresh live
-	// pull on every Reconcile call. It catches "already fenced when this plan
-	// was computed," not a fence applied concurrently between plan and apply
-	// (a drift/staleness scenario, out of scope here).
-	if existing, has := rc.Raw["fence"]; has && existing != nil {
-		res = append(res, fail("route is not already fenced",
-			fmt.Sprintf("route %q already carries a fence block — this batch may already be fenced, or something upstream lost track of state", rc.Name)))
-	} else {
-		res = append(res, pass("route is not already fenced"))
-	}
+	// An already-fenced route is NOT a precondition failure: it is the valid state
+	// a resume interrupted after the fence step finds (the run fenced the route,
+	// then died before promote/switch). Refusing it made static resume-after-fence
+	// impossible. This matches dynamic's fence-blind idempotency — reconcile
+	// classifies topics by streamingDomain (not the fence), and the fence step
+	// re-applies kcp's whole-route fence idempotently. (No double-fence risk: the
+	// static fence is a single route.fence block that the switch replaces.)
 
 	domains := staticDomainBootstrapIDs(gw)
 	ids2, declared := domains[in.TargetDomain]
