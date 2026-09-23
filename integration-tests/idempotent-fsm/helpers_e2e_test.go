@@ -59,22 +59,24 @@ const executeTimeout = 10 * time.Minute
 // generated .env plus the two secret-backed pod-spec vars). svc is kcp's own
 // gateway service built in-cluster (empty kubeconfig ⇒ in-cluster service account).
 type env struct {
-	mode            string // "dynamic" (TBM) or "static" (AAO)
-	namespace       string
-	gateway         string
-	route           string
-	restEndpoint    string
-	destClusterID   string
-	destBootstrap   string
-	destDomain      string
-	linkName        string
-	topicPrefix     string
-	successHi       int
-	reservedTopic   int
-	renderedDir     string
-	saslUser        string
-	saslPassword    string
-	sourceBootstrap string
+	mode              string // "dynamic" (TBM) or "static" (AAO)
+	namespace         string
+	gateway           string
+	route             string
+	restEndpoint      string
+	destClusterID     string
+	destBootstrap     string
+	destDomain        string
+	sourceDomain      string // static only: route.streamingDomain.name to reset to
+	sourceBootstrapID string // static only: route.streamingDomain.bootstrapServerId
+	linkName          string
+	topicPrefix       string
+	successHi         int
+	reservedTopic     int
+	renderedDir       string
+	saslUser          string
+	saslPassword      string
+	sourceBootstrap   string
 
 	svc     *gateway.K8sService
 	linkSvc clusterlink.Service
@@ -82,41 +84,75 @@ type env struct {
 
 func newEnv() *env {
 	return &env{
-		mode:            envOrDefault("KCP_TBM_GATEWAY_MODE", "dynamic"),
-		namespace:       envOrDefault("KCP_TBM_NAMESPACE", "confluent"),
-		gateway:         envOrDefault("KCP_TBM_GATEWAY_NAME", "tbm-gateway"),
-		route:           envOrDefault("KCP_TBM_ROUTE_NAME", "tbm-route"),
-		restEndpoint:    os.Getenv("KCP_TBM_REST_ENDPOINT"),
-		destClusterID:   os.Getenv("KCP_TBM_DEST_CLUSTER_ID"),
-		destBootstrap:   os.Getenv("KCP_TBM_DEST_BOOTSTRAP"),
-		destDomain:      envOrDefault("KCP_TBM_DEST_DOMAIN", "destination-domain"),
-		linkName:        envOrDefault("KCP_TBM_CLUSTER_LINK_NAME", "tbm-link"),
-		topicPrefix:     envOrDefault("KCP_TBM_TOPIC_PREFIX", "tbm-topic-"),
-		successHi:       envInt("KCP_TBM_SUCCESS_HI", 44),
-		reservedTopic:   envInt("KCP_TBM_RESERVED_TOPIC", 45),
-		renderedDir:     envOrDefault("KCP_TBM_RENDERED_DIR", "/workspace/rendered"),
-		saslUser:        os.Getenv("KCP_TBM_DEST_SASL_USER"),
-		saslPassword:    os.Getenv("KCP_TBM_DEST_SASL_PASSWORD"),
-		sourceBootstrap: os.Getenv("KCP_TBM_SOURCE_BOOTSTRAP"),
+		mode:              envOrDefault("KCP_TBM_GATEWAY_MODE", "dynamic"),
+		namespace:         envOrDefault("KCP_TBM_NAMESPACE", "confluent"),
+		gateway:           envOrDefault("KCP_TBM_GATEWAY_NAME", "tbm-gateway"),
+		route:             envOrDefault("KCP_TBM_ROUTE_NAME", "tbm-route"),
+		restEndpoint:      os.Getenv("KCP_TBM_REST_ENDPOINT"),
+		destClusterID:     os.Getenv("KCP_TBM_DEST_CLUSTER_ID"),
+		destBootstrap:     os.Getenv("KCP_TBM_DEST_BOOTSTRAP"),
+		destDomain:        envOrDefault("KCP_TBM_DEST_DOMAIN", "destination-domain"),
+		sourceDomain:      envOrDefault("KCP_TBM_SOURCE_DOMAIN", "source-kafka-cluster"),
+		sourceBootstrapID: envOrDefault("KCP_TBM_SOURCE_BOOTSTRAP_ID", "UNAUTHED"),
+		linkName:          envOrDefault("KCP_TBM_CLUSTER_LINK_NAME", "tbm-link"),
+		topicPrefix:       envOrDefault("KCP_TBM_TOPIC_PREFIX", "tbm-topic-"),
+		successHi:         envInt("KCP_TBM_SUCCESS_HI", 44),
+		reservedTopic:     envInt("KCP_TBM_RESERVED_TOPIC", 45),
+		renderedDir:       envOrDefault("KCP_TBM_RENDERED_DIR", "/workspace/rendered"),
+		saslUser:          os.Getenv("KCP_TBM_DEST_SASL_USER"),
+		saslPassword:      os.Getenv("KCP_TBM_DEST_SASL_PASSWORD"),
+		sourceBootstrap:   os.Getenv("KCP_TBM_SOURCE_BOOTSTRAP"),
 
 		svc:     gateway.NewK8sService(""),
 		linkSvc: clusterlink.NewConfluentCloudService(http.DefaultClient),
 	}
 }
 
-// skipMultiScenarioOnStatic skips tests that assume multiple migrations can
-// share one route via disjoint slices. Static/AAO switches WHOLE-ROUTE (the
-// route's single streamingDomain flips, moving every producer on it), so it is
-// one migration per route per standup — the disjoint-slice model only fits
-// dynamic. Static coverage is TestResume_InterruptAfterFence (which exercises
-// fence → promote → switch → resume → fence-clear end-to-end) plus the four
-// static fixes' unit tests; the shared FSM resume logic is proven by the five
-// dynamic checkpoints.
-func (e *env) skipMultiScenarioOnStatic(t *testing.T) {
+// resetStaticRoute returns the static/AAO route to its pristine, pre-migration
+// shape so the NEXT migration in the same env can run clean. It is the price of
+// running the full kill-point matrix on static: a static switch is WHOLE-ROUTE
+// (the route's single streamingDomain flips, plus a route-level fence), so —
+// unlike dynamic, where disjoint topic slices coexist untouched — each static
+// migration consumes the whole route and the next one must start from source.
+//
+// The reset reads the live route (whatever partial or completed shape the prior
+// test left — switched, fenced, or both), flips streamingDomain back to the
+// source domain, drops any fence, and writes it back as a whole-route replace
+// (RoutePatch.Field == "", the same mechanism SwitchGateway uses). Everything
+// else on the route — endpoint, security (both domains' auth), broker strategy
+// — is preserved from the live object. Promoted mirror topics stay promoted
+// (promotion is irreversible), which is why every test still reserves a DISJOINT
+// topic slice: the reset restores the route, not the topics.
+//
+// No-op on dynamic. Idempotent: resetting an already-source, unfenced route just
+// rewrites the same shape.
+func (e *env) resetStaticRoute(t *testing.T, ctx context.Context) {
 	t.Helper()
-	if e.mode == "static" {
-		t.Skip("static/AAO is whole-route (one migration per route per standup); the static path is covered by TestResume_InterruptAfterFence")
+	if e.mode != "static" {
+		return // dynamic uses disjoint slices; nothing to reset
 	}
+
+	before := e.readCR(t, ctx)
+	route := e.routeObj(t, before)
+	require.NotNilf(t, route, "route %q must exist in the live CR to reset it", e.route)
+
+	route["streamingDomain"] = map[string]any{
+		"name":              e.sourceDomain,
+		"bootstrapServerId": e.sourceBootstrapID,
+	}
+	delete(route, "fence") // the pristine (pre-migration) route carries no kcp fence
+
+	rp := gateway.RoutePatch{RouteName: e.route, Value: route} // Field "" ⇒ whole-route replace
+	_, err := e.svc.PatchGatewayRoute(ctx, e.namespace, e.gateway, rp, "")
+	require.NoErrorf(t, err, "reset static route %q to source domain %q", e.route, e.sourceDomain)
+
+	// Let the operator accept the rewritten route before the next migration
+	// reads it, so reconcile sees a settled source-bound, unfenced route.
+	require.NoError(t, e.svc.WaitForGatewayAccepted(ctx, e.namespace, e.gateway, 2*time.Second, 2*time.Minute),
+		"gateway must accept the route reset")
+
+	t.Logf("\n♻️  STATIC ROUTE RESET ▸ %q flipped back to source domain %q, fence dropped (next migration starts clean)", e.route, e.sourceDomain)
+	e.snapshot(t, ctx, "AFTER static route reset (expect route → source-domain, fence cleared)", nil)
 }
 
 func envOrDefault(key, fallback string) string {

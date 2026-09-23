@@ -19,6 +19,7 @@ import (
 // world state are logged by the harness for human review.
 func runResumeScenario(t *testing.T, e *env, checkpoint, name string, topics []string, assertPartial func(t *testing.T, ctx context.Context)) {
 	ctx := context.Background()
+	e.resetStaticRoute(t, ctx) // static: reclaim the whole route from any prior migration (no-op on dynamic)
 	mani := e.writeManifest(t, name, topics)
 
 	e.snapshot(t, ctx, "BEFORE "+name+" (expect mirrors ACTIVE, route → source)", topics)
@@ -67,7 +68,6 @@ func TestResume_InterruptAfterFence(t *testing.T) {
 // resume must switch them without re-promoting. Slice tbm-topic-061..065.
 func TestResume_InterruptAfterPromote(t *testing.T) {
 	e := newEnv()
-	e.skipMultiScenarioOnStatic(t)
 	topics := e.topicRange(61, 65)
 	runResumeScenario(t, e, cpPromoted, "resume-promote", topics, func(t *testing.T, ctx context.Context) {
 		cr := e.readCR(t, ctx)
@@ -86,7 +86,6 @@ func TestResume_InterruptAfterPromote(t *testing.T) {
 // live proof of the PENDING_STOPPED resume fix. Slice tbm-topic-071..075.
 func TestResume_InterruptDuringPromote(t *testing.T) {
 	e := newEnv()
-	e.skipMultiScenarioOnStatic(t)
 	topics := e.topicRange(71, 75)
 	runResumeScenario(t, e, cpPromoteAccepted, "resume-promote-accepted", topics, func(t *testing.T, ctx context.Context) {
 		ms := e.mirrorStatus(t, ctx)
@@ -103,7 +102,6 @@ func TestResume_InterruptDuringPromote(t *testing.T) {
 // still reports completion. Slice tbm-topic-066..070.
 func TestResume_InterruptAfterSwitch(t *testing.T) {
 	e := newEnv()
-	e.skipMultiScenarioOnStatic(t)
 	topics := e.topicRange(66, 70)
 	runResumeScenario(t, e, cpSwitched, "resume-switch", topics, func(t *testing.T, ctx context.Context) {
 		cr := e.readCR(t, ctx)

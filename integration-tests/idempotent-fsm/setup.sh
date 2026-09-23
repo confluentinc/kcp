@@ -61,22 +61,34 @@ if [ "${GATEWAY_MODE}" = "static" ]; then
   ROUTE_NAME="${ROUTE_NAME:-migration-route}"
   SOURCE_DOMAIN="source-kafka-cluster"
   DEST_DOMAIN="destination-kafka-cluster"
+  # The static route binds streamingDomain by {name, bootstrapServerId}. The
+  # route-reset helper (static-only) flips streamingDomain back to source
+  # between migrations, so it needs the source domain's bootstrap-server id
+  # (matches gateway-static.yaml's source-kafka-cluster UNAUTHED endpoint).
+  SOURCE_BOOTSTRAP_ID="UNAUTHED"
 elif [ "${GATEWAY_MODE}" = "dynamic" ]; then
   GATEWAY_NAME="${GATEWAY_NAME:-tbm-gateway}"
   GATEWAY_REPLICAS="${GATEWAY_REPLICAS:-2}"
   ROUTE_NAME="${ROUTE_NAME:-tbm-route}"
   SOURCE_DOMAIN="source-domain"
   DEST_DOMAIN="destination-domain"
+  SOURCE_BOOTSTRAP_ID=""  # dynamic routes bind per-topic via rules, no streamingDomain
 else
   echo "FATAL: GATEWAY_MODE must be 'dynamic' or 'static', got '${GATEWAY_MODE}'" >&2
   exit 1
 fi
 CLUSTER_LINK_NAME="${CLUSTER_LINK_NAME:-tbm-link}"
 TOPIC_PREFIX="${TOPIC_PREFIX:-tbm-topic-}"
-SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-55}"   # tbm-topic-001..055 on source
-MIRRORED_COUNT="${MIRRORED_COUNT:-48}"           # 001..048 mirrored on the link
-SUCCESS_HI="${SUCCESS_HI:-44}"                    # 001..044 selectable by success batches
-RESERVED_TOPIC="${RESERVED_TOPIC:-45}"           # 045 mirrored, reserved for promoted-not-switched halt
+# The idempotent-fsm suite reserves DISJOINT 5-topic slices per kill-point test
+# (baseline 051..055, after-fence 056..060, after-promote 061..065, after-switch
+# 066..070, during-promote 071..075 — see the *_test.go files). Every one is
+# promoted (irreversible), so every one must exist on source AND be mirrored:
+# the pool runs 001..075 and mirrors all of them. 001..050 are unused headroom
+# kept for future slices.
+SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-75}"   # tbm-topic-001..075 on source
+MIRRORED_COUNT="${MIRRORED_COUNT:-75}"           # 001..075 all mirrored on the link
+SUCCESS_HI="${SUCCESS_HI:-44}"                    # (unused by idempotent-fsm; kept for .env/run.sh contract)
+RESERVED_TOPIC="${RESERVED_TOPIC:-45}"           # (unused by idempotent-fsm; kept for .env/run.sh contract)
 # Exists on BOTH source and destination as standalone topics (mirror of neither) —
 # the input for the "exists on target but is not a mirror" halt, which verdict.go
 # classifies only when a topic is onSource && MirrorNone && onTarget.
@@ -529,6 +541,7 @@ ENV_FILE="${SCRIPT_DIR}/.env"
   echo "KCP_TBM_GATEWAY_REPLICAS=${GATEWAY_REPLICAS}"
   echo "KCP_TBM_ROUTE_NAME=${ROUTE_NAME}"
   echo "KCP_TBM_SOURCE_DOMAIN=${SOURCE_DOMAIN}"
+  echo "KCP_TBM_SOURCE_BOOTSTRAP_ID=${SOURCE_BOOTSTRAP_ID}"
   echo "KCP_TBM_DEST_DOMAIN=${DEST_DOMAIN}"
   echo "KCP_TBM_SOURCE_BOOTSTRAP=${SOURCE_BOOTSTRAP}"
   echo "KCP_TBM_DEST_BOOTSTRAP=${DEST_BOOTSTRAP}"
