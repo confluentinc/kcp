@@ -100,14 +100,16 @@ func (r Report) Refused() bool {
 }
 
 type Artifacts struct {
-	Topics []string // -> topics.json (cluster-link promote input): the whole
-	// in-flight promote set (Migratable + AwaitStopped) — every topic that must
-	// reach STOPPED before the switch.
-	AwaitStopped []string // the subset of Topics already mid-promotion
-	// (PENDING_STOPPED) on resume. The FSM waits for these to reach STOPPED
-	// rather than re-issuing a promote on an already-promoting mirror.
-	FenceRules      []byte // -> fence-rules.yaml (whole rules block)
-	SwitchoverRules []byte // -> switchover-rules.yaml (whole rules block)
+	// Topics is the in-flight set (Migratable + AwaitStopped) that must reach
+	// STOPPED before the switch → topics.json. Exclude AwaitStopped before
+	// issuing promote calls.
+	Topics []string
+	// AwaitStopped is the subset of Topics already mid-promotion
+	// (PENDING_STOPPED) on resume: the FSM waits for these to reach STOPPED
+	// rather than re-promoting an already-promoting mirror.
+	AwaitStopped    []string
+	FenceRules      []byte // → fence-rules.yaml (whole rules block)
+	SwitchoverRules []byte // → switchover-rules.yaml (whole rules block)
 }
 
 type Plan struct {

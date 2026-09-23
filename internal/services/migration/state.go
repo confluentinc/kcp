@@ -155,9 +155,8 @@ type MigrationConfig struct {
 	FenceYAML      string `json:"fence_yaml"`
 	SwitchoverYAML string `json:"switchover_yaml"`
 
-	// Mode is the route mode migplan resolved this migration under ("static"
-	// today — a dynamic-mode result is refused at init, never persisted).
-	// Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
+	// Mode is the route mode migplan resolved this migration under ("static" for
+	// AAO, "dynamic" for TBM). Mirrors migplan.Result.Mode/reconcile.Plan.Mode.
 	Mode string `json:"mode"`
 
 	// LastRunPolicies records the effective execute-time policy this run used —

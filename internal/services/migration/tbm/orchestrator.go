@@ -125,12 +125,8 @@ func NewTBMOrchestrator(
 	// resume position: the command layer calls migplan.Reconcile live on
 	// every invocation and hands its fresh *migplan.Result to Execute, which
 	// walks canonicalWorkflow from the top and re-applies each step's
-	// artifact idempotently (Task 1's FenceYAML/SwitchoverYAML no-op guards
+	// artifact idempotently (the FenceYAML/SwitchoverYAML no-op guards
 	// make an already-complete migration a side-effect-free walk-through).
-	// This is why the old expire_* demotions — which used to re-derive a safe
-	// resume point from a point-in-time fence/verification fact after a
-	// restart — no longer exist: there is nothing to demote from when every
-	// run starts at zero.
 	orchestrator.fsm = fsm.NewFSM(
 		StateUninitialized,
 		events,
@@ -302,10 +298,7 @@ func (o *TBMOrchestrator) onSwitch(ctx context.Context, e *fsm.Event) {
 // fenced — every rollback is an unrouted-producer detection) and the
 // sync-config restore (TBM has no pause_offset_sync stage).
 func (o *TBMOrchestrator) onAbortFence(ctx context.Context, e *fsm.Event) {
-	// The rollback reason is announced by handleStepFailure (which holds the
-	// failing step and error); this callback owns only the unfence. abort_fence
-	// now fires for any halting pre-promote error, so the reason is no longer a
-	// fixed rogue-producer message.
+	// Reason is announced by handleStepFailure; this callback owns only the unfence.
 	if err := o.actions.unfenceGateway(ctx, o.config); err != nil {
 		slog.Error("❌ failed to unfence gateway during rollback", "error", err)
 		e.Cancel(fmt.Errorf("failed to unfence gateway: %w", err))

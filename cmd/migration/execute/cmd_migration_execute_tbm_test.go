@@ -30,7 +30,7 @@ import (
 // Kafka listers and a LIVE Gateway CR pull unconditionally (see
 // internal/services/migplan/run.go), so it cannot succeed — nor resolve a
 // Mode — inside this test process. There is also no migration state file any
-// more (Plan 2e): every run builds its MigrationConfig fresh from the manifest
+// more: every run builds its MigrationConfig fresh from the manifest
 // and drives the FSM from StateUninitialized on a *migplan.Result the command
 // layer's live Reconcile call would have produced. Tests here that need to
 // observe TBM dispatch/execution behavior call runTBMBranch directly
@@ -87,7 +87,7 @@ const (
 // same pure manifest projection buildFreshMigrationConfig produces for f's
 // manifest, plus Mode and the fence/switchover/gateway artifacts a live
 // migplan.Reconcile would have produced for this fixture. There is no
-// migration state file to read any of this from any more (Plan 2e), so a test
+// migration state file to read any of this from any more, so a test
 // that needs to drive runTBMBranch directly builds the config and its
 // matching *migplan.Result (dynamicResult) by hand. edit runs last, so a test
 // can vary a single field.
@@ -338,7 +338,7 @@ func (r *recordingClusterLinkService) maxBatch() int {
 	return max
 }
 
-// TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions confirms Decision 5:
+// TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions confirms that
 // --promote-batch-size, previously AAO-only, now reaches
 // TBMActions.SetPromoteBatchSize for a dynamic-mode run. Two topics are staged
 // at zero lag; the recorded per-call batch sizes discriminate a capped run
@@ -378,7 +378,7 @@ func TestExecute_DynamicMode_PromoteBatchSizeReachesTBMActions(t *testing.T) {
 
 // --- Test 3: a dynamic run records LastRunPolicies ---
 
-// TestExecute_DynamicMode_RecordsLastRunPolicies confirms Decision 4: a
+// TestExecute_DynamicMode_RecordsLastRunPolicies confirms that a
 // dynamic-mode run populates config.LastRunPolicies with its five supported
 // fields (read from the effective policy — the manifest's spec.defaultPolicies,
 // no flags here — the same source TBMActions reads, so this also pins the

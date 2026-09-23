@@ -76,7 +76,7 @@ type fixture struct {
 }
 
 // newFixture writes a manifest (with the default credentials files). There is
-// no migration state file any more (Plan 2e) and no fenced or switchover CR
+// no migration state file any more and no fenced or switchover CR
 // file — every one of those is derived fresh, from the manifest and live
 // reconcile, on every execute.
 func newFixture(t *testing.T, mutate func(string) string) fixture {
@@ -150,7 +150,7 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 }
 
 // TestExecute_VisibleFlagSurface — there is no migration state file any more
-// (Plan 2e dropped --migration-state-file); what stays on the command line is
+// (--migration-state-file was dropped); what stays on the command line is
 // the manifest path, the id override, and the per-policy overrides that vary a
 // spec.defaultPolicies value for a single run. --run-report is registered but
 // hidden (a diagnostics path whose only consumer is the performance rig), so
@@ -176,7 +176,7 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 }
 
 // TestExecute_RetiredFlagsAreGone — the topology/auth flags moved into the
-// manifest, and --migration-state-file itself is retired (Plan 2e). The
+// manifest, and --migration-state-file itself is retired. The
 // per-policy override flags (--lag-threshold, --rollout-timeout, etc.) are NOT
 // here: they are the live surface, asserted by TestExecute_VisibleFlagSurface.
 func TestExecute_RetiredFlagsAreGone(t *testing.T) {

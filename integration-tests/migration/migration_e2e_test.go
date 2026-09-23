@@ -671,7 +671,7 @@ func TestMigrationE2E(t *testing.T) {
 		t.Logf("execute stderr:\n%s", stderr)
 		require.NoError(t, err, "kcp migration execute failed")
 
-		// There is no state file any more (Plan 2e) to read the migration id
+		// There is no state file any more to read the migration id
 		// or CurrentState back from. execute's own success narrative names
 		// metadata.name as the migration id directly, and "switched" is
 		// already implied by require.NoError above (Execute only returns nil
@@ -774,7 +774,7 @@ func TestMigrationE2E_PromoteBatchSize(t *testing.T) {
 		t.Logf("execute stderr:\n%s", stderr)
 		require.NoError(t, err, "kcp migration execute failed")
 
-		// No state file any more (Plan 2e). require.NoError above already
+		// No state file any more. require.NoError above already
 		// implies switched (Execute only returns nil once every
 		// canonicalWorkflow step has succeeded); execute's own success
 		// narrative names the migration id.
@@ -912,7 +912,7 @@ func TestMigrationE2E_PauseOffsetSync_HappyPath(t *testing.T) {
 		t.Logf("execute stderr:\n%s", stderr)
 		require.NoError(t, err, "kcp migration execute failed")
 
-		// No state file any more (Plan 2e). require.NoError above already
+		// No state file any more. require.NoError above already
 		// implies switched; "intent must persist" and the flipped marker
 		// clearing are proven observably by bookend_ran_and_final_state_restored
 		// below (the pause and restore stdout lines, plus the live cluster
@@ -1024,7 +1024,7 @@ func TestMigrationE2E_PauseOffsetSync_Drain(t *testing.T) {
 		t.Logf("execute stderr:\n%s", stderr)
 		require.NoError(t, err, "kcp migration execute failed")
 
-		// No state file any more (Plan 2e). require.NoError above already
+		// No state file any more. require.NoError above already
 		// implies switched; the marker clearing is proven observably below by
 		// config_restored_to_true (the live cluster link's config.enable
 		// ending back at true).
@@ -1121,32 +1121,11 @@ func TestMigrationE2E_PauseOffsetSync_ExecuteRefuses(t *testing.T) {
 		"the restore bookend must still bring the link to the declared baseline (enabled), regardless of how it started")
 }
 
-// TestMigrationE2E_PauseOffsetSync_RestoresFilters is REMOVED (Plan 2e, Task
-// 3), not just rewritten: it proved that a consumer.offset.group.filters
-// value configured on the cluster link before execute survived the
-// spec.clusterLink.pauseConsumerOffsetSync round-trip, via a diff-based
-// restore that snapshotted every consumer.offset.* key
-// (MigrationConfig.ClusterLinkConfigs) at registration and re-applied
-// whichever ones the disable bookend had cleared.
-//
-// Commit 47dec7b3 ("offset-sync restore/pause driven by declared baseline,
-// not state-file markers") replaced that engine entirely: restoreOffsetSync
-// (internal/services/migration/offset_sync_bookend.go) now issues a single
-// idempotent AlterConfigs SET of consumer.offset.sync.enable to the
-// manifest-declared baseline and touches nothing else — there is no
-// snapshot, no diff, and no restoration of consumer.offset.group.filters (or
-// any other consumer.offset.* key) any more. This is not a state-file
-// plumbing detail this task's mandate covers — it is a real behavior
-// removal with no observable substitute: filters cleared by CP as a side
-// effect of disabling sync are, as the code stands after Task 1, simply not
-// restored by kcp.
-//
-// This is flagged in the Task 3 report rather than papered over with a test
-// that would have to assert either the old, now-false behavior, or the new
-// gap as if it were an intended contract — this looks like a genuine
-// regression risk worth a deliberate call, not something to encode here as
-// passing. The "pause-sync-restores-filters" scenario is left provisioned by
-// setup.sh in case that call restores this coverage.
+// TestMigrationE2E_PauseOffsetSync_RestoresFilters was removed (commit 47dec7b3):
+// the pause/restore is now an incremental AlterConfigs of only
+// consumer.offset.sync.enable and never touches consumer.offset.group.filters,
+// so there is nothing to restore. The old test guarded a diff-based restore that
+// no longer exists.
 
 // TestMigrationE2E_RogueProducerDetection exercises the unrouted-producer
 // safety check against real infrastructure.
@@ -1228,7 +1207,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 		assert.NotContains(t, combined, "Promoting mirror topics",
 			"promotion must never start when detection fires")
 
-		// No state file any more (Plan 2e) to read the migration id or the
+		// No state file any more to read the migration id or the
 		// rolled-back CurrentState back from. That the abort_fence rollback
 		// actually landed is proven observably below, directly against the
 		// live cluster: verify_gateway_restored_to_initial (the CR is back at
@@ -1278,7 +1257,7 @@ func TestMigrationE2E_RogueProducerDetection(t *testing.T) {
 		assert.Contains(t, combined, "Checking for unrouted producers", "resume must re-run detection")
 		assert.Contains(t, combined, "Source offsets stable", "detection should pass on a quiet source")
 
-		// No state file any more (Plan 2e). require.NoError above already
+		// No state file any more. require.NoError above already
 		// implies switched; verify_gateway_switched_over below reconfirms it
 		// observably against the live cluster.
 	})
@@ -1350,7 +1329,7 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 		assert.Contains(t, combined, "Source offsets stable",
 			"detection should pass when no producer bypasses the gateway")
 
-		// No state file any more (Plan 2e). require.NoError above already
+		// No state file any more. require.NoError above already
 		// implies switched; execute's own success narrative names the
 		// migration id.
 		assert.Contains(t, stdout, fmt.Sprintf("Migration completed: %s", opts.MetadataName),
@@ -1364,14 +1343,9 @@ func TestMigrationE2E_RogueProducerFalsePositive(t *testing.T) {
 // the gateway but also restore consumer.offset.sync.enable on the real
 // cluster link.
 //
-// Filters round-trip note (Plan 2e, Task 3): this test used to also seed
-// consumer.offset.group.filters and assert the rollback restored it — that
-// coverage is removed along with TestMigrationE2E_PauseOffsetSync_
-// RestoresFilters above, for the same reason: restoreOffsetSync
-// (internal/services/migration/offset_sync_bookend.go, shared by this
-// rollback path and the post-switchover bookend) only ever sets
-// consumer.offset.sync.enable to the declared baseline now — no snapshot, no
-// filters, on rollback or otherwise. See that test's doc comment.
+// (This test used to also assert consumer.offset.group.filters round-tripped;
+// dropped because restoreOffsetSync now only sets consumer.offset.sync.enable
+// and never touches filters — see RestoresFilters above.)
 //
 // Phase A: execute registers the migration with spec.clusterLink.pauseConsumerOffsetSync
 // and immediately runs with a rogue producer writing directly to source. The
@@ -1449,7 +1423,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 		assert.NotContains(t, combined, "Promoting mirror topics",
 			"promotion must never start when detection fires")
 
-		// No state file any more (Plan 2e) to read the migration id, the
+		// No state file any more to read the migration id, the
 		// rolled-back CurrentState, or the flipped marker back from. That the
 		// rollback actually restored the config is proven observably below by
 		// cluster_link_restored_after_rollback (the live cluster link's
@@ -1491,7 +1465,7 @@ func TestMigrationE2E_PauseOffsetSync_RogueProducerRollback(t *testing.T) {
 		assert.Contains(t, combined, "Restoring consumer.offset.sync",
 			"the post-switchover restore bookend must run")
 
-		// No state file any more (Plan 2e). require.NoError above already
+		// No state file any more. require.NoError above already
 		// implies switched; the marker clearing is proven observably below by
 		// final_state_restored (the live cluster link's config.enable ending
 		// back at true).

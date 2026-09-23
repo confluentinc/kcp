@@ -251,22 +251,10 @@ func TestTBMOrchestrator_Execute_VerifyError_CtxCancelled_NoAbort(t *testing.T) 
 	assert.Equal(t, 1, applyCount, "only the fence applies; no unfence on a dead context")
 }
 
-// TestTBMOrchestrator_Bootstrap_ExpiresFenceVerificationOnResume and
-// TestTBMOrchestrator_Bootstrap_ExpiresFencePostureOnResume previously pinned
-// construction-time bootstrap demotions (expire_verification, expire_fence)
-// that derived a safe resume point from config.CurrentState. That mechanism
-// no longer exists — construction always starts the FSM at StateUninitialized
-// (see TestNewTBMOrchestrator_AlwaysStartsUninitialized) — so these are
-// deleted; their intent (a resume never trusts a stale fence/verification
-// posture) is now covered, more strongly, by every from-zero Execute test in
-// this file (e.g. TestTBMOrchestrator_Execute_FromZero_
-// IgnoresPersistedCurrentState), which never special-cases a stale posture
-// at all because the run never trusted it to begin with.
-
-// ----- TBM kill-point matrix (Layer 1) -----
+// ----- TBM kill-point matrix -----
 //
-// The tests below cover every in-scope TBM row of the kill-point test matrix
-// (Plan 2d, kill-point-test-matrix §2): construct, via the fakes plus a
+// The tests below cover every in-scope TBM row of the kill-point test matrix:
+// construct, via the fakes plus a
 // constructed *migplan.Result, the exact live state a kill at that row's
 // point would leave, drive one from-zero Execute, and assert convergence to
 // switched plus a second Execute (fed the Result a real migplan.Reconcile
@@ -352,15 +340,6 @@ func killPointDoneResult() *migplan.Result {
 // call (topic list, in call order), so each row can assert on them directly,
 // including that a second Execute adds none.
 //
-// initialCurrentState is written onto config.CurrentState purely as
-// documentation of the persisted position a kill at this row's point would
-// leave — construction ignores it (start-from-zero: see
-// TestNewTBMOrchestrator_AlwaysStartsUninitialized and
-// TestTBMOrchestrator_Execute_FromZero_IgnoresPersistedCurrentState above),
-// so it has no effect on how Execute below behaves; it is here only so each
-// row's harness call reads as "the state a kill would leave," matching the
-// matrix.
-//
 // readyProgress, when non-empty, replaces the default (immediately
 // succeeding, no-progress-reported) WaitForGatewayReady fake with one that
 // reports each entry via onProgress, in order, before returning nil — the
@@ -374,7 +353,6 @@ func killPointDoneResult() *migplan.Result {
 // replayed on every call reaching it, fence's and switch's alike.
 func newTBMKillPointOrchestrator(
 	t *testing.T,
-	initialCurrentState string,
 	allMirrorTopics []string,
 	initiallyStopped []string,
 	readyProgress []gateway.GatewayReadinessProgress,
@@ -453,7 +431,7 @@ func newTBMKillPointOrchestrator(
 // reports nothing left, must be a pure no-op.
 func TestTBM_S0_FreshFullRun(t *testing.T) {
 	topics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateUninitialized, topics, nil, nil)
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, topics, nil, nil)
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
@@ -484,7 +462,7 @@ func TestTBM_S0_FreshFullRun(t *testing.T) {
 func TestTBMOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
 	t.Setenv(killpoint.EnvVar, StateFenced)
 	topics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateUninitialized, topics, nil, nil)
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, topics, nil, nil)
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 
@@ -503,12 +481,12 @@ func TestTBMOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
 // this run "the route is already fenced" apart from a fresh one, so Fence's
 // apply is unconditionally re-issued every run. What this pins is that
 // re-issuing that apply is safe: exactly one fence patch, never doubled
-// (Task 2a's dynamic PrependFence idempotency), and promotion/switch proceed
+// (dynamic PrependFence idempotency), and promotion/switch proceed
 // normally — landing at the same converged, idempotent-on-a-second-run place
 // as a fresh batch.
 func TestTBM_S1_AlreadyFencedNoReapply(t *testing.T) {
 	topics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, StateFenced, topics, nil, nil)
+	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, topics, nil, nil)
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
@@ -543,7 +521,7 @@ func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
 	topics := []string{"t1.order", "t2.payment"}
 
 	orch, _, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
-		t, StateFenced, topics, nil, []gateway.GatewayReadinessProgress{notReady, converged})
+		t, topics, nil, []gateway.GatewayReadinessProgress{notReady, converged})
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err, "the fence step must succeed once convergence is reported, not error out on the interim tick")
@@ -578,7 +556,7 @@ func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
 func TestTBM_S2_MidPromoteMix(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
 	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
-		t, StatePromoted, allTopics, []string{"t1.order"}, nil)
+		t, allTopics, []string{"t1.order"}, nil)
 
 	midResult := &migplan.Result{
 		Route:          "migration-route",
@@ -612,7 +590,7 @@ func TestTBM_S2_MidPromoteMix(t *testing.T) {
 // returns Topics=[] but non-empty FenceYAML/SwitchoverYAML (reconcile's
 // promote set excludes already-stopped topics, but its inflight set — which
 // gates whether artifacts are built at all — still includes them, since the
-// switch is still owed). Before Task 1's fix, Fence and Switch both no-op'd
+// switch is still owed). Before this branch's fix, Fence and Switch both no-op'd
 // on the same len(config.Topics)==0 check Promote correctly uses, so they
 // would have BOTH incorrectly no-op'd too, never applying the still-owed
 // switch — a real correctness bug (a kill right after the last topic's
@@ -622,7 +600,7 @@ func TestTBM_S2_MidPromoteMix(t *testing.T) {
 func TestTBM_S3_PromotedNotSwitched(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
 	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
-		t, StatePromoted, allTopics, allTopics, nil)
+		t, allTopics, allTopics, nil)
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
@@ -663,7 +641,7 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
 
 	orch, _, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
-		t, StateSwitched, allTopics, allTopics, []gateway.GatewayReadinessProgress{notReady, converged})
+		t, allTopics, allTopics, []gateway.GatewayReadinessProgress{notReady, converged})
 
 	allPromotedResult := &migplan.Result{
 		Route:          "migration-route",
@@ -708,7 +686,7 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 func TestTBM_S4_DoneIsNoop(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
 	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
-		t, StateSwitched, allTopics, allTopics, nil)
+		t, allTopics, allTopics, nil)
 
 	err := orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
@@ -737,7 +715,7 @@ func TestTBM_S4_DoneIsNoop(t *testing.T) {
 func TestTBM_M_MultiBatchComposite(t *testing.T) {
 	allTopics := []string{"t0.legacy", "t1.order", "t2.payment"}
 	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
-		t, StateUninitialized, allTopics, []string{"t0.legacy"}, nil)
+		t, allTopics, []string{"t0.legacy"}, nil)
 
 	activeTopics := []string{"t1.order", "t2.payment"}
 	res := killPointFullResult(activeTopics)
@@ -765,7 +743,7 @@ func TestTBM_M_MultiBatchComposite(t *testing.T) {
 // real kill at point P (via a failure-injection harness) actually leaves
 // live state S, rather than constructing S directly via fakes as every
 // Layer-1 row above does. Deferred: the failure-injection harness itself is
-// a later build-order plan; this task does Layer 1 only.
+// a later build-order item.
 func TestTBM_Layer2_KillInjection(t *testing.T) {
-	t.Skip("failure-injection harness is a later build-order plan")
+	t.Skip("failure-injection harness not yet built")
 }

@@ -44,13 +44,10 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		res = append(res, fail("route is static", fmt.Sprintf("route %q is %q; the static (all-at-once) strategy requires a static route", rc.Name, rc.Mode)))
 	}
 
-	// An already-fenced route is NOT a precondition failure: it is the valid state
-	// a resume interrupted after the fence step finds (the run fenced the route,
-	// then died before promote/switch). Refusing it made static resume-after-fence
-	// impossible. This matches dynamic's fence-blind idempotency — reconcile
-	// classifies topics by streamingDomain (not the fence), and the fence step
-	// re-applies kcp's whole-route fence idempotently. (No double-fence risk: the
-	// static fence is a single route.fence block that the switch replaces.)
+	// An already-fenced route is NOT a precondition failure — it is the valid state
+	// a resume finds after the fence step. Reconcile classifies by streamingDomain
+	// (not the fence), and the fence step re-applies kcp's whole-route fence
+	// idempotently.
 
 	domains := staticDomainBootstrapIDs(gw)
 	ids2, declared := domains[in.TargetDomain]
@@ -73,13 +70,10 @@ func CheckStaticPreconditions(in ReconcileInput, gw *GatewayConfig, missingSecre
 		routesToTarget = stringField(sd, "name") == in.TargetDomain
 	}
 	view.RoutesToTarget = routesToTarget
-	// An already-bound route (routesToTarget) is NOT a precondition failure: it is
-	// a valid done-state the classifier lands as Unchanged, so a completed static
-	// migration re-reconciles to a clean no-op rather than a refusal. (Reverses
-	// the original decision-8 "refuse when already bound" stance, after the live
-	// static resume suite showed it broke re-run idempotency and kill-after-switch
-	// resume.) An already-bound route whose mirror is NOT stopped still fails via
-	// Classify's FailFast ("routes to target but its mirror is not yet promoted").
+	// An already-bound route (routesToTarget) is NOT a precondition failure — the
+	// classifier lands it as Unchanged, so a completed static migration
+	// re-reconciles to a no-op. An already-bound route whose mirror is NOT stopped
+	// still FailFasts ("routes to target but its mirror is not yet promoted").
 
 	staged, hasStaged := stagedAuthFor(rc.Raw, in.TargetDomain)
 	switch {

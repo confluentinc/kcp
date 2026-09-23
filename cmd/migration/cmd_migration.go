@@ -24,7 +24,7 @@ The migration workflow follows a defined lifecycle managed by a finite state mac
 6. **Promote Topics** — promote mirror topics at zero lag.
 7. **Switch Gateway** — apply the switchover gateway CR to route traffic to Confluent Cloud.
 
-` + "`spec.clusterLink.pauseConsumerOffsetSync`" + ` has no effect for a topic-based migration: a dynamic route requires consumer offset sync to be disabled, so a fresh run that sets it is refused at registration.
+` + "`spec.clusterLink.pauseConsumerOffsetSync`" + ` has no effect for a topic-based migration: a dynamic route requires consumer offset sync to be disabled, so a fresh run that sets it is refused up front when the manifest is reconciled.
 
 If execution is interrupted at any step, re-running ` + "`kcp migration execute`" + ` safely continues: there is no persisted position to resume from — every run re-derives the migration's state live from the manifest and the cluster, and re-applying an already-completed step is a no-op.
 

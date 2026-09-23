@@ -71,7 +71,7 @@ func TestSuccessBatchesMigrate(t *testing.T) {
 			require.NotContains(t, out, "panic", "execute must not panic")
 
 			// The real FSM must walk every transition through to switched for
-			// name — there is no state file any more (Plan 2e) to read
+			// name — there is no state file any more to read
 			// CurrentState back from, so this is now proven the same way the
 			// rest of this test already does: the mirrors below reach STOPPED
 			// and the live route below is switched to the target domain,
@@ -196,7 +196,7 @@ func TestUnroutedProducerDetection(t *testing.T) {
 	require.Contains(t, out, "Unrouted producers detected", "execute's narrative must show detection fired")
 	require.Contains(t, out, "Gateway unfenced", "execute's narrative must show the rollback completed")
 
-	// There is no state file any more (Plan 2e) to read the rolled-back FSM's
+	// There is no state file any more to read the rolled-back FSM's
 	// CurrentState back from — and no persisted resume position for that
 	// assertion to matter to any more, either: every run starts from zero and
 	// reconciles live, so there is nothing left to "resume re-checks lag

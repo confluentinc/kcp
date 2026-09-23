@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Deletes the TBM E2E cluster and the per-run artefacts.
+# Deletes the idempotent-fsm E2E cluster and the per-run artefacts.
 #
 # Deletes the whole minikube profile rather than just the Confluent resources: the
 # suite's premise is a clean dynamic gateway, and a half-cleaned cluster is how a

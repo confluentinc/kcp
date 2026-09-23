@@ -28,7 +28,7 @@ const defaultKafkaVersion = "3.6.0"
 // A returned error is an I/O failure, NOT a refusal — a refusal is data.
 type Result struct {
 	Route          string   // the gateway route the fence/switchover rules apply to (spec.route.name)
-	Topics         []string // the promote list to feed to cluster-link promotion
+	Topics         []string // in-flight set that must reach STOPPED before switch; exclude AwaitStopped before promoting
 	AwaitStopped   []string // subset of Topics already mid-promotion (PENDING_STOPPED); the FSM waits for these, never re-promotes them
 	FenceYAML      string   // the whole rules: block, fenced
 	SwitchoverYAML string   // the whole rules: block, switched over

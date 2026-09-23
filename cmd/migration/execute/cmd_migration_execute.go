@@ -141,13 +141,11 @@ func resolveKubeConfigPath(g *manifest.GatewayMigration) (string, error) {
 	return filepath.Join(homeDir, ".kube", "config"), nil
 }
 
-// buildFreshMigrationConfig builds the MigrationConfig for a migration seen
-// for the first time — pure manifest projections, no live call. Mirrors
-// exactly what `kcp migration init`'s Phase 2 used to populate before it was
-// retired: Topics/FenceYAML/SwitchoverYAML/GatewayYAML/Mode are deliberately
-// NOT set here — they require migplan.Reconcile (a live call), which only
-// runs once the FSM actually reaches the initialize transition, exactly as
-// before.
+// buildFreshMigrationConfig builds the MigrationConfig for a migration seen for
+// the first time — pure manifest projections, no live call.
+// Topics/FenceYAML/SwitchoverYAML/GatewayYAML/Mode are deliberately NOT set here:
+// they require migplan.Reconcile (a live call), which runs once the FSM reaches
+// the initialize transition.
 func buildFreshMigrationConfig(g *manifest.GatewayMigration, id, kubeConfigPath string) migration.MigrationConfig {
 	entry := g.Spec.Route.TopicGroup[0] // manifest validation guarantees exactly one entry
 	var topicPatterns []string
@@ -236,8 +234,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	// that observes live state and decides what remains outstanding; the AAO
 	// FSM always starts at uninitialized (internal/services/migration) and
 	// simply applies this run's fresh result idempotently. The route's mode
-	// comes from this run's reconcile result every time now, not only at
-	// first-registration (TBM resume still ignores a fresh result until Plan 2d).
+	// comes from this run's reconcile result every time.
 	reconcileResult, err := migplan.Reconcile(cmd.Context(), g)
 	if err != nil {
 		return fmt.Errorf("failed to produce the reconcile plan: %w", err)
@@ -415,8 +412,7 @@ func buildExecutorOpts(g *manifest.GatewayMigration, config *migration.Migration
 		GatewayConfigPort: g.Spec.DefaultPolicies.GatewayConfigPort,
 		PromoteBatchSize:  g.Spec.DefaultPolicies.PromoteBatchSize,
 
-		// nil except when resuming a migration still at StateUninitialized —
-		// see runMigrationExecute's conditional migplan.Reconcile call.
+		// Always populated: runMigrationExecute reconciles live on every run.
 		ReconcileResult: reconcileResult,
 
 		// The destination Kafka leg authenticates with the KAFKA block. The

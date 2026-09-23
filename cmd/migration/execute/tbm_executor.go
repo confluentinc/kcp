@@ -12,10 +12,8 @@ import (
 )
 
 // runTBMBranch drives a dynamic-mode (TBM) migration through
-// tbm.TBMOrchestrator — the same shape execute-tbm's runMigrationExecuteTBM
-// used, minus its own registration/reconcile logic, which now lives once,
-// shared, in runMigrationExecute (both branches register and drift-check
-// through the same code).
+// tbm.TBMOrchestrator. The live reconcile that builds the run's config lives
+// once, shared, in runMigrationExecute; this branch only dispatches.
 //
 // Every policy value applied here is read from g.Spec.DefaultPolicies — the
 // EFFECTIVE policy, i.e. the manifest's spec.defaultPolicies after
@@ -78,7 +76,7 @@ func runTBMBranch(
 	orchestrator := tbm.NewTBMOrchestrator(config, actions)
 
 	// Record the effective policy this run used — TBM adopts the same audit
-	// snapshot AAO already has (Decision 4). ConsumerOffsetSyncDrainDuration
+	// snapshot AAO already has. ConsumerOffsetSyncDrainDuration
 	// stays zero: TBM has no offset-sync-pause feature to record a value for.
 	config.LastRunPolicies = &migration.LastRunPolicies{
 		LagThreshold:                    g.Spec.DefaultPolicies.LagThreshold,

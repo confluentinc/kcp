@@ -50,7 +50,7 @@ func TestExecuteTBMThinPosture(t *testing.T) {
 	// TestSuccessBatchesMigrate (which runs first, alphabetically, in this
 	// same suite) has already fully migrated batch-01's topics for real, so
 	// a fresh execute run against the same manifest — there is no state file
-	// any more (Plan 2e), so this is a first-ever-looking run purely because
+	// any more, so this is a first-ever-looking run purely because
 	// migplan.Reconcile is called live, every time, against the manifest and
 	// the live cluster — sees this as a first-ever run and Reconcile really
 	// runs fresh — hits exactly this case. Every real transition (fence,
@@ -87,7 +87,7 @@ func gatewayRoutes(t *testing.T, h *tbmHarness) []byte {
 
 // runKCP invokes the in-pod kcp binary's execute with only file-path args (no
 // secrets on argv) and returns the combined output. There is no
-// --migration-state-file any more (Plan 2e): execute reads only the
+// --migration-state-file any more: execute reads only the
 // manifest and live cluster state on every run.
 func runKCP(t *testing.T, manifestPath string) (string, error) {
 	t.Helper()

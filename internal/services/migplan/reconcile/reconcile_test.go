@@ -159,7 +159,7 @@ func TestReconcileDynamic_ResumeMixedBatch(t *testing.T) {
 // route is ALREADY fenced for the batch (a prior run fenced it, then the
 // process died before switchover). Reconciling again must NOT double the
 // rules.fencing entry — exactly one fence for the batch. This is an
-// end-to-end regression guard for the Task 1/2 idempotent-prepend fix; it
+// end-to-end regression guard for the idempotent-prepend fix; it
 // should PASS on first run (the fix already landed).
 func TestReconcileDynamic_ResumeAlreadyFencedNoDouble(t *testing.T) {
 	gw := dynGateway() // BoundDomains msk/cc, coordination.group=msk, default=msk (source)
@@ -653,13 +653,6 @@ func TestReconcileDynamicStillReturnsMode(t *testing.T) {
 	}
 }
 
-// A resumed batch must carry the AwaitStopped subset (mirrors mid-promotion,
-// PENDING_STOPPED) SEPARATELY from the promote set. Both stay in Topics (they
-// must reach STOPPED before the switch), but the FSM needs to know which were
-// already promoted so it WAITS for them to reach STOPPED instead of re-issuing
-// a promote on an already-promoting mirror. Regression guard for the
-// resume-from-PENDING_STOPPED bug (re-promote → fatal error, or the topic
-// never confirmed → hang).
 // On resume the live route already carries kcp's fence (from the interrupted
 // run). The SWITCHOVER artifact must NOT carry that fence forward — the switched
 // state is unfenced for our topics — so a resumed migration reaches the SAME

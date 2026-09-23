@@ -153,11 +153,8 @@ func NewMigrationOrchestrator(
 	// resume position: the command layer calls migplan.Reconcile live on
 	// every invocation and hands its fresh *migplan.Result to Execute, which
 	// walks canonicalWorkflow from the top and re-applies each step's artifact
-	// idempotently (Task 1's len(config.Topics)==0 no-op guards make an
-	// already-complete migration a side-effect-free walk-through). This is why
-	// the old expire_* demotions — which used to re-derive a safe resume point
-	// from a point-in-time fence/verification fact after a restart — no longer
-	// exist: there is nothing to demote from when every run starts at zero.
+	// idempotently (the len(config.Topics)==0 no-op guards make an
+	// already-complete migration a side-effect-free walk-through).
 	//
 	// Action callbacks are registered per-event (before_<EVENT>), not per-state
 	// (leave_<STATE>), so each is single-purpose. This matters for the fenced
@@ -257,26 +254,17 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 	return nil
 }
 
-// handleStepFailure is the single place that maps a failed workflow step to its
-// compensating rollback (if any) and returns the wrapped error. Two failures
-// compensate, both via abort_fence (which unfences the gateway — see
-// onAbortFence — followed here by the sync-config restore):
-//   - any pause_offset_sync failure, keyed by step identity: clients must not
-//     be held fenced over a config problem, so the run rolls back and a re-run
-//     rechecks lags, re-fences, and retries the pause;
-//   - fence verification detecting unrouted producers (ErrUnroutedProducers,
-//     keyed by error class because the verify step's fetch errors must NOT
-//     roll back).
+// handleStepFailure maps a failed workflow step to its compensating rollback.
+// While the fence is up and nothing is promoted yet — the states abort_fence
+// can leave — ANY halting error rolls back: unfence (onAbortFence), then restore
+// the offset-sync config. A cancelled context is the exception: it can't do the
+// unfence IO, so the fenced world is left for the idempotent resume.
 //
-// The rollback event is fired here — never from inside a callback, where
-// looplab's non-reentrant eventMu would deadlock. The sync-config restore also
-// runs here, after the completed transition, rather than in onAbortFence: a
-// before_-callback runs ahead of the transition, and client traffic (the
-// unfence) must land before config tidiness is attempted.
-//
-// A cancelled abort_fence (e.g. the unfence itself failed) is logged, not
-// returned: the originating step error is what surfaces, and the FSM correctly
-// stays at the rollback's source.
+// The rollback event fires here, not from a callback (looplab's non-reentrant
+// eventMu would deadlock), and the sync-config restore runs here too, after the
+// unfence lands, so client traffic is restored before config tidiness. A failed
+// unfence is logged, not returned — the originating step error surfaces and the
+// FSM stays at the rollback's source.
 func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step WorkflowStep, stepErr error, params ExecutionParams) error {
 	stepFailure := fmt.Errorf("failed during %s: %w", step.Description, stepErr)
 

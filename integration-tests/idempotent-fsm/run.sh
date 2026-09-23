@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compiles the TBM hot-reload suite (and a linux kcp binary for execute's
+# Compiles the idempotent-fsm resume suite (and a linux kcp binary for execute's
 # subprocess in U9) for the cluster node's architecture, ships them plus the
 # rendered manifests into the runner pod, and executes the test binary there.
 #
@@ -44,7 +44,7 @@ trap 'rm -f "${TEST_BIN}" "${KCP_BIN}"' EXIT
 NODE_ARCH="$(kubectl --context "${PROFILE}" get nodes -o jsonpath='{.items[0].status.nodeInfo.architecture}')"
 echo "Node architecture: ${NODE_ARCH}"
 
-echo "Compiling the TBM e2e suite for linux/${NODE_ARCH}..."
+echo "Compiling the idempotent-fsm e2e suite for linux/${NODE_ARCH}..."
 (
   cd "${REPO_ROOT}"
   GOTOOLCHAIN=auto CGO_ENABLED=0 GOOS=linux GOARCH="${NODE_ARCH}" \
@@ -75,7 +75,7 @@ for f in "${RENDERED_DIR}"/*; do
 done
 
 echo ""
-echo "=== Running the TBM hot-reload suite in-cluster ==="
+echo "=== Running the idempotent-fsm suite in-cluster ==="
 # Only non-secret KCP_TBM_* are passed on the exec line. KCP_TBM_RENDERED_DIR is
 # rewritten to the in-pod path. The destination SASL user/password are already in
 # the pod env from the tbm-rest-credentials Secret and are deliberately absent here.

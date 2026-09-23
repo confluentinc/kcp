@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# Stands up the live topology for the TBM hot-reload integration suite on its own
-# Minikube profile (kcp-e2e-tbm): a source CP Kafka (PLAINTEXT) and a destination
-# CP Kafka (SASL_SSL) linked by one ClusterLink, plus a DYNAMIC-mode Confluent
-# Gateway with hot reload. The engine (migplan.Reconcile) reads the live gateway
-# CR, and the harness re-applies its rendered fence/switchover route edits with a
-# bumped spec.configId (hot reload, no pod roll) between mirror promotions.
+# Stands up the live topology for the idempotent-migration-FSM resume suite on its
+# own Minikube profile (kcp-e2e-idempotent): a source CP Kafka (PLAINTEXT) and a
+# destination CP Kafka (SASL_SSL) linked by one ClusterLink, plus a Confluent
+# Gateway — dynamic-mode (hot reload) or static-mode (rollout), per GATEWAY_MODE.
+# The engine (migplan.Reconcile) reads the live gateway CR; the harness drives
+# kcp migration execute and interrupts it at kill points to prove resume.
 #
 # Composition (see the plan): the cluster/operator/gateway-image spine is copied
 # from integration-tests/migration (chart 0.1838.0, cpc-gateway 1.4.0-master-*,
@@ -79,12 +79,9 @@ else
 fi
 CLUSTER_LINK_NAME="${CLUSTER_LINK_NAME:-tbm-link}"
 TOPIC_PREFIX="${TOPIC_PREFIX:-tbm-topic-}"
-# The idempotent-fsm suite reserves DISJOINT 5-topic slices per kill-point test
-# (baseline 051..055, after-fence 056..060, after-promote 061..065, after-switch
-# 066..070, during-promote 071..075 — see the *_test.go files). Every one is
-# promoted (irreversible), so every one must exist on source AND be mirrored:
-# the pool runs 001..075 and mirrors all of them. 001..050 are unused headroom
-# kept for future slices.
+# Each kill-point test promotes a disjoint 5-topic slice in 051..075 (see the
+# *_test.go files); promotion is irreversible, so all must exist AND be mirrored.
+# The pool runs 001..075, all mirrored; 001..050 are unused headroom.
 SOURCE_TOPIC_COUNT="${SOURCE_TOPIC_COUNT:-75}"   # tbm-topic-001..075 on source
 MIRRORED_COUNT="${MIRRORED_COUNT:-75}"           # 001..075 all mirrored on the link
 SUCCESS_HI="${SUCCESS_HI:-44}"                    # (unused by idempotent-fsm; kept for .env/run.sh contract)
@@ -158,7 +155,7 @@ wait_for_pods() {
 # topic_name — zero-padded source topic name for an index (1 -> tbm-topic-001).
 topic_name() { printf '%s%03d' "${TOPIC_PREFIX}" "$1"; }
 
-echo "=== KCP TBM hot-reload E2E setup ==="
+echo "=== KCP idempotent-fsm E2E setup ==="
 echo "Profile:        ${PROFILE}"
 echo "CFK chart:      ${CFK_CHART_OCI} (${CFK_CHART_VERSION})"
 echo "Gateway image:  ${GATEWAY_IMAGE} (dynamic mode, hot reload)"
@@ -563,4 +560,4 @@ echo "Environment written to ${ENV_FILE}"
 echo "Dest cluster ID: ${DEST_CLUSTER_ID}"
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" get pods
 echo ""
-echo "Run tests with: make test-migration-tbm-run"
+echo "Run tests with: make test-idempotent-fsm-run"

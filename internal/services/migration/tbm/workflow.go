@@ -253,16 +253,10 @@ func formatLag64(n int64) string {
 // — it just returns an error, leaving the FSM at lags_ok; re-running
 // execute-tbm retries fencing.
 func (a *TBMActions) Fence(ctx context.Context, config *migration.MigrationConfig) error {
-	// Plan-driven no-op: reconcile emitted no fence artifact, so there is
-	// nothing to fence this run. Read the plan (config.FenceYAML), never the
-	// live cluster — the reconcile engine already decided. Deliberately NOT
-	// keyed on config.Topics: Topics is the promote set (Migratable +
-	// AwaitStopped), which reconcile can legitimately return empty while a
-	// fence is still owed for an all-promoted batch still awaiting switchover
-	// (config.FenceYAML non-empty, migplan/reconcile.go's reconcileDynamic
-	// builds FenceYAML/SwitchoverYAML together, both non-empty iff inflight is
-	// non-empty). Gating on Topics there would silently skip the still-owed
-	// fence.
+	// Plan-driven no-op: reconcile emitted no fence artifact, so there is nothing
+	// to fence this run. Keyed on config.FenceYAML, NOT config.Topics: Topics (the
+	// promote set) can be empty while a fence is still owed for an all-promoted
+	// batch awaiting switchover. Gating on Topics would silently skip that fence.
 	if config.FenceYAML == "" {
 		a.reporter.Success("No topics to fence")
 		return nil

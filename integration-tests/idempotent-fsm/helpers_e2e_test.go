@@ -108,24 +108,16 @@ func newEnv() *env {
 	}
 }
 
-// resetStaticRoute returns the static/AAO route to its pristine, pre-migration
-// shape so the NEXT migration in the same env can run clean. It is the price of
-// running the full kill-point matrix on static: a static switch is WHOLE-ROUTE
-// (the route's single streamingDomain flips, plus a route-level fence), so —
-// unlike dynamic, where disjoint topic slices coexist untouched — each static
-// migration consumes the whole route and the next one must start from source.
+// resetStaticRoute returns the static/AAO route to its pristine (source-bound,
+// unfenced) shape so the next migration in the same env starts clean. A static
+// switch is WHOLE-ROUTE (streamingDomain flip + route-level fence), so — unlike
+// dynamic's per-topic slices — each migration consumes the whole route.
 //
-// The reset reads the live route (whatever partial or completed shape the prior
-// test left — switched, fenced, or both), flips streamingDomain back to the
-// source domain, drops any fence, and writes it back as a whole-route replace
-// (RoutePatch.Field == "", the same mechanism SwitchGateway uses). Everything
-// else on the route — endpoint, security (both domains' auth), broker strategy
-// — is preserved from the live object. Promoted mirror topics stay promoted
-// (promotion is irreversible), which is why every test still reserves a DISJOINT
-// topic slice: the reset restores the route, not the topics.
-//
-// No-op on dynamic. Idempotent: resetting an already-source, unfenced route just
-// rewrites the same shape.
+// It reads the live route, flips streamingDomain back to source, drops any fence,
+// and whole-route-replaces (RoutePatch.Field == "", as SwitchGateway does),
+// preserving everything else (endpoint, security, broker strategy). Promoted
+// mirrors stay promoted, so each test still reserves a disjoint slice.
+// No-op on dynamic; idempotent.
 func (e *env) resetStaticRoute(t *testing.T, ctx context.Context) {
 	t.Helper()
 	if e.mode != "static" {

@@ -1381,7 +1381,7 @@ func TestOrchestrator_Execute_PromoteError(t *testing.T) {
 		"should rest at fence_verified after promote failure, never promoted")
 }
 
-// --- AAO kill-point matrix (Plan 2c, Task 3) ---
+// --- AAO kill-point matrix ---
 //
 // Each TestAAO_<row> below corresponds to one row of the AAO kill-point
 // matrix (task-3-brief.md §1, in-scope rows only): it constructs, purely via
@@ -1443,7 +1443,7 @@ func aaoFullResult() *migplan.Result {
 //
 // initialCurrentState is written onto orch.fsm.Current() purely as
 // documentation of the persisted position a kill at this row's point would
-// leave — construction ignores it (Task 2's start-from-zero contract,
+// leave — construction ignores it (the start-from-zero contract,
 // pinned generally by TestNewMigrationOrchestrator_AlwaysStartsUninitialized
 // and per-state by TestOrchestrator_Execute_FromZero_
 // IgnoresPersistedCurrentState), so it has no effect on how Execute below
@@ -1614,8 +1614,8 @@ func TestAAO_S0_FreshFullRun(t *testing.T) {
 	assert.ElementsMatch(t, []string{"topic-a", "topic-b"}, (*promoteCalls)[0])
 
 	// A second run: a fresh reconcile now reports nothing left at all. The
-	// from-zero walk still visits every step (Task 2), but every step's
-	// plan-driven no-op guard (Task 1) must fire — zero new mutations.
+	// from-zero walk still visits every step, but every step's
+	// plan-driven no-op guard must fire — zero new mutations.
 	patchesBefore := atomic.LoadInt64(patchCalls)
 	promotesBefore := len(*promoteCalls)
 
@@ -1653,7 +1653,7 @@ func TestOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
 // it (see newAAOKillPointOrchestrator's doc comment), so the FSM still walks
 // the whole workflow — there is no live read that could tell this run "the
 // route is already fenced" apart from a fresh one, so FenceGateway's apply is
-// unconditionally re-issued every run (Task 2's "AAO reconciles every run").
+// unconditionally re-issued every run ("AAO reconciles every run").
 // What this row actually pins is that re-issuing that apply is safe: exactly
 // one fence patch, never doubled, and promotion/switch proceed normally from
 // mirrors that are still ACTIVE (nothing was promoted by the prior, killed
@@ -1883,23 +1883,23 @@ func TestAAO_S4_DoneIsNoop(t *testing.T) {
 }
 
 // TestAAO_S1p_OffsetSyncPaused would cover matrix row A-S1p (fenced, with
-// consumer offset sync paused). Deferred: offset-sync is out of 2c's scope.
+// consumer offset sync paused). Deferred: offset-sync-paused coverage not yet added.
 func TestAAO_S1p_OffsetSyncPaused(t *testing.T) {
-	t.Skip("offset-sync is Plan 2e")
+	t.Skip("offset-sync-paused row not yet covered")
 }
 
 // TestAAO_Layer2_KillInjection would cover Layer 2 of the matrix — proving a
 // real kill at point P (via a failure-injection harness) actually leaves
 // live state S, rather than constructing S directly via fakes as every
 // Layer-1 row above does. Deferred: the failure-injection harness itself is
-// a later build-order plan; 2c does Layer 1 only.
+// a later build-order item.
 func TestAAO_Layer2_KillInjection(t *testing.T) {
-	t.Skip("failure-injection harness is a later build-order plan")
+	t.Skip("failure-injection harness not yet built")
 }
 
-// --- Plan 2e, Task 3: no state file, still idempotent ---
+// --- no state file, still idempotent ---
 
-// TestOrchestrator_Execute_NoStateFileWritten is the finale for Plan 2e: it
+// TestOrchestrator_Execute_NoStateFileWritten is the finale: it
 // drives a full from-zero AAO run, and its idempotent second run once
 // reconcile reports nothing left, in a real temporary working directory —
 // mirroring TestAAO_S0_FreshFullRun's exact harness (newAAOKillPointOrchestrator)
@@ -1946,7 +1946,7 @@ func TestOrchestrator_Execute_NoStateFileWritten(t *testing.T) {
 }
 
 // assertNoFilesWritten fails if dir contains anything at all. In particular
-// this catches a "*-state.json" migration state file — the artifact Plan 2e
+// this catches a "*-state.json" migration state file — the artifact this change
 // deleted entirely — reappearing by regression, but it deliberately checks
 // for ANY file: there is no longer any legitimate reason for a migration
 // execute run to write anything to its working directory.
