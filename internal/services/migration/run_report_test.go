@@ -49,6 +49,7 @@ func TestRunReport_NilRecorderIsInert(t *testing.T) {
 	r.StageStarted(EventFence, StateLagsOk, StateFenced)
 	r.StageEnded(StateFenced)
 	r.StageSkipped(EventInitialize)
+	r.SetTopics(5)
 	r.StageFailed(errors.New("boom"))
 	r.Finish(StateFenced, nil)
 }
@@ -106,6 +107,42 @@ func TestRunReport_FullWorkflow(t *testing.T) {
 	assert.False(t, report.EndedAt.IsZero())
 	assert.GreaterOrEqual(t, report.DurationMs, int64(0))
 	assert.NotEmpty(t, report.KcpVersion, "the report should stamp the writing binary's version")
+}
+
+// TestRunReport_SetTopicsRewritesReport verifies SetTopics replaces the count
+// and flushes immediately, so a run killed before its next stage still leaves
+// the corrected count on disk.
+func TestRunReport_SetTopicsRewritesReport(t *testing.T) {
+	reportPath := filepath.Join(t.TempDir(), "run-report.json")
+	recorder := NewRunReportRecorder(reportPath, "migration-1", 0, 0, StateUninitialized)
+	require.Equal(t, 0, readRunReport(t, reportPath).Topics)
+
+	recorder.SetTopics(7)
+
+	assert.Equal(t, 7, readRunReport(t, reportPath).Topics)
+}
+
+// TestRunReport_FreshRegistrationRecordsReconciledTopics is the register-and-run
+// case: the command layer builds a fresh config with no topics (they are only
+// reconciled at the initialize transition), so the recorder starts with a count
+// of zero. The report must still end with the count initialize produced.
+func TestRunReport_FreshRegistrationRecordsReconciledTopics(t *testing.T) {
+	topics := []string{"topic-a", "topic-b", "topic-c"}
+	orch, config, _ := newHappyPathOrchestrator(t, StateUninitialized, topics)
+	// Mirror buildFreshMigrationConfig: a newly registered migration has no
+	// topics until initialize reconciles them.
+	config.Topics = nil
+	reportPath := filepath.Join(t.TempDir(), "run-report.json")
+
+	recorder := NewRunReportRecorder(reportPath, config.MigrationId, len(config.Topics), 0, config.CurrentState)
+	orch.SetRunReportRecorder(recorder)
+
+	require.NoError(t, orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, uninitializedReconcileResult(topics)))
+	recorder.Finish(config.CurrentState, nil)
+
+	report := readRunReport(t, reportPath)
+	assert.Equal(t, len(topics), report.Topics)
+	assert.Equal(t, RunOutcomeCompleted, report.Outcome)
 }
 
 // TestRunReport_ResumeRecordsSkippedStages verifies that a resumed run
