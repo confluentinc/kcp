@@ -13,14 +13,14 @@ see [gateway migration example](gateway-migration-example.md).
 
 This manifest drives an imperative, resumable state machine:
 
-- **`execute`** registers the migration on its first run (if not already registered), validates the manifest and live infrastructure, and drives the fence → promote → switchover FSM forward. On first run, it snapshots the topology into its state file (`--migration-state-file`, defaulting to `<metadata.name>-state.json` in the current directory), reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and continues directly into the cutover. On subsequent runs, it resumes from wherever the state file says the last run left off. It re-reads the manifest (topology and policy) on every invocation.
-  - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. No migration state file is created or touched, and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
+- **`execute`** validates the manifest and live infrastructure, reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and drives the fence → promote → switchover FSM forward. There is no state file and no registration step: every run reconciles live from the manifest and the current cluster state, so an interrupted run is safely continued by re-running the same command — it resumes from whatever the live world already reflects. It re-reads the manifest (topology and policy) on every invocation.
+  - **`--dry-run`** validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. Nothing is changed and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.
 - **`lag-check`** polls mirror-topic replication lag independently of `execute`.
 
-**Drift between the manifest and the first-run registration** is forbidden outright: any manifest change to an already-registered migration refuses `execute` unconditionally, at any FSM state, with no override. The topology registered at first run must remain stable. To migrate with a different topology, use a new `metadata.name` to create a fresh registration in the same state file.
+Every `execute` reconciles the current manifest live against the cluster; there is no persisted registration to drift from. A completed migration re-reconciles to a no-op, and an interrupted one continues from the live state. To migrate a different topology, edit the manifest (or use a new `metadata.name`) and run `execute` again.
 
 `spec.defaultPolicies` is the one section re-read fresh on **every** `execute`
-run rather than frozen at registration — each field is a default that a matching
+run rather than fixed once — each field is a default that a matching
 CLI flag can override for a single run, without editing the file.
 
 ## At a glance
@@ -135,7 +135,7 @@ the strict decode with an unknown-field error.
 | ------------ | ------ | -------- | --------------------------------------------------------------------------------------------------- |
 | `namespace`  | string | yes      | Kubernetes namespace where the gateway is deployed.                                                 |
 | `kubeconfig` | string | no       | Path to the kubeconfig to use. The **one** field in this manifest where a leading `~/` is expanded. |
-| `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on first migration registration (the first `execute` run), not a file path. |
+| `cr-name`    | string | yes      | The **name** of the initial gateway custom resource — read live from the cluster on each `execute` run, not a file path. |
 
 ## `spec.route`
 
@@ -167,8 +167,7 @@ first execute run (a singular `streamingDomain` ⇒ static, a plural `streamingD
 dynamic). The **bootstrap server id** the route binds to is likewise **derived**
 from the target domain's declaration in the live CR, not written in
 the manifest. Both modes are fully implemented: `kcp migration execute` resolves
-the mode once, at first registration, persists it on the migration's config
-entry, and dispatches every run after that to the matching engine and FSM —
+the mode from the live gateway CR each run and dispatches to the matching engine and FSM —
 AAO's for static routes, TBM's for dynamic — without re-resolving the mode on
 a resume. `spec.clusterLink.pauseConsumerOffsetSync` has no effect on a
 dynamic-mode migration (TBM's FSM has no pause/restore stage for it); kcp
@@ -181,7 +180,7 @@ topic.
 
 Optional. Every field is a default that a matching `kcp migration execute` flag
 can override for a single run; the section is re-read fresh from the manifest
-on every `execute`, never frozen at registration.
+on every `execute`, never fixed once.
 
 | Field                             | Type     | Default | Override flag                           | Notes                                                                                                                                                                                                                                                                          |
 | --------------------------------- | -------- | ------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
@@ -306,7 +305,7 @@ Key rules, beyond required/optional per field above:
   `detectUnroutedProducersDuration`, if greater than zero, must be at least
   `10s`.
 
-`kcp migration execute --dry-run` performs the same validation `execute` would on first registration (manifest structure, credentials, cluster link and gateway CR existence/health) and prints a reconcile plan, but touches no migration state file and runs no FSM transitions — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.
+`kcp migration execute --dry-run` performs the same validation `execute` would (manifest structure, credentials, cluster link and gateway CR existence/health) and prints a reconcile plan, but takes no actions and runs no FSM transitions — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.
 
 ## Field reference
 
