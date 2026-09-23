@@ -3,6 +3,7 @@ package tbm
 import (
 	"context"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -582,6 +583,92 @@ func TestTBM_S2_MidPromoteMix(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
+}
+
+// TestTBM_Execute_ResumeAtAwaitStopped drives a full Execute for a resume where
+// t1 is mid-promotion (PENDING_STOPPED) and t2 is fresh (ACTIVE). The reconcile
+// Result carries BOTH in Topics but marks t1 AwaitStopped. The run must promote
+// ONLY t2 — t1 is waited for, never re-promoted (a re-promote of an
+// already-promoting mirror is fatal at CC) — then, once t1 reaches STOPPED,
+// switch and converge. This is the end-to-end AwaitStopped resume path
+// (Result.AwaitStopped -> config.AwaitStopped -> awaitingStop) that neither the
+// piecewise Promote unit test nor S2 (already-STOPPED / SwitchOnly) exercises.
+func TestTBM_Execute_ResumeAtAwaitStopped(t *testing.T) {
+	allTopics := []string{"t1.order", "t2.payment"}
+	var mu sync.Mutex
+	var promotes [][]string
+	promoted := map[string]bool{}
+	var t1ListCalls int64
+
+	gw := &mockGatewayService{
+		patchGatewayRouteFn: func(context.Context, string, string, gateway.RoutePatch, string) (string, error) { return "", nil },
+	}
+	cl := &mockClusterLinkService{
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			// t1 is PENDING_STOPPED for its first observation (mid-promotion on
+			// resume), then settles to STOPPED. t2 is ACTIVE until promoted.
+			t1Status := clusterlink.MirrorStatusPendingStopped
+			if atomic.AddInt64(&t1ListCalls, 1) >= 2 {
+				t1Status = clusterlink.MirrorStatusStopped
+			}
+			t2Status := clusterlink.MirrorStatusActive
+			mu.Lock()
+			if promoted["t2.payment"] {
+				t2Status = clusterlink.MirrorStatusStopped
+			}
+			mu.Unlock()
+			return []clusterlink.MirrorTopic{
+				{MirrorTopicName: "t1.order", MirrorStatus: t1Status},
+				{MirrorTopicName: "t2.payment", MirrorStatus: t2Status},
+			}, nil
+		},
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, names []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			mu.Lock()
+			promotes = append(promotes, append([]string(nil), names...))
+			for _, n := range names {
+				promoted[n] = true
+			}
+			mu.Unlock()
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, n := range names {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: n})
+			}
+			return resp, nil
+		},
+	}
+	config := &migration.MigrationConfig{MigrationId: "test-tbm-await", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), gw, cl)
+	actions.promotePollInterval = time.Millisecond
+	orch := NewTBMOrchestrator(config, actions)
+
+	res := &migplan.Result{
+		Route:          "migration-route",
+		Topics:         allTopics,            // both are in-flight (must reach STOPPED before switch)
+		AwaitStopped:   []string{"t1.order"}, // t1 is already promoting (PENDING_STOPPED)
+		FenceYAML:      killPointFenceYAML,
+		SwitchoverYAML: killPointSwitchoverYAML,
+		GatewayYAML:    testGatewayYAML,
+		Mode:           "dynamic",
+	}
+
+	err := orch.Execute(context.Background(), res, 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	require.NoError(t, err)
+	assert.Equal(t, StateSwitched, orch.fsm.Current(), "the resume must drive to switched")
+
+	mu.Lock()
+	defer mu.Unlock()
+	var allPromoted []string
+	for _, batch := range promotes {
+		allPromoted = append(allPromoted, batch...)
+	}
+	assert.NotContains(t, allPromoted, "t1.order",
+		"an AwaitStopped (PENDING_STOPPED) topic must be waited for, never re-promoted")
+	assert.Contains(t, allPromoted, "t2.payment",
+		"the genuinely migratable topic must still be promoted")
 }
 
 // TestTBM_S3_PromotedNotSwitched covers matrix row T-S3 — the bug-fix
