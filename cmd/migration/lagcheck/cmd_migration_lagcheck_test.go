@@ -127,9 +127,8 @@ func loadLagGateway(t *testing.T, path string) *manifest.GatewayMigration {
 	return g
 }
 
-// TestLagCheck_FlagSurfaceIsTwoFlags — decision 15: --migration-yaml and
-// --poll-interval, nothing else. lag-check reads no state file, so a
-// --migration-id would resolve nothing.
+// TestLagCheck_FlagSurfaceIsTwoFlags — --migration-yaml and --poll-interval,
+// nothing else. lag-check reads no persisted state.
 func TestLagCheck_FlagSurfaceIsTwoFlags(t *testing.T) {
 	cmd := NewMigrationLagCheckCmd()
 	var names []string

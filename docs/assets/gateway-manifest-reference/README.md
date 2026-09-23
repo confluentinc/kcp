@@ -40,9 +40,8 @@ spec:
 ```
 
 `apiVersion` must equal `kcp.confluent.io/v1alpha1` and `kind` must equal
-`GatewayMigration`, exactly. `metadata.name` is required and non-blank: it is
-written into the state file as the migration's identity (pre-manifest,
-uuid-keyed migrations keep working, addressed instead with `--migration-id`).
+`GatewayMigration`, exactly. `metadata.name` is required and non-blank: it is the
+migration's identity, used as its `migration_id` in logs and output.
 `spec.source`, `spec.target`, `spec.clusterLink`, `spec.gateway`, and
 `spec.route` are always required; `spec.defaultPolicies` is optional.
 
@@ -258,8 +257,6 @@ tables above:
 | Command                   | Flag                                                                                                                                                                                             | Required                            | Notes                                                                                                                                    |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
 | `kcp migration execute`   | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest.                                                                                                                   |
-|                           | `--migration-state-file`                                                                                                                                                                         | yes                                 | Created on first registration (first `execute` run); re-used on subsequent runs.                                                                                                                      |
-|                           | `--migration-id`                                                                                                                                                                                 | no                                  | Address a migration by id instead of `metadata.name` — needed only for migrations registered before `metadata.name` became the identity. |
 |                           | `--lag-threshold`, `--promote-batch-size`, `--rollout-timeout`, `--detect-unrouted-producers-duration`, `--consumer-offset-sync-drain-duration`, `--hot-reload-timeout`, `--gateway-config-port` | no                                  | Per-run overrides of the matching `spec.defaultPolicies` field for this run only.                                                        |
 | `kcp migration lag-check` | `--migration-yaml`                                                                                                                                                                               | yes                                 | Path to this manifest. Reads only the destination REST leg (`spec.clusterLink.linkCredentials`), honoured in whichever form it resolves — `api_key`/`basic`/`bearer`/`mtls`; it never dials the source or destination Kafka legs. |
 |                           | `--poll-interval`                                                                                                                                                                                | no (default `1`)                    | Poll interval in seconds, `1`-`60`.                                                                                                      |

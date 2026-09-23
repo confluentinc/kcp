@@ -18,7 +18,6 @@ import (
 
 var (
 	manifestFile string
-	migrationId  string
 	dryRun       bool
 	// Per-policy overrides. Each mirrors a field in spec.defaultPolicies and,
 	// when the flag (or its bound env var) is explicitly set, replaces the
@@ -89,7 +88,6 @@ func newMigrationExecuteCmd(buildTBMOffsets offsetProvidersFunc, buildTBMGateway
 	}
 
 	cmd.Flags().StringVar(&manifestFile, "migration-yaml", "", "Path to the GatewayMigration manifest describing this migration.")
-	cmd.Flags().StringVar(&migrationId, "migration-id", "", "Address a migration by id instead of by the manifest's metadata.name. Needed only for migrations registered before metadata.name became the identity.")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Run only the reconcile step and print its plan report; run no FSM transition.")
 
 	// Per-policy overrides. Each replaces the matching spec.defaultPolicies value
@@ -206,11 +204,8 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 		return nil
 	}
 
-	// metadata.name already uniquely identifies the migration and doubles as
-	// migration_id — a separate mandatory path is not required for a fresh or
-	// resumed run — mirrors execute-tbm's own default before this command
-	// absorbed it.
-	id := resolveMigrationID(g, migrationId)
+	// metadata.name identifies the migration and is its migration_id label.
+	id := g.Metadata.Name
 
 	// There is no migration state file: every run builds a fresh
 	// MigrationConfig straight from the manifest — pure manifest
@@ -300,16 +295,6 @@ func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []an
 // that reaches the refusal through the command.
 func pauseOffsetSyncRefusedForDynamic(mode string, g *manifest.GatewayMigration) bool {
 	return mode == "dynamic" && g.Spec.ClusterLink.PauseConsumerOffsetSync
-}
-
-// resolveMigrationID prefers an explicit override. metadata.name is the
-// identity for anything registered by a config-driven init; --migration-id
-// remains the only way to address a row keyed by a generated uuid.
-func resolveMigrationID(g *manifest.GatewayMigration, override string) string {
-	if override != "" {
-		return override
-	}
-	return g.Metadata.Name
 }
 
 // applyPolicyOverrides replaces each default that the operator set explicitly on

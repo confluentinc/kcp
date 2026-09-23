@@ -18,9 +18,7 @@ apiVersion: kcp.confluent.io/v1alpha1
 kind: GatewayMigration
 
 metadata:
-  # THE migration identity — unique per state file, and written into the state
-  # file's migration_id. Pre-existing uuid-keyed migrations keep working and
-  # stay addressable with `--migration-id`.
+  # The migration identity, used as its migration_id label in logs and output.
   name: msk-prod-to-cc-batch-1
 
 spec:

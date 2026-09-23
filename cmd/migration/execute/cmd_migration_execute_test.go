@@ -150,11 +150,11 @@ func TestExecute_IsNamedExecute(t *testing.T) {
 }
 
 // TestExecute_VisibleFlagSurface — there is no migration state file any more
-// (--migration-state-file was dropped); what stays on the command line is
-// the manifest path, the id override, and the per-policy overrides that vary a
-// spec.defaultPolicies value for a single run. --run-report is registered but
-// hidden (a diagnostics path whose only consumer is the performance rig), so
-// it is asserted separately rather than padding the advertised surface.
+// (--migration-state-file was dropped); what stays on the command line is the
+// manifest path and the per-policy overrides that vary a spec.defaultPolicies
+// value for a single run. --run-report is registered but hidden (a diagnostics
+// path whose only consumer is the performance rig), so it is asserted
+// separately rather than padding the advertised surface.
 func TestExecute_VisibleFlagSurface(t *testing.T) {
 	cmd := NewMigrationExecuteCmd()
 	var visible []string
@@ -164,7 +164,7 @@ func TestExecute_VisibleFlagSurface(t *testing.T) {
 		}
 	})
 	assert.ElementsMatch(t, []string{
-		"migration-yaml", "migration-id",
+		"migration-yaml",
 		"lag-threshold", "promote-batch-size", "rollout-timeout",
 		"detect-unrouted-producers-duration", "consumer-offset-sync-drain-duration",
 		"hot-reload-timeout", "gateway-config-port", "dry-run",
@@ -199,18 +199,6 @@ func TestExecute_RequiresMigrationYaml(t *testing.T) {
 	_, err := runExecute(t)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "migration-yaml")
-}
-
-// --- migration id resolution ---
-
-// TestExecute_ResolvesMigrationIdFromMetadataName — --migration-id survives as an
-// override only; the manifest names the migration.
-func TestExecute_ResolvesMigrationIdFromMetadataName(t *testing.T) {
-	f := newFixture(t, nil)
-	g := loadGateway(t, f.manifestPath)
-	assert.Equal(t, "msk-prod-to-cc-batch-1", resolveMigrationID(g, ""))
-	assert.Equal(t, "migration-abc-uuid", resolveMigrationID(g, "migration-abc-uuid"),
-		"an explicit --migration-id addresses a pre-existing uuid-keyed row")
 }
 
 // --- reconcile runs on every invocation ---
