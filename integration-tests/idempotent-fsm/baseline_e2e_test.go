@@ -17,16 +17,16 @@ import (
 // every resume test: an UNinterrupted run completes, and a completed migration
 // re-reconciles to a no-op (the baseline of idempotency).
 //
-// Reserved slice: batch-01 (tbm-topic-001..011). Promotion is irreversible, so
-// this consumes those topics for the life of the env (one-shot per standup).
+// Reserved slice: tbm-topic-051..055. Promotion is irreversible, so this
+// consumes those topics for the life of the env (one-shot per standup).
 //
 // Every step emits tangible evidence via the harness: the live world state
 // before, the full raw kcp output of each run, and the world state after.
 func TestBaseline_FullMigrationCompletes(t *testing.T) {
 	e := newEnv()
 	ctx := context.Background()
-	topics := e.topicRange(1, 11)
-	mani := e.manifestPath("batch-01.yaml")
+	topics := e.topicRange(51, 55)
+	mani := e.writeManifest(t, "baseline", topics)
 
 	e.snapshot(t, ctx, "BEFORE — pristine (expect mirrors ACTIVE, route → source-domain, fencing empty)", topics)
 

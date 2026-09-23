@@ -45,9 +45,10 @@ const kcpBinary = "/workspace/kcp"
 // mismatch would surface as the interrupt never firing (the run completes),
 // which the resume tests catch by requiring a non-zero exit.
 const (
-	cpFenced   = "fenced"
-	cpPromoted = "promoted"
-	cpSwitched = "switched"
+	cpFenced          = "fenced"
+	cpPromoted        = "promoted"
+	cpSwitched        = "switched"
+	cpPromoteAccepted = killpoint.AfterPromoteAccepted // intra-step: accepted, not yet STOPPED
 )
 
 // executeTimeout bounds a single execute invocation (a full cutover incl.
@@ -63,6 +64,8 @@ type env struct {
 	route           string
 	restEndpoint    string
 	destClusterID   string
+	destBootstrap   string
+	destDomain      string
 	linkName        string
 	topicPrefix     string
 	successHi       int
@@ -83,6 +86,8 @@ func newEnv() *env {
 		route:           envOrDefault("KCP_TBM_ROUTE_NAME", "tbm-route"),
 		restEndpoint:    os.Getenv("KCP_TBM_REST_ENDPOINT"),
 		destClusterID:   os.Getenv("KCP_TBM_DEST_CLUSTER_ID"),
+		destBootstrap:   os.Getenv("KCP_TBM_DEST_BOOTSTRAP"),
+		destDomain:      envOrDefault("KCP_TBM_DEST_DOMAIN", "destination-domain"),
 		linkName:        envOrDefault("KCP_TBM_CLUSTER_LINK_NAME", "tbm-link"),
 		topicPrefix:     envOrDefault("KCP_TBM_TOPIC_PREFIX", "tbm-topic-"),
 		successHi:       envInt("KCP_TBM_SUCCESS_HI", 44),
@@ -136,6 +141,55 @@ func (e *env) topicRange(lo, hi int) []string {
 // manifestPath resolves a rendered manifest filename to its in-pod path.
 func (e *env) manifestPath(name string) string {
 	return filepath.Join(e.renderedDir, name)
+}
+
+// writeManifest renders a GatewayMigration manifest for exactly the given topics
+// and writes it into the in-pod rendered dir (the test runs in-cluster), so each
+// test can target its own disjoint slice without a fixed batch template. Reuses
+// the rendered credential files setup.sh already staged. Returns the in-pod path.
+func (e *env) writeManifest(t *testing.T, name string, topics []string) string {
+	t.Helper()
+	var tb strings.Builder
+	for _, tp := range topics {
+		fmt.Fprintf(&tb, "          - %q\n", tp)
+	}
+	manifest := fmt.Sprintf(`apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+metadata:
+  name: %s
+spec:
+  source:
+    type: apache-kafka
+    bootstrapServers:
+      - %q
+    credentials: /workspace/rendered/source-creds.yaml
+  target:
+    type: confluent-platform
+    clusterId: %q
+    kafka:
+      bootstrapServers:
+        - %q
+      restEndpoint: %q
+      clusterCredentials: /workspace/rendered/dest-kafka-creds.yaml
+  clusterLink:
+    name: %q
+    bootstrapServers:
+      - %q
+    linkCredentials: /workspace/rendered/link-creds.yaml
+  gateway:
+    namespace: %q
+    cr-name: %q
+  route:
+    name: %q
+    topicGroup:
+      - topics:
+%s    targetStreamingDomain: %q
+`, name, e.sourceBootstrap, e.destClusterID, e.destBootstrap, e.restEndpoint,
+		e.linkName, e.destBootstrap, e.namespace, e.gateway, e.route, tb.String(), e.destDomain)
+
+	path := filepath.Join(e.renderedDir, name+".yaml")
+	require.NoError(t, os.WriteFile(path, []byte(manifest), 0o600), "write generated manifest")
+	return path
 }
 
 // linkConfig is the destination cluster-link REST config; the SASL user/password
