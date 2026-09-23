@@ -28,8 +28,10 @@ func TestMigrationInfraDecision(t *testing.T) {
 		{"private scram, enterprise", prof(false, authSCRAM), TierEnterprise, 2, 4},
 		{"private scram, dedicated", prof(false, authSCRAM), TierDedicated, 0, 0},
 
-		// Private unauthenticated on Enterprise: external outbound. Dedicated -> specialist.
-		{"private unauth, enterprise", prof(false, authUnauth), TierEnterprise, 3, 0},
+		// Private unauthenticated: CC has no unauthenticated link path, so add a SASL/SCRAM
+		// listener (type 2) with a jump-cluster (type 4) alternative — not a plaintext link.
+		// Dedicated -> specialist.
+		{"private unauth, enterprise", prof(false, authUnauth), TierEnterprise, 2, 4},
 		{"private unauth, dedicated", prof(false, authUnauth), TierDedicated, 0, 0},
 
 		// Private IAM on PROVISIONED MSK, Enterprise: jump cluster (type 5), with a
@@ -46,8 +48,11 @@ func TestMigrationInfraDecision(t *testing.T) {
 		// SASL/SCRAM is preferred over IAM for the link.
 		{"private iam+scram prefers scram", prof(false, authAWSIAM, authSCRAM), TierEnterprise, 2, 4},
 
-		// mTLS / nothing detected -> specialist.
-		{"private mtls", prof(false, authMTLS), TierEnterprise, 0, 0},
+		// mTLS and SASL/PLAIN both need a SASL/SCRAM external outbound link (type 2) with an
+		// "add a SASL/SCRAM listener" prerequisite (kcp's link is SCRAM-only), jump cluster
+		// (type 4) as the alternative. Only genuinely-undetected auth -> specialist.
+		{"private mtls", prof(false, authMTLS), TierEnterprise, 2, 4},
+		{"private sasl-plain", prof(false, authSASLPlain), TierEnterprise, 2, 4},
 		{"private none", prof(false), TierEnterprise, 0, 0},
 	}
 	for _, tc := range cases {
@@ -68,5 +73,18 @@ func TestMigrationInfraDecision(t *testing.T) {
 	// A government target never auto-maps: Cluster Linking isn't available there.
 	if got := MigrationInfraDecision(Profile{SourceAuthTypes: []string{authSCRAM}, TargetIsGovCloud: "Yes"}, TierEnterprise); got.Type != 0 {
 		t.Errorf("gov target: type=%d, want 0", got.Type)
+	}
+
+	// An OSK/CP source known to run outside AWS can't use the AWS-VPC migration-infra,
+	// so it routes to a specialist — but Cluster Linking still applies (clusterLinkable).
+	for _, cloud := range []string{"Azure", "GCP", "On-prem or other"} {
+		got := MigrationInfraDecision(Profile{SourceType: SourceApacheKafka, SourceCloud: cloud, SourceAuthTypes: []string{authSCRAM}}, TierEnterprise)
+		if got.Type != 0 || !got.SpecialistClusterLinkable {
+			t.Errorf("non-AWS (%s) OSK source: type=%d clusterLinkable=%v, want 0/true", cloud, got.Type, got.SpecialistClusterLinkable)
+		}
+	}
+	// An AWS (or unknown-cloud) OSK source still auto-maps to a standard type.
+	if got := MigrationInfraDecision(Profile{SourceType: SourceApacheKafka, SourceCloud: "AWS", SourceAuthTypes: []string{authSCRAM}}, TierEnterprise); got.Type != 2 {
+		t.Errorf("AWS OSK source: type=%d, want 2", got.Type)
 	}
 }

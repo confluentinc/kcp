@@ -20,18 +20,53 @@ type PlanHeader struct {
 	PlanSchemaVersion string    `json:"plan_schema_version"`
 }
 
-// collectClusters flattens every scanned MSK cluster out of the processed state.
+// collectClusters flattens every scanned cluster out of the processed state, from
+// both source kinds: MSK clusters are taken as-is; each OSK (Apache Kafka /
+// Confluent Platform) cluster is mapped into the shared ProcessedCluster shape
+// (oskToProcessedCluster) and tagged SourceType "osk", so the whole engine path
+// consumes one cluster type. MSK clusters are untagged (SourceType ""), preserving
+// every MSK code path unchanged.
 func collectClusters(state report.ProcessedState) []report.ProcessedCluster {
 	var out []report.ProcessedCluster
 	for _, src := range state.Sources {
-		if src.MSKData == nil {
-			continue
-		}
-		for _, region := range src.MSKData.Regions {
-			out = append(out, region.Clusters...)
+		switch {
+		case src.MSKData != nil:
+			for _, region := range src.MSKData.Regions {
+				out = append(out, region.Clusters...)
+			}
+		case src.OSKData != nil:
+			for _, oc := range src.OSKData.Clusters {
+				out = append(out, oskToProcessedCluster(oc))
+			}
 		}
 	}
 	return out
+}
+
+// oskToProcessedCluster flattens an OSK (Apache Kafka / Confluent Platform) cluster
+// into the shared ProcessedCluster shape the engine adapter consumes. Only the
+// fields OSK actually carries are populated — the Kafka Admin info (topics, ACLs,
+// connect, sasl_mechanism), the flattened metrics, and the discovered clients; the
+// MSK-only AWS fields stay zero, which every MSK helper reads as "not scanned". The
+// OSK cluster ID becomes the cluster name (OSK has no ARN or region), and SourceType
+// is stamped "osk" so buildProfile takes the OSK path even when no source_platform
+// was declared.
+func oskToProcessedCluster(oc report.ProcessedOSKCluster) report.ProcessedCluster {
+	c := report.ProcessedCluster{
+		Name:                        oc.ID,
+		SourceType:                  types.SourceTypeOSK,
+		KafkaAdminClientInformation: oc.KafkaAdminClientInformation,
+		DiscoveredClients:           oc.DiscoveredClients,
+	}
+	if oc.ClusterMetrics != nil {
+		c.ClusterMetrics = *oc.ClusterMetrics
+		// Mirror backfillAggregates for OSK: precompute aggregates from the raw series
+		// when the collector didn't (so peak-throughput/storage reads have data).
+		if len(c.ClusterMetrics.Aggregates) == 0 && len(c.ClusterMetrics.Metrics) > 0 {
+			c.ClusterMetrics.Aggregates = report.CalculateMetricsAggregates(c.ClusterMetrics.Metrics)
+		}
+	}
+	return c
 }
 
 // FilterState returns a processed state keeping only clusters that match the given
@@ -49,6 +84,28 @@ func FilterState(state report.ProcessedState, clusterID, region string) (report.
 	out := state
 	out.Sources = nil
 	for _, src := range state.Sources {
+		// OSK sources have no region; keep an OSK cluster only when no region filter is
+		// active and its id matches the (empty-matches-all) cluster-id filter.
+		if src.OSKData != nil {
+			if region != "" {
+				continue
+			}
+			newSrc := src
+			od := *src.OSKData
+			od.Clusters = nil
+			for _, oc := range src.OSKData.Clusters {
+				if clusterID != "" && oc.ID != clusterID {
+					continue
+				}
+				od.Clusters = append(od.Clusters, oc)
+				matched++
+			}
+			if len(od.Clusters) > 0 {
+				newSrc.OSKData = &od
+				out.Sources = append(out.Sources, newSrc)
+			}
+			continue
+		}
 		if src.MSKData == nil {
 			continue
 		}
@@ -101,16 +158,30 @@ func detectSchemaRegistryKind(state report.ProcessedState) string {
 	return ""
 }
 
-// oskClusterCount counts Apache Kafka (OSK) clusters present in the state, which
-// the MSK-only plan does not process.
-func oskClusterCount(state report.ProcessedState) int {
-	n := 0
+// headerSource labels the plan header by the source platform(s) the scan carries.
+// MSK-only stays exactly "Amazon MSK" (and so does the scanless synthetic MSK
+// source), keeping existing output unchanged; an OSK scan reads "Apache Kafka", and
+// a mixed scan names both. This is the scanned source kind — a Confluent Platform
+// source scans as OSK, and the per-cluster source_platform answer, not this fleet
+// label, is what distinguishes CP from Apache Kafka in each cluster's plan.
+func headerSource(state report.ProcessedState) string {
+	hasMSK, hasOSK := false, false
 	for _, src := range state.Sources {
-		if src.OSKData != nil {
-			n += len(src.OSKData.Clusters)
+		if src.MSKData != nil {
+			hasMSK = true
+		}
+		if src.OSKData != nil && len(src.OSKData.Clusters) > 0 {
+			hasOSK = true
 		}
 	}
-	return n
+	switch {
+	case hasMSK && hasOSK:
+		return "Amazon MSK, Apache Kafka"
+	case hasOSK:
+		return "Apache Kafka"
+	default:
+		return "Amazon MSK"
+	}
 }
 
 // countRegions counts the distinct regions present in the state.
@@ -119,6 +190,11 @@ func countRegions(state report.ProcessedState) int {
 	for _, src := range state.Sources {
 		if src.MSKData != nil {
 			for _, r := range src.MSKData.Regions {
+				// The scanless placeholder carries an unnamed region; a real MSK
+				// region always has a name, so unnamed regions don't count.
+				if r.Name == "" {
+					continue
+				}
 				regions[r.Name] = struct{}{}
 			}
 		}

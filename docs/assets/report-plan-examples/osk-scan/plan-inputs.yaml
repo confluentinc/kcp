@@ -1,12 +1,20 @@
 # plan-inputs.yaml: your answers for `kcp report plan`.
 # Re-running reads this file and writes it back; your answers are preserved (it only adds any new follow-up questions).
 # Fill the lines marked `# not set`, then re-run (adjust the paths to where your files are):
-#   kcp report plan --plan-inputs plan-inputs.yaml
-# 14 required questions still open before a full plan.
+#   kcp report plan --state-file demo-osk-scan.json --plan-inputs plan-inputs.yaml
+# 9 required questions still open before a full plan.
 
 clusters:
-  your-cluster:   # region:  · 14 open required, 7 open optional
+  osk-playground:   # region:  · partitions (scanned): 743 · 9 open required, 7 open optional
     # ── REQUIRED: answer these ──
+    # Which cloud does your source run in?
+    #   (Where your Kafka runs today. It sets the default target cloud (you can still choose a different one below) and shapes the networking plan.)
+    #   aws → AWS
+    #   azure → Azure
+    #   gcp → GCP
+    #   on-prem → On-premises or other
+    source_cloud:   # not set
+
     # How widely is this cluster used?
     #   one-app → One team, one application
     #   few-teams → A few teams or applications
@@ -24,20 +32,12 @@ clusters:
     #   false → No, public endpoints are fine
     private_networking_required:   # not set
 
-    # How do you connect to your cluster today?
-    #   same-vpc → Same VPC
-    #   peered → Peered
-    #   privatelink → PrivateLink
-    #   other → Other or more than one
-    connects_today:   # not set
-
-    # What Schema Registry does your source environment use?
-    #   none → None: Schemaless, or schemas kept in app code
-    #   glue → AWS Glue Schema Registry
-    #   cp-enterprise-7.1 → Confluent Schema Registry: Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later
-    #   cp-community → Confluent Schema Registry: Community, or below 7.1: Community edition, or Confluent Platform below version 7.1
+    # Which Confluent Schema Registry edition does your source run?
+    #   (Your scan detected a Confluent Schema Registry. Schema Linking needs Enterprise 7.1 or later.)
+    #   cp-enterprise-7.1 → Enterprise, 7.1 or later: Confluent Platform Enterprise, version 7.1 or later
+    #   cp-community → Community, or below 7.1: Community edition, or Confluent Platform below version 7.1
     #   other → Other, not sure
-    schema_registry:   # not set
+    schema_registry_edition:   # not set
 
     # What do you want to do with your schemas on Confluent Cloud?
     #   migrate → Migrate my existing schemas
@@ -59,36 +59,6 @@ clusters:
     #   2.4-2.9 → 2.4-2.9
     #   older → Older than 2.4
     kafka_version:   # not set
-
-    # Roughly how many partitions do you have, not counting replicas?
-    #   under-2500 → Under 2,500
-    #   2500-30000 → 2,500 to 30,000
-    #   over-30000 → Over 30,000
-    partition_band:   # not set
-
-    # How your Kafka clients authenticate today
-    #   iam → AWS IAM
-    #   scram → SASL/SCRAM
-    #   mtls → TLS client certificates (mTLS)
-    #   unauth → None / plaintext
-    source_auth:   # not set
-
-    # Do your topics use tiered storage?
-    #   (Tiered data is stored separately from your active topics, in Amazon S3, so retrieving it during cutover takes extra time and can add cost.)
-    #   true → Yes
-    #   false → No
-    tiered_storage:   # not set
-
-    # Do any of your topics use non-default settings?
-    #   (This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete.)
-    #   true → Yes
-    #   false → No
-    topics_have_custom_settings:   # not set
-
-    # Do you use MSK Connect?
-    #   true → Yes
-    #   false → No
-    msk_connect_present:   # not set
 
     # Do you run self-managed Kafka Connect?
     #   true → Yes
@@ -139,9 +109,23 @@ clusters:
     #   kstreams → Kafka Streams
     eos_streams: []
 
-    # ── ALREADY ANSWERED / PRESET: edit to override ──
-    # Source cluster type
-    #   provisioned → Provisioned
-    #   serverless → Serverless
-    # source_cluster_type: provisioned   # preset (uncomment to override)
+    # ── ALREADY ANSWERED / FROM YOUR SCAN: edit to override ──
+    # How your Kafka clients authenticate today
+    #   scram → SASL/SCRAM
+    #   sasl-plain → SASL/PLAIN
+    #   mtls → TLS client certificates (mTLS)
+    #   unauth → None / plaintext
+    # source_auth: [sasl-plain]   # from scan (uncomment to override)
+
+    # Do your topics use tiered storage?
+    #   (Tiered data is stored separately from your active topics, in object storage, so retrieving it during cutover takes extra time and can add cost.)
+    #   true → Yes
+    #   false → No
+    # tiered_storage: false   # from scan (uncomment to override)
+
+    # Do any of your topics use non-default settings?
+    #   (This includes retention over 7 days, a replication factor other than 3, a max message size over 2 MB, or a cleanup policy that combines compact and delete.)
+    #   true → Yes
+    #   false → No
+    # topics_have_custom_settings: true   # from scan (uncomment to override)
 

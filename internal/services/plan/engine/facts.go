@@ -13,6 +13,14 @@ func WillBePrivate(p Profile) bool { return willBePrivate(p) }
 // IsServerless reports whether the source is MSK Serverless.
 func IsServerless(p Profile) bool { return p.isServerless() }
 
+// IsMSK reports whether the source is Amazon MSK (the zero-value SourceType is
+// MSK). Used by the question layer to gate MSK-only questions.
+func IsMSK(p Profile) bool { return p.isMSK() }
+
+// IsOSKorCP reports whether the source is self-managed Apache Kafka or Confluent
+// Platform. Used by the question layer to gate the OSK/CP-only questions.
+func IsOSKorCP(p Profile) bool { return p.isOSKorCP() }
+
 // HasBackfillableHistory reports whether there is enough retained history to make
 // the consumer-history question and a backfill plan worth surfacing.
 func HasBackfillableHistory(p Profile) bool { return hasBackfillableHistory(p) }

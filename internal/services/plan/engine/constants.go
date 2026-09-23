@@ -136,6 +136,24 @@ const (
 	MSKServerless  = "Serverless"
 )
 
+// SourceType is the source Kafka platform axis. It gates the platform-specific
+// branches (MSK Serverless / AWS IAM / MSK Connect / AWS Glue) that only apply to
+// an Amazon MSK source, so a self-hosted Apache Kafka or Confluent Platform source
+// gets generic, correct wording instead. The zero value is treated as MSK, so a
+// profile that never sets it behaves exactly as it did before this axis existed.
+type SourceType string
+
+const (
+	// SourceMSK is Amazon MSK. The zero value ("") is also treated as MSK.
+	SourceMSK SourceType = "MSK"
+	// SourceApacheKafka is a self-managed Apache Kafka source.
+	SourceApacheKafka SourceType = "ApacheKafka"
+	// SourceConfluentPlatform is a self-managed Confluent Platform source. It is
+	// behaviourally identical to Apache Kafka; the only differences are the display
+	// name and the schema default toward Confluent Schema Registry.
+	SourceConfluentPlatform SourceType = "ConfluentPlatform"
+)
+
 // Source auth method strings. These are the vocabulary the intake offers and
 // what the profile carries; the mTLS value gates the cluster type.
 const (
@@ -143,6 +161,9 @@ const (
 	authAWSIAM = "AWS IAM"
 	authSCRAM  = "SASL/SCRAM"
 	authUnauth = "None / plaintext"
+	// authSASLPlain is an Apache Kafka / Confluent Platform source auth (MSK's SASL
+	// is SCRAM); it shares the "API keys (SASL/PLAIN)" string with target API-key auth.
+	authSASLPlain = "API keys (SASL/PLAIN)"
 )
 
 // tierSLA — the uptime SLAs each tier offers, ascending. Basic and Standard are
