@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/confluentinc/kcp/internal/services/offset"
 	"github.com/fatih/color"
 )
@@ -542,6 +543,16 @@ func (a *TBMActions) Promote(ctx context.Context, config *migration.MigrationCon
 				slog.Debug("topic promotion accepted, awaiting stopped confirmation", "topic", topic.MirrorTopicName)
 				awaitingStop[topic.MirrorTopicName] = true
 			}
+		}
+
+		// Test-only intra-promote kill-point: topics were just accepted
+		// (error_code 0) but are not yet confirmed STOPPED — a real abrupt exit
+		// here leaves them PENDING_STOPPED. Returns a plain error (not
+		// ErrUnroutedProducers → handleStepFailure does not roll back), so the
+		// partial world is left intact for a resume. No-op in production.
+		if len(awaitingStop) > 0 && killpoint.ShouldCancelAfter(killpoint.AfterPromoteAccepted) {
+			slog.Warn("⚠️ test kill-point reached — cancelling run to simulate an abrupt exit", "afterCheckpoint", killpoint.AfterPromoteAccepted)
+			return fmt.Errorf("test kill-point %q reached (promote accepted, mirrors not yet confirmed STOPPED)", killpoint.AfterPromoteAccepted)
 		}
 
 		slog.Debug("waiting for promotion to complete before next check", "pollInterval", a.promotePollInterval)

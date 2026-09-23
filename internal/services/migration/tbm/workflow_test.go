@@ -12,6 +12,7 @@ import (
 	"github.com/confluentinc/kcp/internal/services/gateway"
 	"github.com/confluentinc/kcp/internal/services/migplan"
 	"github.com/confluentinc/kcp/internal/services/migration"
+	"github.com/confluentinc/kcp/internal/services/migration/killpoint"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -432,6 +433,42 @@ func TestTBMActions_Promote_AwaitStoppedTopicsAreWaitedNotRepromoted(t *testing.
 		"an AwaitStopped topic (already promoting on resume) must be waited on, never re-promoted")
 	assert.Contains(t, promoted, "migrate-me",
 		"the genuinely migratable topic must still be promoted")
+}
+
+// The intra-promote kill-point (killpoint.AfterPromoteAccepted) must interrupt
+// Promote right after a promote request is accepted but before the mirror is
+// confirmed STOPPED — leaving it PENDING_STOPPED — and exit with a non-zero
+// error (no rollback, since it is not ErrUnroutedProducers). This is the seam
+// the live suite drives to leave a genuine PENDING_STOPPED world.
+func TestTBMActions_Promote_KillPointAfterAcceptExitsBeforeConfirm(t *testing.T) {
+	t.Setenv(killpoint.EnvVar, killpoint.AfterPromoteAccepted)
+	var promoted, listed int64
+	cl := &mockClusterLinkService{
+		promoteMirrorTopicsFn: func(_ context.Context, _ clusterlink.Config, names []string) (*clusterlink.PromoteMirrorTopicsResponse, error) {
+			atomic.AddInt64(&promoted, 1)
+			resp := &clusterlink.PromoteMirrorTopicsResponse{}
+			for _, n := range names {
+				resp.Data = append(resp.Data, struct {
+					MirrorTopicName string `json:"mirror_topic_name"`
+					ErrorMessage    string `json:"error_message,omitempty"`
+					ErrorCode       int    `json:"error_code,omitempty"`
+				}{MirrorTopicName: n})
+			}
+			return resp, nil
+		},
+		listMirrorTopicsFn: func(context.Context, clusterlink.Config) ([]clusterlink.MirrorTopic, error) {
+			atomic.AddInt64(&listed, 1)
+			return []clusterlink.MirrorTopic{{MirrorTopicName: "topic-1", MirrorStatus: "PENDING_STOPPED"}}, nil
+		},
+	}
+	actions := NewTBMActions(zeroLagOffsetProvider(), zeroLagOffsetProvider(), &mockGatewayService{}, cl)
+	actions.promotePollInterval = time.Millisecond
+	config := promoteTestConfig([]string{"topic-1"})
+
+	err := actions.Promote(context.Background(), config, clusterlink.BasicAuth{})
+	require.Error(t, err, "the kill-point after accept must exit non-zero")
+	require.Contains(t, err.Error(), "kill-point")
+	assert.Equal(t, int64(1), atomic.LoadInt64(&promoted), "the promote request must have been issued (accepted) before the kill-point")
 }
 
 func TestTBMActions_Promote_BatchSize_ProcessesSequentially(t *testing.T) {

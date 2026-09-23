@@ -19,6 +19,12 @@ import "os"
 // or "promoted".
 const EnvVar = "KCP_TEST_CANCEL_AFTER"
 
+// AfterPromoteAccepted is an intra-step checkpoint (not an FSM state name): it
+// fires inside the promote loop right after a promote request is accepted
+// (error_code 0) but before the mirror is confirmed STOPPED, leaving mirrors in
+// PENDING_STOPPED — the state a resume must handle without re-promoting.
+const AfterPromoteAccepted = "promote_accepted"
+
 // ShouldCancelAfter reports whether the run should cancel itself now that the
 // given checkpoint has been reached. It is true only when EnvVar is set to
 // exactly this checkpoint; unset or any other value is false.
