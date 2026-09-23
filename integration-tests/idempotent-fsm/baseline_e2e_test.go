@@ -24,6 +24,7 @@ import (
 // before, the full raw kcp output of each run, and the world state after.
 func TestBaseline_FullMigrationCompletes(t *testing.T) {
 	e := newEnv()
+	e.skipMultiScenarioOnStatic(t) // static baseline would switch the route, colliding with the static resume test
 	ctx := context.Background()
 	topics := e.topicRange(51, 55)
 	mani := e.writeManifest(t, "baseline", topics)

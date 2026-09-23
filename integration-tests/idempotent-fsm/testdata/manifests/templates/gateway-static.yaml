@@ -1,0 +1,86 @@
+apiVersion: platform.confluent.io/v1beta1
+kind: Gateway
+metadata:
+  labels:
+    app.kubernetes.io/name: confluent-for-kubernetes
+    app.kubernetes.io/managed-by: kcp-e2e
+  name: __GATEWAY_NAME__
+  namespace: confluent
+spec:
+  replicas: 1
+  image:
+    application: __GATEWAY_IMAGE__
+    init: __INIT_IMAGE__
+    # Both images are pre-pulled into minikube's own docker daemon by setup.sh
+    # (see its "Images" section) — do NOT pull from the registry, which the
+    # cluster has no credentials for.
+    pullPolicy: IfNotPresent
+  podTemplate:
+    envVars:
+      - name: GATEWAY_ROOT_LOG_LEVEL
+        value: DEBUG
+  # Backs the pre-staged security.cluster.destination-kafka-cluster block below
+  # (formerly only declared in the now-retired switchover CR).
+  secretStores:
+    - name: file-store
+      provider:
+        type: File
+        configSecretRef: file-store-config
+        clientCredentialsRef: file-store-noauth-credentials
+  streamingDomains:
+    - name: source-kafka-cluster
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: UNAUTHED
+            endpoint: PLAINTEXT://source-kafka.confluent.svc.cluster.local:9071
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 0
+    # Pre-staged switchover target. Redundant auth requires this domain (and
+    # migration-route's security.cluster block for it, below) to already be
+    # declared on the LIVE initial CR — checkRedundantAuthStaged proves that at
+    # `migration init`, before anything is fenced — so cutover is a pure
+    # streamingDomain field flip with no secret or auth change.
+    - name: destination-kafka-cluster
+      type: kafka
+      kafkaCluster:
+        bootstrapServers:
+          - id: SASL_PLAIN
+            endpoint: SASL_SSL://destination-kafka.confluent.svc.cluster.local:9071
+            tls:
+              secretRef: destination-kafka-tls
+        nodeIdRanges:
+          - name: pool-1
+            start: 0
+            end: 0
+  routes:
+    - name: migration-route
+      endpoint: __GATEWAY_NAME__.confluent.svc.cluster.local:9595
+      brokerIdentificationStrategy:
+        type: port
+      streamingDomain:
+        name: source-kafka-cluster
+        bootstrapServerId: UNAUTHED
+      # security.cluster is keyed by streaming-domain name on this CRD
+      # (CFK 0.1838.0+) — a flat security.auth/security.cluster.authentication,
+      # as older switchover examples in this repo show, is rejected outright as
+      # an unknown field. Every domain the route can be bound to needs its own
+      # entry here, including the one it's bound to today: source's is a bare
+      # passthrough, destination's is the pre-staged ("redundant") swap auth —
+      # see gateway.stagedAuthFor. Client identity never changes either way.
+      security:
+        client:
+          authentication:
+            type: none
+        cluster:
+          source-kafka-cluster:
+            auth: passthrough
+          destination-kafka-cluster:
+            auth: swap
+            secretStore: file-store
+            authentication:
+              type: plain
+              jaasConfigPassThrough:
+                secretRef: plain-jaas

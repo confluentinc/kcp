@@ -59,6 +59,7 @@ const executeTimeout = 10 * time.Minute
 // generated .env plus the two secret-backed pod-spec vars). svc is kcp's own
 // gateway service built in-cluster (empty kubeconfig ⇒ in-cluster service account).
 type env struct {
+	mode            string // "dynamic" (TBM) or "static" (AAO)
 	namespace       string
 	gateway         string
 	route           string
@@ -81,6 +82,7 @@ type env struct {
 
 func newEnv() *env {
 	return &env{
+		mode:            envOrDefault("KCP_TBM_GATEWAY_MODE", "dynamic"),
 		namespace:       envOrDefault("KCP_TBM_NAMESPACE", "confluent"),
 		gateway:         envOrDefault("KCP_TBM_GATEWAY_NAME", "tbm-gateway"),
 		route:           envOrDefault("KCP_TBM_ROUTE_NAME", "tbm-route"),
@@ -99,6 +101,21 @@ func newEnv() *env {
 
 		svc:     gateway.NewK8sService(""),
 		linkSvc: clusterlink.NewConfluentCloudService(http.DefaultClient),
+	}
+}
+
+// skipMultiScenarioOnStatic skips tests that assume multiple migrations can
+// share one route via disjoint slices. Static/AAO switches WHOLE-ROUTE (the
+// route's single streamingDomain flips, moving every producer on it), so it is
+// one migration per route per standup — the disjoint-slice model only fits
+// dynamic. Static coverage is TestResume_InterruptAfterFence (which exercises
+// fence → promote → switch → resume → fence-clear end-to-end) plus the four
+// static fixes' unit tests; the shared FSM resume logic is proven by the five
+// dynamic checkpoints.
+func (e *env) skipMultiScenarioOnStatic(t *testing.T) {
+	t.Helper()
+	if e.mode == "static" {
+		t.Skip("static/AAO is whole-route (one migration per route per standup); the static path is covered by TestResume_InterruptAfterFence")
 	}
 }
 
@@ -256,7 +273,7 @@ func (e *env) runKCP(t *testing.T, cancelAfter string, args ...string) (string, 
 // human reviewer can see exactly what changed.
 func (e *env) snapshot(t *testing.T, ctx context.Context, label string, topics []string) {
 	t.Helper()
-	rules := e.routeRulesYAML(t, e.readCR(t, ctx))
+	rules := e.routeYAML(t, e.readCR(t, ctx))
 	ms := e.mirrorStatus(t, ctx)
 	var mb strings.Builder
 	for _, tp := range topics {
@@ -274,64 +291,102 @@ func (e *env) snapshot(t *testing.T, ctx context.Context, label string, topics [
 		label, e.route, indentLines(rules, "      "), mb.String())
 }
 
-// routeRulesYAML extracts the named route's rules subtree (fencing + routing)
-// from a gateway CR and marshals it back to YAML for display. Guarded against an
-// unexpected shape rather than panicking.
-func (e *env) routeRulesYAML(t *testing.T, cr []byte) string {
+// routeObj returns the named route's object from a gateway CR (nil if absent).
+func (e *env) routeObj(t *testing.T, cr []byte) map[string]any {
 	t.Helper()
 	var obj map[string]any
 	if err := yaml.Unmarshal(cr, &obj); err != nil {
-		return "(unparseable CR)"
+		return nil
 	}
 	spec, _ := obj["spec"].(map[string]any)
 	routes, _ := spec["routes"].([]any)
 	for _, r := range routes {
 		rm, _ := r.(map[string]any)
 		if rm["name"] == e.route {
-			out, err := yaml.Marshal(rm["rules"])
-			if err != nil {
-				return "(unmarshalable rules)"
-			}
-			return string(out)
+			return rm
 		}
 	}
-	return "(route " + e.route + " not found in CR)"
+	return nil
 }
 
-// fencedTopics returns the set of topics named in the route's fencing[] blocked
-// entries from a live gateway CR. Used to assert a completed migration leaves no
-// fence on the switched topics (regression guard for the stale-fence-on-resume
-// bug found live 2026-09-23).
-func (e *env) fencedTopics(t *testing.T, cr []byte) map[string]bool {
+// routeYAML renders the migration-relevant route state for the snapshot: a
+// static route's `fence` + `streamingDomain`, or a dynamic route's `rules`.
+func (e *env) routeYAML(t *testing.T, cr []byte) string {
 	t.Helper()
-	out := map[string]bool{}
-	var obj map[string]any
-	if err := yaml.Unmarshal(cr, &obj); err != nil {
-		return out
+	r := e.routeObj(t, cr)
+	if r == nil {
+		return "(route " + e.route + " not found in CR)"
 	}
-	spec, _ := obj["spec"].(map[string]any)
-	routes, _ := spec["routes"].([]any)
-	for _, r := range routes {
-		rm, _ := r.(map[string]any)
-		if rm["name"] != e.route {
+	view := map[string]any{}
+	for _, k := range []string{"fence", "streamingDomain", "rules"} {
+		if v, ok := r[k]; ok {
+			view[k] = v
+		}
+	}
+	out, err := yaml.Marshal(view)
+	if err != nil {
+		return "(unmarshalable route)"
+	}
+	return string(out)
+}
+
+// isFenced reports whether the route fences the given topic. Static: the whole
+// route carries a `fence` block. Dynamic: rules.fencing[] names the topic.
+func (e *env) isFenced(t *testing.T, cr []byte, topic string) bool {
+	t.Helper()
+	r := e.routeObj(t, cr)
+	if r == nil {
+		return false
+	}
+	if _, static := r["streamingDomain"].(map[string]any); static {
+		_, hasFence := r["fence"]
+		return hasFence
+	}
+	rules, _ := r["rules"].(map[string]any)
+	fencing, _ := rules["fencing"].([]any)
+	for _, fe := range fencing {
+		fm, _ := fe.(map[string]any)
+		if blocked, _ := fm["blocked"].(bool); !blocked {
 			continue
 		}
-		rules, _ := rm["rules"].(map[string]any)
-		fencing, _ := rules["fencing"].([]any)
-		for _, fe := range fencing {
-			fm, _ := fe.(map[string]any)
-			if blocked, _ := fm["blocked"].(bool); !blocked {
-				continue
-			}
-			topics, _ := fm["topics"].([]any)
-			for _, tp := range topics {
-				if s, ok := tp.(string); ok {
-					out[s] = true
-				}
+		topics, _ := fm["topics"].([]any)
+		for _, tp := range topics {
+			if tp == topic {
+				return true
 			}
 		}
 	}
-	return out
+	return false
+}
+
+// isSwitchedToTarget reports whether the route routes the topic to the target
+// domain. Static: route.streamingDomain.name == destDomain (whole route).
+// Dynamic: a routing condition binds the topic to destDomain.
+func (e *env) isSwitchedToTarget(t *testing.T, cr []byte, topic string) bool {
+	t.Helper()
+	r := e.routeObj(t, cr)
+	if r == nil {
+		return false
+	}
+	if sd, static := r["streamingDomain"].(map[string]any); static {
+		return sd["name"] == e.destDomain
+	}
+	rules, _ := r["rules"].(map[string]any)
+	routing, _ := rules["routing"].(map[string]any)
+	conditions, _ := routing["conditions"].([]any)
+	for _, c := range conditions {
+		cm, _ := c.(map[string]any)
+		if cm["streamingDomain"] != e.destDomain {
+			continue
+		}
+		topics, _ := cm["topics"].([]any)
+		for _, tp := range topics {
+			if tp == topic {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func indentLines(s, prefix string) string {

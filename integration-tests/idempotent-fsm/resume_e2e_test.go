@@ -41,11 +41,8 @@ func runResumeScenario(t *testing.T, e *env, checkpoint, name string, topics []s
 	ms := e.mirrorStatus(t, ctx)
 	for _, tp := range topics {
 		require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED after the resumed migration completes", tp)
-	}
-	require.Contains(t, e.routeRulesYAML(t, afterCR), "destination-domain", "the resumed migration must switch the route to the destination")
-	fenced := e.fencedTopics(t, afterCR)
-	for _, tp := range topics {
-		require.Falsef(t, fenced[tp], "%s must NOT be fenced after completion — a switched route carries no kcp fence", tp)
+		require.Truef(t, e.isSwitchedToTarget(t, afterCR, tp), "%s must be switched to the target domain after completion", tp)
+		require.Falsef(t, e.isFenced(t, afterCR, tp), "%s must NOT be fenced after completion — a switched route carries no kcp fence", tp)
 	}
 	t.Logf("\n✅ RESULT: interrupted at %q, re-run drove to completion (mirrors STOPPED, route switched, fence cleared).", checkpoint)
 }
@@ -56,10 +53,10 @@ func TestResume_InterruptAfterFence(t *testing.T) {
 	e := newEnv()
 	topics := e.topicRange(56, 60)
 	runResumeScenario(t, e, cpFenced, "resume-fence", topics, func(t *testing.T, ctx context.Context) {
-		fenced := e.fencedTopics(t, e.readCR(t, ctx))
+		cr := e.readCR(t, ctx)
 		ms := e.mirrorStatus(t, ctx)
 		for _, tp := range topics {
-			require.Truef(t, fenced[tp], "%s must be fenced after the fence step", tp)
+			require.Truef(t, e.isFenced(t, cr, tp), "%s must be fenced after the fence step", tp)
 			require.Equalf(t, "ACTIVE", ms[tp], "%s must still be ACTIVE — interrupt happened before promote", tp)
 		}
 	})
@@ -70,13 +67,14 @@ func TestResume_InterruptAfterFence(t *testing.T) {
 // resume must switch them without re-promoting. Slice tbm-topic-061..065.
 func TestResume_InterruptAfterPromote(t *testing.T) {
 	e := newEnv()
+	e.skipMultiScenarioOnStatic(t)
 	topics := e.topicRange(61, 65)
 	runResumeScenario(t, e, cpPromoted, "resume-promote", topics, func(t *testing.T, ctx context.Context) {
-		fenced := e.fencedTopics(t, e.readCR(t, ctx))
+		cr := e.readCR(t, ctx)
 		ms := e.mirrorStatus(t, ctx)
 		for _, tp := range topics {
 			require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED — interrupt happened after promote", tp)
-			require.Truef(t, fenced[tp], "%s must still be fenced — interrupt happened before switch", tp)
+			require.Truef(t, e.isFenced(t, cr, tp), "%s must still be fenced — interrupt happened before switch", tp)
 		}
 	})
 }
@@ -88,6 +86,7 @@ func TestResume_InterruptAfterPromote(t *testing.T) {
 // live proof of the PENDING_STOPPED resume fix. Slice tbm-topic-071..075.
 func TestResume_InterruptDuringPromote(t *testing.T) {
 	e := newEnv()
+	e.skipMultiScenarioOnStatic(t)
 	topics := e.topicRange(71, 75)
 	runResumeScenario(t, e, cpPromoteAccepted, "resume-promote-accepted", topics, func(t *testing.T, ctx context.Context) {
 		ms := e.mirrorStatus(t, ctx)
@@ -104,13 +103,14 @@ func TestResume_InterruptDuringPromote(t *testing.T) {
 // still reports completion. Slice tbm-topic-066..070.
 func TestResume_InterruptAfterSwitch(t *testing.T) {
 	e := newEnv()
+	e.skipMultiScenarioOnStatic(t)
 	topics := e.topicRange(66, 70)
 	runResumeScenario(t, e, cpSwitched, "resume-switch", topics, func(t *testing.T, ctx context.Context) {
-		fenced := e.fencedTopics(t, e.readCR(t, ctx))
+		cr := e.readCR(t, ctx)
 		ms := e.mirrorStatus(t, ctx)
 		for _, tp := range topics {
 			require.Equalf(t, "STOPPED", ms[tp], "%s must be STOPPED — switch already ran", tp)
-			require.Falsef(t, fenced[tp], "%s must already be unfenced — switch cleared the fence", tp)
+			require.Falsef(t, e.isFenced(t, cr, tp), "%s must already be unfenced — switch cleared the fence", tp)
 		}
 	})
 }

@@ -149,6 +149,19 @@ test-migration-tbm-run: ## Run the TBM E2E against an already-provisioned cluste
 test-migration-tbm-teardown: ## Tear down the TBM E2E cluster
 	@bash integration-tests/migration-tbm/teardown.sh
 
+test-idempotent-fsm: test-idempotent-fsm-setup ## Run the idempotent-FSM live resume E2E (own cluster; needs a CP Enterprise licence + AWS creds). GATEWAY_MODE=dynamic|static
+	@trap 'echo ""; echo "Tearing down idempotent-fsm E2E infrastructure..."; bash integration-tests/idempotent-fsm/teardown.sh' EXIT; \
+	bash integration-tests/idempotent-fsm/run.sh
+
+test-idempotent-fsm-setup: ## Set up the idempotent-fsm resume cluster (GATEWAY_MODE=dynamic default, or static for AAO)
+	@bash integration-tests/idempotent-fsm/setup.sh
+
+test-idempotent-fsm-run: ## Run the idempotent-fsm resume E2E against an already-provisioned cluster (no teardown). Arg: a -test.run selector
+	@bash integration-tests/idempotent-fsm/run.sh $(RUN)
+
+test-idempotent-fsm-teardown: ## Tear down the idempotent-fsm E2E cluster
+	@bash integration-tests/idempotent-fsm/teardown.sh
+
 test-osk-scan: build ## Run OSK scan tests (all auth methods, JMX, Prometheus)
 	@bash integration-tests/osk-scan/setup.sh
 	cd integration-tests/osk-scan && go test -tags integration -v ./... ; \

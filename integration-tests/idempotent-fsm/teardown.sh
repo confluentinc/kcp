@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROFILE="${PROFILE:-kcp-e2e-tbm}"
+PROFILE="${PROFILE:-kcp-e2e-idempotent}"
 
 echo "Tearing down TBM E2E profile '${PROFILE}'..."
 minikube delete --profile "${PROFILE}" || true
