@@ -9,9 +9,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROFILE="${PROFILE:-kcp-e2e-idempotent}"
 
-echo "Tearing down TBM E2E profile '${PROFILE}'..."
+echo "Tearing down idempotent-fsm E2E profile '${PROFILE}'..."
 minikube delete --profile "${PROFILE}" || true
 
 rm -rf "${SCRIPT_DIR}/.rendered" "${SCRIPT_DIR}/.env" \
-       "${SCRIPT_DIR}/.tbm-e2e.test" "${SCRIPT_DIR}/.kcp-linux"
+       "${SCRIPT_DIR}/.idempotent-fsm-e2e.test" "${SCRIPT_DIR}/.kcp-linux"
 echo "Done."

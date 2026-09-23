@@ -32,7 +32,6 @@ const (
 	scenarioBaseline                   = "baseline"                      // TestMigrationE2E
 	scenarioPauseSyncHappy             = "pause-sync-happy"              // TestMigrationE2E_PauseOffsetSync_HappyPath
 	scenarioPauseSyncRefuses           = "pause-sync-refuses"            // TestMigrationE2E_PauseOffsetSync_ExecuteRefuses
-	scenarioPauseSyncRestoresFilters   = "pause-sync-restores-filters"   // TestMigrationE2E_PauseOffsetSync_RestoresFilters
 	scenarioPauseSyncRogue             = "pause-sync-rogue"              // TestMigrationE2E_PauseOffsetSync_RogueProducerRollback
 	scenarioPauseSyncDrift             = "pause-sync-drift"              // TestMigrationE2E_PauseOffsetSync_DriftRollsBackFence
 	scenarioPauseSyncDrain             = "pause-sync-drain"              // TestMigrationE2E_PauseOffsetSync_Drain

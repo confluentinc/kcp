@@ -227,7 +227,7 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 	// defaults with any per-run overrides). kcp.log keeps everything at Debug+, so
 	// this is the durable audit trail of the knobs a given execute used; the same
 	// values are also snapshotted into LastRunPolicies for the run report.
-	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, migration.StateUninitialized, g.Spec.DefaultPolicies)...)
+	slog.Info("executing migration with effective policy", effectivePolicyLogArgs(id, g.Spec.DefaultPolicies)...)
 
 	// migplan.Reconcile now runs on EVERY invocation — not only when resuming a
 	// migration still at StateUninitialized. reconcile is the single component
@@ -277,10 +277,9 @@ func runMigrationExecute(cmd *cobra.Command, args []string, buildTBMOffsets offs
 // of DefaultPolicies is spelled out, so it cannot drift field-by-field from the
 // LastRunPolicies snapshot the way the previous hand-inlined call already had
 // (hotReloadTimeout and gatewayConfigPort had been silently dropped).
-func effectivePolicyLogArgs(migrationID, state string, p manifest.DefaultPolicies) []any {
+func effectivePolicyLogArgs(migrationID string, p manifest.DefaultPolicies) []any {
 	return []any{
 		"migration_id", migrationID,
-		"state", state,
 		"lag_threshold", p.LagThreshold,
 		"promote_batch_size", p.PromoteBatchSize,
 		"rollout_timeout", p.RolloutTimeout,

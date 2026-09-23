@@ -21,7 +21,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MANIFESTS_DIR="${SCRIPT_DIR}/testdata/manifests"
 TEMPLATES_DIR="${MANIFESTS_DIR}/templates"
-BATCHES_DIR="${SCRIPT_DIR}/testdata/batches"
 RENDERED_DIR="${SCRIPT_DIR}/.rendered"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
@@ -374,8 +373,7 @@ echo "  ✓ source topics created"
 kubectl --context "${PROFILE}" apply -f "${MANIFESTS_DIR}/kafka-rest-class.yaml"
 
 # --- Cluster link mirroring 001..MIRRORED_COUNT, offset sync DISABLED ---
-# Success batches require consumer.offset.sync.enable OFF; the offset-sync halt
-# toggles it on for itself and restores it (self-contained, no run-order coupling).
+# The resume tests require consumer.offset.sync.enable OFF on the link.
 echo "Creating cluster link ${CLUSTER_LINK_NAME} mirroring ${MIRRORED_COUNT} topics..."
 LINK_CR="${RENDERED_DIR}/cluster-link.yaml"
 {
@@ -485,32 +483,6 @@ done
 kubectl --context "${PROFILE}" -n "${NAMESPACE}" annotate clusterlink "${CLUSTER_LINK_NAME}" \
   platform.confluent.io/block-reconcile=true --overwrite
 
-# --- Render batch/halt manifests + copy hermetic fixtures into .rendered/ ---
-# Committed under testdata/batches/ as credential-free .tmpl; the throwaway
-# destination SASL is injected only here, into .rendered/ (gitignored).
-echo "Rendering batch/halt manifests..."
-render_batch() {
-  local tmpl="$1" out="${RENDERED_DIR}/$(basename "$1" .tmpl)"
-  sed -e "s/__NAMESPACE__/${NAMESPACE}/g" \
-      -e "s/__GATEWAY_NAME__/${GATEWAY_NAME}/g" \
-      -e "s/__ROUTE_NAME__/${ROUTE_NAME}/g" \
-      -e "s/__SOURCE_DOMAIN__/${SOURCE_DOMAIN}/g" \
-      -e "s/__DEST_DOMAIN__/${DEST_DOMAIN}/g" \
-      -e "s|__SOURCE_BOOTSTRAP__|${SOURCE_BOOTSTRAP}|g" \
-      -e "s|__DEST_BOOTSTRAP__|${DEST_BOOTSTRAP}|g" \
-      -e "s|__REST_ENDPOINT__|${REST_ENDPOINT}|g" \
-      -e "s/__DEST_CLUSTER_ID__/${DEST_CLUSTER_ID}/g" \
-      -e "s/__SOURCE_CLUSTER_ID__/${SOURCE_CLUSTER_ID}/g" \
-      -e "s/__CLUSTER_LINK_NAME__/${CLUSTER_LINK_NAME}/g" \
-      -e "s/__DEST_SASL_USER__/${DEST_SASL_USER}/g" \
-      -e "s/__DEST_SASL_PASSWORD__/${DEST_SASL_PASSWORD}/g" \
-      -e "s|__CRED_DIR__|/workspace/rendered|g" \
-      "${tmpl}" > "${out}"
-}
-shopt -s nullglob
-for tmpl in "${BATCHES_DIR}"/*.yaml.tmpl; do render_batch "${tmpl}"; done
-shopt -u nullglob
-
 # Credentials are files, not inline blocks. The manifests reference three shared
 # credentials files at /workspace/rendered/; render them here (into .rendered/,
 # gitignored) so run.sh cp's them into the runner pod alongside the manifests.
@@ -520,10 +492,6 @@ printf 'sasl_plain:\n  username: "%s"\n  password: "%s"\n  tls: true\ninsecure_s
   "${DEST_SASL_USER}" "${DEST_SASL_PASSWORD}" > "${RENDERED_DIR}/dest-kafka-creds.yaml"
 printf 'api_key: "%s"\napi_secret: "%s"\n' \
   "${DEST_SASL_USER}" "${DEST_SASL_PASSWORD}" > "${RENDERED_DIR}/link-creds.yaml"
-# Hermetic route-shape probe fixture needs no live creds — copy verbatim.
-[ -f "${SCRIPT_DIR}/testdata/gateway-static-probe.yaml" ] && \
-  cp "${SCRIPT_DIR}/testdata/gateway-static-probe.yaml" "${RENDERED_DIR}/gateway-static-probe.yaml"
-
 # --- Write .env (no secrets: the SASL password lives only in the k8s Secret) ---
 ENV_FILE="${SCRIPT_DIR}/.env"
 {

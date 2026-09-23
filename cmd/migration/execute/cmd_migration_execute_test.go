@@ -350,7 +350,7 @@ func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
 		HotReloadTimeout:                66 * time.Second,
 		GatewayConfigPort:               9099,
 	}
-	kv := kvMap(t, effectivePolicyLogArgs("mig-1", "initialized", p))
+	kv := kvMap(t, effectivePolicyLogArgs("mig-1", p))
 
 	// The two the audit line silently dropped — the whole point of this test.
 	assert.Equal(t, 66*time.Second, kv["hot_reload_timeout"])
@@ -358,17 +358,16 @@ func TestExecute_PolicyLogArgsCoverEveryDefaultPolicy(t *testing.T) {
 
 	// And the rest, so no field drops out unnoticed later.
 	assert.Equal(t, "mig-1", kv["migration_id"])
-	assert.Equal(t, "initialized", kv["state"])
 	assert.Equal(t, 11, kv["lag_threshold"])
 	assert.Equal(t, 22, kv["promote_batch_size"])
 	assert.Equal(t, 33*time.Second, kv["rollout_timeout"])
 	assert.Equal(t, 44*time.Second, kv["detect_unrouted_producers_duration"])
 	assert.Equal(t, 55*time.Second, kv["consumer_offset_sync_drain_duration"])
 
-	// Every DefaultPolicies field must appear as a policy key (plus migration_id
-	// and state): the count guards against a new field being added to the struct
-	// but not to the log.
-	assert.Len(t, kv, reflect.TypeOf(p).NumField()+2)
+	// Every DefaultPolicies field must appear as a policy key (plus migration_id):
+	// the count guards against a new field being added to the struct but not to
+	// the log.
+	assert.Len(t, kv, reflect.TypeOf(p).NumField()+1)
 }
 
 // kvMap turns slog-style key/value args into a map, requiring string keys.
