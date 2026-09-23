@@ -136,6 +136,18 @@ func (r *RunReportRecorder) StageEnded(finalState string) {
 	r.flush()
 }
 
+// SetTopics updates the topic count and flushes. The count passed to
+// NewRunReportRecorder is only right for a resumed migration: one registered
+// in this same run has no topics until the initialize stage reconciles them,
+// so the orchestrator refreshes the count once that stage has run.
+func (r *RunReportRecorder) SetTopics(n int) {
+	if r == nil {
+		return
+	}
+	r.report.Topics = n
+	r.flush()
+}
+
 // StageFailed closes the open stage as failed and flushes. The run's own
 // outcome is not set here: a failed stage may still be followed by a
 // compensating rollback, and Finish owns the verdict.

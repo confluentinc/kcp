@@ -276,6 +276,12 @@ func (o *MigrationOrchestrator) Execute(ctx context.Context, lagThreshold int64,
 			o.runReport.StageFailed(err)
 			return o.handleStepFailure(ctx, step, err, params)
 		}
+		if step.Event == EventInitialize {
+			// Initialize is where a freshly registered migration's topics are
+			// first reconciled into config.Topics; the recorder was built
+			// before that and holds a count of zero.
+			o.runReport.SetTopics(len(o.config.Topics))
+		}
 		o.runReport.StageEnded(o.config.CurrentState)
 		if err := o.PersistState(); err != nil {
 			return fmt.Errorf("failed during %s: %w", step.Description, err)
