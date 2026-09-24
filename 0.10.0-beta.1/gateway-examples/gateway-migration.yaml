@@ -1,0 +1,132 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/confluentinc/kcp/main/internal/manifest/gatewaymigration.schema.json
+#
+# The declarative form of a `kcp migration` run. One file replaces the topology
+# and auth flags that used to be repeated across `init` and `execute`.
+#
+#   kcp migration execute --migration-yaml gateway-migration.yaml --migration-state-file migration-state.json
+#   kcp migration lag-check --migration-yaml gateway-migration.yaml
+#
+# Paths in this file resolve relative to the PROCESS working directory, not to
+# the file's own location. The one exception is spec.gateway.kubeconfig, where a
+# leading ~/ is expanded.
+#
+# Every credentials field is a PATH to a credentials file — inline secret blocks
+# are not accepted — so this manifest carries no secret material itself. Keep the
+# referenced credentials files 0600.
+
+apiVersion: kcp.confluent.io/v1alpha1
+kind: GatewayMigration
+
+metadata:
+  # THE migration identity — unique per state file, and written into the state
+  # file's migration_id. Pre-existing uuid-keyed migrations keep working and
+  # stay addressable with `--migration-id`.
+  name: msk-prod-to-cc-batch-1
+
+spec:
+  # kcp only ever READS from the source.
+  source:
+    type: msk # msk | apache-kafka. Gates auth: iam is msk-only.
+    bootstrapServers:
+      - b-1.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096
+      - b-2.msk-prod.abc123.c2.kafka.us-east-1.amazonaws.com:9096
+    # Path to the source Kafka credentials file (auth only). Its top-level shape
+    # for MSK, e.g.:
+    #   sasl_scram: { username: ..., password: ..., mechanism: SHA512 }
+    # (MSK is SHA512-only; iam is also valid for an MSK source.)
+    credentials: /etc/kcp/source-creds.yaml
+
+  target:
+    type: confluent-cloud # confluent-cloud | confluent-platform
+    clusterId: lkc-abc123 # required for BOTH destination types
+    kafka:
+      bootstrapServers:
+        - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+      restEndpoint: https://pkc-xxxxx.us-east-1.aws.confluent.cloud:443
+      # Path to the destination KAFKA credentials file — the leg dialled directly
+      # to bootstrapServers to read destination-side offsets. Its top-level shape
+      # accepts sasl_plain, sasl_scram, mtls, unauthenticated_tls, or
+      # unauthenticated_plaintext — iam is rejected (the destination is Confluent
+      # Cloud/Platform, never MSK). insecure_skip_tls_verify is a top-level
+      # sibling of the auth block, scoped to THIS file only. Examples:
+      #   sasl_plain: { username: ..., password: ..., tls: true }   # Confluent Cloud
+      #   sasl_scram: { username: ..., password: ..., mechanism: SHA256, ca_cert: ... }
+      #   mtls:       { client_cert: ..., client_key: ..., ca_cert: ... }
+      clusterCredentials: /etc/kcp/dest-kafka-creds.yaml
+
+  clusterLink:
+    name: msk-to-cc # the link must ALREADY EXIST on the destination
+    # Repeats spec.target.kafka.bootstrapServers, for self-documentation.
+    bootstrapServers:
+      - pkc-xxxxx.us-east-1.aws.confluent.cloud:9092
+    # Path to the cluster-link REST credentials file — the credential that calls
+    # restEndpoint's Admin REST API, which is what actually manages the cluster
+    # link (status, list/promote mirror topics, alter configs). This is a
+    # DIFFERENT server and, on self-managed Confluent Platform, a DIFFERENT
+    # credential store from the Kafka leg above, so it is ALWAYS REQUIRED and is
+    # never derived. Its top-level shape is one of: api_key/api_secret, basic,
+    # bearer, or mtls. Examples:
+    #   api_key: ...            # + api_secret: ...   (Confluent Cloud)
+    #   basic:  { username: ..., password: ... }      (CP Basic realm)
+    #   bearer: { token: ... }                        (MDS/RBAC)
+    #   mtls:   { client_cert: ..., client_key: ... }
+    linkCredentials: /etc/kcp/link-creds.yaml
+    # Disable the link's consumer.offset.sync.enable during apply and restore it
+    # after switchover. Requires the link to currently have it enabled.
+    pauseConsumerOffsetSync: true
+
+  gateway:
+    namespace: confluent
+    # kubeconfig: ~/.kube/config          # optional; a leading ~/ IS expanded
+    cr-name: gateway-initial # a Kubernetes object NAME, read live
+
+  # route names the route to fence/switch, the streaming domain it switches to,
+  # and the topic selection that migrates.
+  #
+  # kcp reads the live initial CR, injects fence: {scope: ALL, errorCode:
+  # BROKER_NOT_AVAILABLE} onto the named route, and applies the patched CR —
+  # there is no separate fenced-CR file to create or keep in sync. The route
+  # must exist in the initial CR and must not already be fenced. At cutover kcp
+  # derives the switched CR the same way, flipping the route's streamingDomain
+  # to the target declared here. This is safe with NO secret or auth change at
+  # cutover only because the route's security.cluster already carries pre-staged
+  # ("redundant") swap auth for the target domain; kcp proves that staging holds
+  # at init (see checkRedundantAuthStaged), before anything is fenced.
+  #
+  # The route's migration MODE (all-at-once vs topic-based) is read from the
+  # live CR's route binding, not declared here.
+  route:
+    name: migration-route # a pre-existing route in the initial CR
+
+    # topicGroup pairs the topic selection(s) that migrate on this route.
+    # Exactly one entry today — one route, one migration per file.
+    #
+    # topics is a flat list of LITERAL topic names, exact-matched against the
+    # link's active mirror topics — not globs. topicPatterns is a list of
+    # anchored full-match regular expressions (RE2). At least one of the two is
+    # REQUIRED; both may be set (their union is used). To cut over EVERY active
+    # mirror topic, use the match-all pattern: topicPatterns: ['.*'].
+    #
+    # Note the selection has NO effect on `lag-check`, which always watches
+    # every mirror.
+    topicGroup:
+      - topics: ['t1.order', 't1.inventory', 't2.order']
+        # topicPatterns: ['orders\..*']
+
+    # The target streaming domain — declared in the initial CR's
+    # spec.streamingDomains. The bootstrap server id kcp binds the route to is
+    # DERIVED from that declaration in the live CR at init, not written here.
+    targetStreamingDomain: confluent-cloud
+
+  # OPTIONAL, and read FRESH on every execute — never frozen at init. That is what
+  # lets policy be varied between init and execute. Each value is a DEFAULT:
+  # `kcp migration execute` can override any of them for a single run with the
+  # matching flag (e.g. --detect-unrouted-producers-duration 60s), no edit needed.
+  defaultPolicies:
+    lagThreshold: 0
+    promoteBatchSize: 100 # 0 = promote all at once
+    rolloutTimeout: 10m # 0 = no deadline
+    detectUnroutedProducersDuration: 30s # 0 = CHECK SKIPPED; min 10s when set
+    consumerOffsetSyncDrainDuration: 15s # 0 = no wait; needs pauseConsumerOffsetSync
+    hotReloadTimeout: 90s # 0 = built-in 90s budget; never unbounded
+    gatewayConfigPort: 0 # 0 = persisted value, falling back to the gateway default (9180)

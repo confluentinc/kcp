@@ -1,0 +1,3934 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="CLI tool for planning and executing Kafka migrations from AWS MSK, Apache Kafka®, and Confluent Platform to Confluent Cloud.">
+      
+      
+      
+        <link rel="canonical" href="https://confluentinc.github.io/kcp/0.10.0-beta.1/gateway-manifest-reference/">
+      
+      
+        <link rel="prev" href="../getting-started-with-zero-cut-migrations/">
+      
+      
+        <link rel="next" href="gateway-migration-example/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../images/confluent-logo.svg">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+    
+    
+      
+        <title>Gateway migration manifest reference - KCP</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Inter:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Inter";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="white" data-md-color-accent="custom">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#gateway-migration-manifest-reference" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="KCP" class="md-header__button md-logo" aria-label="KCP" data-md-component="logo">
+      
+  <img src="../images/confluent-logo.svg" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            KCP
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Gateway migration manifest reference
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+    
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+        <div class="md-search__suggest" data-md-component="search-suggest"></div>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/confluentinc/kcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    confluentinc/kcp
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href=".." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../source-compatibility/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Source Compatibility
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../command-reference/discover/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Command Reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../apache-kafka-configuration/credentials/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Apache Kafka®
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../getting-started-with-zero-cut-migrations/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started (Zero-Cut)
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="./" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Gateway manifest reference
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../gateway-switchover/" class="md-tabs__link">
+          
+  
+  
+    
+  
+  Gateway Switchover
+
+        </a>
+      </li>
+    
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="KCP" class="md-nav__button md-logo" aria-label="KCP" data-md-component="logo">
+      
+  <img src="../images/confluent-logo.svg" alt="logo">
+
+    </a>
+    KCP
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/confluentinc/kcp" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    confluentinc/kcp
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../source-compatibility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Source Compatibility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command Reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3" id="__nav_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Command Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/discover/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp discover
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/scan/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_2" id="__nav_3_2_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp scan
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/clusters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan clusters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/client-inventory/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan client-inventory
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/schema-registry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan schema-registry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/msk-connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan msk-connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/scan/self-managed-connectors/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp scan self-managed-connectors
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/report/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_3" id="__nav_3_3_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp report
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/report/costs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report costs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/report/metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/report/plan/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp report plan
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/create-asset/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp create-asset
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/bastion-host/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset bastion-host
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/target-infra/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset target-infra
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migration-infra/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migration-infra
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-topics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-topics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-schemas/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-schemas
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/create-asset/migrate-acls/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-acls
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_6" id="__nav_3_4_6_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp create-asset migrate-acls
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-acls/iam/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-acls iam
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-acls/kafka/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-acls kafka
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/create-asset/migrate-connectors/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_4_7" id="__nav_3_4_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_4_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp create-asset migrate-connectors
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-connectors/connector-utility/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors connector-utility
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-connectors/msk/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors msk
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/create-asset/migrate-connectors/self-managed/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp create-asset migrate-connectors self-managed
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/migration/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp migration
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_5" id="__nav_3_5_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp migration
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/migration/execute/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp migration execute
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/migration/lag-check/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp migration lag-check
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/migration/list/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp migration list
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/ui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp ui
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/docs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp docs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/update/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp update
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_11" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../command-reference/state/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp state
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_3_11" id="__nav_3_11_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_11_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3_11">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    kcp state
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/state/upgrade/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp state upgrade
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../command-reference/state/version/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    kcp state version
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Apache Kafka®
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Apache Kafka®
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apache-kafka-configuration/credentials/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Credentials
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apache-kafka-configuration/metrics-collection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../apache-kafka-configuration/connect-metrics-collection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Connect metrics collection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started-with-zero-cut-migrations/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started (Zero-Cut)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="./" class="md-nav__link md-nav__link--active">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway manifest reference
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link md-nav__link--active" for="__nav_6" id="__nav_6_label" tabindex="">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Gateway manifest reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="gateway-migration-example/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway migration example
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gateway Switchover
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_7" id="__nav_7_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Gateway Switchover
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_2" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-none-to-mtls/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    none → mTLS
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    none → mTLS
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_3" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-none-to-oauth/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    none → OAuth
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    none → OAuth
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-none-to-saslplain/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    none → SASL/PLAIN
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    none → SASL/PLAIN
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-mtls-to-mtls/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    mTLS → mTLS
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    mTLS → mTLS
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_6" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-mtls-to-oauth/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    mTLS → OAuth
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    mTLS → OAuth
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_7" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-mtls-to-sasl-plain/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    mTLS → SASL/PLAIN
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    mTLS → SASL/PLAIN
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_8" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-sasl-scram-to-oauth/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SASL/SCRAM → OAuth
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_8_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    SASL/SCRAM → OAuth
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_9" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../gateway-switchover/switchover-sasl-scram-to-sasl-plain/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    SASL/SCRAM → SASL/PLAIN
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    SASL/SCRAM → SASL/PLAIN
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#execution-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Execution model
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#at-a-glance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        At a glance
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specsource" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.source
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#spectarget" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.target
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specclusterlink" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.clusterLink
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specgateway" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.gateway
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specroute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.route
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="spec.route">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#specroutetopicgroup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.route.topicGroup
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#specdefaultpolicies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        spec.defaultPolicies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#credentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Credentials
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Credentials">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#kafka-credentials-specsourcecredentials-spectargetkafkaclustercredentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kafka credentials (spec.source.credentials, spec.target.kafka.clusterCredentials)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rest-credentials-specclusterlinklinkcredentials" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        REST credentials (spec.clusterLink.linkCredentials)
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#how-the-commands-read-this-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the commands read this file
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#validation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Validation
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#field-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Field reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#editor-support" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Editor support
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="gateway-migration-manifest-reference">Gateway migration manifest reference<a class="headerlink" href="#gateway-migration-manifest-reference" title="Permanent link">&para;</a></h1>
+<p><code>kcp migration execute|lag-check</code> drive the gateway-orchestrated cutover —
+Confluent Gateway fencing a cluster link, batching mirror-topic promotion, and
+switching production traffic over — from a single YAML manifest,
+<code>gateway-migration.yaml</code>. This page is the field-by-field reference for that
+manifest.</p>
+<p>For a fully-annotated, ready-to-copy manifest — every field, with comments —
+see <a href="gateway-migration-example/">gateway migration example</a>.</p>
+<h2 id="execution-model">Execution model<a class="headerlink" href="#execution-model" title="Permanent link">&para;</a></h2>
+<p>This manifest drives an imperative, resumable state machine:</p>
+<ul>
+<li><strong><code>execute</code></strong> registers the migration on its first run (if not already registered), validates the manifest and live infrastructure, and drives the fence → promote → switchover FSM forward. On first run, it snapshots the topology into its state file (<code>--migration-state-file</code>, defaulting to <code>&lt;metadata.name&gt;-state.json</code> in the current directory), reads the live initial gateway CR to resolve the route's mode and derive its bootstrap server id, and continues directly into the cutover. On subsequent runs, it resumes from wherever the state file says the last run left off. It re-reads the manifest (topology and policy) on every invocation.</li>
+<li><strong><code>--dry-run</code></strong> validates the entire setup without changing anything: confirms the cluster link is active, all topics in the group are replicating, and the gateway CR exists and matches expectations. No migration state file is created or touched, and no FSM transitions occur. Useful for iterating on the manifest and author's infrastructure before scheduling a live cutover.</li>
+<li><strong><code>lag-check</code></strong> polls mirror-topic replication lag independently of <code>execute</code>.</li>
+</ul>
+<p><strong>Drift between the manifest and the first-run registration</strong> is forbidden outright: any manifest change to an already-registered migration refuses <code>execute</code> unconditionally, at any FSM state, with no override. The topology registered at first run must remain stable. To migrate with a different topology, use a new <code>metadata.name</code> to create a fresh registration in the same state file.</p>
+<p><code>spec.defaultPolicies</code> is the one section re-read fresh on <strong>every</strong> <code>execute</code>
+run rather than frozen at registration — each field is a default that a matching
+CLI flag can override for a single run, without editing the file.</p>
+<h2 id="at-a-glance">At a glance<a class="headerlink" href="#at-a-glance" title="Permanent link">&para;</a></h2>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-0-1"><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">kcp.confluent.io/v1alpha1</span><span class="w"> </span><span class="c1"># required, exact literal</span>
+</span><span id="__span-0-2"><a id="__codelineno-0-2" name="__codelineno-0-2" href="#__codelineno-0-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">GatewayMigration</span><span class="w"> </span><span class="c1"># required, exact literal</span>
+</span><span id="__span-0-3"><a id="__codelineno-0-3" name="__codelineno-0-3" href="#__codelineno-0-3"></a><span class="nt">metadata</span><span class="p">:</span>
+</span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my-migration</span><span class="w"> </span><span class="c1"># required, non-blank — the migration identity</span>
+</span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="nt">spec</span><span class="p">:</span>
+</span><span id="__span-0-6"><a id="__codelineno-0-6" name="__codelineno-0-6" href="#__codelineno-0-6"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — cluster being migrated from</span>
+</span><span id="__span-0-7"><a id="__codelineno-0-7" name="__codelineno-0-7" href="#__codelineno-0-7"></a><span class="w">  </span><span class="nt">target</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — cluster being migrated to</span>
+</span><span id="__span-0-8"><a id="__codelineno-0-8" name="__codelineno-0-8" href="#__codelineno-0-8"></a><span class="w">  </span><span class="nt">clusterLink</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — an ALREADY-EXISTING cluster link</span>
+</span><span id="__span-0-9"><a id="__codelineno-0-9" name="__codelineno-0-9" href="#__codelineno-0-9"></a><span class="w">  </span><span class="nt">gateway</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — namespace, kubeconfig, initial gateway CR name</span>
+</span><span id="__span-0-10"><a id="__codelineno-0-10" name="__codelineno-0-10" href="#__codelineno-0-10"></a><span class="w">  </span><span class="nt">route</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># required — the route name, topic selection, and target domain</span>
+</span><span id="__span-0-11"><a id="__codelineno-0-11" name="__codelineno-0-11" href="#__codelineno-0-11"></a><span class="w">  </span><span class="nt">defaultPolicies</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="w"> </span><span class="nv">...</span><span class="w"> </span><span class="p p-Indicator">}</span><span class="w"> </span><span class="c1"># optional — execute-time policy defaults</span>
+</span></code></pre></div>
+<p><code>apiVersion</code> must equal <code>kcp.confluent.io/v1alpha1</code> and <code>kind</code> must equal
+<code>GatewayMigration</code>, exactly. <code>metadata.name</code> is required and non-blank: it is
+written into the state file as the migration's identity (pre-manifest,
+uuid-keyed migrations keep working, addressed instead with <code>--migration-id</code>).
+<code>spec.source</code>, <code>spec.target</code>, <code>spec.clusterLink</code>, <code>spec.gateway</code>, and
+<code>spec.route</code> are always required; <code>spec.defaultPolicies</code> is optional.</p>
+<p>Every credentials field is a <strong>path to a credentials file</strong> — the manifest never
+holds secret material inline, and there is no <code>${ENV_VAR}</code> substitution: a
+<code>${VAR}</code>-shaped value is read literally.</p>
+<h2 id="specsource"><code>spec.source</code><a class="headerlink" href="#specsource" title="Permanent link">&para;</a></h2>
+<p>The cluster being migrated from. <code>kcp</code> only ever reads from it.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td><code>msk</code> or <code>apache-kafka</code>. Gates auth: <code>iam</code> is valid only for <code>msk</code>.</td>
+</tr>
+<tr>
+<td><code>bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>Non-empty; each entry <code>host:port</code>.</td>
+</tr>
+<tr>
+<td><code>credentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>Path to a Kafka-family credentials file — see <a href="#credentials">Credentials</a> below.</td>
+</tr>
+</tbody>
+</table>
+<p><code>confluent-platform</code> is not a valid value here — this manifest only ever
+points at a link that already exists, so it never needs to act as a
+source-side link initiator.</p>
+<h2 id="spectarget"><code>spec.target</code><a class="headerlink" href="#spectarget" title="Permanent link">&para;</a></h2>
+<p>The cluster being migrated to.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td><code>confluent-cloud</code> or <code>confluent-platform</code>.</td>
+</tr>
+<tr>
+<td><code>clusterId</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Required for <strong>both</strong> destination types — this kind never discovers it live.</td>
+</tr>
+<tr>
+<td><code>kafka.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>Destination Kafka bootstrap.</td>
+</tr>
+<tr>
+<td><code>kafka.restEndpoint</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Destination Admin REST endpoint (cluster link + topic operations).</td>
+</tr>
+<tr>
+<td><code>kafka.clusterCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>Path to the destination Kafka leg credentials file, dialled directly to read destination-side offsets. Accepts <code>sasl_plain</code>, <code>sasl_scram</code>, <code>mtls</code>, <code>unauthenticated_tls</code>, or <code>unauthenticated_plaintext</code> — see below.</td>
+</tr>
+</tbody>
+</table>
+<p>The destination REST (cluster-link) credential is <strong>not</strong> on <code>spec.target.kafka</code>
+— it lives at <a href="#specclusterlink"><code>spec.clusterLink.linkCredentials</code></a>, separately
+and always required.</p>
+<p><code>kafka.clusterCredentials</code> accepts any Kafka auth method <strong>except</strong> <code>iam</code> — the
+destination is Confluent Cloud or Confluent Platform, never MSK, so <code>iam</code> is
+rejected outright rather than silently accepted and then failing opaquely at
+connection time. Unlike the source leg, a <code>ca_cert</code> inside <code>sasl_plain</code> is
+honoured here too: it names a private CA the destination client trusts
+directly, on top of (or instead of) the public trust store <code>tls: true</code>
+selects.</p>
+<p>Unlike the shared table above, a destination <code>sasl_plain</code> with <strong>neither</strong>
+<code>ca_cert</code> nor <code>tls</code> set does not fall back to <code>SASL_PLAINTEXT</code>: it defaults to
+<code>tls: true</code> against the public trust store, matching the destination client's
+pre-existing behavior — the destination is always a managed/production
+cluster, never on-prem plaintext like a source may legitimately be. There is
+no <code>sasl_plain</code> field that opts back into <code>SASL_PLAINTEXT</code> against the
+destination; use <code>unauthenticated_plaintext</code> for a genuinely plaintext
+destination (test/lab only).</p>
+<h2 id="specclusterlink"><code>spec.clusterLink</code><a class="headerlink" href="#specclusterlink" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Default</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>Name of a cluster link that <strong>already exists</strong> on the destination. This kind never creates one.</td>
+</tr>
+<tr>
+<td><code>bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>no</td>
+<td>—</td>
+<td>Repeats <code>spec.target.kafka.bootstrapServers</code> for manifest self-documentation. Not validated against it.</td>
+</tr>
+<tr>
+<td><code>linkCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>Path to the destination REST (cluster-link) credentials file — see <a href="#rest-credentials-specclusterlinklinkcredentials">REST credentials</a> below.</td>
+</tr>
+<tr>
+<td><code>pauseConsumerOffsetSync</code></td>
+<td>bool</td>
+<td>no</td>
+<td><code>false</code></td>
+<td>Disable the link's <code>consumer.offset.sync.enable</code> during execute and restore it after switchover. Requires the link to currently have it enabled.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Why two destination credentials at all?</strong> <code>spec.target.kafka.clusterCredentials</code>
+authenticates a direct Kafka-protocol connection to the destination
+<code>bootstrapServers</code>; <code>spec.clusterLink.linkCredentials</code> authenticates HTTP calls
+to <code>restEndpoint</code>'s Admin REST API, which is what actually manages the cluster
+link (status, list/promote mirror topics, alter configs). These are two
+different servers speaking two different protocols. On self-managed Confluent
+Platform they are backed by two independent credential stores the operator
+configures separately on the cluster: the Kafka SASL/SCRAM (or mTLS) listener
+has its own store, while the REST API's auth (<code>kafka.rest.authentication.method</code>
+— a Basic realm file, MDS for bearer, or its own mTLS trust store) has another. A
+valid Kafka credential is <strong>not</strong> automatically a valid REST credential, even
+against the same broker process. <code>linkCredentials</code> is therefore <strong>always
+required</strong> and never derived from the Kafka leg — its top-level shape is one of
+<code>api_key</code>/<code>api_secret</code>, <code>basic</code>, <code>bearer</code>, or <code>mtls</code> (see the
+<a href="#rest-credentials-specclusterlinklinkcredentials">REST credentials table</a>).</p>
+<h2 id="specgateway"><code>spec.gateway</code><a class="headerlink" href="#specgateway" title="Permanent link">&para;</a></h2>
+<p>There is no <code>crs.fenced</code> or <code>crs.switchover</code> file: kcp derives both the fenced
+CR and the switched CR from the live initial CR at cutover — a fence block
+injected onto the route named in <code>spec.route</code>, and that route's
+<code>streamingDomain</code> flipped to its declared target. The old <code>crs.initial</code> nesting
+is flattened to a single <code>cr-name</code>, and the retired <code>crs</code>/<code>routes</code> keys are
+removed from the schema entirely: a stale manifest that still uses them fails
+the strict decode with an unknown-field error.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>namespace</code></td>
+<td>string</td>
+<td>yes</td>
+<td>Kubernetes namespace where the gateway is deployed.</td>
+</tr>
+<tr>
+<td><code>kubeconfig</code></td>
+<td>string</td>
+<td>no</td>
+<td>Path to the kubeconfig to use. The <strong>one</strong> field in this manifest where a leading <code>~/</code> is expanded.</td>
+</tr>
+<tr>
+<td><code>cr-name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>The <strong>name</strong> of the initial gateway custom resource — read live from the cluster on first migration registration (the first <code>execute</code> run), not a file path.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="specroute"><code>spec.route</code><a class="headerlink" href="#specroute" title="Permanent link">&para;</a></h2>
+<p>Required. Names the route to fence and switch over, the target streaming
+domain it switches to, and the topic selection(s) that migrate.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>A <code>spec.routes[].name</code> in the initial CR to fence and switch over. Must be non-blank and exist in the CR.</td>
+</tr>
+<tr>
+<td><code>topicGroup</code></td>
+<td>list</td>
+<td>yes</td>
+<td>A list validated to <strong>exactly one</strong> entry today (one route, one migration per file). See below.</td>
+</tr>
+<tr>
+<td><code>targetStreamingDomain</code></td>
+<td>string</td>
+<td>yes</td>
+<td>The streaming domain this route switches to once unfenced. Must already be declared in the initial CR's <code>spec.streamingDomains</code>.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="specroutetopicgroup"><code>spec.route.topicGroup</code><a class="headerlink" href="#specroutetopicgroup" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>topics</code></td>
+<td><code>[]string</code></td>
+<td>see note</td>
+<td>A flat list of <strong>literal</strong> topic names, exact-matched against the link's active mirror topics — <strong>not</strong> globs.</td>
+</tr>
+<tr>
+<td><code>topicPatterns</code></td>
+<td><code>[]string</code></td>
+<td>see note</td>
+<td>A list of <strong>anchored full-match</strong> regular expressions (RE2). <code>['.*']</code> selects every active mirror topic.</td>
+</tr>
+</tbody>
+</table>
+<p><strong>At least one of <code>topics</code> / <code>topicPatterns</code> is required.</strong> If <code>topics</code> is set
+it is authoritative — <code>topicPatterns</code> is ignored. There is no
+omit-<code>topics</code>-means-all default anymore: to migrate every active mirror topic,
+write an explicit match-all pattern, <code>topicPatterns: ['.*']</code>, with <code>topics</code>
+absent.</p>
+<p>The route's <strong>migration mode</strong> — all-at-once (static) vs topic-based (dynamic)
+— is <strong>not</strong> declared here; kcp reads it from the live CR's route binding on the
+first execute run (a singular <code>streamingDomain</code> ⇒ static, a plural <code>streamingDomains</code> ⇒
+dynamic). The <strong>bootstrap server id</strong> the route binds to is likewise <strong>derived</strong>
+from the target domain's declaration in the live CR, not written in
+the manifest. Both modes are fully implemented: <code>kcp migration execute</code> resolves
+the mode once, at first registration, persists it on the migration's config
+entry, and dispatches every run after that to the matching engine and FSM —
+AAO's for static routes, TBM's for dynamic — without re-resolving the mode on
+a resume. <code>spec.clusterLink.pauseConsumerOffsetSync</code> has no effect on a
+dynamic-mode migration (TBM's FSM has no pause/restore stage for it); kcp
+warns and proceeds rather than refusing a manifest that sets it.</p>
+<p><code>lag-check</code> ignores the topic selection entirely and always watches every mirror
+topic.</p>
+<h2 id="specdefaultpolicies"><code>spec.defaultPolicies</code><a class="headerlink" href="#specdefaultpolicies" title="Permanent link">&para;</a></h2>
+<p>Optional. Every field is a default that a matching <code>kcp migration execute</code> flag
+can override for a single run; the section is re-read fresh from the manifest
+on every <code>execute</code>, never frozen at registration.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Type</th>
+<th>Default</th>
+<th>Override flag</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>lagThreshold</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td><code>--lag-threshold</code></td>
+<td>Total replication lag (sum of all partition lags) tolerated before proceeding. <code>0</code> is the strictest.</td>
+</tr>
+<tr>
+<td><code>promoteBatchSize</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td><code>--promote-batch-size</code></td>
+<td>Max mirror topics promoted per batch. <code>0</code> promotes all at once; when set, each batch is promoted and confirmed stopped before the next is submitted.</td>
+</tr>
+<tr>
+<td><code>rolloutTimeout</code></td>
+<td>duration</td>
+<td><code>0</code></td>
+<td><code>--rollout-timeout</code></td>
+<td>Max wait for the operator to report the gateway <code>Ready</code> during fence and switchover (e.g. <code>10m</code>). <code>0</code> means no deadline — waits until convergence or cancellation.</td>
+</tr>
+<tr>
+<td><code>detectUnroutedProducersDuration</code></td>
+<td>duration</td>
+<td><code>0</code></td>
+<td><code>--detect-unrouted-producers-duration</code></td>
+<td>Window to monitor source offsets after fencing for producers still bypassing the gateway; a detected increase aborts before switchover. <code>0</code> <strong>skips the check entirely</strong>; minimum <code>10s</code> when set — shorter can't span a producer's metadata refresh.</td>
+</tr>
+<tr>
+<td><code>consumerOffsetSyncDrainDuration</code></td>
+<td>duration</td>
+<td><code>0</code></td>
+<td><code>--consumer-offset-sync-drain-duration</code></td>
+<td>Wait after fencing, before disabling the link's consumer offset sync, letting final offsets propagate. Has no effect unless <code>pauseConsumerOffsetSync</code> is set. <code>0</code> means no wait.</td>
+</tr>
+<tr>
+<td><code>hotReloadTimeout</code></td>
+<td>duration</td>
+<td><code>0</code></td>
+<td><code>--hot-reload-timeout</code></td>
+<td>Max wait for every gateway pod to report the new config revision when the gateway supports hot-reload (e.g. <code>90s</code>). Unlike <code>rolloutTimeout</code> this is never unbounded: a hot-reload moves no Kubernetes signal, so <code>0</code> uses the built-in 90s budget rather than waiting forever.</td>
+</tr>
+<tr>
+<td><code>gatewayConfigPort</code></td>
+<td>int</td>
+<td><code>0</code></td>
+<td><code>--gateway-config-port</code></td>
+<td>Port serving the gateway's <code>/config</code> endpoint, polled per pod to confirm a config revision was applied. <code>0</code> uses the persisted value, falling back to the gateway default (<code>9180</code>).</td>
+</tr>
+</tbody>
+</table>
+<h2 id="credentials">Credentials<a class="headerlink" href="#credentials" title="Permanent link">&para;</a></h2>
+<p>Every <code>credentials</code>-shaped slot (<code>spec.source.credentials</code>,
+<code>spec.target.kafka.clusterCredentials</code>, <code>spec.clusterLink.linkCredentials</code>) is a
+<strong>path to an external credentials file</strong> — inline credential blocks are not
+accepted, so the manifest itself never holds secret material:</p>
+<div class="language-yaml highlight"><pre><span></span><code><span id="__span-1-1"><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="nt">credentials</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">/etc/kcp/source-creds.yaml</span>
+</span></code></pre></div>
+<p>The referenced file's top-level content is the credential (a Kafka-family block
+for the Kafka legs, a REST block for <code>linkCredentials</code>). Prefer a credential
+mounted as a Kubernetes Secret file. Each credentials file is secret-bearing —
+<code>kcp</code> warns (not errors) if it is group- or world-readable, so keep it <code>0600</code>.</p>
+<h3 id="kafka-credentials-specsourcecredentials-spectargetkafkaclustercredentials">Kafka credentials (<code>spec.source.credentials</code>, <code>spec.target.kafka.clusterCredentials</code>)<a class="headerlink" href="#kafka-credentials-specsourcecredentials-spectargetkafkaclustercredentials" title="Permanent link">&para;</a></h3>
+<p>Specify <strong>exactly one</strong> method block — its <strong>presence</strong> selects it (no
+<code>auth_method:</code> wrapper, no <code>use:</code> flag). An optional top-level
+<code>insecure_skip_tls_verify: false</code> sibling applies to test environments only.</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Required fields</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>iam</code></td>
+<td><code>region</code></td>
+<td>MSK source only; Confluent Cloud can't present IAM (a link to MSK uses SCRAM instead).</td>
+</tr>
+<tr>
+<td><code>sasl_scram</code></td>
+<td><code>username</code>, <code>password</code></td>
+<td>Optional <code>mechanism</code> (<code>SHA256</code>/<code>SHA512</code>; MSK requires <code>SHA512</code>), <code>ca_cert</code>. Always TLS (SASL_SSL).</td>
+</tr>
+<tr>
+<td><code>sasl_plain</code></td>
+<td><code>username</code>, <code>password</code></td>
+<td>Optional <code>ca_cert</code>, <code>tls</code>. <code>ca_cert</code> present ⇒ SASL_SSL against that CA; <code>tls: true</code> ⇒ SASL_SSL over the system/public trust store; neither ⇒ SASL_PLAINTEXT.</td>
+</tr>
+<tr>
+<td><code>mtls</code></td>
+<td><code>client_cert</code>, <code>client_key</code></td>
+<td>Optional <code>ca_cert</code>. Client is authenticated via its certificate.</td>
+</tr>
+<tr>
+<td><code>unauthenticated_tls</code></td>
+<td>—</td>
+<td>Optional <code>ca_cert</code>. One-way TLS; client is not authenticated.</td>
+</tr>
+<tr>
+<td><code>unauthenticated_plaintext</code></td>
+<td>—</td>
+<td>No auth, no TLS. Test/lab only.</td>
+</tr>
+</tbody>
+</table>
+<p><code>ca_cert</code> (on <code>sasl_scram</code>, <code>sasl_plain</code>, <code>mtls</code>, <code>unauthenticated_tls</code>) is a
+PEM file path used to verify the broker's TLS certificate. Supply it only for a
+<strong>private/internal CA</strong>; public-CA brokers (AWS MSK, Confluent Cloud) validate
+against the system trust store and need no <code>ca_cert</code>.</p>
+<h3 id="rest-credentials-specclusterlinklinkcredentials">REST credentials (<code>spec.clusterLink.linkCredentials</code>)<a class="headerlink" href="#rest-credentials-specclusterlinklinkcredentials" title="Permanent link">&para;</a></h3>
+<p>Specify <strong>exactly one</strong> block (or the <code>api_key</code>/<code>api_secret</code> pair).</p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Required fields</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>api_key</code> + <code>api_secret</code></td>
+<td><code>api_key</code>, <code>api_secret</code></td>
+<td>Confluent Cloud; flat top-level pair; public CA.</td>
+</tr>
+<tr>
+<td><code>basic</code></td>
+<td><code>username</code>, <code>password</code></td>
+<td>e.g. Confluent Platform MDS.</td>
+</tr>
+<tr>
+<td><code>bearer</code></td>
+<td><code>token</code></td>
+<td>e.g. MDS/OAuth.</td>
+</tr>
+<tr>
+<td><code>mtls</code></td>
+<td><code>client_cert</code>, <code>client_key</code></td>
+<td>Auth at the TLS layer.</td>
+</tr>
+</tbody>
+</table>
+<p><code>basic</code>, <code>bearer</code>, and <code>mtls</code> each accept an optional <code>ca_cert</code> and
+<code>insecure_skip_verify</code> to reach a TLS endpoint fronted by a private/internal CA
+(e.g. self-managed CP/MDS). Public-CA endpoints (Confluent Cloud via <code>api_key</code>)
+need neither.</p>
+<p>One restriction is specific to <strong>this</strong> manifest, narrower than the two
+tables above:</p>
+<ul>
+<li><code>spec.source.credentials.iam</code> is valid only when <code>spec.source.type: msk</code>.
+  <code>spec.target.kafka.clusterCredentials.iam</code> is rejected outright — the
+  destination is Confluent Cloud/Platform, never MSK.</li>
+</ul>
+<h2 id="how-the-commands-read-this-file">How the commands read this file<a class="headerlink" href="#how-the-commands-read-this-file" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Flag</th>
+<th>Required</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kcp migration execute</code></td>
+<td><code>--migration-yaml</code></td>
+<td>yes</td>
+<td>Path to this manifest.</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--migration-state-file</code></td>
+<td>yes</td>
+<td>Created on first registration (first <code>execute</code> run); re-used on subsequent runs.</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--migration-id</code></td>
+<td>no</td>
+<td>Address a migration by id instead of <code>metadata.name</code> — needed only for migrations registered before <code>metadata.name</code> became the identity.</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--lag-threshold</code>, <code>--promote-batch-size</code>, <code>--rollout-timeout</code>, <code>--detect-unrouted-producers-duration</code>, <code>--consumer-offset-sync-drain-duration</code>, <code>--hot-reload-timeout</code>, <code>--gateway-config-port</code></td>
+<td>no</td>
+<td>Per-run overrides of the matching <code>spec.defaultPolicies</code> field for this run only.</td>
+</tr>
+<tr>
+<td><code>kcp migration lag-check</code></td>
+<td><code>--migration-yaml</code></td>
+<td>yes</td>
+<td>Path to this manifest. Reads only the destination REST leg (<code>spec.clusterLink.linkCredentials</code>), honoured in whichever form it resolves — <code>api_key</code>/<code>basic</code>/<code>bearer</code>/<code>mtls</code>; it never dials the source or destination Kafka legs.</td>
+</tr>
+<tr>
+<td></td>
+<td><code>--poll-interval</code></td>
+<td>no (default <code>1</code>)</td>
+<td>Poll interval in seconds, <code>1</code>-<code>60</code>.</td>
+</tr>
+</tbody>
+</table>
+<p>Every path in the manifest resolves relative to the <strong>process working
+directory</strong>, not the manifest's own location — the one exception is
+<code>spec.gateway.kubeconfig</code>, where a leading <code>~/</code> is expanded.</p>
+<h2 id="validation">Validation<a class="headerlink" href="#validation" title="Permanent link">&para;</a></h2>
+<p>There is no separate <code>kcp migration validate</code> subcommand. Every read of this
+manifest — by <code>execute</code> or <code>lag-check</code> — parses and structurally
+validates in one step, so both commands get validation automatically and
+neither can skip it by accident.</p>
+<p>Validation collects <strong>every</strong> problem before returning, rather than
+fail-fast, so an operator fixes the file in one pass:</p>
+<div class="language-text highlight"><pre><span></span><code><span id="__span-2-1"><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>3 problem(s) found in the migration manifest:
+</span><span id="__span-2-2"><a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>  - spec.source.bootstrapServers: must not be empty
+</span><span id="__span-2-3"><a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a>  - spec.target.clusterId: required for target type "confluent-cloud"
+</span><span id="__span-2-4"><a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a>  - spec.defaultPolicies.detectUnroutedProducersDuration: must be at least 10s when set (0 skips the check)
+</span></code></pre></div>
+<p>Key rules, beyond required/optional per field above:</p>
+<ul>
+<li><code>apiVersion</code>/<code>kind</code> must be the exact literals; <code>metadata.name</code> non-blank.</li>
+<li><code>spec.source.type</code> and <code>spec.target.type</code> must be one of their listed enum
+  values.</li>
+<li>Every <code>bootstrapServers</code> entry must be <code>host:port</code>.</li>
+<li><code>spec.clusterLink.name</code> must not be blank (existence itself isn't checked
+  until the first <code>execute</code> run touches the destination); <code>spec.clusterLink.linkCredentials</code> must
+  not be blank.</li>
+<li>Every credentials field (<code>spec.source.credentials</code>,
+  <code>spec.target.kafka.clusterCredentials</code>, <code>spec.clusterLink.linkCredentials</code>)
+  must be a non-blank file path; an inline mapping is rejected at parse.</li>
+<li><code>spec.gateway.namespace</code> and <code>cr-name</code> must not be blank; the retired
+  <code>crs</code>/<code>routes</code> keys must not be set at all (they fail the strict decode).</li>
+<li><code>spec.route.name</code> and <code>spec.route.targetStreamingDomain</code> must not be blank;
+  <code>spec.route.topicGroup</code> must have exactly one entry.</li>
+<li>Each entry must set at least one of <code>topics</code> / <code>topicPatterns</code> (both is
+  allowed). Neither present is rejected. <code>topics</code>/<code>topicPatterns</code>, if present,
+  must be non-empty with no blank entries; each <code>topicPatterns</code> entry must
+  compile as an anchored RE2 regular expression.</li>
+<li>No <code>spec.defaultPolicies</code> field may be negative;
+  <code>detectUnroutedProducersDuration</code>, if greater than zero, must be at least
+  <code>10s</code>.</li>
+</ul>
+<p><code>kcp migration execute --dry-run</code> performs the same validation <code>execute</code> would on first registration (manifest structure, credentials, cluster link and gateway CR existence/health) and prints a reconcile plan, but touches no migration state file and runs no FSM transitions — useful for validating your infrastructure and manifest while iterating before scheduling a live cutover.</p>
+<h2 id="field-reference">Field reference<a class="headerlink" href="#field-reference" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Type</th>
+<th>Required</th>
+<th>Default</th>
+<th>Allowed values</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>apiVersion</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td><code>kcp.confluent.io/v1alpha1</code></td>
+</tr>
+<tr>
+<td><code>kind</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td><code>GatewayMigration</code></td>
+</tr>
+<tr>
+<td><code>metadata.name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>non-blank</td>
+</tr>
+<tr>
+<td><code>spec.source.type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td>—</td>
+<td><code>msk</code>, <code>apache-kafka</code></td>
+</tr>
+<tr>
+<td><code>spec.source.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>—</td>
+<td><code>host:port</code></td>
+</tr>
+<tr>
+<td><code>spec.source.credentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>file path; Kafka family, <code>iam</code> only if <code>type: msk</code></td>
+</tr>
+<tr>
+<td><code>spec.target.type</code></td>
+<td>enum</td>
+<td>yes</td>
+<td>—</td>
+<td><code>confluent-cloud</code>, <code>confluent-platform</code></td>
+</tr>
+<tr>
+<td><code>spec.target.clusterId</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>required for both target types</td>
+</tr>
+<tr>
+<td><code>spec.target.kafka.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>yes</td>
+<td>—</td>
+<td><code>host:port</code></td>
+</tr>
+<tr>
+<td><code>spec.target.kafka.restEndpoint</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>URL</td>
+</tr>
+<tr>
+<td><code>spec.target.kafka.clusterCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>file path; Kafka family except <code>iam</code></td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>must reference an existing link</td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.bootstrapServers</code></td>
+<td><code>[]string</code></td>
+<td>no</td>
+<td>—</td>
+<td>repeats <code>spec.target.kafka.bootstrapServers</code>; unvalidated</td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.linkCredentials</code></td>
+<td>path</td>
+<td>yes</td>
+<td>—</td>
+<td>file path; <code>api_key</code>/<code>api_secret</code>, <code>basic</code>, <code>bearer</code>, or <code>mtls</code></td>
+</tr>
+<tr>
+<td><code>spec.clusterLink.pauseConsumerOffsetSync</code></td>
+<td>bool</td>
+<td>no</td>
+<td><code>false</code></td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>spec.gateway.namespace</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>spec.gateway.kubeconfig</code></td>
+<td>string</td>
+<td>no</td>
+<td>—</td>
+<td><code>~/</code> expanded</td>
+</tr>
+<tr>
+<td><code>spec.gateway.cr-name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>K8s object name</td>
+</tr>
+<tr>
+<td><code>spec.route.name</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>must exist in the initial CR</td>
+</tr>
+<tr>
+<td><code>spec.route.topicGroup</code></td>
+<td>list</td>
+<td>yes</td>
+<td>—</td>
+<td>exactly one entry</td>
+</tr>
+<tr>
+<td><code>spec.route.topicGroup[].topics</code></td>
+<td><code>[]string</code></td>
+<td>at least one of topics/topicPatterns</td>
+<td>—</td>
+<td>non-empty if present, literal names</td>
+</tr>
+<tr>
+<td><code>spec.route.topicGroup[].topicPatterns</code></td>
+<td><code>[]string</code></td>
+<td>at least one of topics/topicPatterns</td>
+<td>—</td>
+<td>non-empty if present, anchored RE2 patterns (<code>['.*']</code> = all)</td>
+</tr>
+<tr>
+<td><code>spec.route.targetStreamingDomain</code></td>
+<td>string</td>
+<td>yes</td>
+<td>—</td>
+<td>must be declared in the initial CR's <code>spec.streamingDomains</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.lagThreshold</code></td>
+<td>int</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.promoteBatchSize</code></td>
+<td>int</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.rolloutTimeout</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.detectUnroutedProducersDuration</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>0</code>, or <code>&gt;= 10s</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.consumerOffsetSyncDrainDuration</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.hotReloadTimeout</code></td>
+<td>duration</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+<tr>
+<td><code>spec.defaultPolicies.gatewayConfigPort</code></td>
+<td>int</td>
+<td>no</td>
+<td><code>0</code></td>
+<td><code>&gt;= 0</code></td>
+</tr>
+</tbody>
+</table>
+<h2 id="editor-support">Editor support<a class="headerlink" href="#editor-support" title="Permanent link">&para;</a></h2>
+<p><code>gateway-examples/gateway-migration.yaml</code> carries a <code># yaml-language-server:
+$schema=…</code> modeline pointing at <code>internal/manifest/gatewaymigration.schema.json</code>,
+so VS Code with the
+<a href="https://marketplace.visualstudio.com/items?itemName=redhat.vscode-yaml">Red Hat YAML extension</a>
+gives autocomplete and inline validation automatically.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      Apache®, Apache Kafka®, Kafka®, and the Kafka logo are either registered trademarks or trademarks of the Apache Software Foundation in the United States and/or other countries. No endorsement by the Apache Software Foundation is implied by the use of these marks.
+
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.tabs", "navigation.sections", "navigation.indexes", "navigation.top", "content.code.copy", "search.suggest", "search.highlight"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"default": "latest", "provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      
+    
+  </body>
+</html>
