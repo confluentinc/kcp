@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
 	"github.com/confluentinc/kcp/internal/services/gateway"
@@ -293,9 +294,9 @@ func (o *MigrationOrchestrator) handleStepFailure(ctx context.Context, step Work
 
 	// Announce the rollback with the real reason here — handleStepFailure holds
 	// the failing step and error; onAbortFence owns only the unfence itself.
-	reason := step.Description + " failed"
+	reason := strings.ToUpper(step.Description[:1]) + step.Description[1:] + " failed"
 	if errors.Is(stepErr, ErrUnroutedProducers) {
-		reason = "unrouted producers detected"
+		reason = "Unrouted producers detected"
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 

@@ -292,9 +292,14 @@ func TestOrchestrator_Execute_UnroutedProducers_AbortsFenceAndRollsBack(t *testi
 		},
 	}
 
+	var out strings.Builder
+	orch.reporter = &reporter{out: &out, err: io.Discard}
+
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, out.String(), "Unrouted producers detected — removing fence to restore traffic",
+		"the rollback banner names detection as the reason, as a capitalised sentence")
 
 	// FSM state should have rolled back to initialized via abort_fence
 	assert.Equal(t, StateInitialized, orch.fsm.Current(),
@@ -1295,11 +1300,16 @@ func TestOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *testin
 		},
 	}
 
+	var out strings.Builder
+	orch.reporter = &reporter{out: &out, err: io.Discard}
+
 	err := orch.Execute(context.Background(), 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"}, nil)
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers,
 		"a fetch failure must not be classified as a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
+	assert.Contains(t, out.String(), "Verifying gateway fence failed — removing fence to restore traffic",
+		"the rollback banner names the failed step, as a capitalised sentence")
 
 	assert.Equal(t, StateInitialized, orch.fsm.Current(),
 		"a halting error while fenced and pre-promote must abort_fence back to initialized")

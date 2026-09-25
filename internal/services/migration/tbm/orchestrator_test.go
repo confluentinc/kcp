@@ -3,6 +3,8 @@ package tbm
 import (
 	"context"
 	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -144,11 +146,15 @@ func TestTBMOrchestrator_Execute_UnroutedProducersDetected_UnfencesAndRollsBackT
 	}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
 	orchestrator := NewTBMOrchestrator(config, actions)
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
 
 	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
 
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrUnroutedProducers)
+	assert.Contains(t, out.String(), "Unrouted producers detected — removing fence to restore traffic",
+		"the rollback banner names detection as the reason, as a capitalised sentence")
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(), "a detected rollback must leave the batch at initialized, so a resume re-checks lag for real before re-fencing")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence rollback's unfence applies once more")
 
@@ -207,11 +213,15 @@ func TestTBMOrchestrator_Execute_VerifyFetchError_AbortsFenceAndRollsBack(t *tes
 	config := &migration.MigrationConfig{MigrationId: "test-tbm-verify-fetch-error", K8sNamespace: "confluent", InitialCrName: "gateway-initial"}
 	actions := NewTBMActions(sourceOffset, zeroLagOffsetProvider(), gw, cl)
 	orchestrator := NewTBMOrchestrator(config, actions)
+	var out strings.Builder
+	orchestrator.reporter = &reporter{out: &out, err: io.Discard}
 
 	err := orchestrator.Execute(context.Background(), realisticReconcileResult(), 10, 5*time.Millisecond, clusterlink.BasicAuth{})
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, ErrUnroutedProducers, "a fetch failure is not a rogue-producer detection")
 	assert.Contains(t, err.Error(), "connection reset by peer")
+	assert.Contains(t, out.String(), "Verifying fence failed — removing fence to restore traffic",
+		"the rollback banner names the failed step, as a capitalised sentence")
 	assert.Equal(t, StateInitialized, orchestrator.fsm.Current(),
 		"a halting error while fenced and pre-promote must abort_fence back to initialized")
 	assert.Equal(t, 2, applyCount, "fence applies once, the abort_fence unfence applies once more")

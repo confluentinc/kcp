@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/confluentinc/kcp/internal/services/clusterlink"
@@ -215,9 +216,9 @@ func (o *TBMOrchestrator) handleStepFailure(ctx context.Context, step WorkflowSt
 
 	// Announce the rollback with the real reason here; onAbortFence owns only the
 	// unfence itself.
-	reason := step.Description + " failed"
+	reason := strings.ToUpper(step.Description[:1]) + step.Description[1:] + " failed"
 	if errors.Is(stepErr, ErrUnroutedProducers) {
-		reason = "unrouted producers detected"
+		reason = "Unrouted producers detected"
 	}
 	o.reporter.warn("%s — removing fence to restore traffic", reason)
 
