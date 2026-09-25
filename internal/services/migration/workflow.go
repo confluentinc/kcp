@@ -139,12 +139,8 @@ func (s *MigrationActions) ensureGatewayCapability(ctx context.Context, config *
 }
 
 // ResolveGatewayCapability determines how gateway state transitions will be
-// verified on the live cluster, adopts it for this run, and records it on the
-// migration config. Called once, authoritatively, via ensureGatewayCapability
-// — there is no separate advisory call at Initialize: execute is the only
-// command now, so there is no earlier "review, then commit" moment to advise
-// at (this function used to be called a second, advisory time from Initialize,
-// back when init and execute were separate commands).
+// verified on the live cluster and adopts it for this run. Called once per run,
+// via ensureGatewayCapability.
 func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config *MigrationConfig) error {
 	// Settle the port first: the last gate probes /config, so detection needs it.
 	if config.GatewayConfigPort == 0 {
@@ -167,7 +163,6 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 		return fmt.Errorf("failed to derive switched gateway CR: %w", err)
 	}
 
-	previous := config.GatewayVerificationMode
 	capability, err := s.verifier().ResolveCapability(ctx, config.K8sNamespace, config.InitialCrName,
 		gatewayConfigPort(config), fencedCrYAML, switchedCrYAML)
 	if err != nil {
@@ -183,16 +178,6 @@ func (s *MigrationActions) ResolveGatewayCapability(ctx context.Context, config 
 	// ensureGatewayCapability would silently re-resolve (harmless) AND
 	// re-run VerifyHotReloadCapability a second, unrequested time.
 	s.capabilityResolved = true
-	config.GatewayVerificationMode = string(capability.Mode)
-	config.GatewayHotReloadEnabled = capability.HotReloadEnabled
-
-	// A change since init is worth saying out loud either way: it means the
-	// cluster moved under the migration.
-	if previous != "" && previous != string(capability.Mode) {
-		s.reporter.warn("Gateway verification changed since this migration was initialised: %q -> %q. Using the live cluster's capability.",
-			previous, capability.Mode)
-	}
-
 	return nil
 }
 

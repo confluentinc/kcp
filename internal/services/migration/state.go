@@ -119,19 +119,6 @@ type MigrationConfig struct {
 	// metadata once, centrally.
 	GatewayYAML string
 
-	// GatewayVerificationMode is how kcp confirms a gateway state transition
-	// landed, as resolved against the live cluster at init time. It records what
-	// the operator was told to expect; execute re-derives it and the re-derived
-	// value is the one that governs the run, because the cluster can be upgraded
-	// (or rolled back) between init and execute.
-	GatewayVerificationMode string
-
-	// GatewayHotReloadEnabled records whether spec.hotReload.enabled was declared
-	// at init time by the live Gateway CR or by either of the CRs this migration
-	// will apply — the fence apply is what puts hot-reload into force, so the files
-	// count. Diagnostic: it explains which gate produced GatewayVerificationMode.
-	GatewayHotReloadEnabled bool
-
 	// GatewayConfigPort is the port the gateway's GET /config endpoint is served
 	// on. Configurable because the contract requires it to be; nothing fronts
 	// this port, so kcp dials pod IPs on it directly.
