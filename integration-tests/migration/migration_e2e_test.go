@@ -1120,7 +1120,7 @@ func TestMigrationE2E_PauseOffsetSync_ExecuteRefuses(t *testing.T) {
 		"the restore bookend must still bring the link to the declared baseline (enabled), regardless of how it started")
 }
 
-// TestMigrationE2E_PauseOffsetSync_RestoresFilters was removed (commit 47dec7b3):
+// TestMigrationE2E_PauseOffsetSync_RestoresFilters was removed:
 // the pause/restore is now an incremental AlterConfigs of only
 // consumer.offset.sync.enable and never touches consumer.offset.group.filters,
 // so there is nothing to restore. The old test guarded a diff-based restore that
