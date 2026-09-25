@@ -319,22 +319,10 @@ func (e *env) snapshot(t *testing.T, ctx context.Context, label string, topics [
 		label, e.route, indentLines(rules, "      "), mb.String())
 }
 
-// routeObj returns the named route's object from a gateway CR (nil if absent).
+// routeObj returns the suite's route from a gateway CR (nil if absent).
 func (e *env) routeObj(t *testing.T, cr []byte) map[string]any {
 	t.Helper()
-	var obj map[string]any
-	if err := yaml.Unmarshal(cr, &obj); err != nil {
-		return nil
-	}
-	spec, _ := obj["spec"].(map[string]any)
-	routes, _ := spec["routes"].([]any)
-	for _, r := range routes {
-		rm, _ := r.(map[string]any)
-		if rm["name"] == e.route {
-			return rm
-		}
-	}
-	return nil
+	return findRoute(cr, e.route)
 }
 
 // routeYAML renders the migration-relevant route state for the snapshot: a
@@ -358,63 +346,17 @@ func (e *env) routeYAML(t *testing.T, cr []byte) string {
 	return string(out)
 }
 
-// isFenced reports whether the route fences the given topic. Static: the whole
-// route carries a `fence` block. Dynamic: rules.fencing[] names the topic.
+// isFenced reports whether the suite's route fences the given topic.
 func (e *env) isFenced(t *testing.T, cr []byte, topic string) bool {
 	t.Helper()
-	r := e.routeObj(t, cr)
-	if r == nil {
-		return false
-	}
-	if _, static := r["streamingDomain"].(map[string]any); static {
-		_, hasFence := r["fence"]
-		return hasFence
-	}
-	rules, _ := r["rules"].(map[string]any)
-	fencing, _ := rules["fencing"].([]any)
-	for _, fe := range fencing {
-		fm, _ := fe.(map[string]any)
-		if blocked, _ := fm["blocked"].(bool); !blocked {
-			continue
-		}
-		topics, _ := fm["topics"].([]any)
-		for _, tp := range topics {
-			if tp == topic {
-				return true
-			}
-		}
-	}
-	return false
+	return routeFences(e.routeObj(t, cr), topic)
 }
 
-// isSwitchedToTarget reports whether the route routes the topic to the target
-// domain. Static: route.streamingDomain.name == destDomain (whole route).
-// Dynamic: a routing condition binds the topic to destDomain.
+// isSwitchedToTarget reports whether the suite's route routes the topic to the
+// target domain.
 func (e *env) isSwitchedToTarget(t *testing.T, cr []byte, topic string) bool {
 	t.Helper()
-	r := e.routeObj(t, cr)
-	if r == nil {
-		return false
-	}
-	if sd, static := r["streamingDomain"].(map[string]any); static {
-		return sd["name"] == e.destDomain
-	}
-	rules, _ := r["rules"].(map[string]any)
-	routing, _ := rules["routing"].(map[string]any)
-	conditions, _ := routing["conditions"].([]any)
-	for _, c := range conditions {
-		cm, _ := c.(map[string]any)
-		if cm["streamingDomain"] != e.destDomain {
-			continue
-		}
-		topics, _ := cm["topics"].([]any)
-		for _, tp := range topics {
-			if tp == topic {
-				return true
-			}
-		}
-	}
-	return false
+	return routeTargets(e.routeObj(t, cr), e.destDomain, topic)
 }
 
 func indentLines(s, prefix string) string {
@@ -433,23 +375,4 @@ func (e *env) readCR(t *testing.T, ctx context.Context) []byte {
 	raw, err := e.svc.GetGatewayYAML(ctx, e.namespace, e.gateway)
 	require.NoError(t, err)
 	return stripServerFields(t, raw)
-}
-
-// stripServerFields removes the server-managed metadata a fetched CR carries.
-// Mirrors the migration workflow's cleanInitialCR; duplicated rather than
-// exported because widening kcp's public surface for a test is the wrong trade.
-func stripServerFields(t *testing.T, crYAML []byte) []byte {
-	t.Helper()
-	var obj map[string]any
-	require.NoError(t, yaml.Unmarshal(crYAML, &obj))
-
-	delete(obj, "status")
-	if md, ok := obj["metadata"].(map[string]any); ok {
-		for _, k := range []string{"managedFields", "resourceVersion", "uid", "creationTimestamp", "generation", "selfLink"} {
-			delete(md, k)
-		}
-	}
-	out, err := yaml.Marshal(obj)
-	require.NoError(t, err)
-	return out
 }
