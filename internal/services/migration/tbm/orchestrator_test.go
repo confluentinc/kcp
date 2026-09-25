@@ -442,7 +442,7 @@ func newTBMKillPointOrchestrator(
 // reports nothing left, must be a pure no-op.
 func TestTBM_S0_FreshFullRun(t *testing.T) {
 	topics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, topics, nil, nil)
+	orch, config, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, topics, nil, nil)
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
@@ -458,9 +458,10 @@ func TestTBM_S0_FreshFullRun(t *testing.T) {
 	patchesBefore := len(*patchCalls)
 	promotesBefore := len(*promoteCalls)
 
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, orch.fsm.Current())
+	assert.Equal(t, StateSwitched, rerun.fsm.Current())
 
 	assert.Len(t, *patchCalls, patchesBefore, "a completed batch's re-run must apply no gateway patches")
 	assert.Len(t, *promoteCalls, promotesBefore, "a completed batch's re-run must issue no promote calls")
@@ -497,7 +498,7 @@ func TestTBMOrchestrator_Execute_KillPointEnvCancelsAfterState(t *testing.T) {
 // as a fresh batch.
 func TestTBM_S1_AlreadyFencedNoReapply(t *testing.T) {
 	topics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, topics, nil, nil)
+	orch, config, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(t, topics, nil, nil)
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
@@ -510,7 +511,8 @@ func TestTBM_S1_AlreadyFencedNoReapply(t *testing.T) {
 
 	patchesBefore := len(*patchCalls)
 	promotesBefore := len(*promoteCalls)
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
@@ -531,7 +533,7 @@ func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
 	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
 	topics := []string{"t1.order", "t2.payment"}
 
-	orch, _, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
+	orch, config, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
 		t, topics, nil, []gateway.GatewayReadinessProgress{notReady, converged})
 
 	err := orch.Execute(context.Background(), killPointFullResult(topics), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
@@ -550,7 +552,8 @@ func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
 
 	patchesBefore := len(*patchCalls)
 	promotesBefore := len(*promoteCalls)
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
@@ -566,7 +569,7 @@ func TestTBM_S1u_WaitsForConvergence(t *testing.T) {
 // already-STOPPED t1.order.
 func TestTBM_S2_MidPromoteMix(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, config, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, allTopics, []string{"t1.order"}, nil)
 
 	midResult := &migplan.Result{
@@ -589,7 +592,8 @@ func TestTBM_S2_MidPromoteMix(t *testing.T) {
 
 	patchesBefore := len(*patchCalls)
 	promotesBefore := len(*promoteCalls)
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
@@ -696,7 +700,7 @@ func TestTBM_Execute_ResumeAtAwaitStopped(t *testing.T) {
 // all, but Switch still applies and the run still converges.
 func TestTBM_S3_PromotedNotSwitched(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, config, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, allTopics, allTopics, nil)
 
 	allPromotedResult := &migplan.Result{
@@ -718,7 +722,8 @@ func TestTBM_S3_PromotedNotSwitched(t *testing.T) {
 
 	patchesBefore := len(*patchCalls)
 	promotesBefore := len(*promoteCalls)
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
@@ -737,7 +742,7 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 	converged := gateway.GatewayReadinessProgress{RolloutDetected: true, InitialPodCount: 2, PodsReady: 2}
 	allTopics := []string{"t1.order", "t2.payment"}
 
-	orch, _, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
+	orch, config, patchCalls, promoteCalls, readyEvents := newTBMKillPointOrchestrator(
 		t, allTopics, allTopics, []gateway.GatewayReadinessProgress{notReady, converged})
 
 	allPromotedResult := &migplan.Result{
@@ -765,7 +770,8 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 
 	patchesBefore := len(*patchCalls)
 	promotesBefore := len(*promoteCalls)
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
@@ -782,7 +788,7 @@ func TestTBM_S4u_SwitchWaitsForConvergence(t *testing.T) {
 // short-circuit to get there.
 func TestTBM_S4_DoneIsNoop(t *testing.T) {
 	allTopics := []string{"t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, config, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, allTopics, allTopics, nil)
 
 	err := orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
@@ -793,9 +799,10 @@ func TestTBM_S4_DoneIsNoop(t *testing.T) {
 	assert.Empty(t, *promoteCalls, "zero promote calls")
 
 	// A second Execute is byte-for-byte identical: still zero mutations.
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
-	assert.Equal(t, StateSwitched, orch.fsm.Current())
+	assert.Equal(t, StateSwitched, rerun.fsm.Current())
 	assert.Empty(t, *patchCalls)
 	assert.Empty(t, *promoteCalls)
 }
@@ -811,7 +818,7 @@ func TestTBM_S4_DoneIsNoop(t *testing.T) {
 // doubling the fence/switch patch count for having two batches present.
 func TestTBM_M_MultiBatchComposite(t *testing.T) {
 	allTopics := []string{"t0.legacy", "t1.order", "t2.payment"}
-	orch, _, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
+	orch, config, patchCalls, promoteCalls, _ := newTBMKillPointOrchestrator(
 		t, allTopics, []string{"t0.legacy"}, nil)
 
 	activeTopics := []string{"t1.order", "t2.payment"}
@@ -830,7 +837,8 @@ func TestTBM_M_MultiBatchComposite(t *testing.T) {
 
 	patchesBefore := len(*patchCalls)
 	promotesBefore := len(*promoteCalls)
-	err = orch.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
+	rerun := NewTBMOrchestrator(config, orch.actions) // a re-run is a fresh process over the same world
+	err = rerun.Execute(context.Background(), killPointDoneResult(), 10, 0, clusterlink.BasicAuth{Username: "api-key", Password: "api-secret"})
 	require.NoError(t, err)
 	assert.Len(t, *patchCalls, patchesBefore)
 	assert.Len(t, *promoteCalls, promotesBefore)
